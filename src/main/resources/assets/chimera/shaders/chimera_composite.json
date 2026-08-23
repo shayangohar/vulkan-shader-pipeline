@@ -1,0 +1,9 @@
+{
+    "vertex": "chimera_composite/chimera_composite",
+    "fragment": "chimera_composite/chimera_composite",
+    "samplers": [
+        { "name": "Sampler0" }
+    ],
+    "UBOs": [],
+    "PushConstants": []
+}

@@ -7,9 +7,11 @@ import net.vulkanmod.vulkan.pass.MainPass;
 
 /**
  * Owns the main-pass takeover lifecycle:
- * - onHostRendererReady: capture VulkanMod's installed MainPass and wrap it.
+ * - onHostRendererReady: capture VulkanMod's installed MainPass, then install
+ *   chimera's multi-segment pass.
  * - install/uninstall: swap Renderer's main pass reference between host and
- *   chimera wrapper. setMainPass is a plain field write on the host side.
+ *   chimera (setMainPass is a plain field write host-side) together with the
+ *   terrain pipeline redirect.
  */
 public final class ChimeraRenderer {
     private static boolean ready;
@@ -32,7 +34,7 @@ public final class ChimeraRenderer {
         }
 
         hostPass = current;
-        chimeraPass = new ChimeraMainPass(hostPass);
+        chimeraPass = new ChimeraMainPass();
         ready = true;
 
         ChimeraTerrainPipelines.init();
@@ -65,7 +67,7 @@ public final class ChimeraRenderer {
         Renderer.getInstance().setMainPass(chimeraPass);
         ChimeraTerrainPipelines.enable();
         installed = true;
-        ChimeraMod.LOGGER.info("chimera ACTIVE - main pass + terrain pipelines (F8 to toggle back)");
+        ChimeraMod.LOGGER.info("chimera ACTIVE - HDR frame + terrain pipelines (F8 to toggle back)");
     }
 
     private static void uninstall() {
