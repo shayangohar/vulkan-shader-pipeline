@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.chimera.ChimeraMod;
+import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.pass.MainPass;
 
@@ -34,6 +35,8 @@ public final class ChimeraRenderer {
         chimeraPass = new ChimeraMainPass(hostPass);
         ready = true;
 
+        ChimeraTerrainPipelines.init();
+
         ChimeraMod.LOGGER.info("Captured host main pass: {}", hostPass.getClass().getName());
         install();
     }
@@ -60,8 +63,9 @@ public final class ChimeraRenderer {
         }
 
         Renderer.getInstance().setMainPass(chimeraPass);
+        ChimeraTerrainPipelines.enable();
         installed = true;
-        ChimeraMod.LOGGER.info("chimera main pass ACTIVE (F8 to toggle back)");
+        ChimeraMod.LOGGER.info("chimera ACTIVE - main pass + terrain pipelines (F8 to toggle back)");
     }
 
     private static void uninstall() {
@@ -70,7 +74,8 @@ public final class ChimeraRenderer {
         }
 
         Renderer.getInstance().setMainPass(hostPass);
+        ChimeraTerrainPipelines.disable();
         installed = false;
-        ChimeraMod.LOGGER.info("Reverted to host main pass");
+        ChimeraMod.LOGGER.info("Reverted to host main pass + host terrain shaders");
     }
 }
