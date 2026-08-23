@@ -40,6 +40,11 @@ public final class ChimeraTerrainPipelines {
 
         terrainPipeline = buildPipeline("chimera_terrain", ChimeraVertexFormats.EXTENDED_TERRAIN);
         initialized = true;
+
+        ChimeraMod.LOGGER.info("chimera terrain pipeline ready: format={} stride={}B attributes={}",
+                ChimeraVertexFormats.EXTENDED_TERRAIN.getClass().getSimpleName(),
+                ChimeraVertexFormats.EXTENDED_TERRAIN.getVertexSize(),
+                ChimeraVertexFormats.EXTENDED_TERRAIN.getElementAttributes().size());
     }
 
     public static void enable() {
