@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "chimera",
+  "version": "${version}",
+  "name": "Chimera",
+  "description": "Shaderpack pipeline for VulkanMod - Iris-class shaders on Vulkan.",
+  "authors": [
+    "shayangohar"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "net.chimera.ChimeraMod"
+    ]
+  },
+  "mixins": [
+    "chimera.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "vulkanmod": ">=0.6.8"
+  }
+}
