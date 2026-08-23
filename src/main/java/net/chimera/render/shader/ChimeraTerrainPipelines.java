@@ -3,6 +3,7 @@ package net.chimera.render.shader;
 import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.ChimeraMod;
 import net.chimera.render.vertex.ChimeraExtTerrainBuilder;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.minecraft.client.Minecraft;
@@ -41,10 +42,9 @@ public final class ChimeraTerrainPipelines {
         terrainPipeline = buildPipeline("chimera_terrain", ChimeraVertexFormats.EXTENDED_TERRAIN);
         initialized = true;
 
-        ChimeraMod.LOGGER.info("chimera terrain pipeline ready: format={} stride={}B attributes={}",
-                ChimeraVertexFormats.EXTENDED_TERRAIN.getClass().getSimpleName(),
+        ChimeraMod.LOGGER.info("chimera terrain pipeline ready: stride={}B attributes={}",
                 ChimeraVertexFormats.EXTENDED_TERRAIN.getVertexSize(),
-                ChimeraVertexFormats.EXTENDED_TERRAIN.getElementAttributes().size());
+                ChimeraVertexFormats.EXTENDED_TERRAIN.getElementAttributeNames());
     }
 
     public static void enable() {
