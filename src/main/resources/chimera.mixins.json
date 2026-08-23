@@ -6,7 +6,8 @@
   "mixins": [],
   "client": [
     "RendererInitMixin",
-    "KeyboardHandlerMixin"
+    "KeyboardHandlerMixin",
+    "GameRendererDepthMixin"
   ],
   "injectors": {
     "defaultRequire": 1

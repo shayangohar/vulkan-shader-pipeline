@@ -142,7 +142,13 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
 
-        Renderer.getInstance().endRenderPass(commandBuffer);
+        // Foreign code (vanilla post chains, encoder clears) may have flipped
+        // our color image to shader-read while the pass was closed; restore
+        // the attachment layout before re-entering.
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            this.hdrFramebuffer.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        }
+
         Renderer.getInstance().beginRenderPass(this.hdrAuxRenderPass, this.hdrFramebuffer);
     }
 
