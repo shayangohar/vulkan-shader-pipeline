@@ -23,12 +23,14 @@ layout(binding = 4) uniform sampler2D LightMap;
 layout(location = 0) in ivec4 inPositionLight; // xyz: pos*2048 - 8192, w: packed light
 layout(location = 1) in uvec2 inUV;
 layout(location = 2) in uint inPackedColor;
+layout(location = 3) in int inBlockId;
 
 layout(location = 0) out vec4 outVertexColor;
 layout(location = 1) out vec2 outTexCoord;
 layout(location = 2) out float outSphericalDistance;
 layout(location = 3) out float outCylindricalDistance;
 layout(location = 4) out flat float outFadeFactor;
+layout(location = 5) out flat int outBlockId;
 
 const float UV_SCALE = 1.0 / 32768.0;
 const vec3 POSITION_SCALE = vec3(1.0 / 2048.0);
@@ -65,6 +67,8 @@ void main() {
     outVertexColor = baseColor * fetchLightmap(uint(inPositionLight.w));
 
     outFadeFactor = SectionFadeFactors[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];
+
+    outBlockId = inBlockId;
 
     outTexCoord = vec2(inUV) * UV_SCALE;
 }

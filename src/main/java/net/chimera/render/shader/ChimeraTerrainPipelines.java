@@ -1,7 +1,12 @@
 package net.chimera.render.shader;
 
 import com.google.gson.JsonObject;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.render.vertex.ChimeraExtTerrainBuilder;
+import net.chimera.render.vertex.ChimeraVertexFormats;
+import net.minecraft.client.Minecraft;
+import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
 import net.vulkanmod.render.vertex.TerrainRenderType;
@@ -14,10 +19,13 @@ import net.vulkanmod.vulkan.shader.SPIRVUtils;
  * Builds and installs chimera's terrain pipelines.
  *
  * The GLSL/JSON live under /assets/chimera/shaders/ and declare the same
- * bindings, UBO fields, and vertex interface as the host's terrain path, so
- * the host's uniform suppliers and per-instance section data keep feeding
- * them unchanged. Redirecting PipelineManager's shader getter is the only
- * host state touched; disable() hands it straight back.
+ * bindings and UBO fields as the host's terrain path, so the host's uniform
+ * suppliers and per-instance section data keep feeding them unchanged.
+ *
+ * Enabling also swaps in chimera's extended terrain vertex format (adds a
+ * per-vertex BlockId attribute) and builder constructor, then forces a chunk
+ * rebuild so live sections re-mesh against the new layout. Disabling restores
+ * every piece of host state.
  */
 public final class ChimeraTerrainPipelines {
     private static boolean initialized;
@@ -30,7 +38,7 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        terrainPipeline = buildPipeline("chimera_terrain", CustomVertexFormat.COMPRESSED_TERRAIN);
+        terrainPipeline = buildPipeline("chimera_terrain", ChimeraVertexFormats.EXTENDED_TERRAIN);
         initialized = true;
     }
 
@@ -39,11 +47,25 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
+        PipelineManager.setTerrainVertexFormat(ChimeraVertexFormats.EXTENDED_TERRAIN);
+        ThreadBuilderPack.setTerrainBuilderConstructor(renderType ->
+                new ChimeraExtTerrainBuilder(TerrainRenderType.getLayer(renderType).bufferSize() / DefaultVertexFormat.BLOCK.getVertexSize()));
         PipelineManager.setShaderGetter(renderType -> terrainPipeline);
+        rebuildChunks();
     }
 
     public static void disable() {
         PipelineManager.setDefaultTerrainShaderGetter();
+        PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
+        ThreadBuilderPack.defaultTerrainBuilderConstructor();
+        rebuildChunks();
+    }
+
+    private static void rebuildChunks() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.levelRenderer != null) {
+            minecraft.levelRenderer.allChanged();
+        }
     }
 
     private static GraphicsPipeline buildPipeline(String name, VertexFormat vertexFormat) {
