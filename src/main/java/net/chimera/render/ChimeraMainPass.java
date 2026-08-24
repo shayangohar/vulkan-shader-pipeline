@@ -41,40 +41,6 @@ import static org.lwjgl.vulkan.VK10.*;
 public class ChimeraMainPass implements MainPass {
 
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
-    private static int segmentLogs = 12;
-    private static int presentLogs = 6;
-    private static int levelRebindLogs = 40;
-    private static int postRebindLogs = 8;
-
-    private static void debugSegment(String message) {
-        if (segmentLogs > 0) {
-            segmentLogs--;
-            LOGGER.info("[dbg] {}", message);
-        }
-    }
-
-    private static void debugRebind(String message) {
-        // Menu-phase rebinds are noise; cap them hard. Level-phase rebinds are
-        // the signal we are hunting.
-        if (levelRebindLogs > 0) {
-            levelRebindLogs--;
-            LOGGER.info("[dbg] {}", message);
-        }
-    }
-
-    private static void debugPostRebind(String message) {
-        if (postRebindLogs > 0) {
-            postRebindLogs--;
-            LOGGER.info("[dbg] {}", message);
-        }
-    }
-
-    private static void debugPresent(String message) {
-        if (presentLogs > 0) {
-            presentLogs--;
-            LOGGER.info("[dbg] {}", message);
-        }
-    }
 
     private Framebuffer hdrFramebuffer;
     private Framebuffer finalFramebuffer;
@@ -91,8 +57,6 @@ public class ChimeraMainPass implements MainPass {
 
     /** True while inside the level segment (world renders into HDR). */
     private boolean levelPhase;
-    /** True once the composite segment has run for the current frame. */
-    private boolean compositedThisFrame;
     /** Set when vanilla requests a depth clear while no pass is recording. */
     private boolean pendingDepthClear;
     // Blaze3D interop views, phase-selected: vanilla's "main render target"
@@ -130,8 +94,6 @@ public class ChimeraMainPass implements MainPass {
 
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             this.levelPhase = true;
-            this.compositedThisFrame = false;
-            levelRebindLogs = 40; // re-arm per level segment
 
             // Redirect vanilla's level-rendering output at the Blaze3D level
             // (Beryl's mechanism): frame-graph passes targeting the main
@@ -139,7 +101,6 @@ public class ChimeraMainPass implements MainPass {
             RenderSystem.outputColorTextureOverride = this.hdrColorTextureView;
             RenderSystem.outputDepthTextureOverride = this.hdrDepthTextureView;
 
-            debugSegment("openLevelSegment: HDR pass open, cleared, output override set");
         }
     }
 
@@ -172,8 +133,6 @@ public class ChimeraMainPass implements MainPass {
             drawFullscreen(commandBuffer, this.compositePipeline);
             Renderer.getInstance().endRenderPass(commandBuffer);
 
-            this.compositedThisFrame = true;
-            debugSegment("closeLevelSegment: HDR closed, composite drawn into final");
         }
     }
 
@@ -196,14 +155,12 @@ public class ChimeraMainPass implements MainPass {
     public void begin(VkCommandBuffer commandBuffer, MemoryStack stack) {
         // Intentionally empty: segments open/close around level rendering.
         this.levelPhase = false;
-        this.compositedThisFrame = false;
     }
 
     @Override
     public void end(VkCommandBuffer commandBuffer) {
         // Close whatever is open (aux rebinds from the post-level phase).
         Renderer.getInstance().endRenderPass(commandBuffer);
-        debugPresent("end: present segment; compositedThisFrame=" + this.compositedThisFrame);
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // Present segment only: the final buffer already holds the frame -
@@ -255,9 +212,7 @@ public class ChimeraMainPass implements MainPass {
             // this reopen (first-person hand rendering).
             pass = this.pendingDepthClear ? this.hdrAuxClearDepthRenderPass : this.hdrAuxRenderPass;
             this.pendingDepthClear = false;
-            debugRebind("rebindMainTarget: LEVEL->HDR" + (pass == this.hdrAuxClearDepthRenderPass ? " (depth clear)" : ""));
         } else {
-            debugPostRebind("rebindMainTarget: POST->FINAL");
             pass = this.finalAuxRenderPass;
         }
 
@@ -271,9 +226,6 @@ public class ChimeraMainPass implements MainPass {
 
     /** Records a depth clear to apply at the next level-phase reopen. */
     public void requestPendingDepthClear() {
-        if (!this.pendingDepthClear) {
-            debugPresent("pendingDepthClear requested (pass was closed)");
-        }
         this.pendingDepthClear = true;
     }
 

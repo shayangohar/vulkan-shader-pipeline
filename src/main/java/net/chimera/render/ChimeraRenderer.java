@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.pass.MainPass;
 
 /**
@@ -108,6 +109,11 @@ public final class ChimeraRenderer {
         Renderer.getInstance().endRenderPass();
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.disable();
+        // Our post segments leave depth/cull/blend/topology state disabled;
+        // restore the neutral state the host frame flow expects.
+        VRenderSystem.enableDepthTest();
+        VRenderSystem.enableCull();
+        VRenderSystem.enableBlend();
         installed = false;
         ChimeraMod.LOGGER.info("Reverted to host main pass + host terrain shaders");
     }
@@ -123,7 +129,7 @@ public final class ChimeraRenderer {
 
         Renderer.getInstance().endRenderPass();
         Renderer.getInstance().setMainPass(hostPass);
-        ChimeraTerrainPipelines.suspendForSimpleMode();
+        ChimeraTerrainPipelines.suspendForScreens();
         screenMode = true;
         ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
     }

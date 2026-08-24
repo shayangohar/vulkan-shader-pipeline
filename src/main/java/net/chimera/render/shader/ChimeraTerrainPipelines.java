@@ -1,16 +1,12 @@
 package net.chimera.render.shader;
 
 import com.google.gson.JsonObject;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.ChimeraMod;
-import net.chimera.render.vertex.ChimeraExtTerrainBuilder;
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.minecraft.client.Minecraft;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
-import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
@@ -44,8 +40,8 @@ public final class ChimeraTerrainPipelines {
         initialized = true;
 
         ChimeraMod.LOGGER.info("chimera terrain pipeline ready: stride={}B attributes={}",
-                ChimeraVertexFormats.EXTENDED_TERRAIN.getVertexSize(),
-                ChimeraVertexFormats.EXTENDED_TERRAIN.getElementAttributeNames());
+                CustomVertexFormat.COMPRESSED_TERRAIN.getVertexSize(),
+                CustomVertexFormat.COMPRESSED_TERRAIN.getElementAttributeNames());
     }
 
     public static void enable() {
@@ -63,7 +59,7 @@ public final class ChimeraTerrainPipelines {
      * Simple mode (vanilla screens): full host terrain, no redirect. Called
      * instead of disable() so the chimera terrain pipeline object survives.
      */
-    public static void suspendForSimpleMode() {
+    public static void suspendForScreens() {
         if (!initialized) {
             return;
         }
@@ -73,7 +69,7 @@ public final class ChimeraTerrainPipelines {
         ThreadBuilderPack.defaultTerrainBuilderConstructor();
     }
 
-    public static void resumeFromSimpleMode() {
+    public static void resumeFromScreens() {
         enable();
     }
 
