@@ -43,7 +43,8 @@ public class ChimeraMainPass implements MainPass {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
     private static int segmentLogs = 12;
     private static int presentLogs = 6;
-    private static int rebindLogs = 12;
+    private static int levelRebindLogs = 40;
+    private static int postRebindLogs = 8;
 
     private static void debugSegment(String message) {
         if (segmentLogs > 0) {
@@ -71,13 +72,6 @@ public class ChimeraMainPass implements MainPass {
     private static void debugPresent(String message) {
         if (presentLogs > 0) {
             presentLogs--;
-            LOGGER.info("[dbg] {}", message);
-        }
-    }
-
-    private static void debugRebind(String message) {
-        if (rebindLogs > 0) {
-            rebindLogs--;
             LOGGER.info("[dbg] {}", message);
         }
     }
@@ -137,7 +131,6 @@ public class ChimeraMainPass implements MainPass {
             levelRebindLogs = 40; // re-arm per level segment
             debugSegment("openLevelSegment: HDR pass open, cleared");
         }
-    }
     }
 
     /** Closes the HDR segment and composites HDR -> final. Called at TAIL. */
