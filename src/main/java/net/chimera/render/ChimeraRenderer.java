@@ -63,6 +63,15 @@ public final class ChimeraRenderer {
         return chimeraPass;
     }
 
+    private static int depthRedirectLogs = 3;
+
+    public static void debugDepthRedirect() {
+        if (depthRedirectLogs > 0) {
+            depthRedirectLogs--;
+            ChimeraMod.LOGGER.info("[dbg] hand depth-clear redirected (in-pass)");
+        }
+    }
+
     private static void install() {
         if (!ready || installed) {
             return;

@@ -33,6 +33,7 @@ public abstract class GameRendererDepthMixin {
     )
     private void chimera$clearDepthInPass(CommandEncoder instance, GpuTexture depthTexture, double clearDepth) {
         if (ChimeraRenderer.isInstalled() && Renderer.getInstance().getBoundRenderPass() != null) {
+            ChimeraRenderer.debugDepthRedirect();
             Renderer.clearAttachments(GL11.GL_DEPTH_BUFFER_BIT);
         } else {
             instance.clearDepthTexture(depthTexture, clearDepth);

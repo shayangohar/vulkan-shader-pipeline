@@ -40,6 +40,16 @@ import static org.lwjgl.vulkan.VK10.*;
  */
 public class ChimeraMainPass implements MainPass {
 
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
+    private static int debugBudget = 60;
+
+    private static void debug(String message) {
+        if (debugBudget > 0) {
+            debugBudget--;
+            LOGGER.info("[dbg] {}", message);
+        }
+    }
+
     private Framebuffer hdrFramebuffer;
     private Framebuffer finalFramebuffer;
 
@@ -92,6 +102,7 @@ public class ChimeraMainPass implements MainPass {
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             this.levelPhase = true;
             this.compositedThisFrame = false;
+            debug("openLevelSegment: HDR pass open, cleared");
         }
     }
 
@@ -122,6 +133,7 @@ public class ChimeraMainPass implements MainPass {
             Renderer.getInstance().endRenderPass(commandBuffer);
 
             this.compositedThisFrame = true;
+            debug("closeLevelSegment: HDR closed, composite drawn into final");
         }
     }
 
@@ -195,6 +207,8 @@ public class ChimeraMainPass implements MainPass {
         if (Renderer.getInstance().getBoundFramebuffer() == target) {
             return;
         }
+
+        debug("rebindMainTarget: phase=" + (this.levelPhase ? "LEVEL->HDR" : "POST->FINAL"));
 
         RenderPass pass = this.levelPhase ? this.hdrAuxRenderPass : this.finalAuxRenderPass;
 
