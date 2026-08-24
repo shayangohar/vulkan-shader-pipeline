@@ -41,11 +41,27 @@ import static org.lwjgl.vulkan.VK10.*;
 public class ChimeraMainPass implements MainPass {
 
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
-    private static int debugBudget = 60;
+    private static int segmentLogs = 12;
+    private static int presentLogs = 6;
+    private static int rebindLogs = 12;
 
-    private static void debug(String message) {
-        if (debugBudget > 0) {
-            debugBudget--;
+    private static void debugSegment(String message) {
+        if (segmentLogs > 0) {
+            segmentLogs--;
+            LOGGER.info("[dbg] {}", message);
+        }
+    }
+
+    private static void debugPresent(String message) {
+        if (presentLogs > 0) {
+            presentLogs--;
+            LOGGER.info("[dbg] {}", message);
+        }
+    }
+
+    private static void debugRebind(String message) {
+        if (rebindLogs > 0) {
+            rebindLogs--;
             LOGGER.info("[dbg] {}", message);
         }
     }
@@ -102,7 +118,7 @@ public class ChimeraMainPass implements MainPass {
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             this.levelPhase = true;
             this.compositedThisFrame = false;
-            debug("openLevelSegment: HDR pass open, cleared");
+            debugSegment("openLevelSegment: HDR pass open, cleared");
         }
     }
 
@@ -133,7 +149,7 @@ public class ChimeraMainPass implements MainPass {
             Renderer.getInstance().endRenderPass(commandBuffer);
 
             this.compositedThisFrame = true;
-            debug("closeLevelSegment: HDR closed, composite drawn into final");
+            debugSegment("closeLevelSegment: HDR closed, composite drawn into final");
         }
     }
 
@@ -163,6 +179,7 @@ public class ChimeraMainPass implements MainPass {
     public void end(VkCommandBuffer commandBuffer) {
         // Close whatever is open (aux rebinds from the post-level phase).
         Renderer.getInstance().endRenderPass(commandBuffer);
+        debugPresent("end: present segment; compositedThisFrame=" + this.compositedThisFrame);
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // Present segment only: the final buffer already holds the frame -
@@ -208,7 +225,7 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
 
-        debug("rebindMainTarget: phase=" + (this.levelPhase ? "LEVEL->HDR" : "POST->FINAL"));
+        debugRebind("rebindMainTarget: phase=" + (this.levelPhase ? "LEVEL->HDR" : "POST->FINAL"));
 
         RenderPass pass = this.levelPhase ? this.hdrAuxRenderPass : this.finalAuxRenderPass;
 
