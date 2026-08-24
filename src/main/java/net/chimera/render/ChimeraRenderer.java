@@ -38,6 +38,7 @@ public final class ChimeraRenderer {
 
         hostPass = current;
         chimeraPass = new ChimeraMainPass();
+        hostColorView = hostPass.getColorAttachmentView();
         ready = true;
 
         ChimeraTerrainPipelines.init();
@@ -80,6 +81,21 @@ public final class ChimeraRenderer {
 
     public static ChimeraMainPass getMainPass() {
         return chimeraPass;
+    }
+
+    private static com.mojang.blaze3d.textures.GpuTextureView hostColorView;
+
+    /** True when the view is a main-target-family view (chimera or host). */
+    public static boolean isMainFamilyView(com.mojang.blaze3d.textures.GpuTextureView view) {
+        if (chimeraPass != null && chimeraPass.isFamilyView(view)) {
+            return true;
+        }
+        return hostColorView != null && view == hostColorView;
+    }
+
+    /** The live main-target color texture for the current phase. */
+    public static com.mojang.blaze3d.textures.GpuTexture getCurrentMainColorTexture() {
+        return chimeraPass != null ? chimeraPass.currentMainColorTexture() : null;
     }
 
     private static int depthRedirectLogs = 3;

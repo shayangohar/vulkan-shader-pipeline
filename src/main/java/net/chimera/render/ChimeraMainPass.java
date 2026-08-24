@@ -280,6 +280,16 @@ public class ChimeraMainPass implements MainPass {
         return this.levelPhase ? this.hdrDepthTexture : this.finalDepthTexture;
     }
 
+    /** True when the view belongs to one of chimera's main-target buffers. */
+    public boolean isFamilyView(GpuTextureView view) {
+        return view == this.hdrColorTextureView || view == this.finalColorTextureView;
+    }
+
+    /** The live main-target color texture for the current phase. */
+    public GpuTexture currentMainColorTexture() {
+        return this.levelPhase ? this.hdrColorTexture : this.finalColorTexture;
+    }
+
     // ------------------------------------------------------------------
     // Resources
     // ------------------------------------------------------------------

@@ -9,7 +9,8 @@
     "KeyboardHandlerMixin",
     "GameRendererDepthMixin",
     "ChimeraLevelRendererMixin",
-    "ChimeraMinecraftMixin"
+    "ChimeraMinecraftMixin",
+    "VkCommandEncoderAliasMixin"
   ],
   "injectors": {
     "defaultRequire": 1
