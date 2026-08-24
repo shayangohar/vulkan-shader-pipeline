@@ -149,25 +149,11 @@ public class ChimeraMainPass implements MainPass {
         Renderer.getInstance().endRenderPass(commandBuffer);
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            // If level rendering never ran this frame (menus), composite now.
-            if (!this.compositedThisFrame) {
-                VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
-                hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                VTextureSelector.bindTexture(hdrColor);
-
-                VRenderSystem.disableDepthTest();
-                VRenderSystem.disableCull();
-                VRenderSystem.disableBlend();
-                VRenderSystem.setPrimitiveTopologyGL(GL11.GL_TRIANGLES);
-
-                VulkanImage finalColor0 = this.finalFramebuffer.getColorAttachment();
-                finalColor0.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.finalFramebuffer);
-                drawFullscreen(commandBuffer, this.compositePipeline);
-                Renderer.getInstance().endRenderPass(commandBuffer);
-                this.compositedThisFrame = true;
-            }
-
+            // Present segment only: the final buffer already holds the frame -
+            // world+hand composited at level-render tail, GUI/hand overlays on
+            // top via aux rebinding. Never re-composite here: menus draw
+            // straight into the final buffer and a late composite would wipe
+            // them.
             VulkanImage finalColor = this.finalFramebuffer.getColorAttachment();
 
             SwapChain swapChain = Renderer.getInstance().getSwapChain();
