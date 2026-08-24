@@ -7,7 +7,8 @@
   "client": [
     "RendererInitMixin",
     "KeyboardHandlerMixin",
-    "GameRendererDepthMixin"
+    "GameRendererDepthMixin",
+    "ChimeraLevelRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

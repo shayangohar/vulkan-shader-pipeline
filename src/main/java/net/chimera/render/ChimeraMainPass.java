@@ -232,10 +232,11 @@ public class ChimeraMainPass implements MainPass {
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         this.hdrRenderPass = b.build();
 
-        // Aux: mid-frame rebinding must preserve contents.
+        // Aux: mid-frame rebinding after the pass closed at level-render end.
+        // Depth CLEAR gives hand rendering a clean buffer on reopen.
         b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxRenderPass = b.build();
 
