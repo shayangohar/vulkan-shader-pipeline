@@ -59,6 +59,10 @@ public final class ChimeraRenderer {
         return installed;
     }
 
+    public static ChimeraMainPass getMainPass() {
+        return chimeraPass;
+    }
+
     private static void install() {
         if (!ready || installed) {
             return;

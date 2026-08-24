@@ -1,30 +1,43 @@
 package net.chimera.mixin;
 
+import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
-import net.vulkanmod.vulkan.Renderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Closes chimera's HDR render pass when level rendering finishes.
+ * Brackets level rendering with chimera's segments:
+ * - HEAD: open the HDR segment (world target + clear).
+ * - TAIL: close it and run the composite segment (HDR -> final buffer).
  *
- * Everything vanilla does AFTER the world (post chains, hand depth clear,
- * GUI) interacts with render targets through the CommandEncoder / GL-compat
- * layers and expects a closed pass there - matching how those flows behave
- * against the host renderer's own bookkeeping. The next draw that targets the
- * main framebuffer re-enters through MainPass.rebindMainTarget(), whose aux
- * pass clears depth so first-person hand rendering starts clean.
+ * Everything vanilla does after level rendering (post chains, hand depth
+ * clear, hand, GUI) then runs against the final buffer with no chimera pass
+ * open, matching the state those systems expect; re-entry happens through
+ * MainPass.rebindMainTarget.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraLevelRendererMixin {
 
-    @Inject(method = "renderLevel", at = @At("TAIL"))
-    private void chimera$closeHdrPass(CallbackInfo ci) {
+    @Inject(method = "renderLevel", at = @At("HEAD"))
+    private void chimera$openHdrSegment(CallbackInfo ci) {
         if (ChimeraRenderer.isInstalled()) {
-            Renderer.getInstance().endRenderPass();
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            if (pass != null) {
+                pass.openLevelSegment();
+            }
+        }
+    }
+
+    @Inject(method = "renderLevel", at = @At("TAIL"))
+    private void chimera$closeAndComposite(CallbackInfo ci) {
+        if (ChimeraRenderer.isInstalled()) {
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            if (pass != null) {
+                pass.closeLevelSegmentAndComposite();
+            }
         }
     }
 }
