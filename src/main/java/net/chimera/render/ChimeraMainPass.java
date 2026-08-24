@@ -52,6 +52,22 @@ public class ChimeraMainPass implements MainPass {
         }
     }
 
+    private static void debugRebind(String message) {
+        // Menu-phase rebinds are noise; cap them hard. Level-phase rebinds are
+        // the signal we are hunting.
+        if (levelRebindLogs > 0) {
+            levelRebindLogs--;
+            LOGGER.info("[dbg] {}", message);
+        }
+    }
+
+    private static void debugPostRebind(String message) {
+        if (postRebindLogs > 0) {
+            postRebindLogs--;
+            LOGGER.info("[dbg] {}", message);
+        }
+    }
+
     private static void debugPresent(String message) {
         if (presentLogs > 0) {
             presentLogs--;
@@ -118,8 +134,10 @@ public class ChimeraMainPass implements MainPass {
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             this.levelPhase = true;
             this.compositedThisFrame = false;
+            levelRebindLogs = 40; // re-arm per level segment
             debugSegment("openLevelSegment: HDR pass open, cleared");
         }
+    }
     }
 
     /** Closes the HDR segment and composites HDR -> final. Called at TAIL. */
@@ -225,7 +243,11 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
 
-        debugRebind("rebindMainTarget: phase=" + (this.levelPhase ? "LEVEL->HDR" : "POST->FINAL"));
+        if (this.levelPhase) {
+            debugRebind("rebindMainTarget: LEVEL->HDR");
+        } else {
+            debugPostRebind("rebindMainTarget: POST->FINAL");
+        }
 
         RenderPass pass = this.levelPhase ? this.hdrAuxRenderPass : this.finalAuxRenderPass;
 
