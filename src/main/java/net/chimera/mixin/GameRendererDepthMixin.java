@@ -1,5 +1,6 @@
 package net.chimera.mixin;
 
+import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.textures.GpuTexture;
 import net.chimera.render.ChimeraMainPass;
@@ -42,6 +43,12 @@ public abstract class GameRendererDepthMixin {
 
         if (Renderer.getInstance().getBoundRenderPass() != null) {
             ChimeraRenderer.debugDepthRedirect();
+            // Mirror the host's clear preamble exactly: vkCmdClearAttachments
+            // respects the current scissor, and a stale depth mask from world
+            // rendering can suppress the clear.
+            GlStateManager._disableScissorTest();
+            GlStateManager._depthMask(true);
+            GlStateManager._colorMask(true, true, true, true);
             Renderer.clearAttachments(GL11.GL_DEPTH_BUFFER_BIT);
         } else {
             // No pass recording: force-reopen the HDR pass with its

@@ -7,15 +7,17 @@ import net.vulkanmod.vulkan.pass.MainPass;
 
 /**
  * Owns the main-pass takeover lifecycle:
- * - onHostRendererReady: capture VulkanMod's installed MainPass, then install
- *   chimera's multi-segment pass.
- * - install/uninstall: swap Renderer's main pass reference between host and
- *   chimera (setMainPass is a plain field write host-side) together with the
- *   terrain pipeline redirect.
+ * - onHostRendererReady: capture VulkanMod's installed MainPass and install
+ *   chimera's segmented pass.
+ * - toggle (F8): swap between chimera and host.
+ * - screen mode: while a vanilla screen is open, fully unhand the renderer
+ *   (host pass + host terrain) - the configuration proven crash-free on ESC.
+ *   Resources stay alive; only routing flips.
  */
 public final class ChimeraRenderer {
     private static boolean ready;
     private static boolean installed;
+    private static boolean screenMode;
     private static MainPass hostPass;
     private static ChimeraMainPass chimeraPass;
 
@@ -44,6 +46,12 @@ public final class ChimeraRenderer {
     }
 
     public static void toggle() {
+        if (screenMode) {
+            // F8 while a screen is open: leave screen mode via full toggle-off.
+            uninstall();
+            return;
+        }
+
         if (installed) {
             uninstall();
         } else {
@@ -70,7 +78,7 @@ public final class ChimeraRenderer {
         if (depthCallSiteLogs > 0) {
             depthCallSiteLogs--;
             ChimeraMod.LOGGER.info("[dbg] clearDepthTexture call site reached; boundPass={}",
-                    net.vulkanmod.vulkan.Renderer.getInstance().getBoundRenderPass() != null ? "open" : "closed");
+                    Renderer.getInstance().getBoundRenderPass() != null ? "open" : "closed");
         }
     }
 
@@ -97,9 +105,36 @@ public final class ChimeraRenderer {
             return;
         }
 
+        Renderer.getInstance().endRenderPass();
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.disable();
         installed = false;
         ChimeraMod.LOGGER.info("Reverted to host main pass + host terrain shaders");
+    }
+
+    // ------------------------------------------------------------------
+    // Screen mode: full temporary passthrough while a vanilla screen is open
+    // ------------------------------------------------------------------
+
+    public static void enterScreenMode() {
+        if (!installed) {
+            return;
+        }
+
+        Renderer.getInstance().endRenderPass();
+        Renderer.getInstance().setMainPass(hostPass);
+        ChimeraTerrainPipelines.suspendForSimpleMode();
+        screenMode = true;
+        ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
+    }
+
+    public static void exitScreenMode() {
+        if (!screenMode) {
+            return;
+        }
+
+        screenMode = false;
+        install();
+        ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
     }
 }
