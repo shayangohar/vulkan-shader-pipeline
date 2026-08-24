@@ -64,6 +64,15 @@ public final class ChimeraRenderer {
     }
 
     private static int depthRedirectLogs = 3;
+    private static int depthCallSiteLogs = 6;
+
+    public static void debugDepthCallSite() {
+        if (depthCallSiteLogs > 0) {
+            depthCallSiteLogs--;
+            ChimeraMod.LOGGER.info("[dbg] clearDepthTexture call site reached; boundPass={}",
+                    net.vulkanmod.vulkan.Renderer.getInstance().getBoundRenderPass() != null ? "open" : "closed");
+        }
+    }
 
     public static void debugDepthRedirect() {
         if (depthRedirectLogs > 0) {

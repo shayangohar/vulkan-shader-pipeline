@@ -8,7 +8,8 @@
     "RendererInitMixin",
     "KeyboardHandlerMixin",
     "GameRendererDepthMixin",
-    "ChimeraLevelRendererMixin"
+    "ChimeraLevelRendererMixin",
+    "ChimeraMinecraftMixin"
   ],
   "injectors": {
     "defaultRequire": 1

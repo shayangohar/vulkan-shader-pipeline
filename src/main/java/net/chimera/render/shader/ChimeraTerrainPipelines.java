@@ -53,15 +53,28 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        // DIAGNOSTIC BISECTION 2: chimera_terrain pipeline on the PLAIN
-        // COMPRESSED_TERRAIN format (no BlockId extension). Host vertex data,
-        // our SPIR-V pipeline. Isolates whether the extended format or the
-        // pipeline/shader itself breaks under the M3 frame.
-        ChimeraMod.LOGGER.info("[dbg] terrain redirect ON - COMPRESSED_TERRAIN (no BlockId) for bisection");
         PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
         ThreadBuilderPack.defaultTerrainBuilderConstructor();
         PipelineManager.setShaderGetter(renderType -> terrainPipeline);
         rebuildChunks();
+    }
+
+    /**
+     * Simple mode (vanilla screens): full host terrain, no redirect. Called
+     * instead of disable() so the chimera terrain pipeline object survives.
+     */
+    public static void suspendForSimpleMode() {
+        if (!initialized) {
+            return;
+        }
+
+        PipelineManager.setDefaultTerrainShaderGetter();
+        PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
+        ThreadBuilderPack.defaultTerrainBuilderConstructor();
+    }
+
+    public static void resumeFromSimpleMode() {
+        enable();
     }
 
     public static void disable() {

@@ -37,6 +37,8 @@ public abstract class GameRendererDepthMixin {
             return;
         }
 
+        ChimeraRenderer.debugDepthCallSite();
+
         if (Renderer.getInstance().getBoundRenderPass() != null) {
             ChimeraRenderer.debugDepthRedirect();
             Renderer.clearAttachments(GL11.GL_DEPTH_BUFFER_BIT);

@@ -95,6 +95,14 @@ public class ChimeraMainPass implements MainPass {
     private boolean compositedThisFrame;
     /** Set when vanilla requests a depth clear while no pass is recording. */
     private boolean pendingDepthClear;
+    /**
+     * Simple mode: single-target presentation (final buffer bound at frame
+     * start, presented at end) used while a vanilla screen is open. Mirrors
+     * DefaultMainPass's flow so screens/blur never meet segmented state.
+     */
+    private boolean simpleMode;
+
+    private RenderPass simpleRenderPass;
 
     // Blaze3D interop views, phase-selected: vanilla's "main render target"
     // must alias whichever buffer is current, or its passes bypass us.
@@ -119,6 +127,10 @@ public class ChimeraMainPass implements MainPass {
 
     /** Opens the HDR segment. Called at LevelRenderer.renderLevel HEAD. */
     public void openLevelSegment() {
+        if (this.simpleMode) {
+            return;
+        }
+
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
@@ -146,7 +158,7 @@ public class ChimeraMainPass implements MainPass {
 
     /** Closes the HDR segment and composites HDR -> final. Called at TAIL. */
     public void closeLevelSegmentAndComposite() {
-        if (!this.inLevelPass()) {
+        if (this.simpleMode || !this.inLevelPass()) {
             return;
         }
 
@@ -195,9 +207,18 @@ public class ChimeraMainPass implements MainPass {
 
     @Override
     public void begin(VkCommandBuffer commandBuffer, MemoryStack stack) {
-        // Intentionally empty: segments open/close around level rendering.
         this.levelPhase = false;
         this.compositedThisFrame = false;
+
+        if (this.simpleMode) {
+            Framebuffer target = this.finalFramebuffer;
+            target.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            Renderer.getInstance().beginRenderPass(this.simpleRenderPass, target);
+            Renderer.setViewport(0, 0, target.getWidth(), target.getHeight(), stack);
+            VK10.vkCmdSetScissor(commandBuffer, 0, target.scissor(stack));
+            Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+            debugSegment("begin: simple mode - final buffer bound");
+        }
     }
 
     @Override
@@ -272,7 +293,44 @@ public class ChimeraMainPass implements MainPass {
 
     /** Records a depth clear to apply at the next level-phase reopen. */
     public void requestPendingDepthClear() {
+        if (!this.pendingDepthClear) {
+            debugPresent("pendingDepthClear requested (pass was closed)");
+        }
         this.pendingDepthClear = true;
+    }
+
+    // ------------------------------------------------------------------
+    // Simple mode (vanilla screens: menus, pause, inventory)
+    // ------------------------------------------------------------------
+
+    public boolean isSimpleMode() {
+        return this.simpleMode;
+    }
+
+    public void enterSimpleMode() {
+        if (this.simpleMode) {
+            return;
+        }
+
+        this.simpleMode = true;
+        this.levelPhase = false;
+        this.pendingDepthClear = false;
+
+        // Full host terrain while a screen is open; restored on exit.
+        net.chimera.render.shader.ChimeraTerrainPipelines.suspendForSimpleMode();
+
+        LOGGER.info("Simple mode ON (screen open) - segmented frame suspended");
+    }
+
+    public void exitSimpleMode() {
+        if (!this.simpleMode) {
+            return;
+        }
+
+        this.simpleMode = false;
+        net.chimera.render.shader.ChimeraTerrainPipelines.resumeFromSimpleMode();
+
+        LOGGER.info("Simple mode OFF - segmented frame resumed");
     }
 
     @Override
@@ -349,6 +407,12 @@ public class ChimeraMainPass implements MainPass {
     }
 
     private void createRenderPasses() {
+        // Simple mode: DefaultMainPass-style target on the final buffer.
+        RenderPass.Builder sb = RenderPass.builder(this.finalFramebuffer);
+        sb.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
+        sb.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        this.simpleRenderPass = sb.build();
+
         // HDR segment: cleared at open, color stored for the composite read.
         RenderPass.Builder b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
@@ -421,6 +485,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.finalAuxRenderPass != null) this.finalAuxRenderPass.cleanUp();
         if (this.compositeRenderPass != null) this.compositeRenderPass.cleanUp();
         if (this.presentRenderPass != null) this.presentRenderPass.cleanUp();
+        if (this.simpleRenderPass != null) this.simpleRenderPass.cleanUp();
         this.hdrFramebuffer = null;
         this.finalFramebuffer = null;
         this.hdrRenderPass = null;
@@ -429,6 +494,7 @@ public class ChimeraMainPass implements MainPass {
         this.finalAuxRenderPass = null;
         this.compositeRenderPass = null;
         this.presentRenderPass = null;
+        this.simpleRenderPass = null;
     }
 
     private void cleanUpPipelines() {
