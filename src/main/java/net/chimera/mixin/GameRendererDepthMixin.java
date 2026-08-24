@@ -2,6 +2,7 @@ package net.chimera.mixin;
 
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.textures.GpuTexture;
+import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.minecraft.client.renderer.GameRenderer;
 import net.vulkanmod.vulkan.Renderer;
@@ -43,9 +44,12 @@ public abstract class GameRendererDepthMixin {
             ChimeraRenderer.debugDepthRedirect();
             Renderer.clearAttachments(GL11.GL_DEPTH_BUFFER_BIT);
         } else {
-            // No pass recording: record the clear for the next level-phase
-            // reopen, whose depth-CLEAR load-op applies it.
-            ChimeraRenderer.getMainPass().requestPendingDepthClear();
+            // No pass recording: force-reopen the HDR pass with its
+            // depth-CLEAR variant right now. The hand's own render pass will
+            // then alias into the freshly cleared buffer.
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            pass.requestPendingDepthClear();
+            pass.reopenWithPendingClear();
         }
     }
 }

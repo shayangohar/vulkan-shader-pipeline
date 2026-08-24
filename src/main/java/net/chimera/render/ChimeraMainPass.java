@@ -299,6 +299,21 @@ public class ChimeraMainPass implements MainPass {
         this.pendingDepthClear = true;
     }
 
+    /**
+     * Re-enters the level-phase buffer applying any pending depth clear.
+     * Called when vanilla requests a hand depth clear while no pass is
+     * recording: waiting for a natural reopen leaves the flag unapplied when
+     * the pass is still considered open, so we force the transition here.
+     */
+    public void reopenWithPendingClear() {
+        if (this.simpleMode || !this.levelPhase) {
+            return;
+        }
+
+        this.requestPendingDepthClear();
+        this.rebindMainTarget();
+    }
+
     // ------------------------------------------------------------------
     // Simple mode (vanilla screens: menus, pause, inventory)
     // ------------------------------------------------------------------
@@ -319,7 +334,22 @@ public class ChimeraMainPass implements MainPass {
         // Full host terrain while a screen is open; restored on exit.
         net.chimera.render.shader.ChimeraTerrainPipelines.suspendForSimpleMode();
 
-        LOGGER.info("Simple mode ON (screen open) - segmented frame suspended");
+        // Destroy HDR-segment resources while a screen is open (Beryl's
+        // clearResources pattern): the pause blur chain and screen rendering
+        // never meet segmented state, and memory is reclaimed.
+        Renderer.getInstance().endRenderPass();
+        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(true);
+        if (this.compositePipeline != null) this.compositePipeline.cleanUp();
+        this.hdrFramebuffer = null;
+        this.compositePipeline = null;
+        if (this.hdrRenderPass != null) this.hdrRenderPass.cleanUp();
+        if (this.hdrAuxRenderPass != null) this.hdrAuxRenderPass.cleanUp();
+        if (this.hdrAuxClearDepthRenderPass != null) this.hdrAuxClearDepthRenderPass.cleanUp();
+        this.hdrRenderPass = null;
+        this.hdrAuxRenderPass = null;
+        this.hdrAuxClearDepthRenderPass = null;
+
+        LOGGER.info("Simple mode ON (screen open) - segmented frame suspended, HDR resources released");
     }
 
     public void exitSimpleMode() {
@@ -328,6 +358,20 @@ public class ChimeraMainPass implements MainPass {
         }
 
         this.simpleMode = false;
+
+        // Recreate HDR-segment resources destroyed on enter.
+        if (this.hdrFramebuffer == null) {
+            SwapChain swapChain = Renderer.getInstance().getSwapChain();
+            int width = Math.max(swapChain.getWidth(), 1);
+            int height = Math.max(swapChain.getHeight(), 1);
+            this.hdrFramebuffer = new Framebuffer.Builder("chimeraHdr", width, height, 1, true)
+                    .setFormat(97)
+                    .build();
+            createHdrPasses();
+            this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
+            createHdrInteropTextures();
+        }
+
         net.chimera.render.shader.ChimeraTerrainPipelines.resumeFromSimpleMode();
 
         LOGGER.info("Simple mode OFF - segmented frame resumed");
@@ -413,6 +457,31 @@ public class ChimeraMainPass implements MainPass {
         sb.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         this.simpleRenderPass = sb.build();
 
+        // Post-level re-entry into the FINAL buffer: preserve the composited
+        // scene (hand/GUI draw on top), give hand rendering a clean depth.
+        RenderPass.Builder b = RenderPass.builder(this.finalFramebuffer);
+        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        this.finalAuxRenderPass = b.build();
+
+        // Composite into the final buffer.
+        b = RenderPass.builder(this.finalFramebuffer);
+        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        this.compositeRenderPass = b.build();
+
+        // Present onto the swapchain, ending in the present layout.
+        b = RenderPass.builder(Renderer.getInstance().getSwapChain());
+        b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        this.presentRenderPass = b.build();
+
+        createHdrPasses();
+    }
+
+    private void createHdrPasses() {
         // HDR segment: cleared at open, color stored for the composite read.
         RenderPass.Builder b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
@@ -433,27 +502,6 @@ public class ChimeraMainPass implements MainPass {
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxClearDepthRenderPass = b.build();
-
-        // Post-level re-entry into the FINAL buffer: preserve the composited
-        // scene (hand/GUI draw on top), give hand rendering a clean depth.
-        b = RenderPass.builder(this.finalFramebuffer);
-        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
-        b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        this.finalAuxRenderPass = b.build();
-
-        // Composite into the final buffer.
-        b = RenderPass.builder(this.finalFramebuffer);
-        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
-        this.compositeRenderPass = b.build();
-
-        // Present onto the swapchain, ending in the present layout.
-        b = RenderPass.builder(Renderer.getInstance().getSwapChain());
-        b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
-        this.presentRenderPass = b.build();
     }
 
     private void createPipelines() {
@@ -464,16 +512,22 @@ public class ChimeraMainPass implements MainPass {
     private void createInteropTextures() {
         VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
 
+        VkGpuTexture finalTex = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getColorAttachment());
+        this.finalColorTexture = finalTex;
+        this.finalColorTextureView = device.createTextureView(finalTex);
+        this.finalDepthTexture = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getDepthAttachment());
+
+        createHdrInteropTextures();
+    }
+
+    private void createHdrInteropTextures() {
+        VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
+
         VkGpuTexture hdrTex = device.gpuTextureFromVulkanImage(this.hdrFramebuffer.getColorAttachment());
         this.hdrColorTexture = hdrTex;
         this.hdrColorTextureView = device.createTextureView(hdrTex);
         this.hdrDepthTexture = device.gpuTextureFromVulkanImage(this.hdrFramebuffer.getDepthAttachment());
         this.hdrDepthTextureView = device.createTextureView(this.hdrDepthTexture);
-
-        VkGpuTexture finalTex = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getColorAttachment());
-        this.finalColorTexture = finalTex;
-        this.finalColorTextureView = device.createTextureView(finalTex);
-        this.finalDepthTexture = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getDepthAttachment());
     }
 
     private void cleanUpFramebuffersAndPasses() {
