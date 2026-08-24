@@ -28,17 +28,15 @@ import static org.lwjgl.vulkan.VK10.*;
  *
  *   - Nothing opens at frame start.
  *   - LevelRenderer.renderLevel HEAD opens the HDR segment (world -> RGBA16F).
- *   - renderLevel TAIL closes it and runs the composite segment (HDR -> final
- *     RGBA8 buffer). The swapchain is NOT touched yet.
- *   - Post chains / hand / GUI then run pass-closed or re-enter the FINAL
- *     buffer through rebindMainTarget (color LOAD, depth CLEAR) - drawing on
- *     top of the composited scene.
- *   - MainPass.end (real frame end, after GUI) blits final -> swapchain and
- *     transitions to present.
+ *     Vanilla 1.21.11 wraps terrain/entities in its own RenderPass objects
+ *     targeting the main render target; during this phase those re-enter the
+ *     HDR buffer through rebindMainTarget.
+ *   - renderLevel TAIL closes the HDR segment and composites HDR -> final.
+ *     Phase flips: subsequent vanilla passes (and the pause-blur chain) target
+ *     the FINAL buffer, drawing hand/GUI/post effects on top of the scene.
+ *   - MainPass.end (real frame end) blits final -> swapchain and presents.
  *
- * This ordering is proven on VulkanMod 0.6.8+1.21.11 by Beryl 0.2.1-alpha;
- * foreign encoder work (post-chain barriers, texture clears) only ever sees a
- * closed pass outside the level segment.
+ * This ordering is proven on VulkanMod 0.6.8+1.21.11 by Beryl 0.2.1-alpha.
  */
 public class ChimeraMainPass implements MainPass {
 
@@ -46,6 +44,7 @@ public class ChimeraMainPass implements MainPass {
     private Framebuffer finalFramebuffer;
 
     private RenderPass hdrRenderPass;
+    private RenderPass hdrAuxRenderPass;
     private RenderPass finalAuxRenderPass;
     private RenderPass compositeRenderPass;
     private RenderPass presentRenderPass;
@@ -53,18 +52,23 @@ public class ChimeraMainPass implements MainPass {
     private GraphicsPipeline compositePipeline;
     private GraphicsPipeline presentPipeline;
 
-    /** True while we are inside the level segment (HDR pass recording). */
-    private boolean inLevelSegment;
+    /** True while inside the level segment (world renders into HDR). */
+    private boolean levelPhase;
     /** True once the composite segment has run for the current frame. */
     private boolean compositedThisFrame;
 
-    // Blaze3D interop views of the FINAL buffer (what vanilla treats as the
-    // main render target) - mirrors the host DefaultMainPass behavior.
-    private GpuTexture colorAttachmentTexture;
-    private GpuTextureView colorAttachmentTextureView;
-    private GpuTexture depthAttachmentTexture;
+    // Blaze3D interop views, phase-selected: vanilla's "main render target"
+    // must alias whichever buffer is current, or its passes bypass us.
+    private GpuTexture hdrColorTexture;
+    private GpuTextureView hdrColorTextureView;
+    private GpuTexture hdrDepthTexture;
+    private GpuTexture finalColorTexture;
+    private GpuTextureView finalColorTextureView;
+    private GpuTexture finalDepthTexture;
 
     public ChimeraMainPass() {
+        // Start in level phase so pipelines created at init see HDR formats.
+        this.levelPhase = true;
         createResources();
         Renderer.getInstance().addOnResizeCallback(this::onResize);
     }
@@ -77,33 +81,29 @@ public class ChimeraMainPass implements MainPass {
     public void openLevelSegment() {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            openLevelSegment(commandBuffer, stack);
+            VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
+            hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            Renderer.getInstance().beginRenderPass(this.hdrRenderPass, this.hdrFramebuffer);
+
+            Renderer.setViewport(0, 0, this.hdrFramebuffer.getWidth(), this.hdrFramebuffer.getHeight(), stack);
+            VK10.vkCmdSetScissor(commandBuffer, 0, this.hdrFramebuffer.scissor(stack));
+
+            Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+            this.levelPhase = true;
+            this.compositedThisFrame = false;
         }
-    }
-
-    private void openLevelSegment(VkCommandBuffer commandBuffer, MemoryStack stack) {
-        VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
-        hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-
-        Renderer.getInstance().beginRenderPass(this.hdrRenderPass, this.hdrFramebuffer);
-
-        Renderer.setViewport(0, 0, this.hdrFramebuffer.getWidth(), this.hdrFramebuffer.getHeight(), stack);
-        VK10.vkCmdSetScissor(commandBuffer, 0, this.hdrFramebuffer.scissor(stack));
-
-        Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-        this.inLevelSegment = true;
-        this.compositedThisFrame = false;
     }
 
     /** Closes the HDR segment and composites HDR -> final. Called at TAIL. */
     public void closeLevelSegmentAndComposite() {
-        if (!this.inLevelSegment) {
+        if (!this.inLevelPass()) {
             return;
         }
 
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         Renderer.getInstance().endRenderPass(commandBuffer);
-        this.inLevelSegment = false;
+        this.levelPhase = false;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
@@ -125,6 +125,10 @@ public class ChimeraMainPass implements MainPass {
         }
     }
 
+    private boolean inLevelPass() {
+        return this.levelPhase && Renderer.getInstance().getBoundFramebuffer() == this.hdrFramebuffer;
+    }
+
     private void drawFullscreen(VkCommandBuffer commandBuffer, GraphicsPipeline pipeline) {
         Renderer renderer = Renderer.getInstance();
         renderer.bindGraphicsPipeline(pipeline);
@@ -139,21 +143,20 @@ public class ChimeraMainPass implements MainPass {
     @Override
     public void begin(VkCommandBuffer commandBuffer, MemoryStack stack) {
         // Intentionally empty: segments open/close around level rendering.
-        this.inLevelSegment = false;
+        this.levelPhase = false;
         this.compositedThisFrame = false;
     }
 
     @Override
     public void end(VkCommandBuffer commandBuffer) {
-        // Close whatever is open (aux rebinds from hand/GUI phase).
+        // Close whatever is open (aux rebinds from the post-level phase).
         Renderer.getInstance().endRenderPass(commandBuffer);
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // Present segment only: the final buffer already holds the frame -
-            // world+hand composited at level-render tail, GUI/hand overlays on
-            // top via aux rebinding. Never re-composite here: menus draw
-            // straight into the final buffer and a late composite would wipe
-            // them.
+            // world composited at level-render tail, hand/GUI/post on top via
+            // aux rebinding. Never re-composite here: menus draw straight into
+            // the final buffer and a late composite would wipe them.
             VulkanImage finalColor = this.finalFramebuffer.getColorAttachment();
 
             SwapChain swapChain = Renderer.getInstance().getSwapChain();
@@ -177,59 +180,66 @@ public class ChimeraMainPass implements MainPass {
     }
 
     // ------------------------------------------------------------------
-    // Main-target interop
+    // Main-target interop (phase-aware: HDR during level, final after)
     // ------------------------------------------------------------------
+
+    private Framebuffer currentTargetFramebuffer() {
+        return this.levelPhase ? this.hdrFramebuffer : this.finalFramebuffer;
+    }
 
     @Override
     public void rebindMainTarget() {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
-        Framebuffer target = this.finalFramebuffer;
+        Framebuffer target = currentTargetFramebuffer();
 
         if (Renderer.getInstance().getBoundFramebuffer() == target) {
             return;
         }
+
+        RenderPass pass = this.levelPhase ? this.hdrAuxRenderPass : this.finalAuxRenderPass;
 
         // Foreign code may have flipped layouts while the pass was closed.
         try (MemoryStack stack = MemoryStack.stackPush()) {
             target.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
 
-        Renderer.getInstance().beginRenderPass(this.finalAuxRenderPass, target);
+        Renderer.getInstance().beginRenderPass(pass, target);
     }
 
     @Override
     public void bindAsTexture() {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
+        VulkanImage color = currentTargetFramebuffer().getColorAttachment();
 
         if (Renderer.getInstance().getBoundRenderPass() != null) {
             Renderer.getInstance().endRenderPass(commandBuffer);
         }
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.finalFramebuffer.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            color.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
-        VTextureSelector.bindTexture(this.finalFramebuffer.getColorAttachment());
+        VTextureSelector.bindTexture(color);
     }
 
     @Override
     public Framebuffer getMainFramebuffer() {
-        return this.finalFramebuffer;
+        return currentTargetFramebuffer();
     }
 
     @Override
     public GpuTexture getColorAttachment() {
-        return this.colorAttachmentTexture;
+        return this.levelPhase ? this.hdrColorTexture : this.finalColorTexture;
     }
 
     @Override
     public GpuTextureView getColorAttachmentView() {
-        return this.colorAttachmentTextureView;
+        return this.levelPhase ? this.hdrColorTextureView : this.finalColorTextureView;
     }
 
     @Override
     public GpuTexture getDepthAttachment() {
-        return this.depthAttachmentTexture;
+        return this.levelPhase ? this.hdrDepthTexture : this.finalDepthTexture;
     }
 
     // ------------------------------------------------------------------
@@ -276,6 +286,14 @@ public class ChimeraMainPass implements MainPass {
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         this.hdrRenderPass = b.build();
 
+        // Re-entry into HDR mid-level (vanilla passes alias here): preserve
+        // everything drawn so far.
+        b = RenderPass.builder(this.hdrFramebuffer);
+        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        this.hdrAuxRenderPass = b.build();
+
         // Post-level re-entry into the FINAL buffer: preserve the composited
         // scene (hand/GUI draw on top), give hand rendering a clean depth.
         b = RenderPass.builder(this.finalFramebuffer);
@@ -306,22 +324,29 @@ public class ChimeraMainPass implements MainPass {
     private void createInteropTextures() {
         VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
 
-        VkGpuTexture attachmentTexture = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getColorAttachment());
-        this.colorAttachmentTexture = attachmentTexture;
-        this.colorAttachmentTextureView = device.createTextureView(attachmentTexture);
-        this.depthAttachmentTexture = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getDepthAttachment());
+        VkGpuTexture hdrTex = device.gpuTextureFromVulkanImage(this.hdrFramebuffer.getColorAttachment());
+        this.hdrColorTexture = hdrTex;
+        this.hdrColorTextureView = device.createTextureView(hdrTex);
+        this.hdrDepthTexture = device.gpuTextureFromVulkanImage(this.hdrFramebuffer.getDepthAttachment());
+
+        VkGpuTexture finalTex = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getColorAttachment());
+        this.finalColorTexture = finalTex;
+        this.finalColorTextureView = device.createTextureView(finalTex);
+        this.finalDepthTexture = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getDepthAttachment());
     }
 
     private void cleanUpFramebuffersAndPasses() {
         if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(true);
         if (this.finalFramebuffer != null) this.finalFramebuffer.cleanUp(true);
         if (this.hdrRenderPass != null) this.hdrRenderPass.cleanUp();
+        if (this.hdrAuxRenderPass != null) this.hdrAuxRenderPass.cleanUp();
         if (this.finalAuxRenderPass != null) this.finalAuxRenderPass.cleanUp();
         if (this.compositeRenderPass != null) this.compositeRenderPass.cleanUp();
         if (this.presentRenderPass != null) this.presentRenderPass.cleanUp();
         this.hdrFramebuffer = null;
         this.finalFramebuffer = null;
         this.hdrRenderPass = null;
+        this.hdrAuxRenderPass = null;
         this.finalAuxRenderPass = null;
         this.compositeRenderPass = null;
         this.presentRenderPass = null;
