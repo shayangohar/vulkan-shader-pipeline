@@ -26,7 +26,6 @@ layout(location = 1) in vec2 inTexCoord;
 layout(location = 2) in float inSphericalDistance;
 layout(location = 3) in float inCylindricalDistance;
 layout(location = 4) in flat float inFadeFactor;
-layout(location = 5) in flat int inBlockId; // available to later material work
 
 layout(location = 0) out vec4 outFragColor;
 

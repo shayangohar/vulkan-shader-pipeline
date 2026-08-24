@@ -39,7 +39,8 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        terrainPipeline = buildPipeline("chimera_terrain", ChimeraVertexFormats.EXTENDED_TERRAIN);
+        // BISECTION 2: plain compressed format (BlockId extension paused).
+        terrainPipeline = buildPipeline("chimera_terrain", CustomVertexFormat.COMPRESSED_TERRAIN);
         initialized = true;
 
         ChimeraMod.LOGGER.info("chimera terrain pipeline ready: stride={}B attributes={}",
@@ -52,15 +53,14 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        // DIAGNOSTIC BUILD: terrain redirect AND vertex-format extension both
-        // disabled - terrain runs 100% on host pipelines/format inside chimera's
-        // M3 segment frame. If terrain is visible now, the bug is in
-        // chimera_terrain's pipeline/shader; if still invisible, it is in the
-        // segment frame routing.
-        ChimeraMod.LOGGER.info("[dbg] terrain redirect DISABLED for bisection (pure host terrain)");
-        PipelineManager.setDefaultTerrainShaderGetter();
+        // DIAGNOSTIC BISECTION 2: chimera_terrain pipeline on the PLAIN
+        // COMPRESSED_TERRAIN format (no BlockId extension). Host vertex data,
+        // our SPIR-V pipeline. Isolates whether the extended format or the
+        // pipeline/shader itself breaks under the M3 frame.
+        ChimeraMod.LOGGER.info("[dbg] terrain redirect ON - COMPRESSED_TERRAIN (no BlockId) for bisection");
         PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
         ThreadBuilderPack.defaultTerrainBuilderConstructor();
+        PipelineManager.setShaderGetter(renderType -> terrainPipeline);
         rebuildChunks();
     }
 
