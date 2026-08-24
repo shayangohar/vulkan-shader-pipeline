@@ -34,7 +34,7 @@ public abstract class GameRendererDepthMixin {
             )
     )
     private void chimera$clearDepthInPass(CommandEncoder instance, GpuTexture depthTexture, double clearDepth) {
-        if (!ChimeraRenderer.isInstalled()) {
+        if (!ChimeraRenderer.segmentsActive()) {
             instance.clearDepthTexture(depthTexture, clearDepth);
             return;
         }

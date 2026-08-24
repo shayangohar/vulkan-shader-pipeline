@@ -68,6 +68,16 @@ public final class ChimeraRenderer {
         return installed;
     }
 
+    /** True while a vanilla screen has forced the host renderer takeover. */
+    public static boolean isScreenMode() {
+        return screenMode;
+    }
+
+    /** Chimera's segments may run: installed and not in screen mode. */
+    public static boolean segmentsActive() {
+        return installed && !screenMode;
+    }
+
     public static ChimeraMainPass getMainPass() {
         return chimeraPass;
     }

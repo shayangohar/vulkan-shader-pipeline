@@ -23,7 +23,7 @@ public abstract class ChimeraLevelRendererMixin {
 
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void chimera$openHdrSegment(CallbackInfo ci) {
-        if (ChimeraRenderer.isInstalled()) {
+        if (ChimeraRenderer.segmentsActive()) {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 pass.openLevelSegment();
@@ -33,7 +33,7 @@ public abstract class ChimeraLevelRendererMixin {
 
     @Inject(method = "renderLevel", at = @At("TAIL"))
     private void chimera$closeAndComposite(CallbackInfo ci) {
-        if (ChimeraRenderer.isInstalled()) {
+        if (ChimeraRenderer.segmentsActive()) {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 pass.closeLevelSegmentAndComposite();
