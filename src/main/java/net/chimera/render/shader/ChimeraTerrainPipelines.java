@@ -52,10 +52,15 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
+        // DIAGNOSTIC BUILD: terrain redirect disabled to bisect M3 visibility.
+        // The segment frame runs with HOST terrain pipelines; if terrain is
+        // visible now, the bug is in chimera_terrain's pipeline/shader, not the
+        // frame routing.
+        ChimeraMod.LOGGER.info("[dbg] terrain redirect DISABLED for bisection");
         PipelineManager.setTerrainVertexFormat(ChimeraVertexFormats.EXTENDED_TERRAIN);
         ThreadBuilderPack.setTerrainBuilderConstructor(renderType ->
                 new ChimeraExtTerrainBuilder(TerrainRenderType.getLayer(renderType).bufferSize() / DefaultVertexFormat.BLOCK.getVertexSize()));
-        PipelineManager.setShaderGetter(renderType -> terrainPipeline);
+        PipelineManager.setDefaultTerrainShaderGetter();
         rebuildChunks();
     }
 
