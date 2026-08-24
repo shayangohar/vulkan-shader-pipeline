@@ -81,6 +81,7 @@ public class ChimeraMainPass implements MainPass {
 
     private RenderPass hdrRenderPass;
     private RenderPass hdrAuxRenderPass;
+    private RenderPass hdrAuxClearDepthRenderPass;
     private RenderPass finalAuxRenderPass;
     private RenderPass compositeRenderPass;
     private RenderPass presentRenderPass;
@@ -92,12 +93,15 @@ public class ChimeraMainPass implements MainPass {
     private boolean levelPhase;
     /** True once the composite segment has run for the current frame. */
     private boolean compositedThisFrame;
+    /** Set when vanilla requests a depth clear while no pass is recording. */
+    private boolean pendingDepthClear;
 
     // Blaze3D interop views, phase-selected: vanilla's "main render target"
     // must alias whichever buffer is current, or its passes bypass us.
     private GpuTexture hdrColorTexture;
     private GpuTextureView hdrColorTextureView;
     private GpuTexture hdrDepthTexture;
+    private GpuTextureView hdrDepthTextureView;
     private GpuTexture finalColorTexture;
     private GpuTextureView finalColorTextureView;
     private GpuTexture finalDepthTexture;
@@ -129,7 +133,14 @@ public class ChimeraMainPass implements MainPass {
             this.levelPhase = true;
             this.compositedThisFrame = false;
             levelRebindLogs = 40; // re-arm per level segment
-            debugSegment("openLevelSegment: HDR pass open, cleared");
+
+            // Redirect vanilla's level-rendering output at the Blaze3D level
+            // (Beryl's mechanism): frame-graph passes targeting the main
+            // render target attach our HDR views directly.
+            RenderSystem.outputColorTextureOverride = this.hdrColorTextureView;
+            RenderSystem.outputDepthTextureOverride = this.hdrDepthTextureView;
+
+            debugSegment("openLevelSegment: HDR pass open, cleared, output override set");
         }
     }
 
@@ -142,6 +153,9 @@ public class ChimeraMainPass implements MainPass {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         Renderer.getInstance().endRenderPass(commandBuffer);
         this.levelPhase = false;
+
+        RenderSystem.outputColorTextureOverride = null;
+        RenderSystem.outputDepthTextureOverride = null;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
@@ -236,13 +250,17 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
 
+        RenderPass pass;
         if (this.levelPhase) {
-            debugRebind("rebindMainTarget: LEVEL->HDR");
+            // A depth clear requested while no pass was recording applies on
+            // this reopen (first-person hand rendering).
+            pass = this.pendingDepthClear ? this.hdrAuxClearDepthRenderPass : this.hdrAuxRenderPass;
+            this.pendingDepthClear = false;
+            debugRebind("rebindMainTarget: LEVEL->HDR" + (pass == this.hdrAuxClearDepthRenderPass ? " (depth clear)" : ""));
         } else {
             debugPostRebind("rebindMainTarget: POST->FINAL");
+            pass = this.finalAuxRenderPass;
         }
-
-        RenderPass pass = this.levelPhase ? this.hdrAuxRenderPass : this.finalAuxRenderPass;
 
         // Foreign code may have flipped layouts while the pass was closed.
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -250,6 +268,11 @@ public class ChimeraMainPass implements MainPass {
         }
 
         Renderer.getInstance().beginRenderPass(pass, target);
+    }
+
+    /** Records a depth clear to apply at the next level-phase reopen. */
+    public void requestPendingDepthClear() {
+        this.pendingDepthClear = true;
     }
 
     @Override
@@ -340,6 +363,13 @@ public class ChimeraMainPass implements MainPass {
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxRenderPass = b.build();
 
+        // Same, but applies a pending hand depth-clear on reopen.
+        b = RenderPass.builder(this.hdrFramebuffer);
+        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        this.hdrAuxClearDepthRenderPass = b.build();
+
         // Post-level re-entry into the FINAL buffer: preserve the composited
         // scene (hand/GUI draw on top), give hand rendering a clean depth.
         b = RenderPass.builder(this.finalFramebuffer);
@@ -374,6 +404,7 @@ public class ChimeraMainPass implements MainPass {
         this.hdrColorTexture = hdrTex;
         this.hdrColorTextureView = device.createTextureView(hdrTex);
         this.hdrDepthTexture = device.gpuTextureFromVulkanImage(this.hdrFramebuffer.getDepthAttachment());
+        this.hdrDepthTextureView = device.createTextureView(this.hdrDepthTexture);
 
         VkGpuTexture finalTex = device.gpuTextureFromVulkanImage(this.finalFramebuffer.getColorAttachment());
         this.finalColorTexture = finalTex;
@@ -386,6 +417,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.finalFramebuffer != null) this.finalFramebuffer.cleanUp(true);
         if (this.hdrRenderPass != null) this.hdrRenderPass.cleanUp();
         if (this.hdrAuxRenderPass != null) this.hdrAuxRenderPass.cleanUp();
+        if (this.hdrAuxClearDepthRenderPass != null) this.hdrAuxClearDepthRenderPass.cleanUp();
         if (this.finalAuxRenderPass != null) this.finalAuxRenderPass.cleanUp();
         if (this.compositeRenderPass != null) this.compositeRenderPass.cleanUp();
         if (this.presentRenderPass != null) this.presentRenderPass.cleanUp();
@@ -393,6 +425,7 @@ public class ChimeraMainPass implements MainPass {
         this.finalFramebuffer = null;
         this.hdrRenderPass = null;
         this.hdrAuxRenderPass = null;
+        this.hdrAuxClearDepthRenderPass = null;
         this.finalAuxRenderPass = null;
         this.compositeRenderPass = null;
         this.presentRenderPass = null;
