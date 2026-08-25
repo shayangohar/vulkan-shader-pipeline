@@ -7,6 +7,8 @@
 
 layout(binding = 3) uniform sampler2D Sampler0;
 
+layout(binding = 5) uniform sampler2D ShadowMap;
+
 layout(binding = 1) uniform FragmentSharedUBO {
     vec4 FogColor;
     float FogEnvironmentalStart;
@@ -26,6 +28,7 @@ layout(location = 1) in vec2 inTexCoord;
 layout(location = 2) in float inSphericalDistance;
 layout(location = 3) in float inCylindricalDistance;
 layout(location = 4) in flat float inFadeFactor;
+layout(location = 5) in vec4 inLightSpacePos;
 
 layout(location = 0) out vec4 outFragColor;
 
@@ -105,12 +108,32 @@ float fogRamp(float distance, float start, float end) {
     return (distance - start) / (end - start);
 }
 
+const float SHADOW_BIAS = 0.0025;
+
+float sampleShadow(vec4 lightSpacePos) {
+    // Perspective divide + half-offset + flip Y for texture coords
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    projCoords.y = 1.0 - projCoords.y;
+
+    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) {
+        return 1.0; // Outside shadow map
+    }
+
+    float storedDepth = texture(ShadowMap, projCoords.xy).r;
+    return (projCoords.z - SHADOW_BIAS > storedDepth) ? 0.3 : 1.0;
+}
+
 void main() {
     vec4 sampled = UseRgss == 1
         ? sampleRotatedGrid(Sampler0, inTexCoord, TexelSize)
         : sampleNearest(Sampler0, inTexCoord, TexelSize);
 
     vec4 color = sampled * inVertexColor;
+
+    // Directional shadow
+    float shadow = sampleShadow(inLightSpacePos);
+    color.rgb *= shadow;
 
     // Sections fade in by blending against fog color before alpha rejection.
     color = mix(FogColor * vec4(1.0, 1.0, 1.0, color.a), color, inFadeFactor);

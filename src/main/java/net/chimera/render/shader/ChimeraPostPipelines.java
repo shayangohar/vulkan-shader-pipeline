@@ -30,4 +30,20 @@ public final class ChimeraPostPipelines {
 
         return builder.createGraphicsPipeline();
     }
+
+    /** Creates a terrain-format pipeline (COMPRESSED_TERRAIN vertex layout) for shadow rendering. */
+    public static GraphicsPipeline createTerrainPipeline(String name, VertexFormat vertexFormat) {
+        JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");
+        PipelineConfig config = PipelineConfig.fromJson(name, json);
+
+        Pipeline.Builder builder = new Pipeline.Builder(vertexFormat, name);
+        builder.applyConfig(config);
+
+        String vertexPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.VERTEX_SHADER);
+        String fragmentPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.FRAGMENT_SHADER);
+        builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, ChimeraShaderLoader.loadSource(vertexPath + ".vsh"));
+        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
+
+        return builder.createGraphicsPipeline();
+    }
 }

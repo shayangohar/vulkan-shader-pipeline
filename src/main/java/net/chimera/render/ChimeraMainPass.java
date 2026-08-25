@@ -3,7 +3,10 @@ package net.chimera.render;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import net.chimera.render.ChimeraShadowMap;
 import net.chimera.render.shader.ChimeraPostPipelines;
+import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.render.engine.VkGpuDevice;
 import net.vulkanmod.render.engine.VkGpuTexture;
 import net.vulkanmod.vulkan.Renderer;
@@ -50,6 +53,8 @@ public class ChimeraMainPass implements MainPass {
 
     private GraphicsPipeline presentPipeline;
 
+    private ChimeraShadowMap shadowMap = new ChimeraShadowMap();
+
     /** True while inside the level segment (HDR pass recording). */
     private boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
@@ -63,7 +68,41 @@ public class ChimeraMainPass implements MainPass {
     public ChimeraMainPass() {
         this.levelPhase = true;
         createResources();
+        this.shadowMap.init();
         Renderer.getInstance().addOnResizeCallback(this::onResize);
+    }
+
+    private void renderShadowPass() {
+        if (!this.shadowMap.isInitialized()) return;
+
+        VkCommandBuffer cmd = Renderer.getCommandBuffer();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            var mc = net.minecraft.client.Minecraft.getInstance();
+            Vec3 cameraPos = mc.player != null ? mc.player.position() : new Vec3(0, 64, 0);
+            float celestialAngle = 0.25F;
+            this.shadowMap.updateLight(celestialAngle, cameraPos);
+
+            // Open shadow render pass
+            VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer().getColorAttachment();
+            shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            Renderer.getInstance().beginRenderPass(this.shadowMap.getShadowRenderPass(), this.shadowMap.getShadowFramebuffer());
+            Renderer.setViewport(0, 0, ChimeraShadowMap.getSize(), ChimeraShadowMap.getSize(), stack);
+            VK10.vkCmdSetScissor(cmd, 0, this.shadowMap.getShadowFramebuffer().scissor(stack));
+
+            // Clear to white (no shadows until terrain rendering is added)
+            Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+
+            // TODO: render terrain into the shadow map using the shadow pipeline
+            // This requires calling WorldRenderer.renderSectionLayer with light-space matrices
+
+            Renderer.getInstance().endRenderPass(cmd);
+
+            // Transition shadow color for sampling
+            shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            // Bind shadow texture for terrain sampling
+            this.shadowMap.bindShadowTexture();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -74,6 +113,9 @@ public class ChimeraMainPass implements MainPass {
         if (this.hdrFramebuffer == null) {
             return;
         }
+
+        // Render shadow map before opening HDR
+        renderShadowPass();
 
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -229,6 +271,7 @@ public class ChimeraMainPass implements MainPass {
 
     @Override
     public void cleanUp() {
+        this.shadowMap.cleanUp();
         cleanUpFramebuffersAndPasses();
         cleanUpPipelines();
     }

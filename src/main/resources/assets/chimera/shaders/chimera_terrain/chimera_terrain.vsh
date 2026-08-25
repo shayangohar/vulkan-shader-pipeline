@@ -7,6 +7,7 @@
 
 layout(binding = 0) uniform ViewUBO {
     mat4 MVP;
+    mat4 LightMVP;
 };
 
 layout(binding = 2) uniform SectionData {
@@ -29,6 +30,7 @@ layout(location = 1) out vec2 outTexCoord;
 layout(location = 2) out float outSphericalDistance;
 layout(location = 3) out float outCylindricalDistance;
 layout(location = 4) out flat float outFadeFactor;
+layout(location = 5) out vec4 outLightSpacePos;
 
 const float UV_SCALE = 1.0 / 32768.0;
 const vec3 POSITION_SCALE = vec3(1.0 / 2048.0);
@@ -65,6 +67,8 @@ void main() {
     outVertexColor = baseColor * fetchLightmap(uint(inPositionLight.w));
 
     outFadeFactor = SectionFadeFactors[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];
+
+    outLightSpacePos = LightMVP * vec4(worldPos, 1.0);
 
     outTexCoord = vec2(inUV) * UV_SCALE;
 }
