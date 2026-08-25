@@ -15,11 +15,7 @@ wrapper. Press **F8** in-game (no screen open) to toggle between chimera's pass 
 
 ## Building
 
-```sh
-./gradlew build
-```
-
-Requires Java 21. The jar lands in `build/libs/`.
+Requires Java 21. Builds are staged directly into `C:\Users\shaya\chimera-builds\` (jar + `LATEST-SHA256.txt`); the workspace `build/libs/` output is not used.
 
 ## Roadmap
 

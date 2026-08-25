@@ -156,6 +156,11 @@ public final class ChimeraRenderer {
         Renderer.getInstance().endRenderPass();
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.suspendForScreens();
+        // Reflect reality: the host pass is now the installed pass. Without
+        // this, exitScreenMode's install() early-returns on the installed
+        // flag and chimera's pass is never restored - every frame after the
+        // first screen cycle runs on the host renderer (no HDR, no shadows).
+        installed = false;
         screenMode = true;
         ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
     }

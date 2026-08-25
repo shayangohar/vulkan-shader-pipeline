@@ -6,7 +6,7 @@ layout(binding = 0) uniform LightSpaceUBO {
     mat4 LightMVP;
 };
 
-layout(binding = 1) uniform SectionData {
+layout(binding = 2) uniform SectionData {
     ivec4 SectionOffsets[128];
 };
 

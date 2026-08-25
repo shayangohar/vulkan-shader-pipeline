@@ -61,6 +61,13 @@ public class ChimeraMainPass implements MainPass {
     private boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
     private boolean pendingDepthClear;
+    /**
+     * While true, rebindMainTarget() opens the SHADOW render pass instead of
+     * the HDR target. renderSectionLayer always rebinds to the main target, so
+     * this flag is what makes it draw terrain into the shadow map from the
+     * light's perspective during the shadow phase.
+     */
+    private boolean shadowPassActive;
 
     private GpuTexture hdrColorTexture;
     private GpuTextureView hdrColorTextureView;
@@ -93,27 +100,23 @@ public class ChimeraMainPass implements MainPass {
         float celestialAngle = 0.25F;
         this.shadowMap.updateLight(celestialAngle, playerPos);
 
-        // Switch to the shadow pipeline
-        PipelineManager.setShaderGetter(rt -> this.shadowMap.getShadowPipeline());
-
-        // Set VRenderSystem to light-space matrices (fills the MVP UBO)
-        VRenderSystem.applyProjectionMatrix(this.shadowMap.getLightProjection());
-        VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
-        VRenderSystem.calculateMVP();
-
+        // Prepare the shadow color attachment for the render pass.
+        VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer().getColorAttachment();
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            // Open shadow render pass on the shadow framebuffer
-            VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer().getColorAttachment();
             shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            Renderer.getInstance().beginRenderPass(this.shadowMap.getShadowRenderPass(), this.shadowMap.getShadowFramebuffer());
-            Renderer.setViewport(0, 0, ChimeraShadowMap.getSize(), ChimeraShadowMap.getSize(), stack);
-            VK10.vkCmdSetScissor(cmd, 0, this.shadowMap.getShadowFramebuffer().scissor(stack));
-            Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+        }
 
-            // Render terrain from the light's perspective
-            // The shader getter returns the shadow pipeline, so terrain draws
-            // use the light-space MVP. The vertex data and section offsets
-            // are shared with the main pass.
+        // Make renderSectionLayer's rebindMainTarget() open the SHADOW pass
+        // rather than the HDR target. renderSectionLayer itself opens, draws,
+        // and leaves the pass open; we close it afterward.
+        this.shadowPassActive = true;
+        try {
+            // Switch to the shadow pipeline (fills the MVP UBO via VRenderSystem).
+            PipelineManager.setShaderGetter(rt -> this.shadowMap.getShadowPipeline());
+            VRenderSystem.applyProjectionMatrix(this.shadowMap.getLightProjection());
+            VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
+            VRenderSystem.calculateMVP();
+
             WorldRenderer worldRenderer = WorldRenderer.getInstance();
             worldRenderer.renderSectionLayer(
                     TerrainRenderType.SOLID,
@@ -121,11 +124,15 @@ public class ChimeraMainPass implements MainPass {
                     this.shadowMap.getLightView(),
                     this.shadowMap.getLightProjection()
             );
+        } finally {
+            this.shadowPassActive = false;
+        }
 
-            // Close shadow render pass
-            Renderer.getInstance().endRenderPass(cmd);
+        // Close the shadow render pass renderSectionLayer left open.
+        Renderer.getInstance().endRenderPass(cmd);
 
-            // Transition shadow map for sampling
+        // Transition shadow map for sampling
+        try (MemoryStack stack = MemoryStack.stackPush()) {
             shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
@@ -219,6 +226,18 @@ public class ChimeraMainPass implements MainPass {
     @Override
     public void rebindMainTarget() {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
+
+        // Shadow-phase override: renderSectionLayer targets the shadow map.
+        // beginRenderPass sets the viewport and scissor to the shadow size.
+        if (this.shadowPassActive) {
+            Framebuffer shadow = this.shadowMap.getShadowFramebuffer();
+            if (Renderer.getInstance().getBoundFramebuffer() == shadow) {
+                return;
+            }
+            Renderer.getInstance().beginRenderPass(this.shadowMap.getShadowRenderPass(), shadow);
+            return;
+        }
+
         Framebuffer target = this.hdrFramebuffer;
 
         if (Renderer.getInstance().getBoundFramebuffer() == target) {
