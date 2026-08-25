@@ -44,6 +44,14 @@ public final class ChimeraPostPipelines {
         builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, ChimeraShaderLoader.loadSource(vertexPath + ".vsh"));
         builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
 
-        return builder.createGraphicsPipeline();
+        GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+
+        // Section-offset UBO (binding 2) must read from the global buffer
+        // that VulkanMod's WorldRenderer writes per chunk area.
+        for (var buffer : pipeline.getBuffers()) {
+            buffer.setUseGlobalBuffer(true);
+        }
+
+        return pipeline;
     }
 }

@@ -6,7 +6,6 @@ import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
-import net.vulkanmod.vulkan.framebuffer.SwapChain;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
@@ -14,6 +13,8 @@ import net.vulkanmod.vulkan.texture.SamplerInfo;
 import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import net.vulkanmod.vulkan.util.MappedBuffer;
+import net.vulkanmod.vulkan.shader.Uniforms;
 import org.lwjgl.opengl.GL11;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -44,6 +45,9 @@ public class ChimeraShadowMap {
     private GraphicsPipeline shadowPipeline;
     private long shadowSampler;
 
+    // CPU-side buffer for the light MVP, read by the Uniforms system during upload
+    private MappedBuffer lightMVPBuffer;
+
     // Light-space matrices (updated each frame)
     private final Matrix4f lightProjection = new Matrix4f();
     private final Matrix4f lightView = new Matrix4f();
@@ -55,8 +59,6 @@ public class ChimeraShadowMap {
     public void init() {
         if (this.initialized) return;
 
-        SwapChain swapChain = Renderer.getInstance().getSwapChain();
-        // Shadow map size is fixed, not tied to window size
         this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
                 .build();
@@ -64,6 +66,11 @@ public class ChimeraShadowMap {
         createRenderPass();
         this.shadowPipeline = ChimeraPostPipelines.createTerrainPipeline("chimera_shadow", ChimeraTerrainPipelines.getTerrainVertexFormat());
         createSampler();
+
+        // Register the light MVP supplier so the terrain pipeline's LightMVP
+        // UBO field is filled with our matrix during upload.
+        this.lightMVPBuffer = new MappedBuffer(64);
+        Uniforms.mat4f_uniformMap.put("LightMVP", () -> this.lightMVPBuffer);
 
         this.initialized = true;
     }
@@ -129,35 +136,9 @@ public class ChimeraShadowMap {
 
         // Combined MVP
         this.lightMVP.set(this.lightProjection).mul(this.lightView);
-    }
 
-    /**
-     * Renders the shadow map: opens the shadow render pass, sets the light MVP,
-     * and calls the shadow render callback (which issues terrain draws).
-     */
-    public void renderShadowMap(VkCommandBuffer commandBuffer, MemoryStack stack, Runnable terrainDrawCallback) {
-        if (!this.initialized || this.shadowFramebuffer == null) return;
-
-        // Transition shadow color to attachment layout
-        VulkanImage shadowColor = this.shadowFramebuffer.getColorAttachment();
-        shadowColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-
-        // Open shadow render pass
-        Renderer.getInstance().beginRenderPass(this.shadowRenderPass, this.shadowFramebuffer);
-        Renderer.setViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, stack);
-        VK10.vkCmdSetScissor(commandBuffer, 0, this.shadowFramebuffer.scissor(stack));
-        Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-
-        // Set the light-space MVP via RenderSystem (fills the shared MVP UBO)
-        VRenderSystem.applyProjectionMatrix(this.lightProjection);
-        VRenderSystem.applyModelViewMatrix(this.lightView);
-        VRenderSystem.calculateMVP();
-
-        // Issue terrain draws (callback into the shadow render logic)
-        terrainDrawCallback.run();
-
-        // Close shadow render pass
-        Renderer.getInstance().endRenderPass(commandBuffer);
+        // Write to the mapped buffer for GPU upload
+        this.lightMVPBuffer.buffer.asFloatBuffer().put(this.lightMVP.get(new float[16]));
     }
 
     /** Binds the shadow map texture for sampling by the terrain shader. */

@@ -3,7 +3,6 @@ package net.chimera.render;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import net.chimera.render.ChimeraShadowMap;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.minecraft.world.phys.Vec3;
