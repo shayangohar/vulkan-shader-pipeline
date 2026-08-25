@@ -9,9 +9,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Opens chimera's HDR segment at LevelRenderer.renderLevel HEAD. The pass
- * stays open through hand and GUI rendering (all drawing into the same HDR
- * buffer via alias/rebind) and is closed by MainPass.end at real frame end.
+ * Drives chimera's segment points inside LevelRenderer.renderLevel:
+ *
+ * - HEAD: opens the HDR segment (world renders into RGBA16F).
+ * - After cullTerrain (the compileSections call follows it): renders the
+   shadow map. cullTerrain is what fills VulkanMod's section draw queues,
+   so the shadow phase must run after it to see this frame's section
+   data; a fresh SectionGraph (allChanged) is empty until then.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraLevelRendererMixin {
@@ -22,6 +26,17 @@ public abstract class ChimeraLevelRendererMixin {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 pass.openLevelSegment();
+            }
+        }
+    }
+
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;compileSections(Lnet/minecraft/client/Camera;)V"))
+    private void chimera$renderShadowSegment(CallbackInfo ci) {
+        if (ChimeraRenderer.segmentsActive()) {
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            if (pass != null) {
+                pass.renderShadowSegment();
             }
         }
     }

@@ -52,7 +52,12 @@ public final class ChimeraTerrainPipelines {
         PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
         ThreadBuilderPack.defaultTerrainBuilderConstructor();
         PipelineManager.setShaderGetter(renderType -> terrainPipeline);
-        rebuildChunks();
+        // No rebuildChunks() here: both sides of the swap use the same
+        // 16B COMPRESSED_TERRAIN format and the default builder, so only
+        // the shader getter changes. A re-mesh (allChanged) would rebuild
+        // the SectionGraph on every screen cycle for zero visual gain.
+        // Reinstate it only when the vertex format actually changes
+        // (TASK-49's BlockId extension).
     }
 
     /**
@@ -77,7 +82,7 @@ public final class ChimeraTerrainPipelines {
         PipelineManager.setDefaultTerrainShaderGetter();
         PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
         ThreadBuilderPack.defaultTerrainBuilderConstructor();
-        rebuildChunks();
+        // See enable(): no re-mesh needed while the format is unchanged.
     }
 
     private static void rebuildChunks() {
