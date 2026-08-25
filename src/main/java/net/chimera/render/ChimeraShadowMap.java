@@ -153,6 +153,18 @@ public class ChimeraShadowMap {
         return this.lightMVP;
     }
 
+    public Matrix4f getLightProjection() {
+        return this.lightProjection;
+    }
+
+    public Matrix4f getLightView() {
+        return this.lightView;
+    }
+
+    public GraphicsPipeline getShadowPipeline() {
+        return this.shadowPipeline;
+    }
+
     public Vector3f getLightDir() {
         return this.lightDir;
     }
