@@ -9,14 +9,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Brackets level rendering with chimera's segments:
- * - HEAD: open the HDR segment (world target + clear).
- * - TAIL: close it and run the composite segment (HDR -> final buffer).
- *
- * Everything vanilla does after level rendering (post chains, hand depth
- * clear, hand, GUI) then runs against the final buffer with no chimera pass
- * open, matching the state those systems expect; re-entry happens through
- * MainPass.rebindMainTarget.
+ * Opens chimera's HDR segment at LevelRenderer.renderLevel HEAD. The pass
+ * stays open through hand and GUI rendering (all drawing into the same HDR
+ * buffer via alias/rebind) and is closed by MainPass.end at real frame end.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraLevelRendererMixin {
@@ -27,16 +22,6 @@ public abstract class ChimeraLevelRendererMixin {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 pass.openLevelSegment();
-            }
-        }
-    }
-
-    @Inject(method = "renderLevel", at = @At("TAIL"))
-    private void chimera$closeAndComposite(CallbackInfo ci) {
-        if (ChimeraRenderer.segmentsActive()) {
-            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-            if (pass != null) {
-                pass.closeLevelSegmentAndComposite();
             }
         }
     }
