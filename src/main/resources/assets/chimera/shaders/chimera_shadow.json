@@ -6,7 +6,7 @@
         { "type": "vertex", "binding": 0, "fields": [
             { "name": "MVP", "type": "matrix4x4", "count": 16, "values": [ 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 ] }
         ] },
-        { "type": "vertex", "binding": 2, "size": 4096 }
+        { "type": "vertex", "binding": 1, "size": 4096 }
     ],
     "PushConstants": [
         { "name": "ModelOffset", "type": "float", "count": 3, "values": [ 0.0, 0.0, 0.0 ] }
