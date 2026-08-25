@@ -31,10 +31,14 @@ import static org.lwjgl.vulkan.VK10.*;
 /**
  * Chimera's main render pass — two-buffer segmented frame:
  *
- *   - Nothing opens at frame start.
  *   - renderLevel HEAD opens the HDR segment (world -> RGBA16F).
- *   - renderLevel TAIL closes the composite... actually keeps the pass OPEN:
- *     hand and GUI draw into the same HDR buffer via rebindMainTarget.
+ *   - After cullTerrain, renderShadowSegment closes the HDR pass, records
+ *     the shadow map (terrain re-rendered from the light's perspective via
+ *     renderSectionLayer + the shadowPassActive redirect), and reopens HDR.
+ *     Running after cullTerrain is required: that is what fills VulkanMod's
+ *     section draw queues, and a fresh SectionGraph is empty until it does.
+ *   - Terrain, entities, hand, and GUI draw into the HDR buffer via
+ *     rebindMainTarget / the encoder alias.
  *   - MainPass.end: close HDR -> present HDR directly to swapchain via a
  *     fullscreen passthrough.
  *

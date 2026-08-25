@@ -3,7 +3,6 @@ package net.chimera.render.shader;
 import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.ChimeraMod;
-import net.minecraft.client.Minecraft;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
@@ -19,10 +18,11 @@ import net.vulkanmod.vulkan.shader.SPIRVUtils;
  * bindings and UBO fields as the host's terrain path, so the host's uniform
  * suppliers and per-instance section data keep feeding them unchanged.
  *
- * Enabling also swaps in chimera's extended terrain vertex format (adds a
- * per-vertex BlockId attribute) and builder constructor, then forces a chunk
- * rebuild so live sections re-mesh against the new layout. Disabling restores
- * every piece of host state.
+ * Enabling swaps the terrain shader getter to chimera's pipeline. Both
+ * sides of the swap use the same 16B COMPRESSED_TERRAIN vertex format
+ * and the default builder, so no chunk re-mesh is needed; reinstate one
+ * only if the vertex format ever changes again (TASK-49's BlockId
+ * extension). Disabling restores the host getter.
  */
 public final class ChimeraTerrainPipelines {
     private static boolean initialized;
@@ -60,6 +60,13 @@ public final class ChimeraTerrainPipelines {
         // (TASK-49's BlockId extension).
     }
 
+    public static void disable() {
+        PipelineManager.setDefaultTerrainShaderGetter();
+        PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
+        ThreadBuilderPack.defaultTerrainBuilderConstructor();
+        // See enable(): no re-mesh needed while the format is unchanged.
+    }
+
     /**
      * Simple mode (vanilla screens): full host terrain, no redirect. Called
      * instead of disable() so the chimera terrain pipeline object survives.
@@ -72,24 +79,6 @@ public final class ChimeraTerrainPipelines {
         PipelineManager.setDefaultTerrainShaderGetter();
         PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
         ThreadBuilderPack.defaultTerrainBuilderConstructor();
-    }
-
-    public static void resumeFromScreens() {
-        enable();
-    }
-
-    public static void disable() {
-        PipelineManager.setDefaultTerrainShaderGetter();
-        PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
-        ThreadBuilderPack.defaultTerrainBuilderConstructor();
-        // See enable(): no re-mesh needed while the format is unchanged.
-    }
-
-    private static void rebuildChunks() {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.levelRenderer != null) {
-            minecraft.levelRenderer.allChanged();
-        }
     }
 
     public static GraphicsPipeline getTerrainPipeline() {

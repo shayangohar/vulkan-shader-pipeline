@@ -15,11 +15,9 @@ import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import net.vulkanmod.vulkan.shader.Uniforms;
-import org.lwjgl.opengl.GL11;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 import static org.lwjgl.vulkan.VK10.*;
@@ -149,10 +147,6 @@ public class ChimeraShadowMap {
         VTextureSelector.bindTexture(3, shadowColor); // slot 3 for shadow map
     }
 
-    public Matrix4f getLightMVP() {
-        return this.lightMVP;
-    }
-
     public Matrix4f getLightProjection() {
         return this.lightProjection;
     }
@@ -165,16 +159,8 @@ public class ChimeraShadowMap {
         return this.shadowPipeline;
     }
 
-    public Vector3f getLightDir() {
-        return this.lightDir;
-    }
-
     public boolean isInitialized() {
         return this.initialized;
-    }
-
-    public static int getSize() {
-        return SHADOW_MAP_SIZE;
     }
 
     public Framebuffer getShadowFramebuffer() {
@@ -183,10 +169,6 @@ public class ChimeraShadowMap {
 
     public RenderPass getShadowRenderPass() {
         return this.shadowRenderPass;
-    }
-
-    public void onResize() {
-        // Shadow map size is fixed; no resize needed
     }
 
     public void cleanUp() {
