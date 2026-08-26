@@ -10,7 +10,9 @@
     "GameRendererDepthMixin",
     "ChimeraLevelRendererMixin",
     "ChimeraMinecraftMixin",
-    "VkCommandEncoderAliasMixin"
+    "VkCommandEncoderAliasMixin",
+    "WorldRendererAccessor",
+    "WorldRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
