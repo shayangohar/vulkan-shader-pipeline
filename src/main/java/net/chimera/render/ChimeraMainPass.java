@@ -261,6 +261,13 @@ public class ChimeraMainPass implements MainPass {
         // Arm this frame's shadow segment; consumed at the SOLID layer tail.
         this.shadowPending = true;
 
+        // Terrain shaders sample the shadow map at slot 3 from their very
+        // first draw of the frame; the shadow segment only rebinds it at the
+        // opaque layer tail - after that draw has already bound descriptors.
+        // Bind up-front so the first frames cannot hit "Sampler3 has no
+        // image bound" on chimera_terrain.
+        this.shadowMap.bindShadowTexture();
+
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
