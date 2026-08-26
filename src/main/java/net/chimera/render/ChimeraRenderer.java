@@ -143,6 +143,7 @@ public final class ChimeraRenderer {
             return;
         }
 
+        chimeraPass.prepareForInstall();
         Renderer.getInstance().setMainPass(chimeraPass);
         ChimeraTerrainPipelines.enable();
         installed = true;

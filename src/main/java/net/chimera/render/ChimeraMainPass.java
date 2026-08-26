@@ -263,6 +263,14 @@ public class ChimeraMainPass implements MainPass {
         MemoryManager.getInstance().addFrameOp(this::invalidateFrameResources);
     }
 
+    /**
+     * Restores the attachment invariant before Renderer exposes this pass.
+     * Needed when the host pass owned begin() while a queued reset ran.
+     */
+    void prepareForInstall() {
+        ensureFrameResources();
+    }
+
 
     // ------------------------------------------------------------------
     // Segment control
