@@ -9,11 +9,11 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
 /**
  * Positions chimera's shadow segment deterministically inside the frame:
- * it renders at the RETURN of VulkanMod's SOLID section layer
- * (WorldRenderer.renderSectionLayer, pinned decompile line 282 — void,
+ * it renders at the RETURN of VulkanMod's effective opaque section layer
+ * (TerrainRenderType.getRemapped(SOLID) = CUTOUT under uniqueOpaqueLayer,
+ * else SOLID; renderSectionLayer is pinned decompile line 282 - void,
  * single exit).
  *
  * Ordering contract: openLevelSegment (HEAD of LevelRenderer.renderLevel)
@@ -34,7 +34,7 @@ public abstract class WorldRendererMixin {
     @Inject(method = "renderSectionLayer", at = @At("RETURN"))
     private void chimera$renderShadowAfterSolid(TerrainRenderType renderType, double camX, double camY,
             double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
-        if (renderType != TerrainRenderType.SOLID) return;
+        if (renderType != TerrainRenderType.getRemapped(TerrainRenderType.SOLID)) return;
         if (!ChimeraRenderer.segmentsActive()) return;
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
         if (pass != null && pass.consumeShadowPending()) {

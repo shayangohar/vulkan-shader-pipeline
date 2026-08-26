@@ -140,10 +140,13 @@ public class ChimeraMainPass implements MainPass {
 
             WorldRenderer worldRenderer = WorldRenderer.getInstance();
             // Capped loop-state diagnostic rationale: captures what the main
-            // SOLID pass just drew from. If the shadow pass ever records zero
+            // opaque pass just drew from. If the shadow pass ever records zero
             // draws while idx0 values are non-zero, state was mutated between
             // the two calls; all-zero idx0 means DrawParametersBuffer was
             // zeroed in between.
+            // uniqueOpaqueLayer folds SOLID into CUTOUT at mesh upload, so
+            // the shadow pass must render the remapped opaque layer.
+            TerrainRenderType opaqueType = TerrainRenderType.getRemapped(TerrainRenderType.SOLID);
             if (this.shadowDiagLogs > 0) {
                 this.shadowDiagLogs--;
                 int areas = 0;
@@ -157,7 +160,7 @@ public class ChimeraMainPass implements MainPass {
                         areas++;
                         totalSections += area.sectionQueue.size();
                         DrawBuffers drawBuffers = area.getDrawBuffers();
-                        if (drawBuffers.getAreaBuffer(TerrainRenderType.SOLID) == null || area.sectionQueue.size() == 0) {
+                        if (drawBuffers.getAreaBuffer(opaqueType) == null || area.sectionQueue.size() == 0) {
                             continue;
                         }
                         eligible++;
@@ -171,7 +174,7 @@ public class ChimeraMainPass implements MainPass {
                             long paramsPtr = DrawParametersBuffer.getParamsPtr(
                                     drawBuffers.getDrawParamsPtr(),
                                     section.inAreaIndex,
-                                    TerrainRenderType.SOLID.ordinal(),
+                                    opaqueType.ordinal(),
                                     QuadFacing.UNDEFINED.ordinal());
                             counts.append(n == 0 ? "" : ',').append(DrawParametersBuffer.getIndexCount(paramsPtr));
                             n++;
@@ -179,12 +182,12 @@ public class ChimeraMainPass implements MainPass {
                         idx0 = counts.toString();
                     }
                 }
-                LOGGER.info("[chimera] shadow loop: areas={}, eligible={}, totalSections={}, idx0=[{}], visibleSections={}, graphNeedsUpdate={}",
+                LOGGER.info("[chimera] shadow loop: areas={}, eligible={}, totalSections={}, idx0=[{}], visibleSections={}, graphNeedsUpdate={}, type={}",
                         areas, eligible, totalSections, idx0,
-                        worldRenderer.getVisibleSectionsCount(), worldRenderer.graphNeedsUpdate());
+                        worldRenderer.getVisibleSectionsCount(), worldRenderer.graphNeedsUpdate(), opaqueType);
             }
             worldRenderer.renderSectionLayer(
-                    TerrainRenderType.SOLID,
+                    opaqueType,
                     playerPos.x, playerPos.y, playerPos.z,
                     this.shadowMap.getLightView(),
                     this.shadowMap.getLightProjection()

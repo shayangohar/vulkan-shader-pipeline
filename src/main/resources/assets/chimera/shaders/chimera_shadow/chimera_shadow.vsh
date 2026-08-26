@@ -18,8 +18,11 @@ layout(location = 0) in ivec4 inPositionLight; // xyz: pos*2048 - 8192
 layout(location = 1) in uvec2 inUV;
 layout(location = 2) in uint inPackedColor;
 
+layout(location = 0) out vec2 outTexCoord;
+
 const vec3 POSITION_SCALE = vec3(1.0 / 2048.0);
 const vec3 POSITION_BIAS = vec3(4.0);
+const float UV_SCALE = 1.0 / 32768.0;
 
 vec3 unpackSectionOffset(int encoded) {
     return vec3(
@@ -35,5 +38,6 @@ void main() {
 
     vec3 worldPos = fma(vec3(inPositionLight.xyz), POSITION_SCALE, ModelOffset + sectionOrigin);
 
+    outTexCoord = vec2(inUV) * UV_SCALE;
     gl_Position = LightMVP * vec4(worldPos, 1.0);
 }
