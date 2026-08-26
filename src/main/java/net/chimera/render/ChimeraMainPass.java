@@ -97,8 +97,8 @@ public class ChimeraMainPass implements MainPass {
      * state.
      */
     private boolean shadowPending;
-    /** Coalesces Beryl-style attachment refreshes across rapid screen changes. */
-    private boolean screenResourceRefreshScheduled;
+    /** True only while the current HDR/composite attachment pair is usable. */
+    private boolean frameResourcesReady;
 
     private GpuTexture hdrColorTexture;
     private GpuTextureView hdrColorTextureView;
@@ -256,18 +256,11 @@ public class ChimeraMainPass implements MainPass {
     }
     /**
      * Vanilla can close MainPass attachment aliases while rebuilding screen
-     * resource graphs. Recreate them only after the owning frame fence laps,
-     * matching Beryl's setScreen frame-op lifecycle.
+     * resource graphs. Queue every screen change independently so the reset
+     * executes for the frame slot that observed that change.
      */
-    public void scheduleScreenResourceRefresh() {
-        if (this.screenResourceRefreshScheduled) {
-            return;
-        }
-        this.screenResourceRefreshScheduled = true;
-        MemoryManager.getInstance().addFrameOp(() -> {
-            this.screenResourceRefreshScheduled = false;
-            this.refreshFramebuffers();
-        });
+    public void scheduleScreenResourceReset() {
+        MemoryManager.getInstance().addFrameOp(this::invalidateFrameResources);
     }
 
 
@@ -313,10 +306,10 @@ public class ChimeraMainPass implements MainPass {
 
     @Override
     public void begin(VkCommandBuffer commandBuffer, MemoryStack stack) {
-        if (!this.framebuffersLive()) {
+        if (this.frameResourcesReady && !this.framebuffersLive()) {
             LOGGER.warn("[chimera] main attachment alias closed; rebuilding before frame recording");
-            this.refreshFramebuffers();
         }
+        this.ensureFrameResources();
         this.levelPhase = false;
         this.pendingDepthClear = false;
     }
@@ -499,6 +492,7 @@ public class ChimeraMainPass implements MainPass {
         createRenderPasses();
         createPipelines();
         createInteropTextures();
+        this.frameResourcesReady = true;
     }
 
     private void createFramebuffers(int width, int height) {
@@ -567,32 +561,57 @@ public class ChimeraMainPass implements MainPass {
 
     private boolean framebuffersLive() {
         return this.hdrFramebuffer != null
+                && this.compositeFramebuffer != null
                 && this.hdrColorTexture != null
                 && !this.hdrColorTexture.isClosed()
                 && this.hdrDepthTexture != null
                 && !this.hdrDepthTexture.isClosed()
                 && this.hdrFramebuffer.getColorAttachment().getId() != 0L
-                && this.hdrFramebuffer.getDepthAttachment().getId() != 0L;
+                && this.hdrFramebuffer.getDepthAttachment().getId() != 0L
+                && this.compositeFramebuffer.getColorAttachment().getId() != 0L
+                && this.compositeFramebuffer.getDepthAttachment().getId() != 0L;
     }
 
-    private void refreshFramebuffers() {
-        if (this.hdrFramebuffer == null || this.compositeFramebuffer == null) {
+    private void invalidateFrameResources() {
+        boolean resourcesPresent = this.hdrFramebuffer != null
+                || this.compositeFramebuffer != null
+                || this.hdrColorTexture != null
+                || this.hdrColorTextureView != null
+                || this.hdrDepthTexture != null
+                || this.hdrDepthTextureView != null;
+
+        this.frameResourcesReady = false;
+        this.levelPhase = false;
+        this.pendingDepthClear = false;
+        this.shadowPending = false;
+        if (!resourcesPresent) {
             return;
         }
 
         Renderer.getInstance().endRenderPass();
         releaseInteropTextures();
-        this.hdrFramebuffer.cleanUp(false);
-        this.compositeFramebuffer.cleanUp(true);
+        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(false);
+        if (this.compositeFramebuffer != null) this.compositeFramebuffer.cleanUp(true);
+        this.hdrFramebuffer = null;
+        this.compositeFramebuffer = null;
+        if (TRACE_TRANSITIONS) {
+            LOGGER.info("[chimera] invalidated main attachments at frame boundary");
+        }
+    }
 
+    private void ensureFrameResources() {
+        if (this.frameResourcesReady && this.framebuffersLive()) {
+            return;
+        }
+
+        invalidateFrameResources();
         SwapChain swapChain = Renderer.getInstance().getSwapChain();
         createFramebuffers(Math.max(swapChain.getWidth(), 1), Math.max(swapChain.getHeight(), 1));
         createInteropTextures();
-
-        this.levelPhase = false;
-        this.pendingDepthClear = false;
-        this.shadowPending = false;
-        LOGGER.info("[chimera] refreshed main attachments after screen resource churn");
+        this.frameResourcesReady = true;
+        if (TRACE_TRANSITIONS) {
+            LOGGER.info("[chimera] recreated main attachments before frame");
+        }
     }
 
     private void releaseInteropTextures() {
@@ -607,6 +626,7 @@ public class ChimeraMainPass implements MainPass {
     }
 
     private void cleanUpFramebuffersAndPasses() {
+        this.frameResourcesReady = false;
         releaseInteropTextures();
         if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(false);
         if (this.hdrRenderPass != null) this.hdrRenderPass.cleanUp();

@@ -175,7 +175,7 @@ public final class ChimeraRenderer {
     public static void setScreenOpen(boolean open) {
         screenOpen = open;
         if (GUI_SHADING && chimeraPass != null) {
-            chimeraPass.scheduleScreenResourceRefresh();
+            chimeraPass.scheduleScreenResourceReset();
         }
     }
 
