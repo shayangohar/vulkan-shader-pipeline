@@ -9,12 +9,17 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * While a vanilla screen is open (pause, inventory, menus), chimera fully
- * unhands the renderer: the captured host MainPass and host terrain take over
- * until the screen closes. This is the exact configuration proven crash-free
- * on ESC (chimera toggled off), applied for the whole lifetime of the screen
- * including its post chains. The switch is immediate - the blur chain runs in
- * the same frame the screen opens, so a deferred switch is too late.
+ * Observes Minecraft.setScreen to drive chimera's screen mode.
+ *
+ * With ChimeraRenderer.SCREEN_SHADING_PARITY=true (current), this hook is
+ * advisory only: chimera stays installed and the world renders shaded
+ * behind every screen, including the pause-menu blur chain.
+ *
+ * With the flag false, the legacy behavior applies: any non-null screen
+ * fully unhands the renderer (host MainPass + host terrain until close).
+ * That configuration existed because the old phase-flip design crashed
+ * inside VulkanMod's post-chain barriers during the pause blur (KNOW-47);
+ * it is kept verbatim as the one-flag rollback path.
  */
 @Mixin(Minecraft.class)
 public abstract class ChimeraMinecraftMixin {

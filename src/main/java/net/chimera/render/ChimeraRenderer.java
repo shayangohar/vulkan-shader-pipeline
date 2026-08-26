@@ -11,11 +11,19 @@ import net.vulkanmod.vulkan.pass.MainPass;
  * - onHostRendererReady: capture VulkanMod's installed MainPass and install
  *   chimera's segmented pass.
  * - toggle (F8): swap between chimera and host.
- * - screen mode: while a vanilla screen is open, fully unhand the renderer
- *   (host pass + host terrain) - the configuration proven crash-free on ESC.
- *   Resources stay alive; only routing flips.
+ * - screen mode: with SCREEN_SHADING_PARITY=true the renderer stays
+ *   installed and shaded while a vanilla screen is open (blur chain
+ *   included); =false restores the legacy immediate host passthrough.
  */
 public final class ChimeraRenderer {
+
+    /**
+     * True = keep chimera installed and shaded while vanilla screens are
+     * open (parity with Iris/Beryl). False = legacy immediate host
+     * passthrough on setScreen, kept verbatim as a one-flag rollback for
+     * the blur-chain barrier crash class (KNOW-47).
+     */
+    public static final boolean SCREEN_SHADING_PARITY = true;
     private static boolean ready;
     private static boolean installed;
     private static boolean screenMode;
@@ -145,33 +153,46 @@ public final class ChimeraRenderer {
     }
 
     // ------------------------------------------------------------------
-    // Screen mode: full temporary passthrough while a vanilla screen is open
+    // Screen mode: parity keeps chimera live behind vanilla screens; the
+    // legacy branch below preserves the old full-passthrough behavior.
     // ------------------------------------------------------------------
 
     public static void enterScreenMode() {
-        if (!installed) {
+        if (!SCREEN_SHADING_PARITY) {
+            if (!installed) {
+                return;
+            }
+
+            Renderer.getInstance().endRenderPass();
+            Renderer.getInstance().setMainPass(hostPass);
+            ChimeraTerrainPipelines.suspendForScreens();
+            // Reflect reality: the host pass is now the installed pass. Without
+            // this, exitScreenMode's install() early-returns on the installed
+            // flag and chimera's pass is never restored - every frame after the
+            // first screen cycle runs on the host renderer (no HDR, no shadows).
+            installed = false;
+            screenMode = true;
+            ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
             return;
         }
 
-        Renderer.getInstance().endRenderPass();
-        Renderer.getInstance().setMainPass(hostPass);
-        ChimeraTerrainPipelines.suspendForScreens();
-        // Reflect reality: the host pass is now the installed pass. Without
-        // this, exitScreenMode's install() early-returns on the installed
-        // flag and chimera's pass is never restored - every frame after the
-        // first screen cycle runs on the host renderer (no HDR, no shadows).
-        installed = false;
-        screenMode = true;
-        ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
+        // Parity mode: chimera stays installed and shaded behind the screen.
+        // PostPassM ends any open pass before its barriers, Renderer's
+        // endRenderPass is null-safe when nothing is recording, and encoder
+        // draws targeting the main RT rebind our aux pass - so the blur
+        // chain composes with the live frame without special handling.
+        ChimeraMod.LOGGER.info("Screen open - chimera keeps rendering (shaded GUI backgrounds)");
     }
 
     public static void exitScreenMode() {
-        if (!screenMode) {
-            return;
-        }
+        if (!SCREEN_SHADING_PARITY) {
+            if (!screenMode) {
+                return;
+            }
 
-        screenMode = false;
-        install();
-        ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
+            screenMode = false;
+            install();
+            ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
+        }
     }
 }
