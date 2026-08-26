@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.minecraft.client.Minecraft;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.pass.MainPass;
@@ -11,9 +12,10 @@ import net.vulkanmod.vulkan.pass.MainPass;
  * - onHostRendererReady: capture VulkanMod's installed MainPass and install
  *   chimera's segmented pass.
  * - toggle (F8): swap between chimera and host.
- * - screen mode: with SCREEN_SHADING_PARITY=true the renderer stays
- *   installed and shaded while a vanilla screen is open (blur chain
- *   included); =false restores the legacy immediate host passthrough.
+ * - screen mode: SCREEN_SHADING_PARITY=true keeps the renderer installed
+ *   and shaded behind vanilla screens over a LIVE level; level teardown/
+ *   swap (respawn, portals, quit-to-title) always hands off to the host
+ *   via the WorldRenderer.setLevel hook until a live level returns.
  */
 public final class ChimeraRenderer {
 
@@ -27,6 +29,7 @@ public final class ChimeraRenderer {
     private static boolean ready;
     private static boolean installed;
     private static boolean screenMode;
+    private static boolean screenOpen;
     private static MainPass hostPass;
     private static ChimeraMainPass chimeraPass;
 
@@ -153,46 +156,87 @@ public final class ChimeraRenderer {
     }
 
     // ------------------------------------------------------------------
-    // Screen mode: parity keeps chimera live behind vanilla screens; the
-    // legacy branch below preserves the old full-passthrough behavior.
+    // Screen mode: parity keeps chimera live behind vanilla screens over a
+    // LIVE level; level teardown/swap hands off to the host via the
+    // WorldRenderer.setLevel hook until a live level returns.
     // ------------------------------------------------------------------
 
-    public static void enterScreenMode() {
-        if (!SCREEN_SHADING_PARITY) {
-            if (!installed) {
-                return;
-            }
+    public static void setScreenOpen(boolean open) {
+        screenOpen = open;
+    }
 
-            Renderer.getInstance().endRenderPass();
-            Renderer.getInstance().setMainPass(hostPass);
-            ChimeraTerrainPipelines.suspendForScreens();
-            // Reflect reality: the host pass is now the installed pass. Without
-            // this, exitScreenMode's install() early-returns on the installed
-            // flag and chimera's pass is never restored - every frame after the
-            // first screen cycle runs on the host renderer (no HDR, no shadows).
-            installed = false;
-            screenMode = true;
-            ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
+    /**
+     * Legacy passthrough: hand the frame back to the host until reinstated.
+     * Single source shared by the setScreen fallback and level hooks.
+     */
+    private static void legacyUnhand() {
+        Renderer.getInstance().endRenderPass();
+        Renderer.getInstance().setMainPass(hostPass);
+        ChimeraTerrainPipelines.suspendForScreens();
+        // Reflect reality: the host pass is now the installed pass. Without
+        // this, install() early-returns on the installed flag and chimera's
+        // pass is never restored - every frame after runs on the host
+        // renderer (no HDR, no shadows).
+        installed = false;
+        screenMode = true;
+    }
+
+    public static void enterScreenMode() {
+        if (SCREEN_SHADING_PARITY && Minecraft.getInstance().level != null) {
+            // Parity over a live level: PostPassM ends any open pass before
+            // its barriers, Renderer's endRenderPass is null-safe when nothing
+            // is recording, and encoder draws targeting the main RT rebind our
+            // aux pass - the blur chain composes with the live frame.
+            ChimeraMod.LOGGER.info("Screen open - chimera keeps rendering (shaded GUI backgrounds)");
             return;
         }
 
-        // Parity mode: chimera stays installed and shaded behind the screen.
-        // PostPassM ends any open pass before its barriers, Renderer's
-        // endRenderPass is null-safe when nothing is recording, and encoder
-        // draws targeting the main RT rebind our aux pass - so the blur
-        // chain composes with the live frame without special handling.
-        ChimeraMod.LOGGER.info("Screen open - chimera keeps rendering (shaded GUI backgrounds)");
+        // No live level (loading/transition screens) or legacy flag: the
+        // teardown/swap churn around those frames crashed the segmented
+        // frame's image transitions - use the proven host path instead.
+        if (!installed) {
+            return;
+        }
+        legacyUnhand();
+        ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
     }
 
     public static void exitScreenMode() {
-        if (!SCREEN_SHADING_PARITY) {
-            if (!screenMode) {
-                return;
+        if (SCREEN_SHADING_PARITY) {
+            if (screenMode) {
+                screenMode = false;
+                install();
+                ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
             }
-
-            screenMode = false;
-            install();
-            ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
+            return;
         }
+
+        if (!screenMode) {
+            return;
+        }
+        screenMode = false;
+        install();
+        ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
+    }
+
+    /** Level went away mid-screen: host takes over until a live level returns. */
+    public static void onLevelUnloaded() {
+        if (!SCREEN_SHADING_PARITY || !screenOpen || screenMode || !installed) {
+            return;
+        }
+
+        legacyUnhand();
+        ChimeraMod.LOGGER.info("Level unloaded - host renderer in charge (loading transition)");
+    }
+
+    /** Live level returned while a screen is still up: restore parity behind it. */
+    public static void onLevelLoaded() {
+        if (!SCREEN_SHADING_PARITY || !screenOpen || !screenMode) {
+            return;
+        }
+
+        install();
+        screenMode = false;
+        ChimeraMod.LOGGER.info("Level loaded - chimera resumes behind screen");
     }
 }

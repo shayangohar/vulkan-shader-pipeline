@@ -20,6 +20,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * That configuration existed because the old phase-flip design crashed
  * inside VulkanMod's post-chain barriers during the pause blur (KNOW-47);
  * it is kept verbatim as the one-flag rollback path.
+ * Level teardown during an open screen additionally hands off to the host
+ * via WorldRendererLevelMixin until a live level returns.
  */
 @Mixin(Minecraft.class)
 public abstract class ChimeraMinecraftMixin {
@@ -31,6 +33,7 @@ public abstract class ChimeraMinecraftMixin {
         }
 
         if (screen != null) {
+            ChimeraRenderer.setScreenOpen(screen != null);
             ChimeraRenderer.enterScreenMode();
         } else {
             ChimeraRenderer.exitScreenMode();
