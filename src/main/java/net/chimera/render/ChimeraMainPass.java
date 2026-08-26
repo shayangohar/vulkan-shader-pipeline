@@ -19,6 +19,7 @@ import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
+import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.framebuffer.SwapChain;
@@ -96,6 +97,8 @@ public class ChimeraMainPass implements MainPass {
      * state.
      */
     private boolean shadowPending;
+    /** Coalesces Beryl-style attachment refreshes across rapid screen changes. */
+    private boolean screenResourceRefreshScheduled;
 
     private GpuTexture hdrColorTexture;
     private GpuTextureView hdrColorTextureView;
@@ -251,6 +254,22 @@ public class ChimeraMainPass implements MainPass {
         this.shadowPending = false;
         return p;
     }
+    /**
+     * Vanilla can close MainPass attachment aliases while rebuilding screen
+     * resource graphs. Recreate them only after the owning frame fence laps,
+     * matching Beryl's setScreen frame-op lifecycle.
+     */
+    public void scheduleScreenResourceRefresh() {
+        if (this.screenResourceRefreshScheduled) {
+            return;
+        }
+        this.screenResourceRefreshScheduled = true;
+        MemoryManager.getInstance().addFrameOp(() -> {
+            this.screenResourceRefreshScheduled = false;
+            this.refreshFramebuffers();
+        });
+    }
+
 
     // ------------------------------------------------------------------
     // Segment control
@@ -294,6 +313,10 @@ public class ChimeraMainPass implements MainPass {
 
     @Override
     public void begin(VkCommandBuffer commandBuffer, MemoryStack stack) {
+        if (!this.framebuffersLive()) {
+            LOGGER.warn("[chimera] main attachment alias closed; rebuilding before frame recording");
+            this.refreshFramebuffers();
+        }
         this.levelPhase = false;
         this.pendingDepthClear = false;
     }
@@ -472,6 +495,13 @@ public class ChimeraMainPass implements MainPass {
         int width = Math.max(swapChain.getWidth(), 1);
         int height = Math.max(swapChain.getHeight(), 1);
 
+        createFramebuffers(width, height);
+        createRenderPasses();
+        createPipelines();
+        createInteropTextures();
+    }
+
+    private void createFramebuffers(int width, int height) {
         // 97 = VK_FORMAT_R16G16B16A16_SFLOAT
         this.hdrFramebuffer = new Framebuffer.Builder("chimeraHdr", width, height, 1, true)
                 .setFormat(97)
@@ -483,10 +513,6 @@ public class ChimeraMainPass implements MainPass {
         this.compositeFramebuffer = new Framebuffer.Builder("chimeraComposite", width, height, 1, true)
                 .setFormat(97)
                 .build();
-
-        createRenderPasses();
-        createPipelines();
-        createInteropTextures();
     }
 
     private void createRenderPasses() {
@@ -539,8 +565,50 @@ public class ChimeraMainPass implements MainPass {
         this.hdrDepthTextureView = device.createTextureView(this.hdrDepthTexture);
     }
 
+    private boolean framebuffersLive() {
+        return this.hdrFramebuffer != null
+                && this.hdrColorTexture != null
+                && !this.hdrColorTexture.isClosed()
+                && this.hdrDepthTexture != null
+                && !this.hdrDepthTexture.isClosed()
+                && this.hdrFramebuffer.getColorAttachment().getId() != 0L
+                && this.hdrFramebuffer.getDepthAttachment().getId() != 0L;
+    }
+
+    private void refreshFramebuffers() {
+        if (this.hdrFramebuffer == null || this.compositeFramebuffer == null) {
+            return;
+        }
+
+        Renderer.getInstance().endRenderPass();
+        releaseInteropTextures();
+        this.hdrFramebuffer.cleanUp(false);
+        this.compositeFramebuffer.cleanUp(true);
+
+        SwapChain swapChain = Renderer.getInstance().getSwapChain();
+        createFramebuffers(Math.max(swapChain.getWidth(), 1), Math.max(swapChain.getHeight(), 1));
+        createInteropTextures();
+
+        this.levelPhase = false;
+        this.pendingDepthClear = false;
+        this.shadowPending = false;
+        LOGGER.info("[chimera] refreshed main attachments after screen resource churn");
+    }
+
+    private void releaseInteropTextures() {
+        if (this.hdrColorTextureView != null) this.hdrColorTextureView.close();
+        if (this.hdrDepthTextureView != null) this.hdrDepthTextureView.close();
+        if (this.hdrColorTexture != null) this.hdrColorTexture.close();
+        if (this.hdrDepthTexture != null) this.hdrDepthTexture.close();
+        this.hdrColorTexture = null;
+        this.hdrColorTextureView = null;
+        this.hdrDepthTexture = null;
+        this.hdrDepthTextureView = null;
+    }
+
     private void cleanUpFramebuffersAndPasses() {
-        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(true);
+        releaseInteropTextures();
+        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(false);
         if (this.hdrRenderPass != null) this.hdrRenderPass.cleanUp();
         if (this.hdrAuxRenderPass != null) this.hdrAuxRenderPass.cleanUp();
         if (this.hdrAuxClearDepthRenderPass != null) this.hdrAuxClearDepthRenderPass.cleanUp();
