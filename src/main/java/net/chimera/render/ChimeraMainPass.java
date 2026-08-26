@@ -64,8 +64,11 @@ public class ChimeraMainPass implements MainPass {
     private RenderPass hdrAuxRenderPass;
     private RenderPass hdrAuxClearDepthRenderPass;
     private RenderPass presentRenderPass;
+    private Framebuffer compositeFramebuffer;
+    private RenderPass compositeRenderPass;
 
     private GraphicsPipeline presentPipeline;
+    private GraphicsPipeline compositePipeline;
 
     private ChimeraShadowMap shadowMap = new ChimeraShadowMap();
 
@@ -296,13 +299,24 @@ public class ChimeraMainPass implements MainPass {
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
-            hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            VTextureSelector.bindTexture(hdrColor);
+            VulkanImage compositeColor = this.compositeFramebuffer.getColorAttachment();
 
             VRenderSystem.disableDepthTest();
             VRenderSystem.disableCull();
             VRenderSystem.disableBlend();
 
+            // Composite segment: fullscreen pass over the finished frame.
+            // Identity shader today; tone mapping / grading stack on here.
+            hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
+            VTextureSelector.bindTexture(hdrColor);
+            drawFullscreen(commandBuffer, this.compositePipeline);
+            Renderer.getInstance().endRenderPass(commandBuffer);
+            compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            // Present blit samples the composite result, not raw HDR.
+            VTextureSelector.bindTexture(compositeColor);
             SwapChain swapChain = Renderer.getInstance().getSwapChain();
             if (swapChain.hasImages()) {
                 swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -452,6 +466,13 @@ public class ChimeraMainPass implements MainPass {
                 .setFormat(97)
                 .build();
 
+        // Composite target: identity pass proving the ping-pong machinery;
+        // a real post stack replaces the shader later. Depth rides along
+        // unused (DONT_CARE ops) to mirror every other chimera framebuffer.
+        this.compositeFramebuffer = new Framebuffer.Builder("chimeraComposite", width, height, 1, true)
+                .setFormat(97)
+                .build();
+
         createRenderPasses();
         createPipelines();
         createInteropTextures();
@@ -484,10 +505,17 @@ public class ChimeraMainPass implements MainPass {
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         this.presentRenderPass = b.build();
+
+        // Composite: full overwrite each frame from the finished HDR color.
+        b = RenderPass.builder(this.compositeFramebuffer);
+        b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        this.compositeRenderPass = b.build();
     }
 
     private void createPipelines() {
         this.presentPipeline = ChimeraPostPipelines.create("chimera_present");
+        this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
     }
 
     private void createInteropTextures() {
@@ -506,15 +534,21 @@ public class ChimeraMainPass implements MainPass {
         if (this.hdrAuxRenderPass != null) this.hdrAuxRenderPass.cleanUp();
         if (this.hdrAuxClearDepthRenderPass != null) this.hdrAuxClearDepthRenderPass.cleanUp();
         if (this.presentRenderPass != null) this.presentRenderPass.cleanUp();
+        if (this.compositeFramebuffer != null) this.compositeFramebuffer.cleanUp(true);
+        if (this.compositeRenderPass != null) this.compositeRenderPass.cleanUp();
         this.hdrFramebuffer = null;
         this.hdrRenderPass = null;
         this.hdrAuxRenderPass = null;
         this.hdrAuxClearDepthRenderPass = null;
         this.presentRenderPass = null;
+        this.compositeFramebuffer = null;
+        this.compositeRenderPass = null;
     }
 
     private void cleanUpPipelines() {
         if (this.presentPipeline != null) this.presentPipeline.cleanUp();
+        if (this.compositePipeline != null) this.compositePipeline.cleanUp();
         this.presentPipeline = null;
+        this.compositePipeline = null;
     }
 }
