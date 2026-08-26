@@ -333,6 +333,12 @@ public class ChimeraMainPass implements MainPass {
             Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
             VTextureSelector.bindTexture(hdrColor);
             drawFullscreen(commandBuffer, this.compositePipeline);
+            // VulkShade restores these immediately after resolveForGui.
+            // Without it, the first fullscreen GUI overlay inherits the
+            // composite pass' disabled depth/cull state and destroys output.
+            VRenderSystem.enableDepthTest();
+            VRenderSystem.depthMask(true);
+            VRenderSystem.enableCull();
             this.currentFramebuffer = this.compositeFramebuffer;
         }
     }
