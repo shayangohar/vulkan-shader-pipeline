@@ -37,7 +37,7 @@ public abstract class VkCommandEncoderAliasMixin {
             )
     )
     private GpuTexture chimera$mainFamilyAlias(GpuTextureView view) {
-        if (ChimeraRenderer.mainTargetInteropActive() && ChimeraRenderer.isMainFamilyView(view)) {
+        if (ChimeraRenderer.segmentsActive() && ChimeraRenderer.isMainFamilyView(view)) {
             return ChimeraRenderer.getCurrentMainColorTexture();
         }
         return view.texture();

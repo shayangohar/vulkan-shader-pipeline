@@ -9,16 +9,12 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Drives chimera's HDR segment inside LevelRenderer.renderLevel:
+ * Drives Chimera's world/output split inside LevelRenderer.renderLevel:
  *
- * - HEAD: opens the HDR segment (world renders into RGBA16F) and arms the
- *   shadow-pending flag on the main pass.
- * - The shadow segment itself renders at the tail of VulkanMod's SOLID
- *   section layer (WorldRendererMixin): by then cullTerrain has filled the
- *   section draw queues and the SOLID pass has just drawn from them, so the
- *   shadow phase sees exactly the state the solid pass drew from. The old
- *   hook here (INVOKE compileSections) raced section-graph updates and
- *   recorded zero draws; it is gone.
+ * - HEAD opens the internal RGBA16F world target.
+ * - The SOLID layer tail records the shadow map and resumes that target.
+ * - RETURN resolves the finished HDR world into the stable output target used
+ *   by hand, GUI, and VulkanMod's post chain.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraLevelRendererMixin {
@@ -29,6 +25,16 @@ public abstract class ChimeraLevelRendererMixin {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 pass.openLevelSegment();
+            }
+        }
+    }
+
+    @Inject(method = "renderLevel", at = @At("RETURN"))
+    private void chimera$finishHdrSegment(CallbackInfo ci) {
+        if (ChimeraRenderer.segmentsActive()) {
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            if (pass != null) {
+                pass.finishLevelSegment();
             }
         }
     }
