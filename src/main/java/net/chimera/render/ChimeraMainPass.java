@@ -59,6 +59,12 @@ public class ChimeraMainPass implements MainPass {
 
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
 
+    /** Bisect gates for the transition crash: -Dchimera.gate.noComposite / -Dchimera.gate.noShadow. */
+    private static final boolean COMPOSITE_ENABLED = !Boolean.getBoolean("chimera.gate.noComposite");
+    private static final boolean SHADOW_SEGMENT_ENABLED = !Boolean.getBoolean("chimera.gate.noShadow");
+    /** Set -Dchimera.traceTransitions=true to log every chimera image transition. */
+    private static final boolean TRACE_TRANSITIONS = Boolean.getBoolean("chimera.traceTransitions");
+
     private Framebuffer hdrFramebuffer;
     private RenderPass hdrRenderPass;
     private RenderPass hdrAuxRenderPass;
@@ -122,6 +128,7 @@ public class ChimeraMainPass implements MainPass {
         // Prepare the shadow color attachment for the render pass.
         VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer().getColorAttachment();
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            trace("shadowPre", "shadowColor", shadowColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
 
@@ -199,6 +206,7 @@ public class ChimeraMainPass implements MainPass {
 
         // Transition shadow map for sampling
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            trace("shadowPost", "shadowColor", shadowColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
@@ -242,6 +250,10 @@ public class ChimeraMainPass implements MainPass {
 
     /** Consumes the frame's shadow-pending flag; true at most once per level segment. */
     public boolean consumeShadowPending() {
+        if (!SHADOW_SEGMENT_ENABLED) {
+            this.shadowPending = false;
+            return false;
+        }
         boolean p = this.shadowPending;
         this.shadowPending = false;
         return p;
@@ -269,6 +281,7 @@ public class ChimeraMainPass implements MainPass {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
+            trace("openHdr", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
             Renderer.getInstance().beginRenderPass(this.hdrRenderPass, this.hdrFramebuffer);
@@ -307,23 +320,33 @@ public class ChimeraMainPass implements MainPass {
 
             // Composite segment: fullscreen pass over the finished frame.
             // Identity shader today; tone mapping / grading stack on here.
+            // -Dchimera.gate.noComposite skips it (presents raw HDR instead).
+            trace("endHdrRead", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
-            VTextureSelector.bindTexture(hdrColor);
-            drawFullscreen(commandBuffer, this.compositePipeline);
-            Renderer.getInstance().endRenderPass(commandBuffer);
-            compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (COMPOSITE_ENABLED) {
+                trace("endCompPre", "compositeColor", compositeColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
+                VTextureSelector.bindTexture(hdrColor);
+                drawFullscreen(commandBuffer, this.compositePipeline);
+                Renderer.getInstance().endRenderPass(commandBuffer);
+                trace("endCompPost", "compositeColor", compositeColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-            // Present blit samples the composite result, not raw HDR.
-            VTextureSelector.bindTexture(compositeColor);
+                // Present blit samples the composite result, not raw HDR.
+                VTextureSelector.bindTexture(compositeColor);
+            } else {
+                VTextureSelector.bindTexture(hdrColor);
+            }
             SwapChain swapChain = Renderer.getInstance().getSwapChain();
             if (swapChain.hasImages()) {
+                trace("presentSwap", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 Renderer.getInstance().beginRenderPass(this.presentRenderPass, swapChain);
                 drawFullscreen(commandBuffer, this.presentPipeline);
                 Renderer.getInstance().endRenderPass(commandBuffer);
 
+                trace("presentSrc", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
                 swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
             }
         }
@@ -367,6 +390,7 @@ public class ChimeraMainPass implements MainPass {
         }
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            trace("rebind", "hdrColor", target.getColorAttachment(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             target.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
 
@@ -550,5 +574,30 @@ public class ChimeraMainPass implements MainPass {
         if (this.compositePipeline != null) this.compositePipeline.cleanUp();
         this.presentPipeline = null;
         this.compositePipeline = null;
+    }
+
+    /**
+     * Diagnostic: logs every chimera image transition when
+     * -Dchimera.traceTransitions=true. The last traced line before a native
+     * crash names the faulting site and image.
+     */
+    private static void trace(String site, String image, VulkanImage img, int toLayout) {
+        if (!TRACE_TRANSITIONS) {
+            return;
+        }
+        LOGGER.info("[chimera] tr {} {} {}->{}", site, image,
+                layoutName(img.getCurrentLayout()), layoutName(toLayout));
+    }
+
+    private static String layoutName(int layout) {
+        return switch (layout) {
+            case 0 -> "UNDEFINED";
+            case 2 -> "COLOR_ATTACHMENT";
+            case 5 -> "SHADER_READ_ONLY";
+            case 6 -> "GENERAL";
+            case 7 -> "TRANSFER_DST";
+            case 1000001002 -> "PRESENT_SRC";
+            default -> "vk" + layout;
+        };
     }
 }

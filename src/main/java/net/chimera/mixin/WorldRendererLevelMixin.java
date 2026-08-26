@@ -3,6 +3,8 @@ package net.chimera.mixin;
 import net.chimera.render.ChimeraRenderer;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.vulkanmod.render.chunk.WorldRenderer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -23,10 +25,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(value = WorldRenderer.class, remap = false)
 public abstract class WorldRendererLevelMixin {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
+    private static final boolean TRACE = Boolean.getBoolean("chimera.traceTransitions");
+
     @Inject(method = "setLevel", at = @At("HEAD"))
     private void chimera$onSetLevel(ClientLevel level, CallbackInfo ci) {
         if (!ChimeraRenderer.isReady()) {
             return;
+        }
+
+        if (TRACE) {
+            LOGGER.info("[chimera] setLevel {}", level == null ? "null" : "live");
         }
 
         if (level == null) {

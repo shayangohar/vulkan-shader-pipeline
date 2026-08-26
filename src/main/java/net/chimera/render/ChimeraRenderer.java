@@ -20,12 +20,14 @@ import net.vulkanmod.vulkan.pass.MainPass;
 public final class ChimeraRenderer {
 
     /**
-     * True = keep chimera installed and shaded while vanilla screens are
-     * open (parity with Iris/Beryl). False = legacy immediate host
-     * passthrough on setScreen, kept verbatim as a one-flag rollback for
-     * the blur-chain barrier crash class (KNOW-47).
+     * True = keep chimera installed and shaded behind vanilla screens over a
+     * LIVE level (parity with Iris/Beryl); false - or any level-less screen -
+     * = legacy immediate host passthrough, kept verbatim as a one-flag
+     * rollback for the blur-chain barrier crash class (KNOW-47).
+     *
+     * Launch override: -Dchimera.gate.noParity forces legacy mode.
      */
-    public static final boolean SCREEN_SHADING_PARITY = true;
+    public static final boolean SCREEN_SHADING_PARITY = !Boolean.getBoolean("chimera.gate.noParity");
     private static boolean ready;
     private static boolean installed;
     private static boolean screenMode;
