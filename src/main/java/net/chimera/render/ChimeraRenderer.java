@@ -12,10 +12,11 @@ import net.vulkanmod.vulkan.pass.MainPass;
  * - onHostRendererReady: capture VulkanMod's installed MainPass and install
  *   chimera's segmented pass.
  * - toggle (F8): swap between chimera and host.
- * - screen mode: SCREEN_SHADING_PARITY=true keeps the renderer installed
- *   and shaded behind vanilla screens over a LIVE level; level teardown/
- *   swap (respawn, portals, quit-to-title) always hands off to the host
- *   via the WorldRenderer.setLevel hook until a live level returns.
+ * - screen mode: GUI_SHADING (-Dchimera.guiShading) keeps the renderer
+ *   installed and shaded behind vanilla screens over a LIVE level.
+ *   DEFAULT OFF: keeping it on across level teardown/swap churn (respawn,
+ *   portals) crashes in vkCmdPipelineBarrier during renderLevel even with
+ *   the setLevel handoff - isolated via gated bisect (TASK-63 round 4).
  */
 public final class ChimeraRenderer {
 
@@ -27,7 +28,7 @@ public final class ChimeraRenderer {
      *
      * Launch override: -Dchimera.gate.noParity forces legacy mode.
      */
-    public static final boolean SCREEN_SHADING_PARITY = debugFlag("chimera.gate.noParity");
+    public static final boolean GUI_SHADING = debugFlag("chimera.guiShading");
     private static boolean ready;
     private static boolean installed;
     private static boolean screenMode;
@@ -195,7 +196,7 @@ public final class ChimeraRenderer {
     }
 
     public static void enterScreenMode() {
-        if (SCREEN_SHADING_PARITY && Minecraft.getInstance().level != null) {
+        if (GUI_SHADING && Minecraft.getInstance().level != null) {
             // Parity over a live level: PostPassM ends any open pass before
             // its barriers, Renderer's endRenderPass is null-safe when nothing
             // is recording, and encoder draws targeting the main RT rebind our
@@ -215,7 +216,7 @@ public final class ChimeraRenderer {
     }
 
     public static void exitScreenMode() {
-        if (SCREEN_SHADING_PARITY) {
+        if (GUI_SHADING) {
             if (screenMode) {
                 screenMode = false;
                 install();
@@ -234,7 +235,7 @@ public final class ChimeraRenderer {
 
     /** Level went away mid-screen: host takes over until a live level returns. */
     public static void onLevelUnloaded() {
-        if (!SCREEN_SHADING_PARITY || !screenOpen || screenMode || !installed) {
+        if (!GUI_SHADING || !screenOpen || screenMode || !installed) {
             return;
         }
 
@@ -244,7 +245,7 @@ public final class ChimeraRenderer {
 
     /** Live level returned while a screen is still up: restore parity behind it. */
     public static void onLevelLoaded() {
-        if (!SCREEN_SHADING_PARITY || !screenOpen || !screenMode) {
+        if (!GUI_SHADING || !screenOpen || !screenMode) {
             return;
         }
 

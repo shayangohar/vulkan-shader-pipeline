@@ -59,9 +59,7 @@ public class ChimeraMainPass implements MainPass {
 
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
 
-    /** Bisect gates for the transition crash: -Dchimera.gate.noComposite / -Dchimera.gate.noShadow. */
-    private static final boolean COMPOSITE_ENABLED = ChimeraRenderer.debugFlag("chimera.gate.noComposite");
-    private static final boolean SHADOW_SEGMENT_ENABLED = ChimeraRenderer.debugFlag("chimera.gate.noShadow");
+    /** Diagnostic: -Dchimera.traceTransitions logs every chimera image transition. */
     private static final boolean TRACE_TRANSITIONS = ChimeraRenderer.debugFlag("chimera.traceTransitions");
 
     private Framebuffer hdrFramebuffer;
@@ -249,10 +247,6 @@ public class ChimeraMainPass implements MainPass {
 
     /** Consumes the frame's shadow-pending flag; true at most once per level segment. */
     public boolean consumeShadowPending() {
-        if (!SHADOW_SEGMENT_ENABLED) {
-            this.shadowPending = false;
-            return false;
-        }
         boolean p = this.shadowPending;
         this.shadowPending = false;
         return p;
@@ -319,24 +313,18 @@ public class ChimeraMainPass implements MainPass {
 
             // Composite segment: fullscreen pass over the finished frame.
             // Identity shader today; tone mapping / grading stack on here.
-            // -Dchimera.gate.noComposite skips it (presents raw HDR instead).
             trace("endHdrRead", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            if (COMPOSITE_ENABLED) {
-                trace("endCompPre", "compositeColor", compositeColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
-                VTextureSelector.bindTexture(hdrColor);
-                drawFullscreen(commandBuffer, this.compositePipeline);
-                Renderer.getInstance().endRenderPass(commandBuffer);
-                trace("endCompPost", "compositeColor", compositeColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
+            VTextureSelector.bindTexture(hdrColor);
+            drawFullscreen(commandBuffer, this.compositePipeline);
+            Renderer.getInstance().endRenderPass(commandBuffer);
+            trace("endCompPost", "compositeColor", compositeColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            compositeColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-                // Present blit samples the composite result, not raw HDR.
-                VTextureSelector.bindTexture(compositeColor);
-            } else {
-                VTextureSelector.bindTexture(hdrColor);
-            }
+            // Present blit samples the composite result, not raw HDR.
+            VTextureSelector.bindTexture(compositeColor);
             SwapChain swapChain = Renderer.getInstance().getSwapChain();
             if (swapChain.hasImages()) {
                 trace("presentSwap", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
