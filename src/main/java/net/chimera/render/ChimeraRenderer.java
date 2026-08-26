@@ -96,8 +96,18 @@ public final class ChimeraRenderer {
     }
 
 
-    /** Chimera's segments may run: installed and not in screen mode. */
+    /**
+     * Chimera's level segments may run only after screen resets have reached
+     * their owning frame-slot fences. GUI composition can continue meanwhile.
+     */
     public static boolean segmentsActive() {
+        return installed
+                && !screenMode
+                && (chimeraPass == null || !chimeraPass.screenResourceResetPending());
+    }
+
+    /** Main-target aliasing remains active while level segments are fenced. */
+    public static boolean mainTargetInteropActive() {
         return installed && !screenMode;
     }
 

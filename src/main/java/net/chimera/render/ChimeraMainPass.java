@@ -99,6 +99,8 @@ public class ChimeraMainPass implements MainPass {
     private boolean shadowPending;
     /** True only while the current HDR/composite attachment pair is usable. */
     private boolean frameResourcesReady;
+    /** Number of screen resets waiting for their owning frame-slot fence. */
+    private int pendingScreenResourceResets;
 
     private GpuTexture hdrColorTexture;
     private GpuTextureView hdrColorTextureView;
@@ -256,11 +258,30 @@ public class ChimeraMainPass implements MainPass {
     }
     /**
      * Vanilla can close MainPass attachment aliases while rebuilding screen
-     * resource graphs. Queue every screen change independently so the reset
-     * executes for the frame slot that observed that change.
+     * resource graphs. Queue every screen change independently for the frame
+     * slot that observed it, and suspend level segments until every queued
+     * reset has reached its owning fence.
      */
     public void scheduleScreenResourceReset() {
-        MemoryManager.getInstance().addFrameOp(this::invalidateFrameResources);
+        this.pendingScreenResourceResets++;
+        if (TRACE_TRANSITIONS) {
+            LOGGER.info("[chimera] scheduled main attachment reset frame={} hdrId={} pending={}",
+                    Renderer.getCurrentFrame(), hdrImageId(), this.pendingScreenResourceResets);
+        }
+        MemoryManager.getInstance().addFrameOp(this::runScheduledScreenResourceReset);
+    }
+
+    boolean screenResourceResetPending() {
+        return this.pendingScreenResourceResets != 0;
+    }
+
+    private void runScheduledScreenResourceReset() {
+        invalidateFrameResources();
+        this.pendingScreenResourceResets--;
+        if (TRACE_TRANSITIONS) {
+            LOGGER.info("[chimera] completed main attachment reset frame={} pending={}",
+                    Renderer.getCurrentFrame(), this.pendingScreenResourceResets);
+        }
     }
 
     /**
@@ -580,7 +601,12 @@ public class ChimeraMainPass implements MainPass {
                 && this.compositeFramebuffer.getDepthAttachment().getId() != 0L;
     }
 
+    private long hdrImageId() {
+        return this.hdrFramebuffer == null ? 0L : this.hdrFramebuffer.getColorAttachment().getId();
+    }
+
     private void invalidateFrameResources() {
+        long oldHdrId = hdrImageId();
         boolean resourcesPresent = this.hdrFramebuffer != null
                 || this.compositeFramebuffer != null
                 || this.hdrColorTexture != null
@@ -603,7 +629,8 @@ public class ChimeraMainPass implements MainPass {
         this.hdrFramebuffer = null;
         this.compositeFramebuffer = null;
         if (TRACE_TRANSITIONS) {
-            LOGGER.info("[chimera] invalidated main attachments at frame boundary");
+            LOGGER.info("[chimera] invalidated main attachments at frame boundary frame={} oldHdrId={}",
+                    Renderer.getCurrentFrame(), oldHdrId);
         }
     }
 
@@ -618,7 +645,8 @@ public class ChimeraMainPass implements MainPass {
         createInteropTextures();
         this.frameResourcesReady = true;
         if (TRACE_TRANSITIONS) {
-            LOGGER.info("[chimera] recreated main attachments before frame");
+            LOGGER.info("[chimera] recreated main attachments before frame frame={} newHdrId={}",
+                    Renderer.getCurrentFrame(), hdrImageId());
         }
     }
 
@@ -668,7 +696,8 @@ public class ChimeraMainPass implements MainPass {
         if (!TRACE_TRANSITIONS) {
             return;
         }
-        LOGGER.info("[chimera] tr {} {} {}->{}", site, image,
+        LOGGER.info("[chimera] tr {} frame={} {} id={} {}->{}", site,
+                Renderer.getCurrentFrame(), image, img.getId(),
                 layoutName(img.getCurrentLayout()), layoutName(toLayout));
     }
 
