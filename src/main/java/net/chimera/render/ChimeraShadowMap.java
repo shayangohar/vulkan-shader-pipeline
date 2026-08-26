@@ -1,6 +1,5 @@
 package net.chimera.render;
 
-import net.minecraft.client.Minecraft;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;

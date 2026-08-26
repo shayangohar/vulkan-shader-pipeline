@@ -26,7 +26,8 @@ public final class ChimeraRenderer {
      * = legacy immediate host passthrough, kept verbatim as a one-flag
      * rollback for the blur-chain barrier crash class (KNOW-47).
      *
-     * Launch override: -Dchimera.gate.noParity forces legacy mode.
+     * Opt-in via -Dchimera.guiShading; default off - enabling it across
+     * level transitions crashes (TASK-63 / TASK-64).
      */
     public static final boolean GUI_SHADING = debugFlag("chimera.guiShading");
     private static boolean ready;
@@ -94,10 +95,6 @@ public final class ChimeraRenderer {
         return installed;
     }
 
-    /** True while a vanilla screen has forced the host renderer takeover. */
-    public static boolean isScreenMode() {
-        return screenMode;
-    }
 
     /** Chimera's segments may run: installed and not in screen mode. */
     public static boolean segmentsActive() {
