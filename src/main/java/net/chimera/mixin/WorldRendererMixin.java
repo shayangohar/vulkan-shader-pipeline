@@ -38,7 +38,7 @@ public abstract class WorldRendererMixin {
         if (!ChimeraRenderer.segmentsActive()) return;
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
         if (pass != null && pass.consumeShadowPending()) {
-            pass.renderShadowSegment();
+            pass.renderShadowSegment(camX, camY, camZ);
         }
     }
 }

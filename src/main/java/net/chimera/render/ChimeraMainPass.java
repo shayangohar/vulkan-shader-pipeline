@@ -6,7 +6,6 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.mixin.WorldRendererAccessor;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
-import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.render.chunk.ChunkArea;
 import net.vulkanmod.render.chunk.RenderSection;
 import net.vulkanmod.render.chunk.WorldRenderer;
@@ -111,15 +110,11 @@ public class ChimeraMainPass implements MainPass {
      * renderSectionLayer's rebindMainTarget opens the shadow pass (via the
      * shadowPassActive redirect) and this method closes it afterward.
      */
-    public void renderShadowMap() {
+    public void renderShadowMap(double cameraX, double cameraY, double cameraZ) {
         VkCommandBuffer cmd = Renderer.getCommandBuffer();
-        var mc = net.minecraft.client.Minecraft.getInstance();
-
-        // Compute light matrices
-        Vec3 playerPos = mc.player.position();
         // TODO: compute from level time — fixed noon angle for M3 shadow testing
         float celestialAngle = 0.25F;
-        this.shadowMap.updateLight(celestialAngle, playerPos);
+        this.shadowMap.updateLight(celestialAngle);
 
         // Prepare the shadow color attachment for the render pass.
         VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer().getColorAttachment();
@@ -188,7 +183,7 @@ public class ChimeraMainPass implements MainPass {
             }
             worldRenderer.renderSectionLayer(
                     opaqueType,
-                    playerPos.x, playerPos.y, playerPos.z,
+                    cameraX, cameraY, cameraZ,
                     this.shadowMap.getLightView(),
                     this.shadowMap.getLightProjection()
             );
@@ -223,7 +218,7 @@ public class ChimeraMainPass implements MainPass {
      * so the shadow phase sees exactly the state the solid pass saw —
      * never a possibly-empty fresh SectionGraph.
      */
-    public void renderShadowSegment() {
+    public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.isInitialized()) {
             return;
         }
@@ -235,7 +230,7 @@ public class ChimeraMainPass implements MainPass {
         VkCommandBuffer cmd = Renderer.getCommandBuffer();
         Renderer.getInstance().endRenderPass(cmd);
         try {
-            this.renderShadowMap();
+            this.renderShadowMap(cameraX, cameraY, cameraZ);
         } finally {
             // Reopen the HDR pass (load ops) for the terrain layers.
             this.rebindMainTarget();

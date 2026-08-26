@@ -1,7 +1,6 @@
 package net.chimera.render;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
@@ -90,10 +89,10 @@ public class ChimeraShadowMap {
     }
 
     /**
-     * Computes the light-space matrices from the celestial angle.
+     * Computes camera-relative light-space matrices from the celestial angle.
      * Called each frame before the shadow pass.
      */
-    public void updateLight(float celestialAngle, Vec3 cameraPos) {
+    public void updateLight(float celestialAngle) {
         // Sun direction: rotates around the X axis based on celestial angle
         // At celestialAngle=0 (noon), sun is overhead
         float sunAngleRad = celestialAngle * (float) Math.PI * 2.0F;
@@ -109,17 +108,14 @@ public class ChimeraShadowMap {
 
         this.lightDir.set(sunX, sunY, sunZ).normalize();
 
-        // Light view: look from sun toward the player position
-        Vec3 eyePos = new Vec3(
-                cameraPos.x + this.lightDir.x * SHADOW_DISTANCE,
-                cameraPos.y + this.lightDir.y * SHADOW_DISTANCE,
-                cameraPos.z + this.lightDir.z * SHADOW_DISTANCE
-        );
-
+        // DrawBuffers already subtracts the render camera from terrain
+        // positions, so the light view must use the same relative origin.
         this.lightView.identity();
         this.lightView.lookAt(
-                (float) eyePos.x, (float) eyePos.y, (float) eyePos.z,
-                (float) cameraPos.x, (float) cameraPos.y, (float) cameraPos.z,
+                this.lightDir.x * SHADOW_DISTANCE,
+                this.lightDir.y * SHADOW_DISTANCE,
+                this.lightDir.z * SHADOW_DISTANCE,
+                0.0F, 0.0F, 0.0F,
                 0.0F, 1.0F, 0.0F
         );
 
