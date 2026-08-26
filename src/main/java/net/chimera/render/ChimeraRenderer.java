@@ -27,7 +27,7 @@ public final class ChimeraRenderer {
      *
      * Launch override: -Dchimera.gate.noParity forces legacy mode.
      */
-    public static final boolean SCREEN_SHADING_PARITY = !Boolean.getBoolean("chimera.gate.noParity");
+    public static final boolean SCREEN_SHADING_PARITY = debugFlag("chimera.gate.noParity");
     private static boolean ready;
     private static boolean installed;
     private static boolean screenMode;
@@ -36,6 +36,17 @@ public final class ChimeraRenderer {
     private static ChimeraMainPass chimeraPass;
 
     private ChimeraRenderer() {}
+
+    /**
+     * Debug/bisect switch parser: absent = disabled; a bare -Dname (empty
+     * value) or any value other than "false" (case-insensitive) = enabled.
+     * Boolean.getBoolean would ignore bare flags - it demands the literal
+     * string "true" - which silently deactivated the whole gate matrix.
+     */
+    public static boolean debugFlag(String name) {
+        String value = System.getProperty(name);
+        return value != null && !"false".equalsIgnoreCase(value);
+    }
 
     public static void onHostRendererReady() {
         Renderer renderer = Renderer.getInstance();

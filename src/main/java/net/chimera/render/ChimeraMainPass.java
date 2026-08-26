@@ -60,10 +60,9 @@ public class ChimeraMainPass implements MainPass {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
 
     /** Bisect gates for the transition crash: -Dchimera.gate.noComposite / -Dchimera.gate.noShadow. */
-    private static final boolean COMPOSITE_ENABLED = !Boolean.getBoolean("chimera.gate.noComposite");
-    private static final boolean SHADOW_SEGMENT_ENABLED = !Boolean.getBoolean("chimera.gate.noShadow");
-    /** Set -Dchimera.traceTransitions=true to log every chimera image transition. */
-    private static final boolean TRACE_TRANSITIONS = Boolean.getBoolean("chimera.traceTransitions");
+    private static final boolean COMPOSITE_ENABLED = ChimeraRenderer.debugFlag("chimera.gate.noComposite");
+    private static final boolean SHADOW_SEGMENT_ENABLED = ChimeraRenderer.debugFlag("chimera.gate.noShadow");
+    private static final boolean TRACE_TRANSITIONS = ChimeraRenderer.debugFlag("chimera.traceTransitions");
 
     private Framebuffer hdrFramebuffer;
     private RenderPass hdrRenderPass;

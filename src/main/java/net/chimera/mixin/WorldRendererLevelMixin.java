@@ -18,15 +18,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * teardown/swap point, so parity hands off to the host here and reinstalls
  * the moment a live level exists again.
  *
- * Crash class this prevents (hs_err_pid78880/92932): keeping the segmented
- * frame installed across level churn crashed inside vkCmdPipelineBarrier
- * from VulkanImage.transitionImageLayout during renderLevel.
+ * Crash context (hs_err_pid78880/92932/100460/111080): transition-crash
+ * investigation - see TASK-63 round 3 for the trace/bisect design.
  */
 @Mixin(value = WorldRenderer.class, remap = false)
 public abstract class WorldRendererLevelMixin {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
-    private static final boolean TRACE = Boolean.getBoolean("chimera.traceTransitions");
+    private static final boolean TRACE = ChimeraRenderer.debugFlag("chimera.traceTransitions");
 
     @Inject(method = "setLevel", at = @At("HEAD"))
     private void chimera$onSetLevel(ClientLevel level, CallbackInfo ci) {
