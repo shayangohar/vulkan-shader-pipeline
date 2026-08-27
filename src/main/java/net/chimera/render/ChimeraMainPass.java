@@ -292,12 +292,21 @@ public class ChimeraMainPass implements MainPass {
             VRenderSystem.disableCull();
             VRenderSystem.disableBlend();
             Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
+            VulkanImage[] prevPackSlots = null;
             if (this.packCompositePipeline != null) {
-                bindPackSamplers(this.packCompositeSlots, hdrColor);
+                prevPackSlots = bindPackSamplers(this.packCompositeSlots, hdrColor);
             } else {
                 VTextureSelector.bindTexture(hdrColor);
             }
             drawFullscreen(commandBuffer, resolvePipeline);
+            // boundTextures is a global table shared with the host renderer;
+            // restore every slot the pack composite touched so identity-level
+            // state survives the seam (and world-leave boundaries).
+            if (prevPackSlots != null) {
+                for (int i = 0; i < prevPackSlots.length; i++) {
+                    VTextureSelector.bindTexture(this.packCompositeSlots[i], prevPackSlots[i]);
+                }
+            }
             // VulkShade restores these immediately after resolveForGui.
             // Without it, the first fullscreen GUI overlay inherits the
             // composite pass' disabled depth/cull state and destroys output.
@@ -338,8 +347,9 @@ public class ChimeraMainPass implements MainPass {
             VulkanImage outputColor = this.compositeFramebuffer.getColorAttachment();
             trace("presentRead", "outputColor", outputColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             outputColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            VulkanImage[] prevPackSlots = null;
             if (this.packFinalPipeline != null) {
-                bindPackSamplers(this.packFinalSlots, outputColor);
+                prevPackSlots = bindPackSamplers(this.packFinalSlots, outputColor);
             } else {
                 VTextureSelector.bindTexture(outputColor);
             }
@@ -377,6 +387,22 @@ public class ChimeraMainPass implements MainPass {
                 try {
                     drawFullscreen(commandBuffer,
                             this.packFinalPipeline != null ? this.packFinalPipeline : this.presentPipeline);
+                    if (prevPackSlots != null) {
+                        for (int i = 0; i < prevPackSlots.length; i++) {
+                            int slot = this.packFinalSlots[i];
+                            if (slot != 0) {
+                                VTextureSelector.bindTexture(slot, prevPackSlots[i]);
+                            }
+                        }
+                    }
+                    // Identity's end-of-frame state after the present is
+                    // slot 0 = outputColor. The captured slot 0 can be
+                    // chimera's own bindAsTexture residue (hdrColor), which
+                    // the next world-leave churn destroys; leaving it would
+                    // hand the host a dead image at the transition.
+                    if (this.packFinalPipeline != null) {
+                        VTextureSelector.bindTexture(outputColor);
+                    }
                 } finally {
                     VRenderSystem.depthTest = depthTest;
                     VRenderSystem.depthMask = depthMask;
@@ -417,12 +443,32 @@ public class ChimeraMainPass implements MainPass {
      * map; depthtex0 reads the HDR depth attachment. Every declared slot must
      * be bound so no descriptor references a slot that was never filled;
      * missing sources are skipped, never fatal.
+     *
+     * boundTextures is a global table shared with the host renderer, so this
+     * returns the previously bound image for each slot (captured once per
+     * slot, duplicates share their first capture) and the caller MUST restore
+     * them after the seam draw. Descriptors are written at draw time from
+     * boundTextures, so the restore is safe for the already-recorded frame.
      */
-    private void bindPackSamplers(int[] slots, VulkanImage colortexImage) {
+    private VulkanImage[] bindPackSamplers(int[] slots, VulkanImage colortexImage) {
         if (slots == null) {
-            return;
+            return null;
         }
-        for (int slot : slots) {
+        VulkanImage[] previous = new VulkanImage[slots.length];
+        for (int i = 0; i < slots.length; i++) {
+            int slot = slots[i];
+            boolean duplicate = false;
+            for (int j = 0; j < i; j++) {
+                if (slots[j] == slot) {
+                    previous[i] = previous[j];
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) {
+                continue;
+            }
+            previous[i] = VTextureSelector.getImage(slot);
             if (slot <= 3) {
                 VTextureSelector.bindTexture(slot, colortexImage);
             } else if (slot == 5) {
@@ -438,6 +484,7 @@ public class ChimeraMainPass implements MainPass {
                 }
             }
         }
+        return previous;
     }
 
     // ------------------------------------------------------------------
@@ -562,6 +609,12 @@ public class ChimeraMainPass implements MainPass {
         this.shadowMap.cleanUp();
         cleanUpFramebuffersAndPasses();
         cleanUpPipelines();
+        if (this.packCompositePipeline != null) this.packCompositePipeline.cleanUp();
+        if (this.packFinalPipeline != null) this.packFinalPipeline.cleanUp();
+        this.packCompositePipeline = null;
+        this.packCompositeSlots = null;
+        this.packFinalPipeline = null;
+        this.packFinalSlots = null;
         this.mainFamilyViews.clear();
     }
 
@@ -662,6 +715,17 @@ public class ChimeraMainPass implements MainPass {
      * so a bad pack can never break the frame.
      */
     private void loadPackPipelines() {
+        if (this.packCompositePipeline != null) {
+            // Pack pipelines are pass-agnostic (VulkanMod builds pipeline
+            // variants from the state at bind, render pass included), so a
+            // retained object stays correct across createResources' pass
+            // recreations. Keeping them session-long removes pack
+            // pipeline/descriptor-set destruction (immediate vkDestroyPipeline
+            // in GraphicsPipeline.cleanUp) from the createResources churn
+            // that fires at screen openings - wedge objects must not churn
+            // at frame boundaries. They are destroyed in cleanUp() only.
+            return;
+        }
         this.packCompositePipeline = null;
         this.packCompositeSlots = null;
         this.packFinalPipeline = null;
@@ -872,14 +936,8 @@ public class ChimeraMainPass implements MainPass {
     private void cleanUpPipelines() {
         if (this.presentPipeline != null) this.presentPipeline.cleanUp();
         if (this.compositePipeline != null) this.compositePipeline.cleanUp();
-        if (this.packCompositePipeline != null) this.packCompositePipeline.cleanUp();
-        if (this.packFinalPipeline != null) this.packFinalPipeline.cleanUp();
         this.presentPipeline = null;
         this.compositePipeline = null;
-        this.packCompositePipeline = null;
-        this.packCompositeSlots = null;
-        this.packFinalPipeline = null;
-        this.packFinalSlots = null;
     }
 
     /**
