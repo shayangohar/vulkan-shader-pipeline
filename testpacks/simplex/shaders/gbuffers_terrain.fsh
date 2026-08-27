@@ -39,10 +39,13 @@ void main() {
     float shadow = texture2D(shadowtex0, vec2(0.5, 0.5)).r; // machinery proof only, not correct shadow math
     // Screen-space ramp: gl_FragCoord.x sweeps 0..2560, so the left half of
     // the screen shifts cool (G up, R down), the right half warm (R up).
-    // Albedo is floored so the ramp stays visible in shadowed/cave views.
+    // The floor applies to the LIGHT term, not the albedo: clamping albedo
+    // flattens dark textures (obsidian renders as a uniform gray blob — its
+    // texels are all below the clamp). Flooring light keeps texture detail
+    // at any brightness while the demo stays readable in caves/night.
     float gx = gl_FragCoord.x / 2560.0;
-    vec3 base = color.rgb * max(albedo.rgb, vec3(0.35))
-            * vec3(0.5 + 0.5 * gx, 1.0 - 0.5 * gx, 0.5);
+    vec3 light = max(color.rgb * vec3(0.5 + 0.5 * gx, 1.0 - 0.5 * gx, 0.5), vec3(0.30));
+    vec3 base = albedo.rgb * light;
     base *= 0.6 + 0.4 * shadow;
     gl_FragColor = vec4(base, 1.0);
 }
