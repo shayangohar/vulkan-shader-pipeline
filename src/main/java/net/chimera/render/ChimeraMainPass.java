@@ -1,21 +1,13 @@
 package net.chimera.render;
 import java.util.Collections;
 import java.util.IdentityHashMap;
-import java.util.Iterator;
 import java.util.Set;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import net.chimera.mixin.WorldRendererAccessor;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
-import net.vulkanmod.render.chunk.ChunkArea;
-import net.vulkanmod.render.chunk.RenderSection;
 import net.vulkanmod.render.chunk.WorldRenderer;
-import net.vulkanmod.render.chunk.buffer.DrawBuffers;
-import net.vulkanmod.render.chunk.buffer.DrawParametersBuffer;
-import net.vulkanmod.render.chunk.cull.QuadFacing;
-import net.vulkanmod.render.chunk.graph.SectionGraph;
 import net.vulkanmod.render.engine.VkGpuDevice;
 import net.vulkanmod.render.engine.VkGpuTexture;
 import net.vulkanmod.render.shader.PipelineManager;
@@ -94,8 +86,6 @@ public class ChimeraMainPass implements MainPass {
      * target, so this redirects terrain into the shadow map.
      */
     private boolean shadowPassActive;
-    /** Caps the empty-graph shadow diagnostic to a few lines per session. */
-    private int shadowDiagLogs = 3;
 
     /**
      * Armed at level-segment HEAD, consumed at the SOLID layer tail
@@ -153,55 +143,10 @@ public class ChimeraMainPass implements MainPass {
             VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
             VRenderSystem.calculateMVP();
 
-            WorldRenderer worldRenderer = WorldRenderer.getInstance();
-            // Capped loop-state diagnostic rationale: captures what the main
-            // opaque pass just drew from. If the shadow pass ever records zero
-            // draws while idx0 values are non-zero, state was mutated between
-            // the two calls; all-zero idx0 means DrawParametersBuffer was
-            // zeroed in between.
             // uniqueOpaqueLayer folds SOLID into CUTOUT at mesh upload, so
             // the shadow pass must render the remapped opaque layer.
             TerrainRenderType opaqueType = TerrainRenderType.getRemapped(TerrainRenderType.SOLID);
-            if (this.shadowDiagLogs > 0) {
-                this.shadowDiagLogs--;
-                int areas = 0;
-                int eligible = 0;
-                int totalSections = 0;
-                String idx0 = "n/a";
-                SectionGraph graph = ((WorldRendererAccessor) (Object) worldRenderer).chimera$getSectionGraph();
-                if (graph != null && graph.getChunkAreaQueue() != null) {
-                    for (Iterator<ChunkArea> areaIt = graph.getChunkAreaQueue().iterator(); areaIt.hasNext(); ) {
-                        ChunkArea area = areaIt.next();
-                        areas++;
-                        totalSections += area.sectionQueue.size();
-                        DrawBuffers drawBuffers = area.getDrawBuffers();
-                        if (drawBuffers.getAreaBuffer(opaqueType) == null || area.sectionQueue.size() == 0) {
-                            continue;
-                        }
-                        eligible++;
-                        if (!"n/a".equals(idx0)) {
-                            continue;
-                        }
-                        StringBuilder counts = new StringBuilder();
-                        int n = 0;
-                        for (RenderSection section : area.sectionQueue) {
-                            if (n >= 3) break;
-                            long paramsPtr = DrawParametersBuffer.getParamsPtr(
-                                    drawBuffers.getDrawParamsPtr(),
-                                    section.inAreaIndex,
-                                    opaqueType.ordinal(),
-                                    QuadFacing.UNDEFINED.ordinal());
-                            counts.append(n == 0 ? "" : ',').append(DrawParametersBuffer.getIndexCount(paramsPtr));
-                            n++;
-                        }
-                        idx0 = counts.toString();
-                    }
-                }
-                LOGGER.info("[chimera] shadow loop: areas={}, eligible={}, totalSections={}, idx0=[{}], visibleSections={}, graphNeedsUpdate={}, type={}",
-                        areas, eligible, totalSections, idx0,
-                        worldRenderer.getVisibleSectionsCount(), worldRenderer.graphNeedsUpdate(), opaqueType);
-            }
-            worldRenderer.renderSectionLayer(
+            WorldRenderer.getInstance().renderSectionLayer(
                     opaqueType,
                     cameraX, cameraY, cameraZ,
                     this.shadowMap.getLightView(),

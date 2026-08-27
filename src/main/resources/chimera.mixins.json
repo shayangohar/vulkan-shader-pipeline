@@ -12,7 +12,6 @@
     "ChimeraLevelRendererMixin",
     "ChimeraMinecraftMixin",
     "VkCommandEncoderAliasMixin",
-    "WorldRendererAccessor",
     "WorldRendererMixin",
     "WorldRendererLevelMixin"
   ],

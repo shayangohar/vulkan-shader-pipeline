@@ -11,25 +11,13 @@ import net.vulkanmod.vulkan.pass.MainPass;
  * Owns the main-pass takeover lifecycle:
  * - onHostRendererReady: capture VulkanMod's installed MainPass and install
  *   chimera's segmented pass.
- * - toggle (F8): swap between chimera and host.
- * - screen mode: GUI_SHADING (-Dchimera.guiShading) keeps the renderer
- *   installed and shaded behind vanilla screens over a LIVE level.
- *   DEFAULT OFF: keeping it on across level teardown/swap churn (respawn,
- *   portals) crashes in vkCmdPipelineBarrier during renderLevel even with
- *   the setLevel handoff - isolated via gated bisect (TASK-63 round 4).
+ * - screen mode (default on): the renderer stays installed and shaded behind
+ *   vanilla screens over a LIVE level; level teardown/swap churn (respawn,
+ *   portals, loading screens) hands off to the host via the setLevel hook
+ *   until a live level returns.
  */
 public final class ChimeraRenderer {
 
-    /**
-     * True = keep chimera installed and shaded behind vanilla screens over a
-     * LIVE level (parity with Iris/Beryl); false - or any level-less screen -
-     * = legacy immediate host passthrough, kept verbatim as a one-flag
-     * rollback for the blur-chain barrier crash class (KNOW-47).
-     *
-     * Opt-in via -Dchimera.guiShading; default off - enabling it across
-     * level transitions crashes (TASK-63 / TASK-64).
-     */
-    public static final boolean GUI_SHADING = debugFlag("chimera.guiShading");
     private static boolean ready;
     private static boolean installed;
     private static boolean screenMode;
@@ -120,24 +108,6 @@ public final class ChimeraRenderer {
         return chimeraPass != null ? chimeraPass.currentMainColorTexture() : null;
     }
 
-    private static int depthRedirectLogs = 3;
-    private static int depthCallSiteLogs = 6;
-
-    public static void debugDepthCallSite() {
-        if (depthCallSiteLogs > 0) {
-            depthCallSiteLogs--;
-            ChimeraMod.LOGGER.info("[dbg] clearDepthTexture call site reached; boundPass={}",
-                    Renderer.getInstance().getBoundRenderPass() != null ? "open" : "closed");
-        }
-    }
-
-    public static void debugDepthRedirect() {
-        if (depthRedirectLogs > 0) {
-            depthRedirectLogs--;
-            ChimeraMod.LOGGER.info("[dbg] hand depth-clear redirected (in-pass)");
-        }
-    }
-
     private static void install() {
         if (!ready || installed) {
             return;
@@ -177,7 +147,7 @@ public final class ChimeraRenderer {
 
     public static void setScreenOpen(boolean open) {
         screenOpen = open;
-        if (GUI_SHADING && chimeraPass != null) {
+        if (chimeraPass != null) {
             chimeraPass.scheduleScreenResourceReset();
         }
     }
@@ -206,7 +176,7 @@ public final class ChimeraRenderer {
     }
 
     public static void enterScreenMode() {
-        if (GUI_SHADING && Minecraft.getInstance().level != null) {
+        if (Minecraft.getInstance().level != null) {
             // Parity over a live level: PostPassM ends any open pass before
             // its barriers, Renderer's endRenderPass is null-safe when nothing
             // is recording, and encoder draws targeting the main RT rebind our
@@ -215,9 +185,9 @@ public final class ChimeraRenderer {
             return;
         }
 
-        // No live level (loading/transition screens) or legacy flag: the
-        // teardown/swap churn around those frames crashed the segmented
-        // frame's image transitions - use the proven host path instead.
+        // No live level (loading/transition screens): the teardown/swap churn
+        // around those frames crashed the segmented frame's image transitions
+        // - use the proven host path instead.
         if (!installed) {
             return;
         }
@@ -226,15 +196,6 @@ public final class ChimeraRenderer {
     }
 
     public static void exitScreenMode() {
-        if (GUI_SHADING) {
-            if (screenMode) {
-                screenMode = false;
-                install();
-                ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
-            }
-            return;
-        }
-
         if (!screenMode) {
             return;
         }
@@ -245,7 +206,7 @@ public final class ChimeraRenderer {
 
     /** Level went away mid-screen: host takes over until a live level returns. */
     public static void onLevelUnloaded() {
-        if (!GUI_SHADING || !screenOpen || screenMode || !installed) {
+        if (!screenOpen || screenMode || !installed) {
             return;
         }
 
@@ -255,7 +216,7 @@ public final class ChimeraRenderer {
 
     /** Live level returned while a screen is still up: restore parity behind it. */
     public static void onLevelLoaded() {
-        if (!GUI_SHADING || !screenOpen || !screenMode) {
+        if (!screenOpen || !screenMode) {
             return;
         }
 

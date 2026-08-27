@@ -39,10 +39,7 @@ public abstract class GameRendererDepthMixin {
             return;
         }
 
-        ChimeraRenderer.debugDepthCallSite();
-
         if (Renderer.getInstance().getBoundRenderPass() != null) {
-            ChimeraRenderer.debugDepthRedirect();
             // Mirror the host's clear preamble exactly: vkCmdClearAttachments
             // respects the current scissor, and a stale depth mask from world
             // rendering can suppress the clear.
