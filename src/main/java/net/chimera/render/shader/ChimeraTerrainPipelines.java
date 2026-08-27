@@ -27,8 +27,25 @@ import net.vulkanmod.vulkan.shader.SPIRVUtils;
 public final class ChimeraTerrainPipelines {
     private static boolean initialized;
     private static GraphicsPipeline terrainPipeline;
+    /** Pack geometry program (gbuffers_terrain) installed over the chimera terrain pipeline; null = none. */
+    private static GraphicsPipeline geometryOverride;
 
     private ChimeraTerrainPipelines() {}
+
+    /**
+     * Installs/clears the pack geometry override. All terrain getter sites
+     * route through getTerrainPipeline(), so the override composes with the
+     * shadow-segment swap and its restore without touching ChimeraMainPass.
+     */
+    public static void setGeometryOverride(GraphicsPipeline pipeline) {
+        geometryOverride = pipeline;
+        ChimeraMod.LOGGER.info("[chimera] terrain override: {}", pipeline != null ? "installed" : "cleared");
+        if (!initialized) {
+            return;
+        }
+        // Re-register so a change while enabled takes effect immediately.
+        PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
+    }
 
     public static void init() {
         if (initialized) {
@@ -51,7 +68,7 @@ public final class ChimeraTerrainPipelines {
 
         PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
         ThreadBuilderPack.defaultTerrainBuilderConstructor();
-        PipelineManager.setShaderGetter(renderType -> terrainPipeline);
+        PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
         // No rebuildChunks() here: both sides of the swap use the same
         // 16B COMPRESSED_TERRAIN format and the default builder, so only
         // the shader getter changes. A re-mesh (allChanged) would rebuild
@@ -82,7 +99,7 @@ public final class ChimeraTerrainPipelines {
     }
 
     public static GraphicsPipeline getTerrainPipeline() {
-        return terrainPipeline;
+        return geometryOverride != null ? geometryOverride : terrainPipeline;
     }
 
     public static VertexFormat getTerrainVertexFormat() {

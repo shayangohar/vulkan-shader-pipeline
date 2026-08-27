@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
@@ -12,6 +13,7 @@ import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.shaderpack.PackPipelines;
+import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackSource;
 import net.vulkanmod.render.chunk.WorldRenderer;
@@ -60,6 +62,10 @@ public class ChimeraMainPass implements MainPass {
 
     /** Diagnostic: -Dchimera.traceTransitions logs every chimera image transition. */
     private static final boolean TRACE_TRANSITIONS = ChimeraRenderer.debugFlag("chimera.traceTransitions");
+    /** Chimera's shadow-map settings, against which pack shadow consts are validated. */
+    private static final Map<String, Integer> SHADOW_DEFAULTS = Map.of(
+            "shadowMapResolution", 2048,
+            "shadowDistance", 128);
 
     private Framebuffer hdrFramebuffer;
     private RenderPass hdrRenderPass;
@@ -80,6 +86,19 @@ public class ChimeraMainPass implements MainPass {
     private GraphicsPipeline packFinalPipeline;
     private int[] packCompositeSlots;
     private int[] packFinalSlots;
+    /** Parsed pack consts and programs (-Dchimera.pack); session-long, the property is fixed at launch. */
+    private PackConfig.PackConfigData packConfig;
+    private List<PackProgram> packPrograms;
+    /** HDR buffer format from the pack's colortex0Format; 97 (RGBA16F) when the pack says nothing. */
+    private int packHdrFormat = 97;
+    /** Pack geometry program (gbuffers_terrain) on the terrain path; null = chimera's terrain pipeline. */
+    private GraphicsPipeline packGeometryPipeline;
+    private int[] packGeometrySlots;
+    /** GL-registry slot-5 view of the shadow color, for pack geometry sampling (shadowtex0). */
+    private GpuTexture packShadowTexture;
+    private GpuTextureView packShadowView;
+    private long packShadowSourceId;
+    private boolean packShadowViewTracked;
 
     private ChimeraShadowMap shadowMap = new ChimeraShadowMap();
 
@@ -120,8 +139,12 @@ public class ChimeraMainPass implements MainPass {
 
     public ChimeraMainPass() {
         this.levelPhase = true;
-        createResources();
+        // init() registers the LightMVP uniform supplier, which the pack
+        // geometry pipeline build (inside createResources via
+        // loadPackPipelines) requires; the fixed-view terrain config declares
+        // ViewUBO{MVP, LightMVP} and every UBO field needs a supplier.
         this.shadowMap.init();
+        createResources();
         Renderer.getInstance().addOnResizeCallback(this::onResize);
     }
 
@@ -183,6 +206,7 @@ public class ChimeraMainPass implements MainPass {
 
         // Bind shadow texture for terrain fragment shader sampling
         this.shadowMap.bindShadowTexture();
+        maintainPackShadowGoal();
     }
 
 
@@ -256,6 +280,7 @@ public class ChimeraMainPass implements MainPass {
 
         // Terrain shaders sample the shadow map from their first draw.
         this.shadowMap.bindShadowTexture();
+        maintainPackShadowGoal();
 
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -611,10 +636,15 @@ public class ChimeraMainPass implements MainPass {
         cleanUpPipelines();
         if (this.packCompositePipeline != null) this.packCompositePipeline.cleanUp();
         if (this.packFinalPipeline != null) this.packFinalPipeline.cleanUp();
+        if (this.packGeometryPipeline != null) this.packGeometryPipeline.cleanUp();
         this.packCompositePipeline = null;
         this.packCompositeSlots = null;
         this.packFinalPipeline = null;
         this.packFinalSlots = null;
+        this.packGeometryPipeline = null;
+        this.packGeometrySlots = null;
+        ChimeraTerrainPipelines.setGeometryOverride(null);
+        releasePackShadowView();
         this.mainFamilyViews.clear();
     }
 
@@ -631,6 +661,7 @@ public class ChimeraMainPass implements MainPass {
         int width = Math.max(swapChain.getWidth(), 1);
         int height = Math.max(swapChain.getHeight(), 1);
 
+        loadPackConfig();
         createHdrFramebuffer(width, height);
         createOutputFramebuffer(width, height);
         createRenderPasses();
@@ -646,7 +677,7 @@ public class ChimeraMainPass implements MainPass {
 
     private void createHdrFramebuffer(int width, int height) {
         this.hdrFramebuffer = new Framebuffer.Builder("chimeraHdr", width, height, 1, true)
-                .setFormat(97)
+                .setFormat(this.packHdrFormat)
                 .build();
     }
 
@@ -709,10 +740,67 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /**
+     * Discovers and parses the pack once per session (-Dchimera.pack is fixed
+     * at launch). Must run before createHdrFramebuffer so the pack's
+     * colortex0Format can drive the HDR buffer format.
+     */
+    private void loadPackConfig() {
+        if (this.packConfig != null) {
+            return;
+        }
+        String packDir = System.getProperty("chimera.pack");
+        if (packDir == null || packDir.isBlank()) {
+            LOGGER.info("[chimera] pack disabled (no -Dchimera.pack)");
+            return;
+        }
+
+        Path dir = Path.of(packDir);
+        PackSource.LoadResult result = PackSource.loadResult(dir);
+        this.packPrograms = result.programs();
+        if (this.packPrograms.isEmpty()) {
+            LOGGER.warn("[chimera] pack '{}' from {}: no programs found", dir.getFileName(), dir.toAbsolutePath());
+            return;
+        }
+        this.packConfig = PackConfig.parse(this.packPrograms, result.shadersDir());
+        this.packHdrFormat = this.packConfig.colortexFormats().getOrDefault(0, 97);
+        LOGGER.info("[chimera] pack '{}' from {}: programs={}", dir.getFileName(),
+                dir.toAbsolutePath(), this.packPrograms.stream().map(PackProgram::name).toList());
+        LOGGER.info("[chimera] pack consts: {}, shadowSettings={}, drawBuffers={}",
+                formatSummary(this.packConfig.colortexFormats()),
+                this.packConfig.shadowSettings().isEmpty()
+                        ? "none"
+                        : this.packConfig.shadowSettings() + " (ignored in M4)",
+                this.packConfig.drawBufferCount());
+        for (var entry : this.packConfig.shadowSettings().entrySet()) {
+            Integer defaultSpot = SHADOW_DEFAULTS.get(entry.getKey());
+            if (defaultSpot == null || !defaultSpot.equals(entry.getValue())) {
+                LOGGER.warn("[chimera] pack: shadow setting {}={} differs from chimera default, ignored in M4 "
+                        + "(shadow map stays at chimera default)", entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
+    private String formatSummary(Map<Integer, Integer> formats) {
+        if (formats.isEmpty()) {
+            return "none";
+        }
+        StringBuilder summary = new StringBuilder();
+        formats.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+            if (summary.length() > 0) {
+                summary.append(", ");
+            }
+            summary.append("colortex").append(entry.getKey()).append("Format=").append(entry.getValue())
+                    .append(" (").append(PackConfig.formatName(entry.getValue())).append(')');
+        });
+        return summary.toString();
+    }
+
+    /**
      * Loads the OptiFine-format pack pointed at by -Dchimera.pack and builds
-     * its composite/final programs onto the post seams. A program that fails
-     * to load, convert, or compile keeps the identity pipeline for its seam,
-     * so a bad pack can never break the frame.
+     * its composite/final programs onto the post seams and gbuffers_terrain
+     * onto the terrain path. A program that fails to load, convert, or
+     * compile keeps the identity pipeline for its seam, so a bad pack can
+     * never break the frame.
      */
     private void loadPackPipelines() {
         if (this.packCompositePipeline != null) {
@@ -730,41 +818,116 @@ public class ChimeraMainPass implements MainPass {
         this.packCompositeSlots = null;
         this.packFinalPipeline = null;
         this.packFinalSlots = null;
+        this.packGeometryPipeline = null;
+        this.packGeometrySlots = null;
 
-        String packDir = System.getProperty("chimera.pack");
-        if (packDir == null || packDir.isBlank()) {
-            LOGGER.info("[chimera] pack disabled (no -Dchimera.pack)");
+        if (this.packPrograms == null) {
+            // loadPackConfig found no pack (or no programs).
             return;
         }
 
-        Path dir = Path.of(packDir);
-        List<PackProgram> programs = PackSource.load(dir);
-        LOGGER.info("[chimera] pack '{}' from {}: programs={}", dir.getFileName(),
-                dir.toAbsolutePath(), programs.stream().map(PackProgram::name).toList());
-
         String fixedVertex = ChimeraShaderLoader.loadSource("chimera_composite/chimera_composite.vsh");
-        for (PackProgram program : programs) {
-            if (!program.name().equals("composite") && !program.name().equals("final")) {
-                LOGGER.info("[chimera] pack {}: not a post seam, skipped (wedge)", program.name());
-                continue;
-            }
-            PackPipelines.PackPost post = PackPipelines.buildPost(program, fixedVertex);
-            if (post == null) {
-                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (build failed)", program.name());
-                continue;
-            }
-            if (program.name().equals("composite")) {
-                this.packCompositePipeline = post.pipeline();
-                this.packCompositeSlots = post.samplerSlots();
+        for (PackProgram program : this.packPrograms) {
+            String name = program.name();
+            if (name.equals("composite") || name.equals("final")) {
+                PackPipelines.PackPost post = PackPipelines.buildPost(program, fixedVertex);
+                if (post == null) {
+                    LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (build failed)", name);
+                    continue;
+                }
+                if (name.equals("composite")) {
+                    this.packCompositePipeline = post.pipeline();
+                    this.packCompositeSlots = post.samplerSlots();
+                } else {
+                    this.packFinalPipeline = post.pipeline();
+                    this.packFinalSlots = post.samplerSlots();
+                }
+                LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(post.samplerSlots()));
+                if (TRACE_TRANSITIONS) {
+                    LOGGER.info("[chimera] pack {} converted fragment:\n{}", name, post.convertedFragment());
+                }
+            } else if (name.equals("gbuffers_terrain")) {
+                PackPipelines.PackTerrain terrain = PackPipelines.buildTerrain(program,
+                        ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"));
+                if (terrain == null) {
+                    LOGGER.warn("[chimera] pack gbuffers_terrain: fallback=IDENTITY (build failed)");
+                    continue;
+                }
+                this.packGeometryPipeline = terrain.pipeline();
+                this.packGeometrySlots = terrain.samplerSlots();
+                ChimeraTerrainPipelines.setGeometryOverride(terrain.pipeline());
+                LOGGER.info("[chimera] pack gbuffers_terrain: ok (geometry, samplers={})",
+                        Arrays.toString(terrain.samplerSlots()));
+                if (TRACE_TRANSITIONS) {
+                    LOGGER.info("[chimera] pack gbuffers_terrain converted fragment:\n{}", terrain.convertedFragment());
+                }
+                if (this.packConfig != null && this.packConfig.drawBufferCount() > 1) {
+                    LOGGER.warn("[chimera] pack gbuffers_terrain: DRAWBUFFERS={} not honored in M4 "
+                            + "(single attachment; multi-buffer gbuffers deferred to M5)",
+                            this.packConfig.drawBufferCount());
+                }
             } else {
-                this.packFinalPipeline = post.pipeline();
-                this.packFinalSlots = post.samplerSlots();
-            }
-            LOGGER.info("[chimera] pack {}: ok (samplers={})", program.name(), Arrays.toString(post.samplerSlots()));
-            if (TRACE_TRANSITIONS) {
-                LOGGER.info("[chimera] pack {} converted fragment:\n{}", program.name(), post.convertedFragment());
+                LOGGER.info("[chimera] pack {}: deferred to M5 (not a part-2 stage), skipped", name);
             }
         }
+    }
+
+    /**
+     * Keeps GL-registry slot 5 (the sampler slot pack geometry declares as
+     * shadowtex0) pointing at the shadow map's color. Terrain draws bind
+     * sampler slots from that registry (VTextureSelector.bindShaderTextures),
+     * unlike post seams which bind through boundTextures; the view is rebuilt
+     * only when the shadow attachment is recreated (id change).
+     */
+    private void maintainPackShadowGoal() {
+        if (this.packGeometryPipeline == null || this.packGeometrySlots == null
+                || !containsSlot(this.packGeometrySlots, 5)) {
+            return;
+        }
+        if (!this.shadowMap.isInitialized() || this.shadowMap.getShadowFramebuffer() == null) {
+            return;
+        }
+        VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer().getColorAttachment();
+        if (this.packShadowView == null || shadowColor.getId() != this.packShadowSourceId) {
+            VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
+            VkGpuTexture texture = device.gpuTextureFromVulkanImage(shadowColor);
+            GpuTextureView view = device.createTextureView(texture);
+            releaseOldShadowView();
+            this.packShadowTexture = texture;
+            this.packShadowView = view;
+            this.packShadowSourceId = shadowColor.getId();
+            if (!this.packShadowViewTracked) {
+                this.mainFamilyViews.add(view);
+                this.packShadowViewTracked = true;
+            }
+        }
+        VRenderSystem.setShaderTexture(5, this.packShadowView);
+    }
+
+    private void releaseOldShadowView() {
+        if (this.packShadowView != null) {
+            this.packShadowView.close();
+        }
+        if (this.packShadowTexture != null) {
+            this.packShadowTexture.close();
+        }
+    }
+
+    private void releasePackShadowView() {
+        releaseOldShadowView();
+        this.packShadowTexture = null;
+        this.packShadowView = null;
+        this.packShadowSourceId = 0L;
+        this.packShadowViewTracked = false;
+    }
+
+    private static boolean containsSlot(int[] slots, int slot) {
+        for (int candidate : slots) {
+            if (candidate == slot) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void createHdrInteropTextures() {

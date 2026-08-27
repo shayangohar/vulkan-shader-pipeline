@@ -26,14 +26,15 @@ import java.util.List;
 public final class PackSource {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
 
-    private PackSource() {}
+    /** The pack's programs plus its shaders/ directory (for properties). */
+    public record LoadResult(List<PackProgram> programs, Path shadersDir) {}
 
-    public static List<PackProgram> load(Path packDir) {
+    public static LoadResult loadResult(Path packDir) {
         Path shadersDir = packDir.resolve("shaders");
         List<PackProgram> programs = new ArrayList<>();
         if (!Files.isDirectory(shadersDir)) {
             LOGGER.warn("[chimera] pack: no 'shaders' directory under {}", packDir);
-            return programs;
+            return new LoadResult(programs, shadersDir);
         }
 
         Path passList = shadersDir.resolve("shaders.json");
@@ -42,7 +43,7 @@ public final class PackSource {
         } else {
             scanPairs(shadersDir, programs);
         }
-        return programs;
+        return new LoadResult(programs, shadersDir);
     }
 
     private static void loadFromPassList(Path passList, Path shadersDir, List<PackProgram> out) {
