@@ -49,18 +49,33 @@ public final class LegacyGlslConverter {
                         "layout(binding = " + i + ") uniform sampler2D " + name + ";");
             }
 
+            String outDecl = null;
             if (src.contains("gl_FragColor")) {
                 src = src.replaceAll("\\bgl_FragColor\\b", "fragColor");
-                src = src + "\nlayout(location = 0) out vec4 fragColor;\n";
+                outDecl = "layout(location = 0) out vec4 fragColor;";
             }
 
+            // GLSL requires global declarations to precede their first use;
+            // an output declared at the end of the file is a forward reference
+            // and glslang rejects it ("'fragColor' : undeclared identifier").
+            // Emit the declaration directly after the version line.
             if (!modern) {
-                src = "#version 460\n" + src;
+                src = "#version 460\n" + (outDecl != null ? outDecl + "\n" : "") + src;
+            } else if (outDecl != null) {
+                src = insertAfterFirstLine(src, outDecl);
             }
             return src;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static String insertAfterFirstLine(String src, String line) {
+        int newline = src.indexOf('\n');
+        if (newline < 0) {
+            return line + "\n" + src;
+        }
+        return src.substring(0, newline + 1) + line + src.substring(newline + 1);
     }
 
     private static String inlineIncludes(String src, Path sourceFile, int depth) throws IOException {
