@@ -28,6 +28,7 @@ import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.framebuffer.SwapChain;
 import net.vulkanmod.vulkan.pass.MainPass;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
+import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.opengl.GL11;
@@ -274,7 +275,7 @@ public class ChimeraMainPass implements MainPass {
             LOGGER.info("[chimera] scheduled world attachment reset frame={} hdrId={}",
                     Renderer.getCurrentFrame(), hdrImageId());
         }
-        MemoryManager.getInstance().addFrameOp(this::invalidateWorldResources);
+        MemoryManager.getInstance().addFrameOp(this::refreshWorldResources);
     }
 
     /** Restores the stable output invariant before Renderer exposes this pass. */
@@ -386,19 +387,38 @@ public class ChimeraMainPass implements MainPass {
                 Renderer.setViewport(0, 0, swapChain.getWidth(), swapChain.getHeight(), stack);
                 VK10.vkCmdSetScissor(commandBuffer, 0, swapChain.scissor(stack));
                 // VulkanMod binds a pipeline variant keyed on the CURRENT
-                // VRenderSystem.depthTest/depthMask (getCurrentPipelineState at
-                // bind), and the swapchain depth attachment is DONT_CARE, so a
-                // depth-tested present quad is culled by stale/self-written
-                // depth. Disable depth state for this fullscreen blit only.
+                // VRenderSystem state (getCurrentPipelineState at bind). The
+                // swapchain depth attachment is DONT_CARE (a depth-tested
+                // present quad is culled by stale/self-written depth), and the
+                // GUI draws just before this bind leave blend/colorMask at GUI
+                // values: with the leftover SRC_ALPHA blend applied to the
+                // output's zero alpha, or a cleared color mask, the present
+                // quad writes nothing and the swapchain stays on the pass
+                // clear. Force the same plain opaque blit state the composite
+                // resolve uses, and restore the globals right after.
                 boolean depthTest = VRenderSystem.depthTest;
                 boolean depthMask = VRenderSystem.depthMask;
+                int colorMask = VRenderSystem.getColorMask();
+                boolean blendEnabled = PipelineState.blendInfo.enabled;
+                boolean cullEnabled = VRenderSystem.cull;
                 VRenderSystem.depthTest = false;
                 VRenderSystem.depthMask = false;
+                VRenderSystem.colorMask(true, true, true, true);
+                VRenderSystem.disableBlend();
+                VRenderSystem.disableCull();
                 try {
                     drawFullscreen(commandBuffer, this.presentPipeline);
                 } finally {
                     VRenderSystem.depthTest = depthTest;
                     VRenderSystem.depthMask = depthMask;
+                    VRenderSystem.colorMask((colorMask & 1) != 0, (colorMask & 2) != 0,
+                            (colorMask & 4) != 0, (colorMask & 8) != 0);
+                    if (blendEnabled) {
+                        VRenderSystem.enableBlend();
+                    } else {
+                        VRenderSystem.disableBlend();
+                    }
+                    VRenderSystem.cull = cullEnabled;
                 }
                 Renderer.getInstance().endRenderPass(commandBuffer);
 
@@ -705,12 +725,24 @@ public class ChimeraMainPass implements MainPass {
         }
     }
 
-    private void ensureWorldResources() {
-        if (this.worldResourcesReady && hdrResourcesLive()) {
-            return;
-        }
-
+    /**
+     * Retires the HDR attachments at a frame-op boundary (the slot fence was
+     * waited) and recreates them at the same safe point. Leaving
+     * hdrFramebuffer null here is the respawn NPE: the next frame's
+     * openLevelSegment can run before another recreate boundary when screens
+     * suppress segments, and when the level dies the host handoff leaves no
+     * chimera frame to recreate at all.
+     */
+    private void refreshWorldResources() {
         invalidateWorldResources();
+        recreateWorldAttachments();
+        if (TRACE_TRANSITIONS) {
+            LOGGER.info("[chimera] recreated world attachments at frame boundary frame={} newHdrId={}",
+                    Renderer.getCurrentFrame(), hdrImageId());
+        }
+    }
+
+    private void recreateWorldAttachments() {
         Framebuffer output = this.compositeFramebuffer;
         int width = output != null ? output.getWidth() : Math.max(Renderer.getInstance().getSwapChain().getWidth(), 1);
         int height = output != null ? output.getHeight() : Math.max(Renderer.getInstance().getSwapChain().getHeight(), 1);
@@ -718,6 +750,15 @@ public class ChimeraMainPass implements MainPass {
         createHdrInteropTextures();
         this.worldResourcesReady = true;
         this.earlyOutputPass = false;
+    }
+
+    private void ensureWorldResources() {
+        if (this.worldResourcesReady && hdrResourcesLive()) {
+            return;
+        }
+
+        invalidateWorldResources();
+        recreateWorldAttachments();
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] recreated world attachments before level frame={} newHdrId={}",
                     Renderer.getCurrentFrame(), hdrImageId());

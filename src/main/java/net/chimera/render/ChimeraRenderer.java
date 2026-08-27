@@ -161,8 +161,10 @@ public final class ChimeraRenderer {
         // Our post segments leave depth/cull/blend/topology state disabled;
         // restore the neutral state the host frame flow expects.
         VRenderSystem.enableDepthTest();
+        VRenderSystem.depthMask(true);
         VRenderSystem.enableCull();
         VRenderSystem.enableBlend();
+        VRenderSystem.colorMask(true, true, true, true);
         installed = false;
         ChimeraMod.LOGGER.info("Reverted to host main pass + host terrain shaders");
     }
@@ -188,6 +190,13 @@ public final class ChimeraRenderer {
         Renderer.getInstance().endRenderPass();
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.suspendForScreens();
+        // Return the global pipeline state VulkanMod snapshots at bind to the
+        // neutral host defaults before the host's next frame records.
+        VRenderSystem.enableDepthTest();
+        VRenderSystem.depthMask(true);
+        VRenderSystem.enableCull();
+        VRenderSystem.enableBlend();
+        VRenderSystem.colorMask(true, true, true, true);
         // Reflect reality: the host pass is now the installed pass. Without
         // this, install() early-returns on the installed flag and chimera's
         // pass is never restored - every frame after runs on the host
