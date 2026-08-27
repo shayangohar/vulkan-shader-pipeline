@@ -7,6 +7,7 @@
   "client": [
     "RendererInitMixin",
     "KeyboardHandlerMixin",
+    "SwapChainMixin",
     "GameRendererDepthMixin",
     "ChimeraLevelRendererMixin",
     "ChimeraMinecraftMixin",

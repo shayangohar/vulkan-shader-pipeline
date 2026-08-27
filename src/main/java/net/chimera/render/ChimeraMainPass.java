@@ -380,6 +380,11 @@ public class ChimeraMainPass implements MainPass {
                 trace("presentSwap", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 Renderer.getInstance().beginRenderPass(this.presentRenderPass, swapChain);
+                // The present draw otherwise inherits the GUI's last viewport and
+                // scissor, leaving the swapchain on its clear color; pin the full
+                // swapchain like DefaultMainPass.begin does.
+                Renderer.setViewport(0, 0, swapChain.getWidth(), swapChain.getHeight(), stack);
+                VK10.vkCmdSetScissor(commandBuffer, 0, swapChain.scissor(stack));
                 drawFullscreen(commandBuffer, this.presentPipeline);
                 Renderer.getInstance().endRenderPass(commandBuffer);
 
@@ -608,8 +613,22 @@ public class ChimeraMainPass implements MainPass {
     }
 
     private void createPipelines() {
-        this.presentPipeline = ChimeraPostPipelines.create("chimera_present");
-        this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
+        // Fullscreen post pipelines must not depth-test: the composite pass
+        // clears its depth, but the present pass' swapchain depth is DONT_CARE
+        // (undefined), and a baked depth test culls the present draw entirely.
+        // VulkanMod snapshots VRenderSystem.depthTest/depthMask into the pipeline
+        // at creation time, so build both post pipelines with them off.
+        boolean depthTest = VRenderSystem.depthTest;
+        boolean depthMask = VRenderSystem.depthMask;
+        VRenderSystem.depthTest = false;
+        VRenderSystem.depthMask = false;
+        try {
+            this.presentPipeline = ChimeraPostPipelines.create("chimera_present");
+            this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
+        } finally {
+            VRenderSystem.depthTest = depthTest;
+            VRenderSystem.depthMask = depthMask;
+        }
     }
 
     private void createHdrInteropTextures() {
