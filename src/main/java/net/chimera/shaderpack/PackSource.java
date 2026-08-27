@@ -75,14 +75,12 @@ public final class PackSource {
                 LOGGER.warn("[chimera] pack: program '{}' has no fragment shader; dropping", name);
                 continue;
             }
-            String vertexRel = stringField(program, "vertex");
             Path fragmentPath = shadersDir.resolve(fragmentRel);
             String fragment = readSource(fragmentPath);
             if (fragment == null) {
                 continue;
             }
-            String vertex = vertexRel != null ? readSource(shadersDir.resolve(vertexRel)) : null;
-            out.add(new PackProgram(name, vertex, fragment, fragmentPath));
+            out.add(new PackProgram(name, fragment, fragmentPath));
         }
     }
 
@@ -105,9 +103,7 @@ public final class PackSource {
             if (fragmentSrc == null) {
                 continue;
             }
-            Path vertex = fragment.resolveSibling(base + ".vsh");
-            String vertexSrc = Files.isRegularFile(vertex) ? readSource(vertex) : null;
-            out.add(new PackProgram(base, vertexSrc, fragmentSrc, fragment));
+            out.add(new PackProgram(base, fragmentSrc, fragment));
         }
     }
 
