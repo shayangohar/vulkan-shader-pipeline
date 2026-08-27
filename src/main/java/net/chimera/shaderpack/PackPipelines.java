@@ -44,7 +44,7 @@ public final class PackPipelines {
 
     public static PackPost buildPost(PackProgram program, String fixedVertexSource) {
         try {
-            String converted = LegacyGlslConverter.convertFragment(program.fragmentSource(), program.fragmentPath(), false);
+            String converted = LegacyGlslConverter.convertFragment(program.fragmentSource(), program.fragmentPath(), false, null);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -78,13 +78,12 @@ public final class PackPipelines {
      */
     public static PackTerrain buildTerrain(PackProgram program, String fixedVertexSource) {
         try {
-            String converted = LegacyGlslConverter.convertFragment(program.fragmentSource(), program.fragmentPath(), true);
+            List<String> samplers = UniformRegistry.scanSamplerNames(program.fragmentSource(), UniformRegistry.Stage.GEOMETRY);
+            int[] slots = interleaveLightmap(samplers.stream().mapToInt(UniformRegistry.GEOMETRY_NAME_TO_SLOT::get).toArray());
+            String converted = LegacyGlslConverter.convertFragment(program.fragmentSource(), program.fragmentPath(), true, slots);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
-
-            List<String> samplers = UniformRegistry.scanSamplerNames(program.fragmentSource(), UniformRegistry.Stage.GEOMETRY);
-            int[] slots = samplers.stream().mapToInt(UniformRegistry.GEOMETRY_NAME_TO_SLOT::get).toArray();
 
             JsonObject json = ChimeraShaderLoader.loadJson("chimera_terrain.json").deepCopy();
             json.addProperty("fragment", "pack_" + program.name());
@@ -118,5 +117,31 @@ public final class PackPipelines {
             samplersJson.add(sampler);
         }
         return samplersJson;
+    }
+    /**
+     * The fixed terrain vertex reads its LightMap at descriptor index 1
+     * (layout(binding = 4), registry slot 2). Force registry slot 2 into the
+     * pack's emitted sampler array at that position: without it the vertex's
+     * lightmap fetch lands on the wrong descriptor (with the simplex fixture,
+     * the shadow map) — torch/sky light never reaches geometry and the shadow
+     * content renders as blotchy per-vertex darkening.
+     */
+    private static int[] interleaveLightmap(int[] slots) {
+        if (slots.length == 0) {
+            return new int[] {2};
+        }
+        int addLightmap = 1;
+        for (int s : slots) {
+            if (s == 2) {
+                addLightmap = 0;
+            }
+        }
+        int[] out = new int[slots.length + addLightmap];
+        System.arraycopy(slots, 0, out, 0, slots.length);
+        if (addLightmap == 1) {
+            System.arraycopy(out, 1, out, 2, out.length - 2);
+            out[1] = 2;
+        }
+        return out;
     }
 }

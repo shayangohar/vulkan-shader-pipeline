@@ -51,7 +51,7 @@ public final class LegacyGlslConverter {
 
     private LegacyGlslConverter() {}
 
-    public static String convertFragment(String source, Path sourceFile, boolean geometryStage) {
+    public static String convertFragment(String source, Path sourceFile, boolean geometryStage, int[] geometrySamplerSlots) {
         try {
             String src = source;
             boolean modern = src.contains("#version 460") || src.contains("#version 450");
@@ -82,9 +82,10 @@ public final class LegacyGlslConverter {
             for (int i = 0; i < samplers.size(); i++) {
                 String name = samplers.get(i);
                 String srcName = geometryStage && name.equals("texture") ? "chimeraTexture" : name;
+                int binding = geometryStage ? bindingBase + configIndexOf(name, geometrySamplerSlots) : bindingBase + i;
                 src = src.replaceFirst(
                         "uniform\\s+sampler2D\\s+" + srcName + "\\s*;",
-                        "layout(binding = " + (bindingBase + i) + ") uniform sampler2D " + srcName + ";");
+                        "layout(binding = " + binding + ") uniform sampler2D " + srcName + ";");
             }
 
             String outDecl = null;
@@ -113,6 +114,16 @@ public final class LegacyGlslConverter {
 
     private static UniformRegistry.Stage stageOf(boolean geometryStage) {
         return geometryStage ? UniformRegistry.Stage.GEOMETRY : UniformRegistry.Stage.POST;
+    }
+    /** Position of the sampler's registry slot in the emitted geometry config array. */
+    private static int configIndexOf(String name, int[] slots) {
+        int slot = UniformRegistry.GEOMETRY_NAME_TO_SLOT.get(name);
+        for (int i = 0; i < slots.length; i++) {
+            if (slots[i] == slot) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static String insertAfterFirstLine(String src, String line) {
