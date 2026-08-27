@@ -106,10 +106,6 @@ public final class ChimeraTerrainPipelines {
         return CustomVertexFormat.COMPRESSED_TERRAIN;
     }
 
-    public static boolean isInitialized() {
-        return initialized;
-    }
-
     private static GraphicsPipeline buildPipeline(String name, VertexFormat vertexFormat) {
         JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");
         PipelineConfig config = PipelineConfig.fromJson(name, json);

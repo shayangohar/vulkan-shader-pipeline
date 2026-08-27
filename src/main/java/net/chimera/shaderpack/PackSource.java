@@ -19,9 +19,11 @@ import java.util.List;
 /**
  * Discovers the programs of an OptiFine/Iris-format shader pack on disk
  * (packDir/shaders/), either via its shaders.json pass list or, when absent,
- * by pairing top-level *.fsh with same-basename *.vsh files. Never throws:
- * any failure drops the affected program and is logged as a warning, so a bad
- * pack can never break the frame.
+ * every top-level *.fsh becomes a program. Fragment sources only: pack
+ * vertex programs are not consumed yet (M4 reads the chimera fixed vertex;
+ * M5 adds the mc_* vertex layer). Never throws: any failure drops the
+ * affected program and is logged as a warning, so a bad pack can never break
+ * the frame.
  */
 public final class PackSource {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");

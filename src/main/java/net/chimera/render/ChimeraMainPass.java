@@ -98,7 +98,6 @@ public class ChimeraMainPass implements MainPass {
     private GpuTexture packShadowTexture;
     private GpuTextureView packShadowView;
     private long packShadowSourceId;
-    private boolean packShadowViewTracked;
 
     private ChimeraShadowMap shadowMap = new ChimeraShadowMap();
 
@@ -889,6 +888,12 @@ public class ChimeraMainPass implements MainPass {
         }
         VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer().getColorAttachment();
         if (this.packShadowView == null || shadowColor.getId() != this.packShadowSourceId) {
+            // A recreated shadow attachment retires the old view: drop it from
+            // the main-family set (it stays closed below) and register the new
+            // one, so isFamilyView tracks exactly the live view.
+            if (this.packShadowView != null) {
+                this.mainFamilyViews.remove(this.packShadowView);
+            }
             VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
             VkGpuTexture texture = device.gpuTextureFromVulkanImage(shadowColor);
             GpuTextureView view = device.createTextureView(texture);
@@ -896,10 +901,7 @@ public class ChimeraMainPass implements MainPass {
             this.packShadowTexture = texture;
             this.packShadowView = view;
             this.packShadowSourceId = shadowColor.getId();
-            if (!this.packShadowViewTracked) {
-                this.mainFamilyViews.add(view);
-                this.packShadowViewTracked = true;
-            }
+            this.mainFamilyViews.add(view);
         }
         VRenderSystem.setShaderTexture(5, this.packShadowView);
     }
@@ -918,7 +920,6 @@ public class ChimeraMainPass implements MainPass {
         this.packShadowTexture = null;
         this.packShadowView = null;
         this.packShadowSourceId = 0L;
-        this.packShadowViewTracked = false;
     }
 
     private static boolean containsSlot(int[] slots, int slot) {

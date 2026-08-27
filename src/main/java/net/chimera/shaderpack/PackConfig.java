@@ -36,6 +36,8 @@ public final class PackConfig {
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_LINE = Pattern.compile("^\\s*([\\w]+)\\s*=\\s*(\\w+)\\s*$");
+    /** shaders.properties key shape: colortexNFormat. */
+    private static final Pattern COLORTEX_PROPERTY_KEY = Pattern.compile("^colortex(\\d+)Format$");
 
     /** OptiFine format token -> VK format code (verified: 37/97/109 match the pins). */
     public static final Map<String, Integer> FMT_TO_VK = Map.of(
@@ -104,9 +106,15 @@ public final class PackConfig {
                     }
                     String key = m.group(1);
                     String value = m.group(2);
-                    Matcher colortexKey = Pattern.compile("^colortex(\\d+)Format$").matcher(key);
+                    Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
                     if (colortexKey.find()) {
-                        int slot = Integer.parseInt(colortexKey.group(1));
+                        int slot;
+                        try {
+                            slot = Integer.parseInt(colortexKey.group(1));
+                        } catch (NumberFormatException e) {
+                            LOGGER.warn("[chimera] pack properties: {} is not a valid colortex slot, skipped", key);
+                            continue;
+                        }
                         Integer code = FMT_TO_VK.get(value);
                         if (code == null) {
                             LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
@@ -165,7 +173,13 @@ public final class PackConfig {
         int max = 0;
         Matcher fragData = FRAG_DATA.matcher(source);
         while (fragData.find()) {
-            max = Math.max(max, Integer.parseInt(fragData.group(1)) + 1);
+            int index;
+            try {
+                index = Integer.parseInt(fragData.group(1));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            max = Math.max(max, index + 1);
         }
         return max >= 1 ? max : 1;
     }
