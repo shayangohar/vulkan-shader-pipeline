@@ -385,7 +385,21 @@ public class ChimeraMainPass implements MainPass {
                 // swapchain like DefaultMainPass.begin does.
                 Renderer.setViewport(0, 0, swapChain.getWidth(), swapChain.getHeight(), stack);
                 VK10.vkCmdSetScissor(commandBuffer, 0, swapChain.scissor(stack));
-                drawFullscreen(commandBuffer, this.presentPipeline);
+                // VulkanMod binds a pipeline variant keyed on the CURRENT
+                // VRenderSystem.depthTest/depthMask (getCurrentPipelineState at
+                // bind), and the swapchain depth attachment is DONT_CARE, so a
+                // depth-tested present quad is culled by stale/self-written
+                // depth. Disable depth state for this fullscreen blit only.
+                boolean depthTest = VRenderSystem.depthTest;
+                boolean depthMask = VRenderSystem.depthMask;
+                VRenderSystem.depthTest = false;
+                VRenderSystem.depthMask = false;
+                try {
+                    drawFullscreen(commandBuffer, this.presentPipeline);
+                } finally {
+                    VRenderSystem.depthTest = depthTest;
+                    VRenderSystem.depthMask = depthMask;
+                }
                 Renderer.getInstance().endRenderPass(commandBuffer);
 
                 trace("presentSrc", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -613,22 +627,12 @@ public class ChimeraMainPass implements MainPass {
     }
 
     private void createPipelines() {
-        // Fullscreen post pipelines must not depth-test: the composite pass
-        // clears its depth, but the present pass' swapchain depth is DONT_CARE
-        // (undefined), and a baked depth test culls the present draw entirely.
-        // VulkanMod snapshots VRenderSystem.depthTest/depthMask into the pipeline
-        // at creation time, so build both post pipelines with them off.
-        boolean depthTest = VRenderSystem.depthTest;
-        boolean depthMask = VRenderSystem.depthMask;
-        VRenderSystem.depthTest = false;
-        VRenderSystem.depthMask = false;
-        try {
-            this.presentPipeline = ChimeraPostPipelines.create("chimera_present");
-            this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
-        } finally {
-            VRenderSystem.depthTest = depthTest;
-            VRenderSystem.depthMask = depthMask;
-        }
+        // NOTE: pipeline depth state is decided at BIND time by VulkanMod
+        // (GraphicsPipeline.getHandle(PipelineState) <- getCurrentPipelineState
+        // snapshots VRenderSystem globals), so the present draw disables depth
+        // test/write at the draw site, not here.
+        this.presentPipeline = ChimeraPostPipelines.create("chimera_present");
+        this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
     }
 
     private void createHdrInteropTextures() {
