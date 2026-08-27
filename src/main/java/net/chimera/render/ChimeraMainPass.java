@@ -1,12 +1,19 @@
 package net.chimera.render;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Set;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.render.shader.ChimeraPostPipelines;
+import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.shaderpack.PackPipelines;
+import net.chimera.shaderpack.PackProgram;
+import net.chimera.shaderpack.PackSource;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.engine.VkGpuDevice;
 import net.vulkanmod.render.engine.VkGpuTexture;
@@ -67,6 +74,12 @@ public class ChimeraMainPass implements MainPass {
 
     private GraphicsPipeline presentPipeline;
     private GraphicsPipeline compositePipeline;
+
+    /** Pack programs swapped onto the resolve/present seams (-Dchimera.pack); null = identity. */
+    private GraphicsPipeline packCompositePipeline;
+    private GraphicsPipeline packFinalPipeline;
+    private int[] packCompositeSlots;
+    private int[] packFinalSlots;
 
     private ChimeraShadowMap shadowMap = new ChimeraShadowMap();
 
@@ -273,12 +286,18 @@ public class ChimeraMainPass implements MainPass {
             trace("resolveWorld", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+            GraphicsPipeline resolvePipeline =
+                    this.packCompositePipeline != null ? this.packCompositePipeline : this.compositePipeline;
             VRenderSystem.disableDepthTest();
             VRenderSystem.disableCull();
             VRenderSystem.disableBlend();
             Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
-            VTextureSelector.bindTexture(hdrColor);
-            drawFullscreen(commandBuffer, this.compositePipeline);
+            if (this.packCompositePipeline != null) {
+                bindPackSamplers(this.packCompositeSlots, hdrColor);
+            } else {
+                VTextureSelector.bindTexture(hdrColor);
+            }
+            drawFullscreen(commandBuffer, resolvePipeline);
             // VulkShade restores these immediately after resolveForGui.
             // Without it, the first fullscreen GUI overlay inherits the
             // composite pass' disabled depth/cull state and destroys output.
@@ -319,7 +338,11 @@ public class ChimeraMainPass implements MainPass {
             VulkanImage outputColor = this.compositeFramebuffer.getColorAttachment();
             trace("presentRead", "outputColor", outputColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             outputColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            VTextureSelector.bindTexture(outputColor);
+            if (this.packFinalPipeline != null) {
+                bindPackSamplers(this.packFinalSlots, outputColor);
+            } else {
+                VTextureSelector.bindTexture(outputColor);
+            }
 
             SwapChain swapChain = Renderer.getInstance().getSwapChain();
             if (swapChain.hasImages()) {
@@ -352,7 +375,8 @@ public class ChimeraMainPass implements MainPass {
                 VRenderSystem.disableBlend();
                 VRenderSystem.disableCull();
                 try {
-                    drawFullscreen(commandBuffer, this.presentPipeline);
+                    drawFullscreen(commandBuffer,
+                            this.packFinalPipeline != null ? this.packFinalPipeline : this.presentPipeline);
                 } finally {
                     VRenderSystem.depthTest = depthTest;
                     VRenderSystem.depthMask = depthMask;
@@ -384,6 +408,36 @@ public class ChimeraMainPass implements MainPass {
         renderer.bindGraphicsPipeline(pipeline);
         renderer.uploadAndBindUBOs(pipeline);
         VK10.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    }
+
+    /**
+     * Binds the textures for a pack post program's declared slots. colortexN
+     * slots read the seam's color attachment (HDR world in the composite
+     * resolve, composite output in the present); shadowtex0 reads the shadow
+     * map; depthtex0 reads the HDR depth attachment. Every declared slot must
+     * be bound so no descriptor references a slot that was never filled;
+     * missing sources are skipped, never fatal.
+     */
+    private void bindPackSamplers(int[] slots, VulkanImage colortexImage) {
+        if (slots == null) {
+            return;
+        }
+        for (int slot : slots) {
+            if (slot <= 3) {
+                VTextureSelector.bindTexture(slot, colortexImage);
+            } else if (slot == 5) {
+                VulkanImage shadowColor = this.shadowMap.getShadowFramebuffer() != null
+                        ? this.shadowMap.getShadowFramebuffer().getColorAttachment()
+                        : null;
+                if (shadowColor != null) {
+                    VTextureSelector.bindTexture(5, shadowColor);
+                }
+            } else if (slot == 6) {
+                if (this.hdrFramebuffer != null) {
+                    VTextureSelector.bindTexture(6, this.hdrFramebuffer.getDepthAttachment());
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -534,6 +588,7 @@ public class ChimeraMainPass implements MainPass {
         this.outputResourcesReady = true;
         this.currentFramebuffer = this.compositeFramebuffer;
         this.earlyOutputPass = true;
+        loadPackPipelines();
     }
 
     private void createHdrFramebuffer(int width, int height) {
@@ -598,6 +653,54 @@ public class ChimeraMainPass implements MainPass {
         // test/write at the draw site, not here.
         this.presentPipeline = ChimeraPostPipelines.create("chimera_present");
         this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
+    }
+
+    /**
+     * Loads the OptiFine-format pack pointed at by -Dchimera.pack and builds
+     * its composite/final programs onto the post seams. A program that fails
+     * to load, convert, or compile keeps the identity pipeline for its seam,
+     * so a bad pack can never break the frame.
+     */
+    private void loadPackPipelines() {
+        this.packCompositePipeline = null;
+        this.packCompositeSlots = null;
+        this.packFinalPipeline = null;
+        this.packFinalSlots = null;
+
+        String packDir = System.getProperty("chimera.pack");
+        if (packDir == null || packDir.isBlank()) {
+            LOGGER.info("[chimera] pack disabled (no -Dchimera.pack)");
+            return;
+        }
+
+        Path dir = Path.of(packDir);
+        List<PackProgram> programs = PackSource.load(dir);
+        LOGGER.info("[chimera] pack '{}' from {}: programs={}", dir.getFileName(),
+                dir.toAbsolutePath(), programs.stream().map(PackProgram::name).toList());
+
+        String fixedVertex = ChimeraShaderLoader.loadSource("chimera_composite/chimera_composite.vsh");
+        for (PackProgram program : programs) {
+            if (!program.name().equals("composite") && !program.name().equals("final")) {
+                LOGGER.info("[chimera] pack {}: not a post seam, skipped (wedge)", program.name());
+                continue;
+            }
+            PackPipelines.PackPost post = PackPipelines.buildPost(program, fixedVertex);
+            if (post == null) {
+                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (build failed)", program.name());
+                continue;
+            }
+            if (program.name().equals("composite")) {
+                this.packCompositePipeline = post.pipeline();
+                this.packCompositeSlots = post.samplerSlots();
+            } else {
+                this.packFinalPipeline = post.pipeline();
+                this.packFinalSlots = post.samplerSlots();
+            }
+            LOGGER.info("[chimera] pack {}: ok (samplers={})", program.name(), Arrays.toString(post.samplerSlots()));
+            if (TRACE_TRANSITIONS) {
+                LOGGER.info("[chimera] pack {} converted fragment:\n{}", program.name(), post.convertedFragment());
+            }
+        }
     }
 
     private void createHdrInteropTextures() {
@@ -769,8 +872,14 @@ public class ChimeraMainPass implements MainPass {
     private void cleanUpPipelines() {
         if (this.presentPipeline != null) this.presentPipeline.cleanUp();
         if (this.compositePipeline != null) this.compositePipeline.cleanUp();
+        if (this.packCompositePipeline != null) this.packCompositePipeline.cleanUp();
+        if (this.packFinalPipeline != null) this.packFinalPipeline.cleanUp();
         this.presentPipeline = null;
         this.compositePipeline = null;
+        this.packCompositePipeline = null;
+        this.packCompositeSlots = null;
+        this.packFinalPipeline = null;
+        this.packFinalSlots = null;
     }
 
     /**
