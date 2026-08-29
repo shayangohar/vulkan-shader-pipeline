@@ -47,7 +47,7 @@ public final class LegacyGlslConverter {
     private static final Pattern INCLUDE_LINE = Pattern.compile("(?m)^\\s*#include\\s+[<\"]([^>\"]+)[>\"]\\s*$");
     /** Pack const declarations consumed by PackConfig; stripped so the preprocessor-less GLSL compiles. */
     private static final Pattern CONSUMED_CONSTS =
-            Pattern.compile("(?m)^\\s*const\\s+int\\s+(?:colortex\\d+Format|shadowMapResolution|shadowMapDistance|shadowMapSize|shadowMapFov)\\s*=\\s*\\w+\\s*;\\s*$");
+            Pattern.compile("(?m)^\\s*const\\s+(?:int|float)\\s+(?:colortex\\d+Format|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul)\\s*=\\s*[A-Za-z0-9+_.-]+\\s*;\\s*$");
 
     /** Geometry fragments receive the fixed chimera terrain vertex's outputs by name. */
     private static final Map<String, Integer> GEOMETRY_VARYING_LOCATIONS = Map.of(
@@ -105,8 +105,11 @@ public final class LegacyGlslConverter {
             UniformRegistry.ProgramInterface interfacePlan
     ) {
         try {
+            boolean geometryInterface = interfacePlan != null
+                    && (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
+                    || interfacePlan.stage() == UniformRegistry.Stage.SHADOW);
             if (interfacePlan == null || !interfacePlan.executable()
-                    || interfacePlan.stage() != stageOf(geometryStage)) {
+                    || geometryInterface != geometryStage) {
                 throw new IllegalArgumentException("pack interface is outside the executable contract");
             }
             String src = source;
@@ -189,16 +192,34 @@ public final class LegacyGlslConverter {
             Path sourceFile,
             String fragmentSource
     ) {
+        return convertLegacyVertex(source, sourceFile, fragmentSource, TERRAIN_VERTEX_PREAMBLE);
+    }
+
+    /** Converts the same strict bridge for the shadow pipeline's one-matrix UBO. */
+    public static TerrainVertexConversion convertShadowVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource
+    ) {
+        return convertLegacyVertex(source, sourceFile, fragmentSource, SHADOW_VERTEX_PREAMBLE);
+    }
+
+    private static TerrainVertexConversion convertLegacyVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            String vertexPreamble
+    ) {
         try {
             String src = inlineIncludes(source, sourceFile, 0);
             String stripped = stripComments(src);
             if (!TERRAIN_VERSION.matcher(src).find()
                     || stripped.matches("(?s).*#version\\s+(?!120(?:e)?\\b)\\d+.*")) {
-                throw new IllegalArgumentException("terrain vertex requires #version 120 or #version 120e");
+                throw new IllegalArgumentException("legacy vertex requires #version 120 or #version 120e");
             }
             if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
-                throw new IllegalArgumentException("terrain vertex requires main and gl_Position");
+                throw new IllegalArgumentException("legacy vertex requires main and gl_Position");
             }
             rejectTerrainVertexFeatures(stripped);
 
@@ -207,7 +228,7 @@ public final class LegacyGlslConverter {
             for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
                 String vertexType = vertexTypes.get(entry.getKey());
                 if (!entry.getValue().equals(vertexType)) {
-                    throw new IllegalArgumentException("terrain varying mismatch: " + entry.getKey());
+                    throw new IllegalArgumentException("legacy varying mismatch: " + entry.getKey());
                 }
             }
 
@@ -236,7 +257,7 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("mc_Entity is used without a supported declaration");
             }
             return new TerrainVertexConversion(
-                    "#version 460\n" + TERRAIN_VERTEX_PREAMBLE + converted,
+                    "#version 460\n" + vertexPreamble + converted,
                     layout);
         } catch (Exception e) {
             return null;
@@ -246,6 +267,11 @@ public final class LegacyGlslConverter {
     /** Static probe helper used by PackProbe without compiling a shader. */
     public static boolean supportsTerrainVertex(String source, String fragmentSource) {
         return convertTerrainVertex(source, null, fragmentSource) != null;
+    }
+
+    /** Static probe helper for the strict shadow vertex bridge. */
+    public static boolean supportsShadowVertex(String source, String fragmentSource) {
+        return convertShadowVertex(source, null, fragmentSource) != null;
     }
 
     private static UniformRegistry.Stage stageOf(boolean geometryStage) {
@@ -501,6 +527,10 @@ public final class LegacyGlslConverter {
             }
 
             """;
+
+    /** The shadow config exposes only the single host MVP matrix at binding 0. */
+    private static final String SHADOW_VERTEX_PREAMBLE = TERRAIN_VERTEX_PREAMBLE
+            .replace("mat4 LightMVP;\n", "");
 
     private static String convertTextureCalls(String src) {
         String converted = src;

@@ -6,6 +6,8 @@ import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.PackConfig;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.SamplerInfo;
 import net.vulkanmod.vulkan.texture.SamplerManager;
@@ -23,16 +25,14 @@ import static org.lwjgl.vulkan.VK10.*;
 /**
  * Manages the shadow map: framebuffer, light-space matrices, and rendering.
  *
- * The shadow map is a 2048x2048 RGBA8 color buffer where the shadow pipeline
- * writes gl_FragCoord.z. The terrain fragment shader samples this texture to
- * determine shadow occlusion.
+ * The shadow map keeps an RGBA8 color buffer for the fixed host path and a
+ * stored depth attachment for pack shadowtex0 sampling. Resolution and light
+ * distance are selected once when the pack session is created.
  *
  * Light matrices: ortho projection looking from the sun toward the player.
  * Updated each frame from the celestial angle.
  */
 public class ChimeraShadowMap {
-    private static final int SHADOW_MAP_SIZE = 2048;
-    private static final float SHADOW_DISTANCE = 128.0F;
     private static final float SHADOW_NEAR = 0.1F;
     private static final float SHADOW_FAR = 512.0F;
 
@@ -49,13 +49,24 @@ public class ChimeraShadowMap {
     private final Matrix4f lightView = new Matrix4f();
     private final Matrix4f lightMVP = new Matrix4f();
     private final Vector3f lightDir = new Vector3f();
+    private final float[] matrixScratch = new float[16];
+
+    private int shadowMapSize = PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION;
+    private float shadowDistance = PackConfig.DEFAULT_SHADOW_DISTANCE;
 
     private boolean initialized;
 
     public void init() {
+        init(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, PackConfig.DEFAULT_SHADOW_DISTANCE);
+    }
+
+    public void init(int resolution, float distance) {
         if (this.initialized) return;
 
-        this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1, true)
+        this.shadowMapSize = resolution;
+        this.shadowDistance = distance;
+
+        this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", this.shadowMapSize, this.shadowMapSize, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
                 .build();
 
@@ -74,7 +85,7 @@ public class ChimeraShadowMap {
     private void createRenderPass() {
         RenderPass.Builder b = RenderPass.builder(this.shadowFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         this.shadowRenderPass = b.build();
     }
 
@@ -111,35 +122,40 @@ public class ChimeraShadowMap {
         // positions, so the light view must use the same relative origin.
         this.lightView.identity();
         this.lightView.lookAt(
-                this.lightDir.x * SHADOW_DISTANCE,
-                this.lightDir.y * SHADOW_DISTANCE,
-                this.lightDir.z * SHADOW_DISTANCE,
+                this.lightDir.x * this.shadowDistance,
+                this.lightDir.y * this.shadowDistance,
+                this.lightDir.z * this.shadowDistance,
                 0.0F, 0.0F, 0.0F,
                 0.0F, 1.0F, 0.0F
         );
 
         // Ortho projection covering the shadow distance
-        float halfExtent = SHADOW_DISTANCE * 0.5F;
+        float halfExtent = this.shadowDistance * 0.5F;
         this.lightProjection.identity();
         this.lightProjection.ortho(
                 -halfExtent, halfExtent,
                 -halfExtent, halfExtent,
-                SHADOW_NEAR, SHADOW_FAR
+                SHADOW_NEAR, Math.max(SHADOW_FAR, this.shadowDistance * 4.0F)
         );
 
         // Combined MVP
         this.lightMVP.set(this.lightProjection).mul(this.lightView);
 
         // Write to the mapped buffer for GPU upload
-        this.lightMVPBuffer.buffer.asFloatBuffer().put(this.lightMVP.get(new float[16]));
+        this.lightMVP.get(this.matrixScratch);
+        this.lightMVPBuffer.buffer.asFloatBuffer().put(this.matrixScratch);
+        PackUniformProvider.updateShadowState(this.lightView, this.lightProjection, this.lightDir);
     }
 
     /** Binds the shadow map texture for sampling by the terrain shader. */
     public void bindShadowTexture() {
         if (this.shadowFramebuffer == null) return;
         VulkanImage shadowColor = this.shadowFramebuffer.getColorAttachment();
+        VulkanImage shadowDepth = this.shadowFramebuffer.getDepthAttachment();
         shadowColor.setSampler(this.shadowSampler);
+        shadowDepth.setSampler(this.shadowSampler);
         VTextureSelector.bindTexture(3, shadowColor); // slot 3 for shadow map
+        VTextureSelector.bindTexture(5, shadowDepth); // slot 5 for pack shadowtex0
     }
 
     public Matrix4f getLightProjection() {
@@ -160,6 +176,14 @@ public class ChimeraShadowMap {
 
     public Framebuffer getShadowFramebuffer() {
         return this.shadowFramebuffer;
+    }
+
+    public int getShadowMapSize() {
+        return this.shadowMapSize;
+    }
+
+    public float getShadowDistance() {
+        return this.shadowDistance;
     }
 
     public RenderPass getShadowRenderPass() {

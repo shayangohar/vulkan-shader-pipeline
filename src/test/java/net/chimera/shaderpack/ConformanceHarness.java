@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Small dependency-free conformance check for the locked M5.1, M5.2, and M5.3 boundary.
+ * Small dependency-free conformance check for the locked M5.1 through M5.4 boundary.
  * Gradle runs this class before a normal build.
  */
 public final class ConformanceHarness {
@@ -34,7 +34,9 @@ public final class ConformanceHarness {
         verifyM52Unsupported(fixtureRoot.resolve("m5_2/unsupported_vertex"), fixtureRoot.resolve("baselines/m5_2.json"));
         verifyM53LiveUniforms(fixtureRoot.resolve("m5_3/live_uniforms"), fixtureRoot.resolve("baselines/m5_3.json"));
         verifyM53Unsupported(fixtureRoot.resolve("m5_3/unsupported_uniform"), fixtureRoot.resolve("baselines/m5_3.json"));
-        System.out.println("[chimera] M5.1, M5.2, and M5.3 conformance harness: PASS");
+        verifyM54Shadow(fixtureRoot.resolve("m5_4/shadow"), fixtureRoot.resolve("baselines/m5_4.json"));
+        verifyM54Unsupported(fixtureRoot.resolve("m5_4/unsupported_shadow"), fixtureRoot.resolve("baselines/m5_4.json"));
+        System.out.println("[chimera] M5.1 through M5.4 conformance harness: PASS");
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {
@@ -286,6 +288,152 @@ public final class ConformanceHarness {
         verifyM53Baseline(report, baselinePath, "unsupported_uniform");
     }
 
+    private static void verifyM54Shadow(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        ConformanceReport.ProgramReport shadow = report.program("shadow");
+        assertTrue(shadow != null, "m5.4 shadow program was not discovered");
+        assertEquals(List.of("fragment", "vertex"), shadow.stages(), "m5.4 shadow stages");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
+                shadow.support(), "m5.4 shadow support");
+        assertEquals(List.of("SHADOW_VERTEX_BRIDGE"), shadow.deviations(),
+                "m5.4 shadow deviations");
+        assertEquals(List.of("lightmap", "texture"), shadow.samplers(),
+                "m5.4 shadow sampler inventory");
+        assertTrue(report.passInventory().equals(List.of("composite", "final")),
+                "m5.4 shadow must be discovered outside shaders.json");
+        assertTrue(report.programs().stream().filter(program -> program.name().equals("shadow")).count() == 1,
+                "m5.4 shadow program was duplicated");
+        assertTrue(report.deviations().contains("SHADOW_SETTING_APPLIED:shadowDistance"),
+                "m5.4 shadow distance application is missing");
+        assertTrue(report.deviations().contains("SHADOW_SETTING_APPLIED:shadowMapResolution"),
+                "m5.4 shadow resolution application is missing");
+
+        PackSource.LoadResult loaded = PackSource.loadResult(pack);
+        PackProgram shadowProgram = loaded.programs().stream()
+                .filter(program -> program.name().equals("shadow"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("m5.4 shadow source is missing"));
+        assertTrue(shadowProgram.vertexSource() != null, "m5.4 shadow vertex source is missing");
+
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                shadowProgram.fragmentSource(), UniformRegistry.Stage.SHADOW);
+        assertEquals(List.of(
+                        new UniformRegistry.SamplerBinding("texture", 0),
+                        new UniformRegistry.SamplerBinding("lightmap", 2)),
+                interfacePlan.samplers(), "m5.4 shadow sampler bindings");
+        assertTrue(interfacePlan.executable(), "m5.4 shadow interface is not executable");
+
+        LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertShadowVertex(
+                shadowProgram.vertexSource(), shadowProgram.vertexPath(), shadowProgram.fragmentSource());
+        assertTrue(vertex != null, "m5.4 shadow vertex conversion failed");
+        assertTrue(vertex.source().contains("layout(binding = 0) uniform ViewUBO"),
+                "m5.4 shadow MVP UBO is missing");
+        assertTrue(vertex.source().contains("mat4 MVP;"), "m5.4 shadow MVP field is missing");
+        assertTrue(!vertex.source().contains("LightMVP"),
+                "m5.4 pack shadow bridge retained the fixed LightMVP name");
+        assertTrue(vertex.source().contains("layout(binding = 2) uniform SectionData"),
+                "m5.4 shadow section UBO is missing");
+        assertTrue(vertex.source().contains("layout(location = 3) in int inMaterialId"),
+                "m5.4 shadow material input is missing");
+        assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
+                "m5.4 shadow render-type input is missing");
+
+        String convertedFragment = LegacyGlslConverter.convertFragment(
+                shadowProgram.fragmentSource(), shadowProgram.fragmentPath(), true,
+                new int[] {0, 2}, vertex.layout(), interfacePlan);
+        assertTrue(convertedFragment != null, "m5.4 shadow fragment conversion failed");
+        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
+                "m5.4 shadow atlas binding is missing");
+        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
+                "m5.4 shadow lightmap binding is missing");
+        assertTrue(convertedFragment.contains("layout(location = "),
+                "m5.4 shadow varying locations are missing");
+
+        JsonObject shadowConfig = PackPipelines.shadowPipelineJson();
+        JsonArray shadowUbos = shadowConfig.getAsJsonArray("UBOs");
+        assertTrue(shadowUbos != null && shadowUbos.toString().contains("\"binding\":2"),
+                "m5.4 shadow section UBO binding was not preserved");
+        assertTrue(shadowUbos.toString().contains("\"name\":\"MVP\""),
+                "m5.4 shadow pack config MVP field is missing");
+        assertEquals(List.of(0, 2), toList(PackPipelines.shadowSamplerSlots(new int[] {2})),
+                "m5.4 shadow lightmap descriptor reservation");
+        assertEquals(List.of(0), toList(PackPipelines.shadowSamplerSlots(new int[] {0})),
+                "m5.4 shadow atlas descriptor ordering");
+
+        PackConfig.PackConfigData config = PackConfig.parse(loaded.programs(), loaded.shadersDir());
+        assertEquals(1024, config.shadowSettings().resolution(),
+                "m5.4 shaders.properties resolution precedence");
+        assertEquals(256.0F, config.shadowSettings().distance(),
+                "m5.4 shaders.properties distance precedence");
+        assertTrue(config.shadowSettings().rawValues().get("shadowMapResolution").equals("1024"),
+                "m5.4 resolution raw value");
+        assertTrue(config.shadowSettings().rawValues().get("shadowDistance").equals("256"),
+                "m5.4 distance raw value");
+        verifyM54SettingValidation();
+        verifyM54Baseline(report, baselinePath, "shadow");
+    }
+
+    private static void verifyM54Unsupported(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        ConformanceReport.ProgramReport shadow = report.program("shadow");
+        assertTrue(shadow != null, "m5.4 unsupported shadow program was not discovered");
+        assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
+                shadow.support(), "m5.4 unsupported shadow support");
+        assertTrue(shadow.deviations().contains("SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"),
+                "m5.4 unsupported shadow sampler deviation is missing");
+        assertTrue(!report.shouldAttempt("shadow"),
+                "m5.4 unsupported shadow must not execute");
+        assertTrue(report.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
+                "m5.4 invalid distance default is missing");
+        assertTrue(report.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
+                "m5.4 invalid resolution default is missing");
+
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                Files.readString(pack.resolve("shaders/shadow.fsh"), StandardCharsets.UTF_8),
+                UniformRegistry.Stage.SHADOW);
+        assertTrue(!interfacePlan.executable(), "m5.4 unsupported shadow interface was accepted");
+        UniformRegistry.ProgramInterface colorInput = UniformRegistry.plan(
+                "uniform sampler2D texture; uniform sampler2D shadowcolor0;",
+                UniformRegistry.Stage.SHADOW);
+        assertTrue(colorInput.deviations().contains("SHADOW_COLOR_INPUT_UNSUPPORTED"),
+                "m5.4 shadow color input deviation is missing");
+        assertTrue(!colorInput.executable(), "m5.4 shadow color input was accepted");
+        assertTrue(LegacyGlslConverter.convertShadowVertex(
+                Files.readString(pack.resolve("shaders/shadow.vsh"), StandardCharsets.UTF_8),
+                pack.resolve("shaders/shadow.vsh"),
+                Files.readString(pack.resolve("shaders/shadow.fsh"), StandardCharsets.UTF_8)) != null,
+                "m5.4 unsupported fixture vertex was rejected for the wrong reason");
+        verifyM54Baseline(report, baselinePath, "unsupported_shadow");
+    }
+
+    private static void verifyM54SettingValidation() {
+        Path root;
+        try {
+            root = Files.createTempDirectory("chimera-m54-settings-");
+            Path shaders = Files.createDirectories(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("shaders.properties"),
+                    "shadowMapResolution=64\nshadowDistance=4096\nshadowMapFov=90\n");
+            PackConfig.ShadowSettings settings = PackConfig.parse(List.of(
+                    new PackProgram("shadow", "#version 120\nconst int shadowMapResolution = 2048;",
+                            shaders.resolve("shadow.fsh"), null, null)), shaders).shadowSettings();
+            assertEquals(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, settings.resolution(),
+                    "m5.4 invalid resolution default");
+            assertEquals(PackConfig.DEFAULT_SHADOW_DISTANCE, settings.distance(),
+                    "m5.4 invalid distance default");
+            assertTrue(settings.deviations().contains("SHADOW_SETTING_UNSUPPORTED:shadowMapFov"),
+                    "m5.4 unsupported shadow setting");
+            assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
+                    "m5.4 invalid resolution deviation");
+            assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
+                    "m5.4 invalid distance deviation");
+            Files.deleteIfExists(shaders.resolve("shaders.properties"));
+            Files.deleteIfExists(shaders);
+            Files.deleteIfExists(root);
+        } catch (IOException e) {
+            throw new AssertionError("m5.4 setting validation setup failed", e);
+        }
+    }
+
     private static void assertExtendedFormat() {
         var format = net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
         assertEquals(24, format.getVertexSize(), "m5.2 terrain stride");
@@ -445,6 +593,34 @@ public final class ConformanceHarness {
         assertStable(report, "m5.3 " + fixture);
     }
 
+    private static void verifyM54Baseline(
+            ConformanceReport report,
+            Path baselinePath,
+            String fixture
+    ) throws IOException {
+        assertTrue(Files.isRegularFile(baselinePath), "M5.4 baseline is missing: " + baselinePath);
+        JsonObject root = JsonParser.parseString(
+                Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject baseline = root.getAsJsonObject("fixtures").getAsJsonObject(fixture);
+        assertTrue(baseline != null, "M5.4 baseline fixture is missing: " + fixture);
+        assertEquals(baseline.get("reportSha256").getAsString(), report.sha256(),
+                "M5.4 " + fixture + " report hash");
+        assertEquals(baseline.get("expectedPassInventory").toString(),
+                JsonParser.parseString(report.toJson()).getAsJsonObject()
+                        .get("passInventory").toString(),
+                "M5.4 " + fixture + " pass inventory");
+        assertEquals(baseline.get("expectedStages").toString(), expectedStages(report).toString(),
+                "M5.4 " + fixture + " stages");
+        assertEquals(baseline.get("expectedDeviations").toString(), expectedDeviations(report).toString(),
+                "M5.4 " + fixture + " deviations");
+        Map<String, String> expectedHashes = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : baseline.getAsJsonObject("sourceHashes").entrySet()) {
+            expectedHashes.put(entry.getKey(), entry.getValue().getAsString());
+        }
+        assertEquals(expectedHashes, sourceHashes(report), "M5.4 " + fixture + " source hashes");
+        assertStable(report, "m5.4 " + fixture);
+    }
+
     private static JsonObject expectedStages(ConformanceReport report) {
         JsonObject stages = new JsonObject();
         for (ConformanceReport.ProgramReport program : report.programs()) {
@@ -465,6 +641,14 @@ public final class ConformanceHarness {
     private static JsonArray strings(List<String> values) {
         JsonArray result = new JsonArray();
         for (String value : values) {
+            result.add(value);
+        }
+        return result;
+    }
+
+    private static List<Integer> toList(int[] values) {
+        List<Integer> result = new ArrayList<>();
+        for (int value : values) {
             result.add(value);
         }
         return result;

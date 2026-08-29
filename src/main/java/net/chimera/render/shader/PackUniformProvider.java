@@ -8,6 +8,8 @@ import net.minecraft.world.level.material.FogType;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.shader.layout.Uniform;
 import net.vulkanmod.vulkan.util.MappedBuffer;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -24,8 +26,13 @@ public final class PackUniformProvider {
     private static final PackUniformProvider INSTANCE = new PackUniformProvider();
 
     private final Map<String, MappedBuffer> buffers = new HashMap<>();
+    private final Matrix4f shadowModelView = new Matrix4f();
+    private final Matrix4f shadowProjection = new Matrix4f();
+    private final Vector3f shadowLightPosition = new Vector3f(0.0f, 1.0f, 0.0f);
+    private final float[] matrixScratch = new float[16];
     private long lastFrameNanos;
     private float frameTimeCounter;
+    private float celestialAngle;
 
     private PackUniformProvider() {}
 
@@ -45,6 +52,21 @@ public final class PackUniformProvider {
     /** Captures the current camera, world state, and render delta on the render thread. */
     public static void beginFrame(Camera camera, float partialTick) {
         INSTANCE.updateFrame(camera, partialTick);
+    }
+
+    /** The frame's celestial angle, shared with the shadow matrix builder. */
+    public static float currentCelestialAngle() {
+        return INSTANCE.celestialAngle;
+    }
+
+    /** Publishes the exact shadow state used by the shadow render. */
+    public static void updateShadowState(Matrix4f modelView, Matrix4f projection, Vector3f lightPosition) {
+        INSTANCE.shadowModelView.set(modelView);
+        INSTANCE.shadowProjection.set(projection);
+        INSTANCE.shadowLightPosition.set(lightPosition);
+        INSTANCE.writeMatrix("shadowModelView", INSTANCE.shadowModelView);
+        INSTANCE.writeMatrix("shadowProjection", INSTANCE.shadowProjection);
+        INSTANCE.putVec3("shadowLightPosition", lightPosition.x, lightPosition.y, lightPosition.z);
     }
 
     private void updateFrame(Camera camera, float partialTick) {
@@ -69,6 +91,7 @@ public final class PackUniformProvider {
 
         ClientLevel level = minecraft.level;
         if (level == null) {
+            this.celestialAngle = 0.0f;
             putInt("worldTime", 0);
             putFloat("rainStrength", 0.0f);
             putInt("moonPhase", 0);
@@ -80,6 +103,7 @@ public final class PackUniformProvider {
             putFloat("rainStrength", level.getRainLevel(partialTick));
             putInt("moonPhase", (int) Math.floorMod(level.getDayTime() / 24000L, 8L));
             float timeOfDay = (float) (Math.floorMod(level.getDayTime(), 24000L) + partialTick) / 24000.0f;
+            this.celestialAngle = timeOfDay;
             updateCelestialValues(timeOfDay);
         }
         putFloat("frameTimeCounter", frameTimeCounter);
@@ -116,6 +140,10 @@ public final class PackUniformProvider {
             case "screenSize" -> copyVec2(VRenderSystem.getScreenSize(), buffer);
             case "textureSize" -> copyInts(VRenderSystem.getTextureSize(), buffer);
             case "texelSize" -> copyVec2(VRenderSystem.getTexelSize(), buffer);
+            case "shadowModelView" -> writeMatrix(name, shadowModelView);
+            case "shadowProjection" -> writeMatrix(name, shadowProjection);
+            case "shadowLightPosition" -> putVec3(name, shadowLightPosition.x,
+                    shadowLightPosition.y, shadowLightPosition.z);
             default -> {
                 // Values captured by beginFrame already live in their buffer.
             }
@@ -142,6 +170,17 @@ public final class PackUniformProvider {
             buffer.putFloat(0, x);
             buffer.putFloat(4, y);
             buffer.putFloat(8, z);
+        }
+    }
+
+    private void writeMatrix(String name, Matrix4f matrix) {
+        MappedBuffer buffer = buffers.get(name);
+        if (buffer == null) {
+            return;
+        }
+        matrix.get(matrixScratch);
+        for (int i = 0; i < matrixScratch.length; i++) {
+            buffer.putFloat(i * 4, matrixScratch[i]);
         }
     }
 

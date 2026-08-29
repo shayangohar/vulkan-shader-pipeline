@@ -107,6 +107,16 @@ public final class ConformanceReport {
         return List.copyOf(deviations);
     }
 
+    public List<String> passInventory() {
+        return passInventory;
+    }
+
+    public void addDeviation(String deviation) {
+        if (deviation != null && !deviation.isBlank()) {
+            deviations.add(deviation);
+        }
+    }
+
     /**
      * Returns true only for programs the runtime is allowed to build onto the
      * current fixed-vertex pipelines.

@@ -43,6 +43,9 @@ public final class PackPipelines {
     /** A successfully built pack geometry (terrain) pipeline plus its sampler slots. */
     public record PackTerrain(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
 
+    /** A successfully built pack shadow pipeline plus its sampler slots. */
+    public record PackShadow(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
+
     public static PackPost buildPost(PackProgram program, String fixedVertexSource) {
         try {
             UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
@@ -155,6 +158,56 @@ public final class PackPipelines {
         return ubos;
     }
 
+    /** Builds the strict legacy shadow program on the extended terrain inputs. */
+    public static PackShadow buildShadow(PackProgram program) {
+        try {
+            if (program.vertexSource() == null) {
+                throw new IllegalStateException("shadow program requires a vertex source");
+            }
+            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                    program.fragmentSource(), UniformRegistry.Stage.SHADOW);
+            if (!interfacePlan.executable()) {
+                throw new IllegalStateException("pack shadow interface is unsupported: " + interfacePlan.deviations());
+            }
+            LegacyGlslConverter.TerrainVertexConversion vertex =
+                    LegacyGlslConverter.convertShadowVertex(
+                            program.vertexSource(), program.vertexPath(), program.fragmentSource());
+            if (vertex == null) {
+                throw new IllegalStateException("legacy shadow vertex bridge rejected the source");
+            }
+
+            int[] declaredSlots = interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot)
+                    .toArray();
+            int[] slots = shadowSamplerSlots(declaredSlots);
+            String converted = LegacyGlslConverter.convertFragment(
+                    program.fragmentSource(), program.fragmentPath(), true, slots,
+                    vertex.layout(), interfacePlan);
+            if (converted == null) {
+                throw new IllegalStateException("legacy shadow fragment conversion failed");
+            }
+
+            JsonObject json = shadowPipelineJson();
+            json.addProperty("fragment", "pack_" + program.name());
+            json.add("samplers", samplerArray(slots));
+
+            PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
+            Pipeline.Builder builder = new Pipeline.Builder(
+                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + program.name());
+            builder.applyConfig(config);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex.source());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            for (var buffer : pipeline.getBuffers()) {
+                buffer.setUseGlobalBuffer(true);
+            }
+            return new PackShadow(pipeline, slots, converted);
+        } catch (Exception e) {
+            LOGGER.warn("[chimera] pack {}: shadow build failed: {}", program.name(), e.getMessage());
+            return null;
+        }
+    }
+
     /** Sampler JSON entries "Sampler<slot>" in the given order (config binding order). */
     private static JsonArray samplerArray(int[] slots) {
         JsonArray samplersJson = new JsonArray();
@@ -186,6 +239,20 @@ public final class PackPipelines {
         out[1] = 2;
         System.arraycopy(withAtlas, 1, out, 2, withAtlas.length - 1);
         return out;
+    }
+
+    /** Keep the host's atlas/lightmap positions when a shadow shader asks for lightmap. */
+    static int[] shadowSamplerSlots(int[] declaredSlots) {
+        boolean hasLightmap = java.util.Arrays.stream(declaredSlots).anyMatch(slot -> slot == 2);
+        if (!hasLightmap) {
+            return declaredSlots;
+        }
+        return new int[] {0, 2};
+    }
+
+    /** Return an isolated copy so pack sampler and fragment fields cannot alter the host config. */
+    static JsonObject shadowPipelineJson() {
+        return ChimeraShaderLoader.loadJson("chimera_shadow.json").deepCopy();
     }
 
     private static int[] prepend(int value, int[] values) {

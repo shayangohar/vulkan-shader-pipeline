@@ -32,7 +32,9 @@ public final class UniformRegistry {
         /** composite/final post seams (fullscreen, slot 0 = seam color). */
         POST,
         /** gbuffers_* terrain path (fixed-vertex inputs, host-set registry slots). */
-        GEOMETRY
+        GEOMETRY,
+        /** shadow gbuffers path (terrain inputs, but no shadow feedback samplers). */
+        SHADOW
     }
 
     /** One ordinary GLSL uniform declaration, excluding sampler declarations. */
@@ -119,6 +121,12 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5)
     );
 
+    /** Shadow writes must not sample the resource they are currently filling. */
+    public static final Map<String, Integer> SHADOW_NAME_TO_SLOT = Map.ofEntries(
+            Map.entry("texture", 0),
+            Map.entry("lightmap", 2)
+    );
+
     private static final Set<String> SUPPORTED_TYPES = Set.of(
             "float", "int", "vec2", "vec3", "vec4",
             "ivec2", "ivec3", "ivec4", "mat4");
@@ -182,14 +190,22 @@ public final class UniformRegistry {
             }
         }
 
-        Map<String, Integer> slots = stage == Stage.GEOMETRY
-                ? GEOMETRY_NAME_TO_SLOT
-                : NAME_TO_SLOT;
+        Map<String, Integer> slots = switch (stage) {
+            case POST -> NAME_TO_SLOT;
+            case GEOMETRY -> GEOMETRY_NAME_TO_SLOT;
+            case SHADOW -> SHADOW_NAME_TO_SLOT;
+        };
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
             Integer slot = slots.get(sampler.getKey());
             if (!"sampler2D".equals(sampler.getValue()) || slot == null) {
-                deviations.add("SAMPLER_NOT_MAPPED:" + sampler.getKey());
+                if (stage == Stage.SHADOW && sampler.getKey().startsWith("shadowcolor")) {
+                    deviations.add("SHADOW_COLOR_INPUT_UNSUPPORTED");
+                } else {
+                    deviations.add(stage == Stage.SHADOW
+                            ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler.getKey()
+                            : "SAMPLER_NOT_MAPPED:" + sampler.getKey());
+                }
                 continue;
             }
             bindings.add(new SamplerBinding(sampler.getKey(), slot));
@@ -201,7 +217,7 @@ public final class UniformRegistry {
             }
         }
 
-        if (stage == Stage.GEOMETRY && !declarations.isEmpty()) {
+        if ((stage == Stage.GEOMETRY || stage == Stage.SHADOW) && !declarations.isEmpty()) {
             for (String name : declarations.keySet()) {
                 deviations.add("UNIFORM_NAME_UNSUPPORTED:" + name);
             }
@@ -275,7 +291,9 @@ public final class UniformRegistry {
         return deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                 || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                 || deviation.startsWith("UNIFORM_CONFLICT:")
-                || deviation.startsWith("SAMPLER_NOT_MAPPED:");
+                || deviation.startsWith("SAMPLER_NOT_MAPPED:")
+                || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
+                || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED");
     }
 
     private static boolean isSamplerType(String type) {
@@ -293,6 +311,8 @@ public final class UniformRegistry {
         addLive(specs, "sunPosition", "vec3");
         addLive(specs, "moonPosition", "vec3");
         addLive(specs, "shadowLightPosition", "vec3");
+        addLive(specs, "shadowModelView", "mat4");
+        addLive(specs, "shadowProjection", "mat4");
         addLive(specs, "viewWidth", "float");
         addLive(specs, "viewHeight", "float");
         addLive(specs, "aspectRatio", "float");

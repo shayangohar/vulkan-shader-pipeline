@@ -44,7 +44,32 @@ public final class PackSource {
         } else {
             scanPairs(shadersDir, programs);
         }
+        loadStandardShadowPair(shadersDir, programs);
         return new LoadResult(programs, shadersDir);
+    }
+
+    /** Iris packs may omit the standard shadow program from shaders.json. */
+    private static void loadStandardShadowPair(Path shadersDir, List<PackProgram> out) {
+        Path vertexPath = shadersDir.resolve("shadow.vsh");
+        for (int i = 0; i < out.size(); i++) {
+            PackProgram existing = out.get(i);
+            if (existing.name().equals("shadow")) {
+                if (existing.vertexSource() == null && Files.isRegularFile(vertexPath)) {
+                    out.set(i, new PackProgram(existing.name(), existing.fragmentSource(),
+                            existing.fragmentPath(), readOptionalSource(vertexPath), vertexPath));
+                }
+                return;
+            }
+        }
+        Path fragmentPath = shadersDir.resolve("shadow.fsh");
+        if (!Files.isRegularFile(fragmentPath)) {
+            return;
+        }
+        String fragment = readSource(fragmentPath);
+        if (fragment != null) {
+            out.add(new PackProgram("shadow", fragment, fragmentPath,
+                    readOptionalSource(vertexPath), vertexPath));
+        }
     }
 
     private static void loadFromPassList(Path passList, Path shadersDir, List<PackProgram> out) {

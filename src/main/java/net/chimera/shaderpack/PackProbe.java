@@ -46,7 +46,7 @@ public final class PackProbe {
     private static final Pattern COLORTEX_FORMAT = Pattern.compile(
             "colortex\\d+Format");
     private static final Pattern SHADOW_SETTING = Pattern.compile(
-            "shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov");
+            "shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul");
 
     private PackProbe() {}
 
@@ -59,6 +59,7 @@ public final class PackProbe {
         List<String> globalDeviations = new ArrayList<>();
         List<String> settings = new ArrayList<>();
         List<String> passInventory = new ArrayList<>();
+        Set<String> shadowPropertySettings = new TreeSet<>();
         boolean passListPresent = false;
 
         Path passList = shadersDir.resolve("shaders.json");
@@ -71,7 +72,7 @@ public final class PackProbe {
         Path properties = shadersDir.resolve("shaders.properties");
         if (Files.isRegularFile(properties)) {
             readMetadata(properties, "shaders.properties", metadataHashes, globalDeviations);
-            readProperties(properties, settings, globalDeviations);
+            readProperties(properties, settings, globalDeviations, shadowPropertySettings);
         }
 
         if (!Files.isDirectory(shadersDir)) {
@@ -131,6 +132,11 @@ public final class PackProbe {
             }
         }
 
+        PackConfig.PackConfigData packConfig = PackConfig.parse(
+                PackSource.loadResult(packDir).programs(), shadersDir);
+        applyShadowPropertyReporting(inventories, shadowPropertySettings,
+                packConfig.shadowSettings(), globalDeviations);
+
         ConformanceReport report = new ConformanceReport(packName, passListPresent,
                 passInventory, metadataHashes, settings, globalDeviations);
         for (Inventory inventory : inventories.values()) {
@@ -157,12 +163,13 @@ public final class PackProbe {
         String family = familyOf(name);
         UniformRegistry.Stage interfaceStage = name.equals("gbuffers_terrain")
                 ? UniformRegistry.Stage.GEOMETRY
-                : UniformRegistry.Stage.POST;
+                : name.equals("shadow") ? UniformRegistry.Stage.SHADOW : UniformRegistry.Stage.POST;
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(fragment, interfaceStage);
         deviations.addAll(interfacePlan.deviations());
         boolean executableName = name.equals("gbuffers_terrain")
                 || name.equals("composite")
-                || name.equals("final");
+                || name.equals("final")
+                || name.equals("shadow");
         boolean hasFragment = inventory.stages.contains("fragment");
 
         if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
@@ -172,6 +179,15 @@ public final class PackProbe {
             } else {
                 deviations.add("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
             }
+        } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
+            String vertex = inventory.sources.get("vertex");
+            if (LegacyGlslConverter.supportsShadowVertex(vertex, fragment)) {
+                deviations.add("SHADOW_VERTEX_BRIDGE");
+            } else {
+                deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            }
+        } else if (name.equals("shadow")) {
+            deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
         } else if (inventory.stages.contains("vertex")) {
             deviations.add("FIXED_VERTEX_SUBSTITUTION");
         }
@@ -191,10 +207,12 @@ public final class PackProbe {
 
         Map<String, Integer> knownSamplers = name.equals("gbuffers_terrain")
                 ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
-                : UniformRegistry.NAME_TO_SLOT;
+                : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT : UniformRegistry.NAME_TO_SLOT;
         for (String sampler : samplers) {
             if (!knownSamplers.containsKey(sampler)) {
-                deviations.add("SAMPLER_NOT_MAPPED:" + sampler);
+                deviations.add(name.equals("shadow")
+                        ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
+                        : "SAMPLER_NOT_MAPPED:" + sampler);
             }
         }
         if (targets.size() > 1) {
@@ -240,10 +258,13 @@ public final class PackProbe {
                     || deviation.equals("MRT_NOT_SUPPORTED")
                     || deviation.equals("TARGET_ROUTING_FIXED_TO_COLORTEX0")
                     || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("SHADOW_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_CONFLICT:")
                     || deviation.startsWith("SAMPLER_NOT_MAPPED:")
+                    || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
+                    || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
                     || deviation.equals("NESTED_SOURCE_NOT_LOADED")) {
                 return true;
@@ -349,7 +370,8 @@ public final class PackProbe {
     private static void readProperties(
             Path properties,
             List<String> settings,
-            List<String> deviations
+            List<String> deviations,
+            Set<String> shadowPropertySettings
     ) {
         try {
             for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
@@ -362,13 +384,43 @@ public final class PackProbe {
                 boolean colortexFormat = COLORTEX_FORMAT.matcher(key).matches();
                 boolean shadowSetting = SHADOW_SETTING.matcher(key).matches();
                 if (shadowSetting) {
-                    deviations.add("SHADOW_SETTING_LOGGED_ONLY:" + key);
+                    shadowPropertySettings.add(key);
                 } else if (!colortexFormat) {
                     deviations.add("SETTING_NOT_APPLIED:" + key);
                 }
             }
         } catch (IOException e) {
             deviations.add("SHADERS_PROPERTIES_READ_FAILED");
+        }
+    }
+
+    private static void applyShadowPropertyReporting(
+            Map<String, Inventory> inventories,
+            Set<String> shadowPropertySettings,
+            PackConfig.ShadowSettings shadowSettings,
+            List<String> deviations
+    ) {
+        Inventory shadow = inventories.get("shadow");
+        boolean executablePair = shadow != null
+                && shadow.stages.contains("vertex")
+                && shadow.stages.contains("fragment");
+        if (!executablePair) {
+            for (String key : shadowPropertySettings) {
+                deviations.add("SHADOW_SETTING_LOGGED_ONLY:" + key);
+            }
+            return;
+        }
+
+        for (String key : shadowSettings.rawValues().keySet()) {
+            if (key.equals("shadowMapResolution") || key.equals("shadowDistance")) {
+                if (shadowSettings.deviations().contains("SHADOW_SETTING_DEFAULTED:" + key)) {
+                    deviations.add("SHADOW_SETTING_DEFAULTED:" + key);
+                } else {
+                    deviations.add("SHADOW_SETTING_APPLIED:" + key);
+                }
+            } else {
+                deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
+            }
         }
     }
 

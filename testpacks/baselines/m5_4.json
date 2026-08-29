@@ -1,0 +1,84 @@
+{
+  "formatVersion": 1,
+  "fixtures": {
+    "shadow": {
+      "reportSha256": "11ccfc1efed0b9bc33abf9470fba50cf004edee92fa66f9508bea0827bebaf5b",
+      "expectedPassInventory": [
+        "composite",
+        "final"
+      ],
+      "expectedStages": {
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "shadow": [
+          "fragment",
+          "vertex"
+        ]
+      },
+      "expectedDeviations": {
+        "global": [
+          "SHADOW_SETTING_APPLIED:shadowDistance",
+          "SHADOW_SETTING_APPLIED:shadowMapResolution"
+        ],
+        "composite": [
+          "LIVE_UNIFORM_BRIDGE"
+        ],
+        "final": [],
+        "shadow": [
+          "SHADOW_VERTEX_BRIDGE"
+        ]
+      },
+      "sourceHashes": {
+        "composite.fsh": "01a89f531aaccdcce644d9cf65987f80c2e3576a3abeea1891532cdaa2fd7fd2",
+        "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
+        "shaders.properties": "b4b957cc0678ab61363ab43950dc753fdc72aa82c6d9b66203f98b912a43f51d",
+        "shadow.fsh": "f12ea70e0ea3596960cbc2712de4b04b7386fc2b38c7a92c832f02a3e3b3e1da",
+        "shadow.vsh": "66c1e5536605afb88ba0ee23a6f7c8351463f34a5e01f9a6ca928a9a733c78fc"
+      }
+    },
+    "unsupported_shadow": {
+      "reportSha256": "a074d3638dd894c2c467874e0bdcd57dcd547371f103cad031f235ed93f5a58a",
+      "expectedPassInventory": [
+        "composite",
+        "final"
+      ],
+      "expectedStages": {
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "shadow": [
+          "fragment",
+          "vertex"
+        ]
+      },
+      "expectedDeviations": {
+        "global": [
+          "SHADOW_SETTING_DEFAULTED:shadowDistance",
+          "SHADOW_SETTING_DEFAULTED:shadowMapResolution"
+        ],
+        "composite": [],
+        "final": [],
+        "shadow": [
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_VERTEX_BRIDGE"
+        ]
+      },
+      "sourceHashes": {
+        "composite.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
+        "shaders.properties": "b23696021d62986d10f84c36a2963a0ef8de1c6ac174cd5b105a3ffd727f98ed",
+        "shadow.fsh": "4fcd462b621e86950efec2b853274d95c8a5e66d2c7d91997d0eda57267a0b84",
+        "shadow.vsh": "71fb2afc0704bac960a21daea8c052ffe7c3c3f45461a91b888c3a677b58479c"
+      }
+    }
+  }
+}
