@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Small dependency-free conformance check for the locked M5.1 and M5.2 boundary.
+ * Small dependency-free conformance check for the locked M5.1, M5.2, and M5.3 boundary.
  * Gradle runs this class before a normal build.
  */
 public final class ConformanceHarness {
@@ -32,7 +32,9 @@ public final class ConformanceHarness {
         verifyUnsupported(fixtureRoot.resolve("m5_1/unsupported"));
         verifyM52Material(fixtureRoot.resolve("m5_2/material"), fixtureRoot.resolve("baselines/m5_2.json"));
         verifyM52Unsupported(fixtureRoot.resolve("m5_2/unsupported_vertex"), fixtureRoot.resolve("baselines/m5_2.json"));
-        System.out.println("[chimera] M5.1 and M5.2 conformance harness: PASS");
+        verifyM53LiveUniforms(fixtureRoot.resolve("m5_3/live_uniforms"), fixtureRoot.resolve("baselines/m5_3.json"));
+        verifyM53Unsupported(fixtureRoot.resolve("m5_3/unsupported_uniform"), fixtureRoot.resolve("baselines/m5_3.json"));
+        System.out.println("[chimera] M5.1, M5.2, and M5.3 conformance harness: PASS");
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {
@@ -168,6 +170,122 @@ public final class ConformanceHarness {
         verifyM52Baseline(report, baselinePath, "unsupported_vertex");
     }
 
+    private static void verifyM53LiveUniforms(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        verifyRequiredPrograms(report, "m5.3 live uniforms");
+        ConformanceReport.ProgramReport composite = report.program("composite");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
+                composite.support(), "m5.3 live composite support");
+        assertTrue(report.shouldAttempt("composite"), "m5.3 live composite was rejected");
+        assertEquals(List.of("colortex0", "depthtex0"), composite.samplers(),
+                "m5.3 live composite samplers");
+        assertEquals(List.of(
+                        "cameraPosition", "colortex0", "depthtex0", "fogColor",
+                        "frameTimeCounter", "sunPosition", "viewHeight", "viewWidth",
+                        "wetness", "worldTime"), composite.uniforms(),
+                "m5.3 live composite declarations");
+        assertEquals(List.of(
+                        "DEPTH_INPUT_FIXED_TO_HDR",
+                        "LIVE_UNIFORM_BRIDGE",
+                        "UNIFORM_DEFAULTED:wetness"), composite.deviations(),
+                "m5.3 live composite deviations");
+        assertEquals(List.of(), report.deviations(), "m5.3 live global deviations");
+
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
+                UniformRegistry.Stage.POST);
+        assertEquals(List.of(
+                        new UniformRegistry.UniformDeclaration("cameraPosition", "vec3"),
+                        new UniformRegistry.UniformDeclaration("fogColor", "vec4"),
+                        new UniformRegistry.UniformDeclaration("frameTimeCounter", "float"),
+                        new UniformRegistry.UniformDeclaration("sunPosition", "vec3"),
+                        new UniformRegistry.UniformDeclaration("viewHeight", "float"),
+                        new UniformRegistry.UniformDeclaration("viewWidth", "float"),
+                        new UniformRegistry.UniformDeclaration("wetness", "float"),
+                        new UniformRegistry.UniformDeclaration("worldTime", "int")),
+                interfacePlan.uniforms(), "m5.3 uniform ordering");
+        assertEquals(List.of(
+                        new UniformRegistry.SamplerBinding("colortex0", 0),
+                        new UniformRegistry.SamplerBinding("depthtex0", 6)),
+                interfacePlan.samplers(), "m5.3 sampler ordering");
+        assertTrue(interfacePlan.executable(), "m5.3 live interface is not executable");
+        assertEquals("float", UniformRegistry.pipelineType("vec3"), "m5.3 vec3 pipeline type");
+        assertEquals(3, UniformRegistry.pipelineCount("vec3"), "m5.3 vec3 pipeline count");
+        assertEquals("int", UniformRegistry.pipelineType("int"), "m5.3 int pipeline type");
+        assertEquals(16, UniformRegistry.pipelineCount("mat4"), "m5.3 mat4 pipeline count");
+        verifyM53InterfaceEdgeCases();
+
+        PackProgram compositeProgram = PackSource.loadResult(pack).programs().stream()
+                .filter(program -> program.name().equals("composite"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("m5.3 live composite source is missing"));
+        String converted = LegacyGlslConverter.convertFragment(
+                compositeProgram.fragmentSource(), compositeProgram.fragmentPath(), false, null, null, interfacePlan);
+        assertTrue(converted != null, "m5.3 live composite conversion failed");
+        assertTrue(converted.contains("layout(binding = 0) uniform ChimeraPackUniforms"),
+                "m5.3 generated UBO is missing");
+        assertTrue(converted.contains("layout(binding = 1) uniform sampler2D colortex0"),
+                "m5.3 colortex0 binding is not after the UBO");
+        assertTrue(converted.contains("layout(binding = 2) uniform sampler2D depthtex0"),
+                "m5.3 depthtex0 binding is not after the UBO");
+        assertTrue(!converted.contains("uniform vec3 cameraPosition"),
+                "m5.3 source uniform was not removed");
+        verifyM53Baseline(report, baselinePath, "live_uniforms");
+    }
+
+    private static void verifyM53InterfaceEdgeCases() {
+        UniformRegistry.ProgramInterface array = UniformRegistry.plan(
+                "uniform float wetness[2];", UniformRegistry.Stage.POST);
+        assertTrue(!array.executable(), "m5.3 uniform arrays were accepted");
+        assertTrue(array.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:wetness"),
+                "m5.3 array deviation is missing");
+
+        UniformRegistry.ProgramInterface struct = UniformRegistry.plan(
+                "uniform PackValues { float wetness; };", UniformRegistry.Stage.POST);
+        assertTrue(!struct.executable(), "m5.3 uniform blocks were accepted");
+        assertTrue(struct.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:PackValues"),
+                "m5.3 uniform block deviation is missing");
+
+        UniformRegistry.ProgramInterface unknown = UniformRegistry.plan(
+                "uniform float arbitraryValue;", UniformRegistry.Stage.POST);
+        assertTrue(!unknown.executable(), "m5.3 unknown uniform was accepted");
+        assertTrue(unknown.deviations().contains("UNIFORM_NAME_UNSUPPORTED:arbitraryValue"),
+                "m5.3 unknown uniform deviation is missing");
+
+        UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
+                "uniform float wetness; uniform int wetness;", UniformRegistry.Stage.POST);
+        assertTrue(!conflict.executable(), "m5.3 conflicting uniform declarations were accepted");
+        assertTrue(conflict.deviations().contains("UNIFORM_CONFLICT:wetness"),
+                "m5.3 conflicting uniform deviation is missing");
+
+        UniformRegistry.ProgramInterface alias = UniformRegistry.plan(
+                "uniform sampler2D colortex1;", UniformRegistry.Stage.POST);
+        assertTrue(alias.hasSampler("colortex1"), "m5.3 colortex1 alias was not mapped");
+        assertTrue(alias.deviations().contains("COLORTEX_ALIAS_TO_SEAM"),
+                "m5.3 colortex alias deviation is missing");
+    }
+
+    private static void verifyM53Unsupported(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        ConformanceReport.ProgramReport composite = report.program("composite");
+        assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
+                composite.support(), "m5.3 unsupported composite support");
+        assertTrue(composite.deviations().contains("SAMPLER_NOT_MAPPED:unknownTexture"),
+                "m5.3 unknown sampler deviation is missing");
+        assertTrue(composite.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"),
+                "m5.3 unsupported uniform type deviation is missing");
+        assertTrue(!report.shouldAttempt("composite"), "m5.3 unsupported composite must not execute");
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
+                UniformRegistry.Stage.POST);
+        assertTrue(!interfacePlan.executable(), "m5.3 unsupported interface was accepted");
+        assertTrue(LegacyGlslConverter.convertFragment(
+                Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
+                pack.resolve("shaders/composite.fsh"), false, null) == null,
+                "m5.3 unsupported source converted");
+        verifyM53Baseline(report, baselinePath, "unsupported_uniform");
+    }
+
     private static void assertExtendedFormat() {
         var format = net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
         assertEquals(24, format.getVertexSize(), "m5.2 terrain stride");
@@ -297,6 +415,34 @@ public final class ConformanceHarness {
         }
         assertEquals(expectedHashes, sourceHashes(report), "M5.2 " + fixture + " source hashes");
         assertStable(report, "m5.2 " + fixture);
+    }
+
+    private static void verifyM53Baseline(
+            ConformanceReport report,
+            Path baselinePath,
+            String fixture
+    ) throws IOException {
+        assertTrue(Files.isRegularFile(baselinePath), "M5.3 baseline is missing: " + baselinePath);
+        JsonObject root = JsonParser.parseString(
+                Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject baseline = root.getAsJsonObject("fixtures").getAsJsonObject(fixture);
+        assertTrue(baseline != null, "M5.3 baseline fixture is missing: " + fixture);
+        assertEquals(baseline.get("reportSha256").getAsString(), report.sha256(),
+                "M5.3 " + fixture + " report hash");
+        assertEquals(baseline.get("expectedPassInventory").toString(),
+                JsonParser.parseString(report.toJson()).getAsJsonObject()
+                        .get("passInventory").toString(),
+                "M5.3 " + fixture + " pass inventory");
+        assertEquals(baseline.get("expectedStages").toString(), expectedStages(report).toString(),
+                "M5.3 " + fixture + " stages");
+        assertEquals(baseline.get("expectedDeviations").toString(), expectedDeviations(report).toString(),
+                "M5.3 " + fixture + " deviations");
+        Map<String, String> expectedHashes = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : baseline.getAsJsonObject("sourceHashes").entrySet()) {
+            expectedHashes.put(entry.getKey(), entry.getValue().getAsString());
+        }
+        assertEquals(expectedHashes, sourceHashes(report), "M5.3 " + fixture + " source hashes");
+        assertStable(report, "m5.3 " + fixture);
     }
 
     private static JsonObject expectedStages(ConformanceReport report) {

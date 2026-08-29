@@ -23,12 +23,13 @@ import java.util.regex.Pattern;
  * <p>Two stages:
  * <ul>
  * <li>POST (geometryStage=false): fullscreen seams; varying -> location 0,
- *     samplers at bindings 0,1,... (no UBOs precede them in post configs).
+ *     an optional generated pack UBO at binding 0, then samplers at binding
+ *     1,2,... . No-uniform programs keep sampler binding 0,1,... .
  * <li>GEOMETRY (geometryStage=true): the fixed chimera terrain vertex's
  *     outputs consumed by name (color->0, texcoord->1, lightSpacePos->5);
  *     samplers at bindings 3+i (three UBO blocks precede them in the terrain
  *     config); gl_FragData[N] single-target output (target 0 kept, higher
- *     targets stripped — M4 passes have one color attachment).
+ *     targets stripped - M4 passes have one color attachment).
  * </ul>
  */
 public final class LegacyGlslConverter {
@@ -79,7 +80,8 @@ public final class LegacyGlslConverter {
     public record TerrainVertexConversion(String source, TerrainVaryingLayout layout) {}
 
     public static String convertFragment(String source, Path sourceFile, boolean geometryStage, int[] geometrySamplerSlots) {
-        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, null);
+        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, null,
+                UniformRegistry.plan(source, stageOf(geometryStage)));
     }
 
     public static String convertFragment(
@@ -89,7 +91,24 @@ public final class LegacyGlslConverter {
             int[] geometrySamplerSlots,
             TerrainVaryingLayout terrainLayout
     ) {
+        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, terrainLayout,
+                UniformRegistry.plan(source, stageOf(geometryStage)));
+    }
+
+    /** Converts a fragment with the interface plan already used by the caller. */
+    public static String convertFragment(
+            String source,
+            Path sourceFile,
+            boolean geometryStage,
+            int[] geometrySamplerSlots,
+            TerrainVaryingLayout terrainLayout,
+            UniformRegistry.ProgramInterface interfacePlan
+    ) {
         try {
+            if (interfacePlan == null || !interfacePlan.executable()
+                    || interfacePlan.stage() != stageOf(geometryStage)) {
+                throw new IllegalArgumentException("pack interface is outside the executable contract");
+            }
             String src = source;
             boolean modern = src.contains("#version 460") || src.contains("#version 450");
             src = inlineIncludes(src, sourceFile, 0);
@@ -99,13 +118,16 @@ public final class LegacyGlslConverter {
             }
 
             src = CONSUMED_CONSTS.matcher(src).replaceAll("");
+            src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             src = convertVaryings(src, geometryStage, terrainLayout);
 
             // Samplers in ascending slot order -> bindings base,base+1,... in config order.
-            // The scan runs before the rename below so the declaration is still
-            // recognizable by its OptiFine name.
-            List<String> samplers = UniformRegistry.scanSamplerNames(src, stageOf(geometryStage));
-            int bindingBase = geometryStage ? GEOMETRY_SAMPLER_BINDING_BASE : 0;
+            // The interface plan is also the source of the generated config,
+            // so conversion cannot drift from descriptor order.
+            List<UniformRegistry.SamplerBinding> samplers = interfacePlan.samplers();
+            int bindingBase = geometryStage
+                    ? GEOMETRY_SAMPLER_BINDING_BASE
+                    : (interfacePlan.executableUniforms().isEmpty() ? 0 : 1);
             if (geometryStage) {
                 // GLSL 460: 'texture' is the sampling function name, so a pack
                 // sampler declared as 'uniform sampler2D texture;' (the OptiFine
@@ -117,9 +139,14 @@ public final class LegacyGlslConverter {
             }
             src = convertTextureCalls(src);
             for (int i = 0; i < samplers.size(); i++) {
-                String name = samplers.get(i);
+                String name = samplers.get(i).name();
                 String srcName = geometryStage && name.equals("texture") ? "chimeraTexture" : name;
-                int binding = geometryStage ? bindingBase + configIndexOf(name, geometrySamplerSlots) : bindingBase + i;
+                int binding = geometryStage
+                        ? bindingBase + configIndexOf(name, geometrySamplerSlots)
+                        : bindingBase + i;
+                if (binding < bindingBase) {
+                    throw new IllegalArgumentException("sampler is missing from the generated config: " + name);
+                }
                 src = src.replaceFirst(
                         "uniform\\s+sampler2D\\s+" + srcName + "\\s*;",
                         "layout(binding = " + binding + ") uniform sampler2D " + srcName + ";");
@@ -138,10 +165,14 @@ public final class LegacyGlslConverter {
             // an output declared at the end of the file is a forward reference
             // and glslang rejects it ("'fragColor' : undeclared identifier").
             // Emit the declaration directly after the version line.
+            String uniformBlock = !geometryStage && !interfacePlan.executableUniforms().isEmpty()
+                    ? generatedUniformBlock(interfacePlan.executableUniforms())
+                    : "";
+            String declarations = (outDecl != null ? outDecl + "\n" : "") + uniformBlock;
             if (!modern) {
-                src = "#version 460\n" + (outDecl != null ? outDecl + "\n" : "") + src;
-            } else if (outDecl != null) {
-                src = insertAfterFirstLine(src, outDecl);
+                src = "#version 460\n" + declarations + src;
+            } else if (!declarations.isEmpty()) {
+                src = insertAfterFirstLine(src, declarations);
             }
             return src;
         } catch (Exception e) {
@@ -237,6 +268,15 @@ public final class LegacyGlslConverter {
             return line + "\n" + src;
         }
         return src.substring(0, newline + 1) + line + src.substring(newline + 1);
+    }
+
+    private static String generatedUniformBlock(List<UniformRegistry.UniformDeclaration> uniforms) {
+        StringBuilder block = new StringBuilder("layout(binding = 0) uniform ChimeraPackUniforms {\n");
+        for (UniformRegistry.UniformDeclaration uniform : uniforms) {
+            block.append("    ").append(uniform.glslType()).append(' ')
+                    .append(uniform.name()).append(";\n");
+        }
+        return block.append("};\n").toString();
     }
 
     private static String inlineIncludes(String src, Path sourceFile, int depth) throws IOException {

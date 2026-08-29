@@ -98,6 +98,10 @@ public class ChimeraMainPass implements MainPass {
     private boolean packPipelinesLoaded;
     /** HDR buffer format from the pack's colortex0Format; 97 (RGBA16F) when the pack says nothing. */
     private int packHdrFormat = 97;
+    /** True when a loaded post source may sample the HDR depth attachment. */
+    private boolean packNeedsHdrDepth;
+    /** Tracks the one explicit HDR depth transition for the current level segment. */
+    private boolean hdrDepthReadable;
     /** Pack geometry program (gbuffers_terrain) on the terrain path; null = chimera's terrain pipeline. */
     private GraphicsPipeline packGeometryPipeline;
     private int[] packGeometrySlots;
@@ -280,6 +284,7 @@ public class ChimeraMainPass implements MainPass {
         ensureWorldResources();
         Renderer.getInstance().endRenderPass();
         this.currentFramebuffer = this.hdrFramebuffer;
+        this.hdrDepthReadable = false;
 
         // Arm this frame's shadow segment; consumed at the SOLID layer tail.
         this.shadowPending = true;
@@ -316,6 +321,9 @@ public class ChimeraMainPass implements MainPass {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
             trace("resolveWorld", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (this.packCompositePipeline != null && containsSlot(this.packCompositeSlots, 6)) {
+                transitionHdrDepthForSampling(stack, commandBuffer);
+            }
 
             GraphicsPipeline resolvePipeline =
                     this.packCompositePipeline != null ? this.packCompositePipeline : this.compositePipeline;
@@ -378,6 +386,9 @@ public class ChimeraMainPass implements MainPass {
             VulkanImage outputColor = this.compositeFramebuffer.getColorAttachment();
             trace("presentRead", "outputColor", outputColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             outputColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (this.packFinalPipeline != null && containsSlot(this.packFinalSlots, 6)) {
+                transitionHdrDepthForSampling(stack, commandBuffer);
+            }
             VulkanImage[] prevPackSlots = null;
             if (this.packFinalPipeline != null) {
                 prevPackSlots = bindPackSamplers(this.packFinalSlots, outputColor);
@@ -518,6 +529,16 @@ public class ChimeraMainPass implements MainPass {
         return previous;
     }
 
+    private void transitionHdrDepthForSampling(MemoryStack stack, VkCommandBuffer commandBuffer) {
+        if (!this.packNeedsHdrDepth || this.hdrDepthReadable || this.hdrFramebuffer == null) {
+            return;
+        }
+        VulkanImage hdrDepth = this.hdrFramebuffer.getDepthAttachment();
+        trace("resolveWorldDepth", "hdrDepth", hdrDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        hdrDepth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        this.hdrDepthReadable = true;
+    }
+
     // ------------------------------------------------------------------
     // Main-target interop
     // ------------------------------------------------------------------
@@ -651,6 +672,8 @@ public class ChimeraMainPass implements MainPass {
         this.packGeometrySlots = null;
         this.packPipelinesLoaded = false;
         this.conformanceReport = null;
+        this.packNeedsHdrDepth = false;
+        this.hdrDepthReadable = false;
         ChimeraTerrainPipelines.setGeometryOverride(null);
         releasePackShadowView();
         this.mainFamilyViews.clear();
@@ -699,18 +722,18 @@ public class ChimeraMainPass implements MainPass {
     private void createRenderPasses() {
         RenderPass.Builder b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, hdrDepthStoreOp());
         this.hdrRenderPass = b.build();
 
         b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, hdrDepthStoreOp());
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxRenderPass = b.build();
 
         b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, hdrDepthStoreOp());
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxClearDepthRenderPass = b.build();
 
@@ -766,6 +789,7 @@ public class ChimeraMainPass implements MainPass {
         if (packDir == null || packDir.isBlank()) {
             LOGGER.info("[chimera] pack disabled (no -Dchimera.pack)");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
+            this.packNeedsHdrDepth = false;
             return;
         }
 
@@ -773,6 +797,9 @@ public class ChimeraMainPass implements MainPass {
         PackSource.LoadResult result = PackSource.loadResult(dir);
         this.conformanceReport = PackProbe.probe(dir);
         this.packPrograms = result.programs();
+        this.packNeedsHdrDepth = this.conformanceReport.programs().stream()
+                .filter(program -> program.name().equals("composite") || program.name().equals("final"))
+                .anyMatch(program -> program.samplers().contains("depthtex0"));
         PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir());
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
         if (this.packPrograms.isEmpty()) {
@@ -1087,6 +1114,7 @@ public class ChimeraMainPass implements MainPass {
         int height = output != null ? output.getHeight() : Math.max(Renderer.getInstance().getSwapChain().getHeight(), 1);
         createHdrFramebuffer(width, height);
         createHdrInteropTextures();
+        this.hdrDepthReadable = false;
         this.worldResourcesReady = true;
         this.earlyOutputPass = false;
     }
@@ -1137,6 +1165,7 @@ public class ChimeraMainPass implements MainPass {
     private void cleanUpFramebuffersAndPasses() {
         this.worldResourcesReady = false;
         this.outputResourcesReady = false;
+        this.hdrDepthReadable = false;
         releaseHdrInteropTextures();
         releaseOutputInteropTextures();
         if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(false);
@@ -1165,6 +1194,12 @@ public class ChimeraMainPass implements MainPass {
         if (this.compositePipeline != null) this.compositePipeline.cleanUp();
         this.presentPipeline = null;
         this.compositePipeline = null;
+    }
+
+    private int hdrDepthStoreOp() {
+        return this.packNeedsHdrDepth
+                ? VK_ATTACHMENT_STORE_OP_STORE
+                : VK_ATTACHMENT_STORE_OP_DONT_CARE;
     }
 
     /**

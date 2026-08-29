@@ -1,8 +1,15 @@
 package net.chimera.mixin;
 
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
+import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
+import net.minecraft.client.Camera;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.LevelRenderer;
+import org.joml.Matrix4f;
+import org.joml.Vector4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -20,8 +27,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ChimeraLevelRendererMixin {
 
     @Inject(method = "renderLevel", at = @At("HEAD"))
-    private void chimera$openHdrSegment(CallbackInfo ci) {
+    private void chimera$openHdrSegment(GraphicsResourceAllocator graphicsResourceAllocator,
+                                        DeltaTracker deltaTracker,
+                                        boolean bl,
+                                        Camera camera,
+                                        Matrix4f modelView,
+                                        Matrix4f projection,
+                                        Matrix4f matrix4f,
+                                        GpuBufferSlice gpuBufferSlice,
+                                        Vector4f vector4f,
+                                        boolean bl2,
+                                        CallbackInfo ci) {
         if (ChimeraRenderer.segmentsActive()) {
+            PackUniformProvider.beginFrame(camera, deltaTracker.getGameTimeDeltaPartialTick(false));
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 pass.openLevelSegment();

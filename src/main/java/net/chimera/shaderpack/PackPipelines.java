@@ -10,6 +10,7 @@ import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
 import net.chimera.render.shader.ChimeraShaderLoader;
+import net.chimera.render.shader.PackUniformProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,8 +25,9 @@ import java.util.List;
  * legacy GLSL. Any failure (parse, conversion, shaderc, supplier) returns
  * null and the caller falls back to the identity pipeline.
  *
- * <p>Post build (buildPost): fullscreen triangle vertex, empty UBOs, sampler
- * bindings 0,1,... .
+ * <p>Post build (buildPost): fullscreen triangle vertex, one optional generated
+ * fragment UBO at binding 0, and samplers after it. No-uniform programs keep
+ * sampler bindings 0,1,... .
  * <p>Terrain build (buildTerrain): the extended compressed terrain inputs,
  * the terrain config's UBO blocks (bindings 0/1/2) and push constants kept
  * verbatim, sampler bindings 3,4,... .
@@ -43,22 +45,33 @@ public final class PackPipelines {
 
     public static PackPost buildPost(PackProgram program, String fixedVertexSource) {
         try {
-            String converted = LegacyGlslConverter.convertFragment(program.fragmentSource(), program.fragmentPath(), false, null);
+            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                    program.fragmentSource(), UniformRegistry.Stage.POST);
+            if (!interfacePlan.executable()) {
+                throw new IllegalStateException("pack interface is unsupported: " + interfacePlan.deviations());
+            }
+            String converted = LegacyGlslConverter.convertFragment(
+                    program.fragmentSource(), program.fragmentPath(), false, null, null, interfacePlan);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
 
-            List<String> samplers = UniformRegistry.scanSamplerNames(program.fragmentSource(), UniformRegistry.Stage.POST);
-            int[] slots = samplers.stream().mapToInt(UniformRegistry.NAME_TO_SLOT::get).toArray();
+            int[] slots = interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot)
+                    .toArray();
             JsonObject json = new JsonObject();
             json.addProperty("vertex", "chimera_composite/chimera_composite");
             json.addProperty("fragment", "pack/" + program.name());
             json.add("samplers", samplerArray(slots));
-            json.add("UBOs", new JsonArray());
+            json.add("UBOs", uniformUboArray(interfacePlan));
             json.add("PushConstants", new JsonArray());
 
             PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder((VertexFormat) CustomVertexFormat.NONE, "pack_" + program.name());
+            // Pipeline.Builder resolves uniform suppliers during applyConfig.
+            // Install the provider first so the generated UBO never falls
+            // through to VulkanMod's global uniform maps.
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, fixedVertexSource);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
@@ -118,6 +131,30 @@ public final class PackPipelines {
         }
     }
 
+    /** One generated fragment UBO, or an empty array for the M4 no-uniform path. */
+    private static JsonArray uniformUboArray(UniformRegistry.ProgramInterface interfacePlan) {
+        JsonArray ubos = new JsonArray();
+        List<UniformRegistry.UniformDeclaration> uniforms = interfacePlan.executableUniforms();
+        if (uniforms.isEmpty()) {
+            return ubos;
+        }
+
+        JsonObject ubo = new JsonObject();
+        ubo.addProperty("type", "fragment");
+        ubo.addProperty("binding", 0);
+        JsonArray fields = new JsonArray();
+        for (UniformRegistry.UniformDeclaration uniform : uniforms) {
+            JsonObject field = new JsonObject();
+            field.addProperty("name", uniform.name());
+            field.addProperty("type", UniformRegistry.pipelineType(uniform.glslType()));
+            field.addProperty("count", UniformRegistry.pipelineCount(uniform.glslType()));
+            fields.add(field);
+        }
+        ubo.add("fields", fields);
+        ubos.add(ubo);
+        return ubos;
+    }
+
     /** Sampler JSON entries "Sampler<slot>" in the given order (config binding order). */
     private static JsonArray samplerArray(int[] slots) {
         JsonArray samplersJson = new JsonArray();
@@ -133,7 +170,7 @@ public final class PackPipelines {
      * (layout(binding = 4), registry slot 2). Force registry slot 2 into the
      * pack's emitted sampler array at that position: without it the vertex's
      * lightmap fetch lands on the wrong descriptor (with the simplex fixture,
-     * the shadow map) — torch/sky light never reaches geometry and the shadow
+     * the shadow map) - torch/sky light never reaches geometry and the shadow
      * content renders as blotchy per-vertex darkening.
      */
     private static int[] interleaveLightmap(int[] slots) {

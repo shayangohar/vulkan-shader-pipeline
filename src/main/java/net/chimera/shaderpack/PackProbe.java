@@ -155,6 +155,11 @@ public final class PackProbe {
 
         String name = inventory.name;
         String family = familyOf(name);
+        UniformRegistry.Stage interfaceStage = name.equals("gbuffers_terrain")
+                ? UniformRegistry.Stage.GEOMETRY
+                : UniformRegistry.Stage.POST;
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(fragment, interfaceStage);
+        deviations.addAll(interfacePlan.deviations());
         boolean executableName = name.equals("gbuffers_terrain")
                 || name.equals("composite")
                 || name.equals("final");
@@ -191,9 +196,6 @@ public final class PackProbe {
             if (!knownSamplers.containsKey(sampler)) {
                 deviations.add("SAMPLER_NOT_MAPPED:" + sampler);
             }
-        }
-        if (uniforms.stream().anyMatch(uniform -> !samplers.contains(uniform))) {
-            deviations.add("UNIFORM_NOT_DYNAMIC");
         }
         if (targets.size() > 1) {
             deviations.add("MRT_NOT_SUPPORTED");
@@ -238,6 +240,10 @@ public final class PackProbe {
                     || deviation.equals("MRT_NOT_SUPPORTED")
                     || deviation.equals("TARGET_ROUTING_FIXED_TO_COLORTEX0")
                     || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
+                    || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
+                    || deviation.startsWith("UNIFORM_CONFLICT:")
+                    || deviation.startsWith("SAMPLER_NOT_MAPPED:")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
                     || deviation.equals("NESTED_SOURCE_NOT_LOADED")) {
                 return true;

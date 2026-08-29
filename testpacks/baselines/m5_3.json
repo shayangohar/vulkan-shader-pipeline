@@ -1,0 +1,62 @@
+{
+  "fixtures": {
+    "live_uniforms": {
+      "reportSha256": "aa9c1acb37de3515cd9073c56a3da2eecb9a25ed2ad432a999b4b72ab10beea5",
+      "sourceHashes": {
+        "composite.fsh": "4d39ca56718762ecb0f5ee347039243cbf07009ca70befad1f507776842f3db2",
+        "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "gbuffers_terrain.fsh": "ca84e05ffaae89c5e1d72fd847c0b3530342c115f9bc5613a6a6d241a1cf283b",
+        "shaders.json": "7acba5a997d27ac05442eb70105260b9795ac424717cd28596e06833c6daed58",
+        "shaders.properties": "625c1c01919741f4e5f53841ef18edd00ed94100092caf1c94355999f06f2b8f"
+      },
+      "expectedPassInventory": [
+        "composite",
+        "final",
+        "gbuffers_terrain"
+      ],
+      "expectedStages": {
+        "composite": ["fragment"],
+        "final": ["fragment"],
+        "gbuffers_terrain": ["fragment"]
+      },
+      "expectedDeviations": {
+        "global": [],
+        "composite": [
+          "DEPTH_INPUT_FIXED_TO_HDR",
+          "LIVE_UNIFORM_BRIDGE",
+          "UNIFORM_DEFAULTED:wetness"
+        ],
+        "final": [],
+        "gbuffers_terrain": []
+      }
+    },
+    "unsupported_uniform": {
+      "reportSha256": "e23d015eeb9fb191b3926f459be366d5e908e6f80ce3130baa27655a9876b44b",
+      "sourceHashes": {
+        "composite.fsh": "c296ddec1644fb1be63888a1af0bf45a23c6459dc4dc4b6f3b7a944be6bffe38",
+        "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "gbuffers_terrain.fsh": "ca84e05ffaae89c5e1d72fd847c0b3530342c115f9bc5613a6a6d241a1cf283b",
+        "shaders.json": "7acba5a997d27ac05442eb70105260b9795ac424717cd28596e06833c6daed58"
+      },
+      "expectedPassInventory": [
+        "composite",
+        "final",
+        "gbuffers_terrain"
+      ],
+      "expectedStages": {
+        "composite": ["fragment"],
+        "final": ["fragment"],
+        "gbuffers_terrain": ["fragment"]
+      },
+      "expectedDeviations": {
+        "global": [],
+        "composite": [
+          "SAMPLER_NOT_MAPPED:unknownTexture",
+          "UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"
+        ],
+        "final": [],
+        "gbuffers_terrain": []
+      }
+    }
+  }
+}
