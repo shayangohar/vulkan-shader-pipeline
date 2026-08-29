@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Small dependency-free conformance check for the locked M5.1 through M5.4 boundary.
+ * Small dependency-free conformance check for the locked M5.1 through M5.5 boundary.
  * Gradle runs this class before a normal build.
  */
 public final class ConformanceHarness {
@@ -36,7 +36,9 @@ public final class ConformanceHarness {
         verifyM53Unsupported(fixtureRoot.resolve("m5_3/unsupported_uniform"), fixtureRoot.resolve("baselines/m5_3.json"));
         verifyM54Shadow(fixtureRoot.resolve("m5_4/shadow"), fixtureRoot.resolve("baselines/m5_4.json"));
         verifyM54Unsupported(fixtureRoot.resolve("m5_4/unsupported_shadow"), fixtureRoot.resolve("baselines/m5_4.json"));
-        System.out.println("[chimera] M5.1 through M5.4 conformance harness: PASS");
+        verifyM55Water(fixtureRoot.resolve("m5_5/water"), fixtureRoot.resolve("baselines/m5_5.json"));
+        verifyM55Unsupported(fixtureRoot.resolve("m5_5/unsupported_water"), fixtureRoot.resolve("baselines/m5_5.json"));
+        System.out.println("[chimera] M5.1 through M5.5 conformance harness: PASS");
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {
@@ -286,6 +288,148 @@ public final class ConformanceHarness {
                 pack.resolve("shaders/composite.fsh"), false, null) == null,
                 "m5.3 unsupported source converted");
         verifyM53Baseline(report, baselinePath, "unsupported_uniform");
+    }
+
+    private static void verifyM55Water(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        assertTrue(report.program("composite") != null, "m5.5 water is missing program composite");
+        assertTrue(report.program("final") != null, "m5.5 water is missing program final");
+        ConformanceReport.ProgramReport water = report.program("gbuffers_water");
+        assertTrue(water != null, "m5.5 water program was not discovered");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
+                water.support(), "m5.5 water support");
+        assertEquals(List.of("fragment", "vertex"), water.stages(), "m5.5 water stages");
+        assertTrue(water.deviations().contains("TRANSLUCENT_VERTEX_BRIDGE"),
+                "m5.5 water vertex bridge deviation is missing");
+        assertTrue(water.deviations().contains("TRANSLUCENT_STATE_FIXED_TO_HOST"),
+                "m5.5 host translucent state deviation is missing");
+        assertEquals(List.of("lightmap", "shadowtex0", "texture"), water.samplers(),
+                "m5.5 water sampler inventory");
+        assertEquals(List.of("composite", "final"), report.passInventory(),
+                "m5.5 water must be discovered outside shaders.json");
+        assertTrue(report.programs().stream().filter(program -> program.name().equals("gbuffers_water")).count() == 1,
+                "m5.5 water program was duplicated");
+        assertPostPassThrough(pack, "m5.5 water");
+
+        PackSource.LoadResult loaded = PackSource.loadResult(pack);
+        PackProgram waterProgram = loaded.programs().stream()
+                .filter(program -> program.name().equals("gbuffers_water"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("m5.5 water source is missing"));
+        assertTrue(waterProgram.vertexSource() != null, "m5.5 water vertex source is missing");
+
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                waterProgram.fragmentSource(), UniformRegistry.Stage.TRANSLUCENT);
+        assertTrue(interfacePlan.executable(), "m5.5 water interface is not executable");
+        assertEquals(List.of(
+                        new UniformRegistry.UniformDeclaration("fogColor", "vec4"),
+                        new UniformRegistry.UniformDeclaration("fogEnd", "float"),
+                        new UniformRegistry.UniformDeclaration("fogStart", "float"),
+                        new UniformRegistry.UniformDeclaration("texelSize", "vec2"),
+                        new UniformRegistry.UniformDeclaration("textureSize", "ivec2")),
+                interfacePlan.uniforms(), "m5.5 water uniform ordering");
+        assertEquals(List.of(
+                        new UniformRegistry.SamplerBinding("texture", 0),
+                        new UniformRegistry.SamplerBinding("lightmap", 2),
+                        new UniformRegistry.SamplerBinding("shadowtex0", 5)),
+                interfacePlan.samplers(), "m5.5 water sampler bindings");
+        assertTrue(interfacePlan.deviations().contains("TRANSLUCENT_FIXED_UNIFORM_BRIDGE"),
+                "m5.5 fixed fog bridge deviation is missing");
+        assertEquals("FogRenderDistanceStart",
+                UniformRegistry.translucentUniformField("fogStart"),
+                "m5.5 fogStart alias");
+        assertEquals("TextureSize",
+                UniformRegistry.translucentUniformField("textureSize"),
+                "m5.5 textureSize alias");
+
+        LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertTerrainVertex(
+                waterProgram.vertexSource(), waterProgram.vertexPath(), waterProgram.fragmentSource());
+        assertTrue(vertex != null, "m5.5 water vertex conversion failed");
+        String convertedFragment = LegacyGlslConverter.convertFragment(
+                waterProgram.fragmentSource(), waterProgram.fragmentPath(), true,
+                new int[] {0, 2, 5}, vertex.layout(), interfacePlan);
+        assertTrue(convertedFragment != null, "m5.5 water fragment conversion failed");
+        assertTrue(convertedFragment.contains("layout(binding = 1) uniform ChimeraTerrainUniforms"),
+                "m5.5 terrain UBO is missing");
+        assertTrue(convertedFragment.contains("FogRenderDistanceStart"),
+                "m5.5 fogStart alias was not rewritten");
+        assertTrue(!convertedFragment.contains("uniform float fogStart"),
+                "m5.5 fogStart declaration was not removed");
+        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
+                "m5.5 water atlas binding is missing");
+        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
+                "m5.5 water lightmap binding is missing");
+        assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D shadowtex0"),
+                "m5.5 water shadow binding is missing");
+        assertTrue(convertedFragment.contains("layout(location = " + vertex.layout().location("renderType")
+                        + ") in float renderType"),
+                "m5.5 water varying location was not shared");
+
+        assertExtendedFormat();
+        verifyM55InterfaceEdgeCases();
+        verifyM55Baseline(report, baselinePath, "water");
+    }
+
+    private static void verifyM55InterfaceEdgeCases() {
+        UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
+                "uniform sampler2D texture; uniform sampler2D depthtex0;",
+                UniformRegistry.Stage.TRANSLUCENT);
+        assertTrue(!depth.executable(), "m5.5 depth input was accepted");
+        assertTrue(depth.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
+                "m5.5 depth input deviation is missing");
+
+        UniformRegistry.ProgramInterface unknownSampler = UniformRegistry.plan(
+                "uniform sampler2D noise;", UniformRegistry.Stage.TRANSLUCENT);
+        assertTrue(!unknownSampler.executable(), "m5.5 unknown water sampler was accepted");
+        assertTrue(unknownSampler.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:noise"),
+                "m5.5 unknown water sampler deviation is missing");
+
+        UniformRegistry.ProgramInterface unknownUniform = UniformRegistry.plan(
+                "uniform float waterLevel;", UniformRegistry.Stage.TRANSLUCENT);
+        assertTrue(!unknownUniform.executable(), "m5.5 unknown water uniform was accepted");
+        assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:waterLevel"),
+                "m5.5 unknown water uniform deviation is missing");
+    }
+
+    private static void verifyM55Unsupported(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        ConformanceReport.ProgramReport water = report.program("gbuffers_water");
+        assertTrue(water != null, "m5.5 unsupported water program was not discovered");
+        assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
+                water.support(), "m5.5 unsupported water support");
+        assertTrue(water.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
+                "m5.5 unsupported water depth deviation is missing");
+        assertTrue(!report.shouldAttempt("gbuffers_water"),
+                "m5.5 unsupported water must not execute");
+
+        ConformanceReport.ProgramReport entities = report.program("gbuffers_entities");
+        assertTrue(entities != null, "m5.5 unsupported entity family was not inventoried");
+        assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED,
+                entities.support(), "m5.5 entity family support");
+        assertTrue(!report.shouldAttempt("gbuffers_entities"),
+                "m5.5 entity family must not execute");
+        assertPostPassThrough(pack, "m5.5 unsupported water");
+
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
+                UniformRegistry.Stage.TRANSLUCENT);
+        assertTrue(!interfacePlan.executable(), "m5.5 unsupported water interface was accepted");
+        assertTrue(LegacyGlslConverter.convertFragment(
+                Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
+                pack.resolve("shaders/gbuffers_water.fsh"), true, new int[] {0, 2}, null,
+                interfacePlan) == null,
+                "m5.5 unsupported water source converted");
+        verifyM55Baseline(report, baselinePath, "unsupported_water");
+    }
+
+    private static void assertPostPassThrough(Path pack, String label) throws IOException {
+        for (String name : List.of("composite", "final")) {
+            String source = Files.readString(pack.resolve("shaders/" + name + ".fsh"), StandardCharsets.UTF_8);
+            assertTrue(source.contains("uniform sampler2D colortex0;"),
+                    label + " " + name + " must declare colortex0");
+            assertTrue(source.contains("texture2D(colortex0, texcoord)"),
+                    label + " " + name + " must preserve the input image");
+        }
     }
 
     private static void verifyM54Shadow(Path pack, Path baselinePath) throws IOException {
@@ -619,6 +763,34 @@ public final class ConformanceHarness {
         }
         assertEquals(expectedHashes, sourceHashes(report), "M5.4 " + fixture + " source hashes");
         assertStable(report, "m5.4 " + fixture);
+    }
+
+    private static void verifyM55Baseline(
+            ConformanceReport report,
+            Path baselinePath,
+            String fixture
+    ) throws IOException {
+        assertTrue(Files.isRegularFile(baselinePath), "M5.5 baseline is missing: " + baselinePath);
+        JsonObject root = JsonParser.parseString(
+                Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject baseline = root.getAsJsonObject("fixtures").getAsJsonObject(fixture);
+        assertTrue(baseline != null, "M5.5 baseline fixture is missing: " + fixture);
+        assertEquals(baseline.get("reportSha256").getAsString(), report.sha256(),
+                "M5.5 " + fixture + " report hash");
+        assertEquals(baseline.get("expectedPassInventory").toString(),
+                JsonParser.parseString(report.toJson()).getAsJsonObject()
+                        .get("passInventory").toString(),
+                "M5.5 " + fixture + " pass inventory");
+        assertEquals(baseline.get("expectedStages").toString(), expectedStages(report).toString(),
+                "M5.5 " + fixture + " stages");
+        assertEquals(baseline.get("expectedDeviations").toString(), expectedDeviations(report).toString(),
+                "M5.5 " + fixture + " deviations");
+        Map<String, String> expectedHashes = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : baseline.getAsJsonObject("sourceHashes").entrySet()) {
+            expectedHashes.put(entry.getKey(), entry.getValue().getAsString());
+        }
+        assertEquals(expectedHashes, sourceHashes(report), "M5.5 " + fixture + " source hashes");
+        assertStable(report, "m5.5 " + fixture);
     }
 
     private static JsonObject expectedStages(ConformanceReport report) {

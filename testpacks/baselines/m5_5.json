@@ -1,0 +1,84 @@
+{
+  "formatVersion": 1,
+  "fixtures": {
+    "water": {
+        "reportSha256": "19429d32abb7488b3e06f5916e49c6c22587772a8c7f057a5657e1bba23d842d",
+      "expectedPassInventory": [
+        "composite",
+        "final"
+      ],
+      "expectedStages": {
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "gbuffers_water": [
+          "fragment",
+          "vertex"
+        ]
+      },
+      "expectedDeviations": {
+        "global": [],
+        "composite": [],
+        "final": [],
+        "gbuffers_water": [
+          "LIVE_UNIFORM_BRIDGE",
+          "TRANSLUCENT_FIXED_UNIFORM_BRIDGE",
+          "TRANSLUCENT_STATE_FIXED_TO_HOST",
+          "TRANSLUCENT_VERTEX_BRIDGE"
+        ]
+      },
+      "sourceHashes": {
+        "composite.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
+        "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
+        "gbuffers_water.fsh": "5ffe222b0593ac9cef6084cf7ddb9d0f73e490b6ccb46abe127bf56175a21e0a",
+        "gbuffers_water.vsh": "5d6e9bf8cde576ccbd50af9cabdd14eb3ae5a62f0b8a73e1aeba311f610380a3",
+        "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32"
+      }
+    },
+    "unsupported_water": {
+      "reportSha256": "0f1af4c3188c75aea38a834c31920c3b3b3f9fb66e954d5e1b50f3221f6a0ead",
+      "expectedPassInventory": [
+        "composite",
+        "final",
+        "gbuffers_entities"
+      ],
+      "expectedStages": {
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "gbuffers_entities": [
+          "fragment"
+        ],
+        "gbuffers_water": [
+          "fragment",
+          "vertex"
+        ]
+      },
+      "expectedDeviations": {
+        "global": [],
+        "composite": [],
+        "final": [],
+        "gbuffers_entities": [],
+        "gbuffers_water": [
+          "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
+          "TRANSLUCENT_STATE_FIXED_TO_HOST",
+          "TRANSLUCENT_VERTEX_BRIDGE"
+        ]
+      },
+      "sourceHashes": {
+        "composite.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
+        "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
+        "gbuffers_entities.fsh": "aa1df153dbb2176957f4cd97907b575213c65ab80173bc13a8be099dc426c1f8",
+        "gbuffers_water.fsh": "3544a49726127106b1e67bc8ce0ef04fb8b0103935d84767dd18e4e258447078",
+        "gbuffers_water.vsh": "a99bb9bf73f222e4725f1053fa2e96ad133ab404ad05c624665fe288731fa3b6",
+        "shaders.json": "1c445693269d871699efd24c7dfd7c46c461ad997cceb486e53ddaab3184c1f7"
+      }
+    }
+  }
+}

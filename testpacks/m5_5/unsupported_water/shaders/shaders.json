@@ -1,0 +1,7 @@
+{
+  "programs": [
+    { "name": "composite", "fragment": "composite.fsh" },
+    { "name": "final", "fragment": "final.fsh" },
+    { "name": "gbuffers_entities", "fragment": "gbuffers_entities.fsh" }
+  ]
+}

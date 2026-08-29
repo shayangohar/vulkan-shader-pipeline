@@ -163,13 +163,16 @@ public final class PackProbe {
         String family = familyOf(name);
         UniformRegistry.Stage interfaceStage = name.equals("gbuffers_terrain")
                 ? UniformRegistry.Stage.GEOMETRY
-                : name.equals("shadow") ? UniformRegistry.Stage.SHADOW : UniformRegistry.Stage.POST;
+                : name.equals("shadow") ? UniformRegistry.Stage.SHADOW
+                : name.equals("gbuffers_water") ? UniformRegistry.Stage.TRANSLUCENT
+                : UniformRegistry.Stage.POST;
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(fragment, interfaceStage);
         deviations.addAll(interfacePlan.deviations());
         boolean executableName = name.equals("gbuffers_terrain")
                 || name.equals("composite")
                 || name.equals("final")
-                || name.equals("shadow");
+                || name.equals("shadow")
+                || name.equals("gbuffers_water");
         boolean hasFragment = inventory.stages.contains("fragment");
 
         if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
@@ -186,10 +189,22 @@ public final class PackProbe {
             } else {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
             }
+        } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
+            String vertex = inventory.sources.get("vertex");
+            if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
+                deviations.add("TRANSLUCENT_VERTEX_BRIDGE");
+            } else {
+                deviations.add("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
+            }
+        } else if (name.equals("gbuffers_water")) {
+            deviations.add("FIXED_VERTEX_SUBSTITUTION");
         } else if (name.equals("shadow")) {
             deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
         } else if (inventory.stages.contains("vertex")) {
             deviations.add("FIXED_VERTEX_SUBSTITUTION");
+        }
+        if (name.equals("gbuffers_water")) {
+            deviations.add("TRANSLUCENT_STATE_FIXED_TO_HOST");
         }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry")
@@ -207,10 +222,16 @@ public final class PackProbe {
 
         Map<String, Integer> knownSamplers = name.equals("gbuffers_terrain")
                 ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
-                : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT : UniformRegistry.NAME_TO_SLOT;
+                : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT
+                : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
+                : UniformRegistry.NAME_TO_SLOT;
         for (String sampler : samplers) {
             if (!knownSamplers.containsKey(sampler)) {
-                deviations.add(name.equals("shadow")
+                deviations.add(name.equals("gbuffers_water")
+                        ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
+                        ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
+                        : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
+                        : name.equals("shadow")
                         ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
                         : "SAMPLER_NOT_MAPPED:" + sampler);
             }
@@ -259,11 +280,14 @@ public final class PackProbe {
                     || deviation.equals("TARGET_ROUTING_FIXED_TO_COLORTEX0")
                     || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("SHADOW_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED")
                     || deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_CONFLICT:")
                     || deviation.startsWith("SAMPLER_NOT_MAPPED:")
                     || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
+                    || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
                     || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
                     || deviation.equals("NESTED_SOURCE_NOT_LOADED")) {
@@ -456,6 +480,9 @@ public final class PackProbe {
     }
 
     private static String familyOf(String name) {
+        if (name.equals("gbuffers_water")) {
+            return "gbuffers_water";
+        }
         if (name.startsWith("gbuffers_")) {
             return "gbuffers";
         }

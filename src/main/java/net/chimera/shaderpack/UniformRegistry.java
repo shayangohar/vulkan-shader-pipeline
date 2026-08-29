@@ -34,7 +34,9 @@ public final class UniformRegistry {
         /** gbuffers_* terrain path (fixed-vertex inputs, host-set registry slots). */
         GEOMETRY,
         /** shadow gbuffers path (terrain inputs, but no shadow feedback samplers). */
-        SHADOW
+        SHADOW,
+        /** gbuffers_water on the host translucent terrain layer. */
+        TRANSLUCENT
     }
 
     /** One ordinary GLSL uniform declaration, excluding sampler declarations. */
@@ -127,6 +129,37 @@ public final class UniformRegistry {
             Map.entry("lightmap", 2)
     );
 
+    /** Translucent terrain uses the host's atlas, lightmap, and shadow slots. */
+    public static final Map<String, Integer> TRANSLUCENT_NAME_TO_SLOT = Map.ofEntries(
+            Map.entry("texture", 0),
+            Map.entry("lightmap", 2),
+            Map.entry("shadowtex0", 5)
+    );
+
+    /**
+     * The water bridge is intentionally limited to fields already present in
+     * the host terrain UBO. Lower-case names are the small accepted pack
+     * aliases; their values are rewritten to the corresponding host fields.
+     */
+    private static final Map<String, String> TRANSLUCENT_UNIFORM_FIELDS = Map.ofEntries(
+            Map.entry("fogColor", "FogColor"),
+            Map.entry("fogStart", "FogRenderDistanceStart"),
+            Map.entry("fogEnd", "FogRenderDistanceEnd"),
+            Map.entry("textureSize", "TextureSize"),
+            Map.entry("texelSize", "TexelSize"),
+            Map.entry("FogColor", "FogColor"),
+            Map.entry("FogEnvironmentalStart", "FogEnvironmentalStart"),
+            Map.entry("FogEnvironmentalEnd", "FogEnvironmentalEnd"),
+            Map.entry("FogRenderDistanceStart", "FogRenderDistanceStart"),
+            Map.entry("FogRenderDistanceEnd", "FogRenderDistanceEnd"),
+            Map.entry("FogSkyEnd", "FogSkyEnd"),
+            Map.entry("FogCloudsEnd", "FogCloudsEnd"),
+            Map.entry("AlphaCutout", "AlphaCutout"),
+            Map.entry("TextureSize", "TextureSize"),
+            Map.entry("TexelSize", "TexelSize"),
+            Map.entry("UseRgss", "UseRgss")
+    );
+
     private static final Set<String> SUPPORTED_TYPES = Set.of(
             "float", "int", "vec2", "vec3", "vec4",
             "ivec2", "ivec3", "ivec4", "mat4");
@@ -175,7 +208,9 @@ public final class UniformRegistry {
             if (conflicts.contains(name)) {
                 deviations.add("UNIFORM_CONFLICT:" + name);
             }
-            UniformSpec spec = UNIFORM_SPECS.get(name);
+            String fixedField = stage == Stage.TRANSLUCENT
+                    ? TRANSLUCENT_UNIFORM_FIELDS.get(name) : name;
+            UniformSpec spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
             if (!SUPPORTED_TYPES.contains(type) || (spec != null && !spec.type().equals(type))) {
                 deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + name);
                 continue;
@@ -185,6 +220,9 @@ public final class UniformRegistry {
                 continue;
             }
             deviations.add("LIVE_UNIFORM_BRIDGE");
+            if (stage == Stage.TRANSLUCENT) {
+                deviations.add("TRANSLUCENT_FIXED_UNIFORM_BRIDGE");
+            }
             if (spec.availability() == Availability.DEFAULTED) {
                 deviations.add("UNIFORM_DEFAULTED:" + name);
             }
@@ -194,6 +232,7 @@ public final class UniformRegistry {
             case POST -> NAME_TO_SLOT;
             case GEOMETRY -> GEOMETRY_NAME_TO_SLOT;
             case SHADOW -> SHADOW_NAME_TO_SLOT;
+            case TRANSLUCENT -> TRANSLUCENT_NAME_TO_SLOT;
         };
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
@@ -201,6 +240,12 @@ public final class UniformRegistry {
             if (!"sampler2D".equals(sampler.getValue()) || slot == null) {
                 if (stage == Stage.SHADOW && sampler.getKey().startsWith("shadowcolor")) {
                     deviations.add("SHADOW_COLOR_INPUT_UNSUPPORTED");
+                } else if (stage == Stage.TRANSLUCENT
+                        && (sampler.getKey().startsWith("depthtex")
+                        || sampler.getKey().startsWith("shadowcolor"))) {
+                    deviations.add("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED");
+                } else if (stage == Stage.TRANSLUCENT) {
+                    deviations.add("TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler.getKey());
                 } else {
                     deviations.add(stage == Stage.SHADOW
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler.getKey()
@@ -293,7 +338,9 @@ public final class UniformRegistry {
                 || deviation.startsWith("UNIFORM_CONFLICT:")
                 || deviation.startsWith("SAMPLER_NOT_MAPPED:")
                 || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
-                || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED");
+                || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
+                || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
+                || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED");
     }
 
     private static boolean isSamplerType(String type) {
@@ -397,5 +444,10 @@ public final class UniformRegistry {
         return source
                 .replaceAll("(?s)/\\*.*?\\*/", " ")
                 .replaceAll("(?m)//.*$", " ");
+    }
+
+    /** Returns the host terrain UBO field for an accepted water uniform. */
+    public static String translucentUniformField(String name) {
+        return TRANSLUCENT_UNIFORM_FIELDS.get(name);
     }
 }

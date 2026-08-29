@@ -28,7 +28,7 @@ import java.util.List;
  * <p>Post build (buildPost): fullscreen triangle vertex, one optional generated
  * fragment UBO at binding 0, and samplers after it. No-uniform programs keep
  * sampler bindings 0,1,... .
- * <p>Terrain build (buildTerrain): the extended compressed terrain inputs,
+ * <p>Terrain-like builds (buildTerrain/buildTranslucent): the extended compressed terrain inputs,
  * the terrain config's UBO blocks (bindings 0/1/2) and push constants kept
  * verbatim, sampler bindings 3,4,... .
  */
@@ -89,9 +89,31 @@ public final class PackPipelines {
 
     /** Builds gbuffers_terrain with either the fixed vertex or the M5.2 bridge. */
     public static PackTerrain buildTerrain(PackProgram program, String fixedVertexSource) {
+        return buildTerrainLike(program, fixedVertexSource, UniformRegistry.Stage.GEOMETRY);
+    }
+
+    /** Builds gbuffers_water on the host translucent terrain lane. */
+    public static PackTerrain buildTranslucent(PackProgram program, String fixedVertexSource) {
+        return buildTerrainLike(program, fixedVertexSource, UniformRegistry.Stage.TRANSLUCENT);
+    }
+
+    /** Shared fixed-config builder for opaque and translucent terrain families. */
+    private static PackTerrain buildTerrainLike(
+            PackProgram program,
+            String fixedVertexSource,
+            UniformRegistry.Stage stage
+    ) {
         try {
-            List<String> samplers = UniformRegistry.scanSamplerNames(program.fragmentSource(), UniformRegistry.Stage.GEOMETRY);
-            int[] slots = interleaveLightmap(samplers.stream().mapToInt(UniformRegistry.GEOMETRY_NAME_TO_SLOT::get).toArray());
+            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                    program.fragmentSource(), stage);
+            if (!interfacePlan.executable()) {
+                throw new IllegalStateException("pack terrain interface is unsupported: "
+                        + interfacePlan.deviations());
+            }
+            int[] declaredSlots = interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot)
+                    .toArray();
+            int[] slots = interleaveLightmap(declaredSlots);
             String vertexSource = fixedVertexSource;
             LegacyGlslConverter.TerrainVaryingLayout terrainLayout = null;
             if (program.vertexSource() != null) {
@@ -105,7 +127,7 @@ public final class PackPipelines {
                 terrainLayout = vertex.layout();
             }
             String converted = LegacyGlslConverter.convertFragment(
-                    program.fragmentSource(), program.fragmentPath(), true, slots, terrainLayout);
+                    program.fragmentSource(), program.fragmentPath(), true, slots, terrainLayout, interfacePlan);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -129,7 +151,9 @@ public final class PackPipelines {
 
             return new PackTerrain(pipeline, slots, converted);
         } catch (Exception e) {
-            LOGGER.warn("[chimera] pack {}: terrain build failed: {}", program.name(), e.getMessage());
+            LOGGER.warn("[chimera] pack {}: {} build failed: {}", program.name(),
+                    stage == UniformRegistry.Stage.TRANSLUCENT ? "translucent" : "terrain",
+                    e.getMessage());
             return null;
         }
     }

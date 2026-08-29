@@ -35,12 +35,14 @@ public final class ChimeraTerrainPipelines {
     private static PackMaterialResolver materialResolver = PackMaterialResolver.empty();
     /** Pack geometry program (gbuffers_terrain) installed over the chimera terrain pipeline; null = none. */
     private static GraphicsPipeline geometryOverride;
+    /** Pack water program installed only over the host translucent terrain lane; null = none. */
+    private static GraphicsPipeline translucentOverride;
 
     private ChimeraTerrainPipelines() {}
 
     /**
      * Installs/clears the pack geometry override. All terrain getter sites
-     * route through getTerrainPipeline(), so the override composes with the
+     * route through getTerrainPipeline(renderType), so the override composes with the
      * shadow-segment swap and its restore without touching ChimeraMainPass.
      */
     public static void setGeometryOverride(GraphicsPipeline pipeline) {
@@ -52,7 +54,7 @@ public final class ChimeraTerrainPipelines {
         // Re-register only while Chimera owns terrain. Host/screen mode must
         // keep the host getter even if an override is cleared or replaced.
         if (extendedMode) {
-            PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
+            PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         }
     }
 
@@ -97,6 +99,14 @@ public final class ChimeraTerrainPipelines {
         return geometryOverride != null ? geometryOverride : terrainPipeline;
     }
 
+    /** Selects the family override while preserving the fixed Chimera fallback. */
+    public static GraphicsPipeline getTerrainPipeline(TerrainRenderType renderType) {
+        if (renderType == TerrainRenderType.TRANSLUCENT && translucentOverride != null) {
+            return translucentOverride;
+        }
+        return getTerrainPipeline();
+    }
+
     public static VertexFormat getTerrainVertexFormat() {
         return ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
     }
@@ -109,6 +119,19 @@ public final class ChimeraTerrainPipelines {
         materialResolver = next;
         if (extendedMode) {
             rebuildLiveLevel();
+        }
+    }
+
+    /** Installs/clears the pack water override without affecting opaque terrain. */
+    public static void setTranslucentOverride(GraphicsPipeline pipeline) {
+        translucentOverride = pipeline;
+        ChimeraMod.LOGGER.info("[chimera] translucent override: {}",
+                pipeline != null ? "installed" : "cleared");
+        if (!initialized) {
+            return;
+        }
+        if (extendedMode) {
+            PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         }
     }
 
@@ -130,7 +153,7 @@ public final class ChimeraTerrainPipelines {
                         / DefaultVertexFormat.BLOCK.getVertexSize();
                 return new ChimeraExtTerrainBuilder(size, materialResolver);
             });
-            PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
+            PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         } else {
             ThreadBuilderPack.defaultTerrainBuilderConstructor();
             PipelineManager.setDefaultTerrainShaderGetter();

@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  * <li>POST (geometryStage=false): fullscreen seams; varying -> location 0,
  *     an optional generated pack UBO at binding 0, then samplers at binding
  *     1,2,... . No-uniform programs keep sampler binding 0,1,... .
- * <li>GEOMETRY (geometryStage=true): the fixed chimera terrain vertex's
+ * <li>GEOMETRY/SHADOW/TRANSLUCENT (geometryStage=true): the fixed chimera terrain vertex's
  *     outputs consumed by name (color->0, texcoord->1, lightSpacePos->5);
  *     samplers at bindings 3+i (three UBO blocks precede them in the terrain
  *     config); gl_FragData[N] single-target output (target 0 kept, higher
@@ -107,7 +107,8 @@ public final class LegacyGlslConverter {
         try {
             boolean geometryInterface = interfacePlan != null
                     && (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
-                    || interfacePlan.stage() == UniformRegistry.Stage.SHADOW);
+                    || interfacePlan.stage() == UniformRegistry.Stage.SHADOW
+                    || interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT);
             if (interfacePlan == null || !interfacePlan.executable()
                     || geometryInterface != geometryStage) {
                 throw new IllegalArgumentException("pack interface is outside the executable contract");
@@ -122,6 +123,9 @@ public final class LegacyGlslConverter {
 
             src = CONSUMED_CONSTS.matcher(src).replaceAll("");
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
+            if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT) {
+                src = replaceTranslucentUniformNames(src, interfacePlan);
+            }
             src = convertVaryings(src, geometryStage, terrainLayout);
 
             // Samplers in ascending slot order -> bindings base,base+1,... in config order.
@@ -168,9 +172,15 @@ public final class LegacyGlslConverter {
             // an output declared at the end of the file is a forward reference
             // and glslang rejects it ("'fragColor' : undeclared identifier").
             // Emit the declaration directly after the version line.
-            String uniformBlock = !geometryStage && !interfacePlan.executableUniforms().isEmpty()
-                    ? generatedUniformBlock(interfacePlan.executableUniforms())
-                    : "";
+            String uniformBlock;
+            if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
+                    && !interfacePlan.executableUniforms().isEmpty()) {
+                uniformBlock = terrainUniformBlock();
+            } else if (!geometryStage && !interfacePlan.executableUniforms().isEmpty()) {
+                uniformBlock = generatedUniformBlock(interfacePlan.executableUniforms());
+            } else {
+                uniformBlock = "";
+            }
             String declarations = (outDecl != null ? outDecl + "\n" : "") + uniformBlock;
             if (!modern) {
                 src = "#version 460\n" + declarations + src;
@@ -277,6 +287,21 @@ public final class LegacyGlslConverter {
     private static UniformRegistry.Stage stageOf(boolean geometryStage) {
         return geometryStage ? UniformRegistry.Stage.GEOMETRY : UniformRegistry.Stage.POST;
     }
+
+    private static String replaceTranslucentUniformNames(
+            String source,
+            UniformRegistry.ProgramInterface interfacePlan
+    ) {
+        String result = source;
+        for (UniformRegistry.UniformDeclaration uniform : interfacePlan.executableUniforms()) {
+            String fixedField = UniformRegistry.translucentUniformField(uniform.name());
+            if (fixedField == null || fixedField.equals(uniform.name())) {
+                continue;
+            }
+            result = result.replaceAll("\\b" + Pattern.quote(uniform.name()) + "\\b", fixedField);
+        }
+        return result;
+    }
     /** Position of the sampler's registry slot in the emitted geometry config array. */
     private static int configIndexOf(String name, int[] slots) {
         int slot = UniformRegistry.GEOMETRY_NAME_TO_SLOT.get(name);
@@ -303,6 +328,25 @@ public final class LegacyGlslConverter {
                     .append(uniform.name()).append(";\n");
         }
         return block.append("};\n").toString();
+    }
+
+    /** Exact layout of the host terrain UBO at binding 1. */
+    private static String terrainUniformBlock() {
+        return """
+                layout(binding = 1) uniform ChimeraTerrainUniforms {
+                    vec4 FogColor;
+                    float FogEnvironmentalStart;
+                    float FogEnvironmentalEnd;
+                    float FogRenderDistanceStart;
+                    float FogRenderDistanceEnd;
+                    float FogSkyEnd;
+                    float FogCloudsEnd;
+                    float AlphaCutout;
+                    ivec2 TextureSize;
+                    vec2 TexelSize;
+                    int UseRgss;
+                };
+                """;
     }
 
     private static String inlineIncludes(String src, Path sourceFile, int depth) throws IOException {

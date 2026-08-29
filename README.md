@@ -30,7 +30,7 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M5.2 | Terrain and material slice: `gbuffers_terrain`, `mc_Entity`, texture/lightmap inputs, and material attributes |
 | M5.3 | Uniform and resource slice: live OptiFine/Iris uniforms, samplers, depth inputs, defaults, and bindings |
 | M5.4 | Lighting and shadow slice: shadow programs, `shadowtex`/`depthtex`, shadow settings, and lighting uniforms |
-| M5.5 | Translucency and family slice: water, entities, block entities, particles, hand, and fog |
+| M5.5 | Translucency family slice: legacy gbuffers_water on the host translucent terrain lane |
 | M5.6 | Post and frame-graph slice: deferred/composite/final, `RENDERTARGETS`/`DRAWBUFFERS`, ping-pong, and supported MRT |
 | M5.7 | General conformance slice: Complementary plus a second Iris/OptiFine pack, lifecycle checks, performance, and deviations |
 

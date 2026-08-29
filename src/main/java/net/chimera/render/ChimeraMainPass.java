@@ -101,6 +101,9 @@ public class ChimeraMainPass implements MainPass {
     /** Pack geometry program (gbuffers_terrain) on the terrain path; null = chimera's terrain pipeline. */
     private GraphicsPipeline packGeometryPipeline;
     private int[] packGeometrySlots;
+    /** Pack water program on the host translucent terrain path; null = host/chimera fallback. */
+    private GraphicsPipeline packTranslucentPipeline;
+    private int[] packTranslucentSlots;
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     private GraphicsPipeline packShadowPipeline;
     /** GL-registry slot-5 view of the shadow depth, for pack geometry sampling (shadowtex0). */
@@ -223,8 +226,8 @@ public class ChimeraMainPass implements MainPass {
             shadowDepth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
-        // Restore terrain pipeline getter
-        PipelineManager.setShaderGetter(rt -> ChimeraTerrainPipelines.getTerrainPipeline());
+        // Restore the family-aware terrain getter after the shadow segment.
+        PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
 
         // Bind shadow texture for terrain fragment shader sampling
         this.shadowMap.bindShadowTexture();
@@ -684,6 +687,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.packCompositePipeline != null) this.packCompositePipeline.cleanUp();
         if (this.packFinalPipeline != null) this.packFinalPipeline.cleanUp();
         if (this.packGeometryPipeline != null) this.packGeometryPipeline.cleanUp();
+        if (this.packTranslucentPipeline != null) this.packTranslucentPipeline.cleanUp();
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
         this.packCompositePipeline = null;
         this.packCompositeSlots = null;
@@ -691,6 +695,8 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalSlots = null;
         this.packGeometryPipeline = null;
         this.packGeometrySlots = null;
+        this.packTranslucentPipeline = null;
+        this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = false;
@@ -698,6 +704,7 @@ public class ChimeraMainPass implements MainPass {
         this.packNeedsHdrDepth = false;
         this.hdrDepthReadable = false;
         ChimeraTerrainPipelines.setGeometryOverride(null);
+        ChimeraTerrainPipelines.setTranslucentOverride(null);
         this.mainFamilyViews.clear();
     }
 
@@ -865,8 +872,9 @@ public class ChimeraMainPass implements MainPass {
 
     /**
      * Loads the OptiFine-format pack pointed at by -Dchimera.pack and builds
-     * its composite/final programs onto the post seams and gbuffers_terrain
-     * onto the terrain path. A program that fails to load, convert, or
+     * its composite/final programs onto the post seams, gbuffers_terrain onto
+     * the opaque terrain path, and gbuffers_water onto the translucent path.
+     * A program that fails to load, convert, or
      * compile keeps the identity pipeline for its seam, so a bad pack can
      * never break the frame.
      */
@@ -888,6 +896,8 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalSlots = null;
         this.packGeometryPipeline = null;
         this.packGeometrySlots = null;
+        this.packTranslucentPipeline = null;
+        this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = true;
@@ -992,6 +1002,31 @@ public class ChimeraMainPass implements MainPass {
                             + "(single attachment; multi-buffer gbuffers deferred to M5.6)",
                             this.packConfig.drawBufferCount());
                 }
+            } else if (name.equals("gbuffers_water")) {
+                PackPipelines.PackTerrain water = PackPipelines.buildTranslucent(program,
+                        ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"));
+                if (water == null) {
+                    if (this.conformanceReport != null) {
+                        this.conformanceReport.markRuntime(name,
+                                ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                "PIPELINE_BUILD_FAILED");
+                    }
+                    LOGGER.warn("[chimera] pack gbuffers_water: fallback=IDENTITY (build failed)");
+                    continue;
+                }
+                this.packTranslucentPipeline = water.pipeline();
+                this.packTranslucentSlots = water.samplerSlots();
+                ChimeraTerrainPipelines.setTranslucentOverride(water.pipeline());
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED, null);
+                }
+                LOGGER.info("[chimera] pack gbuffers_water: ok (translucent, samplers={})",
+                        Arrays.toString(water.samplerSlots()));
+                if (TRACE_TRANSITIONS) {
+                    LOGGER.info("[chimera] pack gbuffers_water converted fragment:\n{}",
+                            water.convertedFragment());
+                }
             } else {
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
@@ -1022,8 +1057,11 @@ public class ChimeraMainPass implements MainPass {
      * only when the shadow attachment is recreated (id change).
      */
     private void maintainPackShadowGoal() {
-        if (this.packGeometryPipeline == null || this.packGeometrySlots == null
-                || !containsSlot(this.packGeometrySlots, 5)) {
+        boolean geometryUsesShadow = this.packGeometryPipeline != null
+                && this.packGeometrySlots != null && containsSlot(this.packGeometrySlots, 5);
+        boolean translucentUsesShadow = this.packTranslucentPipeline != null
+                && this.packTranslucentSlots != null && containsSlot(this.packTranslucentSlots, 5);
+        if (!geometryUsesShadow && !translucentUsesShadow) {
             return;
         }
         if (!this.shadowMap.isInitialized() || this.shadowMap.getShadowFramebuffer() == null) {

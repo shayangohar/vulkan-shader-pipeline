@@ -44,16 +44,17 @@ public final class PackSource {
         } else {
             scanPairs(shadersDir, programs);
         }
-        loadStandardShadowPair(shadersDir, programs);
+        loadStandardPair(shadersDir, programs, "shadow");
+        loadStandardPair(shadersDir, programs, "gbuffers_water");
         return new LoadResult(programs, shadersDir);
     }
 
-    /** Iris packs may omit the standard shadow program from shaders.json. */
-    private static void loadStandardShadowPair(Path shadersDir, List<PackProgram> out) {
-        Path vertexPath = shadersDir.resolve("shadow.vsh");
+    /** Standard Iris families may be omitted from shaders.json. */
+    private static void loadStandardPair(Path shadersDir, List<PackProgram> out, String name) {
+        Path vertexPath = shadersDir.resolve(name + ".vsh");
         for (int i = 0; i < out.size(); i++) {
             PackProgram existing = out.get(i);
-            if (existing.name().equals("shadow")) {
+            if (existing.name().equals(name)) {
                 if (existing.vertexSource() == null && Files.isRegularFile(vertexPath)) {
                     out.set(i, new PackProgram(existing.name(), existing.fragmentSource(),
                             existing.fragmentPath(), readOptionalSource(vertexPath), vertexPath));
@@ -61,13 +62,13 @@ public final class PackSource {
                 return;
             }
         }
-        Path fragmentPath = shadersDir.resolve("shadow.fsh");
+        Path fragmentPath = shadersDir.resolve(name + ".fsh");
         if (!Files.isRegularFile(fragmentPath)) {
             return;
         }
         String fragment = readSource(fragmentPath);
         if (fragment != null) {
-            out.add(new PackProgram("shadow", fragment, fragmentPath,
+            out.add(new PackProgram(name, fragment, fragmentPath,
                     readOptionalSource(vertexPath), vertexPath));
         }
     }
