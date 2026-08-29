@@ -15,7 +15,10 @@ import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackProgram;
+import net.chimera.shaderpack.ConformanceReport;
+import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackSource;
+import net.chimera.shaderpack.PackMaterialResolver;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.engine.VkGpuDevice;
 import net.vulkanmod.render.engine.VkGpuTexture;
@@ -89,6 +92,10 @@ public class ChimeraMainPass implements MainPass {
     /** Parsed pack consts and programs (-Dchimera.pack); session-long, the property is fixed at launch. */
     private PackConfig.PackConfigData packConfig;
     private List<PackProgram> packPrograms;
+    /** Static pack inventory plus the actual compile/install disposition. */
+    private ConformanceReport conformanceReport;
+    /** Pack pipelines are retained until the renderer session is torn down. */
+    private boolean packPipelinesLoaded;
     /** HDR buffer format from the pack's colortex0Format; 97 (RGBA16F) when the pack says nothing. */
     private int packHdrFormat = 97;
     /** Pack geometry program (gbuffers_terrain) on the terrain path; null = chimera's terrain pipeline. */
@@ -156,7 +163,7 @@ public class ChimeraMainPass implements MainPass {
      */
     public void renderShadowMap(double cameraX, double cameraY, double cameraZ) {
         VkCommandBuffer cmd = Renderer.getCommandBuffer();
-        // TODO: compute from level time — fixed noon angle for M3 shadow testing
+        // TODO: compute from level time - fixed noon angle for M3 shadow testing
         float celestialAngle = 0.25F;
         this.shadowMap.updateLight(celestialAngle);
 
@@ -217,7 +224,7 @@ public class ChimeraMainPass implements MainPass {
      *
      * Timing matters: by this point cullTerrain has filled VulkanMod's
      * section draw queues and the main SOLID pass has just drawn from them,
-     * so the shadow phase sees exactly the state the solid pass saw —
+     * so the shadow phase sees exactly the state the solid pass saw -
      * never a possibly-empty fresh SectionGraph.
      */
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
@@ -642,6 +649,8 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalSlots = null;
         this.packGeometryPipeline = null;
         this.packGeometrySlots = null;
+        this.packPipelinesLoaded = false;
+        this.conformanceReport = null;
         ChimeraTerrainPipelines.setGeometryOverride(null);
         releasePackShadowView();
         this.mainFamilyViews.clear();
@@ -745,17 +754,27 @@ public class ChimeraMainPass implements MainPass {
      */
     private void loadPackConfig() {
         if (this.packConfig != null) {
+            if (this.conformanceReport == null) {
+                String packDir = System.getProperty("chimera.pack");
+                if (packDir != null && !packDir.isBlank()) {
+                    this.conformanceReport = PackProbe.probe(Path.of(packDir));
+                }
+            }
             return;
         }
         String packDir = System.getProperty("chimera.pack");
         if (packDir == null || packDir.isBlank()) {
             LOGGER.info("[chimera] pack disabled (no -Dchimera.pack)");
+            ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             return;
         }
 
         Path dir = Path.of(packDir);
         PackSource.LoadResult result = PackSource.loadResult(dir);
+        this.conformanceReport = PackProbe.probe(dir);
         this.packPrograms = result.programs();
+        PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir());
+        ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
         if (this.packPrograms.isEmpty()) {
             LOGGER.warn("[chimera] pack '{}' from {}: no programs found", dir.getFileName(), dir.toAbsolutePath());
             return;
@@ -802,7 +821,7 @@ public class ChimeraMainPass implements MainPass {
      * never break the frame.
      */
     private void loadPackPipelines() {
-        if (this.packCompositePipeline != null) {
+        if (this.packPipelinesLoaded) {
             // Pack pipelines are pass-agnostic (VulkanMod builds pipeline
             // variants from the state at bind, render pass included), so a
             // retained object stays correct across createResources' pass
@@ -819,18 +838,35 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalSlots = null;
         this.packGeometryPipeline = null;
         this.packGeometrySlots = null;
+        this.packPipelinesLoaded = true;
 
         if (this.packPrograms == null) {
             // loadPackConfig found no pack (or no programs).
+            if (this.conformanceReport != null) {
+                this.conformanceReport.markUnattemptedAsFallback();
+                LOGGER.info("[chimera] conformance {}", this.conformanceReport.toJson());
+            }
             return;
         }
 
         String fixedVertex = ChimeraShaderLoader.loadSource("chimera_composite/chimera_composite.vsh");
         for (PackProgram program : this.packPrograms) {
             String name = program.name();
+            if (this.conformanceReport != null && !this.conformanceReport.shouldAttempt(name)) {
+                this.conformanceReport.markRuntime(name,
+                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                        "CONTRACT_UNSUPPORTED");
+                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (outside M5.2 contract)", name);
+                continue;
+            }
             if (name.equals("composite") || name.equals("final")) {
                 PackPipelines.PackPost post = PackPipelines.buildPost(program, fixedVertex);
                 if (post == null) {
+                    if (this.conformanceReport != null) {
+                        this.conformanceReport.markRuntime(name,
+                                ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                "PIPELINE_BUILD_FAILED");
+                    }
                     LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (build failed)", name);
                     continue;
                 }
@@ -841,6 +877,10 @@ public class ChimeraMainPass implements MainPass {
                     this.packFinalPipeline = post.pipeline();
                     this.packFinalSlots = post.samplerSlots();
                 }
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED, null);
+                }
                 LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(post.samplerSlots()));
                 if (TRACE_TRANSITIONS) {
                     LOGGER.info("[chimera] pack {} converted fragment:\n{}", name, post.convertedFragment());
@@ -849,12 +889,26 @@ public class ChimeraMainPass implements MainPass {
                 PackPipelines.PackTerrain terrain = PackPipelines.buildTerrain(program,
                         ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"));
                 if (terrain == null) {
+                    if (this.conformanceReport != null) {
+                        this.conformanceReport.markRuntime(name,
+                                ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                "PIPELINE_BUILD_FAILED");
+                        if (program.vertexSource() != null) {
+                            this.conformanceReport.markRuntime(name,
+                                    ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                    "TERRAIN_VERTEX_PIPELINE_BUILD_FAILED");
+                        }
+                    }
                     LOGGER.warn("[chimera] pack gbuffers_terrain: fallback=IDENTITY (build failed)");
                     continue;
                 }
                 this.packGeometryPipeline = terrain.pipeline();
                 this.packGeometrySlots = terrain.samplerSlots();
                 ChimeraTerrainPipelines.setGeometryOverride(terrain.pipeline());
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED, null);
+                }
                 LOGGER.info("[chimera] pack gbuffers_terrain: ok (geometry, samplers={})",
                         Arrays.toString(terrain.samplerSlots()));
                 if (TRACE_TRANSITIONS) {
@@ -862,12 +916,21 @@ public class ChimeraMainPass implements MainPass {
                 }
                 if (this.packConfig != null && this.packConfig.drawBufferCount() > 1) {
                     LOGGER.warn("[chimera] pack gbuffers_terrain: DRAWBUFFERS={} not honored in M4 "
-                            + "(single attachment; multi-buffer gbuffers deferred to M5)",
+                            + "(single attachment; multi-buffer gbuffers deferred to M5.6)",
                             this.packConfig.drawBufferCount());
                 }
             } else {
-                LOGGER.info("[chimera] pack {}: deferred to M5 (not a part-2 stage), skipped", name);
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                            "CONTRACT_UNSUPPORTED");
+                }
+                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (unsupported program family)", name);
             }
+        }
+        if (this.conformanceReport != null) {
+            this.conformanceReport.markUnattemptedAsFallback();
+            LOGGER.info("[chimera] conformance {}", this.conformanceReport.toJson());
         }
     }
 

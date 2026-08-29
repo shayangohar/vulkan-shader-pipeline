@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,6 +37,12 @@ public final class LegacyGlslConverter {
     private static final Pattern VERSION_LINE = Pattern.compile("(?m)^\\s*#version\\s+\\S+.*$");
     private static final Pattern VARYING_DECL =
             Pattern.compile("(?m)\\bvarying\\s+(float|vec2|vec3|vec4)\\s+(\\w+)\\s*;");
+    private static final Pattern TERRAIN_VARYING_DECL =
+            Pattern.compile("(?m)\\bvarying\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
+    private static final Pattern TERRAIN_ATTRIBUTE_DECL =
+            Pattern.compile("(?m)\\battribute\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
+    private static final Pattern TERRAIN_VERSION =
+            Pattern.compile("(?m)^\\s*#version\\s+120(?:e)?\\s*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern INCLUDE_LINE = Pattern.compile("(?m)^\\s*#include\\s+[<\"]([^>\"]+)[>\"]\\s*$");
     /** Pack const declarations consumed by PackConfig; stripped so the preprocessor-less GLSL compiles. */
     private static final Pattern CONSUMED_CONSTS =
@@ -51,7 +59,36 @@ public final class LegacyGlslConverter {
 
     private LegacyGlslConverter() {}
 
+    /** Deterministic interface shared by the narrow terrain vertex and fragment bridge. */
+    public record TerrainVaryingLayout(Map<String, String> types, Map<String, Integer> locations) {
+        public TerrainVaryingLayout {
+            types = Collections.unmodifiableMap(new TreeMap<>(types));
+            locations = Collections.unmodifiableMap(new TreeMap<>(locations));
+        }
+
+        public int location(String name) {
+            Integer location = locations.get(name);
+            if (location == null) {
+                throw new IllegalArgumentException("terrain varying is not produced by the vertex stage: " + name);
+            }
+            return location;
+        }
+    }
+
+    /** Converted terrain vertex source plus the interface used by its fragment stage. */
+    public record TerrainVertexConversion(String source, TerrainVaryingLayout layout) {}
+
     public static String convertFragment(String source, Path sourceFile, boolean geometryStage, int[] geometrySamplerSlots) {
+        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, null);
+    }
+
+    public static String convertFragment(
+            String source,
+            Path sourceFile,
+            boolean geometryStage,
+            int[] geometrySamplerSlots,
+            TerrainVaryingLayout terrainLayout
+    ) {
         try {
             String src = source;
             boolean modern = src.contains("#version 460") || src.contains("#version 450");
@@ -62,7 +99,7 @@ public final class LegacyGlslConverter {
             }
 
             src = CONSUMED_CONSTS.matcher(src).replaceAll("");
-            src = convertVaryings(src, geometryStage);
+            src = convertVaryings(src, geometryStage, terrainLayout);
 
             // Samplers in ascending slot order -> bindings base,base+1,... in config order.
             // The scan runs before the rename below so the declaration is still
@@ -110,6 +147,74 @@ public final class LegacyGlslConverter {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * Converts the strict M5.2 terrain vertex subset. A null result means that
+     * the source must use the identity terrain pipeline.
+     */
+    public static TerrainVertexConversion convertTerrainVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource
+    ) {
+        try {
+            String src = inlineIncludes(source, sourceFile, 0);
+            String stripped = stripComments(src);
+            if (!TERRAIN_VERSION.matcher(src).find()
+                    || stripped.matches("(?s).*#version\\s+(?!120(?:e)?\\b)\\d+.*")) {
+                throw new IllegalArgumentException("terrain vertex requires #version 120 or #version 120e");
+            }
+            if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
+                    || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+                throw new IllegalArgumentException("terrain vertex requires main and gl_Position");
+            }
+            rejectTerrainVertexFeatures(stripped);
+
+            Map<String, String> vertexTypes = parseTerrainVaryings(stripped);
+            Map<String, String> fragmentTypes = parseTerrainVaryings(stripComments(fragmentSource));
+            for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
+                String vertexType = vertexTypes.get(entry.getKey());
+                if (!entry.getValue().equals(vertexType)) {
+                    throw new IllegalArgumentException("terrain varying mismatch: " + entry.getKey());
+                }
+            }
+
+            Map<String, Integer> locations = new TreeMap<>();
+            int location = 0;
+            for (String name : vertexTypes.keySet().stream().sorted().toList()) {
+                locations.put(name, location++);
+            }
+            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations);
+
+            String converted = VERSION_LINE.matcher(src).replaceFirst("");
+            converted = converted.replaceAll(
+                    "(?m)^\\s*attribute\\s+(?:float|vec2)\\s+mc_Entity\\s*;\\s*", "");
+            converted = replaceTerrainVaryings(converted, layout, "out");
+            converted = converted.replaceAll("\\bgl_Vertex\\b", "chimeraVertexValue()");
+            converted = converted.replaceAll("\\bgl_Color\\b", "chimeraColorValue()");
+            converted = converted.replaceAll("\\bgl_MultiTexCoord0\\b", "chimeraTexCoord0Value()");
+            converted = converted.replaceAll("\\bgl_MultiTexCoord1\\b", "chimeraTexCoord1Value()");
+            converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)", "chimeraFtransform()");
+            String entityType = terrainEntityType(stripped);
+            if (entityType != null) {
+                converted = converted.replaceAll("\\bmc_Entity\\b",
+                        entityType.equals("vec2") ? "chimeraMcEntityValue()" : "chimeraMcEntityValue().x");
+            }
+            if (converted.matches("(?s).*\\bmc_Entity\\b.*")) {
+                throw new IllegalArgumentException("mc_Entity is used without a supported declaration");
+            }
+            return new TerrainVertexConversion(
+                    "#version 460\n" + TERRAIN_VERTEX_PREAMBLE + converted,
+                    layout);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Static probe helper used by PackProbe without compiling a shader. */
+    public static boolean supportsTerrainVertex(String source, String fragmentSource) {
+        return convertTerrainVertex(source, null, fragmentSource) != null;
     }
 
     private static UniformRegistry.Stage stageOf(boolean geometryStage) {
@@ -163,7 +268,11 @@ public final class LegacyGlslConverter {
         return include;
     }
 
-    private static String convertVaryings(String src, boolean geometryStage) {
+    private static String convertVaryings(
+            String src,
+            boolean geometryStage,
+            TerrainVaryingLayout terrainLayout
+    ) {
         Matcher matcher = VARYING_DECL.matcher(src);
         StringBuilder out = new StringBuilder();
         int last = 0;
@@ -171,7 +280,9 @@ public final class LegacyGlslConverter {
             String type = matcher.group(1);
             String name = matcher.group(2);
             int location;
-            if (geometryStage) {
+            if (geometryStage && terrainLayout != null) {
+                location = terrainLayout.location(name);
+            } else if (geometryStage) {
                 Integer slot = GEOMETRY_VARYING_LOCATIONS.get(name);
                 if (slot == null) {
                     throw new IllegalArgumentException(
@@ -189,6 +300,167 @@ public final class LegacyGlslConverter {
         out.append(src, last, src.length());
         return out.toString();
     }
+
+    private static String replaceTerrainVaryings(
+            String source,
+            TerrainVaryingLayout layout,
+            String direction
+    ) {
+        Matcher matcher = TERRAIN_VARYING_DECL.matcher(source);
+        StringBuilder out = new StringBuilder();
+        int last = 0;
+        while (matcher.find()) {
+            String type = matcher.group(1);
+            String name = matcher.group(2);
+            if (!layout.types().containsKey(name)
+                    || !layout.types().get(name).equals(type)
+                    || !(type.equals("float") || type.equals("vec2")
+                    || type.equals("vec3") || type.equals("vec4"))) {
+                throw new IllegalArgumentException("unsupported terrain varying: " + name);
+            }
+            out.append(source, last, matcher.start());
+            out.append("layout(location = ").append(layout.location(name)).append(") ")
+                    .append(direction).append(' ').append(type).append(' ').append(name).append(';');
+            last = matcher.end();
+        }
+        out.append(source, last, source.length());
+        return out.toString();
+    }
+
+    private static Map<String, String> parseTerrainVaryings(String source) {
+        Map<String, String> result = new TreeMap<>();
+        Matcher matcher = TERRAIN_VARYING_DECL.matcher(source);
+        while (matcher.find()) {
+            String type = matcher.group(1);
+            String name = matcher.group(2);
+            if (!(type.equals("float") || type.equals("vec2")
+                    || type.equals("vec3") || type.equals("vec4"))) {
+                throw new IllegalArgumentException("unsupported terrain varying type: " + type);
+            }
+            String previous = result.putIfAbsent(name, type);
+            if (previous != null && !previous.equals(type)) {
+                throw new IllegalArgumentException("terrain varying declared with two types: " + name);
+            }
+        }
+        return result;
+    }
+
+    private static String terrainEntityType(String source) {
+        Matcher matcher = TERRAIN_ATTRIBUTE_DECL.matcher(source);
+        String entityType = null;
+        while (matcher.find()) {
+            String type = matcher.group(1);
+            String name = matcher.group(2);
+            if (!name.equals("mc_Entity")) {
+                throw new IllegalArgumentException("unsupported terrain attribute: " + name);
+            }
+            if (!type.equals("float") && !type.equals("vec2")) {
+                throw new IllegalArgumentException("unsupported mc_Entity type: " + type);
+            }
+            if (entityType != null && !entityType.equals(type)) {
+                throw new IllegalArgumentException("mc_Entity declared with two types");
+            }
+            entityType = type;
+        }
+        return entityType;
+    }
+
+    private static void rejectTerrainVertexFeatures(String source) {
+        if (source.matches("(?s).*\\b(?:uniform|gl_Normal|gl_NormalMatrix|gl_ModelViewMatrix|"
+                + "gl_ProjectionMatrix|gl_ModelViewProjectionMatrix|gl_TextureMatrix|"
+                + "mc_midTexCoord|at_tangent|tangent|image\\w*|buffer)\\b.*")) {
+            throw new IllegalArgumentException("unsupported terrain vertex feature");
+        }
+        if (source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective)\\b.*")) {
+            throw new IllegalArgumentException("modern GLSL is not supported in terrain vertex");
+        }
+        Matcher attributes = TERRAIN_ATTRIBUTE_DECL.matcher(source);
+        if (attributes.find()) {
+            attributes.reset();
+            while (attributes.find()) {
+                if (!attributes.group(2).equals("mc_Entity")) {
+                    throw new IllegalArgumentException("unsupported terrain attribute");
+                }
+            }
+        }
+        if (source.matches("(?s).*\\battribute\\b.*")
+                && !source.matches("(?s).*\\battribute\\s+(?:float|vec2)\\s+mc_Entity\\s*;.*")) {
+            throw new IllegalArgumentException("unsupported terrain attribute declaration");
+        }
+    }
+
+    private static String stripComments(String source) {
+        return source == null ? "" : source
+                .replaceAll("(?s)/\\*.*?\\*/", " ")
+                .replaceAll("(?m)//.*$", " ");
+    }
+
+    private static final String TERRAIN_VERTEX_PREAMBLE = """
+            layout(binding = 0) uniform ViewUBO {
+                mat4 MVP;
+                mat4 LightMVP;
+            };
+
+            layout(binding = 2) uniform SectionData {
+                ivec4 SectionOffsets[128];
+                vec4 SectionFadeFactors[128];
+            };
+
+            layout(push_constant) uniform Push {
+                vec3 ModelOffset;
+            };
+
+            layout(location = 0) in ivec4 inPositionLight;
+            layout(location = 1) in uvec2 inUV;
+            layout(location = 2) in uint inPackedColor;
+            layout(location = 3) in int inMaterialId;
+            layout(location = 4) in int inRenderType;
+
+            const float CHIMERA_UV_SCALE = 1.0 / 32768.0;
+            const vec3 CHIMERA_POSITION_SCALE = vec3(1.0 / 2048.0);
+            const vec3 CHIMERA_POSITION_BIAS = vec3(4.0);
+
+            vec3 chimeraSectionOffset(int encoded) {
+                return vec3(
+                    float(bitfieldExtract(encoded, 0, 8)),
+                    float(bitfieldExtract(encoded, 16, 8)),
+                    float(bitfieldExtract(encoded, 8, 8)));
+            }
+
+            vec3 chimeraWorldPosition() {
+                int encoded = SectionOffsets[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];
+                return fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
+                        ModelOffset + chimeraSectionOffset(encoded));
+            }
+
+            vec4 chimeraVertexValue() {
+                return vec4(chimeraWorldPosition(), 1.0);
+            }
+
+            vec4 chimeraColorValue() {
+                return unpackUnorm4x8(inPackedColor);
+            }
+
+            vec4 chimeraTexCoord0Value() {
+                return vec4(vec2(inUV) * CHIMERA_UV_SCALE, 0.0, 1.0);
+            }
+
+            vec4 chimeraTexCoord1Value() {
+                return vec4(
+                        (vec2(float((uint(inPositionLight.w) >> 4u) & 0xFu),
+                              float((uint(inPositionLight.w) >> 12u) & 0xFu)) + 0.5) / 16.0,
+                        0.0, 1.0);
+            }
+
+            vec2 chimeraMcEntityValue() {
+                return vec2(float(inMaterialId), float(inRenderType));
+            }
+
+            vec4 chimeraFtransform() {
+                return MVP * chimeraVertexValue();
+            }
+
+            """;
 
     private static String convertTextureCalls(String src) {
         String converted = src;

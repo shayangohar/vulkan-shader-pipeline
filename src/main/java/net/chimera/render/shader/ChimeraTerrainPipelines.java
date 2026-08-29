@@ -1,11 +1,17 @@
 package net.chimera.render.shader;
 
 import com.google.gson.JsonObject;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.ChimeraMod;
+import net.chimera.render.vertex.ChimeraExtTerrainBuilder;
+import net.chimera.render.vertex.ChimeraVertexFormats;
+import net.chimera.shaderpack.PackMaterialResolver;
+import net.minecraft.client.Minecraft;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
+import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
@@ -18,15 +24,15 @@ import net.vulkanmod.vulkan.shader.SPIRVUtils;
  * bindings and UBO fields as the host's terrain path, so the host's uniform
  * suppliers and per-instance section data keep feeding them unchanged.
  *
- * Enabling swaps the terrain shader getter to chimera's pipeline. Both
- * sides of the swap use the same 16B COMPRESSED_TERRAIN vertex format
- * and the default builder, so no chunk re-mesh is needed; reinstate one
- * only if the vertex format ever changes again (TASK-49's BlockId
- * extension). Disabling restores the host getter.
+ * Enabling swaps the terrain shader getter to chimera's pipeline and installs
+ * the matching extended builder. Disabling restores the host getter, format,
+ * and builder. A live level is rebuilt only when that format mode changes.
  */
 public final class ChimeraTerrainPipelines {
     private static boolean initialized;
+    private static boolean extendedMode;
     private static GraphicsPipeline terrainPipeline;
+    private static PackMaterialResolver materialResolver = PackMaterialResolver.empty();
     /** Pack geometry program (gbuffers_terrain) installed over the chimera terrain pipeline; null = none. */
     private static GraphicsPipeline geometryOverride;
 
@@ -43,8 +49,11 @@ public final class ChimeraTerrainPipelines {
         if (!initialized) {
             return;
         }
-        // Re-register so a change while enabled takes effect immediately.
-        PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
+        // Re-register only while Chimera owns terrain. Host/screen mode must
+        // keep the host getter even if an override is cleared or replaced.
+        if (extendedMode) {
+            PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
+        }
     }
 
     public static void init() {
@@ -52,13 +61,12 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        // BISECTION 2: plain compressed format (BlockId extension paused).
-        terrainPipeline = buildPipeline("chimera_terrain", CustomVertexFormat.COMPRESSED_TERRAIN);
+        terrainPipeline = buildPipeline("chimera_terrain", ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN);
         initialized = true;
 
         ChimeraMod.LOGGER.info("chimera terrain pipeline ready: stride={}B attributes={}",
-                CustomVertexFormat.COMPRESSED_TERRAIN.getVertexSize(),
-                CustomVertexFormat.COMPRESSED_TERRAIN.getElementAttributeNames());
+                ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN.getVertexSize(),
+                ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN.getElementAttributeNames());
     }
 
     public static void enable() {
@@ -66,22 +74,11 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
-        ThreadBuilderPack.defaultTerrainBuilderConstructor();
-        PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
-        // No rebuildChunks() here: both sides of the swap use the same
-        // 16B COMPRESSED_TERRAIN format and the default builder, so only
-        // the shader getter changes. A re-mesh (allChanged) would rebuild
-        // the SectionGraph on every screen cycle for zero visual gain.
-        // Reinstate it only when the vertex format actually changes
-        // (TASK-49's BlockId extension).
+        setTerrainMode(true);
     }
 
     public static void disable() {
-        PipelineManager.setDefaultTerrainShaderGetter();
-        PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
-        ThreadBuilderPack.defaultTerrainBuilderConstructor();
-        // See enable(): no re-mesh needed while the format is unchanged.
+        setTerrainMode(false);
     }
 
     /**
@@ -93,9 +90,7 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        PipelineManager.setDefaultTerrainShaderGetter();
-        PipelineManager.setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
-        ThreadBuilderPack.defaultTerrainBuilderConstructor();
+        setTerrainMode(false);
     }
 
     public static GraphicsPipeline getTerrainPipeline() {
@@ -103,7 +98,56 @@ public final class ChimeraTerrainPipelines {
     }
 
     public static VertexFormat getTerrainVertexFormat() {
-        return CustomVertexFormat.COMPRESSED_TERRAIN;
+        return ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
+    }
+
+    public static void setMaterialResolver(PackMaterialResolver resolver) {
+        PackMaterialResolver next = resolver == null ? PackMaterialResolver.empty() : resolver;
+        if (materialResolver == next) {
+            return;
+        }
+        materialResolver = next;
+        if (extendedMode) {
+            rebuildLiveLevel();
+        }
+    }
+
+    public static boolean isExtendedMode() {
+        return extendedMode;
+    }
+
+    private static void setTerrainMode(boolean chimeraMode) {
+        VertexFormat desiredFormat = chimeraMode
+                ? ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN
+                : CustomVertexFormat.COMPRESSED_TERRAIN;
+        boolean changed = extendedMode != chimeraMode
+                || PipelineManager.terrainVertexFormat != desiredFormat;
+
+        PipelineManager.setTerrainVertexFormat(desiredFormat);
+        if (chimeraMode) {
+            ThreadBuilderPack.setTerrainBuilderConstructor(renderType -> {
+                int size = TerrainRenderType.getLayer(renderType).bufferSize()
+                        / DefaultVertexFormat.BLOCK.getVertexSize();
+                return new ChimeraExtTerrainBuilder(size, materialResolver);
+            });
+            PipelineManager.setShaderGetter(renderType -> getTerrainPipeline());
+        } else {
+            ThreadBuilderPack.defaultTerrainBuilderConstructor();
+            PipelineManager.setDefaultTerrainShaderGetter();
+        }
+        extendedMode = chimeraMode;
+
+        if (changed) {
+            rebuildLiveLevel();
+        }
+    }
+
+    private static void rebuildLiveLevel() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level != null && minecraft.levelRenderer != null) {
+            minecraft.levelRenderer.allChanged();
+            ChimeraMod.LOGGER.info("[chimera] terrain format changed: live level rebuilt (extended={})", extendedMode);
+        }
     }
 
     private static GraphicsPipeline buildPipeline(String name, VertexFormat vertexFormat) {

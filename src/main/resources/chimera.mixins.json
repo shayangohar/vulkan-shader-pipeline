@@ -13,7 +13,9 @@
     "ChimeraMinecraftMixin",
     "VkCommandEncoderAliasMixin",
     "WorldRendererMixin",
-    "WorldRendererLevelMixin"
+    "WorldRendererLevelMixin",
+    "FluidRendererMixin",
+    "QuadSorterMixin"
   ],
   "injectors": {
     "defaultRequire": 1

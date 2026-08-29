@@ -19,9 +19,8 @@ import java.util.List;
 /**
  * Discovers the programs of an OptiFine/Iris-format shader pack on disk
  * (packDir/shaders/), either via its shaders.json pass list or, when absent,
- * every top-level *.fsh becomes a program. Fragment sources only: pack
- * vertex programs are not consumed yet (M4 reads the chimera fixed vertex;
- * M5 adds the mc_* vertex layer). Never throws: any failure drops the
+ * every top-level *.fsh becomes a program. Fragment sources and optional
+ * vertex sources are retained for the narrow M5.2 terrain bridge. Never throws: any failure drops the
  * affected program and is logged as a warning, so a bad pack can never break
  * the frame.
  */
@@ -78,12 +77,15 @@ public final class PackSource {
                 LOGGER.warn("[chimera] pack: program '{}' has no fragment shader; dropping", name);
                 continue;
             }
-            Path fragmentPath = shadersDir.resolve(fragmentRel);
+            Path fragmentPath = resolveStagePath(shadersDir, fragmentRel, ".fsh");
             String fragment = readSource(fragmentPath);
             if (fragment == null) {
                 continue;
             }
-            out.add(new PackProgram(name, fragment, fragmentPath));
+            String vertexRel = stringField(program, "vertex");
+            Path vertexPath = resolveStagePath(shadersDir, vertexRel, ".vsh");
+            String vertex = readOptionalSource(vertexPath);
+            out.add(new PackProgram(name, fragment, fragmentPath, vertex, vertexPath));
         }
     }
 
@@ -106,17 +108,41 @@ public final class PackSource {
             if (fragmentSrc == null) {
                 continue;
             }
-            out.add(new PackProgram(base, fragmentSrc, fragment));
+            Path vertex = shadersDir.resolve(base + ".vsh");
+            out.add(new PackProgram(base, fragmentSrc, fragment,
+                    readOptionalSource(vertex), vertex));
         }
     }
 
     private static String readSource(Path path) {
+        if (path == null) {
+            return null;
+        }
         try {
             return Files.readString(path, StandardCharsets.UTF_8);
         } catch (IOException e) {
             LOGGER.warn("[chimera] pack: cannot read {}: {}", path, e.getMessage());
             return null;
         }
+    }
+
+    private static String readOptionalSource(Path path) {
+        if (path == null || !Files.isRegularFile(path)) {
+            return null;
+        }
+        return readSource(path);
+    }
+
+    private static Path resolveStagePath(Path shadersDir, String relative, String extension) {
+        if (relative == null || relative.isBlank()) {
+            return null;
+        }
+        Path path = shadersDir.resolve(relative);
+        String fileName = path.getFileName().toString();
+        if (!fileName.contains(".")) {
+            path = path.resolveSibling(fileName + extension);
+        }
+        return path;
     }
 
     private static String stringField(JsonObject object, String key) {

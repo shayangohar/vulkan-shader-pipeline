@@ -31,7 +31,7 @@ public final class ChimeraPostPipelines {
         return builder.createGraphicsPipeline();
     }
 
-    /** Creates a terrain-format pipeline (COMPRESSED_TERRAIN vertex layout) for shadow rendering. */
+    /** Creates an extended terrain-format pipeline for shadow rendering. */
     public static GraphicsPipeline createTerrainPipeline(String name, VertexFormat vertexFormat) {
         JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");
         PipelineConfig config = PipelineConfig.fromJson(name, json);

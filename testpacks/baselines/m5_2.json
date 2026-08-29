@@ -1,0 +1,83 @@
+{
+  "formatVersion": 1,
+  "fixtures": {
+    "material": {
+      "reportSha256": "c5bf11d0ab17899caf07c2ace8ed01a8310a0ca6467a19c5de3633c39066b8bb",
+      "expectedPassInventory": [
+        "composite",
+        "final",
+        "gbuffers_terrain"
+      ],
+      "expectedStages": {
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "gbuffers_terrain": [
+          "fragment",
+          "vertex"
+        ]
+      },
+      "expectedDeviations": {
+        "global": [
+          "SHADOW_SETTING_LOGGED_ONLY:shadowMapResolution"
+        ],
+        "composite": [],
+        "final": [],
+        "gbuffers_terrain": [
+          "LEGACY_TERRAIN_VERTEX_BRIDGE"
+        ]
+      },
+      "sourceHashes": {
+        "block.properties": "d074ccf2d7a4a6cbc8df8e390af411bfdeeec65c760127d8b941de08be90bc98",
+        "composite.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "gbuffers_terrain.fsh": "f74bf3c9f623377edeb9c382caaa69cd3f19cc4c6c68832e0bb00611546cb5f6",
+        "gbuffers_terrain.vsh": "0bab9914e674f494babbc3efccef0d21ba86f817882952778de980115709c89e",
+        "shaders.json": "7642ffb0f3f447ab61006a34da56bb0020668e76e2ae20a5b9cf32c91f3ad066",
+        "shaders.properties": "cc1de0a145b88a096e98d8b155a480d4d3bad461e3ebbebf2b2c62afc4e2fac1"
+      }
+    },
+    "unsupported_vertex": {
+      "reportSha256": "253bf58a4b2d6f4e065f9af8598cfa85587b19114ef69b27850a69bbeaef221c",
+      "expectedPassInventory": [
+        "composite",
+        "final",
+        "gbuffers_terrain"
+      ],
+      "expectedStages": {
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "gbuffers_terrain": [
+          "fragment",
+          "vertex"
+        ]
+      },
+      "expectedDeviations": {
+        "global": [
+          "SHADOW_SETTING_LOGGED_ONLY:shadowMapResolution"
+        ],
+        "composite": [],
+        "final": [],
+        "gbuffers_terrain": [
+          "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"
+        ]
+      },
+      "sourceHashes": {
+        "block.properties": "0066924d4a5af58bd8bdd65e19e45ed7c23a7d0bc22e3a05190d6d3697261777",
+        "composite.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "gbuffers_terrain.fsh": "b446ea954b6912b36842c3cd5f5f79f35964db29f373d0f89fff02cee5256580",
+        "gbuffers_terrain.vsh": "c8d7b75e5b163bc0c0d4151359855de83a6c2a2a770b3fd62bee354064769308",
+        "shaders.json": "7642ffb0f3f447ab61006a34da56bb0020668e76e2ae20a5b9cf32c91f3ad066",
+        "shaders.properties": "cc1de0a145b88a096e98d8b155a480d4d3bad461e3ebbebf2b2c62afc4e2fac1"
+      }
+    }
+  }
+}

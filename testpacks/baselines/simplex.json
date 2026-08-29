@@ -1,0 +1,37 @@
+{
+  "fixture": "simplex",
+  "reportSha256": "49a5d33cbf5455a7bc559be6f6954d2359f79c5d855ea55da82de875cd059539",
+  "sourceHashes": {
+    "composite.fsh": "17f137c0eb57515fc462170778de7c8c55d60fdd70ad4b5dc4a81879f8d935eb",
+    "composite.vsh": "f12a8a5277df2127173a151db0856931d5f761f79c279171c6a7455576dc327f",
+    "final.fsh": "1673e32cacf7b5ff1edc474e78fe69614858d5c958c66faa11c8e7ddb5660382",
+    "final.vsh": "f12a8a5277df2127173a151db0856931d5f761f79c279171c6a7455576dc327f",
+    "gbuffers_terrain.fsh": "15514454fe049f575d01fd2f13d79f0296fe878c26b27f1fe659c99cbea5d9dc",
+    "shaders.json": "bea16a77e7f24f40347243523ebbcc7b073a2403fcab6f3ecad353c329cce0c4"
+  },
+  "expectedPassInventory": [
+    "composite",
+    "final",
+    "gbuffers_terrain"
+  ],
+  "runtime": {
+    "resolution": [2560, 1440],
+    "camera": {
+      "position": [166.254012368339, 73.0, -745.946895931714],
+      "rotation": [35.9814, 1.649966],
+      "rotationOrder": "yaw,pitch",
+      "positionSource": "CHIMERA playerdata Pos"
+    },
+    "hdrTarget": {
+      "format": "R16G16B16A16_FLOAT",
+      "width": 2560,
+      "height": 1440
+    },
+    "finalTarget": {
+      "format": "R8G8B8A8_UNORM",
+      "width": 2560,
+      "height": 1440
+    },
+    "renderdocVerified": true
+  }
+}

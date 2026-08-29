@@ -1,0 +1,7 @@
+{
+  "programs": [
+    { "name": "gbuffers_terrain", "fragment": "gbuffers_terrain.fsh" },
+    { "name": "composite1", "fragment": "composite1.fsh" },
+    { "name": "setup", "compute": "setup.csh" }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "programs": [
+    { "name": "gbuffers_terrain", "fragment": "gbuffers_terrain.fsh" },
+    { "name": "composite", "vertex": "composite.vsh", "fragment": "composite.fsh" },
+    { "name": "final", "vertex": "final.vsh", "fragment": "final.fsh" }
+  ]
+}

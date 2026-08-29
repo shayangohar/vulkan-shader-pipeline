@@ -10,6 +10,17 @@ import java.nio.file.Path;
  * @param fragmentPath   on-disk path of the fragment source, used to resolve
  *                       relative #include files during conversion; null when the
  *                       source was provided without a backing file (never in practice)
+ * @param vertexSource   optional legacy terrain vertex source
+ * @param vertexPath     on-disk path of the optional vertex source
  */
-public record PackProgram(String name, String fragmentSource, Path fragmentPath) {
+public record PackProgram(
+        String name,
+        String fragmentSource,
+        Path fragmentPath,
+        String vertexSource,
+        Path vertexPath
+) {
+    public PackProgram(String name, String fragmentSource, Path fragmentPath) {
+        this(name, fragmentSource, fragmentPath, null, null);
+    }
 }

@@ -1,9 +1,10 @@
 #version 460
 // Chimera terrain vertex stage (M2).
-// Consumes VulkanMod's COMPRESSED_TERRAIN layout: position/light packed in an
-// ivec4, UVs as raw u16 pairs, color as a u32. Section offsets arrive per
-// instance through a UBO indexed by gl_InstanceIndex; ModelOffset is a push
-// constant. Interface must stay byte-compatible with the host's terrain path.
+// Consumes the extended terrain layout: the VulkanMod compressed
+// position/light, UV, and color prefix plus material attributes at locations
+// 3 and 4. Section offsets arrive per instance through a UBO indexed by
+// gl_InstanceIndex; ModelOffset is a push constant. The prefix stays
+// byte-compatible with the host terrain path.
 
 layout(binding = 0) uniform ViewUBO {
     mat4 MVP;

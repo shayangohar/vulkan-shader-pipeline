@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
+import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
@@ -19,17 +20,15 @@ import java.util.List;
  * ChimeraPostPipelines.create / ChimeraTerrainPipelines.buildPipeline: a
  * PipelineConfig JSON parsed by PipelineConfig.fromJson (sampler names and
  * order define the descriptor bindings, sequentially after any UBO blocks),
- * vertex stage = a chimera fixed source, fragment stage = the converted
+ * vertex stage = a chimera fixed source or the narrow terrain bridge, fragment stage = the converted
  * legacy GLSL. Any failure (parse, conversion, shaderc, supplier) returns
  * null and the caller falls back to the identity pipeline.
  *
  * <p>Post build (buildPost): fullscreen triangle vertex, empty UBOs, sampler
  * bindings 0,1,... .
- * <p>Terrain build (buildTerrain): chimera's fixed terrain vertex
- * (COMPRESSED_TERRAIN inputs, outputs color/texcoord/lightSpacePos by
- * location), the terrain config's UBO blocks (bindings 0/1/2) and push
- * constants kept verbatim, sampler bindings 3,4,... — matching what
- * LegacyGlslConverter emits for the geometry stage.
+ * <p>Terrain build (buildTerrain): the extended compressed terrain inputs,
+ * the terrain config's UBO blocks (bindings 0/1/2) and push constants kept
+ * verbatim, sampler bindings 3,4,... .
  */
 public final class PackPipelines {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -72,15 +71,25 @@ public final class PackPipelines {
         }
     }
 
-    /**
-     * Builds the gbuffers_terrain pipeline: chimera's fixed terrain vertex,
-     * the pack's converted fragment, the terrain config's UBO blocks.
-     */
+    /** Builds gbuffers_terrain with either the fixed vertex or the M5.2 bridge. */
     public static PackTerrain buildTerrain(PackProgram program, String fixedVertexSource) {
         try {
             List<String> samplers = UniformRegistry.scanSamplerNames(program.fragmentSource(), UniformRegistry.Stage.GEOMETRY);
             int[] slots = interleaveLightmap(samplers.stream().mapToInt(UniformRegistry.GEOMETRY_NAME_TO_SLOT::get).toArray());
-            String converted = LegacyGlslConverter.convertFragment(program.fragmentSource(), program.fragmentPath(), true, slots);
+            String vertexSource = fixedVertexSource;
+            LegacyGlslConverter.TerrainVaryingLayout terrainLayout = null;
+            if (program.vertexSource() != null) {
+                LegacyGlslConverter.TerrainVertexConversion vertex =
+                        LegacyGlslConverter.convertTerrainVertex(
+                                program.vertexSource(), program.vertexPath(), program.fragmentSource());
+                if (vertex == null) {
+                    throw new IllegalStateException("legacy terrain vertex bridge rejected the source");
+                }
+                vertexSource = vertex.source();
+                terrainLayout = vertex.layout();
+            }
+            String converted = LegacyGlslConverter.convertFragment(
+                    program.fragmentSource(), program.fragmentPath(), true, slots, terrainLayout);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -90,9 +99,10 @@ public final class PackPipelines {
             json.add("samplers", samplerArray(slots));
 
             PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
-            Pipeline.Builder builder = new Pipeline.Builder(CustomVertexFormat.COMPRESSED_TERRAIN, "pack_" + program.name());
+            Pipeline.Builder builder = new Pipeline.Builder(
+                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + program.name());
             builder.applyConfig(config);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, fixedVertexSource);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
 
@@ -127,21 +137,24 @@ public final class PackPipelines {
      * content renders as blotchy per-vertex darkening.
      */
     private static int[] interleaveLightmap(int[] slots) {
-        if (slots.length == 0) {
-            return new int[] {2};
-        }
-        int addLightmap = 1;
-        for (int s : slots) {
-            if (s == 2) {
-                addLightmap = 0;
-            }
-        }
-        int[] out = new int[slots.length + addLightmap];
-        System.arraycopy(slots, 0, out, 0, slots.length);
-        if (addLightmap == 1) {
-            System.arraycopy(out, 1, out, 2, out.length - 2);
-            out[1] = 2;
-        }
+        int[] withoutLightmap = java.util.Arrays.stream(slots)
+                .filter(slot -> slot != 2)
+                .toArray();
+        boolean hasAtlas = java.util.Arrays.stream(withoutLightmap).anyMatch(slot -> slot == 0);
+        int[] withAtlas = hasAtlas
+                ? withoutLightmap
+                : prepend(0, withoutLightmap);
+        int[] out = new int[withAtlas.length + 1];
+        System.arraycopy(withAtlas, 0, out, 0, 1);
+        out[1] = 2;
+        System.arraycopy(withAtlas, 1, out, 2, withAtlas.length - 1);
         return out;
+    }
+
+    private static int[] prepend(int value, int[] values) {
+        int[] result = new int[values.length + 1];
+        result[0] = value;
+        System.arraycopy(values, 0, result, 1, values.length);
+        return result;
     }
 }
