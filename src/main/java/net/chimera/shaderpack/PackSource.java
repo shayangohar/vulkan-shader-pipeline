@@ -46,7 +46,29 @@ public final class PackSource {
         }
         loadStandardPair(shadersDir, programs, "shadow");
         loadStandardPair(shadersDir, programs, "gbuffers_water");
+        loadStandardPostPrograms(shadersDir, programs);
         return new LoadResult(programs, shadersDir);
+    }
+
+    /** Standard post programs may be omitted from shaders.json. */
+    private static void loadStandardPostPrograms(Path shadersDir, List<PackProgram> out) {
+        List<Path> fragments = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(shadersDir, "*.fsh")) {
+            for (Path path : stream) {
+                String name = fileNameWithoutExtension(path.getFileName().toString());
+                if (PostTargetPlan.isPostProgramName(name)) {
+                    fragments.add(path);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.warn("[chimera] pack: cannot list post programs in {}: {}", shadersDir, e.getMessage());
+            return;
+        }
+        fragments.sort(Comparator.comparing(path -> path.getFileName().toString()));
+        for (Path fragmentPath : fragments) {
+            loadStandardPair(shadersDir, out,
+                    fileNameWithoutExtension(fragmentPath.getFileName().toString()));
+        }
     }
 
     /** Standard Iris families may be omitted from shaders.json. */

@@ -43,7 +43,7 @@ processResources {
 
 tasks.register('conformanceTest', JavaExec) {
     group = 'verification'
-    description = 'Runs the deterministic M5.1 through M5.5 shader-pack conformance harness.'
+    description = 'Runs the deterministic M5.1 through M5.6 shader-pack conformance harness.'
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.shaderpack.ConformanceHarness'

@@ -6,7 +6,7 @@ Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class commu
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
-M4 is a narrow loader wedge, not general Iris compatibility yet. Its current boundary is fragment-only pack programs, a fixed Chimera vertex and UBO contract, a limited sampler registry, one-color output, and logging-only support for several pack settings. Unsupported stages fall back to the identity pipeline.
+M4 is a narrow loader wedge, not general Iris compatibility yet. Its current boundary is a strict legacy pack subset, fixed Chimera vertex and UBO contracts, a limited sampler registry, and explicit fallback for unsupported stages and resources. M5.6 adds a bounded four-target post chain with real target routing and ping-pong resources; it is still not a general Iris transformer.
 
 ## Requirements
 

@@ -81,12 +81,22 @@ public final class PackConfig {
         }
     }
 
-    public record PackConfigData(Map<Integer, Integer> colortexFormats, int drawBufferCount,
-                                 ShadowSettings shadowSettings) {}
+    public record PackConfigData(
+            Map<Integer, Integer> colortexFormats,
+            int drawBufferCount,
+            ShadowSettings shadowSettings,
+            List<String> deviations
+    ) {
+        public PackConfigData {
+            colortexFormats = Collections.unmodifiableMap(new TreeMap<>(colortexFormats));
+            deviations = List.copyOf(new TreeSet<>(deviations));
+        }
+    }
 
     public static PackConfigData parse(List<PackProgram> programs, Path shadersDir) {
         Map<Integer, Integer> colortexFormats = new HashMap<>();
         Map<String, String> shadowValues = new TreeMap<>();
+        List<String> deviations = new ArrayList<>();
 
         for (PackProgram program : programs.stream()
                 .sorted(java.util.Comparator.comparing(PackProgram::name)).toList()) {
@@ -100,14 +110,19 @@ public final class PackConfig {
                     continue;
                 }
                 String token = fmt.group(2);
+                if (slot > PostTargetPlan.MAX_TARGET) {
+                    deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + slot);
+                    continue;
+                }
                 Integer code = FMT_TO_VK.get(token);
                 if (code == null) {
+                    deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
                     LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
                             program.name(), slot, token);
                     continue;
                 }
                 Integer previous = colortexFormats.put(slot, code);
-                if (previous != null && previous != code) {
+                if (previous != null && !previous.equals(code)) {
                     LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program.name(), slot, previous, code);
                 }
             }
@@ -135,8 +150,13 @@ public final class PackConfig {
                             LOGGER.warn("[chimera] pack properties: {} is not a valid colortex slot, skipped", key);
                             continue;
                         }
+                        if (slot > PostTargetPlan.MAX_TARGET) {
+                            deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + slot);
+                            continue;
+                        }
                         Integer code = FMT_TO_VK.get(value);
                         if (code == null) {
+                            deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:" + key + "=" + value);
                             LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
                             continue;
                         }
@@ -161,7 +181,8 @@ public final class PackConfig {
             }
         }
 
-        return new PackConfigData(colortexFormats, drawBufferCount, validateShadowSettings(shadowValues));
+        return new PackConfigData(colortexFormats, drawBufferCount,
+                validateShadowSettings(shadowValues), deviations);
     }
 
     private static final List<String> SHADOW_PROPERTIES = List.of(
@@ -222,9 +243,9 @@ public final class PackConfig {
         Matcher def = DRAWBUFFERS_DEFINE.matcher(source);
         if (def.find()) {
             try {
-                int n = Integer.parseInt(def.group(1));
-                if (n >= 1) {
-                    return n;
+                int count = Integer.parseInt(def.group(1));
+                if (count >= 1) {
+                    return count;
                 }
             } catch (NumberFormatException ignored) {
             }

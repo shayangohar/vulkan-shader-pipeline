@@ -134,18 +134,23 @@ public final class PackProbe {
 
         PackConfig.PackConfigData packConfig = PackConfig.parse(
                 PackSource.loadResult(packDir).programs(), shadersDir);
+        globalDeviations.addAll(packConfig.deviations());
         applyShadowPropertyReporting(inventories, shadowPropertySettings,
                 packConfig.shadowSettings(), globalDeviations);
 
         ConformanceReport report = new ConformanceReport(packName, passListPresent,
                 passInventory, metadataHashes, settings, globalDeviations);
         for (Inventory inventory : inventories.values()) {
-            report.addProgram(toProgram(inventory));
+            report.addProgram(toProgram(inventory, packConfig.deviations(), packConfig.colortexFormats()));
         }
         return report;
     }
 
-    private static ConformanceReport.ProgramReport toProgram(Inventory inventory) {
+    private static ConformanceReport.ProgramReport toProgram(
+            Inventory inventory,
+            Collection<String> configDeviations,
+            Map<Integer, Integer> targetFormats
+    ) {
         StringBuilder combinedSource = new StringBuilder();
         inventory.sources.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
@@ -156,8 +161,19 @@ public final class PackProbe {
         boolean modern = usesModernGlsl(stripped);
         List<String> samplers = scanSamplers(stripped);
         List<String> uniforms = scanUniforms(stripped);
-        List<Integer> targets = scanTargets(fragment);
+        boolean executablePostName = PostTargetPlan.isPostProgramName(inventory.name);
+        PostTargetPlan.ParseResult targetResult = executablePostName
+                ? PostTargetPlan.parse(inventory.name, fragment, targetFormats)
+                : null;
+        List<Integer> targets = targetResult != null
+                ? targetResult.plan().targetSlots()
+                : scanTargets(fragment);
         TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
+        for (String deviation : configDeviations) {
+            if (deviation.startsWith("POST_TARGET_")) {
+                deviations.add(deviation);
+            }
+        }
 
         String name = inventory.name;
         String family = familyOf(name);
@@ -166,11 +182,22 @@ public final class PackProbe {
                 : name.equals("shadow") ? UniformRegistry.Stage.SHADOW
                 : name.equals("gbuffers_water") ? UniformRegistry.Stage.TRANSLUCENT
                 : UniformRegistry.Stage.POST;
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(fragment, interfaceStage);
+        UniformRegistry.ProgramInterface interfacePlan = executablePostName
+                ? UniformRegistry.planPost(fragment, targetResult.plan())
+                : UniformRegistry.plan(fragment, interfaceStage);
         deviations.addAll(interfacePlan.deviations());
+        if (targetResult != null) {
+            deviations.addAll(targetResult.deviations());
+            if (targetResult.executable()
+                    && !targetResult.plan().targetSlots().equals(List.of(0))) {
+                deviations.add("POST_TARGET_ROUTE_APPLIED");
+            }
+            if (targetResult.executable() && targetResult.plan().requiresMrt()) {
+                deviations.add("MRT_POST_BRIDGE");
+            }
+        }
         boolean executableName = name.equals("gbuffers_terrain")
-                || name.equals("composite")
-                || name.equals("final")
+                || executablePostName
                 || name.equals("shadow")
                 || name.equals("gbuffers_water");
         boolean hasFragment = inventory.stages.contains("fragment");
@@ -236,9 +263,9 @@ public final class PackProbe {
                         : "SAMPLER_NOT_MAPPED:" + sampler);
             }
         }
-        if (targets.size() > 1) {
+        if (targetResult == null && targets.size() > 1) {
             deviations.add("MRT_NOT_SUPPORTED");
-        } else if (!targets.isEmpty() && targets.get(0) != 0) {
+        } else if (targetResult == null && !targets.isEmpty() && targets.get(0) != 0) {
             deviations.add("TARGET_ROUTING_FIXED_TO_COLORTEX0");
         }
         if (!hasFragment) {
@@ -278,6 +305,13 @@ public final class PackProbe {
                     || deviation.equals("ADVANCED_RESOURCE_UNSUPPORTED")
                     || deviation.equals("MRT_NOT_SUPPORTED")
                     || deviation.equals("TARGET_ROUTING_FIXED_TO_COLORTEX0")
+                    || deviation.equals("POST_TARGET_DIRECTIVE_MALFORMED")
+                    || deviation.equals("POST_TARGET_DIRECTIVE_CONFLICT")
+                    || deviation.startsWith("POST_TARGET_DIRECTIVE_DUPLICATE:")
+                    || deviation.startsWith("POST_TARGET_INDEX_UNSUPPORTED:")
+                    || deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")
+                    || deviation.startsWith("POST_OUTPUT_INDEX_UNMAPPED:")
+                    || deviation.equals("FINAL_MRT_UNSUPPORTED")
                     || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("SHADOW_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED")
@@ -351,9 +385,9 @@ public final class PackProbe {
         return List.copyOf(result);
     }
 
-    private static void addSequentialTargets(Set<Integer> result, String countText) {
+    private static void addSequentialTargets(Set<Integer> result, String targetText) {
         try {
-            int count = Integer.parseInt(countText);
+            int count = Integer.parseInt(targetText);
             for (int index = 0; index < count; index++) {
                 result.add(index);
             }

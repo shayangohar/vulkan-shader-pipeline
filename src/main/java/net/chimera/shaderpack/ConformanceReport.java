@@ -60,7 +60,7 @@ public final class ConformanceReport {
             sourceHashes = Map.copyOf(new TreeMap<>(sourceHashes));
             samplers = sortedStrings(samplers);
             uniforms = sortedStrings(uniforms);
-            targets = targets.stream().distinct().sorted().toList();
+            targets = targets.stream().distinct().toList();
             support = Objects.requireNonNull(support);
             runtime = Objects.requireNonNull(runtime);
             deviations = sortedStrings(deviations);

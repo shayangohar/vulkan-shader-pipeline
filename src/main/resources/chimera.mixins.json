@@ -15,7 +15,8 @@
     "WorldRendererMixin",
     "WorldRendererLevelMixin",
     "FluidRendererMixin",
-    "QuadSorterMixin"
+    "QuadSorterMixin",
+    "GraphicsPipelineMrtMixin"
   ],
   "injectors": {
     "defaultRequire": 1

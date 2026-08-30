@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Small dependency-free conformance check for the locked M5.1 through M5.5 boundary.
+ * Small dependency-free conformance check for the locked M5.1 through M5.6 boundary.
  * Gradle runs this class before a normal build.
  */
 public final class ConformanceHarness {
@@ -38,7 +38,10 @@ public final class ConformanceHarness {
         verifyM54Unsupported(fixtureRoot.resolve("m5_4/unsupported_shadow"), fixtureRoot.resolve("baselines/m5_4.json"));
         verifyM55Water(fixtureRoot.resolve("m5_5/water"), fixtureRoot.resolve("baselines/m5_5.json"));
         verifyM55Unsupported(fixtureRoot.resolve("m5_5/unsupported_water"), fixtureRoot.resolve("baselines/m5_5.json"));
-        System.out.println("[chimera] M5.1 through M5.5 conformance harness: PASS");
+        verifyM56PostChain(fixtureRoot.resolve("m5_6/post_chain"), fixtureRoot.resolve("baselines/m5_6.json"));
+        verifyM56Unsupported(fixtureRoot.resolve("m5_6/unsupported_targets"),
+                fixtureRoot.resolve("baselines/m5_6.json"));
+        System.out.println("[chimera] M5.1 through M5.6 conformance harness: PASS");
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {
@@ -89,8 +92,8 @@ public final class ConformanceHarness {
                 terrain.support(), "unsupported MRT terrain support");
         assertTrue(terrain.deviations().contains("MRT_NOT_SUPPORTED"),
                 "unsupported MRT deviation");
-        assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED,
-                numbered.support(), "numbered pass support");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
+                numbered.support(), "numbered post pass support");
         assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED,
                 compute.support(), "compute stage support");
         assertTrue(compute.deviations().contains("UNSUPPORTED_PACK_STAGE"),
@@ -100,7 +103,7 @@ public final class ConformanceHarness {
         assertTrue(report.deviations().contains("SETTING_NOT_APPLIED:iris.features.required"),
                 "feature flag deviation");
         assertTrue(!report.shouldAttempt("gbuffers_terrain"), "MRT terrain must not execute");
-        assertTrue(!report.shouldAttempt("composite1"), "numbered pass must not execute");
+        assertTrue(report.shouldAttempt("composite1"), "numbered post pass must execute");
         assertEquals(List.of(
                         "SETTING_NOT_APPLIED:customImage0",
                         "SETTING_NOT_APPLIED:iris.features.required"),
@@ -288,6 +291,126 @@ public final class ConformanceHarness {
                 pack.resolve("shaders/composite.fsh"), false, null) == null,
                 "m5.3 unsupported source converted");
         verifyM53Baseline(report, baselinePath, "unsupported_uniform");
+    }
+
+    private static void verifyM56PostChain(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        assertEquals(List.of("composite", "final"), report.passInventory(),
+                "m5.6 post pass inventory must preserve shaders.json order");
+        for (String name : List.of("deferred", "composite", "composite1", "final")) {
+            ConformanceReport.ProgramReport program = report.program(name);
+            assertTrue(program != null, "m5.6 post program was not discovered: " + name);
+            assertEquals(List.of("fragment"), program.stages(),
+                    "m5.6 post stages: " + name);
+            assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
+                    program.runtime(), "m5.6 static post runtime: " + name);
+            assertTrue(report.shouldAttempt(name), "m5.6 post program was rejected: " + name);
+        }
+        assertEquals(List.of(0, 1), report.program("deferred").targets(),
+                "m5.6 deferred targets");
+        assertEquals(List.of(0, 1), report.program("composite").targets(),
+                "m5.6 composite targets");
+        assertEquals(List.of(0), report.program("composite1").targets(),
+                "m5.6 numbered composite targets");
+        assertEquals(List.of(0), report.program("final").targets(),
+                "m5.6 final target");
+        assertEquals(List.of("MRT_POST_BRIDGE", "POST_TARGET_ROUTE_APPLIED"),
+                report.program("deferred").deviations(), "m5.6 deferred deviations");
+        assertEquals(List.of("MRT_POST_BRIDGE", "POST_TARGET_ROUTE_APPLIED"),
+                report.program("composite").deviations(), "m5.6 composite deviations");
+        assertEquals(List.of(),
+                report.program("composite1").deviations(), "m5.6 numbered composite deviations");
+        assertEquals(List.of(), report.program("final").deviations(), "m5.6 final deviations");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
+                report.program("deferred").support(), "m5.6 deferred support");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
+                report.program("composite").support(), "m5.6 composite support");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
+                report.program("composite1").support(), "m5.6 numbered composite support");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
+                report.program("final").support(), "m5.6 final support");
+
+        PackSource.LoadResult loaded = PackSource.loadResult(pack);
+        List<String> loadedNames = loaded.programs().stream().map(PackProgram::name)
+                .distinct().sorted(PostTargetPlan.programComparator()).toList();
+        assertEquals(List.of("deferred", "composite", "composite1", "final"), loadedNames,
+                "m5.6 discovered post order");
+        assertEquals(4L, loaded.programs().stream()
+                .filter(program -> PostTargetPlan.isPostProgramName(program.name())).count(),
+                "m5.6 duplicate post programs");
+
+        String deferred = Files.readString(pack.resolve("shaders/deferred.fsh"), StandardCharsets.UTF_8);
+        String composite = Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8);
+        PostTargetPlan deferredPlan = PostTargetPlan.parse("deferred", deferred,
+                Map.of(0, 97, 1, 37)).plan();
+        PostTargetPlan compositePlan = PostTargetPlan.parse("composite", composite,
+                Map.of(0, 97, 1, 37)).plan();
+        assertEquals(List.of(0, 1), deferredPlan.targetSlots(), "m5.6 deferred route");
+        assertEquals(List.of(0, 1), compositePlan.targetSlots(), "m5.6 composite route");
+        assertEquals(List.of(97, 37), compositePlan.outputFormats(), "m5.6 target formats");
+        assertTrue(compositePlan.requiresMrt(), "m5.6 composite must require MRT");
+        String converted = LegacyGlslConverter.convertPostFragment(
+                composite, pack.resolve("shaders/composite.fsh"),
+                UniformRegistry.planPost(composite, compositePlan), compositePlan);
+        assertTrue(converted != null, "m5.6 multi-target conversion failed");
+        assertTrue(converted.contains("layout(location = 0) out vec4 chimeraFragColor0"),
+                "m5.6 output location 0 is missing");
+        assertTrue(converted.contains("layout(location = 1) out vec4 chimeraFragColor1"),
+                "m5.6 output location 1 is missing");
+        assertTrue(!converted.contains("DRAWBUFFERS01"),
+                "m5.6 DRAWBUFFERS directive was not removed");
+        verifyM56TargetParserEdgeCases();
+        verifyM56Baseline(report, baselinePath, "post_chain");
+    }
+
+    private static void verifyM56TargetParserEdgeCases() {
+        PostTargetPlan drawBuffers = PostTargetPlan.parse(
+                "composite", "#version 120\n#define DRAWBUFFERS0123\n").plan();
+        assertEquals(List.of(0, 1, 2, 3), drawBuffers.targetSlots(),
+                "m5.6 DRAWBUFFERS digits are target slots");
+
+        PostTargetPlan renderTargets = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0, 2, 3 */").plan();
+        assertEquals(List.of(0, 2, 3), renderTargets.targetSlots(),
+                "m5.6 RENDERTARGETS route");
+
+        PostTargetPlan malformed = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0, nope */").plan();
+        assertTrue(!malformed.executable(), "m5.6 malformed target directive was accepted");
+        assertTrue(malformed.deviations().contains("POST_TARGET_DIRECTIVE_MALFORMED"),
+                "m5.6 malformed target deviation is missing");
+
+        PostTargetPlan conflict = PostTargetPlan.parse(
+                "composite", "#define DRAWBUFFERS01\n/* RENDERTARGETS: 0,2 */").plan();
+        assertTrue(!conflict.executable(), "m5.6 conflicting target directives were accepted");
+        assertTrue(conflict.deviations().contains("POST_TARGET_DIRECTIVE_CONFLICT"),
+                "m5.6 target conflict deviation is missing");
+
+        PostTargetPlan unsupported = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,4 */").plan();
+        assertTrue(!unsupported.executable(), "m5.6 unsupported target was accepted");
+        assertTrue(unsupported.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:4"),
+                "m5.6 unsupported target deviation is missing");
+
+        PostTargetPlan finalMrt = PostTargetPlan.parse(
+                "final", "/* RENDERTARGETS: 0,1 */ gl_FragData[0] = vec4(1.0);").plan();
+        assertTrue(!finalMrt.executable(), "m5.6 final MRT was accepted");
+        assertTrue(finalMrt.deviations().contains("FINAL_MRT_UNSUPPORTED"),
+                "m5.6 final MRT deviation is missing");
+    }
+
+    private static void verifyM56Unsupported(Path pack, Path baselinePath) throws IOException {
+        ConformanceReport report = probe(pack);
+        ConformanceReport.ProgramReport composite = report.program("composite");
+        assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
+                composite.support(), "m5.6 unsupported target support");
+        assertTrue(composite.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:4"),
+                "m5.6 unsupported target deviation is missing");
+        assertTrue(!report.shouldAttempt("composite"),
+                "m5.6 unsupported target must not execute");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
+                report.program("final").support(), "m5.6 unsupported fixture final probe");
+        verifyM56Baseline(report, baselinePath, "unsupported_targets");
     }
 
     private static void verifyM55Water(Path pack, Path baselinePath) throws IOException {
@@ -791,6 +914,34 @@ public final class ConformanceHarness {
         }
         assertEquals(expectedHashes, sourceHashes(report), "M5.5 " + fixture + " source hashes");
         assertStable(report, "m5.5 " + fixture);
+    }
+
+    private static void verifyM56Baseline(
+            ConformanceReport report,
+            Path baselinePath,
+            String fixture
+    ) throws IOException {
+        assertTrue(Files.isRegularFile(baselinePath), "M5.6 baseline is missing: " + baselinePath);
+        JsonObject root = JsonParser.parseString(
+                Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject baseline = root.getAsJsonObject("fixtures").getAsJsonObject(fixture);
+        assertTrue(baseline != null, "M5.6 baseline fixture is missing: " + fixture);
+        assertEquals(baseline.get("reportSha256").getAsString(), report.sha256(),
+                "M5.6 " + fixture + " report hash");
+        assertEquals(baseline.get("expectedPassInventory").toString(),
+                JsonParser.parseString(report.toJson()).getAsJsonObject()
+                        .get("passInventory").toString(),
+                "M5.6 " + fixture + " pass inventory");
+        assertEquals(baseline.get("expectedStages").toString(), expectedStages(report).toString(),
+                "M5.6 " + fixture + " stages");
+        assertEquals(baseline.get("expectedDeviations").toString(), expectedDeviations(report).toString(),
+                "M5.6 " + fixture + " deviations");
+        Map<String, String> expectedHashes = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : baseline.getAsJsonObject("sourceHashes").entrySet()) {
+            expectedHashes.put(entry.getKey(), entry.getValue().getAsString());
+        }
+        assertEquals(expectedHashes, sourceHashes(report), "M5.6 " + fixture + " source hashes");
+        assertStable(report, "m5.6 " + fixture);
     }
 
     private static JsonObject expectedStages(ConformanceReport report) {

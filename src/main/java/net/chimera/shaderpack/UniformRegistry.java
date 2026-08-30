@@ -173,6 +173,21 @@ public final class UniformRegistry {
      * deviation list and make the plan ineligible for pipeline construction.
      */
     public static ProgramInterface plan(String source, Stage stage) {
+        return planInternal(source, stage, false);
+    }
+
+    /**
+     * Plans a post program whose colortex bindings are backed by M5.6 target
+     * images rather than the older single-image seam aliases.
+     */
+    public static ProgramInterface planPost(String source, PostTargetPlan targetPlan) {
+        if (targetPlan == null) {
+            throw new IllegalArgumentException("post target plan is required");
+        }
+        return planInternal(source, Stage.POST, true);
+    }
+
+    private static ProgramInterface planInternal(String source, Stage stage, boolean targetedPost) {
         String stripped = stripComments(source == null ? "" : source);
         Map<String, UniformDeclaration> declarations = new TreeMap<>();
         Set<String> conflicts = new TreeSet<>();
@@ -257,7 +272,7 @@ public final class UniformRegistry {
             if (stage == Stage.POST && sampler.getKey().equals("depthtex0")) {
                 deviations.add("DEPTH_INPUT_FIXED_TO_HDR");
             }
-            if (stage == Stage.POST && sampler.getKey().matches("colortex[1-3]")) {
+            if (stage == Stage.POST && !targetedPost && sampler.getKey().matches("colortex[1-3]")) {
                 deviations.add("COLORTEX_ALIAS_TO_SEAM");
             }
         }

@@ -45,6 +45,8 @@ public final class LegacyGlslConverter {
     private static final Pattern TERRAIN_VERSION =
             Pattern.compile("(?m)^\\s*#version\\s+120(?:e)?\\s*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern INCLUDE_LINE = Pattern.compile("(?m)^\\s*#include\\s+[<\"]([^>\"]+)[>\"]\\s*$");
+    private static final Pattern POST_DRAWBUFFERS_DEFINE = Pattern.compile(
+            "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
     /** Pack const declarations consumed by PackConfig; stripped so the preprocessor-less GLSL compiles. */
     private static final Pattern CONSUMED_CONSTS =
             Pattern.compile("(?m)^\\s*const\\s+(?:int|float)\\s+(?:colortex\\d+Format|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul)\\s*=\\s*[A-Za-z0-9+_.-]+\\s*;\\s*$");
@@ -104,6 +106,29 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout terrainLayout,
             UniformRegistry.ProgramInterface interfacePlan
     ) {
+        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots,
+                terrainLayout, interfacePlan, null);
+    }
+
+    /** Converts a post fragment with the M5.6 output target plan. */
+    public static String convertPostFragment(
+            String source,
+            Path sourceFile,
+            UniformRegistry.ProgramInterface interfacePlan,
+            PostTargetPlan targetPlan
+    ) {
+        return convertFragment(source, sourceFile, false, null, null, interfacePlan, targetPlan);
+    }
+
+    private static String convertFragment(
+            String source,
+            Path sourceFile,
+            boolean geometryStage,
+            int[] geometrySamplerSlots,
+            TerrainVaryingLayout terrainLayout,
+            UniformRegistry.ProgramInterface interfacePlan,
+            PostTargetPlan targetPlan
+    ) {
         try {
             boolean geometryInterface = interfacePlan != null
                     && (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
@@ -112,6 +137,10 @@ public final class LegacyGlslConverter {
             if (interfacePlan == null || !interfacePlan.executable()
                     || geometryInterface != geometryStage) {
                 throw new IllegalArgumentException("pack interface is outside the executable contract");
+            }
+            if (targetPlan != null && (geometryStage || interfacePlan.stage() != UniformRegistry.Stage.POST
+                    || !targetPlan.executable())) {
+                throw new IllegalArgumentException("post target plan is outside the executable contract");
             }
             String src = source;
             boolean modern = src.contains("#version 460") || src.contains("#version 450");
@@ -160,7 +189,10 @@ public final class LegacyGlslConverter {
             }
 
             String outDecl = null;
-            if (src.contains("gl_FragColor") || src.contains("gl_FragData")) {
+            if (targetPlan != null) {
+                src = convertPostOutputs(src, targetPlan);
+                outDecl = postOutputDeclarations(targetPlan);
+            } else if (src.contains("gl_FragColor") || src.contains("gl_FragData")) {
                 src = src.replaceAll("\\bgl_FragColor\\b", "fragColor");
                 src = src.replaceAll("gl_FragData\\s*\\[\\s*0\\s*\\]", "fragColor");
                 // Targets beyond 0 are consumed by nothing in M4's single-attachment passes.
@@ -191,6 +223,26 @@ public final class LegacyGlslConverter {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static String convertPostOutputs(String source, PostTargetPlan targetPlan) {
+        String result = POST_DRAWBUFFERS_DEFINE.matcher(source).replaceAll("");
+        for (int location : targetPlan.outputLocations()) {
+            result = result.replaceAll(
+                    "gl_FragData\\s*\\[\\s*" + location + "\\s*\\]",
+                    "chimeraFragColor" + location);
+        }
+        result = result.replaceAll("\\bgl_FragColor\\b", "chimeraFragColor0");
+        return result;
+    }
+
+    private static String postOutputDeclarations(PostTargetPlan targetPlan) {
+        StringBuilder declarations = new StringBuilder();
+        for (int location : targetPlan.outputLocations()) {
+            declarations.append("layout(location = ").append(location)
+                    .append(") out vec4 chimeraFragColor").append(location).append(";\n");
+        }
+        return declarations.toString();
     }
 
     /**

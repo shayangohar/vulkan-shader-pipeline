@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Builds GraphicsPipelines from pack programs, mirroring
@@ -38,7 +39,13 @@ public final class PackPipelines {
     private PackPipelines() {}
 
     /** A successfully built pack post pipeline plus the slots its samplers occupy. */
-    public record PackPost(String name, GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
+    public record PackPost(
+            String name,
+            GraphicsPipeline pipeline,
+            int[] samplerSlots,
+            String convertedFragment,
+            PostTargetPlan targetPlan
+    ) {}
 
     /** A successfully built pack geometry (terrain) pipeline plus its sampler slots. */
     public record PackTerrain(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
@@ -47,14 +54,25 @@ public final class PackPipelines {
     public record PackShadow(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
 
     public static PackPost buildPost(PackProgram program, String fixedVertexSource) {
+        return buildPost(program, fixedVertexSource, Map.of());
+    }
+
+    /** Builds a post pipeline using the pack's deterministic target formats. */
+    public static PackPost buildPost(
+            PackProgram program,
+            String fixedVertexSource,
+            Map<Integer, Integer> targetFormats
+    ) {
         try {
-            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
-                    program.fragmentSource(), UniformRegistry.Stage.POST);
+            PostTargetPlan targetPlan = PostTargetPlan.parse(
+                    program.name(), program.fragmentSource(), targetFormats).plan();
+            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planPost(
+                    program.fragmentSource(), targetPlan);
             if (!interfacePlan.executable()) {
                 throw new IllegalStateException("pack interface is unsupported: " + interfacePlan.deviations());
             }
-            String converted = LegacyGlslConverter.convertFragment(
-                    program.fragmentSource(), program.fragmentPath(), false, null, null, interfacePlan);
+            String converted = LegacyGlslConverter.convertPostFragment(
+                    program.fragmentSource(), program.fragmentPath(), interfacePlan, targetPlan);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -80,7 +98,7 @@ public final class PackPipelines {
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
 
-            return new PackPost(program.name(), pipeline, slots, converted);
+            return new PackPost(program.name(), pipeline, slots, converted, targetPlan);
         } catch (Exception e) {
             LOGGER.warn("[chimera] pack {}: build failed: {}", program.name(), e.getMessage());
             return null;
