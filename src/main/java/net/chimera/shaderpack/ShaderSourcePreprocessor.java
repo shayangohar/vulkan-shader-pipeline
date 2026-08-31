@@ -22,6 +22,10 @@ import java.util.regex.Pattern;
  */
 final class ShaderSourcePreprocessor {
     private static final int MAX_INCLUDE_DEPTH = 32;
+    private static final int MAX_EXPANDED_FILES = 256;
+    private static final int MAX_EMITTED_LINES = 200_000;
+    private static final int MAX_EXPANDED_CHARS = 4 * 1024 * 1024;
+    private static final int MAX_EXPRESSION_DEPTH = 64;
     private static final Pattern DIRECTIVE = Pattern.compile("^\\s*#(\\w+)(?:\\s+(.*?))?\\s*$");
     private static final Pattern INCLUDE = Pattern.compile("^[<\"]([^>\"]+)[>\"]$");
     private static final Pattern DEFINE = Pattern.compile("^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
@@ -32,7 +36,7 @@ final class ShaderSourcePreprocessor {
 
     static Result prepare(Path shadersRoot, Path sourceFile, String source) {
         if (source == null) {
-            return new Result(null, List.of("SOURCE_PREPARATION_FAILED"));
+            return new Result(null, List.of("SOURCE_PREPARATION_FAILED"), List.of());
         }
         Context context = new Context(shadersRoot);
         try {
@@ -40,17 +44,24 @@ final class ShaderSourcePreprocessor {
             if (!context.conditions.isEmpty()) {
                 throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
-            return new Result(context.output.toString(), List.copyOf(new TreeSet<>(context.deviations)));
+            return new Result(context.output.toString(),
+                    List.copyOf(new TreeSet<>(context.deviations)),
+                    List.copyOf(new TreeSet<>(context.dependencies)));
         } catch (PreparationFailure e) {
-            return new Result(null, List.of(e.deviation));
+            return new Result(null, List.of(e.deviation), List.of());
         } catch (IOException e) {
-            return new Result(null, List.of("SOURCE_INCLUDE_UNRESOLVED"));
+            return new Result(null, List.of("SOURCE_INCLUDE_UNRESOLVED"), List.of());
         }
     }
 
-    record Result(String source, List<String> deviations) {
+    record Result(String source, List<String> deviations, List<String> dependencies) {
+        Result(String source, List<String> deviations) {
+            this(source, deviations, List.of());
+        }
+
         Result {
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+            dependencies = dependencies == null ? List.of() : dependencies.stream().distinct().sorted().toList();
         }
 
         boolean successful() {
@@ -65,6 +76,10 @@ final class ShaderSourcePreprocessor {
         private final Deque<Condition> conditions = new ArrayDeque<>();
         private final Set<Path> includeStack = new HashSet<>();
         private final Set<String> deviations = new TreeSet<>();
+        private final Set<String> dependencies = new TreeSet<>();
+        private int expandedFiles;
+        private int emittedLines;
+        private int emittedChars;
 
         private Context(Path shadersRoot) {
             this.shadersRoot = shadersRoot == null ? Path.of(".").toAbsolutePath().normalize()
@@ -74,6 +89,9 @@ final class ShaderSourcePreprocessor {
         private void process(String source, Path sourceFile, int depth) throws IOException {
             if (depth > MAX_INCLUDE_DEPTH) {
                 throw new PreparationFailure("SOURCE_INCLUDE_DEPTH_EXCEEDED");
+            }
+            if (++expandedFiles > MAX_EXPANDED_FILES) {
+                throw new PreparationFailure("SOURCE_EXPANSION_BUDGET_EXCEEDED");
             }
             Path normalized = sourceFile == null ? null : sourceFile.toAbsolutePath().normalize();
             if (normalized != null && !includeStack.add(normalized)) {
@@ -95,7 +113,7 @@ final class ShaderSourcePreprocessor {
             Matcher matcher = DIRECTIVE.matcher(line);
             if (!matcher.matches()) {
                 if (active()) {
-                    output.append(line).append('\n');
+                    emit(line);
                 }
                 return;
             }
@@ -117,13 +135,13 @@ final class ShaderSourcePreprocessor {
                             throw new PreparationFailure("PREPROCESSOR_DEFINE_UNSUPPORTED");
                         }
                         macros.remove(argument);
-                        output.append("#undef ").append(argument).append('\n');
+                        emit("#undef " + argument);
                     }
                 }
                 case "include" -> include(argument, sourceFile, depth);
                 case "version", "extension", "pragma", "line" -> {
                     if (active()) {
-                        output.append(line).append('\n');
+                        emit(line);
                     }
                 }
                 default -> {
@@ -146,8 +164,23 @@ final class ShaderSourcePreprocessor {
             if (!Files.isRegularFile(include)) {
                 throw new PreparationFailure("SOURCE_INCLUDE_UNRESOLVED");
             }
-            output.append("\n");
+            dependencies.add(relativePath(include));
+            emit("");
             process(Files.readString(include, StandardCharsets.UTF_8), include, depth + 1);
+        }
+
+        private void emit(String line) {
+            if (++emittedLines > MAX_EMITTED_LINES
+                    || emittedChars + line.length() + 1 > MAX_EXPANDED_CHARS) {
+                throw new PreparationFailure("SOURCE_EXPANSION_BUDGET_EXCEEDED");
+            }
+            output.append(line).append('\n');
+            emittedChars += line.length() + 1;
+        }
+
+        private String relativePath(Path path) {
+            return shadersRoot.relativize(path.toAbsolutePath().normalize())
+                    .toString().replace('\\', '/');
         }
 
         private Path resolveInclude(Path sourceFile, String name) {
@@ -191,10 +224,10 @@ final class ShaderSourcePreprocessor {
                 return;
             }
             if (previous != null) {
-                output.append("#undef ").append(name).append('\n');
+                emit("#undef " + name);
                 deviations.add("PREPROCESSOR_MACRO_REDEFINED:" + name);
             }
-            output.append("#define ").append(source).append('\n');
+            emit("#define " + source);
         }
 
         private static String normalize(String value) {
@@ -273,6 +306,7 @@ final class ShaderSourcePreprocessor {
         private final String source;
         private final Map<String, String> macros;
         private int index;
+        private int recursionDepth;
 
         private ExpressionParser(String source, Map<String, String> macros) {
             this.source = source == null ? "" : source;
@@ -305,15 +339,20 @@ final class ShaderSourcePreprocessor {
         }
 
         private boolean parseUnary() {
-            if (take("!")) {
-                return !parseUnary();
+            enterRecursion();
+            try {
+                if (take("!")) {
+                    return !parseUnary();
+                }
+                if (take("(")) {
+                    boolean value = parseOr();
+                    require(")");
+                    return value;
+                }
+                return parseComparison();
+            } finally {
+                recursionDepth--;
             }
-            if (take("(")) {
-                boolean value = parseOr();
-                require(")");
-                return value;
-            }
-            return parseComparison();
         }
 
         private boolean parseComparison() {
@@ -335,41 +374,53 @@ final class ShaderSourcePreprocessor {
         }
 
         private double parseValue() {
-            skipSpace();
-            if (takeWord("defined")) {
-                skipSpace();
-                boolean parenthesized = take("(");
-                String name = identifier();
-                if (parenthesized) {
-                    require(")");
-                }
-                return macros.containsKey(name) ? 1.0 : 0.0;
-            }
-            if (index < source.length() && (source.charAt(index) == '+' || source.charAt(index) == '-')) {
-                char sign = source.charAt(index++);
-                double value = parseValue();
-                return sign == '-' ? -value : value;
-            }
-            if (index < source.length() && (Character.isDigit(source.charAt(index)) || source.charAt(index) == '.')) {
-                int start = index++;
-                while (index < source.length()
-                        && (Character.isDigit(source.charAt(index)) || source.charAt(index) == '.'
-                        || source.charAt(index) == 'e' || source.charAt(index) == 'E'
-                        || source.charAt(index) == '+' || source.charAt(index) == '-')) {
-                    index++;
-                }
-                String number = source.substring(start, index);
-                return Double.parseDouble(number);
-            }
-            String name = identifier();
-            String value = macros.get(name);
-            if (value == null) {
-                return 0.0;
-            }
+            enterRecursion();
             try {
-                return Double.parseDouble(value.replace("f", "").replace("F", ""));
-            } catch (NumberFormatException ignored) {
-                return 0.0;
+                skipSpace();
+                if (takeWord("defined")) {
+                    skipSpace();
+                    boolean parenthesized = take("(");
+                    String name = identifier();
+                    if (parenthesized) {
+                        require(")");
+                    }
+                    return macros.containsKey(name) ? 1.0 : 0.0;
+                }
+                if (index < source.length() && (source.charAt(index) == '+' || source.charAt(index) == '-')) {
+                    char sign = source.charAt(index++);
+                    double value = parseValue();
+                    return sign == '-' ? -value : value;
+                }
+                if (index < source.length()
+                        && (Character.isDigit(source.charAt(index)) || source.charAt(index) == '.')) {
+                    int start = index++;
+                    while (index < source.length()
+                            && (Character.isDigit(source.charAt(index)) || source.charAt(index) == '.'
+                            || source.charAt(index) == 'e' || source.charAt(index) == 'E'
+                            || source.charAt(index) == '+' || source.charAt(index) == '-')) {
+                        index++;
+                    }
+                    String number = source.substring(start, index);
+                    return Double.parseDouble(number);
+                }
+                String name = identifier();
+                String value = macros.get(name);
+                if (value == null) {
+                    return 0.0;
+                }
+                try {
+                    return Double.parseDouble(value.replace("f", "").replace("F", ""));
+                } catch (NumberFormatException ignored) {
+                    return 0.0;
+                }
+            } finally {
+                recursionDepth--;
+            }
+        }
+
+        private void enterRecursion() {
+            if (++recursionDepth > MAX_EXPRESSION_DEPTH) {
+                throw new IllegalArgumentException("preprocessor expression is too deep");
             }
         }
 

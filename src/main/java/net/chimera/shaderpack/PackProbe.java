@@ -43,14 +43,30 @@ public final class PackProbe {
 
     private PackProbe() {}
 
+    /** Static analysis result shared by reporting and runtime pipeline loading. */
+    public record Analysis(
+            ConformanceReport report,
+            PackPlan plan,
+            PackConfig.PackConfigData config
+    ) {}
+
     public static ConformanceReport probe(Path packPath) {
+        return analyze(packPath).report();
+    }
+
+    public static Analysis analyze(Path packPath) {
         try (PackSource.LoadResult loaded = PackSource.loadResult(packPath)) {
-            return probe(packPath, loaded);
+            return analyze(packPath, loaded);
         }
     }
 
     /** Probes an already loaded source so runtime and static reports share one extraction. */
     public static ConformanceReport probe(Path packPath, PackSource.LoadResult loaded) {
+        return analyze(packPath, loaded).report();
+    }
+
+    /** Builds the report and the immutable runtime plan from one loaded source tree. */
+    public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
         String packName = logicalPackName(packPath);
         Path shadersDir = loaded.shadersDir();
         Map<String, String> metadataHashes = new TreeMap<>();
@@ -75,8 +91,8 @@ public final class PackProbe {
 
         if (!Files.isDirectory(shadersDir)) {
             globalDeviations.add("NO_SHADERS_DIRECTORY");
-            return report(packName, passListPresent, passInventory, metadataHashes,
-                    settings, globalDeviations, loaded);
+            return new Analysis(report(packName, passListPresent, passInventory, metadataHashes,
+                    settings, globalDeviations, loaded), new PackPlan(null, List.of()), null);
         }
 
         Map<String, Inventory> inventories = new TreeMap<>();
@@ -112,6 +128,7 @@ public final class PackProbe {
         }
 
         PackConfig.PackConfigData packConfig = PackConfig.parse(loaded.programs(), shadersDir);
+        PackPlan packPlan = PackPlanBuilder.build(loaded.programs(), packConfig);
         globalDeviations.addAll(packConfig.deviations());
         applyShadowPropertyReporting(inventories, shadowPropertySettings,
                 packConfig.shadowSettings(), globalDeviations);
@@ -119,9 +136,9 @@ public final class PackProbe {
         ConformanceReport report = report(packName, passListPresent, passInventory, metadataHashes,
                 settings, globalDeviations, loaded);
         for (Inventory inventory : inventories.values()) {
-            report.addProgram(toProgram(inventory, packConfig));
+            report.addProgram(toProgram(inventory, packConfig, packPlan.program(inventory.name)));
         }
-        return report;
+        return new Analysis(report, packPlan, packConfig);
     }
 
     private static ConformanceReport report(
@@ -209,7 +226,8 @@ public final class PackProbe {
 
     private static ConformanceReport.ProgramReport toProgram(
             Inventory inventory,
-            PackConfig.PackConfigData packConfig
+            PackConfig.PackConfigData packConfig,
+            PackProgramPlan programPlan
     ) {
         boolean relaxed = !inventory.variantFolder.isBlank();
         StringBuilder combinedSource = new StringBuilder();
@@ -231,12 +249,15 @@ public final class PackProbe {
         uniformNames.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
                 .map(UniformRegistry.UniformDeclaration::name).toList());
         List<String> uniforms = List.copyOf(uniformNames);
-        PostTargetPlan.ParseResult targetResult = executablePostName
-                ? PostTargetPlan.parse(inventory.name, fragment, packConfig.colortexFormats())
-                : null;
+        PostTargetPlan.ParseResult targetResult = null;
+        if (programPlan != null && programPlan.targetPlan() != null) {
+            targetResult = new PostTargetPlan.ParseResult(
+                    programPlan.targetPlan(), programPlan.targetPlan().deviations());
+        } else if (executablePostName) {
+            targetResult = PostTargetPlan.parse(inventory.name, fragment, packConfig.colortexFormats());
+        }
         List<Integer> targets = targetResult != null
-                ? targetResult.plan().targetSlots()
-                : scanTargets(fragment);
+                ? targetResult.plan().targetSlots() : scanTargets(fragment);
         TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
         deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
 
@@ -248,11 +269,17 @@ public final class PackProbe {
                 : name.equals("shadow") ? UniformRegistry.Stage.SHADOW
                 : name.equals("gbuffers_water") ? UniformRegistry.Stage.TRANSLUCENT
                 : UniformRegistry.Stage.POST;
-        UniformRegistry.ProgramInterface interfacePlan = executablePostName
-                ? (relaxed ? UniformRegistry.planPreparedPost(fragment, targetResult.plan())
-                : UniformRegistry.planPost(fragment, targetResult.plan()))
-                : (relaxed ? UniformRegistry.planPrepared(fragment, interfaceStage)
-                : UniformRegistry.plan(fragment, interfaceStage));
+        UniformRegistry.ProgramInterface interfacePlan;
+        if (programPlan != null) {
+            interfacePlan = programPlan.interfacePlan().effective(interfaceStage);
+            deviations.addAll(programPlan.deviations());
+        } else {
+            interfacePlan = executablePostName
+                    ? (relaxed ? UniformRegistry.planPreparedPost(fragment, targetResult.plan())
+                    : UniformRegistry.planPost(fragment, targetResult.plan()))
+                    : (relaxed ? UniformRegistry.planPrepared(fragment, interfaceStage)
+                    : UniformRegistry.plan(fragment, interfaceStage));
+        }
         deviations.addAll(interfacePlan.deviations());
         if (targetResult != null) {
             deviations.addAll(targetResult.deviations());
@@ -265,7 +292,7 @@ public final class PackProbe {
             }
         }
 
-        if (executablePostName && hasFragment && !modern && targetResult != null
+        if (programPlan == null && executablePostName && hasFragment && !modern && targetResult != null
                 && targetResult.executable() && interfacePlan.executable()) {
             Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
                     ? null : inventory.sourcePaths.get("fragment");
@@ -285,30 +312,50 @@ public final class PackProbe {
         boolean executableName = name.equals("gbuffers_terrain")
                 || executablePostName || name.equals("shadow") || name.equals("gbuffers_water");
         String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
-        if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
-            if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
-                deviations.add("LEGACY_TERRAIN_VERTEX_BRIDGE");
-            } else {
-                deviations.add("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
-            }
-        } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
-            if (LegacyGlslConverter.supportsShadowVertex(vertex, fragment)) {
-                deviations.add("SHADOW_VERTEX_BRIDGE");
-            } else {
+        if (programPlan != null) {
+            if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "SHADOW_VERTEX_BRIDGE" : "SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "TRANSLUCENT_VERTEX_BRIDGE" : "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (name.equals("gbuffers_water")) {
+                deviations.add("FIXED_VERTEX_SUBSTITUTION");
+            } else if (name.equals("shadow")) {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        && executablePostName ? "POST_VERTEX_ADAPTER" : "FIXED_VERTEX_SUBSTITUTION");
             }
-        } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
-            if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
-                deviations.add("TRANSLUCENT_VERTEX_BRIDGE");
-            } else {
-                deviations.add("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
+        } else {
+            if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
+                if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
+                    deviations.add("LEGACY_TERRAIN_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
+                }
+            } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
+                if (LegacyGlslConverter.supportsShadowVertex(vertex, fragment)) {
+                    deviations.add("SHADOW_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+                }
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
+                if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
+                    deviations.add("TRANSLUCENT_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
+                }
+            } else if (name.equals("gbuffers_water")) {
+                deviations.add("FIXED_VERTEX_SUBSTITUTION");
+            } else if (name.equals("shadow")) {
+                deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex")) {
+                deviations.add("FIXED_VERTEX_SUBSTITUTION");
             }
-        } else if (name.equals("gbuffers_water")) {
-            deviations.add("FIXED_VERTEX_SUBSTITUTION");
-        } else if (name.equals("shadow")) {
-            deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
-        } else if (inventory.stages.contains("vertex")) {
-            deviations.add("FIXED_VERTEX_SUBSTITUTION");
         }
         if (name.equals("gbuffers_water")) {
             deviations.add("TRANSLUCENT_STATE_FIXED_TO_HOST");
@@ -402,8 +449,11 @@ public final class PackProbe {
                     || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
                     || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
+                    || deviation.startsWith("PROGRAM_")
                     || deviation.startsWith("SOURCE_INCLUDE_")
                     || deviation.equals("POST_CONVERTER_UNSUPPORTED")
+                    || deviation.startsWith("TRANSLATION_UNSUPPORTED:")
+                    || deviation.startsWith("PROGRAM_INTERFACE_")
                     || deviation.startsWith("POST_VARYING_UNSUPPORTED:")
                     || isBlockingPreprocessorDeviation(deviation)) {
                 return true;
@@ -449,8 +499,8 @@ public final class PackProbe {
         if (number >= 330 || number < 120) {
             return true;
         }
-        if (number == 130 && post) {
-            return source.matches("(?s).*\\b(?:layout|flat|buffer|shared|subroutine)\\b.*");
+        if (post) {
+            return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
         }
         return source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective|buffer)\\b.*");
     }

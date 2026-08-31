@@ -64,6 +64,89 @@ public final class PackPipelines {
     /** A successfully built pack shadow pipeline plus its sampler slots. */
     public record PackShadow(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
 
+    /** Builds a post pipeline from the already prepared and translated plan. */
+    public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
+        if (plan == null || !plan.executable() || plan.targetPlan() == null
+                || plan.convertedFragment() == null) {
+            return null;
+        }
+        try {
+            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
+                    .effective(UniformRegistry.Stage.POST);
+            int[] slots = interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot)
+                    .toArray();
+            List<String> samplerNames = interfacePlan.samplers().stream()
+                    .map(UniformRegistry.SamplerBinding::name)
+                    .toList();
+            JsonObject json = new JsonObject();
+            json.addProperty("vertex", "chimera_composite/chimera_composite");
+            json.addProperty("fragment", "pack/" + plan.name());
+            json.add("samplers", samplerArray(slots));
+            json.add("UBOs", uniformUboArray(interfacePlan));
+            json.add("PushConstants", new JsonArray());
+
+            PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
+            Pipeline.Builder builder = new Pipeline.Builder(
+                    (VertexFormat) CustomVertexFormat.NONE, "pack_" + plan.name());
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
+            builder.applyConfig(config);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
+                    plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            return new PackPost(plan.name(), pipeline, slots, samplerNames,
+                    colorInputTargets(samplerNames), plan.convertedFragment(), plan.targetPlan());
+        } catch (Exception e) {
+            LOGGER.warn("[chimera] pack {}: planned post build failed: {}", plan.name(), e.getMessage());
+            return null;
+        }
+    }
+
+    /** Builds the extended terrain pipeline from the shared program plan. */
+    public static PackTerrain buildTerrain(PackProgramPlan plan, String fixedVertexSource) {
+        return buildTerrainLikePlan(plan, fixedVertexSource);
+    }
+
+    /** Builds the translucent terrain pipeline from the shared program plan. */
+    public static PackTerrain buildTranslucent(PackProgramPlan plan, String fixedVertexSource) {
+        return buildTerrainLikePlan(plan, fixedVertexSource);
+    }
+
+    /** Builds the shadow pipeline from the shared program plan. */
+    public static PackShadow buildShadow(PackProgramPlan plan) {
+        if (plan == null || !plan.executable() || plan.convertedFragment() == null
+                || plan.convertedVertex() == null) {
+            return null;
+        }
+        try {
+            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
+                    .effective(UniformRegistry.Stage.SHADOW);
+            int[] declaredSlots = interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot)
+                    .toArray();
+            int[] slots = shadowSamplerSlots(declaredSlots);
+            JsonObject json = shadowPipelineJson();
+            json.addProperty("fragment", "pack_" + plan.name());
+            json.add("samplers", samplerArray(slots));
+
+            PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
+            Pipeline.Builder builder = new Pipeline.Builder(
+                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + plan.name());
+            builder.applyConfig(config);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            for (var buffer : pipeline.getBuffers()) {
+                buffer.setUseGlobalBuffer(true);
+            }
+            return new PackShadow(pipeline, slots, plan.convertedFragment());
+        } catch (Exception e) {
+            LOGGER.warn("[chimera] pack {}: planned shadow build failed: {}", plan.name(), e.getMessage());
+            return null;
+        }
+    }
+
     public static PackPost buildPost(PackProgram program, String fixedVertexSource) {
         return buildPost(program, fixedVertexSource, Map.of());
     }
@@ -210,6 +293,40 @@ public final class PackPipelines {
         }
     }
 
+    private static PackTerrain buildTerrainLikePlan(
+            PackProgramPlan plan,
+            String fixedVertexSource
+    ) {
+        if (plan == null || !plan.executable() || plan.convertedFragment() == null) {
+            return null;
+        }
+        try {
+            UniformRegistry.Stage stage = plan.name().equals("gbuffers_water")
+                    ? UniformRegistry.Stage.TRANSLUCENT : UniformRegistry.Stage.GEOMETRY;
+            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan().effective(stage);
+            int[] slots = interleaveLightmap(interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
+            JsonObject json = ChimeraShaderLoader.loadJson("chimera_terrain.json").deepCopy();
+            json.addProperty("fragment", "pack_" + plan.name());
+            json.add("samplers", samplerArray(slots));
+            PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
+            Pipeline.Builder builder = new Pipeline.Builder(
+                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + plan.name());
+            builder.applyConfig(config);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
+                    plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            for (var buffer : pipeline.getBuffers()) {
+                buffer.setUseGlobalBuffer(true);
+            }
+            return new PackTerrain(pipeline, slots, plan.convertedFragment());
+        } catch (Exception e) {
+            LOGGER.warn("[chimera] pack {}: planned terrain build failed: {}", plan.name(), e.getMessage());
+            return null;
+        }
+    }
+
     /** One generated fragment UBO, or an empty array for the M4 no-uniform path. */
     private static JsonArray uniformUboArray(UniformRegistry.ProgramInterface interfacePlan) {
         JsonArray ubos = new JsonArray();
@@ -306,7 +423,7 @@ public final class PackPipelines {
      * the shadow map) - torch/sky light never reaches geometry and the shadow
      * content renders as blotchy per-vertex darkening.
      */
-    private static int[] interleaveLightmap(int[] slots) {
+    static int[] interleaveLightmap(int[] slots) {
         int[] withoutLightmap = java.util.Arrays.stream(slots)
                 .filter(slot -> slot != 2)
                 .toArray();

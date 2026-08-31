@@ -43,11 +43,56 @@ processResources {
 
 tasks.register('conformanceTest', JavaExec) {
     group = 'verification'
-    description = 'Runs deterministic M5.1 through M5.6 fixtures and M5.7 post-state checks.'
+    description = 'Runs deterministic M5.1 through M5.6 fixtures and post-state checks.'
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.shaderpack.ConformanceHarness'
     jvmArgs '-ea'
+}
+
+tasks.register('m61ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs strict M6.1 shared-plan checks against two explicitly supplied shader packs.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M61ConformanceHarness'
+    jvmArgs '-ea'
+    doFirst {
+        def requiredPack = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required pack path. Set -P${projectKey} or -D${systemKey}.")
+            }
+            def pack = file(value.toString())
+            if (!pack.isDirectory() && !pack.isFile()) {
+                throw new GradleException("M6.1 pack path does not exist: ${pack}")
+            }
+            return pack.absolutePath
+        }
+        def requiredVersion = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required pack version. Set -P${projectKey} or -D${systemKey}.")
+            }
+            return value.toString()
+        }
+        def baselineValue = project.findProperty('m61Baseline')
+                ?: System.getProperty('chimera.m61.baseline')
+                ?: file('testpacks/baselines/m6_1.json').absolutePath
+        def baseline = file(baselineValue.toString())
+        if (!baseline.isFile()) {
+            throw new GradleException("M6.1 baseline does not exist: ${baseline}")
+        }
+        systemProperty 'chimera.m61.complementary',
+                requiredPack('m61Complementary', 'chimera.m61.complementary')
+        systemProperty 'chimera.m61.independent',
+                requiredPack('m61Independent', 'chimera.m61.independent')
+        systemProperty 'chimera.m61.complementaryVersion',
+                requiredVersion('m61ComplementaryVersion', 'chimera.m61.complementaryVersion')
+        systemProperty 'chimera.m61.independentVersion',
+                requiredVersion('m61IndependentVersion', 'chimera.m61.independentVersion')
+        systemProperty 'chimera.m61.baseline', baseline.absolutePath
+    }
 }
 
 tasks.register('m57ConformanceTest', JavaExec) {

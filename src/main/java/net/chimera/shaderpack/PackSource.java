@@ -395,9 +395,20 @@ public final class PackSource {
             List<String> prepDeviations = new ArrayList<>();
             prepDeviations.addAll(fragment.deviations());
             prepDeviations.addAll(vertex.deviations());
+            Map<String, PreparedShaderSource> preparedSources = new TreeMap<>();
+            if (candidate.fragmentSource() != null) {
+                preparedSources.put("fragment", new PreparedShaderSource(
+                        "fragment", relativePath(shadersRoot, candidate.fragmentPath()),
+                        fragment.source(), fragment.dependencies(), fragment.deviations()));
+            }
+            if (candidate.vertexSource() != null) {
+                preparedSources.put("vertex", new PreparedShaderSource(
+                        "vertex", relativePath(shadersRoot, candidate.vertexPath()),
+                        vertex.source(), vertex.dependencies(), vertex.deviations()));
+            }
             result.add(new PackProgram(candidate.name(), candidate.fragmentSource(), candidate.fragmentPath(),
                     candidate.vertexSource(), candidate.vertexPath(), shadersRoot,
-                    fragment.source(), vertex.source(), prepDeviations, variantFolder));
+                    fragment.source(), vertex.source(), prepDeviations, variantFolder, preparedSources));
         }
         return List.copyOf(result);
     }

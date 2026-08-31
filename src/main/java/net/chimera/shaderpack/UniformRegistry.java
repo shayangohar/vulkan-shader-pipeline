@@ -108,6 +108,74 @@ public final class UniformRegistry {
         }
     }
 
+    /**
+     * Canonical interface for all stages in one pack program. The existing
+     * ProgramInterface remains the stage-compatible facade used by the
+     * VulkanMod pipeline builders.
+     */
+    public record ProgramInterfacePlan(
+            Map<String, ProgramInterface> stages,
+            List<UniformDeclaration> uniforms,
+            List<SamplerBinding> samplers,
+            List<String> deviations
+    ) {
+        public ProgramInterfacePlan {
+            stages = stages == null
+                    ? Map.of()
+                    : java.util.Collections.unmodifiableMap(new TreeMap<>(stages));
+            uniforms = sortedUniforms(uniforms);
+            samplers = sortedSamplers(samplers);
+            deviations = sortedStrings(reconcileStageUnused(stages, deviations));
+        }
+
+        /** Returns the legacy facade with the canonical union fields. */
+        public ProgramInterface effective(Stage stage) {
+            Stage effectiveStage = stage == null
+                    ? stages.values().stream().findFirst().map(ProgramInterface::stage).orElse(Stage.POST)
+                    : stage;
+            return new ProgramInterface(effectiveStage, uniforms, samplers, deviations);
+        }
+
+        public boolean executable() {
+            return effective(null).executable();
+        }
+
+        public List<UniformDeclaration> executableUniforms() {
+            return effective(null).executableUniforms();
+        }
+    }
+
+    /** Builds one program-level union from its prepared stage sources. */
+    public static ProgramInterfacePlan planProgram(
+            String fragmentSource,
+            String vertexSource,
+            Stage stage,
+            PostTargetPlan targetPlan,
+            boolean prepared
+    ) {
+        Stage effectiveStage = stage == null ? Stage.POST : stage;
+        ProgramInterface fragment = effectiveStage == Stage.POST && targetPlan != null
+                ? (prepared ? planPreparedPost(fragmentSource, targetPlan)
+                : planPost(fragmentSource, targetPlan))
+                : (prepared ? planPrepared(fragmentSource, effectiveStage)
+                : plan(fragmentSource, effectiveStage));
+        Map<String, ProgramInterface> stagePlans = new TreeMap<>();
+        stagePlans.put("fragment", fragment);
+        List<UniformDeclaration> uniforms = new ArrayList<>(fragment.uniforms());
+        List<SamplerBinding> samplers = new ArrayList<>(fragment.samplers());
+        List<String> deviations = new ArrayList<>(fragment.deviations());
+        if (vertexSource != null) {
+            ProgramInterface vertex = prepared
+                    ? planPrepared(vertexSource, effectiveStage)
+                    : plan(vertexSource, effectiveStage);
+            stagePlans.put("vertex", vertex);
+            uniforms.addAll(vertex.uniforms());
+            samplers.addAll(vertex.samplers());
+            deviations.addAll(vertex.deviations());
+        }
+        return new ProgramInterfacePlan(stagePlans, uniforms, samplers, deviations);
+    }
+
     /** OptiFine texture uniform name -> fixed VTextureSelector binding slot (post stage). */
     public static final Map<String, Integer> NAME_TO_SLOT = Map.ofEntries(
             Map.entry("colortex0", 0),
@@ -120,6 +188,7 @@ public final class UniformRegistry {
             Map.entry("shadowcolor1", 3),
             Map.entry("depthtex0", 6),
             Map.entry("depthtex1", 6),
+            Map.entry("depthtex2", 6),
             Map.entry("noisetex", 7)
     );
 
@@ -371,7 +440,7 @@ public final class UniformRegistry {
     }
 
     private static boolean isHostAlias(String name) {
-        return name.equals("depthtex1") || name.equals("shadowtex1")
+        return name.equals("depthtex1") || name.equals("depthtex2") || name.equals("shadowtex1")
                 || name.equals("shadowcolor0") || name.equals("shadowcolor1");
     }
 
@@ -582,6 +651,7 @@ public final class UniformRegistry {
         addDefault(specs, "atlasSize", "ivec2");
         addDefault(specs, "eyeBrightness", "ivec2");
         addDefault(specs, "eyeBrightnessSmooth", "ivec2");
+        addDefault(specs, "eyeBrightnessM", "float");
         addDefault(specs, "eyePosition", "vec3");
         addDefault(specs, "playerLookVector", "vec3");
         addDefault(specs, "relativeEyePosition", "vec3");
@@ -675,6 +745,35 @@ public final class UniformRegistry {
 
     private static List<String> sortedStrings(Collection<String> values) {
         return List.copyOf(new TreeSet<>(values));
+    }
+
+    private static List<String> reconcileStageUnused(
+            Map<String, ProgramInterface> stages,
+            Collection<String> values
+    ) {
+        Set<String> usedUniforms = new TreeSet<>();
+        Set<String> usedSamplers = new TreeSet<>();
+        for (ProgramInterface stage : stages.values()) {
+            for (UniformDeclaration uniform : stage.uniforms()) {
+                if (!stage.deviations().contains("UNIFORM_DECLARATION_UNUSED:" + uniform.name())) {
+                    usedUniforms.add(uniform.name());
+                }
+            }
+            for (SamplerBinding sampler : stage.samplers()) {
+                if (!stage.deviations().contains("SAMPLER_DECLARATION_UNUSED:" + sampler.name())) {
+                    usedSamplers.add(sampler.name());
+                }
+            }
+        }
+        return values.stream().filter(value -> {
+            if (value.startsWith("UNIFORM_DECLARATION_UNUSED:")) {
+                return !usedUniforms.contains(value.substring("UNIFORM_DECLARATION_UNUSED:".length()));
+            }
+            if (value.startsWith("SAMPLER_DECLARATION_UNUSED:")) {
+                return !usedSamplers.contains(value.substring("SAMPLER_DECLARATION_UNUSED:".length()));
+            }
+            return true;
+        }).toList();
     }
 
     private static String stripComments(String source) {

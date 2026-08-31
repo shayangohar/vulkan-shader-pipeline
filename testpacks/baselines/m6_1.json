@@ -1,0 +1,48 @@
+{
+  "formatVersion": 1,
+  "fixture": "m6_1/program_plan",
+  "m57BaselineExecutablePrograms": {
+    "complementary": [
+      "composite3",
+      "composite4",
+      "composite7",
+      "final"
+    ],
+    "independent": [
+      "composite4",
+      "composite6",
+      "composite7",
+      "final"
+    ]
+  },
+  "reportSha256": "0ddcbd9b8c3e561cd20f3fe9638710c3985853d0a42f09e0cef1d4ccc109ae3e",
+  "sourceHashes": {
+    "composite.fsh": "6e2e77d0c03c62725953fbafb8f6151a9c0b294b4ed3bf16abca3c75d07dfc80",
+    "composite1.fsh": "3486bd3b6b2c9b31e1e79d57309f35405e28a51733f5cbf78c3fb8e09e4c88a0",
+    "composite2.fsh": "591c42faea355fe30a0ff103c2d5560c9dc5b6ffb558567fa2f62c856fcf9880",
+    "composite3.fsh": "db62284ee601947070ae68f20eedec810da867447eba87e0dcae277b5f8eb249",
+    "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
+    "gbuffers_terrain.fsh": "1a5f28bba9abaf8839f72111f64c798e5f7a44eae3e11a3abd201102bdda1ea5",
+    "gbuffers_terrain.vsh": "2ead8a4e8c01094b117547dd68f367f36e9d1f0cb6d1b21edd910a0c450a53a0"
+  },
+  "expectedExecutablePrograms": [
+    "composite",
+    "composite1",
+    "final",
+    "gbuffers_terrain"
+  ],
+  "expectedFallbackPrograms": [
+    "composite2",
+    "composite3"
+  ],
+  "expectedDeviations": [
+    "BLOCK_PROPERTIES_MISSING",
+    "LEGACY_TERRAIN_VERTEX_BRIDGE",
+    "LIVE_UNIFORM_BRIDGE",
+    "MODERN_GLSL_UNSUPPORTED",
+    "POST_CONVERTER_UNSUPPORTED",
+    "POST_VARYING_UNSUPPORTED:unsupportedUv",
+    "PREPROCESSOR_MACRO_REDEFINED:M61_FEATURE",
+    "SHADOW_SETTING_LOGGED_ONLY:shadowMapResolution"
+  ]
+}

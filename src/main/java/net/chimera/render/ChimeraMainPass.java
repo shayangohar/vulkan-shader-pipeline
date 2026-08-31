@@ -16,6 +16,8 @@ import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackPipelines;
+import net.chimera.shaderpack.PackPlan;
+import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.ConformanceReport;
@@ -121,6 +123,7 @@ public class ChimeraMainPass implements MainPass {
     private final VulkanImage[] packFinalInputs = new VulkanImage[4];
     /** Parsed pack consts and programs (-Dchimera.pack); session-long, the property is fixed at launch. */
     private PackConfig.PackConfigData packConfig;
+    private PackPlan packPlan;
     private List<PackProgram> packPrograms;
     /** Owns temporary source extraction for a ZIP pack until session teardown. */
     private PackSource.LoadResult packSource;
@@ -1084,6 +1087,7 @@ public class ChimeraMainPass implements MainPass {
         this.packPostChainActive = false;
         this.packPostChainRejected = false;
         this.packConfig = null;
+        this.packPlan = null;
         this.packPrograms = null;
         this.packHdrFormat = 97;
         this.packNeedsHdrDepth = false;
@@ -1371,15 +1375,20 @@ public class ChimeraMainPass implements MainPass {
         PackSource.LoadResult result = this.packSource != null
                 ? this.packSource : PackSource.loadResult(dir);
         this.packSource = result;
-        this.conformanceReport = PackProbe.probe(dir, result);
+        PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
+        this.conformanceReport = analysis.report();
         this.packPrograms = result.programs();
+        this.packConfig = analysis.config() != null
+                ? analysis.config()
+                : PackConfig.parse(this.packPrograms, result.shadersDir());
+        this.packPlan = analysis.plan() == null
+                ? new PackPlan(this.packConfig, List.of()) : analysis.plan();
         this.packNeedsHdrDepth = this.conformanceReport.programs().stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
                 .anyMatch(program -> program.samplers().contains("depthtex0")
                         || program.samplers().contains("depthtex1"));
         PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir());
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
-        this.packConfig = PackConfig.parse(this.packPrograms, result.shadersDir());
         this.packHdrFormat = this.packConfig.colortexFormats().getOrDefault(0, 97);
         loadPackNoise(result);
         if (this.packPrograms.isEmpty()) {
@@ -1497,6 +1506,8 @@ public class ChimeraMainPass implements MainPass {
         String fixedVertex = ChimeraShaderLoader.loadSource("chimera_composite/chimera_composite.vsh");
         for (PackProgram program : this.packPrograms) {
             String name = program.name();
+            PackProgramPlan programPlan = this.packPlan == null
+                    ? null : this.packPlan.program(name);
             if (this.conformanceReport != null && !this.conformanceReport.shouldAttempt(name)) {
                 this.conformanceReport.markRuntime(name,
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
@@ -1514,7 +1525,7 @@ public class ChimeraMainPass implements MainPass {
                 continue;
             }
             if (name.equals("shadow")) {
-                PackPipelines.PackShadow shadow = PackPipelines.buildShadow(program);
+                PackPipelines.PackShadow shadow = PackPipelines.buildShadow(programPlan);
                 if (shadow == null) {
                     if (this.conformanceReport != null) {
                         this.conformanceReport.markRuntime(name,
@@ -1535,9 +1546,7 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.info("[chimera] pack shadow converted fragment:\n{}", shadow.convertedFragment());
                 }
             } else if (PostTargetPlan.isPostProgramName(name)) {
-                PackPipelines.PackPost post = PackPipelines.buildPost(program, fixedVertex,
-                        this.packConfig == null ? Map.of() : this.packConfig.colortexFormats(),
-                        this.packConfig == null ? Map.of() : this.packConfig.shaderConstants());
+                PackPipelines.PackPost post = PackPipelines.buildPost(programPlan, fixedVertex);
                 if (post == null) {
                     if (this.conformanceReport != null) {
                         this.conformanceReport.markRuntime(name,
@@ -1567,7 +1576,7 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.info("[chimera] pack {} converted fragment:\n{}", name, post.convertedFragment());
                 }
             } else if (name.equals("gbuffers_terrain")) {
-                PackPipelines.PackTerrain terrain = PackPipelines.buildTerrain(program,
+                PackPipelines.PackTerrain terrain = PackPipelines.buildTerrain(programPlan,
                         ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"));
                 if (terrain == null) {
                     if (this.conformanceReport != null) {
@@ -1601,7 +1610,7 @@ public class ChimeraMainPass implements MainPass {
                             this.packConfig.drawBufferCount());
                 }
             } else if (name.equals("gbuffers_water")) {
-                PackPipelines.PackTerrain water = PackPipelines.buildTranslucent(program,
+                PackPipelines.PackTerrain water = PackPipelines.buildTranslucent(programPlan,
                         ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"));
                 if (water == null) {
                     if (this.conformanceReport != null) {
@@ -1676,7 +1685,11 @@ public class ChimeraMainPass implements MainPass {
                 }
             }
             List<Integer> outputs = List.of();
-            if (installed != null && installed.targetPlan() != null) {
+            PackProgramPlan planned = this.packPlan == null
+                    ? null : this.packPlan.program(program.name());
+            if (planned != null && planned.targetPlan() != null) {
+                outputs = planned.targetPlan().targetSlots();
+            } else if (installed != null && installed.targetPlan() != null) {
                 outputs = installed.targetPlan().targetSlots();
             } else if (this.conformanceReport != null) {
                 ConformanceReport.ProgramReport report = this.conformanceReport.program(program.name());

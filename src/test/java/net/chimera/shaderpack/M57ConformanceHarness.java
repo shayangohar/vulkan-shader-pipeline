@@ -69,7 +69,8 @@ public final class M57ConformanceHarness {
         assertEquals(fingerprint, PackFingerprint.sha256(spec.path()),
                 "M5.7 " + spec.label() + " fingerprint stability");
 
-        ConformanceReport report = PackProbe.probe(spec.path());
+        PackProbe.Analysis analysis = PackProbe.analyze(spec.path());
+        ConformanceReport report = analysis.report();
         ConformanceReport secondReport = PackProbe.probe(spec.path());
         assertEquals(report.toJson(), secondReport.toJson(),
                 "M5.7 " + spec.label() + " report stability");
@@ -83,7 +84,7 @@ public final class M57ConformanceHarness {
                     .toList();
             assertEquals(loadedNames.stream().distinct().count(), (long) loadedNames.size(),
                     "M5.7 " + spec.label() + " duplicate runtime programs");
-            verifyConversionBoundary(spec, report, loaded);
+            verifyConversionBoundary(spec, report, analysis.plan());
         }
 
         List<ConformanceReport.ProgramReport> executable = new ArrayList<>();
@@ -140,31 +141,22 @@ public final class M57ConformanceHarness {
     private static void verifyConversionBoundary(
             PackSpec spec,
             ConformanceReport report,
-            PackSource.LoadResult loaded
+            PackPlan plan
     ) {
-        PackConfig.PackConfigData config = PackConfig.parse(loaded.programs(), loaded.shadersDir());
         for (ConformanceReport.ProgramReport reportProgram : report.programs()) {
             if (!report.shouldAttempt(reportProgram.name())
                     || !PostTargetPlan.isPostProgramName(reportProgram.name())) {
                 continue;
             }
-            PackProgram program = loaded.programs().stream()
-                    .filter(candidate -> candidate.name().equals(reportProgram.name()))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("M5.7 " + spec.label()
-                            + " eligible program is not loadable: " + reportProgram.name()));
-            String source = program.executableFragmentSource();
-            PostTargetPlan.ParseResult target = PostTargetPlan.parse(
-                    program.name(), source, config.colortexFormats());
-            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planPreparedPost(
-                    source, target.plan());
-            String converted = LegacyGlslConverter.convertPostFragment(
-                    source, null, interfacePlan, target.plan(), config.shaderConstants());
+            PackProgramPlan planned = plan.program(reportProgram.name());
+            assertTrue(planned != null && planned.executable(), "M5.7 " + spec.label()
+                    + " eligible source failed shared planning: " + reportProgram.name());
+            String converted = planned.convertedFragment();
             assertTrue(converted != null, "M5.7 " + spec.label()
-                    + " eligible source failed conversion: " + program.name());
+                    + " eligible source failed conversion: " + reportProgram.name());
             assertTrue(!converted.contains("#version 120") && !converted.contains("#version 130"),
                     "M5.7 " + spec.label() + " converted source retained a legacy version: "
-                            + program.name());
+                            + reportProgram.name());
         }
     }
 

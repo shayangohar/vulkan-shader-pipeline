@@ -1,8 +1,5 @@
 package net.chimera.shaderpack;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,8 +31,6 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public final class LegacyGlslConverter {
-    private static final int MAX_INCLUDE_DEPTH = 8;
-
     private static final Pattern VERSION_LINE = Pattern.compile("(?m)^\\s*#version\\s+\\S+.*$");
     private static final Pattern VARYING_DECL =
             Pattern.compile("(?m)^\\s*varying\\s+(float|vec2|vec3|vec4)\\s+(\\w+)\\s*;");
@@ -48,7 +43,6 @@ public final class LegacyGlslConverter {
             Pattern.compile("(?m)\\battribute\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
     private static final Pattern TERRAIN_VERSION =
             Pattern.compile("(?m)^\\s*#version\\s+120(?:e)?\\s*$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern INCLUDE_LINE = Pattern.compile("(?m)^\\s*#include\\s+[<\"]([^>\"]+)[>\"]\\s*$");
     private static final Pattern POST_DRAWBUFFERS_DEFINE = Pattern.compile(
             "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
@@ -87,6 +81,21 @@ public final class LegacyGlslConverter {
     /** Converted terrain vertex source plus the interface used by its fragment stage. */
     public record TerrainVertexConversion(String source, TerrainVaryingLayout layout) {}
 
+    /** Converted fullscreen vertex adapter plus the explicit values it synthesizes. */
+    public record PostVertexConversion(String source, List<String> deviations) {
+        public PostVertexConversion {
+            deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        }
+    }
+
+    /** Canonical inputs shared by a prepared fullscreen vertex and fragment pair. */
+    public record PostVaryingLayout(Map<String, Integer> locations, Map<String, String> types) {
+        public PostVaryingLayout {
+            locations = Collections.unmodifiableMap(new TreeMap<>(locations == null ? Map.of() : locations));
+            types = Collections.unmodifiableMap(new TreeMap<>(types == null ? Map.of() : types));
+        }
+    }
+
     public static String convertFragment(String source, Path sourceFile, boolean geometryStage, int[] geometrySamplerSlots) {
         return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, null,
                 UniformRegistry.plan(source, stageOf(geometryStage)));
@@ -113,7 +122,7 @@ public final class LegacyGlslConverter {
             UniformRegistry.ProgramInterface interfacePlan
     ) {
         return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots,
-                terrainLayout, interfacePlan, null, Map.of());
+                terrainLayout, interfacePlan, null, Map.of(), null);
     }
 
     /** Converts a post fragment with the M5.6 output target plan. */
@@ -135,7 +144,102 @@ public final class LegacyGlslConverter {
             Map<String, String> packConstants
     ) {
         return convertFragment(source, sourceFile, false, null, null, interfacePlan, targetPlan,
-                packConstants == null ? Map.of() : packConstants);
+                packConstants == null ? Map.of() : packConstants, null);
+    }
+
+    /** Converts a post fragment against a paired fullscreen vertex layout. */
+    public static String convertPostFragment(
+            String source,
+            Path sourceFile,
+            UniformRegistry.ProgramInterface interfacePlan,
+            PostTargetPlan targetPlan,
+            Map<String, String> packConstants,
+            Map<String, Integer> varyingLocations,
+            Map<String, String> varyingTypes
+    ) {
+        PostVaryingLayout layout = varyingLocations == null
+                ? null : new PostVaryingLayout(varyingLocations, varyingTypes);
+        return convertFragment(source, sourceFile, false, null, null, interfacePlan, targetPlan,
+                packConstants == null ? Map.of() : packConstants, layout);
+    }
+
+    /**
+     * Builds the small fixed fullscreen adapter used for a paired post vertex
+     * source. The adapter preserves the fullscreen position and UV contract,
+     * and synthesizes only the common legacy lighting varyings that have no
+     * equivalent input in CustomVertexFormat.NONE.
+     */
+    public static PostVertexConversion convertPostVertex(
+            String source,
+            GlslInterfaceScanner.StageInterface vertexInterface,
+            GlslInterfaceScanner.StageInterface fragmentInterface,
+            GlslInterfaceScanner.ProgramMatch match
+    ) {
+        try {
+            if (source == null || vertexInterface == null || fragmentInterface == null
+                    || match == null || !match.executable()) {
+                throw new IllegalArgumentException("post vertex interface is not matched");
+            }
+            validatePostVersion(source);
+            if (!source.contains("void") || !source.contains("main")) {
+                throw new IllegalArgumentException("post vertex main is missing");
+            }
+
+            StringBuilder declarations = new StringBuilder();
+            StringBuilder assignments = new StringBuilder();
+            List<String> deviations = new ArrayList<>();
+            for (GlslInterfaceScanner.Declaration input : fragmentInterface.inputs()) {
+                if (!input.referenced()) {
+                    continue;
+                }
+                GlslInterfaceScanner.Declaration output = vertexInterface.output(input.name());
+                Integer location = match.locations().get(input.name());
+                if (output == null || location == null || !output.type().equals(input.type())) {
+                    throw new IllegalArgumentException("post vertex varying is not matched: " + input.name());
+                }
+                String expression = postVertexExpression(input.name(), input.type());
+                if (expression == null) {
+                    throw new IllegalArgumentException("post vertex varying is not synthesized: " + input.name());
+                }
+                declarations.append("layout(location = ").append(location).append(") ");
+                if (output.qualifier() != null) {
+                    declarations.append(output.qualifier()).append(' ');
+                }
+                declarations.append("out ").append(input.type()).append(' ')
+                        .append(input.name()).append(";\n");
+                assignments.append("    ").append(input.name()).append(" = ")
+                        .append(expression).append(";\n");
+                deviations.add("POST_VARYING_ADAPTER:" + input.name());
+                if (input.type().equals("vec3")) {
+                    deviations.add("POST_VARYING_SYNTHESIZED_ZERO:" + input.name());
+                }
+            }
+            if (assignments.length() == 0) {
+                throw new IllegalArgumentException("post vertex has no referenced outputs");
+            }
+            String generated = "#version 460\n"
+                    + declarations
+                    + "void main() {\n"
+                    + "    vec2 chimeraUv = vec2(float((gl_VertexIndex << 1) & 2), "
+                    + "-(float(gl_VertexIndex & 2)) + 1.0);\n"
+                    + "    gl_Position = vec4(chimeraUv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), 0.0, 1.0);\n"
+                    + assignments
+                    + "}\n";
+            return new PostVertexConversion(generated, deviations);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String postVertexExpression(String name, String type) {
+        if (type.equals("vec2") && (name.equals("texCoord")
+                || name.equals("texcoord") || name.equals("uv"))) {
+            return "chimeraUv";
+        }
+        if (type.equals("vec3") && (name.equals("upVec") || name.equals("sunVec"))) {
+            return "vec3(0.0, 1.0, 0.0)";
+        }
+        return null;
     }
 
     private static String convertFragment(
@@ -146,7 +250,8 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout terrainLayout,
             UniformRegistry.ProgramInterface interfacePlan,
             PostTargetPlan targetPlan,
-            Map<String, String> packConstants
+            Map<String, String> packConstants,
+            PostVaryingLayout postVaryingLayout
     ) {
         try {
             boolean geometryInterface = interfacePlan != null
@@ -165,7 +270,7 @@ public final class LegacyGlslConverter {
             if (src == null) {
                 throw new IllegalArgumentException("pack fragment source is missing");
             }
-            src = inlineIncludes(src, sourceFile, 0);
+            src = prepareSource(src, sourceFile);
 
             boolean modern = false;
             if (!geometryStage) {
@@ -185,7 +290,7 @@ public final class LegacyGlslConverter {
             if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT) {
                 src = replaceTranslucentUniformNames(src, interfacePlan);
             }
-            src = convertVaryings(src, geometryStage, terrainLayout);
+            src = convertVaryings(src, geometryStage, terrainLayout, postVaryingLayout);
             if (!geometryStage) {
                 src = injectPackConstants(src, packConstants);
             }
@@ -204,7 +309,7 @@ public final class LegacyGlslConverter {
                 // convertTextureCalls so the function-name rewrite below
                 // creates texture(chimeraTexture, ...) instead of renaming
                 // the function into a variable call.
-                src = src.replaceAll("\\btexture\\b", "chimeraTexture");
+                src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("texture", "chimeraTexture"));
             }
             src = convertTextureCalls(src);
             for (int i = 0; i < samplers.size(); i++) {
@@ -224,8 +329,7 @@ public final class LegacyGlslConverter {
                 src = convertPostOutputs(src, targetPlan);
                 outDecl = postOutputDeclarations(targetPlan);
             } else if (src.contains("gl_FragColor") || src.contains("gl_FragData")) {
-                src = src.replaceAll("\\bgl_FragColor\\b", "fragColor");
-                src = src.replaceAll("gl_FragData\\s*\\[\\s*0\\s*\\]", "fragColor");
+                src = GlslTokenRewriter.rewriteSingleOutput(src);
                 // Targets beyond 0 are consumed by nothing in M4's single-attachment passes.
                 src = src.replaceAll("gl_FragData\\s*\\[\\s*[1-9][0-9]*\\s*\\]\\s*=\\s*[^;]+;\\s*", "");
                 outDecl = "layout(location = 0) out vec4 fragColor;";
@@ -258,13 +362,7 @@ public final class LegacyGlslConverter {
 
     private static String convertPostOutputs(String source, PostTargetPlan targetPlan) {
         String result = POST_DRAWBUFFERS_DEFINE.matcher(source).replaceAll("");
-        for (int location : targetPlan.outputLocations()) {
-            result = result.replaceAll(
-                    "gl_FragData\\s*\\[\\s*" + location + "\\s*\\]",
-                    "chimeraFragColor" + location);
-        }
-        result = result.replaceAll("\\bgl_FragColor\\b", "chimeraFragColor0");
-        return result;
+        return GlslTokenRewriter.rewritePostOutputs(result, targetPlan);
     }
 
     private static String postOutputDeclarations(PostTargetPlan targetPlan) {
@@ -304,7 +402,7 @@ public final class LegacyGlslConverter {
             String vertexPreamble
     ) {
         try {
-            String src = inlineIncludes(source, sourceFile, 0);
+            String src = prepareSource(source, sourceFile);
             String stripped = stripComments(src);
             if (!TERRAIN_VERSION.matcher(src).find()
                     || stripped.matches("(?s).*#version\\s+(?!120(?:e)?\\b)\\d+.*")) {
@@ -432,44 +530,30 @@ public final class LegacyGlslConverter {
                 """;
     }
 
-    private static String inlineIncludes(String src, Path sourceFile, int depth) throws IOException {
-        if (depth > MAX_INCLUDE_DEPTH) {
-            throw new IOException("include depth exceeds " + MAX_INCLUDE_DEPTH);
+    /** Compatibility adapter for callers that still pass raw source and a path. */
+    private static String prepareSource(String source, Path sourceFile) {
+        if (sourceFile == null) {
+            return source;
         }
-        Matcher matcher = INCLUDE_LINE.matcher(src);
-        StringBuilder out = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            out.append(src, last, matcher.start());
-            Path include = resolveInclude(sourceFile, matcher.group(1));
-            String included = Files.readString(include, StandardCharsets.UTF_8);
-            out.append(inlineIncludes(included, include, depth + 1));
-            last = matcher.end();
+        Path root = sourceFile.getParent();
+        ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
+                root, sourceFile, source);
+        if (!prepared.successful()) {
+            throw new IllegalArgumentException(prepared.deviations().toString());
         }
-        out.append(src, last, src.length());
-        return out.toString();
-    }
-
-    private static Path resolveInclude(Path sourceFile, String relative) throws IOException {
-        Path base = sourceFile != null && sourceFile.getParent() != null
-                ? sourceFile.getParent()
-                : Path.of(".");
-        Path include = relative.startsWith("/")
-                ? base.resolve(relative.substring(1)).normalize()
-                : base.resolve(relative).normalize();
-        if (!Files.isRegularFile(include)) {
-            throw new IOException("missing include: " + include);
-        }
-        return include;
+        return prepared.source();
     }
 
     private static String convertVaryings(
             String src,
             boolean geometryStage,
-            TerrainVaryingLayout terrainLayout
+            TerrainVaryingLayout terrainLayout,
+            PostVaryingLayout postVaryingLayout
     ) {
         if (!geometryStage) {
-            return convertPostVaryings(src);
+            return postVaryingLayout == null
+                    ? convertPostVaryings(src)
+                    : convertPostVaryings(src, postVaryingLayout);
         }
         Matcher matcher = VARYING_DECL.matcher(src);
         StringBuilder out = new StringBuilder();
@@ -521,6 +605,34 @@ public final class LegacyGlslConverter {
                     throw new IllegalArgumentException("post varying is not a fixed vec2 input: " + name);
                 }
                 converted.append("layout(location = 0) in vec2 ").append(name).append(';');
+            }
+            last = declaration.end();
+        }
+        converted.append(source, last, source.length());
+        return converted.toString();
+    }
+
+    private static String convertPostVaryings(String source, PostVaryingLayout layout) {
+        List<PostVaryingDeclaration> declarations = postVaryingDeclarations(source);
+        StringBuilder converted = new StringBuilder();
+        int last = 0;
+        for (PostVaryingDeclaration declaration : declarations) {
+            converted.append(source, last, declaration.start());
+            for (String name : declaration.names()) {
+                if (!containsIdentifier(source.substring(0, declaration.start())
+                        + source.substring(declaration.end()), name)) {
+                    continue;
+                }
+                Integer location = layout.locations().get(name);
+                String type = layout.types().get(name);
+                if (location == null || type == null || !type.equals(declaration.type())) {
+                    throw new IllegalArgumentException("post varying is not matched: " + name);
+                }
+                converted.append("layout(location = ").append(location).append(") ");
+                if (declaration.qualifier() != null) {
+                    converted.append(declaration.qualifier()).append(' ');
+                }
+                converted.append("in ").append(type).append(' ').append(name).append(';');
             }
             last = declaration.end();
         }
@@ -600,8 +712,7 @@ public final class LegacyGlslConverter {
     }
 
     private static boolean containsIdentifier(String source, String name) {
-        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b")
-                .matcher(stripComments(source)).find();
+        return GlslTokenRewriter.containsIdentifier(source, name);
     }
 
     private static void validatePostVersion(String source) {
@@ -830,14 +941,7 @@ public final class LegacyGlslConverter {
             .replace("mat4 LightMVP;\n", "");
 
     private static String convertTextureCalls(String src) {
-        String converted = src;
-        // Order matters: the Lod variants first, so plain texture2D/texture3D
-        // rewrites never eat their suffixes.
-        converted = converted.replace("texture2DLod(", "textureLod(");
-        converted = converted.replace("texture2D(", "texture(");
-        converted = converted.replace("texture3DLod(", "textureLod(");
-        converted = converted.replace("texture3D(", "texture(");
-        return converted;
+        return GlslTokenRewriter.rewriteTextureCalls(src);
     }
 
     private static String rewriteSamplerDeclaration(String source, String name, int binding) {
