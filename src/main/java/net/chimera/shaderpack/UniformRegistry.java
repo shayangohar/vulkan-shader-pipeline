@@ -57,6 +57,51 @@ public final class UniformRegistry {
         }
     }
 
+    /** Whether Chimera reads a value from the current frame or uses a declared default. */
+    public enum Availability {
+        LIVE,
+        DEFAULTED
+    }
+
+    /** One canonical source and default policy for a standard pack uniform. */
+    public enum DefaultPolicy {
+        ZERO,
+        ONE,
+        IDENTITY_MATRIX,
+        CLOUD_HEIGHT,
+        NEAR_CLIP,
+        FAR_CLIP,
+        SMOOTH_WETNESS,
+        SMOOTH_EYE_BRIGHTNESS
+    }
+
+    /** Immutable catalog entry shared by probing and runtime buffer creation. */
+    public record UniformDescriptor(
+            String name,
+            List<String> acceptedTypes,
+            Availability availability,
+            String sourceKey,
+            DefaultPolicy defaultPolicy
+    ) {
+        public UniformDescriptor {
+            if (name == null || name.isBlank()) {
+                throw new IllegalArgumentException("uniform descriptor needs a name");
+            }
+            if (acceptedTypes == null || acceptedTypes.isEmpty()
+                    || acceptedTypes.stream().anyMatch(type -> type == null || type.isBlank())) {
+                throw new IllegalArgumentException("uniform descriptor needs accepted types");
+            }
+            acceptedTypes = acceptedTypes.stream().distinct().sorted().toList();
+            availability = availability == null ? Availability.LIVE : availability;
+            sourceKey = sourceKey == null || sourceKey.isBlank() ? name : sourceKey;
+            defaultPolicy = defaultPolicy == null ? DefaultPolicy.ZERO : defaultPolicy;
+        }
+
+        public boolean accepts(String glslType) {
+            return acceptedTypes.contains(glslType);
+        }
+    }
+
     /** Immutable interface plan shared by scanning, conversion, and building. */
     public record ProgramInterface(
             Stage stage,
@@ -240,8 +285,26 @@ public final class UniformRegistry {
             "float", "int", "vec2", "vec3", "vec4",
             "ivec2", "ivec3", "ivec4", "mat4");
 
-    /** Names already supplied by VulkanMod or by the M5.3 provider. */
-    private static final Map<String, UniformSpec> UNIFORM_SPECS = uniformSpecs();
+    /** The only catalog used by declaration planning and the runtime provider. */
+    private static final Map<String, UniformDescriptor> UNIFORM_SPECS = uniformSpecs();
+
+    /** Returns the canonical descriptor for a name, or null for an unknown name. */
+    public static UniformDescriptor descriptor(String name) {
+        return UNIFORM_SPECS.get(name);
+    }
+
+    /** Returns a descriptor only when the declaration uses one of its accepted types. */
+    public static UniformDescriptor descriptor(String name, String glslType) {
+        UniformDescriptor descriptor = descriptor(name);
+        return descriptor != null && descriptor.accepts(glslType) ? descriptor : null;
+    }
+
+    /** Returns the complete deterministic catalog for diagnostics and tests. */
+    public static List<UniformDescriptor> catalog() {
+        return UNIFORM_SPECS.values().stream()
+                .sorted(java.util.Comparator.comparing(UniformDescriptor::name))
+                .toList();
+    }
 
     /**
      * Builds the immutable declaration plan for one fragment source.
@@ -316,7 +379,7 @@ public final class UniformRegistry {
             }
             String fixedField = stage == Stage.TRANSLUCENT
                     ? TRANSLUCENT_UNIFORM_FIELDS.get(name) : name;
-            UniformSpec spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
+            UniformDescriptor spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
             if (!SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
                 if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
                     deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
@@ -423,15 +486,11 @@ public final class UniformRegistry {
         return result;
     }
 
-    private static boolean compatibleType(String name, String type, UniformSpec spec) {
+    private static boolean compatibleType(String name, String type, UniformDescriptor spec) {
         if (spec == null) {
             return SUPPORTED_TYPES.contains(type);
         }
-        if (spec.type().equals(type)) {
-            return true;
-        }
-        // Iris declares fogColor as vec3 while the M5.3 fixture uses vec4.
-        return name.equals("fogColor") && (type.equals("vec3") || type.equals("vec4"));
+        return spec.accepts(type);
     }
 
     private static boolean isReferenced(String source, String name) {
@@ -578,12 +637,13 @@ public final class UniformRegistry {
         return deviations.contains(prefix + name);
     }
 
-    private static Map<String, UniformSpec> uniformSpecs() {
-        Map<String, UniformSpec> specs = new LinkedHashMap<>();
+    private static Map<String, UniformDescriptor> uniformSpecs() {
+        Map<String, UniformDescriptor> specs = new LinkedHashMap<>();
         addLive(specs, "cameraPosition", "vec3");
         addLive(specs, "worldTime", "int");
         addLive(specs, "frameTimeCounter", "float");
         addLive(specs, "rainStrength", "float");
+        addLive(specs, "thunderStrength", "float");
         addLive(specs, "isEyeInWater", "int");
         addLive(specs, "moonPhase", "int");
         addLive(specs, "sunPosition", "vec3");
@@ -596,7 +656,7 @@ public final class UniformRegistry {
         addLive(specs, "aspectRatio", "float");
         addLive(specs, "near", "float");
         addLive(specs, "far", "float");
-        addDefault(specs, "wetness", "float");
+        addDefault(specs, "wetness", "float", DefaultPolicy.SMOOTH_WETNESS);
         addLive(specs, "sunAngle", "float");
         addLive(specs, "frameCounter", "int");
         addLive(specs, "cameraPositionInt", "ivec3");
@@ -604,23 +664,23 @@ public final class UniformRegistry {
         addLive(specs, "cameraPositionFract", "vec3");
         addLive(specs, "previousCameraPositionFract", "vec3");
         addLive(specs, "previousCameraPosition", "vec3");
-        addDefault(specs, "cloudHeight", "float");
+        addDefault(specs, "cloudHeight", "float", DefaultPolicy.CLOUD_HEIGHT);
 
         // Common standard Iris values used by real legacy post sources. The
         // provider supplies live values where Chimera has a source of truth;
         // the remaining values are explicit zero or identity defaults.
-        addDefault(specs, "bedrockLevel", "int");
-        addDefault(specs, "blindFactor", "float");
-        addDefault(specs, "darknessFactor", "float");
-        addDefault(specs, "darknessLightFactor", "float");
+        addLive(specs, "bedrockLevel", "int");
+        addLive(specs, "blindFactor", "float");
+        addLive(specs, "darknessFactor", "float");
+        addLive(specs, "darknessLightFactor", "float");
         addDefault(specs, "endFlashIntensity", "float");
         addDefault(specs, "endFlashPosition", "vec3");
         addLive(specs, "frameTime", "float");
         addDefault(specs, "frameTimeSmooth", "float");
-        addDefault(specs, "framemod2", "float");
-        addDefault(specs, "framemod4", "float");
-        addDefault(specs, "framemod8", "float");
-        addDefault(specs, "framemod600", "float");
+        addLive(specs, "framemod2", "float");
+        addLive(specs, "framemod4", "float");
+        addLive(specs, "framemod8", "float");
+        addLive(specs, "framemod600", "float");
         addDefault(specs, "isCold", "float");
         addDefault(specs, "isDesert", "float");
         addDefault(specs, "isJungle", "float");
@@ -639,22 +699,22 @@ public final class UniformRegistry {
         addDefault(specs, "inWarpedForest", "float");
         addDefault(specs, "isEyeInCave", "float");
         addDefault(specs, "maxBlindnessDarkness", "float");
-        addDefault(specs, "nightVision", "float");
-        addDefault(specs, "rainFactor", "float");
-        addDefault(specs, "screenBrightness", "float");
-        addDefault(specs, "shadowFade", "float");
+        addLive(specs, "nightVision", "float");
+        addLive(specs, "rainFactor", "float", "rainStrength");
+        addLive(specs, "screenBrightness", "float");
+        addDefault(specs, "shadowFade", "float", DefaultPolicy.ONE);
         addDefault(specs, "starter", "float");
-        addDefault(specs, "timeAngle", "float");
-        addDefault(specs, "timeBrightness", "float");
+        addLive(specs, "timeAngle", "float", "sunAngle");
+        addDefault(specs, "timeBrightness", "float", DefaultPolicy.ONE);
         addDefault(specs, "velocity", "float");
-        addDefault(specs, "worldDay", "int");
+        addLive(specs, "worldDay", "int");
         addDefault(specs, "atlasSize", "ivec2");
-        addDefault(specs, "eyeBrightness", "ivec2");
-        addDefault(specs, "eyeBrightnessSmooth", "ivec2");
-        addDefault(specs, "eyeBrightnessM", "float");
-        addDefault(specs, "eyePosition", "vec3");
-        addDefault(specs, "playerLookVector", "vec3");
-        addDefault(specs, "relativeEyePosition", "vec3");
+        addLive(specs, "eyeBrightness", "ivec2");
+        addDefault(specs, "eyeBrightnessSmooth", "ivec2", DefaultPolicy.SMOOTH_EYE_BRIGHTNESS);
+        addLive(specs, "eyeBrightnessM", "float");
+        addLive(specs, "eyePosition", "vec3");
+        addLive(specs, "playerLookVector", "vec3");
+        addLive(specs, "relativeEyePosition", "vec3");
         addDefault(specs, "skyColor", "vec3");
         addDefault(specs, "entityColor", "vec4");
         addDefault(specs, "lightningBoltPosition", "vec4");
@@ -665,14 +725,14 @@ public final class UniformRegistry {
         addDefault(specs, "heldBlockLightValue2", "int");
         addDefault(specs, "heldItemId", "int");
         addDefault(specs, "heldItemId2", "int");
-        addDefault(specs, "gbufferModelView", "mat4");
-        addDefault(specs, "gbufferModelViewInverse", "mat4");
-        addDefault(specs, "gbufferPreviousModelView", "mat4");
-        addDefault(specs, "gbufferPreviousProjection", "mat4");
-        addDefault(specs, "gbufferProjection", "mat4");
-        addDefault(specs, "gbufferProjectionInverse", "mat4");
-        addDefault(specs, "shadowModelViewInverse", "mat4");
-        addDefault(specs, "shadowProjectionInverse", "mat4");
+        addLive(specs, "gbufferModelView", "mat4");
+        addLive(specs, "gbufferModelViewInverse", "mat4");
+        addLive(specs, "gbufferPreviousModelView", "mat4");
+        addLive(specs, "gbufferPreviousProjection", "mat4");
+        addLive(specs, "gbufferProjection", "mat4");
+        addLive(specs, "gbufferProjectionInverse", "mat4");
+        addLive(specs, "shadowModelViewInverse", "mat4");
+        addLive(specs, "shadowProjectionInverse", "mat4");
 
         addLive(specs, "MVP", "mat4");
         addLive(specs, "ModelViewMat", "mat4");
@@ -700,7 +760,7 @@ public final class UniformRegistry {
         addLive(specs, "CurrentTime", "int");
         addLive(specs, "EndPortalLayers", "int");
 
-        addLive(specs, "fogColor", "vec4");
+        addLive(specs, "fogColor", List.of("vec3", "vec4"), "fogColor");
         addLive(specs, "fogStart", "float");
         addLive(specs, "fogEnd", "float");
         addLive(specs, "screenSize", "vec2");
@@ -709,20 +769,30 @@ public final class UniformRegistry {
         return Map.copyOf(specs);
     }
 
-    private static void addLive(Map<String, UniformSpec> specs, String name, String type) {
-        specs.put(name, new UniformSpec(type, Availability.LIVE));
+    private static void addLive(Map<String, UniformDescriptor> specs, String name, String type) {
+        addLive(specs, name, List.of(type), name);
     }
 
-    private static void addDefault(Map<String, UniformSpec> specs, String name, String type) {
-        specs.put(name, new UniformSpec(type, Availability.DEFAULTED));
+    private static void addLive(Map<String, UniformDescriptor> specs, String name,
+                                String type, String sourceKey) {
+        addLive(specs, name, List.of(type), sourceKey);
     }
 
-    private enum Availability {
-        LIVE,
-        DEFAULTED
+    private static void addLive(Map<String, UniformDescriptor> specs, String name,
+                                List<String> types, String sourceKey) {
+        specs.put(name, new UniformDescriptor(name, types, Availability.LIVE,
+                sourceKey, DefaultPolicy.ZERO));
     }
 
-    private record UniformSpec(String type, Availability availability) {}
+    private static void addDefault(Map<String, UniformDescriptor> specs, String name, String type) {
+        addDefault(specs, name, type, DefaultPolicy.ZERO);
+    }
+
+    private static void addDefault(Map<String, UniformDescriptor> specs, String name,
+                                   String type, DefaultPolicy policy) {
+        specs.put(name, new UniformDescriptor(name, List.of(type), Availability.DEFAULTED,
+                name, policy));
+    }
 
     private static List<UniformDeclaration> sortedUniforms(Collection<UniformDeclaration> values) {
         return values.stream()

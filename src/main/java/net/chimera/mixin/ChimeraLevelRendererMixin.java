@@ -39,7 +39,8 @@ public abstract class ChimeraLevelRendererMixin {
                                         boolean bl2,
                                         CallbackInfo ci) {
         if (ChimeraRenderer.segmentsActive()) {
-            PackUniformProvider.beginFrame(camera, deltaTracker.getGameTimeDeltaPartialTick(false));
+            PackUniformProvider.beginFrame(camera,
+                    deltaTracker.getGameTimeDeltaPartialTick(false), modelView, projection);
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 pass.openLevelSegment();

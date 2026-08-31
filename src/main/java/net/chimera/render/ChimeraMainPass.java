@@ -1094,6 +1094,7 @@ public class ChimeraMainPass implements MainPass {
         this.hdrDepthReadable = false;
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
+        PackUniformProvider.resetSession();
     }
 
     /** Records a dimension change for application at the next safe frame boundary. */

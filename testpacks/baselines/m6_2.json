@@ -1,0 +1,25 @@
+{
+  "formatVersion": 1,
+  "fixture": "m6_2/uniform_catalog",
+  "reportSha256": "ec800928b6693978fa70b8b15c53c812eb30f3d6d07e5728ba412414c3e4a5a6",
+  "sourceHashes": {
+    "composite.fsh": "84c27ca9df4ce8ae97d76ae10a8c74e9084b8a43cac3f65e18e8e4b892acbdbd",
+    "composite1.fsh": "c0abb45f5c873843b340e58877135ffa5bf10061e78783106aa246d5adbb319d",
+    "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097"
+  },
+  "expectedExecutablePrograms": [
+    "composite",
+    "final"
+  ],
+  "expectedFallbackPrograms": [
+    "composite1"
+  ],
+  "expectedDeviations": [
+    "LIVE_UNIFORM_BRIDGE",
+    "PREPROCESSOR_MACRO_REDEFINED:M62_FEATURE",
+    "SHADOW_SETTING_LOGGED_ONLY:shadowMapResolution",
+    "UNIFORM_DEFAULTED:eyeBrightnessSmooth",
+    "UNIFORM_DEFAULTED:wetness",
+    "UNIFORM_NAME_UNSUPPORTED:unsupportedCatalogUniform"
+  ]
+}

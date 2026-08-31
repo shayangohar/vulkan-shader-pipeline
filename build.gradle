@@ -43,10 +43,19 @@ processResources {
 
 tasks.register('conformanceTest', JavaExec) {
     group = 'verification'
-    description = 'Runs deterministic M5.1 through M5.6 fixtures and post-state checks.'
+    description = 'Runs deterministic M5.1 through M5.7 fixtures and post-state checks.'
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.shaderpack.ConformanceHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('m62ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M6.2 uniform catalog and frame-state checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.shader.M62ConformanceHarness'
     jvmArgs '-ea'
 }
 
@@ -145,6 +154,7 @@ tasks.register('m57ConformanceTest', JavaExec) {
 
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
+    dependsOn tasks.named('m62ConformanceTest')
 }
 
 tasks.named('test') {
