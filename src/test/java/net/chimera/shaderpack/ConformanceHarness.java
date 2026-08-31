@@ -14,8 +14,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import net.chimera.render.PackPostTargetsHarness;
+
 /**
- * Small dependency-free conformance check for the locked M5.1 through M5.6 boundary.
+ * Small dependency-free conformance check for the locked M5.1 through M5.6 fixtures
+ * and the M5.7 post-target availability boundary.
  * Gradle runs this class before a normal build.
  */
 public final class ConformanceHarness {
@@ -25,6 +28,10 @@ public final class ConformanceHarness {
     private ConformanceHarness() {}
 
     public static void main(String[] args) throws IOException {
+        PackPostTargetsHarness.run();
+        assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
+                        List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
+                "post color input ordering");
         Path fixtureRoot = Path.of(System.getProperty("chimera.fixtureRoot", "testpacks"));
         verifySimplex(fixtureRoot.resolve("simplex"), fixtureRoot.resolve("baselines/simplex.json"));
         verifySupported(fixtureRoot.resolve("m5_1/optifine"), "optifine");
@@ -270,6 +277,13 @@ public final class ConformanceHarness {
         assertTrue(alias.hasSampler("colortex1"), "m5.3 colortex1 alias was not mapped");
         assertTrue(alias.deviations().contains("COLORTEX_ALIAS_TO_SEAM"),
                 "m5.3 colortex alias deviation is missing");
+
+        UniformRegistry.ProgramInterface slotConflict = UniformRegistry.plan(
+                "uniform sampler2D colortex3; uniform sampler2D shadowcolor0;",
+                UniformRegistry.Stage.POST);
+        assertTrue(!slotConflict.executable(), "m5.7 conflicting slot aliases were accepted");
+        assertTrue(slotConflict.deviations().contains("SAMPLER_SLOT_CONFLICT:3"),
+                "m5.7 conflicting slot alias deviation is missing");
     }
 
     private static void verifyM53Unsupported(Path pack, Path baselinePath) throws IOException {

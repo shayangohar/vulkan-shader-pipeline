@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -34,11 +35,16 @@ public final class PackConfig {
 
     /** const int colortexNFormat = TOKEN; (value 0-9 for colortex0-9). */
     private static final Pattern COLORTEX_FMT_CONST =
-            Pattern.compile("(?m)^\\s*const\\s+int\\s+colortex(\\d+)Format\\s*=\\s*(\\w+)\\s*;\\s*$");
+            Pattern.compile("(?m)^\\s*const\\s+int\\s+colortex(\\d+)Format\\s*=\\s*(\\w+)\\s*;\\s*(?://.*)?$");
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
                     + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul)"
-                    + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*$");
+                    + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
+    private static final Pattern PACK_NUMERIC_CONST = Pattern.compile(
+            "(?m)^\\s*const\\s+(int|float)\\s+"
+                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|"
+                    + "shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
+                    + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile("#define\\s+DRAWBUFFERS(\\d+)");
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
@@ -51,6 +57,14 @@ public final class PackConfig {
             "RGBA8", 37,
             "RGBA16F", 97,
             "RGBA32F", 109
+    );
+    /** Common real-pack RGB formats approximated by the supported RGBA images. */
+    private static final Map<String, Integer> APPROXIMATE_FMT_TO_VK = Map.of(
+            "RGB8", 37,
+            "RGB8_SNORM", 97,
+            "RGB16F", 97,
+            "RGBA16", 97,
+            "R11F_G11F_B10F", 97
     );
     private static final Map<Integer, String> VK_TO_NAME;
     static {
@@ -85,10 +99,12 @@ public final class PackConfig {
             Map<Integer, Integer> colortexFormats,
             int drawBufferCount,
             ShadowSettings shadowSettings,
+            Map<String, String> shaderConstants,
             List<String> deviations
     ) {
         public PackConfigData {
             colortexFormats = Collections.unmodifiableMap(new TreeMap<>(colortexFormats));
+            shaderConstants = Collections.unmodifiableMap(new TreeMap<>(shaderConstants));
             deviations = List.copyOf(new TreeSet<>(deviations));
         }
     }
@@ -96,11 +112,15 @@ public final class PackConfig {
     public static PackConfigData parse(List<PackProgram> programs, Path shadersDir) {
         Map<Integer, Integer> colortexFormats = new HashMap<>();
         Map<String, String> shadowValues = new TreeMap<>();
+        Map<String, String> shaderConstants = new TreeMap<>();
         List<String> deviations = new ArrayList<>();
 
         for (PackProgram program : programs.stream()
                 .sorted(java.util.Comparator.comparing(PackProgram::name)).toList()) {
-            String src = program.fragmentSource();
+            String src = program.executableFragmentSource();
+            if (src == null) {
+                src = "";
+            }
             Matcher fmt = COLORTEX_FMT_CONST.matcher(src);
             while (fmt.find()) {
                 int slot;
@@ -116,6 +136,13 @@ public final class PackConfig {
                 }
                 Integer code = FMT_TO_VK.get(token);
                 if (code == null) {
+                    code = APPROXIMATE_FMT_TO_VK.get(token);
+                    if (code != null) {
+                        deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
+                                + slot + "=" + token + "->" + formatName(code));
+                    }
+                }
+                if (code == null) {
                     deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
                     LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
                             program.name(), slot, token);
@@ -127,7 +154,9 @@ public final class PackConfig {
                 }
             }
             collectShadowConstants(src, shadowValues);
-            collectShadowConstants(program.vertexSource(), shadowValues);
+            collectShadowConstants(program.executableVertexSource(), shadowValues);
+            collectPackConstants(src, shaderConstants, deviations);
+            collectPackConstants(program.executableVertexSource(), shaderConstants, deviations);
         }
 
         // shaders.properties overrides (OptiFine packs may declare formats here).
@@ -156,6 +185,13 @@ public final class PackConfig {
                         }
                         Integer code = FMT_TO_VK.get(value);
                         if (code == null) {
+                            code = APPROXIMATE_FMT_TO_VK.get(value);
+                            if (code != null) {
+                                deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
+                                        + slot + "=" + value + "->" + formatName(code));
+                            }
+                        }
+                        if (code == null) {
                             deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:" + key + "=" + value);
                             LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
                             continue;
@@ -165,6 +201,13 @@ public final class PackConfig {
                     } else if (SHADOW_PROPERTIES.contains(key)) {
                         shadowValues.put(key, value);
                         LOGGER.info("[chimera] pack properties: {}={}", key, value);
+                    } else if (PACK_CONSTANT_NAMES.contains(key)) {
+                        if (isNumeric(value)) {
+                            shaderConstants.put(key, normalizeNumeric(value));
+                            LOGGER.info("[chimera] pack properties: {}={}", key, value);
+                        } else {
+                            deviations.add("PACK_CONSTANT_UNSUPPORTED:" + key);
+                        }
                     }
                 }
             } catch (IOException e) {
@@ -176,24 +219,62 @@ public final class PackConfig {
         int drawBufferCount = 1;
         for (PackProgram program : programs) {
             if (program.name().equals("gbuffers_terrain")) {
-                drawBufferCount = drawBufferCountOf(program.fragmentSource());
+                drawBufferCount = drawBufferCountOf(program.executableFragmentSource());
                 break;
             }
         }
 
+        ShadowSettings shadowSettings = validateShadowSettings(shadowValues);
+        shaderConstants.put("shadowMapResolution", Integer.toString(shadowSettings.resolution()));
+        shaderConstants.put("shadowDistance", Float.toString(shadowSettings.distance()));
         return new PackConfigData(colortexFormats, drawBufferCount,
-                validateShadowSettings(shadowValues), deviations);
+                shadowSettings, shaderConstants, deviations);
     }
 
     private static final List<String> SHADOW_PROPERTIES = List.of(
             "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
             "shadowDistanceRenderMul");
+    private static final Set<String> PACK_CONSTANT_NAMES = Set.of(
+            "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
+            "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
 
     private static void collectShadowConstants(String source, Map<String, String> values) {
         Matcher shadow = SHADOW_CONST.matcher(source == null ? "" : source);
         while (shadow.find()) {
             values.put(shadow.group(1), shadow.group(2));
         }
+    }
+
+    private static void collectPackConstants(
+            String source,
+            Map<String, String> values,
+            List<String> deviations
+    ) {
+        Matcher constants = PACK_NUMERIC_CONST.matcher(source == null ? "" : source);
+        while (constants.find()) {
+            String name = constants.group(2);
+            String value = normalizeNumeric(constants.group(3));
+            String previous = values.putIfAbsent(name, value);
+            if (previous != null && !previous.equals(value)) {
+                deviations.add("PACK_CONSTANT_CONFLICT:" + name);
+            }
+        }
+    }
+
+    private static boolean isNumeric(String value) {
+        try {
+            return Float.isFinite(Float.parseFloat(value));
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private static String normalizeNumeric(String value) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.endsWith("f") || normalized.endsWith("F")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     private static ShadowSettings validateShadowSettings(Map<String, String> rawValues) {

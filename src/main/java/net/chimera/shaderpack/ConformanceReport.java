@@ -68,6 +68,8 @@ public final class ConformanceReport {
     }
 
     private final String packName;
+    private final String selectedDimension;
+    private final String selectedVariantFolder;
     private final boolean passListPresent;
     private final List<String> passInventory;
     private final Map<String, String> metadataHashes;
@@ -83,7 +85,22 @@ public final class ConformanceReport {
             Collection<String> settings,
             Collection<String> deviations
     ) {
+        this(packName, passListPresent, passInventory, metadataHashes, settings, deviations, null, null);
+    }
+
+    public ConformanceReport(
+            String packName,
+            boolean passListPresent,
+            Collection<String> passInventory,
+            Map<String, String> metadataHashes,
+            Collection<String> settings,
+            Collection<String> deviations,
+            String selectedDimension,
+            String selectedVariantFolder
+    ) {
         this.packName = Objects.requireNonNull(packName);
+        this.selectedDimension = selectedDimension;
+        this.selectedVariantFolder = selectedVariantFolder;
         this.passListPresent = passListPresent;
         this.passInventory = sortedStrings(passInventory);
         this.metadataHashes = new TreeMap<>(metadataHashes);
@@ -164,10 +181,29 @@ public final class ConformanceReport {
         }
     }
 
+    /** Concise startup summary that does not change the stable JSON schema. */
+    public String runtimeSummary() {
+        int installed = 0;
+        int fallback = 0;
+        for (ProgramReport program : programs.values()) {
+            if (program.runtime() == RuntimeDisposition.INSTALLED) {
+                installed++;
+            } else if (program.runtime() == RuntimeDisposition.IDENTITY_FALLBACK) {
+                fallback++;
+            }
+        }
+        return "installed=" + installed + ", fallback=" + fallback;
+    }
+
     public String toJson() {
         JsonObject root = new JsonObject();
         root.addProperty("formatVersion", 1);
         root.addProperty("pack", packName);
+        if (selectedDimension != null && selectedVariantFolder != null
+                && !selectedVariantFolder.isBlank()) {
+            root.addProperty("selectedDimension", selectedDimension);
+            root.addProperty("selectedVariantFolder", selectedVariantFolder);
+        }
         root.addProperty("passListPresent", passListPresent);
         root.add("passInventory", strings(passInventory));
         root.add("metadataHashes", stringMap(metadataHashes));

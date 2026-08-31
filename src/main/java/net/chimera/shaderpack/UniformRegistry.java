@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
  */
 public final class UniformRegistry {
     private static final Pattern UNIFORM_DECLARATION = Pattern.compile(
-            "\\buniform\\s+([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)(\\s*\\[[^;]*\\])?\\s*;");
+            "\\buniform\\s+([A-Za-z_]\\w*)\\s+([^;{}]+);");
     private static final Pattern UNIFORM_BLOCK = Pattern.compile(
             "\\buniform\\s+([A-Za-z_]\\w*)\\s*\\{");
 
@@ -83,7 +83,9 @@ public final class UniformRegistry {
                 }
             }
             return uniforms.stream()
-                    .filter(uniform -> !blocked.contains(uniform.name()))
+                    .filter(uniform -> !blocked.contains(uniform.name())
+                            && !isDeviationForName(deviations, "UNIFORM_DECLARATION_UNUSED:",
+                            uniform.name()))
                     .toList();
         }
 
@@ -113,7 +115,12 @@ public final class UniformRegistry {
             Map.entry("colortex2", 2),
             Map.entry("colortex3", 3),
             Map.entry("shadowtex0", 5),
-            Map.entry("depthtex0", 6)
+            Map.entry("shadowtex1", 5),
+            Map.entry("shadowcolor0", 3),
+            Map.entry("shadowcolor1", 3),
+            Map.entry("depthtex0", 6),
+            Map.entry("depthtex1", 6),
+            Map.entry("noisetex", 7)
     );
 
     /** Geometry stage: the host's registry slots the terrain draw path fills. */
@@ -173,7 +180,7 @@ public final class UniformRegistry {
      * deviation list and make the plan ineligible for pipeline construction.
      */
     public static ProgramInterface plan(String source, Stage stage) {
-        return planInternal(source, stage, false);
+        return planInternal(source, stage, false, false);
     }
 
     /**
@@ -184,31 +191,46 @@ public final class UniformRegistry {
         if (targetPlan == null) {
             throw new IllegalArgumentException("post target plan is required");
         }
-        return planInternal(source, Stage.POST, true);
+        return planInternal(source, Stage.POST, true, false);
     }
 
-    private static ProgramInterface planInternal(String source, Stage stage, boolean targetedPost) {
+    /** Plans a source snapshot after the pack preprocessor has removed inactive declarations. */
+    public static ProgramInterface planPrepared(String source, Stage stage) {
+        return planInternal(source, stage, false, true);
+    }
+
+    /** Prepared post source variant used by the real-pack loader. */
+    public static ProgramInterface planPreparedPost(String source, PostTargetPlan targetPlan) {
+        if (targetPlan == null) {
+            throw new IllegalArgumentException("post target plan is required");
+        }
+        return planInternal(source, Stage.POST, true, true);
+    }
+
+    private static ProgramInterface planInternal(
+            String source, Stage stage, boolean targetedPost, boolean allowUnusedDeclarations) {
         String stripped = stripComments(source == null ? "" : source);
         Map<String, UniformDeclaration> declarations = new TreeMap<>();
         Set<String> conflicts = new TreeSet<>();
         Map<String, String> samplerNames = new TreeMap<>();
+        Map<Integer, String> samplerResources = new TreeMap<>();
         Set<String> deviations = new TreeSet<>();
 
         Matcher matcher = UNIFORM_DECLARATION.matcher(stripped);
         while (matcher.find()) {
             String type = matcher.group(1);
-            String name = matcher.group(2);
-            String array = matcher.group(3);
-            if (isSamplerType(type)) {
-                samplerNames.putIfAbsent(name, type);
-                continue;
-            }
-            String declaredType = array == null ? type : type + "[]";
-            UniformDeclaration declaration = new UniformDeclaration(name, declaredType);
-            UniformDeclaration previous = declarations.putIfAbsent(name, declaration);
-            if (previous != null && !previous.glslType().equals(declaredType)) {
-                conflicts.add(name);
-                declarations.put(name, declaration);
+            for (Variable variable : parseVariables(matcher.group(2))) {
+                if (isSamplerType(type)) {
+                    samplerNames.putIfAbsent(variable.name(), type);
+                    continue;
+                }
+                String declaredType = variable.array() ? type + "[]" : type;
+                UniformDeclaration declaration = new UniformDeclaration(variable.name(), declaredType);
+                UniformDeclaration previous = declarations.putIfAbsent(variable.name(), declaration);
+                if (previous != null && !previous.glslType().equals(declaredType)) {
+                    conflicts.add(variable.name());
+                    declarations.put(variable.name(), declaration);
+                }
             }
         }
 
@@ -226,12 +248,24 @@ public final class UniformRegistry {
             String fixedField = stage == Stage.TRANSLUCENT
                     ? TRANSLUCENT_UNIFORM_FIELDS.get(name) : name;
             UniformSpec spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
-            if (!SUPPORTED_TYPES.contains(type) || (spec != null && !spec.type().equals(type))) {
-                deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + name);
+            if (!SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
+                if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
+                } else {
+                    deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + name);
+                }
                 continue;
             }
             if (spec == null) {
-                deviations.add("UNIFORM_NAME_UNSUPPORTED:" + name);
+                if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
+                } else {
+                    deviations.add("UNIFORM_NAME_UNSUPPORTED:" + name);
+                }
+                continue;
+            }
+            if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+                deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
                 continue;
             }
             deviations.add("LIVE_UNIFORM_BRIDGE");
@@ -251,8 +285,14 @@ public final class UniformRegistry {
         };
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
+            if (allowUnusedDeclarations && !isReferenced(stripped, sampler.getKey())) {
+                deviations.add("SAMPLER_DECLARATION_UNUSED:" + sampler.getKey());
+                continue;
+            }
             Integer slot = slots.get(sampler.getKey());
-            if (!"sampler2D".equals(sampler.getValue()) || slot == null) {
+            boolean mappedType = sampler.getValue().equals("sampler2D")
+                    || sampler.getValue().equals("sampler2DShadow");
+            if (!mappedType || slot == null) {
                 if (stage == Stage.SHADOW && sampler.getKey().startsWith("shadowcolor")) {
                     deviations.add("SHADOW_COLOR_INPUT_UNSUPPORTED");
                 } else if (stage == Stage.TRANSLUCENT
@@ -269,6 +309,17 @@ public final class UniformRegistry {
                 continue;
             }
             bindings.add(new SamplerBinding(sampler.getKey(), slot));
+            String resource = samplerResource(sampler.getKey());
+            String previousResource = samplerResources.putIfAbsent(slot, resource);
+            if (previousResource != null && !previousResource.equals(resource)) {
+                deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
+            }
+            if (stage == Stage.POST && isHostAlias(sampler.getKey())) {
+                deviations.add("SAMPLER_ALIAS_TO_HOST:" + sampler.getKey());
+            }
+            if (stage == Stage.POST && sampler.getKey().equals("noisetex")) {
+                deviations.add("NOISETEX_PACK_RESOURCE");
+            }
             if (stage == Stage.POST && sampler.getKey().equals("depthtex0")) {
                 deviations.add("DEPTH_INPUT_FIXED_TO_HDR");
             }
@@ -286,6 +337,46 @@ public final class UniformRegistry {
         return new ProgramInterface(stage, List.copyOf(declarations.values()), bindings, List.copyOf(deviations));
     }
 
+    private static List<Variable> parseVariables(String body) {
+        List<Variable> result = new ArrayList<>();
+        for (String part : body.split(",")) {
+            String value = part.trim();
+            int equals = value.indexOf('=');
+            if (equals >= 0) {
+                value = value.substring(0, equals).trim();
+            }
+            Matcher name = Pattern.compile("^([A-Za-z_]\\w*)(\\s*\\[[^]]*\\])?$")
+                    .matcher(value);
+            if (name.matches()) {
+                result.add(new Variable(name.group(1), name.group(2) != null));
+            }
+        }
+        return result;
+    }
+
+    private static boolean compatibleType(String name, String type, UniformSpec spec) {
+        if (spec == null) {
+            return SUPPORTED_TYPES.contains(type);
+        }
+        if (spec.type().equals(type)) {
+            return true;
+        }
+        // Iris declares fogColor as vec3 while the M5.3 fixture uses vec4.
+        return name.equals("fogColor") && (type.equals("vec3") || type.equals("vec4"));
+    }
+
+    private static boolean isReferenced(String source, String name) {
+        Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source);
+        return matcher.find() && matcher.find();
+    }
+
+    private static boolean isHostAlias(String name) {
+        return name.equals("depthtex1") || name.equals("shadowtex1")
+                || name.equals("shadowcolor0") || name.equals("shadowcolor1");
+    }
+
+    private record Variable(String name, boolean array) {}
+
     /**
      * The OptiFine sampler names a fragment program declares, in ascending
      * slot order, resolved against the stage's map. Unknown names are omitted
@@ -302,7 +393,9 @@ public final class UniformRegistry {
         Matcher matcher = UNIFORM_DECLARATION.matcher(stripped);
         while (matcher.find()) {
             if (isSamplerType(matcher.group(1))) {
-                names.add(matcher.group(2));
+                for (Variable variable : parseVariables(matcher.group(2))) {
+                    names.add(variable.name());
+                }
             }
         }
         return List.copyOf(names);
@@ -338,19 +431,52 @@ public final class UniformRegistry {
     /** Removes only accepted ordinary declarations, keeping sampler declarations for binding rewrite. */
     public static String removeUniformDeclarations(String source, ProgramInterface plan) {
         String result = source == null ? "" : source;
-        for (UniformDeclaration declaration : plan.executableUniforms()) {
-            String type = Pattern.quote(declaration.glslType());
-            result = result.replaceAll(
-                    "(?m)\\buniform\\s+" + type + "\\s+" + Pattern.quote(declaration.name())
-                            + "\\s*;\\s*", "");
+        Set<String> executable = plan.executableUniforms().stream()
+                .map(UniformDeclaration::name).collect(java.util.stream.Collectors.toSet());
+        Set<String> unusedSamplers = new java.util.HashSet<>();
+        for (String deviation : plan.deviations()) {
+            if (deviation.startsWith("UNIFORM_DECLARATION_UNUSED:")) {
+                executable.add(deviation.substring("UNIFORM_DECLARATION_UNUSED:".length()));
+            } else if (deviation.startsWith("SAMPLER_DECLARATION_UNUSED:")) {
+                unusedSamplers.add(deviation.substring("SAMPLER_DECLARATION_UNUSED:".length()));
+            }
         }
-        return result;
+        Matcher matcher = UNIFORM_DECLARATION.matcher(result);
+        StringBuilder out = new StringBuilder();
+        int last = 0;
+        boolean changed = false;
+        while (matcher.find()) {
+            if (isSamplerType(matcher.group(1))) {
+                List<Variable> variables = parseVariables(matcher.group(2));
+                if (!variables.isEmpty()
+                        && variables.stream().allMatch(variable -> unusedSamplers.contains(variable.name()))) {
+                    out.append(result, last, matcher.start());
+                    last = matcher.end();
+                    changed = true;
+                }
+                continue;
+            }
+            List<Variable> variables = parseVariables(matcher.group(2));
+            boolean remove = !variables.isEmpty()
+                    && variables.stream().allMatch(variable -> executable.contains(variable.name()));
+            if (remove) {
+                out.append(result, last, matcher.start());
+                last = matcher.end();
+                changed = true;
+            }
+        }
+        if (!changed) {
+            return result;
+        }
+        out.append(result, last, result.length());
+        return out.toString();
     }
 
     private static boolean isExecutionBlocking(String deviation) {
         return deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                 || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                 || deviation.startsWith("UNIFORM_CONFLICT:")
+                || deviation.startsWith("SAMPLER_SLOT_CONFLICT:")
                 || deviation.startsWith("SAMPLER_NOT_MAPPED:")
                 || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
                 || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
@@ -360,6 +486,27 @@ public final class UniformRegistry {
 
     private static boolean isSamplerType(String type) {
         return type.startsWith("sampler") || type.startsWith("isampler") || type.startsWith("usampler");
+    }
+
+    private static String samplerResource(String name) {
+        if (name.startsWith("shadowcolor")) {
+            return "shadowcolor";
+        }
+        if (name.startsWith("shadowtex")) {
+            return "shadowtex";
+        }
+        if (name.startsWith("depthtex")) {
+            return "depthtex";
+        }
+        return name;
+    }
+
+    private static boolean isDeviationForName(
+            Collection<String> deviations,
+            String prefix,
+            String name
+    ) {
+        return deviations.contains(prefix + name);
     }
 
     private static Map<String, UniformSpec> uniformSpecs() {
@@ -381,6 +528,81 @@ public final class UniformRegistry {
         addLive(specs, "near", "float");
         addLive(specs, "far", "float");
         addDefault(specs, "wetness", "float");
+        addLive(specs, "sunAngle", "float");
+        addLive(specs, "frameCounter", "int");
+        addLive(specs, "cameraPositionInt", "ivec3");
+        addLive(specs, "previousCameraPositionInt", "ivec3");
+        addLive(specs, "cameraPositionFract", "vec3");
+        addLive(specs, "previousCameraPositionFract", "vec3");
+        addLive(specs, "previousCameraPosition", "vec3");
+        addDefault(specs, "cloudHeight", "float");
+
+        // Common standard Iris values used by real legacy post sources. The
+        // provider supplies live values where Chimera has a source of truth;
+        // the remaining values are explicit zero or identity defaults.
+        addDefault(specs, "bedrockLevel", "int");
+        addDefault(specs, "blindFactor", "float");
+        addDefault(specs, "darknessFactor", "float");
+        addDefault(specs, "darknessLightFactor", "float");
+        addDefault(specs, "endFlashIntensity", "float");
+        addDefault(specs, "endFlashPosition", "vec3");
+        addLive(specs, "frameTime", "float");
+        addDefault(specs, "frameTimeSmooth", "float");
+        addDefault(specs, "framemod2", "float");
+        addDefault(specs, "framemod4", "float");
+        addDefault(specs, "framemod8", "float");
+        addDefault(specs, "framemod600", "float");
+        addDefault(specs, "isCold", "float");
+        addDefault(specs, "isDesert", "float");
+        addDefault(specs, "isJungle", "float");
+        addDefault(specs, "isMesa", "float");
+        addDefault(specs, "isMushroom", "float");
+        addDefault(specs, "isSavanna", "float");
+        addDefault(specs, "isSwamp", "float");
+        addDefault(specs, "inBasaltDeltas", "float");
+        addDefault(specs, "inCrimsonForest", "float");
+        addDefault(specs, "inDry", "float");
+        addDefault(specs, "inNetherWastes", "float");
+        addDefault(specs, "inPaleGarden", "float");
+        addDefault(specs, "inRainy", "float");
+        addDefault(specs, "inSnowy", "float");
+        addDefault(specs, "inSoulValley", "float");
+        addDefault(specs, "inWarpedForest", "float");
+        addDefault(specs, "isEyeInCave", "float");
+        addDefault(specs, "maxBlindnessDarkness", "float");
+        addDefault(specs, "nightVision", "float");
+        addDefault(specs, "rainFactor", "float");
+        addDefault(specs, "screenBrightness", "float");
+        addDefault(specs, "shadowFade", "float");
+        addDefault(specs, "starter", "float");
+        addDefault(specs, "timeAngle", "float");
+        addDefault(specs, "timeBrightness", "float");
+        addDefault(specs, "velocity", "float");
+        addDefault(specs, "worldDay", "int");
+        addDefault(specs, "atlasSize", "ivec2");
+        addDefault(specs, "eyeBrightness", "ivec2");
+        addDefault(specs, "eyeBrightnessSmooth", "ivec2");
+        addDefault(specs, "eyePosition", "vec3");
+        addDefault(specs, "playerLookVector", "vec3");
+        addDefault(specs, "relativeEyePosition", "vec3");
+        addDefault(specs, "skyColor", "vec3");
+        addDefault(specs, "entityColor", "vec4");
+        addDefault(specs, "lightningBoltPosition", "vec4");
+        addDefault(specs, "blockEntityId", "int");
+        addDefault(specs, "currentRenderedItemId", "int");
+        addDefault(specs, "entityId", "int");
+        addDefault(specs, "heldBlockLightValue", "int");
+        addDefault(specs, "heldBlockLightValue2", "int");
+        addDefault(specs, "heldItemId", "int");
+        addDefault(specs, "heldItemId2", "int");
+        addDefault(specs, "gbufferModelView", "mat4");
+        addDefault(specs, "gbufferModelViewInverse", "mat4");
+        addDefault(specs, "gbufferPreviousModelView", "mat4");
+        addDefault(specs, "gbufferPreviousProjection", "mat4");
+        addDefault(specs, "gbufferProjection", "mat4");
+        addDefault(specs, "gbufferProjectionInverse", "mat4");
+        addDefault(specs, "shadowModelViewInverse", "mat4");
+        addDefault(specs, "shadowProjectionInverse", "mat4");
 
         addLive(specs, "MVP", "mat4");
         addLive(specs, "ModelViewMat", "mat4");

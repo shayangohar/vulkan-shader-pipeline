@@ -1,0 +1,73 @@
+package net.chimera.render;
+
+import java.util.List;
+
+/** Deterministic, Vulkan-free checks for pack post target availability. */
+public final class PackPostTargetsHarness {
+    private PackPostTargetsHarness() {}
+
+    public static void run() {
+        boolean[] unwritten = new boolean[4];
+        assertTrue(PackPostTargets.isTargetAvailable(0, true, unwritten),
+                "target 0 must use HDR identity before a pack write");
+        assertTrue(!PackPostTargets.isTargetAvailable(1, true, unwritten),
+                "target 1 must be unavailable before a pack write");
+        assertTrue(!PackPostTargets.isTargetAvailable(2, true, unwritten),
+                "target 2 must be unavailable before a pack write");
+        assertTrue(!PackPostTargets.isTargetAvailable(3, true, unwritten),
+                "target 3 must be unavailable before a pack write");
+
+        boolean[] targetZeroWritten = unwritten.clone();
+        targetZeroWritten[0] = true;
+        assertTrue(PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
+                "target 0 must become pack-owned after a successful write");
+        PackPostTargets.invalidateWrittenTargets(targetZeroWritten, List.of(0));
+        assertTrue(PackPostTargets.isTargetAvailable(0, true, targetZeroWritten),
+                "target 0 invalidation must restore HDR identity");
+        assertTrue(!PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
+                "target 0 must not remain pack-owned after invalidation");
+
+        boolean[] targetOneWritten = unwritten.clone();
+        targetOneWritten[1] = true;
+        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, targetOneWritten),
+                "written target 1 must remain available with HDR target 0");
+        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(0, 2), true, targetOneWritten),
+                "target 2 must remain unavailable until written");
+
+        boolean[] targetThreeWritten = targetOneWritten.clone();
+        targetThreeWritten[3] = true;
+        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 3), true, targetThreeWritten),
+                "a successful target 3 writer must make target 3 available");
+        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
+        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(0, 3), true, targetThreeWritten),
+                "a skipped target 3 writer must invalidate target 3");
+        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
+                "an unrelated target 0 consumer must remain executable");
+        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(1));
+        assertTrue(!PackPostTargets.isTargetAvailable(1, true, targetThreeWritten),
+                "invalidated auxiliary targets must remain unavailable until rewritten");
+        targetThreeWritten[3] = true;
+        assertTrue(PackPostTargets.isTargetAvailable(3, true, targetThreeWritten),
+                "a later successful write must restore target availability");
+
+        // A failed destination bank does not change the committed source set.
+        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, targetOneWritten),
+                "failed destination bank must preserve committed targets");
+        assertTrue(PackPostTargets.bankAfterFinish(0, 1, false) == 0,
+                "runtime failure must not swap the destination bank");
+        assertTrue(PackPostTargets.bankAfterFinish(0, 1, true) == 1,
+                "successful finish must commit the destination bank");
+        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
+        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
+                "final fallback must resolve through target 0 when target 3 is unavailable");
+
+        System.out.println("[chimera] post target availability harness: PASS");
+    }
+
+    private static void assertTrue(boolean condition, String message) {
+        if (!condition) {
+            throw new AssertionError(message);
+        }
+    }
+
+}

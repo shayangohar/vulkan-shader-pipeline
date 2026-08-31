@@ -16,6 +16,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
+import java.nio.file.Path;
 
 /**
  * Builds GraphicsPipelines from pack programs, mirroring
@@ -43,9 +45,18 @@ public final class PackPipelines {
             String name,
             GraphicsPipeline pipeline,
             int[] samplerSlots,
+            List<String> samplerNames,
+            List<Integer> requiredColorInputs,
             String convertedFragment,
             PostTargetPlan targetPlan
-    ) {}
+    ) {
+        public PackPost {
+            samplerNames = samplerNames == null ? List.of() : List.copyOf(samplerNames);
+            requiredColorInputs = requiredColorInputs == null
+                    ? List.of()
+                    : requiredColorInputs.stream().distinct().sorted().toList();
+        }
+    }
 
     /** A successfully built pack geometry (terrain) pipeline plus its sampler slots. */
     public record PackTerrain(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
@@ -63,16 +74,30 @@ public final class PackPipelines {
             String fixedVertexSource,
             Map<Integer, Integer> targetFormats
     ) {
+        return buildPost(program, fixedVertexSource, targetFormats, Map.of());
+    }
+
+    /** Builds a post pipeline with the same parsed pack constants used by probing. */
+    public static PackPost buildPost(
+            PackProgram program,
+            String fixedVertexSource,
+            Map<Integer, Integer> targetFormats,
+            Map<String, String> packConstants
+    ) {
         try {
+            String fragmentSource = program.executableFragmentSource();
+            Path sourcePath = program.preparedFragmentSource() == null
+                    ? program.fragmentPath() : null;
             PostTargetPlan targetPlan = PostTargetPlan.parse(
-                    program.name(), program.fragmentSource(), targetFormats).plan();
-            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planPost(
-                    program.fragmentSource(), targetPlan);
+                    program.name(), fragmentSource, targetFormats).plan();
+            UniformRegistry.ProgramInterface interfacePlan = program.preparedFragmentSource() == null
+                    ? UniformRegistry.planPost(fragmentSource, targetPlan)
+                    : UniformRegistry.planPreparedPost(fragmentSource, targetPlan);
             if (!interfacePlan.executable()) {
                 throw new IllegalStateException("pack interface is unsupported: " + interfacePlan.deviations());
             }
             String converted = LegacyGlslConverter.convertPostFragment(
-                    program.fragmentSource(), program.fragmentPath(), interfacePlan, targetPlan);
+                    fragmentSource, sourcePath, interfacePlan, targetPlan, packConstants);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -80,6 +105,10 @@ public final class PackPipelines {
             int[] slots = interfacePlan.samplers().stream()
                     .mapToInt(UniformRegistry.SamplerBinding::slot)
                     .toArray();
+            List<String> samplerNames = interfacePlan.samplers().stream()
+                    .map(UniformRegistry.SamplerBinding::name)
+                    .toList();
+            List<Integer> requiredColorInputs = colorInputTargets(samplerNames);
             JsonObject json = new JsonObject();
             json.addProperty("vertex", "chimera_composite/chimera_composite");
             json.addProperty("fragment", "pack/" + program.name());
@@ -98,7 +127,8 @@ public final class PackPipelines {
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
 
-            return new PackPost(program.name(), pipeline, slots, converted, targetPlan);
+            return new PackPost(program.name(), pipeline, slots, samplerNames,
+                    requiredColorInputs, converted, targetPlan);
         } catch (Exception e) {
             LOGGER.warn("[chimera] pack {}: build failed: {}", program.name(), e.getMessage());
             return null;
@@ -122,8 +152,12 @@ public final class PackPipelines {
             UniformRegistry.Stage stage
     ) {
         try {
-            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
-                    program.fragmentSource(), stage);
+            String fragmentSource = program.executableFragmentSource();
+            String vertexSourceText = program.executableVertexSource();
+            boolean prepared = program.preparedFragmentSource() != null;
+            UniformRegistry.ProgramInterface interfacePlan = prepared
+                    ? UniformRegistry.planPrepared(fragmentSource, stage)
+                    : UniformRegistry.plan(fragmentSource, stage);
             if (!interfacePlan.executable()) {
                 throw new IllegalStateException("pack terrain interface is unsupported: "
                         + interfacePlan.deviations());
@@ -134,10 +168,10 @@ public final class PackPipelines {
             int[] slots = interleaveLightmap(declaredSlots);
             String vertexSource = fixedVertexSource;
             LegacyGlslConverter.TerrainVaryingLayout terrainLayout = null;
-            if (program.vertexSource() != null) {
+            if (vertexSourceText != null) {
                 LegacyGlslConverter.TerrainVertexConversion vertex =
                         LegacyGlslConverter.convertTerrainVertex(
-                                program.vertexSource(), program.vertexPath(), program.fragmentSource());
+                                vertexSourceText, prepared ? null : program.vertexPath(), fragmentSource);
                 if (vertex == null) {
                     throw new IllegalStateException("legacy terrain vertex bridge rejected the source");
                 }
@@ -145,7 +179,7 @@ public final class PackPipelines {
                 terrainLayout = vertex.layout();
             }
             String converted = LegacyGlslConverter.convertFragment(
-                    program.fragmentSource(), program.fragmentPath(), true, slots, terrainLayout, interfacePlan);
+                    fragmentSource, prepared ? null : program.fragmentPath(), true, slots, terrainLayout, interfacePlan);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -203,17 +237,21 @@ public final class PackPipelines {
     /** Builds the strict legacy shadow program on the extended terrain inputs. */
     public static PackShadow buildShadow(PackProgram program) {
         try {
-            if (program.vertexSource() == null) {
+            if (program.executableVertexSource() == null) {
                 throw new IllegalStateException("shadow program requires a vertex source");
             }
-            UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
-                    program.fragmentSource(), UniformRegistry.Stage.SHADOW);
+            String fragmentSource = program.executableFragmentSource();
+            String vertexSourceText = program.executableVertexSource();
+            boolean prepared = program.preparedFragmentSource() != null;
+            UniformRegistry.ProgramInterface interfacePlan = prepared
+                    ? UniformRegistry.planPrepared(fragmentSource, UniformRegistry.Stage.SHADOW)
+                    : UniformRegistry.plan(fragmentSource, UniformRegistry.Stage.SHADOW);
             if (!interfacePlan.executable()) {
                 throw new IllegalStateException("pack shadow interface is unsupported: " + interfacePlan.deviations());
             }
             LegacyGlslConverter.TerrainVertexConversion vertex =
                     LegacyGlslConverter.convertShadowVertex(
-                            program.vertexSource(), program.vertexPath(), program.fragmentSource());
+                        vertexSourceText, prepared ? null : program.vertexPath(), fragmentSource);
             if (vertex == null) {
                 throw new IllegalStateException("legacy shadow vertex bridge rejected the source");
             }
@@ -223,7 +261,7 @@ public final class PackPipelines {
                     .toArray();
             int[] slots = shadowSamplerSlots(declaredSlots);
             String converted = LegacyGlslConverter.convertFragment(
-                    program.fragmentSource(), program.fragmentPath(), true, slots,
+                    fragmentSource, prepared ? null : program.fragmentPath(), true, slots,
                     vertex.layout(), interfacePlan);
             if (converted == null) {
                 throw new IllegalStateException("legacy shadow fragment conversion failed");
@@ -295,6 +333,25 @@ public final class PackPipelines {
     /** Return an isolated copy so pack sampler and fragment fields cannot alter the host config. */
     static JsonObject shadowPipelineJson() {
         return ChimeraShaderLoader.loadJson("chimera_shadow.json").deepCopy();
+    }
+
+    /** Derives the logical post color inputs once from the shared interface plan. */
+    static List<Integer> colorInputTargets(List<String> samplerNames) {
+        TreeSet<Integer> targets = new TreeSet<>();
+        for (String sampler : samplerNames) {
+            if (!sampler.startsWith("colortex")) {
+                continue;
+            }
+            try {
+                int target = Integer.parseInt(sampler.substring("colortex".length()));
+                if (target >= 0 && target <= PostTargetPlan.MAX_TARGET) {
+                    targets.add(target);
+                }
+            } catch (NumberFormatException ignored) {
+                // The interface plan rejects malformed sampler names.
+            }
+        }
+        return List.copyOf(targets);
     }
 
     private static int[] prepend(int value, int[] values) {

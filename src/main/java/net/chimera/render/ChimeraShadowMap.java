@@ -55,6 +55,8 @@ public class ChimeraShadowMap {
     private float shadowDistance = PackConfig.DEFAULT_SHADOW_DISTANCE;
 
     private boolean initialized;
+    /** True only until the newly created images receive their first read layout. */
+    private boolean needsInitialSamplingLayout;
 
     public void init() {
         init(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, PackConfig.DEFAULT_SHADOW_DISTANCE);
@@ -79,6 +81,7 @@ public class ChimeraShadowMap {
         this.lightMVPBuffer = new MappedBuffer(64);
         Uniforms.mat4f_uniformMap.put("LightMVP", () -> this.lightMVPBuffer);
 
+        this.needsInitialSamplingLayout = true;
         this.initialized = true;
     }
 
@@ -174,6 +177,14 @@ public class ChimeraShadowMap {
         return this.initialized;
     }
 
+    public boolean needsInitialSamplingLayout() {
+        return this.needsInitialSamplingLayout;
+    }
+
+    public void markInitialSamplingLayoutReady() {
+        this.needsInitialSamplingLayout = false;
+    }
+
     public Framebuffer getShadowFramebuffer() {
         return this.shadowFramebuffer;
     }
@@ -197,6 +208,7 @@ public class ChimeraShadowMap {
         this.shadowFramebuffer = null;
         this.shadowRenderPass = null;
         this.shadowPipeline = null;
+        this.needsInitialSamplingLayout = false;
         this.initialized = false;
     }
 }

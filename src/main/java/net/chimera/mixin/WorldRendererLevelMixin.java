@@ -40,7 +40,7 @@ public abstract class WorldRendererLevelMixin {
         if (level == null) {
             ChimeraRenderer.onLevelUnloaded();
         } else {
-            ChimeraRenderer.onLevelLoaded();
+            ChimeraRenderer.onLevelLoaded(level);
         }
     }
 }

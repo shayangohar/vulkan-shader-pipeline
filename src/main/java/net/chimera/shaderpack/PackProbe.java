@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -20,19 +21,11 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
-/**
- * Read-only inventory of the part of an OptiFine/Iris pack that Chimera can
- * currently see. It never compiles or changes source files.
- */
+/** Read-only, deterministic inventory of the Chimera pack boundary. */
 public final class PackProbe {
     private static final Set<String> STAGE_EXTENSIONS = Set.of(
             ".vsh", ".fsh", ".gsh", ".tcs", ".tes", ".csh");
-    private static final Pattern SAMPLER_DECL = Pattern.compile(
-            "\\buniform\\s+(?:sampler\\w*|isampler\\w*|usampler\\w*)\\s+([A-Za-z_]\\w*)\\s*;");
-    private static final Pattern UNIFORM_DECL = Pattern.compile(
-            "\\buniform\\s+[A-Za-z_]\\w*\\s+([A-Za-z_]\\w*)\\s*;");
     private static final Pattern VERSION = Pattern.compile(
             "(?m)^\\s*#version\\s+(\\d+)");
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
@@ -50,13 +43,18 @@ public final class PackProbe {
 
     private PackProbe() {}
 
-    public static ConformanceReport probe(Path packDir) {
-        String packName = packDir.getFileName() == null
-                ? "pack"
-                : packDir.getFileName().toString();
-        Path shadersDir = packDir.resolve("shaders");
+    public static ConformanceReport probe(Path packPath) {
+        try (PackSource.LoadResult loaded = PackSource.loadResult(packPath)) {
+            return probe(packPath, loaded);
+        }
+    }
+
+    /** Probes an already loaded source so runtime and static reports share one extraction. */
+    public static ConformanceReport probe(Path packPath, PackSource.LoadResult loaded) {
+        String packName = logicalPackName(packPath);
+        Path shadersDir = loaded.shadersDir();
         Map<String, String> metadataHashes = new TreeMap<>();
-        List<String> globalDeviations = new ArrayList<>();
+        List<String> globalDeviations = new ArrayList<>(loaded.deviations());
         List<String> settings = new ArrayList<>();
         List<String> passInventory = new ArrayList<>();
         Set<String> shadowPropertySettings = new TreeSet<>();
@@ -77,42 +75,23 @@ public final class PackProbe {
 
         if (!Files.isDirectory(shadersDir)) {
             globalDeviations.add("NO_SHADERS_DIRECTORY");
-            return new ConformanceReport(packName, passListPresent, passInventory,
-                    metadataHashes, settings, globalDeviations);
+            return report(packName, passListPresent, passInventory, metadataHashes,
+                    settings, globalDeviations, loaded);
         }
 
         Map<String, Inventory> inventories = new TreeMap<>();
-        try (Stream<Path> stream = Files.walk(shadersDir)) {
-            List<Path> files = stream
-                    .filter(Files::isRegularFile)
-                    .filter(PackProbe::isStageFile)
-                    .sorted(Comparator.comparing(path -> relativePath(shadersDir, path)))
-                    .toList();
-            for (Path file : files) {
-                String relative = relativePath(shadersDir, file);
-                String fileName = file.getFileName().toString();
-                String base = fileName.substring(0, fileName.lastIndexOf('.'));
-                Inventory inventory = inventories.computeIfAbsent(base, ignored -> new Inventory(base));
-                String source;
-                byte[] bytes;
-                try {
-                    bytes = Files.readAllBytes(file);
-                    source = new String(bytes, StandardCharsets.UTF_8);
-                } catch (IOException e) {
-                    inventory.deviations.add("SOURCE_READ_FAILED");
-                    continue;
-                }
-                String extension = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
-                inventory.stages.add(stageName(extension));
-                inventory.sourceHashes.put(relative, ConformanceReport.sha256(bytes));
-                inventory.sources.put(stageName(extension), source);
-                if (relative.indexOf('/') >= 0) {
-                    inventory.deviations.add("NESTED_SOURCE_NOT_LOADED");
-                }
+        for (PackProgram program : loaded.programs()) {
+            Inventory inventory = inventories.computeIfAbsent(program.name(), Inventory::new);
+            inventory.variantFolder = program.variantFolder();
+            addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
+                    program.preparedFragmentSource(), shadersDir);
+            if (program.vertexSource() != null) {
+                addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
+                        program.preparedVertexSource(), shadersDir);
             }
-        } catch (IOException e) {
-            globalDeviations.add("SOURCE_SCAN_FAILED");
+            inventory.deviations.addAll(program.preparationDeviations());
         }
+        scanSelectedStageFiles(loaded, inventories);
 
         if (!passListPresent) {
             passInventory.addAll(inventories.keySet());
@@ -132,59 +111,148 @@ public final class PackProbe {
             }
         }
 
-        PackConfig.PackConfigData packConfig = PackConfig.parse(
-                PackSource.loadResult(packDir).programs(), shadersDir);
+        PackConfig.PackConfigData packConfig = PackConfig.parse(loaded.programs(), shadersDir);
         globalDeviations.addAll(packConfig.deviations());
         applyShadowPropertyReporting(inventories, shadowPropertySettings,
                 packConfig.shadowSettings(), globalDeviations);
 
-        ConformanceReport report = new ConformanceReport(packName, passListPresent,
-                passInventory, metadataHashes, settings, globalDeviations);
+        ConformanceReport report = report(packName, passListPresent, passInventory, metadataHashes,
+                settings, globalDeviations, loaded);
         for (Inventory inventory : inventories.values()) {
-            report.addProgram(toProgram(inventory, packConfig.deviations(), packConfig.colortexFormats()));
+            report.addProgram(toProgram(inventory, packConfig));
         }
         return report;
     }
 
+    private static ConformanceReport report(
+            String packName,
+            boolean passListPresent,
+            Collection<String> passInventory,
+            Map<String, String> metadataHashes,
+            Collection<String> settings,
+            Collection<String> deviations,
+            PackSource.LoadResult loaded
+    ) {
+        if (loaded.selectedVariantFolder().isBlank()) {
+            return new ConformanceReport(packName, passListPresent, passInventory,
+                    metadataHashes, settings, deviations);
+        }
+        return new ConformanceReport(packName, passListPresent, passInventory,
+                metadataHashes, settings, deviations,
+                loaded.selectedDimension(), loaded.selectedVariantFolder());
+    }
+
+    private static void scanSelectedStageFiles(
+            PackSource.LoadResult loaded,
+            Map<String, Inventory> inventories
+    ) {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(loaded.selectedSourceDir())) {
+            List<Path> files = new ArrayList<>();
+            for (Path path : stream) {
+                if (Files.isRegularFile(path) && isStageFile(path)) {
+                    files.add(path);
+                }
+            }
+            files.sort(Comparator.comparing(path -> relativePath(loaded.shadersDir(), path)));
+            for (Path file : files) {
+                String fileName = file.getFileName().toString();
+                String base = fileName.substring(0, fileName.lastIndexOf('.'));
+                Inventory inventory = inventories.computeIfAbsent(base, Inventory::new);
+                String extension = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
+                String stage = stageName(extension);
+                if (inventory.sourcePaths.containsKey(stage)) {
+                    continue;
+                }
+                try {
+                    String source = Files.readString(file, StandardCharsets.UTF_8);
+                    addSource(inventory, stage, file, source, null, loaded.shadersDir());
+                } catch (IOException e) {
+                    inventory.deviations.add("SOURCE_READ_FAILED");
+                }
+            }
+        } catch (IOException ignored) {
+            // The load result already carries the path failure. The report remains deterministic.
+        }
+    }
+
+    private static void addSource(
+            Inventory inventory,
+            String stage,
+            Path path,
+            String source,
+            String prepared,
+            Path root
+    ) {
+        if (path == null || source == null) {
+            return;
+        }
+        String relative = relativePath(root, path);
+        inventory.stages.add(stage);
+        inventory.sourceHashes.put(relative, ConformanceReport.sha256(
+                source.getBytes(StandardCharsets.UTF_8)));
+        inventory.sources.putIfAbsent(stage, source);
+        if (prepared != null) {
+            inventory.preparedSources.putIfAbsent(stage, prepared);
+        }
+        inventory.sourcePaths.putIfAbsent(stage, path);
+    }
+
+    public static String logicalPackName(Path packPath) {
+        if (packPath == null || packPath.getFileName() == null) {
+            return "pack";
+        }
+        String name = packPath.getFileName().toString();
+        return name.toLowerCase().endsWith(".zip")
+                ? name.substring(0, name.length() - 4)
+                : name;
+    }
+
     private static ConformanceReport.ProgramReport toProgram(
             Inventory inventory,
-            Collection<String> configDeviations,
-            Map<Integer, Integer> targetFormats
+            PackConfig.PackConfigData packConfig
     ) {
+        boolean relaxed = !inventory.variantFolder.isBlank();
         StringBuilder combinedSource = new StringBuilder();
-        inventory.sources.entrySet().stream()
+        Map<String, String> sourceView = relaxed && !inventory.preparedSources.isEmpty()
+                ? inventory.preparedSources : inventory.sources;
+        sourceView.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
         String source = combinedSource.toString();
-        String fragment = inventory.sources.getOrDefault("fragment", source);
+        String fragment = sourceView.getOrDefault("fragment", source);
         String stripped = stripComments(source);
-        boolean modern = usesModernGlsl(stripped);
-        List<String> samplers = scanSamplers(stripped);
-        List<String> uniforms = scanUniforms(stripped);
         boolean executablePostName = PostTargetPlan.isPostProgramName(inventory.name);
+        boolean modern = usesUnsupportedModernGlsl(stripped, executablePostName);
+        List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
+        // The report has historically exposed all uniform declarations,
+        // including samplers. Keep that public inventory stable while the
+        // shared interface plan continues to separate samplers for bindings.
+        TreeSet<String> uniformNames = new TreeSet<>(samplers);
+        uniformNames.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
+                .map(UniformRegistry.UniformDeclaration::name).toList());
+        List<String> uniforms = List.copyOf(uniformNames);
         PostTargetPlan.ParseResult targetResult = executablePostName
-                ? PostTargetPlan.parse(inventory.name, fragment, targetFormats)
+                ? PostTargetPlan.parse(inventory.name, fragment, packConfig.colortexFormats())
                 : null;
         List<Integer> targets = targetResult != null
                 ? targetResult.plan().targetSlots()
                 : scanTargets(fragment);
         TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
-        for (String deviation : configDeviations) {
-            if (deviation.startsWith("POST_TARGET_")) {
-                deviations.add(deviation);
-            }
-        }
+        deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
 
         String name = inventory.name;
         String family = familyOf(name);
+        boolean hasFragment = inventory.stages.contains("fragment");
         UniformRegistry.Stage interfaceStage = name.equals("gbuffers_terrain")
                 ? UniformRegistry.Stage.GEOMETRY
                 : name.equals("shadow") ? UniformRegistry.Stage.SHADOW
                 : name.equals("gbuffers_water") ? UniformRegistry.Stage.TRANSLUCENT
                 : UniformRegistry.Stage.POST;
         UniformRegistry.ProgramInterface interfacePlan = executablePostName
-                ? UniformRegistry.planPost(fragment, targetResult.plan())
-                : UniformRegistry.plan(fragment, interfaceStage);
+                ? (relaxed ? UniformRegistry.planPreparedPost(fragment, targetResult.plan())
+                : UniformRegistry.planPost(fragment, targetResult.plan()))
+                : (relaxed ? UniformRegistry.planPrepared(fragment, interfaceStage)
+                : UniformRegistry.plan(fragment, interfaceStage));
         deviations.addAll(interfacePlan.deviations());
         if (targetResult != null) {
             deviations.addAll(targetResult.deviations());
@@ -196,28 +264,40 @@ public final class PackProbe {
                 deviations.add("MRT_POST_BRIDGE");
             }
         }
-        boolean executableName = name.equals("gbuffers_terrain")
-                || executablePostName
-                || name.equals("shadow")
-                || name.equals("gbuffers_water");
-        boolean hasFragment = inventory.stages.contains("fragment");
 
+        if (executablePostName && hasFragment && !modern && targetResult != null
+                && targetResult.executable() && interfacePlan.executable()) {
+            Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
+                    ? null : inventory.sourcePaths.get("fragment");
+            String converted = LegacyGlslConverter.convertPostFragment(
+                    fragment, sourcePath, interfacePlan, targetResult.plan(),
+                    packConfig.shaderConstants());
+            if (converted == null) {
+                deviations.addAll(LegacyGlslConverter.postVaryingDeviations(fragment));
+                deviations.add("POST_CONVERTER_UNSUPPORTED");
+            }
+        }
+
+        if (executablePostName) {
+            addPackConstantDeviations(fragment, packConfig, deviations);
+        }
+
+        boolean executableName = name.equals("gbuffers_terrain")
+                || executablePostName || name.equals("shadow") || name.equals("gbuffers_water");
+        String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
-            String vertex = inventory.sources.get("vertex");
             if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
                 deviations.add("LEGACY_TERRAIN_VERTEX_BRIDGE");
             } else {
                 deviations.add("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
             }
         } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
-            String vertex = inventory.sources.get("vertex");
             if (LegacyGlslConverter.supportsShadowVertex(vertex, fragment)) {
                 deviations.add("SHADOW_VERTEX_BRIDGE");
             } else {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
             }
         } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
-            String vertex = inventory.sources.get("vertex");
             if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
                 deviations.add("TRANSLUCENT_VERTEX_BRIDGE");
             } else {
@@ -234,10 +314,8 @@ public final class PackProbe {
             deviations.add("TRANSLUCENT_STATE_FIXED_TO_HOST");
         }
         if (inventory.stages.stream().anyMatch(stage ->
-                stage.equals("geometry")
-                        || stage.equals("tess_control")
-                        || stage.equals("tess_evaluation")
-                        || stage.equals("compute"))) {
+                stage.equals("geometry") || stage.equals("tess_control")
+                        || stage.equals("tess_evaluation") || stage.equals("compute"))) {
             deviations.add("UNSUPPORTED_PACK_STAGE");
         }
         if (modern) {
@@ -252,16 +330,23 @@ public final class PackProbe {
                 : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
                 : UniformRegistry.NAME_TO_SLOT;
-        for (String sampler : samplers) {
-            if (!knownSamplers.containsKey(sampler)) {
-                deviations.add(name.equals("gbuffers_water")
-                        ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
-                        ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
-                        : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
-                        : name.equals("shadow")
-                        ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
-                        : "SAMPLER_NOT_MAPPED:" + sampler);
+        if (!relaxed) {
+            for (String sampler : samplers) {
+                if (!knownSamplers.containsKey(sampler)) {
+                    deviations.add(name.equals("gbuffers_water")
+                            ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
+                            ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
+                            : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
+                            : name.equals("shadow")
+                            ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
+                            : "SAMPLER_NOT_MAPPED:" + sampler);
+                }
             }
+        }
+        if (samplers.contains("noisetex")) {
+            // Runtime performs the exact file check. The report records the
+            // standard resource requirement without embedding a path.
+            deviations.add("NOISETEX_PACK_RESOURCE");
         }
         if (targetResult == null && targets.size() > 1) {
             deviations.add("MRT_NOT_SUPPORTED");
@@ -284,18 +369,10 @@ public final class PackProbe {
         }
 
         return new ConformanceReport.ProgramReport(
-                name,
-                family,
-                modern ? "MODERN_GLSL" : "LEGACY_GLSL",
-                sorted(inventory.stages),
-                inventory.sourceHashes,
-                samplers,
-                uniforms,
-                targets,
-                support,
-                ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
-                List.copyOf(deviations)
-        );
+                name, family, modern ? "MODERN_GLSL" : "LEGACY_GLSL",
+                sorted(inventory.stages), inventory.sourceHashes, samplers, uniforms,
+                targets, support, ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
+                List.copyOf(deviations));
     }
 
     private static boolean hasSevereDeviation(Collection<String> deviations) {
@@ -320,47 +397,96 @@ public final class PackProbe {
                     || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_CONFLICT:")
                     || deviation.startsWith("SAMPLER_NOT_MAPPED:")
+                    || deviation.startsWith("SAMPLER_SLOT_CONFLICT:")
                     || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
                     || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
                     || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
-                    || deviation.equals("NESTED_SOURCE_NOT_LOADED")) {
+                    || deviation.startsWith("SOURCE_INCLUDE_")
+                    || deviation.equals("POST_CONVERTER_UNSUPPORTED")
+                    || deviation.startsWith("POST_VARYING_UNSUPPORTED:")
+                    || isBlockingPreprocessorDeviation(deviation)) {
                 return true;
             }
         }
         return false;
     }
 
-    private static boolean usesModernGlsl(String source) {
+    private static boolean isBlockingPreprocessorDeviation(String deviation) {
+        return deviation.startsWith("PREPROCESSOR_")
+                && !deviation.startsWith("PREPROCESSOR_MACRO_REDEFINED:");
+    }
+
+    private static void addPackConstantDeviations(
+            String source,
+            PackConfig.PackConfigData packConfig,
+            Collection<String> deviations
+    ) {
+        String stripped = stripComments(source);
+        for (String name : packConfig.shaderConstants().keySet()) {
+            if (!Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(stripped).find()) {
+                continue;
+            }
+            if (packConfig.shadowSettings().deviations().contains(
+                    "SHADOW_SETTING_DEFAULTED:" + name)) {
+                deviations.add("PACK_CONSTANT_DEFAULTED:" + name);
+            } else {
+                deviations.add("PACK_CONSTANT_INJECTED:" + name);
+            }
+        }
+    }
+
+    private static boolean usesUnsupportedModernGlsl(String source, boolean post) {
         Matcher version = VERSION.matcher(source);
+        int number = 120;
         if (version.find()) {
             try {
-                if (Integer.parseInt(version.group(1)) >= 330) {
-                    return true;
-                }
+                number = Integer.parseInt(version.group(1));
             } catch (NumberFormatException ignored) {
                 return true;
             }
         }
-        return source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective)\\b.*");
+        if (number >= 330 || number < 120) {
+            return true;
+        }
+        if (number == 130 && post) {
+            return source.matches("(?s).*\\b(?:layout|flat|buffer|shared|subroutine)\\b.*");
+        }
+        return source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective|buffer)\\b.*");
     }
 
-    private static List<String> scanSamplers(String source) {
-        TreeSet<String> result = new TreeSet<>();
-        Matcher matcher = SAMPLER_DECL.matcher(source);
-        while (matcher.find()) {
-            result.add(matcher.group(1));
+    private static List<String> relevantTargetDeviations(
+            Collection<String> configDeviations,
+            PostTargetPlan.ParseResult targetResult
+    ) {
+        if (targetResult == null) {
+            return List.of();
         }
-        return List.copyOf(result);
+        List<String> result = new ArrayList<>();
+        for (String deviation : configDeviations) {
+            if (deviation.startsWith("POST_TARGET_INDEX_UNSUPPORTED:")
+                    || deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")
+                    || deviation.startsWith("POST_TARGET_FORMAT_APPROXIMATED:")) {
+                Integer target = targetIndex(deviation);
+                if (target != null && targetResult.plan().targetSlots().contains(target)) {
+                    result.add(deviation);
+                }
+            }
+        }
+        return result;
     }
 
-    private static List<String> scanUniforms(String source) {
-        TreeSet<String> result = new TreeSet<>();
-        Matcher matcher = UNIFORM_DECL.matcher(source);
-        while (matcher.find()) {
-            result.add(matcher.group(1));
+    private static Integer targetIndex(String deviation) {
+        Matcher index = Pattern.compile("POST_TARGET_INDEX_UNSUPPORTED:(\\d+)").matcher(deviation);
+        if (index.matches()) {
+            return Integer.parseInt(index.group(1));
         }
-        return List.copyOf(result);
+        Matcher format = Pattern.compile("POST_TARGET_FORMAT_(?:UNSUPPORTED|APPROXIMATED):colortex(\\d+)")
+                .matcher(deviation);
+        if (format.find()) {
+            return Integer.parseInt(format.group(1));
+        }
+        return null;
     }
 
     private static List<Integer> scanTargets(String source) {
@@ -460,15 +586,13 @@ public final class PackProbe {
     ) {
         Inventory shadow = inventories.get("shadow");
         boolean executablePair = shadow != null
-                && shadow.stages.contains("vertex")
-                && shadow.stages.contains("fragment");
+                && shadow.stages.contains("vertex") && shadow.stages.contains("fragment");
         if (!executablePair) {
             for (String key : shadowPropertySettings) {
                 deviations.add("SHADOW_SETTING_LOGGED_ONLY:" + key);
             }
             return;
         }
-
         for (String key : shadowSettings.rawValues().keySet()) {
             if (key.equals("shadowMapResolution") || key.equals("shadowDistance")) {
                 if (shadowSettings.deviations().contains("SHADOW_SETTING_DEFAULTED:" + key)) {
@@ -483,11 +607,7 @@ public final class PackProbe {
     }
 
     private static void readMetadata(
-            Path file,
-            String name,
-            Map<String, String> hashes,
-            List<String> deviations
-    ) {
+            Path file, String name, Map<String, String> hashes, List<String> deviations) {
         try {
             hashes.put(name, ConformanceReport.sha256(Files.readAllBytes(file)));
         } catch (IOException e) {
@@ -514,40 +634,23 @@ public final class PackProbe {
     }
 
     private static String familyOf(String name) {
-        if (name.equals("gbuffers_water")) {
-            return "gbuffers_water";
-        }
-        if (name.startsWith("gbuffers_")) {
-            return "gbuffers";
-        }
-        if (name.startsWith("composite")) {
-            return "composite";
-        }
-        if (name.equals("final")) {
-            return "final";
-        }
-        if (name.startsWith("shadow")) {
-            return "shadow";
-        }
-        if (name.startsWith("deferred")) {
-            return "deferred";
-        }
-        if (name.startsWith("prepare")) {
-            return "prepare";
-        }
-        if (name.startsWith("begin") || name.startsWith("end")) {
-            return "setup";
-        }
+        if (name.equals("gbuffers_water")) return "gbuffers_water";
+        if (name.startsWith("gbuffers_")) return "gbuffers";
+        if (name.startsWith("composite")) return "composite";
+        if (name.equals("final")) return "final";
+        if (name.startsWith("shadow")) return "shadow";
+        if (name.startsWith("deferred")) return "deferred";
+        if (name.startsWith("prepare")) return "prepare";
+        if (name.startsWith("begin") || name.startsWith("end")) return "setup";
         return "other";
     }
 
     private static String relativePath(Path root, Path file) {
-        return root.relativize(file).toString().replace('\\', '/');
+        return root.relativize(file.normalize()).toString().replace('\\', '/');
     }
 
     private static String stripComments(String source) {
-        return source
-                .replaceAll("(?s)/\\*.*?\\*/", " ")
+        return source.replaceAll("(?s)/\\*.*?\\*/", " ")
                 .replaceAll("(?m)//.*$", " ");
     }
 
@@ -560,7 +663,10 @@ public final class PackProbe {
         private final Set<String> stages = new TreeSet<>();
         private final Map<String, String> sourceHashes = new TreeMap<>();
         private final Map<String, String> sources = new HashMap<>();
+        private final Map<String, String> preparedSources = new HashMap<>();
+        private final Map<String, Path> sourcePaths = new HashMap<>();
         private final Set<String> deviations = new HashSet<>();
+        private String variantFolder = "";
 
         private Inventory(String name) {
             this.name = name;

@@ -51,8 +51,12 @@ public final class PackPostTargets {
 
     private final VulkanImage[][] images = new VulkanImage[2][TARGET_COUNT];
     private final boolean[] used = new boolean[TARGET_COUNT];
+    private final boolean[] initialized = new boolean[TARGET_COUNT];
+    private final boolean[] pendingOutputs = new boolean[TARGET_COUNT];
     private final int[] targetFormats = new int[TARGET_COUNT];
     private final VulkanImage[] sourceImages = new VulkanImage[TARGET_COUNT];
+    /** The current frame's immutable identity source for logical target 0. */
+    private VulkanImage hdrIdentitySource;
 
     private Framebuffer pipelineFramebuffer;
     private RenderPass pipelineRenderPass;
@@ -89,9 +93,17 @@ public final class PackPostTargets {
                     this.targetFormats[target] = formats.get(i);
                 }
             }
-            for (int slot : post.samplerSlots()) {
-                if (slot >= 0 && slot < TARGET_COUNT) {
-                    this.used[slot] = true;
+            for (String sampler : post.samplerNames()) {
+                if (!sampler.startsWith("colortex")) {
+                    continue;
+                }
+                try {
+                    int target = Integer.parseInt(sampler.substring("colortex".length()));
+                    if (target >= 0 && target < TARGET_COUNT) {
+                        this.used[target] = true;
+                    }
+                } catch (NumberFormatException ignored) {
+                    // The interface plan rejects malformed sampler names.
                 }
             }
         }
@@ -140,6 +152,9 @@ public final class PackPostTargets {
         }
         this.activeBank = 0;
         this.destinationBank = 1;
+        Arrays.fill(this.initialized, false);
+        Arrays.fill(this.pendingOutputs, false);
+        this.hdrIdentitySource = hdrColor;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkClearColorValue clear = VkClearColorValue.calloc(stack);
             clear.float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
@@ -164,8 +179,26 @@ public final class PackPostTargets {
         }
         Arrays.fill(this.sourceImages, null);
         this.sourceImages[0] = hdrColor;
-        for (int target = 1; target < TARGET_COUNT; target++) {
-            this.sourceImages[target] = this.images[this.activeBank][target];
+    }
+
+    /**
+     * Invalidates logical pack ownership for the supplied outputs. Physical
+     * images are deliberately left untouched so bank preservation and cleanup
+     * remain unchanged. Target 0 immediately returns to the HDR identity
+     * source; auxiliary targets remain unavailable until a later successful
+     * finish writes them.
+     */
+    public void invalidateOutputs(List<Integer> targets) {
+        if (targets == null) {
+            return;
+        }
+        for (int target : targets) {
+            if (target < 0 || target >= TARGET_COUNT) {
+                continue;
+            }
+            this.pendingOutputs[target] = false;
+            this.initialized[target] = false;
+            this.sourceImages[target] = target == 0 ? this.hdrIdentitySource : null;
         }
     }
 
@@ -186,10 +219,12 @@ public final class PackPostTargets {
                 }
                 VulkanImage source = this.sourceImages[target];
                 VulkanImage destination = this.images[this.destinationBank][target];
-                if (source == null || destination == null) {
+                if (destination == null) {
                     throw new IllegalStateException("missing pack post target " + target);
                 }
-                copyImage(stack, commandBuffer, source, destination);
+                if (source != null) {
+                    copyImage(stack, commandBuffer, source, destination);
+                }
             }
             for (int target = 0; target < TARGET_COUNT; target++) {
                 VulkanImage destination = this.images[this.destinationBank][target];
@@ -200,6 +235,10 @@ public final class PackPostTargets {
             }
 
             List<Integer> targets = plan.targetSlots();
+            Arrays.fill(this.pendingOutputs, false);
+            for (int target : targets) {
+                this.pendingOutputs[target] = true;
+            }
             VkRenderingAttachmentInfo.Buffer attachments =
                     VkRenderingAttachmentInfo.calloc(targets.size(), stack);
             for (int i = 0; i < targets.size(); i++) {
@@ -246,8 +285,9 @@ public final class PackPostTargets {
         if (!this.rendering) {
             throw new IllegalStateException("pack post rendering is not active");
         }
-        vkCmdEndRenderingKHR(commandBuffer);
+        boolean committed = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            vkCmdEndRenderingKHR(commandBuffer);
             for (int target = 0; target < TARGET_COUNT; target++) {
                 VulkanImage destination = this.images[this.destinationBank][target];
                 if (destination != null) {
@@ -255,11 +295,20 @@ public final class PackPostTargets {
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 }
             }
+            committed = true;
         } finally {
-            this.activeBank = this.destinationBank;
-            for (int target = 0; target < TARGET_COUNT; target++) {
-                this.sourceImages[target] = this.images[this.activeBank][target];
+            this.activeBank = bankAfterFinish(this.activeBank, this.destinationBank, committed);
+            if (committed) {
+                for (int target = 0; target < TARGET_COUNT; target++) {
+                    if (this.pendingOutputs[target]) {
+                        this.initialized[target] = true;
+                        this.sourceImages[target] = this.images[this.activeBank][target];
+                    } else if (this.initialized[target]) {
+                        this.sourceImages[target] = this.images[this.activeBank][target];
+                    }
+                }
             }
+            Arrays.fill(this.pendingOutputs, false);
             this.rendering = false;
             MrtPipelineContext.end();
             Renderer.getInstance().setBoundRenderPass(null);
@@ -281,6 +330,7 @@ public final class PackPostTargets {
             }
         } finally {
             this.rendering = false;
+            Arrays.fill(this.pendingOutputs, false);
             MrtPipelineContext.end();
             Renderer.getInstance().setBoundRenderPass(null);
             Renderer.getInstance().setBoundFramebuffer(null);
@@ -291,11 +341,66 @@ public final class PackPostTargets {
         return this.sourceImages;
     }
 
+    /** True when every declared logical color input has a valid current image. */
+    public boolean areInputsAvailable(List<Integer> requiredTargets) {
+        if (requiredTargets == null) {
+            return true;
+        }
+        for (int target : requiredTargets) {
+            if (!isTargetAvailable(target)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public VulkanImage activeTarget(int target) {
         if (target < 0 || target >= TARGET_COUNT) {
             return null;
         }
-        return this.images[this.activeBank][target];
+        if (target == 0 && !this.initialized[0]) {
+            return this.sourceImages[0];
+        }
+        return this.initialized[target] ? this.images[this.activeBank][target] : null;
+    }
+
+    /** Pure target availability rule used by the deterministic harness. */
+    static boolean isTargetAvailable(int target, boolean hdrIdentity, boolean[] written) {
+        return written != null && target >= 0 && target < TARGET_COUNT && target < written.length
+                && (target == 0 ? hdrIdentity || written[target] : written[target]);
+    }
+
+    static boolean areTargetsAvailable(List<Integer> targets, boolean hdrIdentity, boolean[] written) {
+        if (targets == null) {
+            return true;
+        }
+        for (int target : targets) {
+            if (!isTargetAvailable(target, hdrIdentity, written)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Pure logical invalidation rule used by the deterministic harness. */
+    static void invalidateWrittenTargets(boolean[] written, List<Integer> targets) {
+        if (written == null || targets == null) {
+            return;
+        }
+        for (int target : targets) {
+            if (target >= 0 && target < TARGET_COUNT && target < written.length) {
+                written[target] = false;
+            }
+        }
+    }
+
+    /** Pure commit rule used to prove that failed stages cannot swap banks. */
+    static int bankAfterFinish(int activeBank, int destinationBank, boolean committed) {
+        return committed ? destinationBank : activeBank;
+    }
+
+    public boolean isRendering() {
+        return this.rendering;
     }
 
     public boolean isConfigured() {
@@ -323,7 +428,10 @@ public final class PackPostTargets {
             }
         }
         Arrays.fill(this.sourceImages, null);
+        this.hdrIdentitySource = null;
         Arrays.fill(this.used, false);
+        Arrays.fill(this.initialized, false);
+        Arrays.fill(this.pendingOutputs, false);
         this.configured = false;
         this.activeBank = 0;
         this.destinationBank = 1;
@@ -334,8 +442,11 @@ public final class PackPostTargets {
         int intermediateCount = 0;
         for (PackPipelines.PackPost post : posts) {
             PostTargetPlan plan = post.targetPlan();
-            if (plan == null || plan.isFinal()) {
+            if (plan == null) {
                 continue;
+            }
+            if (plan.isFinal()) {
+                return true;
             }
             intermediateCount++;
             if (plan.requiresMrt() || !post.name().equals("composite")) {
@@ -343,6 +454,15 @@ public final class PackPostTargets {
             }
         }
         return intermediateCount > 1;
+    }
+
+    private boolean isTargetAvailable(int target) {
+        if (target < 0 || target >= TARGET_COUNT) {
+            return false;
+        }
+        return target == 0
+                ? this.sourceImages[0] != null || this.initialized[0]
+                : this.initialized[target] && this.sourceImages[target] != null;
     }
 
     private static void copyImage(

@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.pass.MainPass;
@@ -22,6 +23,8 @@ public final class ChimeraRenderer {
     private static boolean installed;
     private static boolean screenMode;
     private static boolean screenOpen;
+    /** Keeps a normal Chimera install request alive across a safe rebuild. */
+    private static boolean resumeAfterVariant;
     private static MainPass hostPass;
     private static ChimeraMainPass chimeraPass;
 
@@ -83,6 +86,31 @@ public final class ChimeraRenderer {
         return installed;
     }
 
+    /** Applies pending pack work before VulkanMod begins a new main command buffer. */
+    public static void beforeMainCommandBuffer() {
+        if (!ready || chimeraPass == null) {
+            return;
+        }
+        if (chimeraPass.hasPendingPackVariant() && installed) {
+            Renderer.getInstance().setMainPass(hostPass);
+            ChimeraTerrainPipelines.disable();
+            installed = false;
+            resumeAfterVariant = true;
+            ChimeraMod.LOGGER.info("Pack variant transition handed to host");
+        }
+        if (!chimeraPass.applyPendingPackVariantAtFrameBoundary()) {
+            return;
+        }
+        boolean liveLevel = Minecraft.getInstance().level != null;
+        if ((resumeAfterVariant || (screenMode && liveLevel)) && !installed) {
+            if (install()) {
+                resumeAfterVariant = false;
+                screenMode = false;
+                ChimeraMod.LOGGER.info("Safe frame boundary - chimera resumed");
+            }
+        }
+    }
+
 
     /** Chimera's world segments may run while its pass owns the frame. */
     public static boolean segmentsActive() {
@@ -108,16 +136,20 @@ public final class ChimeraRenderer {
         return chimeraPass != null ? chimeraPass.currentMainColorTexture() : null;
     }
 
-    private static void install() {
+    private static boolean install() {
         if (!ready || installed) {
-            return;
+            return installed;
         }
 
-        chimeraPass.prepareForInstall();
+        if (!chimeraPass.prepareForInstall()) {
+            ChimeraMod.LOGGER.warn("Chimera install deferred; host main pass remains active");
+            return false;
+        }
         Renderer.getInstance().setMainPass(chimeraPass);
         ChimeraTerrainPipelines.enable();
         installed = true;
         ChimeraMod.LOGGER.info("chimera ACTIVE - HDR frame + terrain pipelines (F8 to toggle back)");
+        return true;
     }
 
     private static void uninstall() {
@@ -136,6 +168,7 @@ public final class ChimeraRenderer {
         VRenderSystem.enableBlend();
         VRenderSystem.colorMask(true, true, true, true);
         installed = false;
+        resumeAfterVariant = false;
         ChimeraMod.LOGGER.info("Reverted to host main pass + host terrain shaders");
     }
 
@@ -172,7 +205,26 @@ public final class ChimeraRenderer {
         // pass is never restored - every frame after runs on the host
         // renderer (no HDR, no shadows).
         installed = false;
+        resumeAfterVariant = false;
         screenMode = true;
+    }
+
+    /** Leaves the host renderer active after a failed Chimera variant rebuild. */
+    static void fallbackToHostRenderer() {
+        if (installed) {
+            Renderer.getInstance().endRenderPass();
+            Renderer.getInstance().setMainPass(hostPass);
+        }
+        ChimeraTerrainPipelines.disable();
+        VRenderSystem.enableDepthTest();
+        VRenderSystem.depthMask(true);
+        VRenderSystem.enableCull();
+        VRenderSystem.enableBlend();
+        VRenderSystem.colorMask(true, true, true, true);
+        installed = false;
+        screenMode = false;
+        resumeAfterVariant = false;
+        ChimeraMod.LOGGER.warn("Chimera variant fallback - host main pass restored");
     }
 
     public static void enterScreenMode() {
@@ -199,9 +251,7 @@ public final class ChimeraRenderer {
         if (!screenMode) {
             return;
         }
-        screenMode = false;
-        install();
-        ChimeraMod.LOGGER.info("Screen closed - chimera resumed");
+        ChimeraMod.LOGGER.info("Screen closed - chimera resume deferred to the next safe frame boundary");
     }
 
     /** Level went away mid-screen: host takes over until a live level returns. */
@@ -216,12 +266,18 @@ public final class ChimeraRenderer {
 
     /** Live level returned while a screen is still up: restore parity behind it. */
     public static void onLevelLoaded() {
+        onLevelLoaded(Minecraft.getInstance().level);
+    }
+
+    /** Re-selects the pack variant before applying the screen lifecycle state. */
+    public static void onLevelLoaded(ClientLevel level) {
+        if (chimeraPass != null && level != null) {
+            chimeraPass.onLevelChanged(level.dimension().identifier().toString());
+        }
         if (!screenOpen || !screenMode) {
             return;
         }
 
-        install();
-        screenMode = false;
-        ChimeraMod.LOGGER.info("Level loaded - chimera resumes behind screen");
+        ChimeraMod.LOGGER.info("Level loaded - chimera resume deferred to the next safe frame boundary");
     }
 }
