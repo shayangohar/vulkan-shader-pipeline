@@ -16,7 +16,18 @@
     "WorldRendererLevelMixin",
     "FluidRendererMixin",
     "QuadSorterMixin",
-    "GraphicsPipelineMrtMixin"
+    "GraphicsPipelineMrtMixin",
+    "ChimeraBufferBuilderMixin",
+    "ChimeraByteBufferBuilderAccessor",
+    "ChimeraEntityRenderDispatcherMixin",
+    "ChimeraModelFeatureRendererMixin",
+    "ChimeraModelFeatureStorageMixin",
+    "ChimeraModelSubmitMixin",
+    "ChimeraEntityVertexInputMixin",
+    "ChimeraRenderPipelineMixin",
+    "ChimeraRenderTypeMixin",
+    "ChimeraVkRenderPassMixin",
+    "ChimeraVkCommandEncoderMixin"
   ],
   "injectors": {
     "defaultRequire": 1

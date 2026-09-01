@@ -19,6 +19,9 @@ import java.util.Map;
 import java.util.TreeSet;
 import java.nio.file.Path;
 
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
+
 /**
  * Builds GraphicsPipelines from pack programs, mirroring
  * ChimeraPostPipelines.create / ChimeraTerrainPipelines.buildPipeline: a
@@ -63,6 +66,14 @@ public final class PackPipelines {
 
     /** A successfully built pack shadow pipeline plus its sampler slots. */
     public record PackShadow(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
+
+    /** A successfully built world-entity pipeline plus its sampler slots. */
+    public record PackEntity(
+            GraphicsPipeline pipeline,
+            int[] samplerSlots,
+            String convertedVertex,
+            String convertedFragment
+    ) {}
 
     /** Builds a post pipeline from the already prepared and translated plan. */
     public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
@@ -143,6 +154,64 @@ public final class PackPipelines {
             return new PackShadow(pipeline, slots, plan.convertedFragment());
         } catch (Exception e) {
             LOGGER.warn("[chimera] pack {}: planned shadow build failed: {}", plan.name(), e.getMessage());
+            return null;
+        }
+    }
+
+    /** Builds the guarded world entity pipeline on the append-only entity format. */
+    public static PackEntity buildEntity(PackProgramPlan plan) {
+        if (plan == null || !plan.executable() || plan.convertedVertex() == null
+                || plan.convertedFragment() == null
+                || plan.interfacePlan() == null
+                || plan.interfacePlan().effective(UniformRegistry.Stage.ENTITY).stage()
+                != UniformRegistry.Stage.ENTITY) {
+            return null;
+        }
+        try {
+            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
+                    .effective(UniformRegistry.Stage.ENTITY);
+            int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
+            PipelineConfig.Builder configBuilder = PipelineConfig.builder()
+                    .addUB(PipelineConfig.UB.builder(0, VK_SHADER_STAGE_VERTEX_BIT)
+                            .addUniform("mat4", "ModelViewMat")
+                            .addUniform("vec4", "ColorModulator")
+                            .addUniform("vec3", "ModelOffset")
+                            .addUniform("mat4", "TextureMat")
+                            .build())
+                    .addUB(PipelineConfig.UB.builder(1, VK_SHADER_STAGE_VERTEX_BIT)
+                            .addUniform("mat4", "ProjMat")
+                            .build());
+            if (!interfacePlan.executableUniforms().isEmpty()) {
+                PipelineConfig.UB.Builder uniforms = PipelineConfig.UB.builder(
+                        2, VK_SHADER_STAGE_FRAGMENT_BIT);
+                for (UniformRegistry.UniformDeclaration uniform : interfacePlan.executableUniforms()) {
+                    uniforms.addUniform(uniform.glslType(), uniform.name());
+                }
+                configBuilder.addUB(uniforms.build());
+            }
+            int samplerBase = interfacePlan.executableUniforms().isEmpty() ? 2 : 3;
+            for (int index = 0; index < slots.length; index++) {
+                int slot = slots[index];
+                configBuilder.addImageDescriptor(samplerBase + index, "sampler2D",
+                        "Sampler" + slot, net.vulkanmod.vulkan.texture.VTextureSelector
+                                .getTextureIdx("Sampler" + slot));
+            }
+            PipelineConfig config = configBuilder.build();
+            Pipeline.Builder builder = new Pipeline.Builder(
+                    net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY,
+                    "pack_gbuffers_entities");
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
+            builder.applyConfig(config);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            for (var buffer : pipeline.getBuffers()) {
+                buffer.setUseGlobalBuffer(true);
+            }
+            return new PackEntity(pipeline, slots, plan.convertedVertex(), plan.convertedFragment());
+        } catch (Exception e) {
+            LOGGER.warn("[chimera] pack {}: planned entity build failed: {}", plan.name(), e.getMessage());
             return null;
         }
     }
@@ -445,6 +514,11 @@ public final class PackPipelines {
             return declaredSlots;
         }
         return new int[] {0, 2};
+    }
+
+    /** Preserve the registry slots used by the host entity draw. */
+    public static int[] entitySamplerSlots(int[] declaredSlots) {
+        return java.util.Arrays.stream(declaredSlots).distinct().sorted().toArray();
     }
 
     /** Return an isolated copy so pack sampler and fragment fields cannot alter the host config. */

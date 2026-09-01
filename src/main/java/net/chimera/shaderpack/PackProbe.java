@@ -127,8 +127,22 @@ public final class PackProbe {
             }
         }
 
+        Path entityProperties = shadersDir.resolve("entity.properties");
+        PackEntityIdResolver.ParseResult entityIds = PackEntityIdResolver.parse(shadersDir);
+        if (Files.isRegularFile(entityProperties)) {
+            readMetadata(entityProperties, "entity.properties", metadataHashes, globalDeviations);
+            globalDeviations.addAll(entityIds.deviations());
+        }
+        if (loaded.programs().stream().anyMatch(program ->
+                program.name().equals("gbuffers_entities")
+                        && program.vertexSource() != null
+                        && program.fragmentSource() != null)) {
+            globalDeviations.add(entityIds.present()
+                    ? "ENTITY_ID_MAP_APPLIED" : "ENTITY_ID_DEFAULTED");
+        }
+
         PackConfig.PackConfigData packConfig = PackConfig.parse(loaded.programs(), shadersDir);
-        PackPlan packPlan = PackPlanBuilder.build(loaded.programs(), packConfig);
+        PackPlan packPlan = PackPlanBuilder.build(loaded.programs(), packConfig, entityIds.resolver());
         globalDeviations.addAll(packConfig.deviations());
         applyShadowPropertyReporting(inventories, shadowPropertySettings,
                 packConfig.shadowSettings(), globalDeviations);
@@ -238,9 +252,11 @@ public final class PackProbe {
                 .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
         String source = combinedSource.toString();
         String fragment = sourceView.getOrDefault("fragment", source);
+        String name = inventory.name;
         String stripped = stripComments(source);
-        boolean executablePostName = PostTargetPlan.isPostProgramName(inventory.name);
-        boolean modern = usesUnsupportedModernGlsl(stripped, executablePostName);
+        boolean executablePostName = PostTargetPlan.isPostProgramName(name);
+        boolean modern = usesUnsupportedModernGlsl(stripped,
+                executablePostName, name.equals("gbuffers_entities"));
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
         // including samplers. Keep that public inventory stable while the
@@ -261,13 +277,13 @@ public final class PackProbe {
         TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
         deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
 
-        String name = inventory.name;
         String family = familyOf(name);
         boolean hasFragment = inventory.stages.contains("fragment");
         UniformRegistry.Stage interfaceStage = name.equals("gbuffers_terrain")
                 ? UniformRegistry.Stage.GEOMETRY
                 : name.equals("shadow") ? UniformRegistry.Stage.SHADOW
                 : name.equals("gbuffers_water") ? UniformRegistry.Stage.TRANSLUCENT
+                : name.equals("gbuffers_entities") ? UniformRegistry.Stage.ENTITY
                 : UniformRegistry.Stage.POST;
         UniformRegistry.ProgramInterface interfacePlan;
         if (programPlan != null) {
@@ -310,7 +326,9 @@ public final class PackProbe {
         }
 
         boolean executableName = name.equals("gbuffers_terrain")
-                || executablePostName || name.equals("shadow") || name.equals("gbuffers_water");
+                || executablePostName || name.equals("shadow") || name.equals("gbuffers_water")
+                || (name.equals("gbuffers_entities")
+                && inventory.stages.contains("vertex") && inventory.stages.contains("fragment"));
         String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         if (programPlan != null) {
             if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
@@ -322,6 +340,9 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "TRANSLUCENT_VERTEX_BRIDGE" : "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_entities")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "ENTITY_VERTEX_BRIDGE" : "ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
@@ -349,6 +370,12 @@ public final class PackProbe {
                 } else {
                     deviations.add("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
                 }
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_entities")) {
+                if (LegacyGlslConverter.supportsEntityVertex(vertex, fragment)) {
+                    deviations.add("ENTITY_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
+                }
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
@@ -359,6 +386,13 @@ public final class PackProbe {
         }
         if (name.equals("gbuffers_water")) {
             deviations.add("TRANSLUCENT_STATE_FIXED_TO_HOST");
+        }
+        if (name.equals("gbuffers_entities")
+                && programPlan != null && programPlan.executable()) {
+            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
+            deviations.add("ENTITY_STATE_FIXED_TO_HOST");
+            deviations.add("ENTITY_BATCH_ORIGIN_SPLIT");
+            deviations.add("ENTITY_SCREEN_DRAW_FALLBACK");
         }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
@@ -376,6 +410,7 @@ public final class PackProbe {
                 ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
                 : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
+                : name.equals("gbuffers_entities") ? UniformRegistry.ENTITY_NAME_TO_SLOT
                 : UniformRegistry.NAME_TO_SLOT;
         if (!relaxed) {
             for (String sampler : samplers) {
@@ -386,6 +421,8 @@ public final class PackProbe {
                             : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
                             : name.equals("shadow")
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
+                            : name.equals("gbuffers_entities")
+                            ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
                             : "SAMPLER_NOT_MAPPED:" + sampler);
                 }
             }
@@ -440,6 +477,9 @@ public final class PackProbe {
                     || deviation.equals("SHADOW_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED")
+                    || deviation.equals("ENTITY_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.startsWith("ENTITY_SAMPLER_UNSUPPORTED:")
+                    || deviation.startsWith("ENTITY_ID_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_CONFLICT:")
@@ -486,7 +526,7 @@ public final class PackProbe {
         }
     }
 
-    private static boolean usesUnsupportedModernGlsl(String source, boolean post) {
+    private static boolean usesUnsupportedModernGlsl(String source, boolean post, boolean entity) {
         Matcher version = VERSION.matcher(source);
         int number = 120;
         if (version.find()) {
@@ -499,7 +539,15 @@ public final class PackProbe {
         if (number >= 330 || number < 120) {
             return true;
         }
+        if (entity && number != 120 && number != 130) {
+            return true;
+        }
         if (post) {
+            return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
+        }
+        if (entity) {
+            // The entity bridge accepts simple GLSL 130 stage declarations. The
+            // converter still performs the authoritative feature check below.
             return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
         }
         return source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective|buffer)\\b.*");

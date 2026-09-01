@@ -17,7 +17,7 @@ import java.util.TreeMap;
 import net.chimera.render.PackPostTargetsHarness;
 
 /**
- * Small dependency-free conformance check for the locked M5.1 through M5.6 fixtures
+ * Small dependency-free conformance check for the locked M5.1 through M5.7 fixtures
  * and the M5.7 post-target availability boundary.
  * Gradle runs this class before a normal build.
  */
@@ -48,7 +48,7 @@ public final class ConformanceHarness {
         verifyM56PostChain(fixtureRoot.resolve("m5_6/post_chain"), fixtureRoot.resolve("baselines/m5_6.json"));
         verifyM56Unsupported(fixtureRoot.resolve("m5_6/unsupported_targets"),
                 fixtureRoot.resolve("baselines/m5_6.json"));
-        System.out.println("[chimera] M5.1 through M5.6 conformance harness: PASS");
+        System.out.println("[chimera] M5.1 through M5.7 conformance harness: PASS");
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {

@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * SwapChain.recreate() destroys the swapchain and its image views when the
  * surface extent becomes zero (window minimized) but leaves the
  * swapChainImages list populated, so the later cleanUp() destroys the
- * already-freed views a second time — the vkDestroyImageView access violation
+ * already-freed views a second time - the vkDestroyImageView access violation
  * seen on game exit. Skip cleanUp entirely when the swapchain was already
  * reaped by that branch (swapChainId == 0, hasImages == false); its images,
  * views, swapchain and depth are all gone already.

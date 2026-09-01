@@ -2,6 +2,7 @@ package net.chimera.mixin;
 
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
+import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
@@ -39,6 +40,7 @@ public abstract class ChimeraLevelRendererMixin {
                                         boolean bl2,
                                         CallbackInfo ci) {
         if (ChimeraRenderer.segmentsActive()) {
+            ChimeraEntityBridge.beginWorldSubmissionWindow();
             PackUniformProvider.beginFrame(camera,
                     deltaTracker.getGameTimeDeltaPartialTick(false), modelView, projection);
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
@@ -55,6 +57,7 @@ public abstract class ChimeraLevelRendererMixin {
             if (pass != null) {
                 pass.finishLevelSegment();
             }
+            ChimeraEntityBridge.endWorldSubmissionWindow();
         }
     }
 }

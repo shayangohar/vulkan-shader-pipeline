@@ -36,7 +36,9 @@ public final class UniformRegistry {
         /** shadow gbuffers path (terrain inputs, but no shadow feedback samplers). */
         SHADOW,
         /** gbuffers_water on the host translucent terrain layer. */
-        TRANSLUCENT
+        TRANSLUCENT,
+        /** gbuffers_entities on the guarded world entity lane. */
+        ENTITY
     }
 
     /** One ordinary GLSL uniform declaration, excluding sampler declarations. */
@@ -129,6 +131,7 @@ public final class UniformRegistry {
             }
             return uniforms.stream()
                     .filter(uniform -> !blocked.contains(uniform.name())
+                            && !(stage == Stage.ENTITY && uniform.name().equals("entityId"))
                             && !isDeviationForName(deviations, "UNIFORM_DECLARATION_UNUSED:",
                             uniform.name()))
                     .toList();
@@ -257,6 +260,13 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5)
     );
 
+    /** World entities use the host atlas, lightmap, and optional shadow map. */
+    public static final Map<String, Integer> ENTITY_NAME_TO_SLOT = Map.ofEntries(
+            Map.entry("texture", 0),
+            Map.entry("lightmap", 2),
+            Map.entry("shadowtex0", 5)
+    );
+
     /**
      * The water bridge is intentionally limited to fields already present in
      * the host terrain UBO. Lower-case names are the small accepted pack
@@ -377,6 +387,16 @@ public final class UniformRegistry {
             if (conflicts.contains(name)) {
                 deviations.add("UNIFORM_CONFLICT:" + name);
             }
+            if (stage == Stage.ENTITY && name.equals("entityId")) {
+                if (!type.equals("int") && !type.equals("float")) {
+                    deviations.add("ENTITY_ID_UNSUPPORTED:" + type);
+                } else if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
+                } else {
+                    deviations.add("ENTITY_ID_VERTEX_DATA");
+                }
+                continue;
+            }
             String fixedField = stage == Stage.TRANSLUCENT
                     ? TRANSLUCENT_UNIFORM_FIELDS.get(name) : name;
             UniformDescriptor spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
@@ -414,6 +434,7 @@ public final class UniformRegistry {
             case GEOMETRY -> GEOMETRY_NAME_TO_SLOT;
             case SHADOW -> SHADOW_NAME_TO_SLOT;
             case TRANSLUCENT -> TRANSLUCENT_NAME_TO_SLOT;
+            case ENTITY -> ENTITY_NAME_TO_SLOT;
         };
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
@@ -431,6 +452,8 @@ public final class UniformRegistry {
                         && (sampler.getKey().startsWith("depthtex")
                         || sampler.getKey().startsWith("shadowcolor"))) {
                     deviations.add("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED");
+                } else if (stage == Stage.ENTITY) {
+                    deviations.add("ENTITY_SAMPLER_UNSUPPORTED:" + sampler.getKey());
                 } else if (stage == Stage.TRANSLUCENT) {
                     deviations.add("TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler.getKey());
                 } else {
@@ -609,7 +632,9 @@ public final class UniformRegistry {
                 || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
                 || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                 || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
-                || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED");
+                || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED")
+                || deviation.startsWith("ENTITY_SAMPLER_UNSUPPORTED:")
+                || deviation.startsWith("ENTITY_ID_UNSUPPORTED:");
     }
 
     private static boolean isSamplerType(String type) {

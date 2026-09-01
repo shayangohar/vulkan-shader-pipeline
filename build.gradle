@@ -59,6 +59,15 @@ tasks.register('m62ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m63ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M6.3 entity geometry format, mapping, translation, and fallback checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M63ConformanceHarness'
+    jvmArgs '-ea'
+}
+
 tasks.register('m61ConformanceTest', JavaExec) {
     group = 'verification'
     description = 'Runs strict M6.1 shared-plan checks against two explicitly supplied shader packs.'
@@ -155,6 +164,7 @@ tasks.register('m57ConformanceTest', JavaExec) {
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
+    dependsOn tasks.named('m63ConformanceTest')
 }
 
 tasks.named('test') {

@@ -8,13 +8,19 @@ import java.util.TreeMap;
 /** Immutable plan for the active pack variant. */
 public record PackPlan(
         PackConfig.PackConfigData config,
-        List<PackProgramPlan> programs
+        List<PackProgramPlan> programs,
+        PackEntityIdResolver entityIds
 ) {
+    public PackPlan(PackConfig.PackConfigData config, List<PackProgramPlan> programs) {
+        this(config, programs, PackEntityIdResolver.empty());
+    }
+
     public PackPlan {
         programs = programs == null ? List.of() : programs.stream()
                 .filter(value -> value != null)
                 .sorted(java.util.Comparator.comparing(PackProgramPlan::name))
                 .toList();
+        entityIds = entityIds == null ? PackEntityIdResolver.empty() : entityIds;
     }
 
     public Map<String, PackProgramPlan> byName() {

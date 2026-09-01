@@ -14,13 +14,21 @@ public final class PackPlanBuilder {
             List<PackProgram> programs,
             PackConfig.PackConfigData config
     ) {
+        return build(programs, config, PackEntityIdResolver.empty());
+    }
+
+    public static PackPlan build(
+            List<PackProgram> programs,
+            PackConfig.PackConfigData config,
+            PackEntityIdResolver entityIds
+    ) {
         List<PackProgramPlan> plans = new ArrayList<>();
         if (programs != null) {
             for (PackProgram program : programs) {
                 plans.add(build(program, config));
             }
         }
-        return new PackPlan(config, plans);
+        return new PackPlan(config, plans, entityIds);
     }
 
     public static PackProgramPlan build(
@@ -41,6 +49,7 @@ public final class PackPlanBuilder {
         // from their authored declarations, while nested dimension variants
         // use the active preprocessed snapshot.
         boolean prepared = !program.variantFolder().isBlank();
+        boolean preparedSnapshot = !program.preparedSources().isEmpty();
         UniformRegistry.Stage stage = stageFor(program.name());
         PostTargetPlan targetPlan = PostTargetPlan.isPostProgramName(program.name())
                 ? PostTargetPlan.parse(program.name(), fragment,
@@ -79,19 +88,24 @@ public final class PackPlanBuilder {
         LegacyGlslConverter.TerrainVaryingLayout vertexLayout = null;
         boolean executable = isExecutableFamily(program.name())
                 && fragment != null
+                && (!program.name().equals("gbuffers_entities") || vertex != null)
                 && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
                 && interfacePlan.executable()
                 && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
                 && stageMatch.executable()
                 && (targetPlan == null || targetPlan.executable());
 
+        if (program.name().equals("gbuffers_entities") && vertex == null) {
+            deviations.add("ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
+        }
+
         try {
             if (isTerrainLike(program.name()) && vertex != null) {
                 LegacyGlslConverter.TerrainVertexConversion conversion = switch (program.name()) {
                     case "shadow" -> LegacyGlslConverter.convertShadowVertex(
-                            vertex, prepared ? null : program.vertexPath(), fragment);
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
                     default -> LegacyGlslConverter.convertTerrainVertex(
-                            vertex, prepared ? null : program.vertexPath(), fragment);
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
                 };
                 if (conversion == null) {
                     deviations.add(vertexBridgeDeviation(program.name()));
@@ -99,6 +113,21 @@ public final class PackPlanBuilder {
                 } else {
                     convertedVertex = conversion.source();
                     vertexLayout = conversion.layout();
+                }
+            }
+
+            if (executable && program.name().equals("gbuffers_entities") && vertex != null) {
+                LegacyGlslConverter.TerrainVertexConversion conversion =
+                        LegacyGlslConverter.convertEntityVertex(
+                                vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                                stageMatch.locations());
+                if (conversion == null) {
+                    deviations.add("ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
+                    executable = false;
+                } else {
+                    convertedVertex = conversion.source();
+                    vertexLayout = conversion.layout();
+                    deviations.add("ENTITY_VERTEX_BRIDGE");
                 }
             }
 
@@ -125,7 +154,7 @@ public final class PackPlanBuilder {
                             stageMatch.locations(), postVaryingTypes(stageInterfaces.get("fragment")));
                     convertedFragment = LegacyGlslConverter.convertPostFragment(
                             fragment,
-                            prepared ? null : program.fragmentPath(),
+                            preparedSnapshot ? null : program.fragmentPath(),
                             interfacePlan.effective(UniformRegistry.Stage.POST),
                             targetPlan,
                             config == null ? Map.of() : config.shaderConstants(),
@@ -140,7 +169,7 @@ public final class PackPlanBuilder {
             } else if (executable && program.name().equals("gbuffers_terrain")) {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertFragment(
-                        fragment, prepared ? null : program.fragmentPath(), true, slots,
+                        fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
                         vertexLayout, interfacePlan.effective(stage));
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -149,7 +178,7 @@ public final class PackPlanBuilder {
             } else if (executable && program.name().equals("gbuffers_water")) {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertFragment(
-                        fragment, prepared ? null : program.fragmentPath(), true, slots,
+                        fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
                         vertexLayout, interfacePlan.effective(stage));
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -158,8 +187,17 @@ public final class PackPlanBuilder {
             } else if (executable && program.name().equals("shadow")) {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertFragment(
-                        fragment, prepared ? null : program.fragmentPath(), true, slots,
+                        fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
                         vertexLayout, interfacePlan.effective(stage));
+                if (convertedFragment == null) {
+                    deviations.add("POST_CONVERTER_UNSUPPORTED");
+                    executable = false;
+                }
+            } else if (executable && program.name().equals("gbuffers_entities")) {
+                int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
+                convertedFragment = LegacyGlslConverter.convertEntityFragment(
+                        fragment, preparedSnapshot ? null : program.fragmentPath(),
+                        slots, vertexLayout, interfacePlan.effective(stage));
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
@@ -216,6 +254,7 @@ public final class PackPlanBuilder {
         return switch (name) {
             case "shadow" -> "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_water" -> "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED";
+            case "gbuffers_entities" -> "ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
             default -> "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
         };
     }
@@ -269,12 +308,16 @@ public final class PackPlanBuilder {
         if ("gbuffers_water".equals(name)) {
             return UniformRegistry.Stage.TRANSLUCENT;
         }
+        if ("gbuffers_entities".equals(name)) {
+            return UniformRegistry.Stage.ENTITY;
+        }
         return UniformRegistry.Stage.POST;
     }
 
     private static boolean isExecutableFamily(String name) {
         return "gbuffers_terrain".equals(name)
                 || "gbuffers_water".equals(name)
+                || "gbuffers_entities".equals(name)
                 || "shadow".equals(name)
                 || PostTargetPlan.isPostProgramName(name);
     }

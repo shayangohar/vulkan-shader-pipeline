@@ -39,7 +39,7 @@
       }
     },
     "unsupported_water": {
-      "reportSha256": "0f1af4c3188c75aea38a834c31920c3b3b3f9fb66e954d5e1b50f3221f6a0ead",
+      "reportSha256": "59523d1de2641002b41ab79014bd72d72912117efc6bf59f4d6ce06b987524cf",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -64,7 +64,9 @@
         "global": [],
         "composite": [],
         "final": [],
-        "gbuffers_entities": [],
+        "gbuffers_entities": [
+          "ENTITY_VERTEX_BRIDGE_UNSUPPORTED"
+        ],
         "gbuffers_water": [
           "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",

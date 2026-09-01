@@ -47,7 +47,8 @@ public final class PackSource {
                 Path shadersDir,
                 Path temporaryRoot,
                 Map<String, List<PackProgram>> variants,
-                List<String> deviations
+                List<String> deviations,
+                String initialDimension
         ) {
             this.shadersDir = shadersDir;
             this.temporaryRoot = temporaryRoot;
@@ -57,7 +58,7 @@ public final class PackSource {
             this.baseDeviations = List.copyOf(new TreeSet<>(deviations));
             this.programs = List.of();
             this.deviations = this.baseDeviations;
-            selectDimension("minecraft:overworld");
+            selectDimension(initialDimension);
         }
 
         public List<PackProgram> programs() {
@@ -162,7 +163,7 @@ public final class PackSource {
         List<String> deviations = new ArrayList<>();
         if (packPath == null) {
             deviations.add("PACK_PATH_MISSING");
-            return emptyResult(Path.of("shaders"), null, deviations);
+            return emptyResult(Path.of("shaders"), null, deviations, dimension);
         }
         if (Files.isDirectory(packPath)) {
             return discover(packPath.resolve("shaders"), null, deviations, dimension);
@@ -173,7 +174,7 @@ public final class PackSource {
 
         deviations.add("PACK_PATH_INVALID");
         LOGGER.warn("[chimera] pack path is not a directory or ZIP file: {}", packPath);
-        return emptyResult(packPath.resolve("shaders"), null, deviations);
+        return emptyResult(packPath.resolve("shaders"), null, deviations, dimension);
     }
 
     private static LoadResult loadArchive(Path archive, List<String> deviations, String dimension) {
@@ -242,7 +243,7 @@ public final class PackSource {
             if (temporaryRoot != null) {
                 deleteTree(temporaryRoot);
             }
-            return emptyResult(failedShadersDir, null, deviations);
+            return emptyResult(failedShadersDir, null, deviations, dimension);
         }
     }
 
@@ -255,7 +256,7 @@ public final class PackSource {
         if (!Files.isDirectory(shadersDir)) {
             deviations.add("NO_SHADERS_DIRECTORY");
             LOGGER.warn("[chimera] pack: no 'shaders' directory under {}", shadersDir);
-            return emptyResult(shadersDir, temporaryRoot, deviations);
+            return emptyResult(shadersDir, temporaryRoot, deviations, dimension);
         }
 
         Map<String, Path> variantDirs = variantDirectories(shadersDir);
@@ -270,14 +271,20 @@ public final class PackSource {
             }
             loadStandardPair(variant.getValue(), byName, deviations, "shadow");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_water");
+            loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_entities");
             loadStandardPostPrograms(variant.getValue(), byName, deviations);
             variants.put(variant.getKey(), preparePrograms(byName, shadersDir, variant.getKey(), deviations));
         }
-        return new LoadResult(shadersDir, temporaryRoot, variants, deviations);
+        return new LoadResult(shadersDir, temporaryRoot, variants, deviations, dimension);
     }
 
-    private static LoadResult emptyResult(Path shadersDir, Path temporaryRoot, List<String> deviations) {
-        return new LoadResult(shadersDir, temporaryRoot, Map.of("", List.of()), deviations);
+    private static LoadResult emptyResult(
+            Path shadersDir,
+            Path temporaryRoot,
+            List<String> deviations,
+            String dimension
+    ) {
+        return new LoadResult(shadersDir, temporaryRoot, Map.of("", List.of()), deviations, dimension);
     }
 
     private static Map<String, Path> variantDirectories(Path shadersDir) {

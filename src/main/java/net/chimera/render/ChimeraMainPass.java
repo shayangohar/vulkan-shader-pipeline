@@ -13,6 +13,7 @@ import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraShaderLoader;
+import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackPipelines;
@@ -150,6 +151,8 @@ public class ChimeraMainPass implements MainPass {
     private int[] packTranslucentSlots;
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     private GraphicsPipeline packShadowPipeline;
+    /** Pack world-entity program on the guarded delayed model batch. */
+    private PackPipelines.PackEntity packEntityPipeline;
     /** GL-registry slot-5 view of the shadow depth, for pack geometry sampling (shadowtex0). */
     private GpuTexture packShadowTexture;
     private GpuTextureView packShadowView;
@@ -1044,6 +1047,11 @@ public class ChimeraMainPass implements MainPass {
 
     /** Releases only pack-owned state so a dimension variant can be rebuilt. */
     private void cleanUpPackVariant() {
+        ChimeraEntityBridge.setEnabled(false);
+        // Release the dedicated entity source before its pipeline is destroyed.
+        // This keeps any remaining host-side batch cleanup away from a dead
+        // pack pipeline and leaves the host format/cache untouched.
+        ChimeraEntityBridge.disable();
         VTextureSelector.bindTexture(7, null);
         releasePackShadowView();
         this.shadowMap.cleanUp();
@@ -1061,6 +1069,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.packGeometryPipeline != null) this.packGeometryPipeline.cleanUp();
         if (this.packTranslucentPipeline != null) this.packTranslucentPipeline.cleanUp();
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
+        if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
         if (this.packNoiseTexture != null) this.packNoiseTexture.close();
         this.packNoiseTexture = null;
         this.packNoiseImage = null;
@@ -1080,6 +1089,7 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentPipeline = null;
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
+        this.packEntityPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.shadowFrameReady = false;
         this.shadowTransitionFallbackLogged = false;
@@ -1191,6 +1201,7 @@ public class ChimeraMainPass implements MainPass {
     private void clearPackOverrides() {
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
+        ChimeraEntityBridge.setEnabled(false);
     }
 
     private void waitForImmediateDestruction(String reason) {
@@ -1491,6 +1502,7 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentPipeline = null;
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
+        this.packEntityPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = true;
 
@@ -1634,6 +1646,45 @@ public class ChimeraMainPass implements MainPass {
                 if (TRACE_TRANSITIONS) {
                     LOGGER.info("[chimera] pack gbuffers_water converted fragment:\n{}",
                             water.convertedFragment());
+                }
+            } else if (name.equals("gbuffers_entities")) {
+                PackPipelines.PackEntity entity = PackPipelines.buildEntity(programPlan);
+                if (entity == null) {
+                    if (this.conformanceReport != null) {
+                        this.conformanceReport.markRuntime(name,
+                                ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                "ENTITY_PIPELINE_BUILD_FAILED");
+                    }
+                    LOGGER.warn("[chimera] pack gbuffers_entities: fallback=IDENTITY "
+                            + "(ENTITY_PIPELINE_BUILD_FAILED)");
+                    continue;
+                }
+                this.packEntityPipeline = entity;
+                ChimeraEntityBridge.install(entity,
+                        this.packPlan == null ? null : this.packPlan.entityIds());
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "ENTITY_VERTEX_FORMAT_EXTENDED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "ENTITY_PIPELINE_INSTALLED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "ENTITY_STATE_FIXED_TO_HOST");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "ENTITY_BATCH_ORIGIN_SPLIT");
+                }
+                LOGGER.info("[chimera] pack gbuffers_entities: ok (entity pipeline installed, "
+                        + "stride={}, samplers={})",
+                        net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
+                        Arrays.toString(entity.samplerSlots()));
+                if (TRACE_TRANSITIONS) {
+                    LOGGER.info("[chimera] pack gbuffers_entities converted vertex:\n{}",
+                            entity.convertedVertex());
+                    LOGGER.info("[chimera] pack gbuffers_entities converted fragment:\n{}",
+                            entity.convertedFragment());
                 }
             } else {
                 if (this.conformanceReport != null) {

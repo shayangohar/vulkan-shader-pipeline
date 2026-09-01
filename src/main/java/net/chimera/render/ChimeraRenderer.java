@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.chimera.ChimeraMod;
+import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -94,6 +95,7 @@ public final class ChimeraRenderer {
         if (chimeraPass.hasPendingPackVariant() && installed) {
             Renderer.getInstance().setMainPass(hostPass);
             ChimeraTerrainPipelines.disable();
+            ChimeraEntityBridge.setEnabled(false);
             installed = false;
             resumeAfterVariant = true;
             ChimeraMod.LOGGER.info("Pack variant transition handed to host");
@@ -142,13 +144,19 @@ public final class ChimeraRenderer {
         }
 
         if (!chimeraPass.prepareForInstall()) {
+            // A toggle can arrive while the current command buffer is still
+            // recording. Keep the request alive so the pre-command-buffer
+            // hook retries it at the next safe boundary instead of leaving
+            // the host renderer installed until another manual toggle.
+            resumeAfterVariant = true;
             ChimeraMod.LOGGER.warn("Chimera install deferred; host main pass remains active");
             return false;
         }
         Renderer.getInstance().setMainPass(chimeraPass);
         ChimeraTerrainPipelines.enable();
+        ChimeraEntityBridge.setEnabled(ChimeraEntityBridge.isInstalled());
         installed = true;
-        ChimeraMod.LOGGER.info("chimera ACTIVE - HDR frame + terrain pipelines (F8 to toggle back)");
+        ChimeraMod.LOGGER.info("chimera ACTIVE - HDR frame + terrain/entity pipelines (F8 to toggle back)");
         return true;
     }
 
@@ -160,6 +168,7 @@ public final class ChimeraRenderer {
         Renderer.getInstance().endRenderPass();
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.disable();
+        ChimeraEntityBridge.setEnabled(false);
         // Our post segments leave depth/cull/blend/topology state disabled;
         // restore the neutral state the host frame flow expects.
         VRenderSystem.enableDepthTest();
@@ -193,6 +202,7 @@ public final class ChimeraRenderer {
         Renderer.getInstance().endRenderPass();
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.suspendForScreens();
+        ChimeraEntityBridge.setEnabled(false);
         // Return the global pipeline state VulkanMod snapshots at bind to the
         // neutral host defaults before the host's next frame records.
         VRenderSystem.enableDepthTest();
@@ -216,6 +226,7 @@ public final class ChimeraRenderer {
             Renderer.getInstance().setMainPass(hostPass);
         }
         ChimeraTerrainPipelines.disable();
+        ChimeraEntityBridge.setEnabled(false);
         VRenderSystem.enableDepthTest();
         VRenderSystem.depthMask(true);
         VRenderSystem.enableCull();
