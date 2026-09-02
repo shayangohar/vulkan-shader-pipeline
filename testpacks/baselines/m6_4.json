@@ -1,0 +1,10 @@
+{
+  "milestone": "M6.4",
+  "fixtures": {
+    "sparse_targets": {
+      "targets": [0, 4],
+      "formats": {"0": "RGBA16F", "4": "RGBA8"},
+      "expectedDeviations": ["POST_TARGET_ROUTE_APPLIED", "PING_PONG_TARGETS_APPLIED"]
+    }
+  }
+}

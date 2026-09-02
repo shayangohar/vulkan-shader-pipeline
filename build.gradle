@@ -161,10 +161,19 @@ tasks.register('m57ConformanceTest', JavaExec) {
     }
 }
 
+tasks.register('m64ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M6.4 device-aware target checks.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.M64ConformanceHarness'
+    jvmArgs '-ea'
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
     dependsOn tasks.named('m63ConformanceTest')
+    dependsOn tasks.named('m64ConformanceTest')
 }
 
 tasks.named('test') {

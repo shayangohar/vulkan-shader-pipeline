@@ -5,9 +5,11 @@ import java.util.List;
 import java.util.Map;
 
 import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.texture.VulkanImage;
@@ -86,6 +88,14 @@ public final class PackPostTargets {
             }
             List<Integer> targets = plan.targetSlots();
             List<Integer> formats = plan.outputFormats();
+            int maxAttachments = DeviceManager.device == null
+                    ? 4
+                    : ((ChimeraDeviceAccessor) DeviceManager.device)
+                            .chimera$properties().limits().maxColorAttachments();
+            if (targets.size() > maxAttachments) {
+                throw new IllegalStateException("post pass requires " + targets.size()
+                        + " color attachments, device supports " + maxAttachments);
+            }
             for (int i = 0; i < targets.size(); i++) {
                 int target = targets.get(i);
                 if (target >= 0 && target < TARGET_COUNT) {
@@ -397,6 +407,11 @@ public final class PackPostTargets {
     /** Pure commit rule used to prove that failed stages cannot swap banks. */
     static int bankAfterFinish(int activeBank, int destinationBank, boolean committed) {
         return committed ? destinationBank : activeBank;
+    }
+
+    static boolean deviceSupportsMrt(int attachments, int maxColorAttachments) {
+        return attachments > 0 && maxColorAttachments > 0
+                && attachments <= maxColorAttachments;
     }
 
     public boolean isRendering() {

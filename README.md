@@ -2,11 +2,11 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.3 implementation complete; manual runtime verification pending.**
+**Status: M6.4 implementation complete; manual runtime verification pending.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
-M4 was a narrow loader wedge, not general Iris compatibility. M5.6 added a bounded four-target post chain with real target routing and ping-pong resources. M5.7 added directory and ZIP loading for real packs, standard dimension variants, root-relative includes, a narrow GLSL 130 post path, explicit common RGB format approximations, deterministic fingerprints, lifecycle evidence, and performance measurements. M6.1 shares one prepared-source, program-plan, interface, and token-translation path between conformance and runtime pipeline construction. M6.2 adds one canonical live uniform catalog and one reusable frame snapshot for pack UBOs, including camera history, matrices, weather, player, lighting, and shadow values. M6.3 adds an isolated legacy gbuffers_entities adapter with an append-only entity format, basic entity IDs, and guarded host-state draw dispatch. Unsupported stages, resources, and syntax still use explicit fallback. It is still not a general Iris transformer.
+M4 was a narrow loader wedge, not general Iris compatibility. M5.6 added a bounded four-target post chain with real target routing and ping-pong resources. M5.7 added directory and ZIP loading for real packs, standard dimension variants, root-relative includes, a narrow GLSL 130 post path, explicit common RGB format approximations, deterministic fingerprints, lifecycle evidence, and performance measurements. M6.1 shares one prepared-source, program-plan, interface, and token-translation path between conformance and runtime pipeline construction. M6.2 adds one canonical live uniform catalog and one reusable frame snapshot for pack UBOs, including camera history, matrices, weather, player, lighting, and shadow values. M6.3 adds an isolated legacy gbuffers_entities adapter with an append-only entity format, basic entity IDs, and guarded host-state draw dispatch. M6.4 extends post targets beyond the original four-target bridge and validates MRT against device limits. Unsupported stages, resources, and syntax still use explicit fallback. It is still not a general Iris transformer.
 
 ## Requirements
 

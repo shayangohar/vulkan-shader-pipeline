@@ -121,7 +121,7 @@ public class ChimeraMainPass implements MainPass {
     private boolean packPostChainActive;
     /** Set only when the target graph itself cannot be configured. */
     private boolean packPostChainRejected;
-    private final VulkanImage[] packFinalInputs = new VulkanImage[4];
+    private final VulkanImage[] packFinalInputs = new VulkanImage[PostTargetPlan.MAX_TARGET + 1];
     /** Parsed pack consts and programs (-Dchimera.pack); session-long, the property is fixed at launch. */
     private PackConfig.PackConfigData packConfig;
     private PackPlan packPlan;
@@ -863,6 +863,14 @@ public class ChimeraMainPass implements MainPass {
             } else if (slot >= 0 && slot <= 3) {
                 VulkanImage colorInput = colorInputs != null
                         ? colorInputs[slot] : fallbackColortex;
+                if (colorInput != null) {
+                    VTextureSelector.bindTexture(slot, colorInput);
+                }
+            } else if (slot >= 8 && slot <= 11 && samplerName.startsWith("colortex")) {
+                int logicalTarget = slot - 4;
+                VulkanImage colorInput = colorInputs != null
+                        && logicalTarget < colorInputs.length
+                        ? colorInputs[logicalTarget] : null;
                 if (colorInput != null) {
                     VTextureSelector.bindTexture(slot, colorInput);
                 }

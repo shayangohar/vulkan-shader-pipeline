@@ -443,6 +443,9 @@ public final class UniformRegistry {
                 continue;
             }
             Integer slot = slots.get(sampler.getKey());
+            if (stage == Stage.POST && slot == null) {
+                slot = extendedPostColorSlot(sampler.getKey());
+            }
             boolean mappedType = sampler.getValue().equals("sampler2D")
                     || sampler.getValue().equals("sampler2DShadow");
             if (!mappedType || slot == null) {
@@ -652,6 +655,24 @@ public final class UniformRegistry {
             return "depthtex";
         }
         return name;
+    }
+
+    /**
+     * Keep VulkanMod's reserved slots intact while exposing four additional
+     * logical post targets through selector slots 8 through 11.
+     */
+    private static Integer extendedPostColorSlot(String name) {
+        Matcher matcher = Pattern.compile("colortex(\\d+)").matcher(name);
+        if (!matcher.matches()) {
+            return null;
+        }
+        int target;
+        try {
+            target = Integer.parseInt(matcher.group(1));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return target >= 4 && target <= PostTargetPlan.MAX_TARGET ? target + 4 : null;
     }
 
     private static boolean isDeviationForName(

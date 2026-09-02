@@ -16,7 +16,8 @@ import java.util.regex.Pattern;
  * and the runtime post chain.
  */
 public final class PostTargetPlan {
-    public static final int MAX_TARGET = 3;
+    /** Logical targets supported by the bounded VulkanMod selector bridge. */
+    public static final int MAX_TARGET = 7;
     public static final int DEFAULT_FORMAT = 97;
 
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
@@ -187,11 +188,15 @@ public final class PostTargetPlan {
         }
         for (String token : trimmed.split(",")) {
             String value = token.trim();
-            if (value.length() != 1) {
+            if (!value.matches("\\d+")) {
                 deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
                 continue;
             }
-            result.add(value.charAt(0) - '0');
+            try {
+                result.add(Integer.parseInt(value));
+            } catch (NumberFormatException e) {
+                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+            }
         }
         validateDuplicates(result, deviations);
         return result;
