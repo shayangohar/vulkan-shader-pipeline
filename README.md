@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.4 implementation complete; manual runtime verification pending.**
+**Status: M6.4 complete and runtime-verified.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
@@ -36,6 +36,8 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M6.1 | Shared source and program translation core: immutable prepared sources, cross-stage plans, bounded preprocessing, and token-based legacy translation |
 | M6.2 | Canonical live uniform catalog: one typed catalog, one frame snapshot, stable buffers, camera history, and standard runtime values |
 | M6.3 | Entity geometry adapter: legacy gbuffers_entities, append-only entity format, basic entity IDs, and guarded world-entity dispatch |
+| M6.4 | Device-aware post targets and pack resources: sparse target allocation, ping-pong preservation, dynamic post MRT, and explicit limit fallback |
+| M6.5 | Real-pack parity qualification: Complementary, BSL, reference comparisons, lifecycle coverage, and measured performance evidence |
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
