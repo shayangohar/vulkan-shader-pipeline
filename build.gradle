@@ -169,6 +169,57 @@ tasks.register('m64ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m65ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs strict M6.5 parity qualification against Complementary and BSL.'
+    dependsOn tasks.named('conformanceTest')
+    dependsOn tasks.named('m62ConformanceTest')
+    dependsOn tasks.named('m63ConformanceTest')
+    dependsOn tasks.named('m64ConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M65ConformanceHarness'
+    jvmArgs '-ea'
+    doFirst {
+        def requiredPack = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required pack path. Set -P${projectKey} or -D${systemKey}.")
+            }
+            def pack = file(value.toString())
+            if (!pack.isDirectory() && !pack.isFile()) {
+                throw new GradleException("M6.5 pack path does not exist: ${pack}")
+            }
+            return pack.absolutePath
+        }
+        def requiredVersion = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required pack version. Set -P${projectKey} or -D${systemKey}.")
+            }
+            return value.toString()
+        }
+        def baselineValue = project.findProperty('m65Baseline')
+                ?: System.getProperty('chimera.m65.baseline')
+                ?: file('testpacks/baselines/m6_5.json')
+        def baseline = file(baselineValue.toString())
+        if (!baseline.isFile()) {
+            throw new GradleException("M6.5 baseline does not exist: ${baseline}")
+        }
+        systemProperty 'chimera.m65.complementary',
+                requiredPack('m65Complementary', 'chimera.m65.complementary')
+        systemProperty 'chimera.m65.bsl',
+                requiredPack('m65Bsl', 'chimera.m65.bsl')
+        systemProperty 'chimera.m65.complementaryVersion',
+                requiredVersion('m65ComplementaryVersion', 'chimera.m65.complementaryVersion')
+        systemProperty 'chimera.m65.bslVersion',
+                requiredVersion('m65BslVersion', 'chimera.m65.bslVersion')
+        systemProperty 'chimera.m65.baseline', baseline.absolutePath
+        if (project.findProperty('m65EmitBaseline')?.toString()?.toBoolean()) {
+            systemProperty 'chimera.m65.emitBaseline', 'true'
+        }
+    }
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')

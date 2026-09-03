@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.4 complete and runtime-verified.**
+**Status: M6.4 complete and runtime-verified. M6.5 qualification is available.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
@@ -41,9 +41,15 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
-The normal `conformanceTest` checks the checked-in M5.1 through M5.7 fixtures. `m62ConformanceTest` checks the local M6.2 uniform catalog fixture and frame-state invariants. `m63ConformanceTest` checks the M6.3 entity geometry format, mapping, translation, and fallback fixture. M6.1 uses its strict task for the checked-in program-plan fixture plus explicit real-pack paths. M5.7 uses the strict external-pack task and requires explicit paths and versions:
+The normal `conformanceTest` checks the checked-in M5.1 through M5.7 fixtures. `m62ConformanceTest` checks the local M6.2 uniform catalog fixture and frame-state invariants. `m63ConformanceTest` checks the M6.3 entity geometry format, mapping, translation, and fallback fixture. `m64ConformanceTest` checks device-aware target allocation and MRT limits. M6.1 uses its strict task for the checked-in program-plan fixture plus explicit real-pack paths. M5.7 uses the strict external-pack task and requires explicit paths and versions:
 
 `powershell -NoProfile -ExecutionPolicy Bypass -File tools\m57-conformance.ps1 -ComplementaryPath <pack-or-relative-name> -IndependentPath <pack-or-relative-name> -ComplementaryVersion <version> -IndependentVersion <version>`
+
+M6.5 uses the exact Complementary Reimagined r5.8.1 and BSL v10.1.3 packs. It compares deterministic static reports with user-provided Chimera and Sodium + Iris reference evidence. It does not add compatibility behavior and does not claim universal visual or performance parity. Run it explicitly with Prism Java 21:
+
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\m65-conformance.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion r5.8.1 -BslVersion v10.1.3`
+
+M6.5 capture and performance files stay outside the committed source tree. A runtime-installed program must be proven by the Minecraft log and RenderDoc evidence; static eligibility alone is not an installation claim. Use identical scene state and camera for Chimera and Sodium + Iris references, and report performance as three fixed-window medians with RenderDoc structural counts.
 
 ## License
 
