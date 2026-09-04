@@ -101,7 +101,7 @@ public class ChimeraMainPass implements MainPass {
     private GraphicsPipeline presentPipeline;
     private GraphicsPipeline compositePipeline;
 
-    /** Pack programs swapped onto the resolve/present seams (-Dchimera.pack); null = identity. */
+    /** Pack programs swapped onto the resolve/present seams; null = identity. */
     private GraphicsPipeline packCompositePipeline;
     private GraphicsPipeline packFinalPipeline;
     private int[] packCompositeSlots;
@@ -122,7 +122,7 @@ public class ChimeraMainPass implements MainPass {
     /** Set only when the target graph itself cannot be configured. */
     private boolean packPostChainRejected;
     private final VulkanImage[] packFinalInputs = new VulkanImage[PostTargetPlan.MAX_TARGET + 1];
-    /** Parsed pack consts and programs (-Dchimera.pack); session-long, the property is fixed at launch. */
+    /** Parsed pack constants and programs for the active selection. */
     private PackConfig.PackConfigData packConfig;
     private PackPlan packPlan;
     private List<PackProgram> packPrograms;
@@ -181,6 +181,59 @@ public class ChimeraMainPass implements MainPass {
     private String pendingPackDimension;
     /** Prevents repeated log spam while a pending change waits for an idle boundary. */
     private String loggedPendingPackDimension;
+    /** A complete pack replacement requested by an in-game command. */
+    record PendingPackChange(Path path, boolean forceReload) {}
+    /** Internal request queue exposed only for deterministic state checks. */
+    public static final class PackChangeQueue {
+        private PendingPackChange pending;
+
+        public boolean request(Path activePath, Path requestedPath, boolean forceReload) {
+            if (!forceReload && pending == null && samePath(activePath, requestedPath)) {
+                return false;
+            }
+            if (!forceReload && pending != null && samePath(pending.path(), requestedPath)) {
+                return false;
+            }
+            pending = new PendingPackChange(requestedPath, forceReload);
+            return true;
+        }
+
+        private static boolean samePath(Path first, Path second) {
+            if (first == second) {
+                return true;
+            }
+            if (first == null || second == null) {
+                return false;
+            }
+            return first.toAbsolutePath().normalize().equals(second.toAbsolutePath().normalize());
+        }
+
+        PendingPackChange pending() {
+            return pending;
+        }
+
+        public boolean hasPending() {
+            return pending != null;
+        }
+
+        public Path pendingPath() {
+            return pending == null ? null : pending.path();
+        }
+
+        public boolean pendingForced() {
+            return pending != null && pending.forceReload();
+        }
+
+        public void clear() {
+            pending = null;
+        }
+    }
+
+    private final PackChangeQueue packChangeQueue = new PackChangeQueue();
+    /** Prevents a blocked request from producing per-frame diagnostics. */
+    private String loggedPendingPackChange;
+    /** Current live dimension, also used when a new pack is selected in-game. */
+    private String currentDimension = "minecraft:overworld";
 
     /**
      * Armed at level-segment HEAD, consumed at the SOLID layer tail
@@ -207,9 +260,27 @@ public class ChimeraMainPass implements MainPass {
             Collections.newSetFromMap(new IdentityHashMap<>());
 
     public ChimeraMainPass() {
+        this(startupPackPath());
+    }
+
+    ChimeraMainPass(Path initialPackPath) {
+        this.packPath = initialPackPath;
         this.levelPhase = true;
         createResources();
         Renderer.getInstance().addOnResizeCallback(this::onResize);
+    }
+
+    private static Path startupPackPath() {
+        String value = System.getProperty("chimera.pack");
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Path.of(value.trim());
+        } catch (RuntimeException failure) {
+            LOGGER.warn("[chimera] startup pack path is invalid: {}", value);
+            return null;
+        }
     }
 
     /**
@@ -348,7 +419,7 @@ public class ChimeraMainPass implements MainPass {
     /** Restores the stable output invariant before Renderer exposes this pass. */
     boolean prepareForInstall() {
         if (Renderer.isRecording() || Renderer.getInstance().getBoundRenderPass() != null
-                || hasPendingPackVariant()) {
+                || hasPendingPackChange()) {
             return false;
         }
         ensureOutputResources();
@@ -357,11 +428,52 @@ public class ChimeraMainPass implements MainPass {
 
     /** Called before Renderer begins a fresh main command buffer. */
     boolean applyPendingPackVariantAtFrameBoundary() {
+        if (this.packChangeQueue.pending() != null) {
+            return applyPendingPackChange();
+        }
         return applyPendingPackVariant();
     }
 
     boolean hasPendingPackVariant() {
-        return this.pendingPackDimension != null;
+        return this.pendingPackDimension != null && this.packSource != null && this.packPath != null
+                && !this.pendingPackDimension.equals(this.packSource.selectedDimension());
+    }
+
+    boolean hasPendingPackChange() {
+        return this.packChangeQueue.pending() != null || hasPendingPackVariant();
+    }
+
+    boolean queuePackChange(Path path, boolean forceReload) {
+        if (!this.packChangeQueue.request(this.packPath, path, forceReload)) {
+            return false;
+        }
+        this.loggedPendingPackChange = null;
+        LOGGER.info("[chimera] pack change queued: {}{}",
+                packLabel(path), forceReload ? " (reload)" : "");
+        return true;
+    }
+
+    boolean queuePackReload() {
+        return queuePackChange(this.packPath, true);
+    }
+
+    String packStatus() {
+        String active = packLabel(this.packPath);
+        PendingPackChange pendingRequest = this.packChangeQueue.pending();
+        String pending = pendingRequest == null
+                ? (hasPendingPackVariant() ? "dimension " + this.pendingPackDimension : "none")
+                : packLabel(pendingRequest.path());
+        return "Chimera pack: active=" + active
+                + ", dimension=" + this.currentDimension
+                + ", pending=" + pending;
+    }
+
+    private static String packLabel(Path path) {
+        if (path == null) {
+            return "identity";
+        }
+        Path name = path.getFileName();
+        return name == null ? path.toString() : name.toString();
     }
 
 
@@ -1029,6 +1141,8 @@ public class ChimeraMainPass implements MainPass {
         if (this.packSource != null) this.packSource.close();
         this.packSource = null;
         this.packPath = null;
+        this.packChangeQueue.clear();
+        this.loggedPendingPackChange = null;
         this.pendingPackDimension = null;
         this.loggedPendingPackDimension = null;
         this.conformanceReport = null;
@@ -1117,8 +1231,11 @@ public class ChimeraMainPass implements MainPass {
 
     /** Records a dimension change for application at the next safe frame boundary. */
     public void onLevelChanged(String dimension) {
-        if (this.packSource == null || this.packPath == null
-                || dimension == null || dimension.isBlank()) {
+        if (dimension == null || dimension.isBlank()) {
+            return;
+        }
+        this.currentDimension = dimension;
+        if (this.packSource == null || this.packPath == null) {
             return;
         }
         if (dimension.equals(this.packSource.selectedDimension())) {
@@ -1132,6 +1249,97 @@ public class ChimeraMainPass implements MainPass {
             LOGGER.info("[chimera] pack dimension variant pending: {} ({})",
                     dimension, "PACK_VARIANT_REBUILD_DEFERRED");
         }
+    }
+
+    /** Queues a complete pack replacement for the next safe command boundary. */
+    private boolean applyPendingPackChange() {
+        PendingPackChange request = this.packChangeQueue.pending();
+        if (request == null) {
+            return true;
+        }
+        if (rebuildBlocked()) {
+            String label = packLabel(request.path());
+            if (!label.equals(this.loggedPendingPackChange)) {
+                this.loggedPendingPackChange = label;
+                LOGGER.warn("[chimera] pack change still deferred: {}", label);
+            }
+            return false;
+        }
+
+        Path previousPath = this.packPath;
+        String previousDimension = this.currentDimension;
+        this.packChangeQueue.clear();
+        this.loggedPendingPackChange = null;
+        LOGGER.info("[chimera] pack change safe boundary: {}", packLabel(request.path()));
+        try {
+            preparePackSessionReplacement(true);
+            this.packPath = request.path();
+            this.currentDimension = previousDimension;
+            createResources();
+            if (request.path() != null && packSourceLoadFailed()) {
+                throw new IllegalStateException("shaderpack source could not be loaded");
+            }
+            this.pendingPackDimension = null;
+            this.loggedPendingPackDimension = null;
+            LOGGER.info("[chimera] pack change installed: {}", packLabel(this.packPath));
+            return true;
+        } catch (RuntimeException rebuildFailure) {
+            LOGGER.warn("[chimera] pack change failed: {}, restoring {}: {}",
+                    packLabel(request.path()), packLabel(previousPath), rebuildFailure.getMessage());
+            try {
+                preparePackSessionReplacement(false);
+                this.packPath = previousPath;
+                this.currentDimension = previousDimension;
+                createResources();
+                this.pendingPackDimension = null;
+                this.loggedPendingPackDimension = null;
+                LOGGER.info("[chimera] pack change rolled back: {}", packLabel(previousPath));
+                return true;
+            } catch (RuntimeException restoreFailure) {
+                LOGGER.warn("[chimera] pack rollback failed; host seams remain active: {}",
+                        restoreFailure.getMessage());
+                this.pendingPackDimension = null;
+                this.loggedPendingPackDimension = null;
+                markPackVariantFallback();
+                ChimeraRenderer.fallbackToHostRenderer();
+                return false;
+            }
+        }
+    }
+
+    /** Clears all pack-owned objects and closes the current source after the idle wait. */
+    private void preparePackSessionReplacement(boolean waitForIdle) {
+        clearPackOverrides();
+        this.levelPhase = false;
+        this.pendingDepthClear = false;
+        this.shadowPending = false;
+        if (waitForIdle) {
+            waitForImmediateDestruction("pack replacement");
+        }
+        cleanUpPackVariant();
+        cleanUpFramebuffersAndPasses();
+        cleanUpPipelines();
+        if (this.packSource != null) {
+            this.packSource.close();
+            this.packSource = null;
+        }
+    }
+
+    private boolean rebuildBlocked() {
+        return Renderer.isRecording() || this.shadowPassActive || this.packPostTargets.isRendering()
+                || Renderer.getInstance().getBoundRenderPass() != null;
+    }
+
+    private boolean packSourceLoadFailed() {
+        if (this.packSource == null) {
+            return true;
+        }
+        return this.packSource.deviations().stream().anyMatch(deviation ->
+                deviation.equals("PACK_PATH_INVALID")
+                        || deviation.equals("NO_SHADERS_DIRECTORY")
+                        || deviation.equals("PACK_SHADERS_NOT_FOUND")
+                        || deviation.equals("PACK_ARCHIVE_INVALID")
+                        || deviation.startsWith("PACK_ARCHIVE_"));
     }
 
     /**
@@ -1149,8 +1357,7 @@ public class ChimeraMainPass implements MainPass {
             this.loggedPendingPackDimension = null;
             return true;
         }
-        if (Renderer.isRecording() || this.shadowPassActive || this.packPostTargets.isRendering()
-                || Renderer.getInstance().getBoundRenderPass() != null) {
+        if (rebuildBlocked()) {
             if (!requested.equals(this.loggedPendingPackDimension)) {
                 this.loggedPendingPackDimension = requested;
                 LOGGER.warn("[chimera] pack dimension variant still deferred: {}",
@@ -1362,9 +1569,9 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /**
-     * Discovers and parses the pack once per session (-Dchimera.pack is fixed
-     * at launch). Must run before createHdrFramebuffer so the pack's
-     * colortex0Format can drive the HDR buffer format.
+     * Discovers and parses the active pack once per session. Must run before
+     * createHdrFramebuffer so the pack's colortex0Format can drive the HDR
+     * buffer format.
      */
     private void loadPackConfig() {
         if (this.packConfig != null) {
@@ -1375,25 +1582,15 @@ public class ChimeraMainPass implements MainPass {
             }
             return;
         }
-        String packDir = System.getProperty("chimera.pack");
-        if (packDir == null || packDir.isBlank()) {
-            LOGGER.info("[chimera] pack disabled (no -Dchimera.pack)");
+        Path dir = this.packPath;
+        if (dir == null) {
+            LOGGER.info("[chimera] pack disabled (identity selection)");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             this.packNeedsHdrDepth = false;
             return;
         }
-
-        final Path dir;
-        try {
-            dir = Path.of(packDir);
-        } catch (RuntimeException e) {
-            LOGGER.warn("[chimera] pack path is invalid: {}", packDir);
-            ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
-            return;
-        }
-        this.packPath = dir;
         PackSource.LoadResult result = this.packSource != null
-                ? this.packSource : PackSource.loadResult(dir);
+                ? this.packSource : PackSource.loadResult(dir, this.currentDimension);
         this.packSource = result;
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
         this.conformanceReport = analysis.report();
@@ -1473,7 +1670,7 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /**
-     * Loads the OptiFine-format pack pointed at by -Dchimera.pack and builds
+     * Loads the active OptiFine-format pack and builds
      * its composite/final programs onto the post seams, gbuffers_terrain onto
      * the opaque terrain path, and gbuffers_water onto the translucent path.
      * A program that fails to load, convert, or

@@ -1,5 +1,6 @@
 package net.chimera;
 
+import net.chimera.command.ChimeraCommands;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
@@ -17,5 +18,7 @@ public class ChimeraMod implements ClientModInitializer {
     public void onInitializeClient() {
         LOGGER.info("Chimera {} initializing - shaderpack pipeline for VulkanMod", VERSION);
         LOGGER.info("Press F8 in-game to toggle the chimera main pass");
+        ChimeraCommands.register();
+        LOGGER.info("Use /chimera pack list, load, reload, off, or status to change shaderpacks in-game");
     }
 }

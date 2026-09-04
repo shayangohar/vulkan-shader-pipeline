@@ -9,6 +9,8 @@ import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.pass.MainPass;
 
+import java.nio.file.Path;
+
 /**
  * Owns the main-pass takeover lifecycle:
  * - onHostRendererReady: capture VulkanMod's installed MainPass and install
@@ -26,8 +28,16 @@ public final class ChimeraRenderer {
     private static boolean screenOpen;
     /** Keeps a normal Chimera install request alive across a safe rebuild. */
     private static boolean resumeAfterVariant;
+    /** F8-controlled master state; pack commands must not change it. */
+    private static boolean chimeraEnabled = true;
     private static MainPass hostPass;
     private static ChimeraMainPass chimeraPass;
+
+    public enum PackRequestResult {
+        QUEUED,
+        ALREADY_ACTIVE,
+        NOT_READY
+    }
 
     private ChimeraRenderer() {}
 
@@ -62,19 +72,35 @@ public final class ChimeraRenderer {
         ChimeraTerrainPipelines.init();
 
         ChimeraMod.LOGGER.info("Captured host main pass: {}", hostPass.getClass().getName());
+        chimeraEnabled = true;
         install();
     }
 
     public static void toggle() {
         if (screenMode) {
             // F8 while a screen is open: leave screen mode via full toggle-off.
-            uninstall();
+            chimeraEnabled = false;
+            if (installed) {
+                uninstall();
+            } else {
+                screenMode = false;
+                resumeAfterVariant = false;
+            }
+            return;
+        }
+
+        if (!installed && resumeAfterVariant) {
+            chimeraEnabled = false;
+            resumeAfterVariant = false;
+            ChimeraMod.LOGGER.info("F8 disabled pending Chimera resume");
             return;
         }
 
         if (installed) {
+            chimeraEnabled = false;
             uninstall();
         } else {
+            chimeraEnabled = true;
             install();
         }
     }
@@ -87,24 +113,52 @@ public final class ChimeraRenderer {
         return installed;
     }
 
+    public static PackRequestResult requestPack(Path path) {
+        if (!ready || chimeraPass == null) {
+            return PackRequestResult.NOT_READY;
+        }
+        return chimeraPass.queuePackChange(path, false)
+                ? PackRequestResult.QUEUED : PackRequestResult.ALREADY_ACTIVE;
+    }
+
+    public static PackRequestResult reloadPack() {
+        if (!ready || chimeraPass == null) {
+            return PackRequestResult.NOT_READY;
+        }
+        return chimeraPass.queuePackReload()
+                ? PackRequestResult.QUEUED : PackRequestResult.ALREADY_ACTIVE;
+    }
+
+    public static PackRequestResult disablePack() {
+        return requestPack(null);
+    }
+
+    public static String packStatus() {
+        if (!ready || chimeraPass == null) {
+            return "Chimera pack: renderer not ready";
+        }
+        return chimeraPass.packStatus() + ", F8=" + (chimeraEnabled ? "enabled" : "disabled")
+                + ", renderer=" + (installed ? "chimera" : "host");
+    }
+
     /** Applies pending pack work before VulkanMod begins a new main command buffer. */
     public static void beforeMainCommandBuffer() {
         if (!ready || chimeraPass == null) {
             return;
         }
-        if (chimeraPass.hasPendingPackVariant() && installed) {
+        if (chimeraPass.hasPendingPackChange() && installed) {
             Renderer.getInstance().setMainPass(hostPass);
             ChimeraTerrainPipelines.disable();
             ChimeraEntityBridge.setEnabled(false);
             installed = false;
-            resumeAfterVariant = true;
-            ChimeraMod.LOGGER.info("Pack variant transition handed to host");
+            resumeAfterVariant = chimeraEnabled;
+            ChimeraMod.LOGGER.info("Pack change handed to host at safe boundary");
         }
         if (!chimeraPass.applyPendingPackVariantAtFrameBoundary()) {
             return;
         }
         boolean liveLevel = Minecraft.getInstance().level != null;
-        if ((resumeAfterVariant || (screenMode && liveLevel)) && !installed) {
+        if (chimeraEnabled && (resumeAfterVariant || (screenMode && liveLevel)) && !installed) {
             if (install()) {
                 resumeAfterVariant = false;
                 screenMode = false;
@@ -235,6 +289,7 @@ public final class ChimeraRenderer {
         installed = false;
         screenMode = false;
         resumeAfterVariant = false;
+        chimeraEnabled = false;
         ChimeraMod.LOGGER.warn("Chimera variant fallback - host main pass restored");
     }
 

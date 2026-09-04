@@ -220,11 +220,21 @@ tasks.register('m65ConformanceTest', JavaExec) {
     }
 }
 
+tasks.register('m66ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M6.6 command path and hot-swap state checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.command.M66HotSwapHarness'
+    jvmArgs '-ea'
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
     dependsOn tasks.named('m63ConformanceTest')
     dependsOn tasks.named('m64ConformanceTest')
+    dependsOn tasks.named('m66ConformanceTest')
 }
 
 tasks.named('test') {
