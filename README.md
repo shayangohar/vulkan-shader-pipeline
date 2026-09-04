@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.6 complete. M7 core Iris visual parity is planned; M7.0 is next.**
+**Status: M6.6 complete. M7.0 real-pack parity baseline complete.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
@@ -40,6 +40,7 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M6.5 | Real-pack parity qualification: Complementary, BSL, reference comparisons, lifecycle coverage, and measured performance evidence |
 | M6.6 | Command-driven runtime pack switching with safe GPU-idle replacement and rollback |
 | M7 | Core Iris visual parity: program resolution, translation, uniforms, targets, resources, family adapters, frame sequencing, and qualification |
+| M7.0 | Lock the real-pack parity gap: static eligibility, runtime installation, execution evidence, and visual claims |
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
@@ -52,6 +53,12 @@ M6.5 uses the exact Complementary Reimagined r5.8.1 and BSL v10.1.3 packs. It co
 `powershell -NoProfile -ExecutionPolicy Bypass -File tools\m65-conformance.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion r5.8.1 -BslVersion v10.1.3`
 
 M6.5 capture and performance files stay outside the committed source tree. A runtime-installed program must be proven by the Minecraft log and RenderDoc evidence; static eligibility alone is not an installation claim. Use identical scene state and camera for Chimera and Sodium + Iris references, and report performance as three fixed-window medians with RenderDoc structural counts.
+
+M7.0 keeps the same exact Complementary Reimagined r5.8.1 and BSL v10.1.3 pack fingerprints and adds a capability matrix. Static eligibility, runtime installation, RenderDoc execution, and visual parity are separate states. Run the strict baseline check with the saved evidence paths:
+
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\m70-parity-baseline.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion r5.8.1 -BslVersion v10.1.3 -ComplementaryLogPath <log-path> -BslLogPath <log-path> -ComplementaryCapturePath <capture-path> -BslCapturePath <capture-path>`
+
+The M7.0 check requires one installed program and one fallback program for each pack, verifies the M6.5 source and report baseline, and checks ZIP and directory loading. It records RenderDoc execution as review-required until the capture structure is confirmed. It does not claim visual parity or performance parity. Use `-EmitBaseline` only when intentionally replacing `testpacks\baselines\m7_0.json` after reviewing the generated evidence.
 
 ## Runtime pack switching
 

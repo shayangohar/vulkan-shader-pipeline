@@ -229,6 +229,77 @@ tasks.register('m66ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m70ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Locks the M7.0 real-pack parity gap and evidence matrix.'
+    dependsOn tasks.named('conformanceTest')
+    dependsOn tasks.named('m62ConformanceTest')
+    dependsOn tasks.named('m63ConformanceTest')
+    dependsOn tasks.named('m64ConformanceTest')
+    dependsOn tasks.named('m66ConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M70ParityBaselineHarness'
+    jvmArgs '-ea'
+    doFirst {
+        def requiredPack = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required pack path. Set -P${projectKey} or -D${systemKey}.")
+            }
+            def pack = file(value.toString())
+            if (!pack.isDirectory() && !pack.isFile()) {
+                throw new GradleException("M7.0 pack path does not exist: ${pack}")
+            }
+            return pack.absolutePath
+        }
+        def requiredVersion = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required pack version. Set -P${projectKey} or -D${systemKey}.")
+            }
+            return value.toString()
+        }
+        def requiredEvidence = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required evidence path. Set -P${projectKey} or -D${systemKey}.")
+            }
+            def evidence = file(value.toString())
+            if (!evidence.isFile()) {
+                throw new GradleException("M7.0 evidence path does not exist: ${evidence}")
+            }
+            return evidence.absolutePath
+        }
+        def baselineValue = project.findProperty('m70Baseline')
+                ?: System.getProperty('chimera.m70.baseline')
+                ?: file('testpacks/baselines/m7_0.json')
+        def baseline = file(baselineValue.toString())
+        if (!baseline.isFile()) {
+            throw new GradleException("M7.0 baseline does not exist: ${baseline}")
+        }
+        systemProperty 'chimera.m70.complementary',
+                requiredPack('m70Complementary', 'chimera.m70.complementary')
+        systemProperty 'chimera.m70.bsl',
+                requiredPack('m70Bsl', 'chimera.m70.bsl')
+        systemProperty 'chimera.m70.complementaryVersion',
+                requiredVersion('m70ComplementaryVersion', 'chimera.m70.complementaryVersion')
+        systemProperty 'chimera.m70.bslVersion',
+                requiredVersion('m70BslVersion', 'chimera.m70.bslVersion')
+        systemProperty 'chimera.m70.complementaryLog',
+                requiredEvidence('m70ComplementaryLog', 'chimera.m70.complementaryLog')
+        systemProperty 'chimera.m70.bslLog',
+                requiredEvidence('m70BslLog', 'chimera.m70.bslLog')
+        systemProperty 'chimera.m70.complementaryCapture',
+                requiredEvidence('m70ComplementaryCapture', 'chimera.m70.complementaryCapture')
+        systemProperty 'chimera.m70.bslCapture',
+                requiredEvidence('m70BslCapture', 'chimera.m70.bslCapture')
+        systemProperty 'chimera.m70.baseline', baseline.absolutePath
+        if (project.findProperty('m70EmitBaseline')?.toString()?.toBoolean()) {
+            systemProperty 'chimera.m70.emitBaseline', 'true'
+        }
+    }
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
