@@ -11,11 +11,12 @@ public record PackPlan(
         List<PackProgramPlan> programs,
         PackEntityIdResolver entityIds,
         PackSettingsPlan settings,
-        PackResolutionPlan resolution
+        PackResolutionPlan resolution,
+        PackResourcePlan resources
 ) {
     public PackPlan(PackConfig.PackConfigData config, List<PackProgramPlan> programs) {
         this(config, programs, PackEntityIdResolver.empty(),
-                PackSettingsPlan.empty(), PackResolutionPlan.empty());
+                PackSettingsPlan.empty(), PackResolutionPlan.empty(), PackResourcePlan.empty());
     }
 
     public PackPlan(
@@ -23,7 +24,8 @@ public record PackPlan(
             List<PackProgramPlan> programs,
             PackEntityIdResolver entityIds
     ) {
-        this(config, programs, entityIds, PackSettingsPlan.empty(), PackResolutionPlan.empty());
+        this(config, programs, entityIds, PackSettingsPlan.empty(),
+                PackResolutionPlan.empty(), PackResourcePlan.empty());
     }
 
     public PackPlan {
@@ -34,6 +36,7 @@ public record PackPlan(
         entityIds = entityIds == null ? PackEntityIdResolver.empty() : entityIds;
         settings = settings == null ? PackSettingsPlan.empty() : settings;
         resolution = resolution == null ? PackResolutionPlan.empty() : resolution;
+        resources = resources == null ? PackResourcePlan.empty() : resources;
     }
 
     public Map<String, PackProgramPlan> byName() {
@@ -56,7 +59,8 @@ public record PackPlan(
     /** One eligibility result shared by probe and runtime pipeline construction. */
     public boolean shouldAttempt(String name) {
         PackProgramPlan program = program(name);
-        return program != null && program.executable() && resolution.shouldAttempt(name);
+        return program != null && program.executable() && resolution.shouldAttempt(name)
+                && resources.programAllowed(name);
     }
 
     public String selectedDimension() {
@@ -100,5 +104,9 @@ public record PackPlan(
     public boolean isProgramAlias(String name) {
         PackProgramResolution value = resolution.resolution(name);
         return value != null && !value.requestedProgram().equals(value.selectedProgram());
+    }
+
+    public PackResourcePlan resources() {
+        return resources;
     }
 }

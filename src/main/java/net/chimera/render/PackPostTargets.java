@@ -4,10 +4,17 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.mixin.ChimeraDeviceAccessor;
+import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.PackPipelines;
+import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.PackProgram;
+import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
+import net.chimera.shaderpack.TargetSpec;
+import net.chimera.shaderpack.TargetStep;
+import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
@@ -27,13 +34,13 @@ import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_A
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
+import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
+import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -43,441 +50,445 @@ import static org.lwjgl.vulkan.VK10.vkCmdCopyImage;
 import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
 
 /**
- * Owns the small post-processing target graph used by M5.6. The host
- * renderer still owns the HDR and presentation framebuffers. This class only
- * owns two banks of pack color images and the dynamic-rendering seam between
- * them.
+ * Render-thread executor for the immutable M7.4 target graph. Logical
+ * validity and physical image ownership are kept separate so a skipped pass
+ * cannot make a cleared or stale image visible to a later pass.
  */
 public final class PackPostTargets {
-    private static final int TARGET_COUNT = PostTargetPlan.MAX_TARGET + 1;
+    private static final int TARGET_COUNT = PackTargetGraphPlan.MAX_TARGET + 1;
 
     private final VulkanImage[][] images = new VulkanImage[2][TARGET_COUNT];
     private final boolean[] used = new boolean[TARGET_COUNT];
-    private final boolean[] initialized = new boolean[TARGET_COUNT];
+    private final boolean[] valid = new boolean[TARGET_COUNT];
     private final boolean[] pendingOutputs = new boolean[TARGET_COUNT];
-    private final int[] targetFormats = new int[TARGET_COUNT];
+    private final boolean[] doubled = new boolean[TARGET_COUNT];
+    private final int[] activeSide = new int[TARGET_COUNT];
+    private final int[] pendingWriteSide = new int[TARGET_COUNT];
     private final VulkanImage[] sourceImages = new VulkanImage[TARGET_COUNT];
-    /** The current frame's immutable identity source for logical target 0. */
-    private VulkanImage hdrIdentitySource;
+    private final VulkanImage[] pendingImages = new VulkanImage[TARGET_COUNT];
 
+    private VulkanImage hdrIdentitySource;
+    private PackTargetGraphPlan graph;
     private Framebuffer pipelineFramebuffer;
     private RenderPass pipelineRenderPass;
-    private int activeBank;
-    private int destinationBank;
     private boolean configured;
     private boolean rendering;
+    private TargetStep currentStep;
+    private PostTargetPlan currentPlan;
 
-    public boolean configure(
-            List<PackPipelines.PackPost> posts,
-            Map<Integer, Integer> declaredFormats,
-            int width,
-            int height
-    ) {
+    /** Installs the validated graph and allocates only required physical sides. */
+    public boolean configure(PackTargetGraphPlan graph) {
         cleanUp();
-        if (!needsTargetChain(posts)) {
+        if (graph == null || graph.steps().isEmpty()) {
             return false;
         }
-
+        if (graph.deviations().stream().anyMatch(value -> value.startsWith("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED"))) {
+            throw new IllegalStateException("pack target graph contains unsupported formats");
+        }
+        this.graph = graph;
         Arrays.fill(this.used, false);
-        Arrays.fill(this.targetFormats, PostTargetPlan.DEFAULT_FORMAT);
-        this.used[0] = true;
-        for (PackPipelines.PackPost post : posts) {
-            PostTargetPlan plan = post.targetPlan();
-            if (plan == null) {
+        Arrays.fill(this.valid, false);
+        Arrays.fill(this.pendingOutputs, false);
+        Arrays.fill(this.doubled, false);
+        Arrays.fill(this.activeSide, 0);
+        Arrays.fill(this.pendingWriteSide, 0);
+        for (TargetSpec target : graph.targets()) {
+            int index = target.index();
+            if (index < 0 || index >= TARGET_COUNT) {
                 continue;
             }
-            List<Integer> targets = plan.targetSlots();
-            List<Integer> formats = plan.outputFormats();
-            int maxAttachments = DeviceManager.device == null
-                    ? 4
-                    : ((ChimeraDeviceAccessor) DeviceManager.device)
-                            .chimera$properties().limits().maxColorAttachments();
-            if (targets.size() > maxAttachments) {
-                throw new IllegalStateException("post pass requires " + targets.size()
-                        + " color attachments, device supports " + maxAttachments);
-            }
-            for (int i = 0; i < targets.size(); i++) {
-                int target = targets.get(i);
-                if (target >= 0 && target < TARGET_COUNT) {
-                    this.used[target] = true;
-                    this.targetFormats[target] = formats.get(i);
-                }
-            }
-            for (String sampler : post.samplerNames()) {
-                if (!sampler.startsWith("colortex")) {
-                    continue;
-                }
-                try {
-                    int target = Integer.parseInt(sampler.substring("colortex".length()));
-                    if (target >= 0 && target < TARGET_COUNT) {
-                        this.used[target] = true;
-                    }
-                } catch (NumberFormatException ignored) {
-                    // The interface plan rejects malformed sampler names.
-                }
-            }
-        }
-        if (declaredFormats != null) {
-            for (Map.Entry<Integer, Integer> entry : declaredFormats.entrySet()) {
-                int target = entry.getKey();
-                if (target >= 0 && target < TARGET_COUNT && this.used[target]) {
-                    this.targetFormats[target] = entry.getValue();
-                }
-            }
-        }
-
-        int safeWidth = Math.max(width, 1);
-        int safeHeight = Math.max(height, 1);
-        int usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                | VK_IMAGE_USAGE_SAMPLED_BIT
-                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        for (int bank = 0; bank < images.length; bank++) {
-            for (int target = 0; target < TARGET_COUNT; target++) {
-                if (!this.used[target]) {
-                    continue;
-                }
-                this.images[bank][target] = VulkanImage.builder(safeWidth, safeHeight)
-                        .setName("chimeraPackColortex" + target + "Bank" + bank)
-                        .setFormat(this.targetFormats[target])
+            this.used[index] = true;
+            this.doubled[index] = target.doubled();
+            int usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                    | VK_IMAGE_USAGE_SAMPLED_BIT
+                    | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                    | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            this.images[0][index] = VulkanImage.builder(target.width(), target.height())
+                    .setName("chimeraPackColortex" + index + "Side0")
+                    .setFormat(target.format())
+                    .setUsage(usage)
+                    .setLinearFiltering(true)
+                    .setClamp(true)
+                    .createVulkanImage();
+            if (this.doubled[index]) {
+                this.images[1][index] = VulkanImage.builder(target.width(), target.height())
+                        .setName("chimeraPackColortex" + index + "Side1")
+                        .setFormat(target.format())
                         .setUsage(usage)
                         .setLinearFiltering(true)
                         .setClamp(true)
                         .createVulkanImage();
             }
         }
-
-        // VulkanMod uses this one-color framebuffer only as the pipeline
-        // state anchor. The actual draw attachments are supplied below by
-        // dynamic rendering, so no host framebuffer is widened.
+        if (this.images[0][0] == null) {
+            throw new IllegalStateException("target graph does not contain colortex0");
+        }
         this.pipelineFramebuffer = Framebuffer.builder(this.images[0][0], null).build();
         this.pipelineRenderPass = RenderPass.builder(this.pipelineFramebuffer).build();
         this.configured = true;
         return true;
     }
 
+    /** Compatibility entry point retained for earlier callers. */
+    public boolean configure(
+            List<PackPipelines.PackPost> posts,
+            Map<Integer, Integer> declaredFormats,
+            int width,
+            int height
+    ) {
+        if (posts == null || posts.isEmpty()) return false;
+        List<PackProgramPlan> plans = posts.stream().map(post -> {
+            List<UniformRegistry.SamplerBinding> samplers = new java.util.ArrayList<>();
+            for (int index = 0; index < post.samplerNames().size(); index++) {
+                samplers.add(new UniformRegistry.SamplerBinding(
+                        post.samplerNames().get(index), post.samplerSlots()[index]));
+            }
+            UniformRegistry.ProgramInterface stage = new UniformRegistry.ProgramInterface(
+                    UniformRegistry.Stage.POST, List.of(), samplers, List.of());
+            UniformRegistry.ProgramInterfacePlan interfacePlan =
+                    new UniformRegistry.ProgramInterfacePlan(
+                            Map.of("fragment", stage), List.of(), samplers, List.of());
+            PackProgram program = new PackProgram(post.name(), "", null);
+            return new PackProgramPlan(program, Map.of(), interfacePlan, Map.of(), Map.of(),
+                    post.targetPlan(), post.convertedFragment(), null, null, List.of(), true);
+        }).toList();
+        PackConfig.PackConfigData config = new PackConfig.PackConfigData(
+                declaredFormats == null ? Map.of() : declaredFormats, 1,
+                new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
+                        PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of()),
+                Map.of(), List.of());
+        int maxAttachments = deviceMaxColorAttachments();
+        PackTargetGraphPlan legacy = PackTargetGraphPlan.build(
+                plans, config, width, height, maxAttachments, Integer.MAX_VALUE);
+        return configure(legacy);
+    }
+
+    /** Starts a frame without clearing or copying unrelated logical targets. */
     public void beginFrame(VkCommandBuffer commandBuffer, VulkanImage hdrColor) {
-        if (!this.configured) {
-            throw new IllegalStateException("pack post targets are not configured");
+        if (!this.configured || this.graph == null) {
+            throw new IllegalStateException("pack target graph is not configured");
         }
-        this.activeBank = 0;
-        this.destinationBank = 1;
-        Arrays.fill(this.initialized, false);
-        Arrays.fill(this.pendingOutputs, false);
         this.hdrIdentitySource = hdrColor;
+        Arrays.fill(this.pendingOutputs, false);
+        Arrays.fill(this.pendingImages, null);
+        Arrays.fill(this.sourceImages, null);
+        this.valid[0] = false;
+        this.sourceImages[0] = hdrColor;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkClearColorValue clear = VkClearColorValue.calloc(stack);
-            clear.float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
-            VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
-            range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-            range.get(0).baseMipLevel(0);
-            range.get(0).levelCount(1);
-            range.get(0).baseArrayLayer(0);
-            range.get(0).layerCount(1);
-            for (int bank = 0; bank < images.length; bank++) {
-                for (int target = 0; target < TARGET_COUNT; target++) {
-                    VulkanImage image = this.images[bank][target];
-                    if (image == null) {
-                        continue;
-                    }
-                    image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-                    vkCmdClearColorImage(commandBuffer, image.getId(),
-                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, range);
-                    image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            for (TargetSpec target : this.graph.targets()) {
+                int index = target.index();
+                if (index == 0 || !this.used[index]) {
+                    continue;
+                }
+                if (target.clear()) {
+                    VulkanImage image = imageFor(index, this.activeSide[index]);
+                    clearImage(stack, commandBuffer, image, target.clearColorCopy());
+                    this.valid[index] = true;
+                    this.sourceImages[index] = image;
+                } else if (this.valid[index]) {
+                    this.sourceImages[index] = imageFor(index, this.activeSide[index]);
                 }
             }
         }
-        Arrays.fill(this.sourceImages, null);
-        this.sourceImages[0] = hdrColor;
     }
 
-    /**
-     * Invalidates logical pack ownership for the supplied outputs. Physical
-     * images are deliberately left untouched so bank preservation and cleanup
-     * remain unchanged. Target 0 immediately returns to the HDR identity
-     * source; auxiliary targets remain unavailable until a later successful
-     * finish writes them.
-     */
+    /** Invalidates logical outputs while retaining physical images. */
     public void invalidateOutputs(List<Integer> targets) {
-        if (targets == null) {
-            return;
-        }
+        if (targets == null) return;
         for (int target : targets) {
-            if (target < 0 || target >= TARGET_COUNT) {
-                continue;
-            }
+            if (target < 0 || target >= TARGET_COUNT) continue;
             this.pendingOutputs[target] = false;
-            this.initialized[target] = false;
+            this.valid[target] = false;
             this.sourceImages[target] = target == 0 ? this.hdrIdentitySource : null;
         }
     }
 
+    /** Begins dynamic rendering for the graph step represented by this post. */
     public void prepare(PackPipelines.PackPost post, VkCommandBuffer commandBuffer) {
-        if (!this.configured || this.rendering) {
+        if (!this.configured || this.graph == null || this.rendering) {
             throw new IllegalStateException("pack post target state is not ready");
         }
         PostTargetPlan plan = post.targetPlan();
-        if (plan == null || plan.isFinal()) {
-            throw new IllegalArgumentException("final is not an intermediate pack post pass");
+        TargetStep step = this.graph.step(post.name());
+        if (plan == null || plan.isFinal() || step == null || !step.executable()) {
+            throw new IllegalStateException("post step is not executable: " + post.name());
         }
-
-        this.destinationBank = 1 - this.activeBank;
+        pendingWriteSideReset();
+        this.currentStep = step;
+        this.currentPlan = plan;
+        int attachmentCount = plan.targetSlots().size();
+        int deviceLimit = deviceMaxColorAttachments();
+        if (!deviceSupportsMrt(attachmentCount, deviceLimit)) {
+            throw new IllegalStateException("post pass requires " + attachmentCount
+                    + " color attachments, device supports " + deviceLimit);
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            for (int target = 0; target < TARGET_COUNT; target++) {
-                if (!this.used[target]) {
-                    continue;
+            for (int target : step.outputTargets()) {
+                if (target < 0 || target >= TARGET_COUNT || !this.used[target]) {
+                    throw new IllegalStateException("missing output target " + target);
                 }
-                VulkanImage source = this.sourceImages[target];
-                VulkanImage destination = this.images[this.destinationBank][target];
-                if (destination == null) {
-                    throw new IllegalStateException("missing pack post target " + target);
-                }
-                if (source != null) {
-                    copyImage(stack, commandBuffer, source, destination);
-                }
-            }
-            for (int target = 0; target < TARGET_COUNT; target++) {
-                VulkanImage destination = this.images[this.destinationBank][target];
-                if (destination != null) {
-                    destination.transitionImageLayout(stack, commandBuffer,
-                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                }
-            }
-
-            List<Integer> targets = plan.targetSlots();
-            Arrays.fill(this.pendingOutputs, false);
-            for (int target : targets) {
+                int side = this.doubled[target] ? 1 - this.activeSide[target] : this.activeSide[target];
+                this.pendingWriteSide[target] = side;
+                VulkanImage destination = imageFor(target, side);
+                this.pendingImages[target] = destination;
                 this.pendingOutputs[target] = true;
+                if (step.reads(target) && this.sourceImages[target] != null
+                        && this.sourceImages[target] != destination) {
+                    copyImage(stack, commandBuffer, this.sourceImages[target], destination);
+                }
             }
+            List<Integer> attachmentTargets = plan.targetSlots();
             VkRenderingAttachmentInfo.Buffer attachments =
-                    VkRenderingAttachmentInfo.calloc(targets.size(), stack);
-            for (int i = 0; i < targets.size(); i++) {
-                VulkanImage destination = this.images[this.destinationBank][targets.get(i)];
+                    VkRenderingAttachmentInfo.calloc(attachmentTargets.size(), stack);
+            int renderWidth = step.width();
+            int renderHeight = step.height();
+            for (int i = 0; i < attachmentTargets.size(); i++) {
+                int target = attachmentTargets.get(i);
+                VulkanImage destination = this.pendingImages[target] != null
+                        ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
+                if (destination == null) {
+                    throw new IllegalStateException("missing attachment target " + target);
+                }
+                destination.transitionImageLayout(stack, commandBuffer,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 VkRenderingAttachmentInfo attachment = attachments.get(i);
                 attachment.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR);
                 attachment.imageView(destination.getImageView());
                 attachment.imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 attachment.loadOp(VK_ATTACHMENT_LOAD_OP_LOAD);
                 attachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+                if (i == 0) {
+                    renderWidth = destination.width;
+                    renderHeight = destination.height;
+                }
             }
 
             VkRect2D renderArea = VkRect2D.calloc(stack);
             renderArea.offset().set(0, 0);
-            renderArea.extent().set(this.images[this.destinationBank][0].width,
-                    this.images[this.destinationBank][0].height);
+            renderArea.extent().set(renderWidth, renderHeight);
             VkRenderingInfo renderingInfo = VkRenderingInfo.calloc(stack);
             renderingInfo.sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR);
             renderingInfo.renderArea(renderArea);
             renderingInfo.layerCount(1);
             renderingInfo.pColorAttachments(attachments);
 
-            MrtPipelineContext.begin(plan.outputFormatsArray());
+            MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit);
             Renderer.getInstance().setBoundFramebuffer(this.pipelineFramebuffer);
             Renderer.getInstance().setBoundRenderPass(this.pipelineRenderPass);
-            Renderer.setViewport(0, 0, renderArea.extent().width(), renderArea.extent().height(), stack);
+            Renderer.setViewport(0, 0, renderWidth, renderHeight, stack);
             VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
             scissor.get(0).offset().set(0, 0);
-            scissor.get(0).extent().set(renderArea.extent().width(), renderArea.extent().height());
+            scissor.get(0).extent().set(renderWidth, renderHeight);
             vkCmdSetScissor(commandBuffer, 0, scissor);
             try {
                 vkCmdBeginRenderingKHR(commandBuffer, renderingInfo);
                 this.rendering = true;
-            } catch (RuntimeException e) {
+            } catch (RuntimeException failure) {
                 MrtPipelineContext.end();
                 Renderer.getInstance().setBoundRenderPass(null);
                 Renderer.getInstance().setBoundFramebuffer(null);
-                throw e;
+                throw failure;
             }
         }
     }
 
+    /** Commits only successful output writes. */
     public void finish(VkCommandBuffer commandBuffer) {
-        if (!this.rendering) {
-            throw new IllegalStateException("pack post rendering is not active");
-        }
+        if (!this.rendering) throw new IllegalStateException("pack post rendering is not active");
         boolean committed = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdEndRenderingKHR(commandBuffer);
-            for (int target = 0; target < TARGET_COUNT; target++) {
-                VulkanImage destination = this.images[this.destinationBank][target];
-                if (destination != null) {
-                    destination.transitionImageLayout(stack, commandBuffer,
+            for (VulkanImage image : this.pendingImages) {
+                if (image != null) {
+                    image.transitionImageLayout(stack, commandBuffer,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                }
+            }
+            if (this.currentPlan != null) {
+                for (int target : this.currentPlan.targetSlots()) {
+                    VulkanImage image = this.pendingImages[target] != null
+                            ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
+                    if (image != null && !contains(this.pendingImages, image)) {
+                        image.transitionImageLayout(stack, commandBuffer,
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    }
                 }
             }
             committed = true;
         } finally {
-            this.activeBank = bankAfterFinish(this.activeBank, this.destinationBank, committed);
             if (committed) {
                 for (int target = 0; target < TARGET_COUNT; target++) {
-                    if (this.pendingOutputs[target]) {
-                        this.initialized[target] = true;
-                        this.sourceImages[target] = this.images[this.activeBank][target];
-                    } else if (this.initialized[target]) {
-                        this.sourceImages[target] = this.images[this.activeBank][target];
+                    if (this.pendingImages[target] != null) {
+                        this.activeSide[target] = this.pendingWriteSide[target];
+                        this.valid[target] = true;
+                        this.sourceImages[target] = this.pendingImages[target];
                     }
                 }
             }
-            Arrays.fill(this.pendingOutputs, false);
-            this.rendering = false;
-            MrtPipelineContext.end();
-            Renderer.getInstance().setBoundRenderPass(null);
-            Renderer.getInstance().setBoundFramebuffer(null);
+            clearPendingState();
+            finishRendererState();
         }
     }
 
+    /** Aborts pending writes without changing committed logical state. */
     public void abort(VkCommandBuffer commandBuffer) {
-        if (this.rendering) {
-            vkCmdEndRenderingKHR(commandBuffer);
-        }
+        if (this.rendering) vkCmdEndRenderingKHR(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            for (int target = 0; target < TARGET_COUNT; target++) {
-                VulkanImage destination = this.images[this.destinationBank][target];
-                if (destination != null) {
-                    destination.transitionImageLayout(stack, commandBuffer,
+            for (VulkanImage image : this.pendingImages) {
+                if (image != null) {
+                    image.transitionImageLayout(stack, commandBuffer,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 }
             }
-        } finally {
-            this.rendering = false;
-            Arrays.fill(this.pendingOutputs, false);
-            MrtPipelineContext.end();
-            Renderer.getInstance().setBoundRenderPass(null);
-            Renderer.getInstance().setBoundFramebuffer(null);
-        }
-    }
-
-    public VulkanImage[] sourceImages() {
-        return this.sourceImages;
-    }
-
-    /** True when every declared logical color input has a valid current image. */
-    public boolean areInputsAvailable(List<Integer> requiredTargets) {
-        if (requiredTargets == null) {
-            return true;
-        }
-        for (int target : requiredTargets) {
-            if (!isTargetAvailable(target)) {
-                return false;
+            if (this.currentPlan != null) {
+                for (int target : this.currentPlan.targetSlots()) {
+                    VulkanImage image = this.pendingImages[target] != null
+                            ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
+                    if (image != null && !contains(this.pendingImages, image)) {
+                        image.transitionImageLayout(stack, commandBuffer,
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    }
+                }
             }
+        } finally {
+            clearPendingState();
+            finishRendererState();
         }
+    }
+
+    public VulkanImage[] sourceImages() { return this.sourceImages; }
+    public PackTargetGraphPlan graph() { return this.graph; }
+
+    public boolean areInputsAvailable(List<Integer> requiredTargets) {
+        if (requiredTargets == null) return true;
+        for (int target : requiredTargets) if (!isTargetAvailable(target)) return false;
         return true;
     }
 
     public VulkanImage activeTarget(int target) {
-        if (target < 0 || target >= TARGET_COUNT) {
-            return null;
-        }
-        if (target == 0 && !this.initialized[0]) {
-            return this.sourceImages[0];
-        }
-        return this.initialized[target] ? this.images[this.activeBank][target] : null;
+        if (target < 0 || target >= TARGET_COUNT) return null;
+        if (target == 0 && !this.valid[0]) return this.sourceImages[0];
+        return this.valid[target] ? imageFor(target, this.activeSide[target]) : null;
     }
 
-    /** Pure target availability rule used by the deterministic harness. */
     static boolean isTargetAvailable(int target, boolean hdrIdentity, boolean[] written) {
         return written != null && target >= 0 && target < TARGET_COUNT && target < written.length
                 && (target == 0 ? hdrIdentity || written[target] : written[target]);
     }
 
     static boolean areTargetsAvailable(List<Integer> targets, boolean hdrIdentity, boolean[] written) {
-        if (targets == null) {
-            return true;
-        }
-        for (int target : targets) {
-            if (!isTargetAvailable(target, hdrIdentity, written)) {
-                return false;
-            }
-        }
+        if (targets == null) return true;
+        for (int target : targets) if (!isTargetAvailable(target, hdrIdentity, written)) return false;
         return true;
     }
 
-    /** Pure logical invalidation rule used by the deterministic harness. */
     static void invalidateWrittenTargets(boolean[] written, List<Integer> targets) {
-        if (written == null || targets == null) {
-            return;
-        }
-        for (int target : targets) {
-            if (target >= 0 && target < TARGET_COUNT && target < written.length) {
-                written[target] = false;
-            }
-        }
+        if (written == null || targets == null) return;
+        for (int target : targets) if (target >= 0 && target < TARGET_COUNT && target < written.length) written[target] = false;
     }
 
-    /** Pure commit rule used to prove that failed stages cannot swap banks. */
     static int bankAfterFinish(int activeBank, int destinationBank, boolean committed) {
         return committed ? destinationBank : activeBank;
     }
 
     static boolean deviceSupportsMrt(int attachments, int maxColorAttachments) {
         return attachments > 0 && maxColorAttachments > 0
-                && attachments <= maxColorAttachments;
+                && attachments <= Math.min(PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT, maxColorAttachments);
     }
 
-    public boolean isRendering() {
-        return this.rendering;
-    }
-
-    public boolean isConfigured() {
-        return this.configured;
-    }
+    public boolean isRendering() { return this.rendering; }
+    public boolean isConfigured() { return this.configured; }
 
     public void cleanUp() {
-        if (this.rendering) {
-            throw new IllegalStateException("cannot clean up active pack post rendering");
-        }
-        if (this.pipelineRenderPass != null) {
-            this.pipelineRenderPass.cleanUp();
-        }
-        if (this.pipelineFramebuffer != null) {
-            this.pipelineFramebuffer.cleanUp(false);
-        }
+        if (this.rendering) throw new IllegalStateException("cannot clean up active pack post rendering");
+        if (this.pipelineRenderPass != null) this.pipelineRenderPass.cleanUp();
+        if (this.pipelineFramebuffer != null) this.pipelineFramebuffer.cleanUp(false);
         this.pipelineRenderPass = null;
         this.pipelineFramebuffer = null;
-        for (int bank = 0; bank < images.length; bank++) {
+        for (int side = 0; side < images.length; side++) {
             for (int target = 0; target < TARGET_COUNT; target++) {
-                if (this.images[bank][target] != null) {
-                    this.images[bank][target].free();
-                    this.images[bank][target] = null;
+                if (this.images[side][target] != null) {
+                    this.images[side][target].free();
+                    this.images[side][target] = null;
                 }
             }
         }
         Arrays.fill(this.sourceImages, null);
-        this.hdrIdentitySource = null;
+        Arrays.fill(this.pendingImages, null);
         Arrays.fill(this.used, false);
-        Arrays.fill(this.initialized, false);
+        Arrays.fill(this.valid, false);
         Arrays.fill(this.pendingOutputs, false);
+        Arrays.fill(this.doubled, false);
+        this.hdrIdentitySource = null;
+        this.graph = null;
+        this.currentStep = null;
+        this.currentPlan = null;
         this.configured = false;
-        this.activeBank = 0;
-        this.destinationBank = 1;
         MrtPipelineContext.end();
     }
 
-    private static boolean needsTargetChain(List<PackPipelines.PackPost> posts) {
-        int intermediateCount = 0;
-        for (PackPipelines.PackPost post : posts) {
-            PostTargetPlan plan = post.targetPlan();
-            if (plan == null) {
-                continue;
-            }
-            if (plan.isFinal()) {
-                return true;
-            }
-            intermediateCount++;
-            if (plan.requiresMrt() || !post.name().equals("composite")) {
-                return true;
-            }
-        }
-        return intermediateCount > 1;
+    private boolean isTargetAvailable(int target) {
+        if (target < 0 || target >= TARGET_COUNT) return false;
+        return target == 0 ? this.sourceImages[0] != null
+                : this.valid[target] && this.sourceImages[target] != null;
     }
 
-    private boolean isTargetAvailable(int target) {
-        if (target < 0 || target >= TARGET_COUNT) {
-            return false;
-        }
-        return target == 0
-                ? this.sourceImages[0] != null || this.initialized[0]
-                : this.initialized[target] && this.sourceImages[target] != null;
+    private VulkanImage imageFor(int target, int side) {
+        if (target < 0 || target >= TARGET_COUNT) return null;
+        return this.images[this.doubled[target] ? side : 0][target];
+    }
+
+    private void pendingWriteSideReset() {
+        Arrays.fill(this.pendingOutputs, false);
+        Arrays.fill(this.pendingImages, null);
+        Arrays.fill(this.pendingWriteSide, 0);
+        this.currentStep = null;
+        this.currentPlan = null;
+    }
+
+    private void clearPendingState() {
+        Arrays.fill(this.pendingOutputs, false);
+        Arrays.fill(this.pendingImages, null);
+        this.rendering = false;
+        this.currentStep = null;
+        this.currentPlan = null;
+    }
+
+    private void finishRendererState() {
+        MrtPipelineContext.end();
+        Renderer.getInstance().setBoundRenderPass(null);
+        Renderer.getInstance().setBoundFramebuffer(null);
+    }
+
+    private static int deviceMaxColorAttachments() {
+        if (DeviceManager.device == null) return PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT;
+        return ((ChimeraDeviceAccessor) DeviceManager.device)
+                .chimera$properties().limits().maxColorAttachments();
+    }
+
+    private static void clearImage(
+            MemoryStack stack,
+            VkCommandBuffer commandBuffer,
+            VulkanImage image,
+            float[] color
+    ) {
+        if (image == null) throw new IllegalStateException("cannot clear missing target image");
+        VkClearColorValue clear = VkClearColorValue.calloc(stack);
+        clear.float32(stack.floats(color[0], color[1], color[2], color[3]));
+        VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+        range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
+        range.get(0).baseMipLevel(0);
+        range.get(0).levelCount(1);
+        range.get(0).baseArrayLayer(0);
+        range.get(0).layerCount(1);
+        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdClearColorImage(commandBuffer, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, range);
+        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    private static boolean contains(VulkanImage[] images, VulkanImage needle) {
+        for (VulkanImage image : images) if (image == needle) return true;
+        return false;
     }
 
     private static void copyImage(
@@ -486,10 +497,9 @@ public final class PackPostTargets {
             VulkanImage source,
             VulkanImage destination
     ) {
-        if (source.format != destination.format
-                || source.width != destination.width
+        if (source.format != destination.format || source.width != destination.width
                 || source.height != destination.height) {
-            throw new IllegalStateException("pack post target copy dimensions or formats differ");
+            throw new IllegalStateException("POST_TARGET_SEED_CONVERSION");
         }
         source.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         destination.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -508,5 +518,6 @@ public final class PackPostTargets {
         vkCmdCopyImage(commandBuffer, source.getId(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 destination.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
         source.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        destination.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 }

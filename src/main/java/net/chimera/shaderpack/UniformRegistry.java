@@ -209,7 +209,8 @@ public final class UniformRegistry {
             PostTargetPlan targetPlan,
             boolean prepared
     ) {
-        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared, Map.of());
+        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared,
+                Map.of(), Map.of());
     }
 
     /** Builds a program interface with the valid custom scalar descriptors for one pack session. */
@@ -221,10 +222,26 @@ public final class UniformRegistry {
             boolean prepared,
             Map<String, UniformDescriptor> customDescriptors
     ) {
+        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared,
+                customDescriptors, Map.of());
+    }
+
+    /** Builds a program interface with pack-owned sampler slots. */
+    public static ProgramInterfacePlan planProgram(
+            String fragmentSource,
+            String vertexSource,
+            Stage stage,
+            PostTargetPlan targetPlan,
+            boolean prepared,
+            Map<String, UniformDescriptor> customDescriptors,
+            Map<String, Integer> customSamplerSlots
+    ) {
         Stage effectiveStage = stage == null ? Stage.POST : stage;
         ProgramInterface fragment = effectiveStage == Stage.POST && targetPlan != null
-                ? planInternal(fragmentSource, Stage.POST, true, prepared, customDescriptors)
-                : planInternal(fragmentSource, effectiveStage, false, prepared, customDescriptors);
+                ? planInternal(fragmentSource, Stage.POST, true, prepared,
+                customDescriptors, customSamplerSlots)
+                : planInternal(fragmentSource, effectiveStage, false, prepared,
+                customDescriptors, customSamplerSlots);
         Map<String, ProgramInterface> stagePlans = new TreeMap<>();
         stagePlans.put("fragment", fragment);
         List<UniformDeclaration> uniforms = new ArrayList<>(fragment.uniforms());
@@ -232,7 +249,7 @@ public final class UniformRegistry {
         List<String> deviations = new ArrayList<>(fragment.deviations());
         if (vertexSource != null) {
             ProgramInterface vertex = planInternal(vertexSource, effectiveStage, false, prepared,
-                    customDescriptors);
+                    customDescriptors, customSamplerSlots);
             stagePlans.put("vertex", vertex);
             uniforms.addAll(vertex.uniforms());
             samplers.addAll(vertex.samplers());
@@ -252,8 +269,8 @@ public final class UniformRegistry {
             Map.entry("shadowcolor0", 3),
             Map.entry("shadowcolor1", 3),
             Map.entry("depthtex0", 6),
-            Map.entry("depthtex1", 6),
-            Map.entry("depthtex2", 6),
+            Map.entry("depthtex1", 12),
+            Map.entry("depthtex2", 13),
             Map.entry("noisetex", 7)
     );
 
@@ -378,6 +395,18 @@ public final class UniformRegistry {
             boolean allowUnusedDeclarations,
             Map<String, UniformDescriptor> customDescriptors
     ) {
+        return planInternal(source, stage, targetedPost, allowUnusedDeclarations,
+                customDescriptors, Map.of());
+    }
+
+    private static ProgramInterface planInternal(
+            String source,
+            Stage stage,
+            boolean targetedPost,
+            boolean allowUnusedDeclarations,
+            Map<String, UniformDescriptor> customDescriptors,
+            Map<String, Integer> customSamplerSlots
+    ) {
         String stripped = stripComments(source == null ? "" : source);
         Map<String, UniformDeclaration> declarations = new TreeMap<>();
         Set<String> implicitDeclarations = new TreeSet<>();
@@ -501,6 +530,9 @@ public final class UniformRegistry {
             if (stage == Stage.POST && slot == null) {
                 slot = extendedPostColorSlot(sampler.getKey());
             }
+            if (stage == Stage.POST && slot == null && customSamplerSlots != null) {
+                slot = customSamplerSlots.get(sampler.getKey());
+            }
             boolean mappedType = sampler.getValue().equals("sampler2D")
                     || sampler.getValue().equals("sampler2DShadow");
             if (!mappedType || slot == null) {
@@ -533,8 +565,15 @@ public final class UniformRegistry {
             if (stage == Stage.POST && sampler.getKey().equals("noisetex")) {
                 deviations.add("NOISETEX_PACK_RESOURCE");
             }
-            if (stage == Stage.POST && sampler.getKey().equals("depthtex0")) {
-                deviations.add("DEPTH_INPUT_FIXED_TO_HDR");
+            if (stage == Stage.POST && sampler.getKey().startsWith("depthtex")) {
+                // Keep the M5.3 single-depth report stable while the new
+                // graph is introduced. M7.4 graph snapshots carry the
+                // authoritative semantic correction.
+                if (sampler.getKey().equals("depthtex0")) {
+                    deviations.add("DEPTH_INPUT_FIXED_TO_HDR");
+                } else {
+                    deviations.add("DEPTH_INPUT_GRAPH:" + sampler.getKey());
+                }
             }
             if (stage == Stage.POST && !targetedPost && sampler.getKey().matches("colortex[1-3]")) {
                 deviations.add("COLORTEX_ALIAS_TO_SEAM");
@@ -589,7 +628,7 @@ public final class UniformRegistry {
     }
 
     private static boolean isHostAlias(String name) {
-        return name.equals("depthtex1") || name.equals("depthtex2") || name.equals("shadowtex1")
+        return name.equals("shadowtex1")
                 || name.equals("shadowcolor0") || name.equals("shadowcolor1");
     }
 
@@ -728,16 +767,7 @@ public final class UniformRegistry {
     }
 
     private static String samplerResource(String name) {
-        if (name.startsWith("shadowcolor")) {
-            return "shadowcolor";
-        }
-        if (name.startsWith("shadowtex")) {
-            return "shadowtex";
-        }
-        if (name.startsWith("depthtex")) {
-            return "depthtex";
-        }
-        return name;
+        return PackResourcePlan.canonicalResource(name);
     }
 
     /**
@@ -745,17 +775,18 @@ public final class UniformRegistry {
      * logical post targets through selector slots 8 through 11.
      */
     private static Integer extendedPostColorSlot(String name) {
-        Matcher matcher = Pattern.compile("colortex(\\d+)").matcher(name);
-        if (!matcher.matches()) {
+        Integer target = PackResourcePlan.targetIndex(name);
+        if (target == null) {
             return null;
         }
-        int target;
-        try {
-            target = Integer.parseInt(matcher.group(1));
-        } catch (NumberFormatException e) {
-            return null;
+        // The first four aliases use the host selector slots. The extended
+        // logical targets continue at slots 8 through 11. This keeps aliases
+        // such as gcolor and gaux1 equivalent to their colortex names while
+        // preserving the existing M5.3 slots for colortex0..3.
+        if (target >= 0 && target <= 3) {
+            return target;
         }
-        return target >= 4 && target <= PostTargetPlan.MAX_TARGET ? target + 4 : null;
+        return target <= PostTargetPlan.MAX_TARGET ? target + 4 : null;
     }
 
     private static boolean isDeviationForName(

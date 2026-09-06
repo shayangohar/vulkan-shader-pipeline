@@ -33,7 +33,8 @@ record PackSettingsPlan(
         Set<String> unsupportedRequiredFeatures,
         List<String> deviations,
         String activeProfile,
-        PackRuntimeSettings runtimeSettings
+        PackRuntimeSettings runtimeSettings,
+        Map<String, PackResourceDeclaration> resourceDeclarations
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Pattern DEFINE = Pattern.compile(
@@ -69,6 +70,8 @@ record PackSettingsPlan(
         deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
         activeProfile = activeProfile == null || activeProfile.isBlank() ? "default" : activeProfile;
         runtimeSettings = runtimeSettings == null ? PackRuntimeSettings.empty() : runtimeSettings;
+        resourceDeclarations = resourceDeclarations == null
+                ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(resourceDeclarations));
     }
 
     /** Compatibility constructor for the M7.1 settings shape. */
@@ -86,12 +89,31 @@ record PackSettingsPlan(
     ) {
         this(options, defaults, profiles, propertyValues, programEnabled,
                 requiredFeatures, optionalFeatures, unsupportedRequiredFeatures,
-                deviations, activeProfile, PackRuntimeSettings.empty());
+                deviations, activeProfile, PackRuntimeSettings.empty(), Map.of());
+    }
+
+    /** Compatibility constructor for callers using the M7.2 settings shape. */
+    PackSettingsPlan(
+            Map<String, Option> options,
+            Map<String, String> defaults,
+            Map<String, Profile> profiles,
+            Map<String, String> propertyValues,
+            Map<String, Boolean> programEnabled,
+            Set<String> requiredFeatures,
+            Set<String> optionalFeatures,
+            Set<String> unsupportedRequiredFeatures,
+            List<String> deviations,
+            String activeProfile,
+            PackRuntimeSettings runtimeSettings
+    ) {
+        this(options, defaults, profiles, propertyValues, programEnabled,
+                requiredFeatures, optionalFeatures, unsupportedRequiredFeatures,
+                deviations, activeProfile, runtimeSettings, Map.of());
     }
 
     static PackSettingsPlan empty() {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
-                Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty());
+                Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty(), Map.of());
     }
 
     static PackSettingsPlan parse(List<PackProgram> programs, Path shadersDir) {
@@ -128,10 +150,11 @@ record PackSettingsPlan(
         Set<String> required = new TreeSet<>();
         Set<String> optional = new TreeSet<>();
         List<PackRuntimeSettings.Declaration> customValues = new ArrayList<>();
+        Map<String, PackResourceDeclaration> resourceDeclarations = new TreeMap<>();
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
             parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
-                    required, optional, customValues, deviations);
+                    required, optional, customValues, resourceDeclarations, deviations);
         }
         Set<String> unsupportedRequired = new TreeSet<>();
         for (String feature : required) {
@@ -143,7 +166,7 @@ record PackSettingsPlan(
         PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(customValues, defaults, deviations);
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
-                runtimeSettings);
+                runtimeSettings, resourceDeclarations);
     }
 
     /** Active defaults seed the shared shader preprocessor. */
@@ -172,6 +195,9 @@ record PackSettingsPlan(
         root.add("deviations", strings(deviations));
         root.addProperty("activeProfile", activeProfile);
         root.addProperty("runtimeSettings", runtimeSettingsFingerprint());
+        if (!resourceDeclarations.isEmpty()) {
+            root.addProperty("resourceFingerprint", resourceFingerprint());
+        }
         return JSON.toJson(root);
     }
 
@@ -191,6 +217,38 @@ record PackSettingsPlan(
 
     String fingerprint() {
         return ConformanceReport.sha256(snapshotJson().getBytes(StandardCharsets.UTF_8));
+    }
+
+    List<String> resourceDeviations() {
+        return resourceDeclarations.values().stream()
+                .map(value -> "PACK_TEXTURE_DECLARED:" + value.key())
+                .sorted().toList();
+    }
+
+    Map<String, Integer> customSamplerSlots() {
+        Map<String, Integer> slots = new TreeMap<>();
+        int next = PackResourcePlan.PACK_SLOT_FIRST;
+        for (PackResourceDeclaration declaration : resourceDeclarations.values().stream()
+                .sorted(Comparator.comparing(PackResourceDeclaration::key)).toList()) {
+            if (declaration.sampler().isBlank() || slots.containsKey(declaration.sampler())) {
+                continue;
+            }
+            if (next <= PackResourcePlan.PACK_SLOT_LAST) {
+                slots.put(declaration.sampler(), next++);
+            }
+        }
+        return Collections.unmodifiableMap(slots);
+    }
+
+    private String resourceFingerprint() {
+        StringBuilder value = new StringBuilder();
+        resourceDeclarations.values().stream()
+                .sorted(Comparator.comparing(PackResourceDeclaration::key))
+                .forEach(declaration -> value.append(declaration.key()).append('|')
+                        .append(declaration.stage()).append('|')
+                        .append(declaration.sampler()).append('|')
+                        .append(declaration.source()).append('\n'));
+        return ConformanceReport.sha256(value.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     private static void collectSourceOptions(
@@ -246,6 +304,7 @@ record PackSettingsPlan(
             Set<String> required,
             Set<String> optional,
             List<PackRuntimeSettings.Declaration> customValues,
+            Map<String, PackResourceDeclaration> resourceDeclarations,
             List<String> deviations
     ) {
         PackConditionals.State conditions = new PackConditionals.State(defaults);
@@ -302,6 +361,11 @@ record PackSettingsPlan(
                     continue;
                 }
                 values.put(key, value);
+                PackResourceDeclaration resource = resourceDeclaration(key, value);
+                if (resource != null) {
+                    resourceDeclarations.put(resource.key(), resource);
+                    continue;
+                }
                 Matcher profile = PROFILE.matcher(line);
                 if (profile.matches()) {
                     profiles.put(profile.group(1), new Profile(profile.group(1), value));
@@ -336,6 +400,15 @@ record PackSettingsPlan(
                             custom.group(3), custom.group(4).trim()));
                     continue;
                 }
+                if (key.startsWith("image.") || key.startsWith("customImage.")) {
+                    deviations.add("CUSTOM_IMAGE_UNSUPPORTED:" + key);
+                    continue;
+                }
+                if (key.startsWith("bufferObject.") || key.startsWith("ssbo.")
+                        || key.startsWith("storage.")) {
+                    deviations.add("STORAGE_RESOURCE_UNSUPPORTED:" + key);
+                    continue;
+                }
                 if (!isSupportedProperty(key)) {
                     deviations.add("SETTING_UNSUPPORTED:" + key);
                 }
@@ -355,9 +428,32 @@ record PackSettingsPlan(
     private static boolean isSupportedProperty(String key) {
         return key.startsWith("profile.") || key.startsWith("program.")
                 || key.startsWith("iris.features.") || key.matches("colortex\\d+Format")
+                || key.matches("colortex\\d+Clear") || key.matches("colortex\\d+ClearColor")
+                || key.matches("colortex\\d+MipmapEnabled")
+                || key.startsWith("size.buffer.colortex") || key.startsWith("flip.")
+                || key.startsWith("customTexture.") || key.startsWith("texture.")
                 || key.startsWith("shadow") || key.equals("sunPathRotation")
                 || key.equals("sunPathOffset") || key.equals("shadowMapResolution")
                 || key.equals("shadowDistance");
+    }
+
+    private static PackResourceDeclaration resourceDeclaration(String key, String value) {
+        if (key.startsWith("customTexture.")) {
+            String sampler = key.substring("customTexture.".length()).trim();
+            return sampler.isBlank() ? null
+                    : new PackResourceDeclaration(key, "*", sampler, value, PackResourceKind.PACK_TEXTURE);
+        }
+        if (key.equals("texture.noise")) {
+            return new PackResourceDeclaration(key, "*", "noisetex", value, PackResourceKind.NOISE);
+        }
+        if (key.startsWith("texture.")) {
+            String[] parts = key.split("\\.", 3);
+            if (parts.length == 3 && !parts[1].isBlank() && !parts[2].isBlank()) {
+                return new PackResourceDeclaration(key, parts[1], parts[2], value,
+                        PackResourceKind.PACK_TEXTURE);
+            }
+        }
+        return null;
     }
 
     private static void putDefault(

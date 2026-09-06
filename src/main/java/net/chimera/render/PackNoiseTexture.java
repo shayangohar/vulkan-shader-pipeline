@@ -7,6 +7,7 @@ import net.vulkanmod.render.engine.VkGpuTexture;
 import net.vulkanmod.render.engine.VkTextureView;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -14,6 +15,10 @@ import java.nio.file.Path;
 
 /** One pack-owned noisetex image for the narrow real-pack post path. */
 public final class PackNoiseTexture implements AutoCloseable {
+    private static final int MAX_ENCODED_BYTES = 8 * 1024 * 1024;
+    private static final int MAX_DIMENSION = 4096;
+    private static final long MAX_PIXELS = 16L * 1024L * 1024L;
+
     private final DynamicTexture texture;
     private final VulkanImage image;
 
@@ -26,16 +31,37 @@ public final class PackNoiseTexture implements AutoCloseable {
     }
 
     public static PackNoiseTexture load(Path path) throws IOException {
-        NativeImage pixels;
         try (InputStream input = Files.newInputStream(path)) {
-            pixels = NativeImage.read(input);
+            return load(input, "chimera_pack_noise");
         }
+    }
+
+    public static PackNoiseTexture load(Path path, String name) throws IOException {
+        try (InputStream input = Files.newInputStream(path)) {
+            return load(input, name);
+        }
+    }
+
+    public static PackNoiseTexture load(InputStream input, String name) throws IOException {
+        if (input == null) {
+            throw new IOException("texture input is missing");
+        }
+        byte[] encoded = input.readNBytes(MAX_ENCODED_BYTES + 1);
+        if (encoded.length > MAX_ENCODED_BYTES) {
+            throw new IOException("texture exceeds encoded size limit");
+        }
+        NativeImage pixels = NativeImage.read(new ByteArrayInputStream(encoded));
         if (pixels.getWidth() < 1 || pixels.getHeight() < 1) {
             pixels.close();
             throw new IOException("noise image has no pixels");
         }
+        if (pixels.getWidth() > MAX_DIMENSION || pixels.getHeight() > MAX_DIMENSION
+                || (long) pixels.getWidth() * pixels.getHeight() > MAX_PIXELS) {
+            pixels.close();
+            throw new IOException("texture dimensions exceed limit");
+        }
 
-        DynamicTexture texture = new DynamicTexture(() -> "chimera_pack_noise", pixels);
+        DynamicTexture texture = new DynamicTexture(() -> name == null ? "chimera_pack_texture" : name, pixels);
         try {
             texture.upload();
             GpuTextureView view = texture.getTextureView();

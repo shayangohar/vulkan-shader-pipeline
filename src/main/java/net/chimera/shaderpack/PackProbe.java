@@ -158,16 +158,27 @@ public final class PackProbe {
         PackResolutionPlan resolution = PackResolutionPlan.build(
                 loaded.selectedDimension(), loaded.selectedVariantFolder(),
                 loaded.programs(), settingsPlan);
-        PackPlan packPlan = PackPlanBuilder.build(
+        PackPlan initialPlan = PackPlanBuilder.build(
                 loaded.programs(), packConfig, entityIds.resolver(), resolution);
+        PackResourcePlan resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
+        PackPlan packPlan = new PackPlan(packConfig, initialPlan.programs(), entityIds.resolver(),
+                settingsPlan, resolution, resourcePlan);
         globalDeviations.addAll(packConfig.deviations());
+        // Keep standard sampler aliases program-scoped. Adding every binding
+        // deviation to the pack-wide list changes old fixture support status
+        // even when the alias is already part of that family's contract.
+        globalDeviations.addAll(settingsPlan.resourceDeviations());
+        settingsPlan.deviations().stream()
+                .filter(value -> value.startsWith("CUSTOM_IMAGE_UNSUPPORTED:")
+                        || value.startsWith("STORAGE_RESOURCE_UNSUPPORTED:"))
+                .forEach(globalDeviations::add);
         applyShadowPropertyReporting(inventories, shadowPropertySettings,
                 packConfig.shadowSettings(), globalDeviations);
 
         ConformanceReport report = report(packName, passListPresent, passInventory, metadataHashes,
                 settings, globalDeviations, loaded);
         for (Inventory inventory : inventories.values()) {
-            report.addProgram(toProgram(inventory, packConfig, packPlan.program(inventory.name)));
+            report.addProgram(toProgram(inventory, packConfig, packPlan.program(inventory.name), resourcePlan));
         }
         return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
     }
@@ -258,7 +269,8 @@ public final class PackProbe {
     private static ConformanceReport.ProgramReport toProgram(
             Inventory inventory,
             PackConfig.PackConfigData packConfig,
-            PackProgramPlan programPlan
+            PackProgramPlan programPlan,
+            PackResourcePlan resourcePlan
     ) {
         boolean relaxed = !inventory.variantFolder.isBlank();
         StringBuilder combinedSource = new StringBuilder();
@@ -292,6 +304,12 @@ public final class PackProbe {
         List<Integer> targets = targetResult != null
                 ? targetResult.plan().targetSlots() : scanTargets(fragment);
         TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
+        if (resourcePlan != null) {
+            resourcePlan.deviationsForProgram(name).stream()
+                    .filter(value -> !value.startsWith("STANDARD_RESOURCE_ALIAS:")
+                            && !value.startsWith("SHADOW_RESOURCE_ALIAS:"))
+                    .forEach(deviations::add);
+        }
         deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
 
         String family = familyOf(name);
@@ -429,7 +447,10 @@ public final class PackProbe {
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
                 : name.equals("gbuffers_entities") ? UniformRegistry.ENTITY_NAME_TO_SLOT
                 : UniformRegistry.NAME_TO_SLOT;
-        if (!relaxed) {
+        // PackPlanBuilder already resolved standard aliases and pack-owned
+        // sampler slots through the shared interface plan. Keep the legacy
+        // scan only for compatibility callers that do not have a plan.
+        if (!relaxed && programPlan == null) {
             for (String sampler : samplers) {
                 if (!knownSamplers.containsKey(sampler)) {
                     deviations.add(name.equals("gbuffers_water")
@@ -502,6 +523,12 @@ public final class PackProbe {
                     || deviation.startsWith("UNIFORM_CONFLICT:")
                     || deviation.startsWith("SAMPLER_NOT_MAPPED:")
                     || deviation.startsWith("SAMPLER_SLOT_CONFLICT:")
+                    || deviation.startsWith("PACK_TEXTURE_MISSING:")
+                    || deviation.startsWith("PACK_TEXTURE_PATH_UNSAFE:")
+                    || deviation.startsWith("PACK_TEXTURE_LOAD_FAILED:")
+                    || deviation.startsWith("PACK_RESOURCE_SLOT_LIMIT:")
+                    || deviation.startsWith("STANDARD_RESOURCE_UNAVAILABLE:")
+                    || deviation.startsWith("MATERIAL_MAP_DEFERRED:")
                     || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
                     || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
                     || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")

@@ -16,6 +16,8 @@ import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.mixin.ChimeraDeviceAccessor;
+import net.chimera.shaderpack.DepthGraphPlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgramPlan;
@@ -26,6 +28,12 @@ import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackSource;
 import net.chimera.shaderpack.PackMaterialResolver;
 import net.chimera.shaderpack.PostTargetPlan;
+import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.TargetStep;
+import net.chimera.shaderpack.PackResourceBinding;
+import net.chimera.shaderpack.PackResourcePlan;
+import net.chimera.shaderpack.PackResourceStatus;
+import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.engine.VkGpuDevice;
 import net.vulkanmod.render.engine.VkGpuTexture;
@@ -118,6 +126,9 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackPost packFinalPost;
     private PackPostExecution packFinalExecution;
     private final PackPostTargets packPostTargets = new PackPostTargets();
+    private final PackDepthTargets packDepthTargets = new PackDepthTargets();
+    /** Immutable target and depth schedule for the active pack variant. */
+    private PackTargetGraphPlan packTargetGraph;
     private boolean packPostChainActive;
     /** Set only when the target graph itself cannot be configured. */
     private boolean packPostChainRejected;
@@ -130,9 +141,8 @@ public class ChimeraMainPass implements MainPass {
     private PackSource.LoadResult packSource;
     /** Original pack path used to select another dimension variant in place. */
     private Path packPath;
-    /** Pack-owned noisetex image, retained for the pack session. */
-    private PackNoiseTexture packNoiseTexture;
-    private VulkanImage packNoiseImage;
+    /** All pack-owned sampled images, retained for the pack session. */
+    private PackResourceOwner packResourceOwner;
     /** Static pack inventory plus the actual compile/install disposition. */
     private ConformanceReport conformanceReport;
     /** Pack pipelines are retained until the renderer session is torn down. */
@@ -534,6 +544,11 @@ public class ChimeraMainPass implements MainPass {
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             if (this.packNeedsHdrDepth) {
                 transitionHdrDepthForSampling(stack, commandBuffer);
+                if (this.packDepthTargets.isConfigured()
+                        && !this.packDepthTargets.captureScene(
+                        commandBuffer, this.hdrFramebuffer.getDepthAttachment())) {
+                    LOGGER.warn("[chimera] pack depth graph: fallback=IDENTITY (depth conversion failed)");
+                }
             }
 
             if (this.packPostChainActive && this.packPostTargets.isConfigured()) {
@@ -550,7 +565,7 @@ public class ChimeraMainPass implements MainPass {
             Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
             VulkanImage[] prevPackSlots = null;
             if (this.packCompositePipeline != null) {
-                prevPackSlots = bindPackSamplers(this.packCompositeSlots,
+                prevPackSlots = bindPackSamplers("composite", this.packCompositeSlots,
                         this.packCompositeSamplerNames, null, hdrColor);
             } else {
                 VTextureSelector.bindTexture(hdrColor);
@@ -610,7 +625,7 @@ public class ChimeraMainPass implements MainPass {
             boolean packFinalAlreadyApplied = this.packPostChainActive && this.packFinalPost != null;
             VulkanImage[] prevPackSlots = null;
             if (!packFinalAlreadyApplied && this.packFinalPipeline != null) {
-                prevPackSlots = bindPackSamplers(this.packFinalSlots,
+                prevPackSlots = bindPackSamplers("final", this.packFinalSlots,
                         this.packFinalSamplerNames, null, outputColor);
             } else {
                 VTextureSelector.bindTexture(outputColor);
@@ -724,15 +739,23 @@ public class ChimeraMainPass implements MainPass {
                     markPostStageIdentityBoundary(stage, "not installed");
                     continue;
                 }
-                if (!this.packPostTargets.areInputsAvailable(post.requiredColorInputs())) {
+                TargetStep graphStep = postGraphStep(stage);
+                if (graphStep == null || !graphStep.executable()) {
+                    markPostGraphIdentityBoundary(stage, graphStep);
+                    continue;
+                }
+                if (!this.packPostTargets.areInputsAvailable(post.requiredColorInputs())
+                        || !packDepthInputsAvailable(post.samplerNames())) {
                     markPostStageIdentityBoundary(stage,
-                            "unavailable inputs " + post.requiredColorInputs());
+                            "unavailable inputs " + post.requiredColorInputs()
+                                    + " depth=" + post.samplerNames());
                     continue;
                 }
                 VulkanImage[] previous = null;
                 boolean attempted = false;
                 try {
                     previous = bindPackSamplers(
+                            post.name(),
                             post.samplerSlots(), post.samplerNames(),
                             this.packPostTargets.sourceImages(), hdrColor);
                     attempted = true;
@@ -760,14 +783,24 @@ public class ChimeraMainPass implements MainPass {
             }
             Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
             stableOutputPassOpen = true;
+            TargetStep finalGraphStep = postGraphStep(this.packFinalExecution);
+            boolean finalGraphExecutable = this.packFinalPost != null
+                    && finalGraphStep != null && finalGraphStep.executable();
+            if (this.packFinalPost != null && !finalGraphExecutable
+                    && this.packFinalExecution != null) {
+                markPostGraphIdentityBoundary(this.packFinalExecution, finalGraphStep);
+            }
             boolean finalInputsAvailable = this.packFinalPost != null
-                    && this.packPostTargets.areInputsAvailable(this.packFinalPost.requiredColorInputs());
+                    && finalGraphExecutable
+                    && this.packPostTargets.areInputsAvailable(this.packFinalPost.requiredColorInputs())
+                    && packDepthInputsAvailable(this.packFinalPost.samplerNames());
             if (this.packFinalPost != null && finalInputsAvailable) {
                 Arrays.fill(this.packFinalInputs, null);
                 for (int target = 0; target < this.packFinalInputs.length; target++) {
                     this.packFinalInputs[target] = this.packPostTargets.activeTarget(target);
                 }
                 VulkanImage[] previous = bindPackSamplers(
+                        this.packFinalPost.name(),
                         this.packFinalPost.samplerSlots(), this.packFinalPost.samplerNames(),
                         this.packFinalInputs, resolved);
                 try {
@@ -781,11 +814,12 @@ public class ChimeraMainPass implements MainPass {
                     restorePackSamplers(this.packFinalPost.samplerSlots(), previous);
                 }
             } else {
-                if (this.packFinalExecution != null) {
+                if (this.packFinalExecution != null && (this.packFinalPost == null || finalGraphExecutable)) {
                     markPostStageIdentityBoundary(this.packFinalExecution,
                             this.packFinalPost == null
                                     ? "not installed"
-                                    : "unavailable inputs " + this.packFinalPost.requiredColorInputs());
+                                    : "unavailable inputs " + this.packFinalPost.requiredColorInputs()
+                                    + " depth=" + this.packFinalPost.samplerNames());
                 }
                 VTextureSelector.bindTexture(resolved);
                 drawFullscreen(commandBuffer, this.compositePipeline);
@@ -823,6 +857,52 @@ public class ChimeraMainPass implements MainPass {
         if (!success) {
             renderIdentityResolve(commandBuffer, hdrColor);
         }
+    }
+
+    private TargetStep postGraphStep(PackPostExecution stage) {
+        if (stage == null || this.packPostTargets.graph() == null) {
+            return null;
+        }
+        return this.packPostTargets.graph().step(stage.name());
+    }
+
+    /** Converts a static graph rejection into a per-stage identity boundary. */
+    private void markPostGraphIdentityBoundary(PackPostExecution stage, TargetStep step) {
+        if (this.packPostBoundaryLogged.contains(stage.name())) {
+            if (!stage.finalStage()) {
+                this.packPostTargets.invalidateOutputs(step == null
+                        ? stage.outputTargets() : step.outputTargets());
+            }
+            return;
+        }
+        String detail = step == null
+                ? "graph step unavailable"
+                : "graph step rejected " + step.deviations();
+        if (step != null && this.conformanceReport != null) {
+            String code = graphRejectionCode(stage.name(), step);
+            this.conformanceReport.addDeviation(code);
+            this.conformanceReport.markRuntime(stage.name(),
+                    ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, code);
+        }
+        markPostStageIdentityBoundary(
+                stage.name(),
+                step == null ? stage.outputTargets() : step.outputTargets(),
+                stage.finalStage(),
+                detail);
+    }
+
+    private static String graphRejectionCode(String name, TargetStep step) {
+        for (String deviation : step.deviations()) {
+            if (deviation.startsWith("POST_TARGET_MIPMAP_UNSUPPORTED:")
+                    || deviation.startsWith("POST_TARGET_ATTACHMENT_LIMIT:")
+                    || deviation.startsWith("POST_TARGET_SIZE_CONFLICT:")
+                    || deviation.startsWith("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:")
+                    || deviation.startsWith("POST_TARGET_FEEDBACK_UNSUPPORTED:")
+                    || deviation.equals("FINAL_MRT_UNSUPPORTED")) {
+                return deviation;
+            }
+        }
+        return "POST_STAGE_GRAPH_REJECTED:" + name;
     }
 
     /** Restores the stable host resolve after a pack post pass fails. */
@@ -938,10 +1018,11 @@ public class ChimeraMainPass implements MainPass {
      * boundTextures, so the restore is safe for the already-recorded frame.
      */
     private VulkanImage[] bindPackSamplers(int[] slots, VulkanImage colortexImage) {
-        return bindPackSamplers(slots, null, null, colortexImage);
+        return bindPackSamplers("", slots, null, null, colortexImage);
     }
 
     private VulkanImage[] bindPackSamplers(
+            String programName,
             int[] slots,
             List<String> samplerNames,
             VulkanImage[] colorInputs,
@@ -967,6 +1048,17 @@ public class ChimeraMainPass implements MainPass {
             previous[i] = VTextureSelector.getImage(slot);
             String samplerName = samplerNames != null && i < samplerNames.size()
                     ? samplerNames.get(i) : "";
+            PackResourceBinding resourceBinding = this.packResourceOwner == null
+                    ? null : this.packResourceOwner.binding(programName, samplerName);
+            if (resourceBinding != null
+                    && (resourceBinding.status() == PackResourceStatus.PACK_FILE
+                    || resourceBinding.status() == PackResourceStatus.GAME_RESOURCE)) {
+                VulkanImage resourceImage = this.packResourceOwner.image(resourceBinding.resourceKey());
+                if (resourceImage != null) {
+                    VTextureSelector.bindTexture(slot, resourceImage);
+                }
+                continue;
+            }
             if (samplerName.equals("shadowcolor0") || samplerName.equals("shadowcolor1")) {
                 if (this.shadowMap.getShadowFramebuffer() != null) {
                     VTextureSelector.bindTexture(3,
@@ -978,13 +1070,14 @@ public class ChimeraMainPass implements MainPass {
                 if (colorInput != null) {
                     VTextureSelector.bindTexture(slot, colorInput);
                 }
-            } else if (slot >= 8 && slot <= 11 && samplerName.startsWith("colortex")) {
-                int logicalTarget = slot - 4;
-                VulkanImage colorInput = colorInputs != null
-                        && logicalTarget < colorInputs.length
-                        ? colorInputs[logicalTarget] : null;
-                if (colorInput != null) {
-                    VTextureSelector.bindTexture(slot, colorInput);
+            } else if (slot >= 8 && slot <= 11) {
+                Integer logicalTarget = PackResourcePlan.targetIndex(samplerName);
+                if (logicalTarget != null && logicalTarget >= 4
+                        && colorInputs != null && logicalTarget < colorInputs.length) {
+                    VulkanImage colorInput = colorInputs[logicalTarget];
+                    if (colorInput != null) {
+                        VTextureSelector.bindTexture(slot, colorInput);
+                    }
                 }
             } else if (slot == 5) {
                 VulkanImage shadowDepth = this.shadowMap.getShadowFramebuffer() != null
@@ -994,14 +1087,60 @@ public class ChimeraMainPass implements MainPass {
                     VTextureSelector.bindTexture(5, shadowDepth);
                 }
             } else if (slot == 6) {
-                if (this.hdrFramebuffer != null) {
-                    VTextureSelector.bindTexture(6, this.hdrFramebuffer.getDepthAttachment());
+                VulkanImage depth = this.packDepthTargets.image("depthtex0");
+                if (depth == null && this.hdrFramebuffer != null) {
+                    depth = this.hdrFramebuffer.getDepthAttachment();
                 }
-            } else if (slot == 7 && this.packNoiseImage != null) {
-                VTextureSelector.bindTexture(7, this.packNoiseImage);
+                if (depth != null) {
+                    VTextureSelector.bindTexture(6, depth);
+                }
+            } else if (slot == 12 || slot == 13) {
+                VulkanImage depth = this.packDepthTargets.image(samplerName);
+                if (depth != null) {
+                    VTextureSelector.bindTexture(slot, depth);
+                }
+            } else if (slot == 7 && this.packResourceOwner != null) {
+                VulkanImage noise = this.packResourceOwner.image("noisetex");
+                if (noise != null) {
+                    VTextureSelector.bindTexture(7, noise);
+                }
             }
         }
         return previous;
+    }
+
+    private boolean packDepthInputsAvailable(List<String> samplerNames) {
+        if (samplerNames == null) return true;
+        for (String sampler : samplerNames) {
+            if (sampler != null && sampler.startsWith("depthtex")
+                    && this.packDepthTargets.image(sampler) == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Captures opaque depth at the boundary immediately before translucency. */
+    public void captureOpaqueDepthBeforeTranslucent() {
+        if (!this.levelPhase || !this.packDepthTargets.isConfigured()
+                || !this.packDepthTargets.plan().depthtex1()
+                || this.hdrFramebuffer == null) {
+            return;
+        }
+        VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
+        Renderer.getInstance().endRenderPass(commandBuffer);
+        boolean captured = this.packDepthTargets.captureOpaque(
+                commandBuffer, this.hdrFramebuffer.getDepthAttachment());
+        if (!captured) {
+            LOGGER.warn("[chimera] pack depth graph: depthtex1 capture unavailable");
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            Renderer.getInstance().beginRenderPass(this.hdrAuxRenderPass, this.hdrFramebuffer);
+            Renderer.setViewport(0, 0, this.hdrFramebuffer.getWidth(),
+                    this.hdrFramebuffer.getHeight(), stack);
+            VK10.vkCmdSetScissor(commandBuffer, 0, this.hdrFramebuffer.scissor(stack));
+        }
+        this.hdrDepthReadable = false;
     }
 
     private void transitionHdrDepthForSampling(MemoryStack stack, VkCommandBuffer commandBuffer) {
@@ -1175,9 +1314,13 @@ public class ChimeraMainPass implements MainPass {
         // pack pipeline and leaves the host format/cache untouched.
         ChimeraEntityBridge.disable();
         VTextureSelector.bindTexture(7, null);
+        for (int slot = 8; slot <= PackResourcePlan.PACK_SLOT_LAST; slot++) {
+            VTextureSelector.bindTexture(slot, null);
+        }
         releasePackShadowView();
         this.shadowMap.cleanUp();
         this.packPostTargets.cleanUp();
+        this.packDepthTargets.cleanUp();
         Set<GraphicsPipeline> postPipelines =
                 Collections.newSetFromMap(new IdentityHashMap<>());
         for (PackPipelines.PackPost post : this.packPostStages) {
@@ -1192,9 +1335,8 @@ public class ChimeraMainPass implements MainPass {
         if (this.packTranslucentPipeline != null) this.packTranslucentPipeline.cleanUp();
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
         if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
-        if (this.packNoiseTexture != null) this.packNoiseTexture.close();
-        this.packNoiseTexture = null;
-        this.packNoiseImage = null;
+        if (this.packResourceOwner != null) this.packResourceOwner.close();
+        this.packResourceOwner = null;
         this.packPostStages.clear();
         this.packPostExecution.clear();
         this.packPostBoundaryLogged.clear();
@@ -1220,6 +1362,7 @@ public class ChimeraMainPass implements MainPass {
         this.packPostChainRejected = false;
         this.packConfig = null;
         this.packPlan = null;
+        this.packTargetGraph = null;
         this.packPrograms = null;
         this.packHdrFormat = 97;
         this.packNeedsHdrDepth = false;
@@ -1448,6 +1591,7 @@ public class ChimeraMainPass implements MainPass {
     private void createResources() {
         this.packPostChainActive = false;
         this.packPostTargets.cleanUp();
+        this.packDepthTargets.cleanUp();
         cleanUpFramebuffersAndPasses();
         cleanUpPipelines();
 
@@ -1482,17 +1626,27 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
         try {
-            this.packPostChainActive = this.packPostTargets.configure(
-                    this.packPostStages,
-                    this.packConfig == null ? Map.of() : this.packConfig.colortexFormats(),
-                    width,
-                    height);
+            if (this.packPlan == null) {
+                return;
+            }
+            int maxAttachments = deviceMaxColorAttachments();
+            this.packTargetGraph = PackTargetGraphPlan.build(
+                    this.packPlan.programs(), this.packConfig, this.packPlan.resources(), width, height,
+                    maxAttachments, deviceMaxImageDimension());
+            this.packNeedsHdrDepth = this.packTargetGraph.depth().any();
+            this.packDepthTargets.configure(width, height, this.packTargetGraph.depth());
+            this.packPostChainActive = this.packPostTargets.configure(this.packTargetGraph);
             if (this.packPostChainActive) {
-                LOGGER.info("[chimera] pack post target chain: configured");
+                LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, maxAttachments={}, fingerprint={}",
+                        this.packTargetGraph.targets().size(), this.packTargetGraph.steps().size(),
+                        this.packTargetGraph.depth().names(), this.packTargetGraph.maxAttachments(),
+                        this.packTargetGraph.fingerprint());
             }
         } catch (RuntimeException e) {
             this.packPostTargets.cleanUp();
+            this.packDepthTargets.cleanUp();
             this.packPostChainActive = false;
+            this.packTargetGraph = null;
             this.packPostChainRejected = true;
             discardPackPostPipelines();
             if (this.conformanceReport != null) {
@@ -1502,6 +1656,22 @@ public class ChimeraMainPass implements MainPass {
             LOGGER.warn("[chimera] pack post target chain: fallback=IDENTITY (resource allocation failed: {})",
                     e.getMessage());
         }
+    }
+
+    private static int deviceMaxColorAttachments() {
+        if (DeviceManager.device == null) {
+            return PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT;
+        }
+        return ((ChimeraDeviceAccessor) DeviceManager.device)
+                .chimera$properties().limits().maxColorAttachments();
+    }
+
+    private static int deviceMaxImageDimension() {
+        if (DeviceManager.device == null) {
+            return Integer.MAX_VALUE;
+        }
+        return ((ChimeraDeviceAccessor) DeviceManager.device)
+                .chimera$properties().limits().maxImageDimension2D();
     }
 
     private void createHdrFramebuffer(int width, int height) {
@@ -1618,11 +1788,16 @@ public class ChimeraMainPass implements MainPass {
         this.packNeedsHdrDepth = this.conformanceReport.programs().stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
                 .anyMatch(program -> program.samplers().contains("depthtex0")
-                        || program.samplers().contains("depthtex1"));
+                        || program.samplers().contains("depthtex1")
+                        || program.samplers().contains("depthtex2"));
         PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir());
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
         this.packHdrFormat = this.packConfig.colortexFormats().getOrDefault(0, 97);
-        loadPackNoise(result);
+        this.packResourceOwner = PackResourceOwner.load(this.packPlan.resources(), result.shadersDir());
+        LOGGER.info("[chimera] pack resources: fingerprint={}, declarations={}, deviations={}",
+                this.packPlan.resources().fingerprint(),
+                this.packPlan.resources().declarations().size(),
+                this.packPlan.resources().deviations().size());
         if (this.packPrograms.isEmpty()) {
             LOGGER.warn("[chimera] pack '{}' from {}: no programs found", dir.getFileName(), dir.toAbsolutePath());
             return;
@@ -1657,30 +1832,6 @@ public class ChimeraMainPass implements MainPass {
         if (this.conformanceReport != null) {
             LOGGER.info("[chimera] conformance summary: reportSha256={} {}",
                     this.conformanceReport.sha256(), this.conformanceReport.runtimeSummary());
-        }
-    }
-
-    private void loadPackNoise(PackSource.LoadResult result) {
-        boolean required = this.conformanceReport != null && this.conformanceReport.programs().stream()
-                .anyMatch(program -> program.samplers().contains("noisetex")
-                        && this.conformanceReport.shouldAttempt(program.name()));
-        if (!required) {
-            return;
-        }
-        Path noise = result.findNoiseTexture();
-        if (noise == null) {
-            this.conformanceReport.addDeviation("NOISETEX_RESOURCE_MISSING");
-            LOGGER.warn("[chimera] pack noisetex: fallback=IDENTITY (resource missing)");
-            return;
-        }
-        try {
-            this.packNoiseTexture = PackNoiseTexture.load(noise);
-            this.packNoiseImage = this.packNoiseTexture.image();
-            LOGGER.info("[chimera] pack noisetex: loaded {} ({}x{})", noise.getFileName(),
-                    this.packNoiseImage.width, this.packNoiseImage.height);
-        } catch (Exception e) {
-            this.conformanceReport.addDeviation("NOISETEX_RESOURCE_LOAD_FAILED");
-            LOGGER.warn("[chimera] pack noisetex: fallback=IDENTITY (load failed: {})", e.getMessage());
         }
     }
 
@@ -1750,6 +1901,13 @@ public class ChimeraMainPass implements MainPass {
                     reason = "PROGRAM_DISABLED:" + name;
                 } else if (this.packPlan != null && this.packPlan.isProgramAlias(name)) {
                     reason = "PROGRAM_ALIAS_RUNTIME_FALLBACK:" + name;
+                } else if (this.packPlan != null
+                        && !this.packPlan.resources().programAllowed(name)) {
+                    reason = this.packPlan.resources().deviationsForProgram(name).stream()
+                            .filter(value -> value.startsWith("PACK_TEXTURE_")
+                                    || value.startsWith("STANDARD_RESOURCE_UNAVAILABLE:")
+                                    || value.startsWith("MATERIAL_MAP_DEFERRED:"))
+                            .findFirst().orElse("PACK_RESOURCE_UNAVAILABLE");
                 } else if (programPlan != null && !programPlan.executable()) {
                     reason = "PLAN_INELIGIBLE:" + name;
                 }
@@ -1761,13 +1919,13 @@ public class ChimeraMainPass implements MainPass {
                 LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
                 continue;
             }
-            if (requiresNoise(program) && this.packNoiseImage == null) {
+            if (this.packResourceOwner != null && !this.packResourceOwner.programAvailable(name)) {
+                String reason = this.packResourceOwner.failureDeviationForProgram(name);
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
-                            ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                            "NOISETEX_RESOURCE_LOAD_FAILED");
+                            ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
                 }
-                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (noisetex unavailable)", name);
+                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
                 continue;
             }
             if (name.equals("shadow")) {

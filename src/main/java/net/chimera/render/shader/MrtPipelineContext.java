@@ -8,15 +8,21 @@ import java.util.Arrays;
  * the target formats must be available at that exact call site.
  */
 public final class MrtPipelineContext {
+    public static final int LOGICAL_LIMIT = 8;
     private static final ThreadLocal<int[]> COLOR_FORMATS = new ThreadLocal<>();
 
     private MrtPipelineContext() {}
 
     public static void begin(int[] formats) {
-        if (formats == null || formats.length < 1 || formats.length > 4) {
-            throw new IllegalArgumentException("M5.6 requires one to four color formats");
+        begin(formats, LOGICAL_LIMIT);
+    }
+
+    public static void begin(int[] formats, int deviceMaxColorAttachments) {
+        int limit = Math.min(LOGICAL_LIMIT, Math.max(0, deviceMaxColorAttachments));
+        if (formats == null || formats.length < 1 || formats.length > limit) {
+            throw new IllegalArgumentException("M7.4 post MRT exceeds the safe attachment limit " + limit);
         }
-        COLOR_FORMATS.set(formats);
+        COLOR_FORMATS.set(formats.clone());
     }
 
     public static void end() {

@@ -56,7 +56,7 @@ public final class LegacyGlslConverter {
             "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
     private static final Pattern CONSUMED_CONSTS =
-            Pattern.compile("(?m)^\\s*const\\s+(?:int|float)\\s+(?:colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|MipmapEnabled)|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)\\s*=\\s*[A-Za-z0-9+_.-]+\\s*;\\s*(?://.*)?$");
+            Pattern.compile("(?m)^\\s*const\\s+(?:int|float|bool|vec4)\\s+(?:colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)\\s*=\\s*[A-Za-z0-9+_.(), -]+\\s*;\\s*(?://.*)?$");
     private static final Pattern KNOWN_LEGACY_EXTENSIONS = Pattern.compile(
             "(?im)^\\s*#extension\\s+GL_ARB_shader_texture_lod\\s*:\\s*(?:enable|require|disable)\\s*$\\r?\\n?");
 
@@ -913,8 +913,8 @@ public final class LegacyGlslConverter {
 
     private static String removePackMetadataConstants(String source) {
         Matcher declarations = Pattern.compile(
-                "(?m)^\\s*const\\s+(?:int|float|bool)\\s+"
-                        + "((?:colortex|gaux)\\d+(?:Format|Clear|MipmapEnabled))"
+                "(?m)^\\s*const\\s+(?:int|float|bool|vec4)\\s+"
+                        + "((?:colortex|gaux)\\d+(?:Format|Clear|ClearColor|MipmapEnabled))"
                         + "\\s*=\\s*[^;]+;\\s*(?://.*)?$").matcher(source);
         List<PostVarying> matches = new ArrayList<>();
         while (declarations.find()) {

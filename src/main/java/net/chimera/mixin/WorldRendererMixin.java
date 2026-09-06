@@ -41,4 +41,13 @@ public abstract class WorldRendererMixin {
             pass.renderShadowSegment(camX, camY, camZ);
         }
     }
+
+    @Inject(method = "renderSectionLayer", at = @At("HEAD"))
+    private void chimera$captureOpaqueDepthBeforeTranslucent(TerrainRenderType renderType,
+            double camX, double camY, double camZ, Matrix4f modelView, Matrix4f projection,
+            CallbackInfo ci) {
+        if (renderType != TerrainRenderType.TRANSLUCENT || !ChimeraRenderer.segmentsActive()) return;
+        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+        if (pass != null) pass.captureOpaqueDepthBeforeTranslucent();
+    }
 }

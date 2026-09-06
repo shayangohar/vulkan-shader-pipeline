@@ -36,6 +36,14 @@ public final class PackConfig {
     /** const int colortexNFormat = TOKEN; (value 0-9 for colortex0-9). */
     private static final Pattern COLORTEX_FMT_CONST =
             Pattern.compile("(?m)^\\s*const\\s+int\\s+colortex(\\d+)Format\\s*=\\s*(\\w+)\\s*;\\s*(?://.*)?$");
+    private static final Pattern COLORTEX_CLEAR_CONST = Pattern.compile(
+            "(?m)^\\s*const\\s+bool\\s+colortex(\\d+)Clear\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern COLORTEX_CLEAR_COLOR_CONST = Pattern.compile(
+            "(?m)^\\s*const\\s+vec4\\s+colortex(\\d+)ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
+    private static final Pattern COLORTEX_MIPMAP_CONST = Pattern.compile(
+            "(?m)^\\s*const\\s+bool\\s+colortex(\\d+)MipmapEnabled\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
                     + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul)"
@@ -48,9 +56,19 @@ public final class PackConfig {
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile("#define\\s+DRAWBUFFERS(\\d+)");
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
-    private static final Pattern PROPERTY_LINE = Pattern.compile("^\\s*([A-Za-z0-9_.-]+)\\s*=\\s*([^#\\s]+)\\s*$");
+    private static final Pattern PROPERTY_LINE = Pattern.compile("^\\s*([A-Za-z0-9_.-]+)\\s*=\\s*([^#\\r\\n]+?)\\s*$");
     /** shaders.properties key shape: colortexNFormat. */
     private static final Pattern COLORTEX_PROPERTY_KEY = Pattern.compile("^colortex(\\d+)Format$");
+    private static final Pattern TARGET_SIZE_PROPERTY_KEY =
+            Pattern.compile("^size\\.buffer\\.colortex(\\d+)$");
+    private static final Pattern TARGET_CLEAR_PROPERTY_KEY =
+            Pattern.compile("^colortex(\\d+)Clear$");
+    private static final Pattern TARGET_CLEAR_COLOR_PROPERTY_KEY =
+            Pattern.compile("^colortex(\\d+)ClearColor$");
+    private static final Pattern TARGET_MIPMAP_PROPERTY_KEY =
+            Pattern.compile("^colortex(\\d+)MipmapEnabled$");
+    private static final Pattern TARGET_FLIP_PROPERTY_KEY =
+            Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
     /** OptiFine format token -> VK format code (verified: 37/97/109 match the pins). */
     public static final Map<String, Integer> FMT_TO_VK = Map.of(
@@ -95,13 +113,49 @@ public final class PackConfig {
         }
     }
 
+    /** Load-time target directives. Runtime image allocation is done by M7.4. */
+    public record TargetSettings(
+            String sizeExpression,
+            boolean clear,
+            float[] clearColor,
+            boolean mipmapped,
+            List<String> deviations
+    ) {
+        public TargetSettings {
+            sizeExpression = sizeExpression == null ? "" : sizeExpression.trim();
+            clearColor = clearColor == null ? new float[] {0.0F, 0.0F, 0.0F, 0.0F}
+                    : clearColor.clone();
+            if (clearColor.length != 4) {
+                clearColor = new float[] {0.0F, 0.0F, 0.0F, 0.0F};
+            }
+            deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        }
+
+        public static TargetSettings defaults() {
+            return new TargetSettings("", true,
+                    new float[] {0.0F, 0.0F, 0.0F, 0.0F}, false, List.of());
+        }
+
+        public float[] clearColorCopy() {
+            return clearColor.clone();
+        }
+
+        @Override
+        public float[] clearColor() {
+            return clearColor.clone();
+        }
+    }
+
     public record PackConfigData(
             Map<Integer, Integer> colortexFormats,
             int drawBufferCount,
             ShadowSettings shadowSettings,
             Map<String, String> shaderConstants,
             List<String> deviations,
-            PackSettingsPlan settings
+            PackSettingsPlan settings,
+            Map<Integer, TargetSettings> targetSettings,
+            Map<String, List<Integer>> flips,
+            Map<String, List<Integer>> preFlips
     ) {
         public PackConfigData(
                 Map<Integer, Integer> colortexFormats,
@@ -111,7 +165,7 @@ public final class PackConfig {
                 List<String> deviations
         ) {
             this(colortexFormats, drawBufferCount, shadowSettings, shaderConstants,
-                    deviations, PackSettingsPlan.empty());
+                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of());
         }
 
         public PackConfigData {
@@ -119,6 +173,21 @@ public final class PackConfig {
             shaderConstants = Collections.unmodifiableMap(new TreeMap<>(shaderConstants));
             deviations = List.copyOf(new TreeSet<>(deviations));
             settings = settings == null ? PackSettingsPlan.empty() : settings;
+            targetSettings = Collections.unmodifiableMap(new TreeMap<>(targetSettings == null
+                    ? Map.of() : targetSettings));
+            flips = immutableTargetLists(flips);
+            preFlips = immutableTargetLists(preFlips);
+        }
+
+        private static Map<String, List<Integer>> immutableTargetLists(
+                Map<String, List<Integer>> source
+        ) {
+            Map<String, List<Integer>> result = new TreeMap<>();
+            if (source != null) {
+                source.forEach((key, value) -> result.put(key,
+                        value == null ? List.of() : value.stream().distinct().sorted().toList()));
+            }
+            return Collections.unmodifiableMap(result);
         }
     }
 
@@ -134,6 +203,9 @@ public final class PackConfig {
         Map<Integer, Integer> colortexFormats = new HashMap<>();
         Map<String, String> shadowValues = new TreeMap<>();
         Map<String, String> shaderConstants = new TreeMap<>();
+        Map<Integer, TargetSettings> targetSettings = new TreeMap<>();
+        Map<String, List<Integer>> flips = new TreeMap<>();
+        Map<String, List<Integer>> preFlips = new TreeMap<>();
         List<String> deviations = new ArrayList<>();
 
         for (PackProgram program : programs.stream()
@@ -178,6 +250,8 @@ public final class PackConfig {
             collectShadowConstants(program.executableVertexSource(), shadowValues);
             collectPackConstants(src, shaderConstants, deviations);
             collectPackConstants(program.executableVertexSource(), shaderConstants, deviations);
+            collectTargetConstants(src, targetSettings, deviations);
+            collectTargetConstants(program.executableVertexSource(), targetSettings, deviations);
         }
 
         // shaders.properties overrides (OptiFine packs may declare formats here).
@@ -190,7 +264,7 @@ public final class PackConfig {
                         continue;
                     }
                     String key = m.group(1);
-                    String value = m.group(2);
+                    String value = m.group(2).trim();
                     Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
                     if (colortexKey.find()) {
                         int slot;
@@ -219,7 +293,61 @@ public final class PackConfig {
                         }
                         colortexFormats.put(slot, code);
                         LOGGER.info("[chimera] pack properties: {}={}", key, value);
-                    } else if (SHADOW_PROPERTIES.contains(key)) {
+                    } else {
+                        Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
+                        Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
+                        Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
+                        Matcher mipmapKey = TARGET_MIPMAP_PROPERTY_KEY.matcher(key);
+                        Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
+                        if (sizeKey.matches()) {
+                            int slot = parseTargetIndex(sizeKey.group(1), deviations);
+                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
+                                updateTargetSettings(targetSettings, slot, value, null, null,
+                                        null, null);
+                            }
+                        } else if (clearKey.matches()) {
+                            int slot = parseTargetIndex(clearKey.group(1), deviations);
+                            Boolean clear = parseBoolean(value);
+                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
+                                updateTargetSettings(targetSettings, slot, null, clear, null,
+                                        null, null);
+                            } else if (clear != null) {
+                                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+                            }
+                        } else if (clearColorKey.matches()) {
+                            int slot = parseTargetIndex(clearColorKey.group(1), deviations);
+                            float[] color = parseColor(value);
+                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
+                                updateTargetSettings(targetSettings, slot, null, null, color,
+                                        null, null);
+                            } else {
+                                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+                            }
+                        } else if (mipmapKey.matches()) {
+                            int slot = parseTargetIndex(mipmapKey.group(1), deviations);
+                            Boolean mipmapped = parseBoolean(value);
+                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && mipmapped != null) {
+                                updateTargetSettings(targetSettings, slot, null, null, null,
+                                        mipmapped, null);
+                            } else {
+                                deviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:colortex" + slot);
+                            }
+                        } else if (flipKey.matches()) {
+                            int slot = parseTargetIndex(flipKey.group(2), deviations);
+                            Boolean flip = parseBoolean(value);
+                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && flip != null) {
+                                Map<String, List<Integer>> destination = flipKey.group(1).endsWith("_pre")
+                                        ? preFlips : flips;
+                                updateFlip(destination, flipKey.group(1), slot, flip);
+                            } else {
+                                deviations.add("POST_TARGET_FLIP_UNSUPPORTED:" + key);
+                            }
+                        } else if (key.startsWith("size.buffer.")
+                                || key.startsWith("flip.")) {
+                            deviations.add("POST_TARGET_PROPERTY_UNSUPPORTED:" + key);
+                        }
+                    }
+                    if (SHADOW_PROPERTIES.contains(key)) {
                         shadowValues.put(key, value);
                         LOGGER.info("[chimera] pack properties: {}={}", key, value);
                     } else if (PACK_CONSTANT_NAMES.contains(key)) {
@@ -249,7 +377,8 @@ public final class PackConfig {
         shaderConstants.put("shadowMapResolution", Integer.toString(shadowSettings.resolution()));
         shaderConstants.put("shadowDistance", Float.toString(shadowSettings.distance()));
         return new PackConfigData(colortexFormats, drawBufferCount,
-                shadowSettings, shaderConstants, deviations, settings);
+                shadowSettings, shaderConstants, deviations, settings,
+                targetSettings, flips, preFlips);
     }
 
     private static final List<String> SHADOW_PROPERTIES = List.of(
@@ -279,6 +408,125 @@ public final class PackConfig {
             if (previous != null && !previous.equals(value)) {
                 deviations.add("PACK_CONSTANT_CONFLICT:" + name);
             }
+        }
+    }
+
+    private static void collectTargetConstants(
+            String source,
+            Map<Integer, TargetSettings> values,
+            List<String> deviations
+    ) {
+        String text = source == null ? "" : source;
+        Matcher clear = COLORTEX_CLEAR_CONST.matcher(text);
+        while (clear.find()) {
+            int slot = parseTargetIndex(clear.group(1), deviations);
+            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
+                updateTargetSettings(values, slot, null,
+                        Boolean.parseBoolean(clear.group(2)), null, null, null);
+            }
+        }
+        Matcher color = COLORTEX_CLEAR_COLOR_CONST.matcher(text);
+        while (color.find()) {
+            int slot = parseTargetIndex(color.group(1), deviations);
+            float[] parsed = parseColor(color.group(2));
+            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && parsed != null) {
+                updateTargetSettings(values, slot, null, null, parsed, null, null);
+            } else {
+                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+            }
+        }
+        Matcher mipmap = COLORTEX_MIPMAP_CONST.matcher(text);
+        while (mipmap.find()) {
+            int slot = parseTargetIndex(mipmap.group(1), deviations);
+            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
+                updateTargetSettings(values, slot, null, null, null,
+                        Boolean.parseBoolean(mipmap.group(2)), null);
+            }
+        }
+    }
+
+    private static int parseTargetIndex(String value, List<String> deviations) {
+        try {
+            int slot = Integer.parseInt(value);
+            if (slot < 0 || slot > PostTargetPlan.MAX_TARGET) {
+                deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + slot);
+                return -1;
+            }
+            return slot;
+        } catch (NumberFormatException e) {
+            deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + value);
+            return -1;
+        }
+    }
+
+    private static void updateTargetSettings(
+            Map<Integer, TargetSettings> values,
+            int slot,
+            String size,
+            Boolean clear,
+            float[] clearColor,
+            Boolean mipmapped,
+            List<String> deviations
+    ) {
+        TargetSettings previous = values.getOrDefault(slot, TargetSettings.defaults());
+        values.put(slot, new TargetSettings(
+                size == null ? previous.sizeExpression() : size,
+                clear == null ? previous.clear() : clear,
+                clearColor == null ? previous.clearColorCopy() : clearColor,
+                mipmapped == null ? previous.mipmapped() : mipmapped,
+                deviations == null ? previous.deviations() : deviations));
+    }
+
+    private static void updateFlip(
+            Map<String, List<Integer>> flips,
+            String program,
+            int slot,
+            boolean enabled
+    ) {
+        List<Integer> values = new ArrayList<>(flips.getOrDefault(program, List.of()));
+        values.removeIf(value -> value == slot);
+        if (enabled) {
+            values.add(slot);
+        }
+        values.sort(Integer::compareTo);
+        flips.put(program, List.copyOf(values));
+    }
+
+    private static Boolean parseBoolean(String value) {
+        if (value == null) {
+            return null;
+        }
+        if (value.trim().equalsIgnoreCase("true") || value.trim().equals("1")) {
+            return Boolean.TRUE;
+        }
+        if (value.trim().equalsIgnoreCase("false") || value.trim().equals("0")) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
+    private static float[] parseColor(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim()
+                .replaceFirst("(?i)^vec4\\s*\\(", "")
+                .replaceFirst("\\)$", "");
+        String[] parts = normalized.split(",");
+        if (parts.length != 4) {
+            return null;
+        }
+        float[] result = new float[4];
+        try {
+            for (int i = 0; i < result.length; i++) {
+                result[i] = Float.parseFloat(normalizeNumeric(parts[i]));
+                if (!Float.isFinite(result[i])) {
+                    return null;
+                }
+            }
+            return result;
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

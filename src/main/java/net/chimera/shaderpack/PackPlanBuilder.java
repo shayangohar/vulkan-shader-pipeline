@@ -38,7 +38,8 @@ public final class PackPlanBuilder {
             }
         }
         return new PackPlan(config, plans, entityIds,
-                config == null ? PackSettingsPlan.empty() : config.settings(), resolution);
+                config == null ? PackSettingsPlan.empty() : config.settings(), resolution,
+                PackResourcePlan.empty());
     }
 
     public static PackProgramPlan build(
@@ -76,7 +77,9 @@ public final class PackPlanBuilder {
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
                 fragment, vertex, stage, targetPlan, prepared,
                 config == null || config.settings() == null
-                        ? Map.of() : config.settings().runtimeSettings().customDescriptors());
+                        ? Map.of() : config.settings().runtimeSettings().customDescriptors(),
+                config == null || config.settings() == null
+                        ? Map.of() : config.settings().customSamplerSlots());
         Map<String, GlslInterfaceScanner.StageInterface> stageInterfaces = new TreeMap<>();
         if (fragment != null) {
             stageInterfaces.put("fragment", GlslInterfaceScanner.scan(fragment, false));

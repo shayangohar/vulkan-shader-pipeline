@@ -2,11 +2,11 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete.**
+**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete; runtime evidence pending.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
-M4 was a narrow loader wedge, not general Iris compatibility. M5.6 added a bounded four-target post chain with real target routing and ping-pong resources. M5.7 added directory and ZIP loading for real packs, standard dimension variants, root-relative includes, a narrow GLSL 130 post path, explicit common RGB format approximations, deterministic fingerprints, lifecycle evidence, and performance measurements. M6.1 shares one prepared-source, program-plan, interface, and token-translation path between conformance and runtime pipeline construction. M6.2 adds one canonical live uniform catalog and one reusable frame snapshot for pack UBOs, including camera history, matrices, weather, player, lighting, and shadow values. M6.3 adds an isolated legacy gbuffers_entities adapter with an append-only entity format, basic entity IDs, and guarded host-state draw dispatch. M6.4 extends post targets beyond the original four-target bridge and validates MRT against device limits. Unsupported stages, resources, and syntax still use explicit fallback. It is still not a general Iris transformer.
+M4 was a narrow loader wedge, not general Iris compatibility. M5.6 added a bounded four-target post chain with real target routing and ping-pong resources. M5.7 added directory and ZIP loading for real packs, standard dimension variants, root-relative includes, a narrow GLSL 130 post path, explicit common RGB format approximations, deterministic fingerprints, lifecycle evidence, and performance measurements. M6.1 shares one prepared-source, program-plan, interface, and token-translation path between conformance and runtime pipeline construction. M6.2 adds one canonical live uniform catalog and one reusable frame snapshot for pack UBOs, including camera history, matrices, weather, player, lighting, and shadow values. M6.3 adds an isolated legacy gbuffers_entities adapter with an append-only entity format, basic entity IDs, and guarded host-state draw dispatch. M6.4 extends post targets beyond the original four-target bridge and validates MRT against device limits. M7.4 replaces global post-bank assumptions with an immutable target graph, per-target validity and side ownership, relative or absolute sizes, clear and persistent policies, flip directives, device-aware MRT, and converted depthtex0/1/2 snapshots. Unsupported layouts remain explicit fallback. It is still not a general Iris transformer.
 
 ## Requirements
 
@@ -44,6 +44,8 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M7.1 | Resolve dimensions, standard program families, settings, options, feature flags, and explicit fallback aliases |
 | M7.2 | Expand the bounded shared GLSL translator for real-pack declarations, built-ins, texture operations, outputs, interfaces, and safe fallback |
 | M7.3 | Complete the canonical live uniform catalog, Iris world-state semantics, smoothing, and bounded scalar pack values |
+| M7.4 | Authoritative render-target and depth graph: sizes, formats, clear and flip policies, per-target ownership, device-aware MRT, and depth snapshots |
+| M7.5 | Pack texture and resource bridge: sampled pack PNGs, standard aliases, safe ownership, and per-program resource fallback |
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
@@ -72,6 +74,14 @@ The M7.1 wrapper requires explicit real-pack paths and versions when strict exte
 M7.2 extends the existing load-time token translator. Run `m72ConformanceTest` for legacy declaration, nested texture, shadow lookup, output, interface, and fail-closed fallback checks. It remains source-agnostic and does not add modern GLSL, new renderer families, or resource semantics outside the existing bridge.
 
 M7.3 extends the same one-frame snapshot used by pack UBO suppliers. Run `m73ConformanceTest` for Iris-style time, camera, matrix, dimension, weather, fog, fluid, lighting, smoothing, and bounded scalar-value checks. Values without an authoritative source remain explicit defaults or fallback. `centerDepthSmooth` and previous depth or render-target history remain deferred to the temporal-resource work.
+
+M7.4 runs `m74ConformanceTest` for the authoritative target and depth graph. The fixture checks target formats, relative sizes, clear and persistent state, output routes, flips, logical validity, device-aware MRT limits, reversed-Z depth conversion, and failure fallback. Runtime resources are recreated only at existing GPU-idle boundaries. Run it with Prism Java 21 before staging:
+
+`$env:JAVA_HOME = '<Prism Java 21 directory>'; .\gradlew.bat m74ConformanceTest --no-daemon`
+
+M7.4 supports logical `colortex0` through `colortex7` and uses the device color-attachment limit up to the isolated eight-target bridge. `depthtex0`, `depthtex1`, and `depthtex2` use distinct pack bindings 6, 12, and 13. Previous-frame uniform history and the broader world schedule remain deferred to M7.7.
+
+M7.5 runs `m75ConformanceTest` for deterministic sampled-resource plans. The fixture checks stage-specific and global texture precedence, safe PNG loading, noise and custom textures, standard target/depth/shadow aliases, stable selector slots 14 through 21, and per-program fallback for unavailable resources. Pack-owned sampled resources are loaded once per pack session and released at the existing GPU-idle cleanup boundary. Writable images, storage buffers, compute resources, 3D or array textures, and unsupported material maps remain explicit fallback.
 
 ## Runtime pack switching
 

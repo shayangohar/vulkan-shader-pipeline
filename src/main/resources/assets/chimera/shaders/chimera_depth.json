@@ -1,0 +1,9 @@
+{
+    "vertex": "chimera_depth/chimera_depth",
+    "fragment": "chimera_depth/chimera_depth",
+    "samplers": [
+        { "name": "Sampler6" }
+    ],
+    "UBOs": [],
+    "PushConstants": []
+}

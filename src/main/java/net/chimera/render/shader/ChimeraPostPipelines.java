@@ -31,6 +31,11 @@ public final class ChimeraPostPipelines {
         return builder.createGraphicsPipeline();
     }
 
+    /** Creates the one internal reversed-Z depth conversion pipeline. */
+    public static GraphicsPipeline createDepthPipeline() {
+        return create("chimera_depth");
+    }
+
     /** Creates an extended terrain-format pipeline for shadow rendering. */
     public static GraphicsPipeline createTerrainPipeline(String name, VertexFormat vertexFormat) {
         JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");
