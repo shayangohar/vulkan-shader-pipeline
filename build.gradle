@@ -361,6 +361,15 @@ tasks.register('m72ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m73ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M7.3 uniform catalog and world-state checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.shader.M73ConformanceHarness'
+    jvmArgs '-ea'
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
@@ -369,6 +378,7 @@ tasks.named('check') {
     dependsOn tasks.named('m66ConformanceTest')
     dependsOn tasks.named('m71ConformanceTest')
     dependsOn tasks.named('m72ConformanceTest')
+    dependsOn tasks.named('m73ConformanceTest')
 }
 
 tasks.named('test') {

@@ -1,7 +1,7 @@
 {
   "fixtures": {
     "live_uniforms": {
-      "reportSha256": "aa9c1acb37de3515cd9073c56a3da2eecb9a25ed2ad432a999b4b72ab10beea5",
+      "reportSha256": "ebe3ab64b101dc78fb12427de5a9ad235eff989f07140969a88ed7e6fc1ff247",
       "sourceHashes": {
         "composite.fsh": "4d39ca56718762ecb0f5ee347039243cbf07009ca70befad1f507776842f3db2",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
@@ -23,8 +23,7 @@
         "global": [],
         "composite": [
           "DEPTH_INPUT_FIXED_TO_HDR",
-          "LIVE_UNIFORM_BRIDGE",
-          "UNIFORM_DEFAULTED:wetness"
+          "LIVE_UNIFORM_BRIDGE"
         ],
         "final": [],
         "gbuffers_terrain": []

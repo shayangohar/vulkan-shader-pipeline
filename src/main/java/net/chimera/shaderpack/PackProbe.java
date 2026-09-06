@@ -682,9 +682,10 @@ public final class PackProbe {
                 settings.add(key);
                 boolean colortexFormat = COLORTEX_FORMAT.matcher(key).matches();
                 boolean shadowSetting = SHADOW_SETTING.matcher(key).matches();
+                boolean customValue = key.matches("(?:uniform|variable)\\.(?:float|int|bool)\\.[A-Za-z_]\\w*");
                 if (shadowSetting) {
                     shadowPropertySettings.add(key);
-                } else if (!colortexFormat) {
+                } else if (!colortexFormat && !customValue) {
                     deviations.add("SETTING_NOT_APPLIED:" + key);
                 }
             }

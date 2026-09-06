@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core is in progress.**
+**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
@@ -43,6 +43,7 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M7.0 | Lock the real-pack parity gap: static eligibility, runtime installation, execution evidence, and visual claims |
 | M7.1 | Resolve dimensions, standard program families, settings, options, feature flags, and explicit fallback aliases |
 | M7.2 | Expand the bounded shared GLSL translator for real-pack declarations, built-ins, texture operations, outputs, interfaces, and safe fallback |
+| M7.3 | Complete the canonical live uniform catalog, Iris world-state semantics, smoothing, and bounded scalar pack values |
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
@@ -69,6 +70,8 @@ M7.1 adds one load-time resolution plan. It selects a dimension source, applies 
 The M7.1 wrapper requires explicit real-pack paths and versions when strict external checks are requested. The ordinary `m71ConformanceTest` task runs the local resolution fixture and does not require external packs. Resolution fingerprints are evidence of deterministic pack interpretation; they do not claim that an aliased family is installed or that the pack has visual parity.
 
 M7.2 extends the existing load-time token translator. Run `m72ConformanceTest` for legacy declaration, nested texture, shadow lookup, output, interface, and fail-closed fallback checks. It remains source-agnostic and does not add modern GLSL, new renderer families, or resource semantics outside the existing bridge.
+
+M7.3 extends the same one-frame snapshot used by pack UBO suppliers. Run `m73ConformanceTest` for Iris-style time, camera, matrix, dimension, weather, fog, fluid, lighting, smoothing, and bounded scalar-value checks. Values without an authoritative source remain explicit defaults or fallback. `centerDepthSmooth` and previous depth or render-target history remain deferred to the temporal-resource work.
 
 ## Runtime pack switching
 

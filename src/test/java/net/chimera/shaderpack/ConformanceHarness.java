@@ -200,8 +200,7 @@ public final class ConformanceHarness {
                 "m5.3 live composite declarations");
         assertEquals(List.of(
                         "DEPTH_INPUT_FIXED_TO_HDR",
-                        "LIVE_UNIFORM_BRIDGE",
-                        "UNIFORM_DEFAULTED:wetness"), composite.deviations(),
+                        "LIVE_UNIFORM_BRIDGE"), composite.deviations(),
                 "m5.3 live composite deviations");
         assertEquals(List.of(), report.deviations(), "m5.3 live global deviations");
 

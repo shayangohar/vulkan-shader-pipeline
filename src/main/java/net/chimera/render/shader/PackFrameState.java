@@ -1,6 +1,7 @@
 package net.chimera.render.shader;
 
 import net.chimera.shaderpack.UniformRegistry;
+import net.chimera.shaderpack.PackRuntimeSettings;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -67,6 +68,9 @@ final class PackFrameState {
     private final int[] previousCameraPositionInt = new int[3];
     private final float[] cameraPositionFract = new float[3];
     private final float[] previousCameraPositionFract = new float[3];
+    private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
+    private double[] customScratch = new double[0];
+    private float[] customValues = new float[0];
 
     private ClientLevel lastLevel;
     private boolean viewInitialized;
@@ -102,6 +106,17 @@ final class PackFrameState {
     private float screenSizeWidth;
     private float screenSizeHeight;
     private int isEyeInWater;
+    private int dimension;
+    private int heightLimit;
+    private int logicalHeightLimit;
+    private int seaLevel;
+    private int hasCeiling;
+    private int hasSkylight;
+    private float ambientLight;
+    private float cloudHeight;
+    private float biomeTemperature;
+    private float rainfall;
+    private float nearPlane = 0.05f;
     private boolean smoothingStarted;
     private float wetnessValue;
     private float eyeBrightnessBlockSmooth;
@@ -122,6 +137,18 @@ final class PackFrameState {
         resetTemporalState();
     }
 
+    void installRuntimeSettings(PackRuntimeSettings settings) {
+        this.runtimeSettings = settings == null ? PackRuntimeSettings.empty() : settings;
+        int count = this.runtimeSettings.valueCount();
+        if (customScratch.length != count) {
+            customScratch = new double[count];
+            customValues = new float[count];
+        } else {
+            java.util.Arrays.fill(customScratch, 0.0);
+            java.util.Arrays.fill(customValues, 0.0f);
+        }
+    }
+
     void begin(Minecraft minecraft, Camera camera, float partialTick,
                Matrix4f capturedModelView, Matrix4f capturedProjection, float deltaSeconds) {
         this.frameTime = clamp(deltaSeconds, 0.0f, 0.25f);
@@ -137,6 +164,7 @@ final class PackFrameState {
         if (camera == null || minecraft == null) {
             clearCameraState();
             clearWorldState();
+            evaluateCustomValues();
             return;
         }
 
@@ -177,6 +205,7 @@ final class PackFrameState {
         this.screenBrightness = minecraft.options.gamma().get().floatValue();
 
         captureWorld(minecraft.level, minecraft, partialTick);
+        evaluateCustomValues();
     }
 
     void updateShadow(Matrix4f modelView, Matrix4f projection, Vector3f lightPosition) {
@@ -198,6 +227,16 @@ final class PackFrameState {
     }
 
     void write(UniformRegistry.UniformDescriptor descriptor, String type, MappedBuffer target) {
+        if (descriptor.sourceKey().startsWith("custom:")) {
+            int index = runtimeSettings.indexOf(descriptor.name());
+            float value = index < 0 ? 0.0f : customValues[index];
+            if (type.startsWith("i")) {
+                target.putInt(0, (int) value);
+            } else {
+                target.putFloat(0, value);
+            }
+            return;
+        }
         switch (descriptor.sourceKey()) {
             case "cameraPosition" -> writeVec3(target, cameraOrigin.x, cameraOrigin.y, cameraOrigin.z);
             case "previousCameraPosition" -> writeVec3(target,
@@ -214,6 +253,16 @@ final class PackFrameState {
             case "worldTime" -> target.putInt(0, worldTime);
             case "worldDay" -> target.putInt(0, worldDay);
             case "moonPhase" -> target.putInt(0, moonPhase);
+            case "dimension" -> target.putInt(0, dimension);
+            case "heightLimit" -> target.putInt(0, heightLimit);
+            case "logicalHeightLimit" -> target.putInt(0, logicalHeightLimit);
+            case "seaLevel" -> target.putInt(0, seaLevel);
+            case "hasCeiling" -> target.putInt(0, hasCeiling);
+            case "hasSkylight" -> target.putInt(0, hasSkylight);
+            case "ambientLight" -> target.putFloat(0, ambientLight);
+            case "cloudHeight" -> target.putFloat(0, cloudHeight);
+            case "temperature" -> target.putFloat(0, biomeTemperature);
+            case "rainfall" -> target.putFloat(0, rainfall);
             case "frameCounter" -> target.putInt(0, frameCounter);
             case "CurrentTime" -> target.putInt(0, currentTime);
             case "isEyeInWater" -> target.putInt(0, isEyeInWater);
@@ -272,7 +321,7 @@ final class PackFrameState {
             case "viewWidth" -> target.putFloat(0, viewWidth);
             case "viewHeight" -> target.putFloat(0, viewHeight);
             case "aspectRatio" -> target.putFloat(0, aspectRatio);
-            case "near" -> target.putFloat(0, 0.05f);
+            case "near" -> target.putFloat(0, nearPlane);
             case "far" -> target.putFloat(0, farPlane);
             case "blindFactor" -> target.putFloat(0, blindness);
             case "darknessFactor" -> target.putFloat(0, darknessFactor);
@@ -280,7 +329,6 @@ final class PackFrameState {
             case "nightVision" -> target.putFloat(0, nightVision);
             case "screenBrightness" -> target.putFloat(0, screenBrightness);
             case "bedrockLevel" -> target.putInt(0, bedrockLevel);
-            case "cloudHeight" -> target.putFloat(0, 192.0f);
             case "shadowFade" -> target.putFloat(0, 1.0f);
             case "timeBrightness" -> target.putFloat(0, 1.0f);
             case "frameTimeSmooth" -> target.putFloat(0, frameTimeSmooth);
@@ -299,6 +347,18 @@ final class PackFrameState {
 
     static float wrapFrameTimeCounter(float value) {
         return wrapped(value, FRAME_TIME_COUNTER_WRAP);
+    }
+
+    static int irisWorldTimeForTest(long dayTime, boolean fixedTime, boolean netherOrEnd) {
+        return fixedTime && !netherOrEnd ? 0 : (int) Math.floorMod(dayTime, 24000L);
+    }
+
+    static int irisWorldDayForTest(long dayTime) {
+        return (int) Math.floorDiv(dayTime, 24000L);
+    }
+
+    static float quantizedFrameSecondsForTest(long elapsedNanos) {
+        return (float) (Math.max(elapsedNanos, 0L) / 1_000_000L) / 1000.0f;
     }
 
     static double cameraShift(double value, double previous) {
@@ -406,15 +466,30 @@ final class PackFrameState {
             clearWorldState();
             return;
         }
-        long gameTime = level.getGameTime();
         long dayTime = level.getDayTime();
-        worldTime = (int) Math.floorMod(gameTime, 24000L);
-        worldDay = (int) Math.floorDiv(dayTime, 24000L);
+        boolean netherOrEnd = level.dimension() == net.minecraft.world.level.Level.NETHER
+                || level.dimension() == net.minecraft.world.level.Level.END;
+        boolean fixedTime = level.dimensionType().hasFixedTime();
+        worldTime = irisWorldTimeForTest(dayTime, fixedTime, netherOrEnd);
+        worldDay = irisWorldDayForTest(dayTime);
         moonPhase = (int) Math.floorMod(worldDay, 8);
         rainStrength = clamp(level.getRainLevel(partialTick), 0.0f, 1.0f);
         thunderStrength = clamp(level.getThunderLevel(partialTick), 0.0f, 1.0f);
         sunAngle = (float) (Math.floorMod(dayTime, 24000L) + partialTick) / 24000.0f;
+        dimension = dimensionOrdinal(level);
         bedrockLevel = level.dimensionType().minY();
+        heightLimit = level.dimensionType().height();
+        logicalHeightLimit = level.dimensionType().logicalHeight();
+        seaLevel = level.getSeaLevel();
+        hasCeiling = level.dimensionType().hasCeiling() ? 1 : 0;
+        hasSkylight = level.dimensionType().hasSkyLight() ? 1 : 0;
+        ambientLight = level.dimensionType().ambientLight();
+        cloudHeight = level.dimension() == net.minecraft.world.level.Level.OVERWORLD
+                ? 192.0f : 0.0f;
+        BlockPos biomePos = BlockPos.containing(cameraOrigin.rawX, cameraOrigin.rawY, cameraOrigin.rawZ);
+        var biome = level.getBiome(biomePos).value();
+        biomeTemperature = biome.getBaseTemperature();
+        rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
         farPlane = Math.max(minecraft.options.getEffectiveRenderDistance(), 1) * 16.0f;
         double angle = sunAngle * Math.PI * 2.0;
         sunPosition.set((float) Math.sin(angle), (float) Math.cos(angle), 0.0f);
@@ -428,17 +503,18 @@ final class PackFrameState {
             eyeBrightnessSkySmooth = eyeBrightness[1];
             smoothingStarted = true;
         } else {
-            wetnessValue = smooth(wetnessValue, rainStrength, 600.0f, 200.0f, frameTime);
+            wetnessValue = smooth(wetnessValue, rainStrength,
+                    runtimeSettings.wetnessRiseHalfLife(),
+                    runtimeSettings.wetnessFallHalfLife(), frameTime);
         }
         wetness = wetnessValue;
         if (frameTime > 0.0f) {
             eyeBrightnessBlockSmooth = smooth(eyeBrightnessBlockSmooth,
-                    eyeBrightness[0], 10.0f, 10.0f, frameTime);
+                    eyeBrightness[0], runtimeSettings.eyeBrightnessHalfLife(),
+                    runtimeSettings.eyeBrightnessHalfLife(), frameTime);
             eyeBrightnessSkySmooth = smooth(eyeBrightnessSkySmooth,
-                    eyeBrightness[1], 10.0f, 10.0f, frameTime);
-        } else {
-            eyeBrightnessBlockSmooth = eyeBrightness[0];
-            eyeBrightnessSkySmooth = eyeBrightness[1];
+                    eyeBrightness[1], runtimeSettings.eyeBrightnessHalfLife(),
+                    runtimeSettings.eyeBrightnessHalfLife(), frameTime);
         }
         eyeBrightnessSmooth[0] = (int) eyeBrightnessBlockSmooth;
         eyeBrightnessSmooth[1] = (int) eyeBrightnessSkySmooth;
@@ -453,6 +529,63 @@ final class PackFrameState {
         BlockPos block = BlockPos.containing(x, y, z);
         eyeBrightness[0] = level.getBrightness(LightLayer.BLOCK, block) * 16;
         eyeBrightness[1] = level.getBrightness(LightLayer.SKY, block) * 16;
+    }
+
+    private void evaluateCustomValues() {
+        runtimeSettings.evaluate(this::scalarValue, customScratch, customValues);
+    }
+
+    private double scalarValue(String name) {
+        return switch (name) {
+            case "frameTime" -> frameTime;
+            case "frameTimeCounter" -> frameTimeCounter;
+            case "frameCounter" -> frameCounter;
+            case "worldTime" -> worldTime;
+            case "worldDay" -> worldDay;
+            case "moonPhase" -> moonPhase;
+            case "rainStrength", "rainFactor" -> rainStrength;
+            case "thunderStrength" -> thunderStrength;
+            case "wetness" -> wetness;
+            case "sunAngle", "timeAngle" -> sunAngle;
+            case "dimension" -> dimension;
+            case "bedrockLevel" -> bedrockLevel;
+            case "heightLimit" -> heightLimit;
+            case "logicalHeightLimit" -> logicalHeightLimit;
+            case "seaLevel" -> seaLevel;
+            case "hasCeiling" -> hasCeiling;
+            case "hasSkylight" -> hasSkylight;
+            case "ambientLight" -> ambientLight;
+            case "cloudHeight" -> cloudHeight;
+            case "temperature" -> biomeTemperature;
+            case "rainfall" -> rainfall;
+            case "viewWidth" -> viewWidth;
+            case "viewHeight" -> viewHeight;
+            case "aspectRatio" -> aspectRatio;
+            case "near" -> nearPlane;
+            case "far" -> farPlane;
+            case "blindFactor" -> blindness;
+            case "darknessFactor" -> darknessFactor;
+            case "darknessLightFactor" -> darknessLightFactor;
+            case "nightVision" -> nightVision;
+            case "screenBrightness" -> screenBrightness;
+            case "isEyeInWater" -> isEyeInWater;
+            case "eyeBrightnessM" -> Math.max(eyeBrightness[0], eyeBrightness[1]) / 16.0;
+            case "eyeBrightness" -> eyeBrightness[0];
+            default -> 0.0;
+        };
+    }
+
+    private static int dimensionOrdinal(ClientLevel level) {
+        if (level.dimension() == net.minecraft.world.level.Level.OVERWORLD) {
+            return 0;
+        }
+        if (level.dimension() == net.minecraft.world.level.Level.NETHER) {
+            return -1;
+        }
+        if (level.dimension() == net.minecraft.world.level.Level.END) {
+            return 1;
+        }
+        return 2;
     }
 
     private float nightVision(Minecraft minecraft, Entity cameraEntity, float partialTick) {
@@ -543,6 +676,16 @@ final class PackFrameState {
         sunAngle = 0.0f;
         farPlane = 0.0f;
         bedrockLevel = 0;
+        dimension = 0;
+        heightLimit = 0;
+        logicalHeightLimit = 0;
+        seaLevel = 0;
+        hasCeiling = 0;
+        hasSkylight = 0;
+        ambientLight = 0.0f;
+        cloudHeight = 0.0f;
+        biomeTemperature = 0.0f;
+        rainfall = 0.0f;
         sunPosition.set(0.0f, 1.0f, 0.0f);
         moonPosition.set(0.0f, -1.0f, 0.0f);
         shadowLightPosition.set(0.0f, 1.0f, 0.0f);

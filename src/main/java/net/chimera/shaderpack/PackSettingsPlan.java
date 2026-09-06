@@ -32,7 +32,8 @@ record PackSettingsPlan(
         Set<String> optionalFeatures,
         Set<String> unsupportedRequiredFeatures,
         List<String> deviations,
-        String activeProfile
+        String activeProfile,
+        PackRuntimeSettings runtimeSettings
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Pattern DEFINE = Pattern.compile(
@@ -47,6 +48,8 @@ record PackSettingsPlan(
             "^program\\.(.+)\\.enabled\\s*=\\s*(.*)$");
     private static final Pattern FEATURES = Pattern.compile(
             "^iris\\.features\\.(required|optional)\\s*=\\s*(.*)$");
+    private static final Pattern CUSTOM_VALUE = Pattern.compile(
+            "^\\s*(uniform|variable)\\.(float|int|bool)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
     private static final Pattern CONDITION = Pattern.compile(
             "^#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");
@@ -65,11 +68,30 @@ record PackSettingsPlan(
         unsupportedRequiredFeatures = immutableSet(unsupportedRequiredFeatures);
         deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
         activeProfile = activeProfile == null || activeProfile.isBlank() ? "default" : activeProfile;
+        runtimeSettings = runtimeSettings == null ? PackRuntimeSettings.empty() : runtimeSettings;
+    }
+
+    /** Compatibility constructor for the M7.1 settings shape. */
+    PackSettingsPlan(
+            Map<String, Option> options,
+            Map<String, String> defaults,
+            Map<String, Profile> profiles,
+            Map<String, String> propertyValues,
+            Map<String, Boolean> programEnabled,
+            Set<String> requiredFeatures,
+            Set<String> optionalFeatures,
+            Set<String> unsupportedRequiredFeatures,
+            List<String> deviations,
+            String activeProfile
+    ) {
+        this(options, defaults, profiles, propertyValues, programEnabled,
+                requiredFeatures, optionalFeatures, unsupportedRequiredFeatures,
+                deviations, activeProfile, PackRuntimeSettings.empty());
     }
 
     static PackSettingsPlan empty() {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
-                Set.of(), Set.of(), Set.of(), List.of(), "default");
+                Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty());
     }
 
     static PackSettingsPlan parse(List<PackProgram> programs, Path shadersDir) {
@@ -105,10 +127,11 @@ record PackSettingsPlan(
         Map<String, Boolean> programEnabled = new TreeMap<>();
         Set<String> required = new TreeSet<>();
         Set<String> optional = new TreeSet<>();
+        List<PackRuntimeSettings.Declaration> customValues = new ArrayList<>();
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
             parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
-                    required, optional, deviations);
+                    required, optional, customValues, deviations);
         }
         Set<String> unsupportedRequired = new TreeSet<>();
         for (String feature : required) {
@@ -117,8 +140,10 @@ record PackSettingsPlan(
                 deviations.add("REQUIRED_FEATURE_UNSUPPORTED:" + feature);
             }
         }
+        PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(customValues, defaults, deviations);
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
-                required, optional, unsupportedRequired, deviations, "default");
+                required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
+                runtimeSettings);
     }
 
     /** Active defaults seed the shared shader preprocessor. */
@@ -146,7 +171,22 @@ record PackSettingsPlan(
         root.add("unsupportedRequiredFeatures", strings(unsupportedRequiredFeatures));
         root.add("deviations", strings(deviations));
         root.addProperty("activeProfile", activeProfile);
+        root.addProperty("runtimeSettings", runtimeSettingsFingerprint());
         return JSON.toJson(root);
+    }
+
+    public PackRuntimeSettings runtimeSettings() {
+        return runtimeSettings;
+    }
+
+    private String runtimeSettingsFingerprint() {
+        StringBuilder value = new StringBuilder();
+        value.append(runtimeSettings.wetnessRiseHalfLife()).append('|')
+                .append(runtimeSettings.wetnessFallHalfLife()).append('|')
+                .append(runtimeSettings.eyeBrightnessHalfLife()).append('|');
+        runtimeSettings.customDescriptors().keySet().stream().sorted()
+                .forEach(name -> value.append(name).append(';'));
+        return ConformanceReport.sha256(value.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     String fingerprint() {
@@ -205,6 +245,7 @@ record PackSettingsPlan(
             Map<String, Boolean> programEnabled,
             Set<String> required,
             Set<String> optional,
+            List<PackRuntimeSettings.Declaration> customValues,
             List<String> deviations
     ) {
         PackConditionals.State conditions = new PackConditionals.State(defaults);
@@ -286,6 +327,13 @@ record PackSettingsPlan(
                             destination.add(token);
                         }
                     }
+                    continue;
+                }
+                Matcher custom = CUSTOM_VALUE.matcher(line);
+                if (custom.matches()) {
+                    customValues.add(PackRuntimeSettings.declaration(
+                            custom.group(1).equals("uniform"), custom.group(2),
+                            custom.group(3), custom.group(4).trim()));
                     continue;
                 }
                 if (!isSupportedProperty(key)) {

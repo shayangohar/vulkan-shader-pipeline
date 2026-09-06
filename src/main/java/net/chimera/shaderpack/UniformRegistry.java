@@ -209,21 +209,30 @@ public final class UniformRegistry {
             PostTargetPlan targetPlan,
             boolean prepared
     ) {
+        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared, Map.of());
+    }
+
+    /** Builds a program interface with the valid custom scalar descriptors for one pack session. */
+    public static ProgramInterfacePlan planProgram(
+            String fragmentSource,
+            String vertexSource,
+            Stage stage,
+            PostTargetPlan targetPlan,
+            boolean prepared,
+            Map<String, UniformDescriptor> customDescriptors
+    ) {
         Stage effectiveStage = stage == null ? Stage.POST : stage;
         ProgramInterface fragment = effectiveStage == Stage.POST && targetPlan != null
-                ? (prepared ? planPreparedPost(fragmentSource, targetPlan)
-                : planPost(fragmentSource, targetPlan))
-                : (prepared ? planPrepared(fragmentSource, effectiveStage)
-                : plan(fragmentSource, effectiveStage));
+                ? planInternal(fragmentSource, Stage.POST, true, prepared, customDescriptors)
+                : planInternal(fragmentSource, effectiveStage, false, prepared, customDescriptors);
         Map<String, ProgramInterface> stagePlans = new TreeMap<>();
         stagePlans.put("fragment", fragment);
         List<UniformDeclaration> uniforms = new ArrayList<>(fragment.uniforms());
         List<SamplerBinding> samplers = new ArrayList<>(fragment.samplers());
         List<String> deviations = new ArrayList<>(fragment.deviations());
         if (vertexSource != null) {
-            ProgramInterface vertex = prepared
-                    ? planPrepared(vertexSource, effectiveStage)
-                    : plan(vertexSource, effectiveStage);
+            ProgramInterface vertex = planInternal(vertexSource, effectiveStage, false, prepared,
+                    customDescriptors);
             stagePlans.put("vertex", vertex);
             uniforms.addAll(vertex.uniforms());
             samplers.addAll(vertex.samplers());
@@ -359,6 +368,16 @@ public final class UniformRegistry {
 
     private static ProgramInterface planInternal(
             String source, Stage stage, boolean targetedPost, boolean allowUnusedDeclarations) {
+        return planInternal(source, stage, targetedPost, allowUnusedDeclarations, Map.of());
+    }
+
+    private static ProgramInterface planInternal(
+            String source,
+            Stage stage,
+            boolean targetedPost,
+            boolean allowUnusedDeclarations,
+            Map<String, UniformDescriptor> customDescriptors
+    ) {
         String stripped = stripComments(source == null ? "" : source);
         Map<String, UniformDeclaration> declarations = new TreeMap<>();
         Set<String> implicitDeclarations = new TreeSet<>();
@@ -429,6 +448,9 @@ public final class UniformRegistry {
             String fixedField = stage == Stage.TRANSLUCENT
                     ? TRANSLUCENT_UNIFORM_FIELDS.get(name) : name;
             UniformDescriptor spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
+            if (spec == null && customDescriptors != null) {
+                spec = customDescriptors.get(name);
+            }
             if (!SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
                 if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
                     deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
@@ -451,6 +473,9 @@ public final class UniformRegistry {
                 continue;
             }
             deviations.add("LIVE_UNIFORM_BRIDGE");
+            if (customDescriptors != null && customDescriptors.containsKey(name)) {
+                deviations.add("CUSTOM_UNIFORM_BRIDGE:" + name);
+            }
             if (stage == Stage.TRANSLUCENT) {
                 deviations.add("TRANSLUCENT_FIXED_UNIFORM_BRIDGE");
             }
@@ -760,7 +785,7 @@ public final class UniformRegistry {
         addLive(specs, "aspectRatio", "float");
         addLive(specs, "near", "float");
         addLive(specs, "far", "float");
-        addDefault(specs, "wetness", "float", DefaultPolicy.SMOOTH_WETNESS);
+        addLive(specs, "wetness", "float");
         addLive(specs, "sunAngle", "float");
         addLive(specs, "frameCounter", "int");
         addLive(specs, "cameraPositionInt", "ivec3");
@@ -768,7 +793,7 @@ public final class UniformRegistry {
         addLive(specs, "cameraPositionFract", "vec3");
         addLive(specs, "previousCameraPositionFract", "vec3");
         addLive(specs, "previousCameraPosition", "vec3");
-        addDefault(specs, "cloudHeight", "float", DefaultPolicy.CLOUD_HEIGHT);
+        addLive(specs, "cloudHeight", "float");
 
         // Common standard Iris values used by real legacy post sources. The
         // provider supplies live values where Chimera has a source of truth;
@@ -780,7 +805,7 @@ public final class UniformRegistry {
         addDefault(specs, "endFlashIntensity", "float");
         addDefault(specs, "endFlashPosition", "vec3");
         addLive(specs, "frameTime", "float");
-        addDefault(specs, "frameTimeSmooth", "float");
+        addLive(specs, "frameTimeSmooth", "float");
         addLive(specs, "framemod2", "float");
         addLive(specs, "framemod4", "float");
         addLive(specs, "framemod8", "float");
@@ -814,11 +839,21 @@ public final class UniformRegistry {
         addLive(specs, "worldDay", "int");
         addDefault(specs, "atlasSize", "ivec2");
         addLive(specs, "eyeBrightness", "ivec2");
-        addDefault(specs, "eyeBrightnessSmooth", "ivec2", DefaultPolicy.SMOOTH_EYE_BRIGHTNESS);
+        addLive(specs, "eyeBrightnessSmooth", "ivec2");
         addLive(specs, "eyeBrightnessM", "float");
         addLive(specs, "eyePosition", "vec3");
         addLive(specs, "playerLookVector", "vec3");
         addLive(specs, "relativeEyePosition", "vec3");
+        addLive(specs, "dimension", "int");
+        addLive(specs, "heightLimit", "int");
+        addLive(specs, "logicalHeightLimit", "int");
+        addLive(specs, "seaLevel", "int");
+        addLive(specs, "hasCeiling", "int");
+        addLive(specs, "hasSkylight", "int");
+        addLive(specs, "ambientLight", "float");
+        addLive(specs, "temperature", "float");
+        addLive(specs, "rainfall", "float");
+        addDefault(specs, "centerDepthSmooth", "float");
         addDefault(specs, "skyColor", "vec3");
         addDefault(specs, "entityColor", "vec4");
         addDefault(specs, "lightningBoltPosition", "vec4");

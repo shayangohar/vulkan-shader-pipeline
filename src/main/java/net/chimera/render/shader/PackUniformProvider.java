@@ -2,6 +2,7 @@ package net.chimera.render.shader;
 
 import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.UniformRegistry;
+import net.chimera.shaderpack.PackRuntimeSettings;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -26,6 +27,7 @@ public final class PackUniformProvider {
 
     private final Map<UniformKey, Binding> bindings = new HashMap<>();
     private final PackFrameState frameState = new PackFrameState();
+    private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
     private long lastFrameNanos;
     private boolean catalogLogged;
 
@@ -39,6 +41,12 @@ public final class PackUniformProvider {
     public Supplier<MappedBuffer> supplier(Uniform.Info info) {
         UniformRegistry.UniformDescriptor descriptor =
                 UniformRegistry.descriptor(info.name, info.type);
+        if (descriptor == null) {
+            descriptor = runtimeSettings.customDescriptors().get(info.name);
+            if (descriptor != null && !descriptor.accepts(info.type)) {
+                descriptor = null;
+            }
+        }
         if (descriptor == null) {
             throw new IllegalArgumentException("uniform is not in the Chimera catalog: "
                     + info.name + " (" + info.type + ")");
@@ -78,9 +86,18 @@ public final class PackUniformProvider {
         INSTANCE.refreshBindings();
     }
 
+    /** Installs the immutable runtime settings for the active pack session. */
+    public static void installRuntimeSettings(PackRuntimeSettings settings) {
+        INSTANCE.runtimeSettings = settings == null ? PackRuntimeSettings.empty() : settings;
+        INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
+        INSTANCE.refreshBindings();
+    }
+
     /** Drops frame history when the pack session is destroyed or reloaded. */
     public static void resetSession() {
         INSTANCE.lastFrameNanos = 0L;
+        INSTANCE.runtimeSettings = PackRuntimeSettings.empty();
+        INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
         INSTANCE.frameState.resetSession();
         INSTANCE.refreshBindings();
     }
@@ -96,8 +113,8 @@ public final class PackUniformProvider {
         long now = System.nanoTime();
         float deltaSeconds = lastFrameNanos == 0L
                 ? 0.0f
-                : Math.min(Math.max((now - lastFrameNanos) / 1_000_000L / 1000.0f,
-                0.0f), 0.25f);
+                : Math.min(Math.max(PackFrameState.quantizedFrameSecondsForTest(
+                now - lastFrameNanos), 0.0f), 0.25f);
         lastFrameNanos = now;
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
         refreshBindings();

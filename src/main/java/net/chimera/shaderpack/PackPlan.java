@@ -87,6 +87,11 @@ public record PackPlan(
         return resolution.fingerprint();
     }
 
+    /** Immutable runtime smoothing and custom scalar settings for the pack session. */
+    public PackRuntimeSettings runtimeSettings() {
+        return settings.runtimeSettings();
+    }
+
     public boolean isProgramDisabled(String name) {
         PackProgramResolution value = resolution.resolution(name);
         return value != null && !value.enabled();

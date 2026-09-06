@@ -1,0 +1,19 @@
+{
+  "fixture": "m7_3/uniform_semantics",
+  "reportSha256": "ae637c88659daa7f8bf336e7435f693d0ae744924ae37aa183f03fd5969276a5",
+  "sourceHashes": {
+    "composite.fsh": "ce696c93e38df544da3bbf7a3470afcdc4bf8c23ed118fa62711a68cf25b11e8",
+    "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097"
+  },
+  "expectedExecutablePrograms": ["composite", "final"],
+  "expectedFallbackPrograms": [],
+  "expectedCustomUniforms": ["m73Marker"],
+  "expectedSettingsDeviations": [
+    "CUSTOM_EXPRESSION_UNKNOWN:m73Unknown:missingM73Value",
+    "CUSTOM_VALUE_CYCLE:m73CycleA",
+    "CUSTOM_VALUE_DEPENDENCY_INVALID:m73CycleA",
+    "CUSTOM_VALUE_DEPENDENCY_INVALID:m73CycleB",
+    "SMOOTHING_APPLIED:eyeBrightness",
+    "SMOOTHING_APPLIED:wetness"
+  ]
+}

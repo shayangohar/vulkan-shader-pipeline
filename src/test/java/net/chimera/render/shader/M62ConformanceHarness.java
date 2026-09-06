@@ -47,12 +47,12 @@ public final class M62ConformanceHarness {
         assertEquals(UniformRegistry.Availability.LIVE,
                 UniformRegistry.descriptor("eyeBrightness").availability(),
                 "M6.2 eye brightness status");
-        assertEquals(UniformRegistry.Availability.DEFAULTED,
+        assertEquals(UniformRegistry.Availability.LIVE,
                 UniformRegistry.descriptor("wetness").availability(),
                 "M6.2 wetness status");
-        assertEquals(UniformRegistry.DefaultPolicy.SMOOTH_EYE_BRIGHTNESS,
-                UniformRegistry.descriptor("eyeBrightnessSmooth").defaultPolicy(),
-                "M6.2 eye smoothing policy");
+        assertEquals(UniformRegistry.Availability.LIVE,
+                UniformRegistry.descriptor("eyeBrightnessSmooth").availability(),
+                "M6.2 eye smoothing status");
         assertTrue(UniformRegistry.descriptor("cameraPosition", "float") == null,
                 "M6.2 typed catalog accepted a conflicting declaration");
         assertTrue(UniformRegistry.descriptor("cameraPosition", "vec3") != null,
@@ -114,10 +114,10 @@ public final class M62ConformanceHarness {
         assertTrue(composite.support() == ConformanceReport.SupportStatus.SUPPORTED
                         || composite.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
                 "M6.2 live fixture composite is not executable");
-        assertTrue(composite.deviations().contains("UNIFORM_DEFAULTED:wetness"),
-                "M6.2 explicit default uniform was not reported");
-        assertTrue(composite.deviations().contains("UNIFORM_DEFAULTED:eyeBrightnessSmooth"),
-                "M6.2 smoothing default was not reported");
+        assertTrue(!composite.deviations().contains("UNIFORM_DEFAULTED:wetness"),
+                "M6.2 live wetness remained defaulted");
+        assertTrue(!composite.deviations().contains("UNIFORM_DEFAULTED:eyeBrightnessSmooth"),
+                "M6.2 live smoothing remained defaulted");
         assertTrue(composite.uniforms().contains("cameraPosition"),
                 "M6.2 live camera uniform was not inventoried");
 

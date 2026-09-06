@@ -1586,6 +1586,7 @@ public class ChimeraMainPass implements MainPass {
         if (dir == null) {
             LOGGER.info("[chimera] pack disabled (identity selection)");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
+            PackUniformProvider.installRuntimeSettings(null);
             this.packNeedsHdrDepth = false;
             return;
         }
@@ -1600,6 +1601,7 @@ public class ChimeraMainPass implements MainPass {
                 : PackConfig.parse(this.packPrograms, result.shadersDir());
         this.packPlan = analysis.plan() == null
                 ? new PackPlan(this.packConfig, List.of()) : analysis.plan();
+        PackUniformProvider.installRuntimeSettings(this.packPlan.runtimeSettings());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 this.packPlan.selectedDimension(),
                 this.packPlan.selectedSourceFolder(),
@@ -1608,6 +1610,11 @@ public class ChimeraMainPass implements MainPass {
                 this.packPlan.missingProgramCount(),
                 this.packPlan.settingsFingerprint(),
                 this.packPlan.resolutionFingerprint());
+        LOGGER.info("[chimera] uniform runtime settings: custom={}, wetnessRise={}, wetnessFall={}, eyeBrightnessHalfLife={}",
+                this.packPlan.runtimeSettings().customDescriptors().size(),
+                this.packPlan.runtimeSettings().wetnessRiseHalfLife(),
+                this.packPlan.runtimeSettings().wetnessFallHalfLife(),
+                this.packPlan.runtimeSettings().eyeBrightnessHalfLife());
         this.packNeedsHdrDepth = this.conformanceReport.programs().stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
                 .anyMatch(program -> program.samplers().contains("depthtex0")

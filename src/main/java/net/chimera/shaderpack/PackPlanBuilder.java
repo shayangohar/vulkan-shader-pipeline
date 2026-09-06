@@ -74,7 +74,9 @@ public final class PackPlanBuilder {
                 config == null ? Map.of() : config.colortexFormats()).plan()
                 : null;
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
-                fragment, vertex, stage, targetPlan, prepared);
+                fragment, vertex, stage, targetPlan, prepared,
+                config == null || config.settings() == null
+                        ? Map.of() : config.settings().runtimeSettings().customDescriptors());
         Map<String, GlslInterfaceScanner.StageInterface> stageInterfaces = new TreeMap<>();
         if (fragment != null) {
             stageInterfaces.put("fragment", GlslInterfaceScanner.scan(fragment, false));
