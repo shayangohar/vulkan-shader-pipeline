@@ -300,12 +300,75 @@ tasks.register('m70ConformanceTest', JavaExec) {
     }
 }
 
+tasks.register('m71ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M7.1 settings and standard program-resolution checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M71ConformanceHarness'
+    jvmArgs '-ea'
+    doFirst {
+        def assignOptionalPack = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                return null
+            }
+            def pack = file(value.toString())
+            if (!pack.isDirectory() && !pack.isFile()) {
+                throw new GradleException("M7.1 pack path does not exist: ${pack}")
+            }
+            return pack.absolutePath
+        }
+        def complementary = assignOptionalPack('m71Complementary', 'chimera.m71.complementary')
+        def bsl = assignOptionalPack('m71Bsl', 'chimera.m71.bsl')
+        if ((complementary == null) != (bsl == null)) {
+            throw new GradleException('M7.1 strict mode requires both Complementary and BSL paths.')
+        }
+        if (complementary != null) {
+            def complementaryVersion = project.findProperty('m71ComplementaryVersion')
+                    ?: System.getProperty('chimera.m71.complementaryVersion')
+            def bslVersion = project.findProperty('m71BslVersion')
+                    ?: System.getProperty('chimera.m71.bslVersion')
+            if (complementaryVersion == null || complementaryVersion.toString().isBlank()
+                    || bslVersion == null || bslVersion.toString().isBlank()) {
+                throw new GradleException('M7.1 strict mode requires both pack versions.')
+            }
+            systemProperty 'chimera.m71.complementary', complementary
+            systemProperty 'chimera.m71.bsl', bsl
+            systemProperty 'chimera.m71.complementaryVersion', complementaryVersion.toString()
+            systemProperty 'chimera.m71.bslVersion', bslVersion.toString()
+        }
+        def baselineValue = project.findProperty('m71Baseline')
+                ?: System.getProperty('chimera.m71.baseline')
+                ?: file('testpacks/baselines/m7_1.json').absolutePath
+        def baseline = file(baselineValue.toString())
+        if (!project.hasProperty('m71PrintSnapshot') && !Boolean.getBoolean('chimera.m71.printSnapshot')
+                && !baseline.isFile()) {
+            throw new GradleException("M7.1 baseline does not exist: ${baseline}")
+        }
+        systemProperty 'chimera.m71.printSnapshot',
+                (project.findProperty('m71PrintSnapshot')?.toString()?.toBoolean() ?: false).toString()
+        systemProperty 'chimera.m71.baseline', baseline.absolutePath
+    }
+}
+
+tasks.register('m72ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M7.2 shared GLSL translation checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M72ConformanceHarness'
+    jvmArgs '-ea'
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
     dependsOn tasks.named('m63ConformanceTest')
     dependsOn tasks.named('m64ConformanceTest')
     dependsOn tasks.named('m66ConformanceTest')
+    dependsOn tasks.named('m71ConformanceTest')
+    dependsOn tasks.named('m72ConformanceTest')
 }
 
 tasks.named('test') {

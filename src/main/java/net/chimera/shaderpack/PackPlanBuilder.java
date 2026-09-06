@@ -22,18 +22,36 @@ public final class PackPlanBuilder {
             PackConfig.PackConfigData config,
             PackEntityIdResolver entityIds
     ) {
+        return build(programs, config, entityIds, PackResolutionPlan.empty());
+    }
+
+    public static PackPlan build(
+            List<PackProgram> programs,
+            PackConfig.PackConfigData config,
+            PackEntityIdResolver entityIds,
+            PackResolutionPlan resolution
+    ) {
         List<PackProgramPlan> plans = new ArrayList<>();
         if (programs != null) {
             for (PackProgram program : programs) {
-                plans.add(build(program, config));
+                plans.add(build(program, config, resolution));
             }
         }
-        return new PackPlan(config, plans, entityIds);
+        return new PackPlan(config, plans, entityIds,
+                config == null ? PackSettingsPlan.empty() : config.settings(), resolution);
     }
 
     public static PackProgramPlan build(
             PackProgram program,
             PackConfig.PackConfigData config
+    ) {
+        return build(program, config, PackResolutionPlan.empty());
+    }
+
+    public static PackProgramPlan build(
+            PackProgram program,
+            PackConfig.PackConfigData config,
+            PackResolutionPlan resolution
     ) {
         if (program == null) {
             return new PackProgramPlan(null, Map.of(),
@@ -208,6 +226,14 @@ public final class PackPlanBuilder {
         } catch (RuntimeException e) {
             deviations.add("TRANSLATION_UNSUPPORTED:" + safeReason(e));
             executable = false;
+        }
+
+        PackProgramResolution resolved = resolution == null ? null : resolution.resolution(program.name());
+        if (resolved != null) {
+            deviations.addAll(resolved.deviations());
+            if (!resolved.enabled() || !resolved.executable()) {
+                executable = false;
+            }
         }
 
         return new PackProgramPlan(program, stages, interfacePlan, stageInterfaces,

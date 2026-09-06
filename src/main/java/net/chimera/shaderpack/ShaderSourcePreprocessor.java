@@ -4,9 +4,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +22,6 @@ final class ShaderSourcePreprocessor {
     private static final int MAX_EXPANDED_FILES = 256;
     private static final int MAX_EMITTED_LINES = 200_000;
     private static final int MAX_EXPANDED_CHARS = 4 * 1024 * 1024;
-    private static final int MAX_EXPRESSION_DEPTH = 64;
     private static final Pattern DIRECTIVE = Pattern.compile("^\\s*#(\\w+)(?:\\s+(.*?))?\\s*$");
     private static final Pattern INCLUDE = Pattern.compile("^[<\"]([^>\"]+)[>\"]$");
     private static final Pattern DEFINE = Pattern.compile("^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
@@ -35,13 +31,24 @@ final class ShaderSourcePreprocessor {
     private ShaderSourcePreprocessor() {}
 
     static Result prepare(Path shadersRoot, Path sourceFile, String source) {
+        return prepare(shadersRoot, sourceFile, source, Map.of());
+    }
+
+    static Result prepare(
+            Path shadersRoot,
+            Path sourceFile,
+            String source,
+            Map<String, String> initialMacros
+    ) {
         if (source == null) {
             return new Result(null, List.of("SOURCE_PREPARATION_FAILED"), List.of());
         }
-        Context context = new Context(shadersRoot);
+        Context context = new Context(shadersRoot, initialMacros);
         try {
             context.process(source, sourceFile, 0);
-            if (!context.conditions.isEmpty()) {
+            try {
+                context.conditionState.finish();
+            } catch (RuntimeException failure) {
                 throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
             return new Result(context.output.toString(),
@@ -72,8 +79,7 @@ final class ShaderSourcePreprocessor {
     private static final class Context {
         private final Path shadersRoot;
         private final StringBuilder output = new StringBuilder();
-        private final Map<String, String> macros = new HashMap<>();
-        private final Deque<Condition> conditions = new ArrayDeque<>();
+        private final PackConditionals.State conditionState;
         private final Set<Path> includeStack = new HashSet<>();
         private final Set<String> deviations = new TreeSet<>();
         private final Set<String> dependencies = new TreeSet<>();
@@ -81,9 +87,10 @@ final class ShaderSourcePreprocessor {
         private int emittedLines;
         private int emittedChars;
 
-        private Context(Path shadersRoot) {
+        private Context(Path shadersRoot, Map<String, String> initialMacros) {
             this.shadersRoot = shadersRoot == null ? Path.of(".").toAbsolutePath().normalize()
                     : shadersRoot.toAbsolutePath().normalize();
+            this.conditionState = new PackConditionals.State(initialMacros);
         }
 
         private void process(String source, Path sourceFile, int depth) throws IOException {
@@ -134,7 +141,7 @@ final class ShaderSourcePreprocessor {
                         if (!argument.matches("[A-Za-z_]\\w*")) {
                             throw new PreparationFailure("PREPROCESSOR_DEFINE_UNSUPPORTED");
                         }
-                        macros.remove(argument);
+                        conditionState.undefine(argument);
                         emit("#undef " + argument);
                     }
                 }
@@ -219,7 +226,7 @@ final class ShaderSourcePreprocessor {
         }
 
         private void emitDefinition(String name, String source, String definition) {
-            String previous = macros.put(name, definition);
+            String previous = conditionState.define(name, definition);
             if (previous != null && previous.equals(definition)) {
                 return;
             }
@@ -235,51 +242,28 @@ final class ShaderSourcePreprocessor {
         }
 
         private void pushCondition(String expression) {
-            boolean parent = active();
-            boolean value = parent && evaluate(expression);
-            conditions.push(new Condition(parent, parent && value, value, false));
+            applyCondition("if", expression);
         }
 
         private void switchCondition(String expression) {
-            if (conditions.isEmpty()) {
-                throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
-            }
-            Condition current = conditions.pop();
-            if (current.elseSeen) {
-                throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
-            }
-            boolean value = current.parentActive && !current.taken && evaluate(expression);
-            boolean branch = !current.taken && value;
-            conditions.push(new Condition(current.parentActive, current.parentActive && branch,
-                    current.taken || value, false));
+            applyCondition("elif", expression);
         }
 
         private void switchElse() {
-            if (conditions.isEmpty()) {
-                throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
-            }
-            Condition current = conditions.pop();
-            if (current.elseSeen) {
-                throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
-            }
-            conditions.push(new Condition(current.parentActive, current.parentActive && !current.taken,
-                    true, true));
+            applyCondition("else", "");
         }
 
         private void popCondition() {
-            if (conditions.isEmpty()) {
-                throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
-            }
-            conditions.pop();
+            applyCondition("endif", "");
         }
 
         private boolean active() {
-            return conditions.isEmpty() || conditions.peek().active;
+            return conditionState.active();
         }
 
-        private boolean evaluate(String expression) {
+        private void applyCondition(String directive, String expression) {
             try {
-                return new ExpressionParser(expression, macros).parse();
+                conditionState.apply(directive, expression);
             } catch (RuntimeException e) {
                 throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
@@ -291,8 +275,6 @@ final class ShaderSourcePreprocessor {
         }
     }
 
-    private record Condition(boolean parentActive, boolean active, boolean taken, boolean elseSeen) {}
-
     private static final class PreparationFailure extends RuntimeException {
         private final String deviation;
 
@@ -301,187 +283,4 @@ final class ShaderSourcePreprocessor {
         }
     }
 
-    /** Recursive descent parser for the small boolean expression subset. */
-    private static final class ExpressionParser {
-        private final String source;
-        private final Map<String, String> macros;
-        private int index;
-        private int recursionDepth;
-
-        private ExpressionParser(String source, Map<String, String> macros) {
-            this.source = source == null ? "" : source;
-            this.macros = macros;
-        }
-
-        private boolean parse() {
-            boolean result = parseOr();
-            skipSpace();
-            if (index != source.length()) {
-                throw new IllegalArgumentException("unsupported expression");
-            }
-            return result;
-        }
-
-        private boolean parseOr() {
-            boolean value = parseAnd();
-            while (take("||")) {
-                value = parseAnd() || value;
-            }
-            return value;
-        }
-
-        private boolean parseAnd() {
-            boolean value = parseUnary();
-            while (take("&&")) {
-                value = parseUnary() && value;
-            }
-            return value;
-        }
-
-        private boolean parseUnary() {
-            enterRecursion();
-            try {
-                if (take("!")) {
-                    return !parseUnary();
-                }
-                if (take("(")) {
-                    boolean value = parseOr();
-                    require(")");
-                    return value;
-                }
-                return parseComparison();
-            } finally {
-                recursionDepth--;
-            }
-        }
-
-        private boolean parseComparison() {
-            double left = parseValue();
-            String operator = nextOperator();
-            if (operator == null) {
-                return left != 0.0;
-            }
-            double right = parseValue();
-            return switch (operator) {
-                case "==" -> left == right;
-                case "!=" -> left != right;
-                case ">" -> left > right;
-                case ">=" -> left >= right;
-                case "<" -> left < right;
-                case "<=" -> left <= right;
-                default -> throw new IllegalArgumentException("unsupported expression operator");
-            };
-        }
-
-        private double parseValue() {
-            enterRecursion();
-            try {
-                skipSpace();
-                if (takeWord("defined")) {
-                    skipSpace();
-                    boolean parenthesized = take("(");
-                    String name = identifier();
-                    if (parenthesized) {
-                        require(")");
-                    }
-                    return macros.containsKey(name) ? 1.0 : 0.0;
-                }
-                if (index < source.length() && (source.charAt(index) == '+' || source.charAt(index) == '-')) {
-                    char sign = source.charAt(index++);
-                    double value = parseValue();
-                    return sign == '-' ? -value : value;
-                }
-                if (index < source.length()
-                        && (Character.isDigit(source.charAt(index)) || source.charAt(index) == '.')) {
-                    int start = index++;
-                    while (index < source.length()
-                            && (Character.isDigit(source.charAt(index)) || source.charAt(index) == '.'
-                            || source.charAt(index) == 'e' || source.charAt(index) == 'E'
-                            || source.charAt(index) == '+' || source.charAt(index) == '-')) {
-                        index++;
-                    }
-                    String number = source.substring(start, index);
-                    return Double.parseDouble(number);
-                }
-                String name = identifier();
-                String value = macros.get(name);
-                if (value == null) {
-                    return 0.0;
-                }
-                try {
-                    return Double.parseDouble(value.replace("f", "").replace("F", ""));
-                } catch (NumberFormatException ignored) {
-                    return 0.0;
-                }
-            } finally {
-                recursionDepth--;
-            }
-        }
-
-        private void enterRecursion() {
-            if (++recursionDepth > MAX_EXPRESSION_DEPTH) {
-                throw new IllegalArgumentException("preprocessor expression is too deep");
-            }
-        }
-
-        private String nextOperator() {
-            for (String operator : List.of(">=", "<=", "==", "!=", ">", "<")) {
-                if (take(operator)) {
-                    return operator;
-                }
-            }
-            return null;
-        }
-
-        private String identifier() {
-            skipSpace();
-            int start = index;
-            if (index >= source.length()
-                    || !(Character.isLetter(source.charAt(index)) || source.charAt(index) == '_')) {
-                throw new IllegalArgumentException("identifier required");
-            }
-            index++;
-            while (index < source.length()
-                    && (Character.isLetterOrDigit(source.charAt(index)) || source.charAt(index) == '_')) {
-                index++;
-            }
-            return source.substring(start, index);
-        }
-
-        private void require(String token) {
-            if (!take(token)) {
-                throw new IllegalArgumentException("token required");
-            }
-        }
-
-        private boolean take(String token) {
-            skipSpace();
-            if (source.startsWith(token, index)) {
-                index += token.length();
-                return true;
-            }
-            return false;
-        }
-
-        private boolean takeWord(String token) {
-            skipSpace();
-            if (!source.startsWith(token, index)) {
-                return false;
-            }
-            int end = index + token.length();
-            if (end < source.length()
-                    && (Character.isLetterOrDigit(source.charAt(end))
-                    || source.charAt(end) == '_')) {
-                return false;
-            }
-            index = end;
-            return true;
-        }
-
-        private void skipSpace() {
-            while (index < source.length() && Character.isWhitespace(source.charAt(index))) {
-                index++;
-            }
-        }
-    }
 }

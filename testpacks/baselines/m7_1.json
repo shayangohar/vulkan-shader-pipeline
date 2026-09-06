@@ -1,0 +1,48 @@
+{
+  "formatVersion": 1,
+  "fixture": "m7_1/resolution",
+  "overworld": {
+    "dimension": "minecraft:overworld",
+    "folder": "overworld",
+    "reportSha256": "35a90e4f7ec0ccaee9b1eadb7856e378a34a53eaeb5d200e004ed6cff4da3552",
+    "sourceHashDigest": "bec6e0a98e9c0cdc0e954d832c87afeaa82d1b3fc020b7056c7b9561a027044d",
+    "settingsFingerprint": "4b976ab3fbddb26a67d8c3f4147c7b57bdf47414de81af308603ee42bf3d8360",
+    "resolutionFingerprint": "202c758fc021f8eacc40f8018257e486d6028ef1a829c6d00f13421eddc9576a",
+    "aliases": ["gbuffers_block->gbuffers_terrain", "gbuffers_block_translucent->gbuffers_terrain", "gbuffers_damagedblock->gbuffers_terrain", "gbuffers_terrain_cutout->gbuffers_terrain", "gbuffers_terrain_solid->gbuffers_terrain", "gbuffers_water->gbuffers_terrain"],
+    "missingPrograms": ["dh_generic", "dh_shadow", "dh_terrain", "dh_water", "gbuffers_armor_glint", "gbuffers_basic", "gbuffers_beaconbeam", "gbuffers_clouds", "gbuffers_entities", "gbuffers_entities_glowing", "gbuffers_entities_translucent", "gbuffers_hand", "gbuffers_hand_water", "gbuffers_item", "gbuffers_lightning", "gbuffers_line", "gbuffers_particles", "gbuffers_particles_translucent", "gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_spidereyes", "gbuffers_textured", "gbuffers_textured_lit", "gbuffers_weather", "shadow", "shadow_block", "shadow_cutout", "shadow_entities", "shadow_lightning", "shadow_solid", "shadow_water"],
+    "disabledPrograms": ["final"]
+  },
+  "nether": {
+    "dimension": "minecraft:the_nether",
+    "folder": "nether",
+    "reportSha256": "a33db298604d7d703f6a3d60651f97754cb7e4559a9f7ebbab4feb9252c0e23b",
+    "sourceHashDigest": "abbf9bfa6f3ee900d092bf248261719aa3451f171da4d0f0dd6d25ae0c9b4739",
+    "settingsFingerprint": "4b976ab3fbddb26a67d8c3f4147c7b57bdf47414de81af308603ee42bf3d8360",
+    "resolutionFingerprint": "78216931f271958932ce39d01566f57378468fc4759cad4526581fd755f61f67",
+    "aliases": ["gbuffers_block->gbuffers_textured_lit", "gbuffers_block_translucent->gbuffers_textured_lit", "gbuffers_damagedblock->gbuffers_textured_lit", "gbuffers_entities->gbuffers_textured_lit", "gbuffers_entities_glowing->gbuffers_textured_lit", "gbuffers_entities_translucent->gbuffers_textured_lit", "gbuffers_hand->gbuffers_textured_lit", "gbuffers_hand_water->gbuffers_textured_lit", "gbuffers_item->gbuffers_textured_lit", "gbuffers_lightning->gbuffers_textured_lit", "gbuffers_particles->gbuffers_textured_lit", "gbuffers_particles_translucent->gbuffers_textured_lit", "gbuffers_terrain->gbuffers_textured_lit", "gbuffers_terrain_cutout->gbuffers_textured_lit", "gbuffers_terrain_solid->gbuffers_textured_lit", "gbuffers_water->gbuffers_textured_lit", "gbuffers_weather->gbuffers_textured_lit"],
+    "missingPrograms": ["dh_generic", "dh_shadow", "dh_terrain", "dh_water", "final", "gbuffers_armor_glint", "gbuffers_basic", "gbuffers_beaconbeam", "gbuffers_clouds", "gbuffers_line", "gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_spidereyes", "gbuffers_textured", "shadow", "shadow_block", "shadow_cutout", "shadow_entities", "shadow_lightning", "shadow_solid", "shadow_water"],
+    "disabledPrograms": ["final"]
+  },
+  "end": {
+    "dimension": "minecraft:the_end",
+    "folder": "end",
+    "reportSha256": "570cb344c08d748c95a6135490843ffe8c94105c126d11e61d9e6adf12404496",
+    "sourceHashDigest": "fdc29d8bb683f741a29aef964fcbd4c0ee88b8c2c5b75f64a2ad7873550948a9",
+    "settingsFingerprint": "4b976ab3fbddb26a67d8c3f4147c7b57bdf47414de81af308603ee42bf3d8360",
+    "resolutionFingerprint": "a857152e71da4d32587412ca5f9b5be5bfbd7730c5ee6db64d53b904a0c76d39",
+    "aliases": ["gbuffers_block->gbuffers_terrain", "gbuffers_block_translucent->gbuffers_terrain", "gbuffers_damagedblock->gbuffers_terrain", "gbuffers_terrain_cutout->gbuffers_terrain", "gbuffers_terrain_solid->gbuffers_terrain", "gbuffers_water->gbuffers_terrain"],
+    "missingPrograms": ["dh_generic", "dh_shadow", "dh_terrain", "dh_water", "final", "gbuffers_armor_glint", "gbuffers_basic", "gbuffers_beaconbeam", "gbuffers_clouds", "gbuffers_entities", "gbuffers_entities_glowing", "gbuffers_entities_translucent", "gbuffers_hand", "gbuffers_hand_water", "gbuffers_item", "gbuffers_lightning", "gbuffers_line", "gbuffers_particles", "gbuffers_particles_translucent", "gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_spidereyes", "gbuffers_textured", "gbuffers_textured_lit", "gbuffers_weather", "shadow", "shadow_block", "shadow_cutout", "shadow_entities", "shadow_lightning", "shadow_solid", "shadow_water"],
+    "disabledPrograms": ["final"]
+  },
+  "custom": {
+    "dimension": "custom:moon",
+    "folder": "overworld",
+    "reportSha256": "e6425c0fe0dc52da256cd2e7f612da8ea8e0281f0049642682eab6aee7f8b871",
+    "sourceHashDigest": "bec6e0a98e9c0cdc0e954d832c87afeaa82d1b3fc020b7056c7b9561a027044d",
+    "settingsFingerprint": "4b976ab3fbddb26a67d8c3f4147c7b57bdf47414de81af308603ee42bf3d8360",
+    "resolutionFingerprint": "3594f8206b475f62ae708d18f2af59fbe42d90d479f2f9aafeed551098eecf63",
+    "aliases": ["gbuffers_block->gbuffers_terrain", "gbuffers_block_translucent->gbuffers_terrain", "gbuffers_damagedblock->gbuffers_terrain", "gbuffers_terrain_cutout->gbuffers_terrain", "gbuffers_terrain_solid->gbuffers_terrain", "gbuffers_water->gbuffers_terrain"],
+    "missingPrograms": ["dh_generic", "dh_shadow", "dh_terrain", "dh_water", "gbuffers_armor_glint", "gbuffers_basic", "gbuffers_beaconbeam", "gbuffers_clouds", "gbuffers_entities", "gbuffers_entities_glowing", "gbuffers_entities_translucent", "gbuffers_hand", "gbuffers_hand_water", "gbuffers_item", "gbuffers_lightning", "gbuffers_line", "gbuffers_particles", "gbuffers_particles_translucent", "gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_spidereyes", "gbuffers_textured", "gbuffers_textured_lit", "gbuffers_weather", "shadow", "shadow_block", "shadow_cutout", "shadow_entities", "shadow_lightning", "shadow_solid", "shadow_water"],
+    "disabledPrograms": ["final"]
+  }
+}

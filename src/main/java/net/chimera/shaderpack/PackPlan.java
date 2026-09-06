@@ -9,10 +9,21 @@ import java.util.TreeMap;
 public record PackPlan(
         PackConfig.PackConfigData config,
         List<PackProgramPlan> programs,
-        PackEntityIdResolver entityIds
+        PackEntityIdResolver entityIds,
+        PackSettingsPlan settings,
+        PackResolutionPlan resolution
 ) {
     public PackPlan(PackConfig.PackConfigData config, List<PackProgramPlan> programs) {
-        this(config, programs, PackEntityIdResolver.empty());
+        this(config, programs, PackEntityIdResolver.empty(),
+                PackSettingsPlan.empty(), PackResolutionPlan.empty());
+    }
+
+    public PackPlan(
+            PackConfig.PackConfigData config,
+            List<PackProgramPlan> programs,
+            PackEntityIdResolver entityIds
+    ) {
+        this(config, programs, entityIds, PackSettingsPlan.empty(), PackResolutionPlan.empty());
     }
 
     public PackPlan {
@@ -21,6 +32,8 @@ public record PackPlan(
                 .sorted(java.util.Comparator.comparing(PackProgramPlan::name))
                 .toList();
         entityIds = entityIds == null ? PackEntityIdResolver.empty() : entityIds;
+        settings = settings == null ? PackSettingsPlan.empty() : settings;
+        resolution = resolution == null ? PackResolutionPlan.empty() : resolution;
     }
 
     public Map<String, PackProgramPlan> byName() {
@@ -38,5 +51,49 @@ public record PackPlan(
             }
         }
         return null;
+    }
+
+    /** One eligibility result shared by probe and runtime pipeline construction. */
+    public boolean shouldAttempt(String name) {
+        PackProgramPlan program = program(name);
+        return program != null && program.executable() && resolution.shouldAttempt(name);
+    }
+
+    public String selectedDimension() {
+        return resolution.selectedDimension();
+    }
+
+    public String selectedSourceFolder() {
+        return resolution.selectedSourceFolder();
+    }
+
+    public int aliasCount() {
+        return resolution.aliases().size();
+    }
+
+    public int disabledProgramCount() {
+        return resolution.disabledPrograms().size();
+    }
+
+    public int missingProgramCount() {
+        return resolution.missingPrograms().size();
+    }
+
+    public String settingsFingerprint() {
+        return settings.fingerprint();
+    }
+
+    public String resolutionFingerprint() {
+        return resolution.fingerprint();
+    }
+
+    public boolean isProgramDisabled(String name) {
+        PackProgramResolution value = resolution.resolution(name);
+        return value != null && !value.enabled();
+    }
+
+    public boolean isProgramAlias(String name) {
+        PackProgramResolution value = resolution.resolution(name);
+        return value != null && !value.requestedProgram().equals(value.selectedProgram());
     }
 }

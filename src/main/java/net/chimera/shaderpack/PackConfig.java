@@ -100,16 +100,37 @@ public final class PackConfig {
             int drawBufferCount,
             ShadowSettings shadowSettings,
             Map<String, String> shaderConstants,
-            List<String> deviations
+            List<String> deviations,
+            PackSettingsPlan settings
     ) {
+        public PackConfigData(
+                Map<Integer, Integer> colortexFormats,
+                int drawBufferCount,
+                ShadowSettings shadowSettings,
+                Map<String, String> shaderConstants,
+                List<String> deviations
+        ) {
+            this(colortexFormats, drawBufferCount, shadowSettings, shaderConstants,
+                    deviations, PackSettingsPlan.empty());
+        }
+
         public PackConfigData {
             colortexFormats = Collections.unmodifiableMap(new TreeMap<>(colortexFormats));
             shaderConstants = Collections.unmodifiableMap(new TreeMap<>(shaderConstants));
             deviations = List.copyOf(new TreeSet<>(deviations));
+            settings = settings == null ? PackSettingsPlan.empty() : settings;
         }
     }
 
     public static PackConfigData parse(List<PackProgram> programs, Path shadersDir) {
+        return parse(programs, shadersDir, PackSettingsPlan.parse(programs, shadersDir));
+    }
+
+    public static PackConfigData parse(
+            List<PackProgram> programs,
+            Path shadersDir,
+            PackSettingsPlan settings
+    ) {
         Map<Integer, Integer> colortexFormats = new HashMap<>();
         Map<String, String> shadowValues = new TreeMap<>();
         Map<String, String> shaderConstants = new TreeMap<>();
@@ -228,7 +249,7 @@ public final class PackConfig {
         shaderConstants.put("shadowMapResolution", Integer.toString(shadowSettings.resolution()));
         shaderConstants.put("shadowDistance", Float.toString(shadowSettings.distance()));
         return new PackConfigData(colortexFormats, drawBufferCount,
-                shadowSettings, shaderConstants, deviations);
+                shadowSettings, shaderConstants, deviations, settings);
     }
 
     private static final List<String> SHADOW_PROPERTIES = List.of(

@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -30,13 +32,20 @@ import java.util.zip.ZipFile;
 public final class PackSource {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final List<String> DIMENSION_FOLDERS = List.of("world0", "world-1", "world1");
+    private static final Pattern PROPERTY_DIRECTIVE = Pattern.compile(
+            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif|define)\\b(.*)$");
+    private static final Pattern PROPERTY_DEFINE = Pattern.compile(
+            "^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
 
     /** The selected programs, shader root, archive owner, and load metadata. */
     public static final class LoadResult implements AutoCloseable {
         private final Path shadersDir;
         private final Path temporaryRoot;
-        private final Map<String, List<PackProgram>> variants;
+        private final Map<String, List<PackProgram>> rawVariants;
+        private final Map<String, String> explicitDimensionFolders;
+        private final boolean hasDimensionProperties;
         private final List<String> baseDeviations;
+        private Map<String, List<PackProgram>> variants;
         private List<PackProgram> programs;
         private List<String> deviations;
         private String selectedDimension = "minecraft:overworld";
@@ -47,6 +56,8 @@ public final class PackSource {
                 Path shadersDir,
                 Path temporaryRoot,
                 Map<String, List<PackProgram>> variants,
+                Map<String, String> explicitDimensionFolders,
+                boolean hasDimensionProperties,
                 List<String> deviations,
                 String initialDimension
         ) {
@@ -54,15 +65,58 @@ public final class PackSource {
             this.temporaryRoot = temporaryRoot;
             Map<String, List<PackProgram>> copy = new TreeMap<>();
             variants.forEach((key, value) -> copy.put(key, List.copyOf(value)));
-            this.variants = Map.copyOf(copy);
+            this.rawVariants = Map.copyOf(copy);
+            this.explicitDimensionFolders = Map.copyOf(explicitDimensionFolders);
+            this.hasDimensionProperties = hasDimensionProperties;
             this.baseDeviations = List.copyOf(new TreeSet<>(deviations));
+            this.variants = Map.of();
             this.programs = List.of();
             this.deviations = this.baseDeviations;
+            prepare(Map.of());
             selectDimension(initialDimension);
         }
 
         public List<PackProgram> programs() {
             return programs;
+        }
+
+        /** Raw selected sources used to build the settings plan before preparation. */
+        public List<PackProgram> rawPrograms() {
+            return rawVariants.getOrDefault(selectedVariantFolder, List.of());
+        }
+
+        /** Raw executable entry files from every discovered dimension variant. */
+        public List<PackProgram> rawProgramsAllVariants() {
+            return rawVariants.values().stream()
+                    .flatMap(List::stream)
+                    .sorted(Comparator.comparing(PackProgram::name)
+                            .thenComparing(value -> relativePath(shadersDir, value.fragmentPath())))
+                    .toList();
+        }
+
+        /** Re-prepares every variant with the active load-time option defaults. */
+        public void prepare(Map<String, String> initialMacros) {
+            Map<String, List<PackProgram>> prepared = new TreeMap<>();
+            rawVariants.forEach((folder, values) -> prepared.put(folder, preparePrograms(
+                    values, shadersDir, folder, variantMacros(folder, initialMacros))));
+            this.variants = Map.copyOf(prepared);
+            selectDimension(this.selectedDimension);
+        }
+
+        private static Map<String, String> variantMacros(
+                String folder, Map<String, String> initialMacros) {
+            Map<String, String> result = new TreeMap<>();
+            if (initialMacros != null) {
+                result.putAll(initialMacros);
+            }
+            if (folder.equals("world0")) {
+                result.put("OVERWORLD", "1");
+            } else if (folder.equals("world-1")) {
+                result.put("NETHER", "1");
+            } else if (folder.equals("world1")) {
+                result.put("END", "1");
+            }
+            return Map.copyOf(result);
         }
 
         public Path shadersDir() {
@@ -108,7 +162,7 @@ public final class PackSource {
         public void selectDimension(String dimension) {
             String requested = dimension == null || dimension.isBlank()
                     ? "minecraft:overworld" : dimension;
-            String folder = dimensionFolder(requested);
+            String folder = selectedFolder(requested);
             String chosen = folder;
             List<PackProgram> selected = variants.get(folder);
             List<String> nextDeviations = new ArrayList<>(baseDeviations);
@@ -116,9 +170,8 @@ public final class PackSource {
                     .anyMatch(value -> !value.isBlank());
 
             if (selected == null && hasNestedVariants) {
-                if (folder.equals("world0") && variants.containsKey("world0")) {
-                    selected = variants.get("world0");
-                } else if (variants.containsKey("world0") && !isStandardDimension(requested)) {
+                if (!hasDimensionProperties && !isStandardDimension(requested)
+                        && variants.containsKey("world0")) {
                     chosen = "world0";
                     selected = variants.get("world0");
                     nextDeviations.add("DIMENSION_SOURCE_FALLBACK_TO_WORLD0:" + requested);
@@ -130,10 +183,6 @@ public final class PackSource {
                 selected = variants.getOrDefault("", List.of());
                 chosen = "";
             }
-            if (hasNestedVariants && !isStandardDimension(requested)
-                    && chosen.equals("world0") && selected != null) {
-                nextDeviations.add("DIMENSION_SOURCE_FALLBACK_TO_WORLD0:" + requested);
-            }
             if (hasNestedVariants && !chosen.isBlank()) {
                 nextDeviations.add("DIMENSION_SOURCE_SELECTED:" + chosen);
             }
@@ -141,6 +190,15 @@ public final class PackSource {
             this.selectedVariantFolder = chosen;
             this.programs = selected;
             this.deviations = List.copyOf(new TreeSet<>(nextDeviations));
+        }
+
+        private String selectedFolder(String dimension) {
+            String normalized = normalizeDimension(dimension);
+            if (hasDimensionProperties) {
+                return explicitDimensionFolders.getOrDefault(normalized,
+                        explicitDimensionFolders.getOrDefault("*", ""));
+            }
+            return dimensionFolder(normalized);
         }
 
         @Override
@@ -259,7 +317,9 @@ public final class PackSource {
             return emptyResult(shadersDir, temporaryRoot, deviations, dimension);
         }
 
-        Map<String, Path> variantDirs = variantDirectories(shadersDir);
+        Map<String, String> dimensionFolders = readDimensionFolders(shadersDir, deviations);
+        Map<String, Path> variantDirs = variantDirectories(shadersDir, dimensionFolders);
+        boolean dimensionProperties = Files.isRegularFile(shadersDir.resolve("dimension.properties"));
         Map<String, List<PackProgram>> variants = new TreeMap<>();
         for (Map.Entry<String, Path> variant : variantDirs.entrySet()) {
             Map<String, PackProgram> byName = new TreeMap<>();
@@ -273,9 +333,10 @@ public final class PackSource {
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_water");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_entities");
             loadStandardPostPrograms(variant.getValue(), byName, deviations);
-            variants.put(variant.getKey(), preparePrograms(byName, shadersDir, variant.getKey(), deviations));
+            variants.put(variant.getKey(), List.copyOf(byName.values()));
         }
-        return new LoadResult(shadersDir, temporaryRoot, variants, deviations, dimension);
+        return new LoadResult(shadersDir, temporaryRoot, variants, dimensionFolders,
+                dimensionProperties, deviations, dimension);
     }
 
     private static LoadResult emptyResult(
@@ -284,17 +345,31 @@ public final class PackSource {
             List<String> deviations,
             String dimension
     ) {
-        return new LoadResult(shadersDir, temporaryRoot, Map.of("", List.of()), deviations, dimension);
+        return new LoadResult(shadersDir, temporaryRoot, Map.of("", List.of()), Map.of(),
+                false, deviations, dimension);
     }
 
-    private static Map<String, Path> variantDirectories(Path shadersDir) {
+    private static Map<String, Path> variantDirectories(
+            Path shadersDir,
+            Map<String, String> dimensionFolders
+    ) {
         Map<String, Path> result = new TreeMap<>();
         if (hasDirectStageFiles(shadersDir) || Files.isRegularFile(shadersDir.resolve("shaders.json"))) {
             result.put("", shadersDir);
         }
         for (String folder : DIMENSION_FOLDERS) {
             Path path = shadersDir.resolve(folder);
-            if (Files.isDirectory(path) && hasDirectStageFiles(path)) {
+            if (Files.isDirectory(path)
+                    && (hasDirectStageFiles(path)
+                    || Files.isRegularFile(path.resolve("shaders.json")))) {
+                result.put(folder, path);
+            }
+        }
+        for (String folder : dimensionFolders.values()) {
+            Path path = shadersDir.resolve(folder);
+            if (Files.isDirectory(path)
+                    && (hasDirectStageFiles(path)
+                    || Files.isRegularFile(path.resolve("shaders.json")))) {
                 result.put(folder, path);
             }
         }
@@ -302,6 +377,90 @@ public final class PackSource {
             result.put("", shadersDir);
         }
         return result;
+    }
+
+    private static Map<String, String> readDimensionFolders(
+            Path shadersDir,
+            List<String> deviations
+    ) {
+        Path properties = shadersDir.resolve("dimension.properties");
+        if (!Files.isRegularFile(properties)) {
+            return Map.of();
+        }
+        Map<String, String> result = new TreeMap<>();
+        PackConditionals.State conditions = new PackConditionals.State(Map.of());
+        boolean invalidCondition = false;
+        try {
+            for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
+                Matcher directive = PROPERTY_DIRECTIVE.matcher(line);
+                if (directive.matches()) {
+                    if (!invalidCondition) {
+                        String name = directive.group(1).toLowerCase();
+                        String argument = stripLineComment(directive.group(2)).trim();
+                        try {
+                            if (name.equals("define")) {
+                                if (conditions.active()) {
+                                    Matcher define = PROPERTY_DEFINE.matcher(argument);
+                                    if (!define.matches()) {
+                                        throw new IllegalArgumentException("invalid define");
+                                    }
+                                    conditions.define(define.group(1), define.group(2));
+                                }
+                            } else {
+                                conditions.apply(name, argument);
+                            }
+                        } catch (RuntimeException failure) {
+                            deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
+                            conditions = new PackConditionals.State(Map.of());
+                            invalidCondition = true;
+                        }
+                    }
+                    continue;
+                }
+                if (invalidCondition || !conditions.active()) {
+                    continue;
+                }
+                String value = line.trim();
+                if (value.isEmpty() || value.startsWith("#")) {
+                    continue;
+                }
+                int equals = value.indexOf('=');
+                if (equals <= "dimension.".length()) {
+                    continue;
+                }
+                String key = value.substring(0, equals).trim();
+                if (!key.startsWith("dimension.")) {
+                    continue;
+                }
+                String folder = key.substring("dimension.".length()).trim();
+                if (!folder.matches("[A-Za-z0-9_-]+")) {
+                    continue;
+                }
+                for (String world : value.substring(equals + 1).trim().split("\\s+")) {
+                    if (!world.isBlank()) {
+                        result.put(world.equals("*") ? "*" : normalizeDimension(world), folder);
+                    }
+                }
+            }
+            if (!invalidCondition) {
+                try {
+                    conditions.finish();
+                } catch (RuntimeException failure) {
+                    deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
+                }
+            }
+        } catch (IOException ignored) {
+            return Map.of();
+        }
+        return Map.copyOf(result);
+    }
+
+    private static String stripLineComment(String value) {
+        if (value == null) {
+            return "";
+        }
+        int comment = value.indexOf("//");
+        return comment < 0 ? value : value.substring(0, comment);
     }
 
     private static boolean hasDirectStageFiles(Path directory) {
@@ -386,19 +545,19 @@ public final class PackSource {
     }
 
     private static List<PackProgram> preparePrograms(
-            Map<String, PackProgram> candidates,
+            List<PackProgram> candidates,
             Path shadersRoot,
             String variantFolder,
-            List<String> deviations
+            Map<String, String> initialMacros
     ) {
         List<PackProgram> result = new ArrayList<>();
-        for (PackProgram candidate : candidates.values()) {
+        for (PackProgram candidate : candidates) {
             ShaderSourcePreprocessor.Result fragment = ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.fragmentPath(), candidate.fragmentSource());
+                    shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros);
             ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
                     ? new ShaderSourcePreprocessor.Result(null, List.of())
                     : ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.vertexPath(), candidate.vertexSource());
+                    shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros);
             List<String> prepDeviations = new ArrayList<>();
             prepDeviations.addAll(fragment.deviations());
             prepDeviations.addAll(vertex.deviations());
@@ -462,6 +621,9 @@ public final class PackSource {
             Path fragmentPath = resolveStagePath(shadersDir, fragmentRel, ".fsh");
             if (fragmentPath == null) {
                 deviations.add("PACK_SOURCE_PATH_UNSAFE");
+                continue;
+            }
+            if (!Files.isRegularFile(fragmentPath)) {
                 continue;
             }
             String fragment = readSource(fragmentPath);
@@ -584,7 +746,13 @@ public final class PackSource {
     }
 
     private static String relativePath(Path root, Path file) {
-        return file == null ? "~" : root.relativize(file.normalize()).toString().replace('\\', '/');
+        if (file == null) {
+            return "~";
+        }
+        if (root == null) {
+            return file.getFileName() == null ? "" : file.getFileName().toString().replace('\\', '/');
+        }
+        return root.relativize(file.normalize()).toString().replace('\\', '/');
     }
 
     private static String normalizeZipName(String name) {
@@ -639,6 +807,13 @@ public final class PackSource {
             case "minecraft:overworld", "overworld" -> "world0";
             default -> "world0";
         };
+    }
+
+    private static String normalizeDimension(String dimension) {
+        if (dimension == null || dimension.isBlank()) {
+            return "minecraft:overworld";
+        }
+        return dimension.indexOf(':') < 0 ? "minecraft:" + dimension : dimension;
     }
 
     private static boolean isStandardDimension(String dimension) {

@@ -47,8 +47,18 @@ public final class PackProbe {
     public record Analysis(
             ConformanceReport report,
             PackPlan plan,
-            PackConfig.PackConfigData config
-    ) {}
+            PackConfig.PackConfigData config,
+            PackSettingsPlan settings,
+            PackResolutionPlan resolution
+    ) {
+        public Analysis(
+                ConformanceReport report,
+                PackPlan plan,
+                PackConfig.PackConfigData config
+        ) {
+            this(report, plan, config, PackSettingsPlan.empty(), PackResolutionPlan.empty());
+        }
+    }
 
     public static ConformanceReport probe(Path packPath) {
         return analyze(packPath).report();
@@ -69,6 +79,8 @@ public final class PackProbe {
     public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
         String packName = logicalPackName(packPath);
         Path shadersDir = loaded.shadersDir();
+        PackSettingsPlan settingsPlan = PackSettingsPlan.parse(loaded.rawProgramsAllVariants(), shadersDir);
+        loaded.prepare(settingsPlan.preprocessorDefines());
         Map<String, String> metadataHashes = new TreeMap<>();
         List<String> globalDeviations = new ArrayList<>(loaded.deviations());
         List<String> settings = new ArrayList<>();
@@ -92,7 +104,8 @@ public final class PackProbe {
         if (!Files.isDirectory(shadersDir)) {
             globalDeviations.add("NO_SHADERS_DIRECTORY");
             return new Analysis(report(packName, passListPresent, passInventory, metadataHashes,
-                    settings, globalDeviations, loaded), new PackPlan(null, List.of()), null);
+                    settings, globalDeviations, loaded), new PackPlan(null, List.of()), null,
+                    settingsPlan, PackResolutionPlan.empty());
         }
 
         Map<String, Inventory> inventories = new TreeMap<>();
@@ -141,8 +154,12 @@ public final class PackProbe {
                     ? "ENTITY_ID_MAP_APPLIED" : "ENTITY_ID_DEFAULTED");
         }
 
-        PackConfig.PackConfigData packConfig = PackConfig.parse(loaded.programs(), shadersDir);
-        PackPlan packPlan = PackPlanBuilder.build(loaded.programs(), packConfig, entityIds.resolver());
+        PackConfig.PackConfigData packConfig = PackConfig.parse(loaded.programs(), shadersDir, settingsPlan);
+        PackResolutionPlan resolution = PackResolutionPlan.build(
+                loaded.selectedDimension(), loaded.selectedVariantFolder(),
+                loaded.programs(), settingsPlan);
+        PackPlan packPlan = PackPlanBuilder.build(
+                loaded.programs(), packConfig, entityIds.resolver(), resolution);
         globalDeviations.addAll(packConfig.deviations());
         applyShadowPropertyReporting(inventories, shadowPropertySettings,
                 packConfig.shadowSettings(), globalDeviations);
@@ -152,7 +169,7 @@ public final class PackProbe {
         for (Inventory inventory : inventories.values()) {
             report.addProgram(toProgram(inventory, packConfig, packPlan.program(inventory.name)));
         }
-        return new Analysis(report, packPlan, packConfig);
+        return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
     }
 
     private static ConformanceReport report(

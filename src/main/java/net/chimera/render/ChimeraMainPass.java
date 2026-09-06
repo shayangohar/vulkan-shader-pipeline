@@ -1600,6 +1600,14 @@ public class ChimeraMainPass implements MainPass {
                 : PackConfig.parse(this.packPrograms, result.shadersDir());
         this.packPlan = analysis.plan() == null
                 ? new PackPlan(this.packConfig, List.of()) : analysis.plan();
+        LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",
+                this.packPlan.selectedDimension(),
+                this.packPlan.selectedSourceFolder(),
+                this.packPlan.aliasCount(),
+                this.packPlan.disabledProgramCount(),
+                this.packPlan.missingProgramCount(),
+                this.packPlan.settingsFingerprint(),
+                this.packPlan.resolutionFingerprint());
         this.packNeedsHdrDepth = this.conformanceReport.programs().stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
                 .anyMatch(program -> program.samplers().contains("depthtex0")
@@ -1726,11 +1734,24 @@ public class ChimeraMainPass implements MainPass {
             String name = program.name();
             PackProgramPlan programPlan = this.packPlan == null
                     ? null : this.packPlan.program(name);
-            if (this.conformanceReport != null && !this.conformanceReport.shouldAttempt(name)) {
-                this.conformanceReport.markRuntime(name,
-                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "CONTRACT_UNSUPPORTED");
-                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (contract unsupported)", name);
+            boolean reportAllowed = this.conformanceReport == null
+                    || this.conformanceReport.shouldAttempt(name);
+            boolean planAllowed = this.packPlan == null || this.packPlan.shouldAttempt(name);
+            if (!reportAllowed || !planAllowed) {
+                String reason = "CONTRACT_UNSUPPORTED";
+                if (this.packPlan != null && this.packPlan.isProgramDisabled(name)) {
+                    reason = "PROGRAM_DISABLED:" + name;
+                } else if (this.packPlan != null && this.packPlan.isProgramAlias(name)) {
+                    reason = "PROGRAM_ALIAS_RUNTIME_FALLBACK:" + name;
+                } else if (programPlan != null && !programPlan.executable()) {
+                    reason = "PLAN_INELIGIBLE:" + name;
+                }
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                            reason);
+                }
+                LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
                 continue;
             }
             if (requiresNoise(program) && this.packNoiseImage == null) {

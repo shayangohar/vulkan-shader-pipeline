@@ -328,6 +328,15 @@ public final class LegacyGlslConverter {
                 src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("texture", "chimeraTexture"));
             }
             src = convertTextureCalls(src);
+            if (GlslTokenRewriter.containsIdentifier(src, "shadow2DProj")
+                    || GlslTokenRewriter.containsIdentifier(src, "shadow2DProjLod")) {
+                throw new IllegalArgumentException("projected shadow lookup is outside the supported bridge");
+            }
+            Map<String, String> samplerTypes = new TreeMap<>();
+            for (UniformRegistry.SamplerBinding sampler : samplers) {
+                samplerTypes.put(sampler.name(), sampler.glslType());
+            }
+            src = GlslTokenRewriter.rewriteShadowCalls(src, samplerTypes);
             for (int i = 0; i < samplers.size(); i++) {
                 String name = samplers.get(i).name();
                 String srcName = geometryStage && name.equals("texture") ? "chimeraTexture" : name;

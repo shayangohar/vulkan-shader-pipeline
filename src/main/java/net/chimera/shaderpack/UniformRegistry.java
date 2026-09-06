@@ -50,12 +50,20 @@ public final class UniformRegistry {
         }
     }
 
-    /** One pack sampler and its fixed VulkanMod texture registry slot. */
-    public record SamplerBinding(String name, int slot) {
+    /** One pack sampler, its GLSL type, and its fixed VulkanMod texture slot. */
+    public record SamplerBinding(String name, int slot, String glslType) {
         public SamplerBinding {
             if (name == null || name.isBlank() || slot < 0) {
                 throw new IllegalArgumentException("sampler binding is invalid");
             }
+            if (glslType == null || glslType.isBlank()) {
+                throw new IllegalArgumentException("sampler binding needs a GLSL type");
+            }
+        }
+
+        /** Compatibility constructor for callers that use the ordinary sampler type. */
+        public SamplerBinding(String name, int slot) {
+            this(name, slot, "sampler2D");
         }
     }
 
@@ -353,6 +361,7 @@ public final class UniformRegistry {
             String source, Stage stage, boolean targetedPost, boolean allowUnusedDeclarations) {
         String stripped = stripComments(source == null ? "" : source);
         Map<String, UniformDeclaration> declarations = new TreeMap<>();
+        Set<String> implicitDeclarations = new TreeSet<>();
         Set<String> conflicts = new TreeSet<>();
         Map<String, String> samplerNames = new TreeMap<>();
         Map<Integer, String> samplerResources = new TreeMap<>();
@@ -379,6 +388,26 @@ public final class UniformRegistry {
         Matcher blockMatcher = UNIFORM_BLOCK.matcher(stripped);
         while (blockMatcher.find()) {
             deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + blockMatcher.group(1));
+        }
+
+        // Real packs sometimes expose standard Iris uniforms through a
+        // conditional include that is absent from the prepared snapshot. If
+        // the name is in the canonical catalog and has exactly one accepted
+        // type, synthesize the declaration from that catalog entry. This is
+        // deliberately table-driven and does not infer arbitrary GLSL types.
+        if (allowUnusedDeclarations) {
+            for (UniformDescriptor descriptor : UNIFORM_SPECS.values()) {
+                if (descriptor.acceptedTypes().size() != 1
+                        || declarations.containsKey(descriptor.name())
+                        || !isPresent(stripped, descriptor.name())
+                        || isLocallyDeclared(stripped, descriptor.name())) {
+                    continue;
+                }
+                declarations.put(descriptor.name(), new UniformDeclaration(
+                        descriptor.name(), descriptor.acceptedTypes().get(0)));
+                implicitDeclarations.add(descriptor.name());
+                deviations.add("UNIFORM_IMPLICIT_DECLARATION:" + descriptor.name());
+            }
         }
 
         for (UniformDeclaration declaration : declarations.values()) {
@@ -416,7 +445,8 @@ public final class UniformRegistry {
                 }
                 continue;
             }
-            if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+            if (allowUnusedDeclarations && !implicitDeclarations.contains(name)
+                    && !isReferenced(stripped, name)) {
                 deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
                 continue;
             }
@@ -466,7 +496,7 @@ public final class UniformRegistry {
                 }
                 continue;
             }
-            bindings.add(new SamplerBinding(sampler.getKey(), slot));
+            bindings.add(new SamplerBinding(sampler.getKey(), slot, sampler.getValue()));
             String resource = samplerResource(sampler.getKey());
             String previousResource = samplerResources.putIfAbsent(slot, resource);
             if (previousResource != null && !previousResource.equals(resource)) {
@@ -522,6 +552,15 @@ public final class UniformRegistry {
     private static boolean isReferenced(String source, String name) {
         Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source);
         return matcher.find() && matcher.find();
+    }
+
+    private static boolean isPresent(String source, String name) {
+        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source).find();
+    }
+
+    private static boolean isLocallyDeclared(String source, String name) {
+        return Pattern.compile("\\b(?:const\\s+)?[A-Za-z_]\\w*\\s+"
+                + Pattern.quote(name) + "\\b").matcher(source).find();
     }
 
     private static boolean isHostAlias(String name) {
@@ -602,21 +641,40 @@ public final class UniformRegistry {
         while (matcher.find()) {
             if (isSamplerType(matcher.group(1))) {
                 List<Variable> variables = parseVariables(matcher.group(2));
-                if (!variables.isEmpty()
-                        && variables.stream().allMatch(variable -> unusedSamplers.contains(variable.name()))) {
-                    out.append(result, last, matcher.start());
-                    last = matcher.end();
-                    changed = true;
+                if (!variables.isEmpty()) {
+                    List<Variable> retained = variables.stream()
+                            .filter(variable -> !unusedSamplers.contains(variable.name()))
+                            .toList();
+                    if (retained.size() != variables.size()) {
+                        out.append(result, last, matcher.start());
+                        if (!retained.isEmpty()) {
+                            out.append("uniform ").append(matcher.group(1)).append(' ')
+                                    .append(retained.stream().map(Variable::name)
+                                            .collect(java.util.stream.Collectors.joining(", ")))
+                                    .append(';');
+                        }
+                        last = matcher.end();
+                        changed = true;
+                    }
                 }
                 continue;
             }
             List<Variable> variables = parseVariables(matcher.group(2));
-            boolean remove = !variables.isEmpty()
-                    && variables.stream().allMatch(variable -> executable.contains(variable.name()));
-            if (remove) {
-                out.append(result, last, matcher.start());
-                last = matcher.end();
-                changed = true;
+            if (!variables.isEmpty()) {
+                List<Variable> retained = variables.stream()
+                        .filter(variable -> !executable.contains(variable.name()))
+                        .toList();
+                if (retained.size() != variables.size()) {
+                    out.append(result, last, matcher.start());
+                    if (!retained.isEmpty()) {
+                        out.append("uniform ").append(matcher.group(1)).append(' ')
+                                .append(retained.stream().map(Variable::name)
+                                        .collect(java.util.stream.Collectors.joining(", ")))
+                                .append(';');
+                    }
+                    last = matcher.end();
+                    changed = true;
+                }
             }
         }
         if (!changed) {

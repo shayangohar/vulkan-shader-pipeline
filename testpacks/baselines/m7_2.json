@@ -1,0 +1,6 @@
+{
+  "formatVersion": 1,
+  "milestone": "M7.2",
+  "fixture": "translation",
+  "scope": "bounded token translation with explicit fallback"
+}

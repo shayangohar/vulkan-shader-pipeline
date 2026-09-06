@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.6 complete. M7.0 real-pack parity baseline complete.**
+**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core is in progress.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
@@ -41,6 +41,8 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M6.6 | Command-driven runtime pack switching with safe GPU-idle replacement and rollback |
 | M7 | Core Iris visual parity: program resolution, translation, uniforms, targets, resources, family adapters, frame sequencing, and qualification |
 | M7.0 | Lock the real-pack parity gap: static eligibility, runtime installation, execution evidence, and visual claims |
+| M7.1 | Resolve dimensions, standard program families, settings, options, feature flags, and explicit fallback aliases |
+| M7.2 | Expand the bounded shared GLSL translator for real-pack declarations, built-ins, texture operations, outputs, interfaces, and safe fallback |
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
@@ -59,6 +61,14 @@ M7.0 keeps the same exact Complementary Reimagined r5.8.1 and BSL v10.1.3 pack f
 `powershell -NoProfile -ExecutionPolicy Bypass -File tools\m70-parity-baseline.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion r5.8.1 -BslVersion v10.1.3 -ComplementaryLogPath <log-path> -BslLogPath <log-path> -ComplementaryCapturePath <capture-path> -BslCapturePath <capture-path>`
 
 The M7.0 check requires one installed program and one fallback program for each pack, verifies the M6.5 source and report baseline, and checks ZIP and directory loading. It records RenderDoc execution as review-required until the capture structure is confirmed. It does not claim visual parity or performance parity. Use `-EmitBaseline` only when intentionally replacing `testpacks\baselines\m7_0.json` after reviewing the generated evidence.
+
+M7.1 adds one load-time resolution plan. It selects a dimension source, applies defaults from `shaders.properties` and authored shader options, records profiles and feature flags, evaluates program enable expressions, and records standard-family fallback aliases. Alias records are not routed through an incompatible adapter. Run the checked-in fixture with Prism Java 21:
+
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\m71-conformance.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion <version> -BslVersion <version>`
+
+The M7.1 wrapper requires explicit real-pack paths and versions when strict external checks are requested. The ordinary `m71ConformanceTest` task runs the local resolution fixture and does not require external packs. Resolution fingerprints are evidence of deterministic pack interpretation; they do not claim that an aliased family is installed or that the pack has visual parity.
+
+M7.2 extends the existing load-time token translator. Run `m72ConformanceTest` for legacy declaration, nested texture, shadow lookup, output, interface, and fail-closed fallback checks. It remains source-agnostic and does not add modern GLSL, new renderer families, or resource semantics outside the existing bridge.
 
 ## Runtime pack switching
 
