@@ -59,7 +59,8 @@ Write-Output ("QUICKPLAY_WORLD=" + $WorldName)
 Write-Output "QUICKPLAY_MODE=prism-cli-world"
 
 $quotedWorldName = '"' + $WorldName.Replace('"', '\"') + '"'
-$launcher = Start-Process -FilePath $PrismPath -ArgumentList @("-l", $InstanceId, "-w", $quotedWorldName) -PassThru
+$quotedInstanceId = '"' + $InstanceId.Replace('"', '\"') + '"'
+$launcher = Start-Process -FilePath $PrismPath -ArgumentList @("-l", $quotedInstanceId, "-w", $quotedWorldName) -PassThru
 $ready = $false
 $readyPid = $null
 

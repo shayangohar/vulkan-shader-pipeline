@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete. M7.6 core family adapter implementation complete. M7.7 temporal frame schedule complete.**
+**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete. M7.6 core family adapter implementation complete. M7.7 temporal frame schedule complete. M7.8 qualification in progress.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
@@ -48,6 +48,7 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M7.5 | Pack texture and resource bridge: sampled pack PNGs, standard aliases, safe ownership, and per-program resource fallback |
 | M7.6 | Core family adapters: gbuffers_block, gbuffers_hand, gbuffers_particles, shared host-state seams, and explicit unsupported-family fallback |
 | M7.7 | Complete frame schedule and temporal state: early deferred, world depth seams, late composite, final-before-GUI, and bounded previous-target validity |
+| M7.8 | Qualify core visual parity against exact Complementary and BSL packs using separate static, runtime, RenderDoc, visual, and performance evidence |
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
@@ -88,6 +89,8 @@ M7.5 runs `m75ConformanceTest` for deterministic sampled-resource plans. The fix
 M7.6 runs `m76ConformanceTest` for the table-driven family adapter registry and local legacy fixtures. `gbuffers_entities`, `gbuffers_block`, and `gbuffers_hand` use the append-only extended entity format and guarded host-state draw seam. `gbuffers_particles` uses the host particle format and a separate guarded draw window. Sky, cloud, weather, glowing, outlines, and other unimplemented lanes remain explicit host fallback. The slice does not change terrain, water, shadow, post targets, frame timing, or lifecycle ownership.
 
 M7.7 runs `m77ConformanceTest` for the immutable frame schedule and temporal validity state. Deferred stages run at the early post seam, composite stages run after world rendering, depthtex1 is captured before translucent terrain, depthtex2 is captured before hand submission, and final runs after hand and before GUI. `PackPostTargets` and `PackDepthTargets` remain the resource owners; the schedule only orders their existing seams. Unavailable targets and failed stages remain identity fallback, and previous-target validity is reset at pack and level boundaries.
+
+M7.8 is a qualification gate, not a renderer expansion. It checks exact Complementary Reimagined r5.8.1 and BSL v10.1.3 packs through static plan eligibility, runtime installation, RenderDoc execution, and optional Sodium + Iris reference evidence. Run the strict check with `tools\m78-qualification.ps1`, providing the two pack paths, versions, Chimera logs, and Chimera captures. Add `-RequireReference` only when matching Sodium + Iris captures are available. The harness never claims visual parity from static eligibility alone, and performance comparison remains deferred to `TASK-172`.
 
 For headless runtime verification, run `powershell -NoProfile -ExecutionPolicy Bypass -File tools\\launch-chimera-world.ps1`. The script uses Prism Launcher world Quick Play, waits for `Chimera Dev` to be active, and prints the Minecraft PID for RenderDoc injection. It does not edit the instance configuration.
 

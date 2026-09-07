@@ -409,6 +409,102 @@ tasks.register('m77ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m78ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs strict M7.8 core visual parity qualification against Complementary and BSL.'
+    dependsOn tasks.named('m77ConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M78ParityQualificationHarness'
+    jvmArgs '-ea'
+    doFirst {
+        def requiredPath = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required path. Set -P${projectKey} or -D${systemKey}.")
+            }
+            def path = file(value.toString())
+            if (!path.isDirectory() && !path.isFile()) {
+                throw new GradleException("M7.8 path does not exist: ${path}")
+            }
+            return path.absolutePath
+        }
+        def requiredString = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing required value. Set -P${projectKey} or -D${systemKey}.")
+            }
+            return value.toString()
+        }
+        def requiredEvidence = { String projectKey, String systemKey ->
+            def value = requiredString(projectKey, systemKey)
+            def path = file(value)
+            if (!path.isFile()) {
+                throw new GradleException("M7.8 evidence path does not exist: ${path}")
+            }
+            return path.absolutePath
+        }
+        def optionalEvidence = { String projectKey, String systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value == null || value.toString().isBlank()) {
+                return null
+            }
+            def path = file(value.toString())
+            if (!path.isFile()) {
+                throw new GradleException("M7.8 optional evidence path does not exist: ${path}")
+            }
+            return path.absolutePath
+        }
+        def baselineValue = project.findProperty('m78Baseline')
+                ?: System.getProperty('chimera.m78.baseline')
+                ?: file('testpacks/baselines/m7_8.json')
+        def baseline = file(baselineValue.toString())
+        if (!baseline.isFile()) {
+            throw new GradleException("M7.8 baseline does not exist: ${baseline}")
+        }
+        systemProperty 'chimera.m78.complementary',
+                requiredPath('m78Complementary', 'chimera.m78.complementary')
+        systemProperty 'chimera.m78.bsl',
+                requiredPath('m78Bsl', 'chimera.m78.bsl')
+        systemProperty 'chimera.m78.complementaryVersion',
+                requiredString('m78ComplementaryVersion', 'chimera.m78.complementaryVersion')
+        systemProperty 'chimera.m78.bslVersion',
+                requiredString('m78BslVersion', 'chimera.m78.bslVersion')
+        systemProperty 'chimera.m78.complementaryLog',
+                requiredEvidence('m78ComplementaryLog', 'chimera.m78.complementaryLog')
+        systemProperty 'chimera.m78.bslLog',
+                requiredEvidence('m78BslLog', 'chimera.m78.bslLog')
+        systemProperty 'chimera.m78.complementaryCapture',
+                requiredEvidence('m78ComplementaryCapture', 'chimera.m78.complementaryCapture')
+        systemProperty 'chimera.m78.bslCapture',
+                requiredEvidence('m78BslCapture', 'chimera.m78.bslCapture')
+        def irisComplementaryCapture = optionalEvidence(
+                'm78IrisComplementaryCapture', 'chimera.m78.irisComplementaryCapture')
+        def irisBslCapture = optionalEvidence('m78IrisBslCapture', 'chimera.m78.irisBslCapture')
+        def irisComplementaryLog = optionalEvidence(
+                'm78IrisComplementaryLog', 'chimera.m78.irisComplementaryLog')
+        def irisBslLog = optionalEvidence('m78IrisBslLog', 'chimera.m78.irisBslLog')
+        if (irisComplementaryCapture != null) {
+            systemProperty 'chimera.m78.irisComplementaryCapture', irisComplementaryCapture
+        }
+        if (irisBslCapture != null) {
+            systemProperty 'chimera.m78.irisBslCapture', irisBslCapture
+        }
+        if (irisComplementaryLog != null) {
+            systemProperty 'chimera.m78.irisComplementaryLog', irisComplementaryLog
+        }
+        if (irisBslLog != null) {
+            systemProperty 'chimera.m78.irisBslLog', irisBslLog
+        }
+        systemProperty 'chimera.m78.requireReferenceEvidence',
+                (project.findProperty('m78RequireReference')?.toString()?.toBoolean()
+                        ?: Boolean.getBoolean('chimera.m78.requireReferenceEvidence')).toString()
+        systemProperty 'chimera.m78.emitBaseline',
+                (project.findProperty('m78EmitBaseline')?.toString()?.toBoolean()
+                        ?: Boolean.getBoolean('chimera.m78.emitBaseline')).toString()
+        systemProperty 'chimera.m78.baseline', baseline.absolutePath
+    }
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')

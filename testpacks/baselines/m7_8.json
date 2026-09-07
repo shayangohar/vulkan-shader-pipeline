@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "milestone": "M7.8",
+  "referenceBackend": "Sodium + Iris",
+  "evidenceModel": [
+    "STATIC_ELIGIBILITY",
+    "RUNTIME_INSTALLATION",
+    "RUNTIME_EXECUTION",
+    "VISUAL_PARITY"
+  ],
+  "performanceStatus": "DEFERRED_TO_TASK-172",
+  "visualParityClaim": "NOT_CLAIMED",
+  "packs": {
+    "complementary": {
+      "version": "r5.8.1",
+      "requireStaticEligibility": true,
+      "requireChimeraInstallation": true,
+      "visualParityClaim": "NOT_CLAIMED"
+    },
+    "bsl": {
+      "version": "v10.1.3",
+      "requireStaticEligibility": true,
+      "requireChimeraInstallation": true,
+      "visualParityClaim": "NOT_CLAIMED"
+    }
+  }
+}
