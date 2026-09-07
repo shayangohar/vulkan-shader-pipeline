@@ -15,6 +15,14 @@ bin/
 .project
 .settings/
 
+# Local runtime evidence and generated analysis outputs
+captures/*
+!captures/.gitkeep
+logs/
+mappings/
+scratch/
+tools/_chimera-pack-agent*.jar
+
 # Fabric
 run/
 
