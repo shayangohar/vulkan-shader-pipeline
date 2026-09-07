@@ -388,6 +388,18 @@ tasks.register('m75ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m76ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M7.6 core family adapter and fallback checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M76ConformanceHarness'
+    jvmArgs '-ea'
+    systemProperty 'chimera.m76.printBaseline',
+            (project.findProperty('m76PrintBaseline')?.toString()?.toBoolean()
+                    ?: Boolean.getBoolean('chimera.m76.printBaseline')).toString()
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
@@ -399,6 +411,7 @@ tasks.named('check') {
     dependsOn tasks.named('m73ConformanceTest')
     dependsOn tasks.named('m74ConformanceTest')
     dependsOn tasks.named('m75ConformanceTest')
+    dependsOn tasks.named('m76ConformanceTest')
 }
 
 tasks.named('test') {

@@ -267,7 +267,10 @@ public final class LegacyGlslConverter {
                     && (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
                     || interfacePlan.stage() == UniformRegistry.Stage.SHADOW
                     || interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
-                    || interfacePlan.stage() == UniformRegistry.Stage.ENTITY);
+                    || interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
+                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
+                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE);
             if (interfacePlan == null || !interfacePlan.executable()
                     || geometryInterface != geometryStage) {
                 throw new IllegalArgumentException("pack interface is outside the executable contract");
@@ -299,7 +302,9 @@ public final class LegacyGlslConverter {
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT) {
                 src = replaceTranslucentUniformNames(src, interfacePlan);
-            } else if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY) {
+            } else if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
+                    || interfacePlan.stage() == UniformRegistry.Stage.HAND) {
                 src = removeEntityIdDeclarations(src, interfacePlan);
                 src = replaceEntityIdReferences(src, terrainLayout);
             }
@@ -314,7 +319,10 @@ public final class LegacyGlslConverter {
             // so conversion cannot drift from descriptor order.
             List<UniformRegistry.SamplerBinding> samplers = interfacePlan.samplers();
             int bindingBase = geometryStage
-                    ? interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+                    ? (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
+                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
+                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE)
                     ? (interfacePlan.executableUniforms().isEmpty() ? 2 : 3)
                     : GEOMETRY_SAMPLER_BINDING_BASE
                     : (interfacePlan.executableUniforms().isEmpty() ? 0 : 1);
@@ -368,7 +376,10 @@ public final class LegacyGlslConverter {
             if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
                     && !interfacePlan.executableUniforms().isEmpty()) {
                 uniformBlock = terrainUniformBlock();
-            } else if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+            } else if ((interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
+                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
+                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE)
                     && !interfacePlan.executableUniforms().isEmpty()) {
                 uniformBlock = entityUniformBlock(interfacePlan.executableUniforms());
             } else if (!geometryStage && !interfacePlan.executableUniforms().isEmpty()) {
@@ -376,7 +387,9 @@ public final class LegacyGlslConverter {
             } else {
                 uniformBlock = "";
             }
-            String entityIdDeclaration = interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+            String entityIdDeclaration = (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
+                    || interfacePlan.stage() == UniformRegistry.Stage.HAND)
                     ? entityIdFragmentDeclaration(terrainLayout) : "";
             String declarations = entityIdDeclaration
                     + (outDecl != null ? outDecl + "\n" : "") + uniformBlock;
@@ -442,6 +455,40 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations
     ) {
+        return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
+                ENTITY_VERTEX_PREAMBLE, false);
+    }
+
+    /** Converts the block-entity variant, which uses the host ModelOffset field. */
+    public static TerrainVertexConversion convertBlockVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations
+    ) {
+        return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
+                BLOCK_VERTEX_PREAMBLE, false);
+    }
+
+    /** Converts the first-person hand contract onto EXTENDED_PARTICLE. */
+    public static TerrainVertexConversion convertHandVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations
+    ) {
+        return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
+                HAND_VERTEX_PREAMBLE, true);
+    }
+
+    private static TerrainVertexConversion convertEntityVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            String vertexPreamble,
+            boolean particleInputs
+    ) {
         try {
             String src = prepareSource(source, sourceFile);
             String stripped = stripComments(src);
@@ -454,7 +501,7 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("entity vertex requires main and gl_Position");
             }
             String entityIdType = entityIdentifierType(stripped, fragmentSource);
-            rejectEntityVertexFeatures(removeEntityIdDeclarations(stripped));
+            rejectEntityVertexFeatures(removeEntityIdDeclarations(stripped), particleInputs);
 
             Map<String, String> vertexTypes = parseEntityVaryings(stripped, true);
             Map<String, String> fragmentTypes = parseEntityVaryings(stripComments(fragmentSource), false);
@@ -486,7 +533,16 @@ public final class LegacyGlslConverter {
             converted = removeEntityIdDeclarations(converted);
             converted = removeEntityAttributes(converted);
             converted = replaceEntityVaryings(converted, layout, "out", true);
-            converted = GlslTokenRewriter.replaceIdentifiers(converted, Map.ofEntries(
+            Map<String, String> inputs = particleInputs
+                    ? Map.ofEntries(
+                    Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
+                    Map.entry("gl_Color", "Color"),
+                    Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
+                    Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2) / 256.0, 0.0, 1.0)"),
+                    Map.entry("mc_midTexCoord", "MidTexCoord"),
+                    Map.entry("at_tangent", "Tangent"),
+                    Map.entry("entityId", entityIdExpression(layout)))
+                    : Map.ofEntries(
                     Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
                     Map.entry("gl_Color", "Color"),
                     Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
@@ -495,7 +551,8 @@ public final class LegacyGlslConverter {
                     Map.entry("gl_Normal", "Normal.xyz"),
                     Map.entry("mc_midTexCoord", "MidTexCoord"),
                     Map.entry("at_tangent", "Tangent"),
-                    Map.entry("entityId", entityIdExpression(layout))));
+                    Map.entry("entityId", entityIdExpression(layout)));
+            converted = GlslTokenRewriter.replaceIdentifiers(converted, inputs);
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraEntityFtransform()");
             if (entityIdType != null) {
@@ -508,10 +565,37 @@ public final class LegacyGlslConverter {
             String entityIdVarying = entityIdType == null ? ""
                     : "layout(location = " + layout.location(ENTITY_ID_VARYING)
                     + ") flat out uint " + ENTITY_ID_VARYING + ";\n";
-            return new TerrainVertexConversion("#version 460\n" + ENTITY_VERTEX_PREAMBLE
+            return new TerrainVertexConversion("#version 460\n" + vertexPreamble
                     + entityIdVarying + converted,
                     layout);
         } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Converts the legacy particle vertex contract onto DefaultVertexFormat.PARTICLE. */
+    public static TerrainVertexConversion convertParticleVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations
+    ) {
+        return convertLegacyVertex(source, sourceFile, fragmentSource, PARTICLE_VERTEX_PREAMBLE);
+    }
+
+    /** Converts a particle fragment with the shared host sampler and varying rules. */
+    public static String convertParticleFragment(
+            String source,
+            Path sourceFile,
+            int[] samplerSlots,
+            TerrainVaryingLayout particleLayout,
+            UniformRegistry.ProgramInterface interfacePlan
+    ) {
+        try {
+            String prepared = prepareSource(source, sourceFile);
+            return convertFragment(prepared, null, true, samplerSlots, particleLayout,
+                    interfacePlan, null, Map.of(), null);
+        } catch (RuntimeException ignored) {
             return null;
         }
     }
@@ -609,6 +693,11 @@ public final class LegacyGlslConverter {
         return convertEntityVertex(source, null, fragmentSource) != null;
     }
 
+    /** Static probe helper for the particle-layout hand bridge. */
+    public static boolean supportsHandVertex(String source, String fragmentSource) {
+        return convertHandVertex(source, null, fragmentSource, null) != null;
+    }
+
     private static UniformRegistry.Stage stageOf(boolean geometryStage) {
         return geometryStage ? UniformRegistry.Stage.GEOMETRY : UniformRegistry.Stage.POST;
     }
@@ -633,7 +722,10 @@ public final class LegacyGlslConverter {
             int[] slots,
             UniformRegistry.Stage stage
     ) {
-        Map<String, Integer> mapping = stage == UniformRegistry.Stage.ENTITY
+        Map<String, Integer> mapping = (stage == UniformRegistry.Stage.ENTITY
+                || stage == UniformRegistry.Stage.BLOCK
+                || stage == UniformRegistry.Stage.HAND
+                || stage == UniformRegistry.Stage.PARTICLE)
                 ? UniformRegistry.ENTITY_NAME_TO_SLOT : UniformRegistry.GEOMETRY_NAME_TO_SLOT;
         Integer slotValue = mapping.get(name);
         if (slotValue == null) {
@@ -720,7 +812,10 @@ public final class LegacyGlslConverter {
                     ? convertPostVaryings(src)
                     : convertPostVaryings(src, postVaryingLayout);
         }
-        if (stage == UniformRegistry.Stage.ENTITY) {
+        if (stage == UniformRegistry.Stage.ENTITY
+                || stage == UniformRegistry.Stage.BLOCK
+                || stage == UniformRegistry.Stage.HAND
+                || stage == UniformRegistry.Stage.PARTICLE) {
             return replaceEntityVaryings(src, terrainLayout, "in", false);
         }
         Matcher matcher = VARYING_DECL.matcher(src);
@@ -1212,7 +1307,7 @@ public final class LegacyGlslConverter {
         }
     }
 
-    private static void rejectEntityVertexFeatures(String source) {
+    private static void rejectEntityVertexFeatures(String source, boolean particleInputs) {
         if (source.matches("(?s).*\\b(?:uniform|gl_NormalMatrix|gl_ModelViewMatrix|"
                 + "gl_ProjectionMatrix|gl_ModelViewProjectionMatrix|gl_TextureMatrix|"
                 + "image\\w*|buffer|geometry|tessellation|compute)\\b.*")) {
@@ -1240,6 +1335,9 @@ public final class LegacyGlslConverter {
             // Simple version 130 is accepted, but pack-authored explicit layouts
             // would conflict with the generated locations.
             throw new IllegalArgumentException("entity vertex layout is fixed by Chimera");
+        }
+        if (particleInputs && source.matches("(?s).*\\b(?:gl_Normal|gl_MultiTexCoord2)\\b.*")) {
+            throw new IllegalArgumentException("hand vertex input is not present in the particle format");
         }
     }
 
@@ -1344,11 +1442,86 @@ public final class LegacyGlslConverter {
             layout(location = 8) in vec4 Tangent;
 
             vec4 chimeraEntityVertexValue() {
-                return vec4(Position + ModelOffset, 1.0);
+                return vec4(Position, 1.0);
             }
 
             vec4 chimeraEntityFtransform() {
                 return ProjMat * ModelViewMat * chimeraEntityVertexValue();
+            }
+
+            """;
+
+    /** Block entities use the host block shader's camera-relative offset. */
+    private static final String BLOCK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("return vec4(Position, 1.0);", "return vec4(Position + ModelOffset, 1.0);");
+
+    /** First-person hand inputs use the host particle layout, not NEW_ENTITY. */
+    private static final String HAND_VERTEX_PREAMBLE = """
+            layout(binding = 0) uniform DynamicTransforms {
+                mat4 ModelViewMat;
+                vec4 ColorModulator;
+                vec3 ModelOffset;
+                mat4 TextureMat;
+            };
+
+            layout(binding = 1) uniform Projection {
+                mat4 ProjMat;
+            };
+
+            layout(location = 0) in vec3 Position;
+            layout(location = 1) in vec2 UV0;
+            layout(location = 2) in vec4 Color;
+            layout(location = 3) in ivec2 UV2;
+            layout(location = 4) in uvec4 EntityIds;
+            layout(location = 5) in vec2 MidTexCoord;
+            layout(location = 6) in vec4 Tangent;
+
+            vec4 chimeraEntityVertexValue() {
+                return vec4(Position, 1.0);
+            }
+
+            vec4 chimeraEntityFtransform() {
+                return ProjMat * ModelViewMat * chimeraEntityVertexValue();
+            }
+
+            """;
+
+    /** Host particle transform blocks and DefaultVertexFormat.PARTICLE inputs. */
+    private static final String PARTICLE_VERTEX_PREAMBLE = """
+            layout(binding = 0) uniform DynamicTransforms {
+                mat4 ModelViewMat;
+                vec4 ColorModulator;
+                vec3 ModelOffset;
+                mat4 TextureMat;
+            };
+
+            layout(binding = 1) uniform Projection {
+                mat4 ProjMat;
+            };
+
+            layout(location = 0) in vec3 Position;
+            layout(location = 1) in vec2 UV0;
+            layout(location = 2) in vec4 Color;
+            layout(location = 3) in ivec2 UV2;
+
+            vec4 chimeraVertexValue() {
+                return vec4(Position, 1.0);
+            }
+
+            vec4 chimeraColorValue() {
+                return Color;
+            }
+
+            vec4 chimeraTexCoord0Value() {
+                return vec4(UV0, 0.0, 1.0);
+            }
+
+            vec4 chimeraTexCoord1Value() {
+                return vec4(vec2(UV2) / 256.0, 0.0, 1.0);
+            }
+
+            vec4 chimeraFtransform() {
+                return ProjMat * ModelViewMat * chimeraVertexValue();
             }
 
             """;

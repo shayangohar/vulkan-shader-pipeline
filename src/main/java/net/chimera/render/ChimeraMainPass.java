@@ -163,6 +163,12 @@ public class ChimeraMainPass implements MainPass {
     private GraphicsPipeline packShadowPipeline;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
+    /** Pack block-entity program on the guarded delayed model batch. */
+    private PackPipelines.PackEntity packBlockPipeline;
+    /** Pack first-person hand program on the guarded hand draw window. */
+    private PackPipelines.PackEntity packHandPipeline;
+    /** Pack particle program on the host particle draw window. */
+    private PackPipelines.PackParticle packParticlePipeline;
     /** GL-registry slot-5 view of the shadow depth, for pack geometry sampling (shadowtex0). */
     private GpuTexture packShadowTexture;
     private GpuTextureView packShadowView;
@@ -1335,6 +1341,9 @@ public class ChimeraMainPass implements MainPass {
         if (this.packTranslucentPipeline != null) this.packTranslucentPipeline.cleanUp();
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
         if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
+        if (this.packBlockPipeline != null) this.packBlockPipeline.pipeline().cleanUp();
+        if (this.packHandPipeline != null) this.packHandPipeline.pipeline().cleanUp();
+        if (this.packParticlePipeline != null) this.packParticlePipeline.pipeline().cleanUp();
         if (this.packResourceOwner != null) this.packResourceOwner.close();
         this.packResourceOwner = null;
         this.packPostStages.clear();
@@ -1354,6 +1363,9 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
         this.packEntityPipeline = null;
+        this.packBlockPipeline = null;
+        this.packHandPipeline = null;
+        this.packParticlePipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.shadowFrameReady = false;
         this.shadowTransitionFallbackLogged = false;
@@ -2051,8 +2063,6 @@ public class ChimeraMainPass implements MainPass {
                     continue;
                 }
                 this.packEntityPipeline = entity;
-                ChimeraEntityBridge.install(entity,
-                        this.packPlan == null ? null : this.packPlan.entityIds());
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
                             ConformanceReport.RuntimeDisposition.INSTALLED,
@@ -2077,6 +2087,93 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.info("[chimera] pack gbuffers_entities converted fragment:\n{}",
                             entity.convertedFragment());
                 }
+            } else if (name.equals("gbuffers_block")) {
+                PackPipelines.PackEntity block = PackPipelines.buildBlock(programPlan);
+                if (block == null) {
+                    if (this.conformanceReport != null) {
+                        this.conformanceReport.markRuntime(name,
+                                ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                "BLOCK_PIPELINE_BUILD_FAILED");
+                    }
+                    LOGGER.warn("[chimera] pack gbuffers_block: fallback=IDENTITY "
+                            + "(BLOCK_PIPELINE_BUILD_FAILED)");
+                    continue;
+                }
+                this.packBlockPipeline = block;
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "FAMILY_ADAPTER_INSTALLED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "ENTITY_VERTEX_FORMAT_EXTENDED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "BLOCK_ENTITY_ID_DEFAULTED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "ENTITY_STATE_FIXED_TO_HOST");
+                }
+                LOGGER.info("[chimera] pack gbuffers_block: ok (block adapter installed, "
+                        + "stride={}, samplers={})",
+                        net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
+                        Arrays.toString(block.samplerSlots()));
+            } else if (name.equals("gbuffers_hand")) {
+                PackPipelines.PackEntity hand = PackPipelines.buildHand(programPlan);
+                if (hand == null) {
+                    if (this.conformanceReport != null) {
+                        this.conformanceReport.markRuntime(name,
+                                ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                "HAND_PIPELINE_BUILD_FAILED");
+                    }
+                    LOGGER.warn("[chimera] pack gbuffers_hand: fallback=IDENTITY "
+                            + "(HAND_PIPELINE_BUILD_FAILED)");
+                    continue;
+                }
+                this.packHandPipeline = hand;
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "FAMILY_ADAPTER_INSTALLED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "ENTITY_VERTEX_FORMAT_EXTENDED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "HAND_ITEM_ID_DEFAULTED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "HAND_STATE_FIXED_TO_HOST");
+                }
+                LOGGER.info("[chimera] pack gbuffers_hand: ok (hand adapter installed, "
+                        + "stride={}, samplers={})",
+                        net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
+                        Arrays.toString(hand.samplerSlots()));
+            } else if (name.equals("gbuffers_particles")) {
+                PackPipelines.PackParticle particle = PackPipelines.buildParticle(programPlan);
+                if (particle == null) {
+                    if (this.conformanceReport != null) {
+                        this.conformanceReport.markRuntime(name,
+                                ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                                "PARTICLE_PIPELINE_BUILD_FAILED");
+                    }
+                    LOGGER.warn("[chimera] pack gbuffers_particles: fallback=IDENTITY "
+                            + "(PARTICLE_PIPELINE_BUILD_FAILED)");
+                    continue;
+                }
+                this.packParticlePipeline = particle;
+                if (this.conformanceReport != null) {
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "FAMILY_ADAPTER_INSTALLED");
+                    this.conformanceReport.markRuntime(name,
+                            ConformanceReport.RuntimeDisposition.INSTALLED,
+                            "PARTICLE_STATE_FIXED_TO_HOST");
+                }
+                LOGGER.info("[chimera] pack gbuffers_particles: ok (particle adapter installed, "
+                        + "stride={}, samplers={})",
+                        com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE.getVertexSize(),
+                        Arrays.toString(particle.samplerSlots()));
             } else {
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
@@ -2086,6 +2183,9 @@ public class ChimeraMainPass implements MainPass {
                 LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (unsupported program family)", name);
             }
         }
+        ChimeraEntityBridge.install(this.packEntityPipeline, this.packBlockPipeline,
+                this.packHandPipeline, this.packParticlePipeline,
+                this.packPlan == null ? null : this.packPlan.entityIds());
         this.packPostStages.sort(Comparator.comparing(
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
         buildPackPostExecutionPlan();

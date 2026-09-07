@@ -314,12 +314,7 @@ public final class PackProbe {
 
         String family = familyOf(name);
         boolean hasFragment = inventory.stages.contains("fragment");
-        UniformRegistry.Stage interfaceStage = name.equals("gbuffers_terrain")
-                ? UniformRegistry.Stage.GEOMETRY
-                : name.equals("shadow") ? UniformRegistry.Stage.SHADOW
-                : name.equals("gbuffers_water") ? UniformRegistry.Stage.TRANSLUCENT
-                : name.equals("gbuffers_entities") ? UniformRegistry.Stage.ENTITY
-                : UniformRegistry.Stage.POST;
+        UniformRegistry.Stage interfaceStage = FamilyAdapterRegistry.stageFor(name);
         UniformRegistry.ProgramInterface interfacePlan;
         if (programPlan != null) {
             interfacePlan = programPlan.interfacePlan().effective(interfaceStage);
@@ -360,10 +355,11 @@ public final class PackProbe {
             addPackConstantDeviations(fragment, packConfig, deviations);
         }
 
-        boolean executableName = name.equals("gbuffers_terrain")
-                || executablePostName || name.equals("shadow") || name.equals("gbuffers_water")
-                || (name.equals("gbuffers_entities")
-                && inventory.stages.contains("vertex") && inventory.stages.contains("fragment"));
+        boolean executableName = FamilyAdapterRegistry.isExecutableFamily(name)
+                && (executablePostName || inventory.stages.contains("fragment"))
+                && (!FamilyAdapterRegistry.isEntityLike(name)
+                && !name.equals("gbuffers_particles")
+                || inventory.stages.contains("vertex"));
         String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         if (programPlan != null) {
             if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
@@ -378,6 +374,15 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_entities")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "ENTITY_VERTEX_BRIDGE" : "ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_block")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "BLOCK_VERTEX_BRIDGE" : "BLOCK_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_hand")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "HAND_VERTEX_BRIDGE" : "HAND_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_particles")) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "PARTICLE_VERTEX_BRIDGE" : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
@@ -411,6 +416,24 @@ public final class PackProbe {
                 } else {
                     deviations.add("ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
                 }
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_block")) {
+                if (LegacyGlslConverter.supportsEntityVertex(vertex, fragment)) {
+                    deviations.add("BLOCK_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("BLOCK_VERTEX_BRIDGE_UNSUPPORTED");
+                }
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_hand")) {
+                if (LegacyGlslConverter.supportsHandVertex(vertex, fragment)) {
+                    deviations.add("HAND_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("HAND_VERTEX_BRIDGE_UNSUPPORTED");
+                }
+            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_particles")) {
+                if (LegacyGlslConverter.convertParticleVertex(vertex, null, fragment, Map.of()) != null) {
+                    deviations.add("PARTICLE_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+                }
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
@@ -429,6 +452,22 @@ public final class PackProbe {
             deviations.add("ENTITY_BATCH_ORIGIN_SPLIT");
             deviations.add("ENTITY_SCREEN_DRAW_FALLBACK");
         }
+        if (name.equals("gbuffers_block") && programPlan != null && programPlan.executable()) {
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
+            deviations.add("BLOCK_ENTITY_ID_DEFAULTED");
+            deviations.add("ENTITY_STATE_FIXED_TO_HOST");
+        }
+        if (name.equals("gbuffers_hand") && programPlan != null && programPlan.executable()) {
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
+            deviations.add("HAND_ITEM_ID_DEFAULTED");
+            deviations.add("HAND_STATE_FIXED_TO_HOST");
+        }
+        if (name.equals("gbuffers_particles") && programPlan != null && programPlan.executable()) {
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add("PARTICLE_STATE_FIXED_TO_HOST");
+        }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
                         || stage.equals("tess_evaluation") || stage.equals("compute"))) {
@@ -445,7 +484,9 @@ public final class PackProbe {
                 ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
                 : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
-                : name.equals("gbuffers_entities") ? UniformRegistry.ENTITY_NAME_TO_SLOT
+                : (name.equals("gbuffers_entities") || name.equals("gbuffers_block")
+                || name.equals("gbuffers_hand") || name.equals("gbuffers_particles"))
+                ? UniformRegistry.ENTITY_NAME_TO_SLOT
                 : UniformRegistry.NAME_TO_SLOT;
         // PackPlanBuilder already resolved standard aliases and pack-owned
         // sampler slots through the shared interface plan. Keep the legacy
@@ -459,7 +500,8 @@ public final class PackProbe {
                             : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
                             : name.equals("shadow")
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
-                            : name.equals("gbuffers_entities")
+                            : name.equals("gbuffers_entities") || name.equals("gbuffers_block")
+                            || name.equals("gbuffers_hand") || name.equals("gbuffers_particles")
                             ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
                             : "SAMPLER_NOT_MAPPED:" + sampler);
                 }

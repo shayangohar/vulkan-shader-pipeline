@@ -10,5 +10,7 @@ import java.util.Map;
 public interface ChimeraEntityStorage {
     Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$entitySubmits();
 
+    Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$blockSubmits();
+
     void chimera$clearEntitySubmits();
 }

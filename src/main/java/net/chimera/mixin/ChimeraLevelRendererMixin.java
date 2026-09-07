@@ -1,6 +1,7 @@
 package net.chimera.mixin;
 
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.resource.ResourceHandle;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.PackUniformProvider;
@@ -12,6 +13,7 @@ import net.minecraft.client.renderer.LevelRenderer;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -26,6 +28,34 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraLevelRendererMixin {
+    @Unique
+    private boolean chimera$particleDrawActive;
+
+    @Inject(method = "method_62213", at = @At("HEAD"), require = 1)
+    private void chimera$beginParticlePass(
+            GpuBufferSlice fog,
+            ResourceHandle particles,
+            ResourceHandle main,
+            CallbackInfo callback
+    ) {
+        if (ChimeraRenderer.segmentsActive()) {
+            chimera$particleDrawActive = ChimeraEntityBridge.beginParticleDraw();
+        }
+    }
+
+    @Inject(method = "method_62213", at = @At("RETURN"), require = 1)
+    private void chimera$endParticlePass(
+            GpuBufferSlice fog,
+            ResourceHandle particles,
+            ResourceHandle main,
+            CallbackInfo callback
+    ) {
+        if (chimera$particleDrawActive
+                && ChimeraEntityBridge.isDrawActive(ChimeraEntityBridge.Family.PARTICLE)) {
+            ChimeraEntityBridge.endDraw();
+        }
+        chimera$particleDrawActive = false;
+    }
 
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void chimera$openHdrSegment(GraphicsResourceAllocator graphicsResourceAllocator,

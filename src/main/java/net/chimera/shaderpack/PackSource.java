@@ -332,6 +332,9 @@ public final class PackSource {
             loadStandardPair(variant.getValue(), byName, deviations, "shadow");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_water");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_entities");
+            loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_block");
+            loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_hand");
+            loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_particles");
             loadStandardPostPrograms(variant.getValue(), byName, deviations);
             variants.put(variant.getKey(), List.copyOf(byName.values()));
         }

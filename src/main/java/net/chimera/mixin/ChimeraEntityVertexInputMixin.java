@@ -21,7 +21,7 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_VERTEX_INPUT_RATE_VERTEX;
 
-/** Supplies Vulkan input descriptions for the append-only entity format. */
+/** Supplies Vulkan input descriptions for Chimera append-only family formats. */
 @Mixin(targets = "net.vulkanmod.vulkan.shader.GraphicsPipeline$VertexInputDescription", remap = false)
 public abstract class ChimeraEntityVertexInputMixin {
     @Shadow
@@ -36,7 +36,8 @@ public abstract class ChimeraEntityVertexInputMixin {
 
     @Inject(method = "<init>", at = @At("RETURN"), require = 1)
     private void chimera$describeEntityFormat(VertexFormat format, CallbackInfo callback) {
-        if (format != ChimeraVertexFormats.EXTENDED_ENTITY) {
+        if (format != ChimeraVertexFormats.EXTENDED_ENTITY
+                && format != ChimeraVertexFormats.EXTENDED_PARTICLE) {
             return;
         }
 
@@ -46,16 +47,27 @@ public abstract class ChimeraEntityVertexInputMixin {
         binding.stride(format.getVertexSize());
         binding.inputRate(VK_VERTEX_INPUT_RATE_VERTEX);
 
-        this.attributeDescriptions = VkVertexInputAttributeDescription.calloc(9);
-        describe(0, VK_FORMAT_R32G32B32_SFLOAT, 0);
-        describe(1, VK_FORMAT_R8G8B8A8_UNORM, 12);
-        describe(2, VK_FORMAT_R32G32_SFLOAT, 16);
-        describe(3, VK_FORMAT_R16G16_SINT, 24);
-        describe(4, VK_FORMAT_R16G16_SINT, 28);
-        describe(5, VK_FORMAT_R8G8B8A8_SNORM, 32);
-        describe(6, VK_FORMAT_R16G16B16A16_UINT, 36);
-        describe(7, VK_FORMAT_R32G32_SFLOAT, 44);
-        describe(8, VK_FORMAT_R8G8B8A8_SNORM, 52);
+        if (format == ChimeraVertexFormats.EXTENDED_ENTITY) {
+            this.attributeDescriptions = VkVertexInputAttributeDescription.calloc(9);
+            describe(0, VK_FORMAT_R32G32B32_SFLOAT, 0);
+            describe(1, VK_FORMAT_R8G8B8A8_UNORM, 12);
+            describe(2, VK_FORMAT_R32G32_SFLOAT, 16);
+            describe(3, VK_FORMAT_R16G16_SINT, 24);
+            describe(4, VK_FORMAT_R16G16_SINT, 28);
+            describe(5, VK_FORMAT_R8G8B8A8_SNORM, 32);
+            describe(6, VK_FORMAT_R16G16B16A16_UINT, 36);
+            describe(7, VK_FORMAT_R32G32_SFLOAT, 44);
+            describe(8, VK_FORMAT_R8G8B8A8_SNORM, 52);
+        } else {
+            this.attributeDescriptions = VkVertexInputAttributeDescription.calloc(7);
+            describe(0, VK_FORMAT_R32G32B32_SFLOAT, 0);
+            describe(1, VK_FORMAT_R32G32_SFLOAT, 12);
+            describe(2, VK_FORMAT_R8G8B8A8_UNORM, 20);
+            describe(3, VK_FORMAT_R16G16_SINT, 24);
+            describe(4, VK_FORMAT_R16G16B16A16_UINT, 28);
+            describe(5, VK_FORMAT_R32G32_SFLOAT, 36);
+            describe(6, VK_FORMAT_R8G8B8A8_SNORM, 44);
+        }
     }
 
     private void describe(int location, int format, int offset) {

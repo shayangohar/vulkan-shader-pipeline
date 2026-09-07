@@ -20,6 +20,8 @@ public abstract class ChimeraModelSubmitMixin implements ChimeraEntitySubmission
     private boolean chimera$worldEntity;
     @Unique
     private int chimera$entityId;
+    @Unique
+    private int chimera$family;
 
     @Inject(method = "<init>", at = @At("RETURN"), require = 1)
     private void chimera$capture(
@@ -36,6 +38,7 @@ public abstract class ChimeraModelSubmitMixin implements ChimeraEntitySubmission
     ) {
         this.chimera$worldEntity = ChimeraEntityBridge.isSubmittingEntity();
         this.chimera$entityId = ChimeraEntityBridge.currentEntityId();
+        this.chimera$family = ChimeraEntityBridge.currentSubmissionFamily();
     }
 
     @Override
@@ -46,5 +49,10 @@ public abstract class ChimeraModelSubmitMixin implements ChimeraEntitySubmission
     @Override
     public int chimera$entityId() {
         return chimera$entityId;
+    }
+
+    @Override
+    public int chimera$family() {
+        return chimera$family;
     }
 }

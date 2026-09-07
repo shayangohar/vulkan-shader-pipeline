@@ -1,0 +1,57 @@
+{
+  "formatVersion": 1,
+  "fixture": "m7_6/families",
+  "fixtures": {
+    "families": {
+      "reportSha256": "8026154007ee3894078aaa6279d40ed251b34f8868cd2b34d84649e515596b9f",
+      "sourceHashes": {
+        "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
+        "gbuffers_block.fsh": "80d96b5eab7d4baeee89f8f0a4d9a268fa79bfd7466b21ea0b608bed6f4219da",
+        "gbuffers_block.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_entities.fsh": "c4d2f44caff0cf56ec1919db6b185899ef3606cd434a4aa3d342cb8ce7a7f7f4",
+        "gbuffers_entities.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_hand.fsh": "c4d2f44caff0cf56ec1919db6b185899ef3606cd434a4aa3d342cb8ce7a7f7f4",
+        "gbuffers_hand.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_particles.fsh": "7712e70bcf6b5b65a09ad329e36169b4431a9ec1f08701a07e326699091da2a4",
+        "gbuffers_particles.vsh": "d34f41cb8f3b36dcef800237ae0175ad6abfc41813e5e76ec6b915386f42f7a7",
+        "gbuffers_skybasic.fsh": "d44cb5fa4e86b95e4f6f97feb1fc8d16f3bbcdef1b3a57790fe7db1931d838c9"
+      },
+      "expectedExecutablePrograms": [
+        "final",
+        "gbuffers_block",
+        "gbuffers_entities",
+        "gbuffers_hand",
+        "gbuffers_particles"
+      ],
+      "expectedFallbackPrograms": [],
+      "expectedUnsupportedPrograms": ["gbuffers_skybasic"],
+      "expectedDeviations": [
+        "BLOCK_ENTITY_ID_DEFAULTED",
+        "BLOCK_VERTEX_BRIDGE",
+        "ENTITY_BATCH_ORIGIN_SPLIT",
+        "ENTITY_ID_DEFAULTED",
+        "ENTITY_SCREEN_DRAW_FALLBACK",
+        "ENTITY_STATE_FIXED_TO_HOST",
+        "ENTITY_VERTEX_BRIDGE",
+        "ENTITY_VERTEX_FORMAT_EXTENDED",
+        "FAMILY_ADAPTER_INSTALLED",
+        "HAND_ITEM_ID_DEFAULTED",
+        "HAND_STATE_FIXED_TO_HOST",
+        "HAND_VERTEX_BRIDGE",
+        "PARTICLE_STATE_FIXED_TO_HOST",
+        "PARTICLE_VERTEX_BRIDGE"
+      ]
+    },
+    "unsupported_families": {
+      "reportSha256": "5b460c5d59d3e15d143b9c5b55f3038b1eace4047915ee71f799dd695cd4a07b",
+      "sourceHashes": {
+        "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
+        "gbuffers_entities_glowing.fsh": "bd44f22583d6ee38de1696d56ee08cbaa8e68b0ffbf96b8086c232fa50ceb81d",
+        "gbuffers_skybasic.fsh": "0b7ea4cdbcd8ff77b292490bb1bc62b1a6b63c039c9d656b44185bdfe9e6c7e6"
+      },
+      "expectedExecutablePrograms": ["final"],
+      "expectedFallbackPrograms": [],
+      "expectedUnsupportedPrograms": ["gbuffers_entities_glowing", "gbuffers_skybasic"]
+    }
+  }
+}

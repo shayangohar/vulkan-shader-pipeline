@@ -75,6 +75,14 @@ public final class PackPipelines {
             String convertedFragment
     ) {}
 
+    /** A successfully built host particle pipeline plus its sampler slots. */
+    public record PackParticle(
+            GraphicsPipeline pipeline,
+            int[] samplerSlots,
+            String convertedVertex,
+            String convertedFragment
+    ) {}
+
     /** Builds a post pipeline from the already prepared and translated plan. */
     public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
         if (plan == null || !plan.executable() || plan.targetPlan() == null
@@ -160,16 +168,43 @@ public final class PackPipelines {
 
     /** Builds the guarded world entity pipeline on the append-only entity format. */
     public static PackEntity buildEntity(PackProgramPlan plan) {
+        return buildEntityLike(plan, UniformRegistry.Stage.ENTITY, "pack_gbuffers_entities");
+    }
+
+    /** Builds the block-entity adapter on the same append-only host format. */
+    public static PackEntity buildBlock(PackProgramPlan plan) {
+        return buildEntityLike(plan, UniformRegistry.Stage.BLOCK, "pack_gbuffers_block");
+    }
+
+    /** Builds the first-person hand adapter on the same append-only host format. */
+    public static PackEntity buildHand(PackProgramPlan plan) {
+        return buildEntityLike(plan, UniformRegistry.Stage.HAND, "pack_gbuffers_hand",
+                ChimeraVertexFormats.EXTENDED_PARTICLE);
+    }
+
+    private static PackEntity buildEntityLike(
+            PackProgramPlan plan,
+            UniformRegistry.Stage stage,
+            String pipelineName
+    ) {
+        return buildEntityLike(plan, stage, pipelineName, ChimeraVertexFormats.EXTENDED_ENTITY);
+    }
+
+    private static PackEntity buildEntityLike(
+            PackProgramPlan plan,
+            UniformRegistry.Stage stage,
+            String pipelineName,
+            VertexFormat vertexFormat
+    ) {
         if (plan == null || !plan.executable() || plan.convertedVertex() == null
                 || plan.convertedFragment() == null
                 || plan.interfacePlan() == null
-                || plan.interfacePlan().effective(UniformRegistry.Stage.ENTITY).stage()
-                != UniformRegistry.Stage.ENTITY) {
+                || plan.interfacePlan().effective(stage).stage() != stage) {
             return null;
         }
         try {
             UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
-                    .effective(UniformRegistry.Stage.ENTITY);
+                    .effective(stage);
             int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
                     .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
             PipelineConfig.Builder configBuilder = PipelineConfig.builder()
@@ -199,8 +234,8 @@ public final class PackPipelines {
             }
             PipelineConfig config = configBuilder.build();
             Pipeline.Builder builder = new Pipeline.Builder(
-                    net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY,
-                    "pack_gbuffers_entities");
+                    vertexFormat,
+                    pipelineName);
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
@@ -211,7 +246,64 @@ public final class PackPipelines {
             }
             return new PackEntity(pipeline, slots, plan.convertedVertex(), plan.convertedFragment());
         } catch (Exception e) {
-            LOGGER.warn("[chimera] pack {}: planned entity build failed: {}", plan.name(), e.getMessage());
+            LOGGER.warn("[chimera] pack {}: planned {} build failed: {}", plan.name(),
+                    stage.name().toLowerCase(), e.getMessage());
+            return null;
+        }
+    }
+
+    /** Builds the particle family on the host DefaultVertexFormat.PARTICLE path. */
+    public static PackParticle buildParticle(PackProgramPlan plan) {
+        if (plan == null || !plan.executable() || plan.convertedVertex() == null
+                || plan.convertedFragment() == null || plan.interfacePlan() == null
+                || plan.interfacePlan().effective(UniformRegistry.Stage.PARTICLE).stage()
+                != UniformRegistry.Stage.PARTICLE) {
+            return null;
+        }
+        try {
+            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
+                    .effective(UniformRegistry.Stage.PARTICLE);
+            int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
+            PipelineConfig.Builder configBuilder = PipelineConfig.builder()
+                    .addUB(PipelineConfig.UB.builder(0, VK_SHADER_STAGE_VERTEX_BIT)
+                            .addUniform("mat4", "ModelViewMat")
+                            .addUniform("vec4", "ColorModulator")
+                            .addUniform("vec3", "ModelOffset")
+                            .addUniform("mat4", "TextureMat")
+                            .build())
+                    .addUB(PipelineConfig.UB.builder(1, VK_SHADER_STAGE_VERTEX_BIT)
+                            .addUniform("mat4", "ProjMat")
+                            .build());
+            if (!interfacePlan.executableUniforms().isEmpty()) {
+                PipelineConfig.UB.Builder uniforms = PipelineConfig.UB.builder(
+                        2, VK_SHADER_STAGE_FRAGMENT_BIT);
+                for (UniformRegistry.UniformDeclaration uniform : interfacePlan.executableUniforms()) {
+                    uniforms.addUniform(uniform.glslType(), uniform.name());
+                }
+                configBuilder.addUB(uniforms.build());
+            }
+            int samplerBase = interfacePlan.executableUniforms().isEmpty() ? 2 : 3;
+            for (int index = 0; index < slots.length; index++) {
+                int slot = slots[index];
+                configBuilder.addImageDescriptor(samplerBase + index, "sampler2D",
+                        "Sampler" + slot, net.vulkanmod.vulkan.texture.VTextureSelector
+                                .getTextureIdx("Sampler" + slot));
+            }
+            Pipeline.Builder builder = new Pipeline.Builder(
+                    com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE,
+                    "pack_gbuffers_particles");
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
+            builder.applyConfig(configBuilder.build());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            for (var buffer : pipeline.getBuffers()) {
+                buffer.setUseGlobalBuffer(true);
+            }
+            return new PackParticle(pipeline, slots, plan.convertedVertex(), plan.convertedFragment());
+        } catch (Exception e) {
+            LOGGER.warn("[chimera] pack {}: planned particle build failed: {}", plan.name(), e.getMessage());
             return null;
         }
     }

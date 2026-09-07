@@ -207,11 +207,7 @@ record PackResolutionPlan(
     }
 
     private static boolean supportsCurrentAdapter(String name) {
-        return name.equals("gbuffers_terrain")
-                || name.equals("gbuffers_water")
-                || name.equals("gbuffers_entities")
-                || name.equals("shadow")
-                || PostTargetPlan.isPostProgramName(name);
+        return FamilyAdapterRegistry.isExecutableFamily(name);
     }
 
     private static List<String> sorted(Iterable<String> values) {

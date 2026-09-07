@@ -27,6 +27,9 @@ public abstract class ChimeraVkCommandEncoderMixin {
         }
 
         RenderPipeline hostPipeline = renderPass.getPipeline();
+        if (!ChimeraEntityBridge.shouldUsePackPipeline(hostPipeline)) {
+            return;
+        }
         var packPipeline = ChimeraEntityBridge.pipeline();
         if (hostPipeline == null || packPipeline == null) {
             callback.setReturnValue(false);

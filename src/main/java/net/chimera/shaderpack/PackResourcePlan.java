@@ -274,11 +274,7 @@ public final class PackResourcePlan {
     }
 
     private static UniformRegistry.Stage stageFor(String name) {
-        if (name.equals("gbuffers_terrain")) return UniformRegistry.Stage.GEOMETRY;
-        if (name.equals("gbuffers_water")) return UniformRegistry.Stage.TRANSLUCENT;
-        if (name.equals("gbuffers_entities")) return UniformRegistry.Stage.ENTITY;
-        if (name.equals("shadow")) return UniformRegistry.Stage.SHADOW;
-        return UniformRegistry.Stage.POST;
+        return FamilyAdapterRegistry.stageFor(name);
     }
 
     private String snapshotJson() {

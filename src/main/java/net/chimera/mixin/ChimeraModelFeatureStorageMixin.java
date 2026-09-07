@@ -24,6 +24,9 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
     @Unique
     private final Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$entitySubmits =
             new LinkedHashMap<>();
+    @Unique
+    private final Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$blockSubmits =
+            new LinkedHashMap<>();
 
     @Inject(method = "add", at = @At("HEAD"), cancellable = true, require = 1)
     private void chimera$separate(
@@ -33,21 +36,27 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
     ) {
         if (ChimeraRenderer.segmentsActive()
                 && ChimeraEntityBridge.isInstalled()
+                && ChimeraEntityBridge.isWorldSubmissionWindow()
                 && ChimeraEntityBridge.isEntityBufferReady()
                 && (Object) submit instanceof ChimeraEntitySubmission entity
                 && entity.chimera$isWorldEntity()
+                && ChimeraEntityBridge.supportsSubmissionFamily(entity.chimera$family())
                 // Outlined submissions are consumed by the host outline
                 // buffer. Keep them out of the temporary extended-format
                 // batch so that buffer is never flushed with a host pipeline
                 // and an entity-only stride.
                 && submit.outlineColor() == 0
                 && ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
-            chimera$entitySubmits.computeIfAbsent(renderType, ignored -> new ArrayList<>()).add(submit);
+            Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> destination =
+                    entity.chimera$family() == ChimeraEntitySubmission.FAMILY_BLOCK
+                            ? chimera$blockSubmits : chimera$entitySubmits;
+            destination.computeIfAbsent(renderType, ignored -> new ArrayList<>()).add(submit);
             ChimeraEntityBridge.noteSeparatedBatch(renderType,
-                    chimera$entitySubmits.get(renderType).size());
+                    destination.get(renderType).size());
             callback.cancel();
         } else if (ChimeraRenderer.segmentsActive()
                 && ChimeraEntityBridge.isInstalled()
+                && ChimeraEntityBridge.isWorldSubmissionWindow()
                 && (Object) submit instanceof ChimeraEntitySubmission entity
                 && entity.chimera$isWorldEntity()
                 && submit.outlineColor() == 0
@@ -59,11 +68,13 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
     @Inject(method = "clear", at = @At("HEAD"), require = 1)
     private void chimera$clearEntityBatch(CallbackInfo callback) {
         chimera$entitySubmits.clear();
+        chimera$blockSubmits.clear();
     }
 
     @Inject(method = "endFrame", at = @At("HEAD"), require = 1)
     private void chimera$clearEntityBatchAtFrameEnd(CallbackInfo callback) {
         chimera$entitySubmits.clear();
+        chimera$blockSubmits.clear();
     }
 
     @Override
@@ -72,7 +83,13 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
     }
 
     @Override
+    public Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$blockSubmits() {
+        return chimera$blockSubmits;
+    }
+
+    @Override
     public void chimera$clearEntitySubmits() {
         chimera$entitySubmits.clear();
+        chimera$blockSubmits.clear();
     }
 }

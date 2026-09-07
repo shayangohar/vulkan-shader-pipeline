@@ -1,0 +1,4 @@
+{
+  "formatVersion": 1,
+  "passes": ["final", "gbuffers_skybasic", "gbuffers_entities_glowing"]
+}

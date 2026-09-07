@@ -42,6 +42,9 @@ public final class ChimeraVertexFormats {
     /** Host NEW_ENTITY followed by the three pack-visible Iris attributes. */
     public static final VertexFormat EXTENDED_ENTITY = extendedEntityFormat();
 
+    /** Host PARTICLE followed by the same pack-visible Iris attributes. */
+    public static final VertexFormat EXTENDED_PARTICLE = extendedParticleFormat();
+
     private static VertexFormat extendedEntityFormat() {
         VertexFormat.Builder builder = VertexFormat.builder();
         java.util.List<VertexFormatElement> elements = DefaultVertexFormat.NEW_ENTITY.getElements();
@@ -53,6 +56,26 @@ public final class ChimeraVertexFormats {
         }
         if (DefaultVertexFormat.NEW_ENTITY.getVertexSize() > hostElementBytes) {
             builder.padding(DefaultVertexFormat.NEW_ENTITY.getVertexSize() - hostElementBytes);
+        }
+        builder.add("EntityIds", ENTITY_IDS);
+        builder.padding(6);
+        builder.add("MidTexCoord", MID_TEX_COORD);
+        builder.padding(4);
+        builder.add("Tangent", TANGENT);
+        return builder.build();
+    }
+
+    private static VertexFormat extendedParticleFormat() {
+        VertexFormat.Builder builder = VertexFormat.builder();
+        java.util.List<VertexFormatElement> elements = DefaultVertexFormat.PARTICLE.getElements();
+        java.util.List<String> names = DefaultVertexFormat.PARTICLE.getElementAttributeNames();
+        int hostElementBytes = 0;
+        for (int index = 0; index < elements.size(); index++) {
+            builder.add(names.get(index), elements.get(index));
+            hostElementBytes += elements.get(index).byteSize();
+        }
+        if (DefaultVertexFormat.PARTICLE.getVertexSize() > hostElementBytes) {
+            builder.padding(DefaultVertexFormat.PARTICLE.getVertexSize() - hostElementBytes);
         }
         builder.add("EntityIds", ENTITY_IDS);
         builder.padding(6);

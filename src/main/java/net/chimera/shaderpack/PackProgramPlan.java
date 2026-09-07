@@ -21,7 +21,8 @@ public record PackProgramPlan(
         String convertedVertex,
         LegacyGlslConverter.TerrainVaryingLayout vertexLayout,
         List<String> deviations,
-        boolean executable
+        boolean executable,
+        FamilyAdapterPlan familyAdapter
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -32,6 +33,9 @@ public record PackProgramPlan(
                 ? Map.of()
                 : Collections.unmodifiableMap(new TreeMap<>(varyingLocations));
         deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        familyAdapter = familyAdapter == null
+                ? FamilyAdapterRegistry.forProgram(program == null ? "" : program.name())
+                : familyAdapter;
     }
 
     /** Compatibility constructor for callers using the pre-M6.1 plan shape. */
@@ -48,7 +52,27 @@ public record PackProgramPlan(
             boolean executable
     ) {
         this(program, stages, interfacePlan, stageInterfaces, Map.of(), targetPlan,
-                convertedFragment, convertedVertex, vertexLayout, deviations, executable);
+                convertedFragment, convertedVertex, vertexLayout, deviations, executable,
+                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()));
+    }
+
+    /** Compatibility constructor for pre-M7.6 callers. */
+    public PackProgramPlan(
+            PackProgram program,
+            Map<String, PreparedShaderSource> stages,
+            UniformRegistry.ProgramInterfacePlan interfacePlan,
+            Map<String, GlslInterfaceScanner.StageInterface> stageInterfaces,
+            Map<String, Integer> varyingLocations,
+            PostTargetPlan targetPlan,
+            String convertedFragment,
+            String convertedVertex,
+            LegacyGlslConverter.TerrainVaryingLayout vertexLayout,
+            List<String> deviations,
+            boolean executable
+    ) {
+        this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
+                convertedFragment, convertedVertex, vertexLayout, deviations, executable,
+                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()));
     }
 
     public String name() {

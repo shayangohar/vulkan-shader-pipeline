@@ -38,7 +38,13 @@ public final class UniformRegistry {
         /** gbuffers_water on the host translucent terrain layer. */
         TRANSLUCENT,
         /** gbuffers_entities on the guarded world entity lane. */
-        ENTITY
+        ENTITY,
+        /** gbuffers_block on the guarded block-entity lane. */
+        BLOCK,
+        /** gbuffers_hand on the guarded first-person item lane. */
+        HAND,
+        /** gbuffers_particles on the host particle lane. */
+        PARTICLE
     }
 
     /** One ordinary GLSL uniform declaration, excluding sampler declarations. */
@@ -139,7 +145,8 @@ public final class UniformRegistry {
             }
             return uniforms.stream()
                     .filter(uniform -> !blocked.contains(uniform.name())
-                            && !(stage == Stage.ENTITY && uniform.name().equals("entityId"))
+                            && !((stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND)
+                            && uniform.name().equals("entityId"))
                             && !isDeviationForName(deviations, "UNIFORM_DECLARATION_UNUSED:",
                             uniform.name()))
                     .toList();
@@ -464,7 +471,8 @@ public final class UniformRegistry {
             if (conflicts.contains(name)) {
                 deviations.add("UNIFORM_CONFLICT:" + name);
             }
-            if (stage == Stage.ENTITY && name.equals("entityId")) {
+            if ((stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND)
+                    && name.equals("entityId")) {
                 if (!type.equals("int") && !type.equals("float")) {
                     deviations.add("ENTITY_ID_UNSUPPORTED:" + type);
                 } else if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
@@ -518,7 +526,8 @@ public final class UniformRegistry {
             case GEOMETRY -> GEOMETRY_NAME_TO_SLOT;
             case SHADOW -> SHADOW_NAME_TO_SLOT;
             case TRANSLUCENT -> TRANSLUCENT_NAME_TO_SLOT;
-            case ENTITY -> ENTITY_NAME_TO_SLOT;
+            case ENTITY, BLOCK, HAND -> ENTITY_NAME_TO_SLOT;
+            case PARTICLE -> ENTITY_NAME_TO_SLOT;
         };
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
@@ -542,7 +551,8 @@ public final class UniformRegistry {
                         && (sampler.getKey().startsWith("depthtex")
                         || sampler.getKey().startsWith("shadowcolor"))) {
                     deviations.add("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED");
-                } else if (stage == Stage.ENTITY) {
+                } else if (stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND
+                        || stage == Stage.PARTICLE) {
                     deviations.add("ENTITY_SAMPLER_UNSUPPORTED:" + sampler.getKey());
                 } else if (stage == Stage.TRANSLUCENT) {
                     deviations.add("TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler.getKey());

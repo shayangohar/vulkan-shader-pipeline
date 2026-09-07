@@ -1,0 +1,4 @@
+{
+  "formatVersion": 1,
+  "passes": ["final", "gbuffers_block", "gbuffers_hand", "gbuffers_particles", "gbuffers_entities", "gbuffers_skybasic"]
+}

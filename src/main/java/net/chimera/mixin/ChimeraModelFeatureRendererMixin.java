@@ -37,7 +37,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
                 && (Object) submit instanceof ChimeraEntitySubmission entity
                 && entity.chimera$isWorldEntity()) {
             ChimeraEntityBridge.noteModelDraw(renderType);
-            ChimeraEntityBridge.setCurrentEntityId(entity.chimera$entityId());
+            ChimeraEntityBridge.beginModelEntity(entity.chimera$entityId());
         }
     }
 
@@ -53,7 +53,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
         if (ChimeraEntityBridge.isDrawActive()
                 && (Object) submit instanceof ChimeraEntitySubmission entity
                 && entity.chimera$isWorldEntity()) {
-            ChimeraEntityBridge.setCurrentEntityId(0);
+            ChimeraEntityBridge.endModelEntity();
         }
     }
     @Inject(method = "render", at = @At("HEAD"), require = 1)
@@ -83,28 +83,56 @@ public abstract class ChimeraModelFeatureRendererMixin {
         if (!(collection.getModelSubmits() instanceof ChimeraEntityStorage storage)
                 || !ChimeraRenderer.segmentsActive()
                 || !ChimeraEntityBridge.isInstalled()
-                || storage.chimera$entitySubmits().isEmpty()) {
+                || (storage.chimera$entitySubmits().isEmpty()
+                && storage.chimera$blockSubmits().isEmpty())) {
             return;
         }
-        if (!ChimeraEntityBridge.beginDraw()) {
+        try {
+            boolean entityHandled = chimera$renderFamily(ChimeraEntityBridge.Family.ENTITY,
+                    storage.chimera$entitySubmits(), outlineBufferSource, crumblingBufferSource);
+            if (!entityHandled && !storage.chimera$entitySubmits().isEmpty()) {
+                chimera$renderBatch(bufferSource, outlineBufferSource,
+                        storage.chimera$entitySubmits(), crumblingBufferSource);
+            }
+            boolean blockHandled = chimera$renderFamily(ChimeraEntityBridge.Family.BLOCK,
+                    storage.chimera$blockSubmits(), outlineBufferSource, crumblingBufferSource);
+            if (!blockHandled && !storage.chimera$blockSubmits().isEmpty()) {
+                chimera$renderBatch(bufferSource, outlineBufferSource,
+                        storage.chimera$blockSubmits(), crumblingBufferSource);
+            }
+        } finally {
+            if (ChimeraEntityBridge.isDrawActive()) {
+                ChimeraEntityBridge.endDraw();
+            }
             storage.chimera$clearEntitySubmits();
-            return;
+        }
+    }
+
+    private boolean chimera$renderFamily(
+            ChimeraEntityBridge.Family family,
+            Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> submits,
+            OutlineBufferSource outlineBufferSource,
+            MultiBufferSource.BufferSource crumblingBufferSource
+    ) {
+        if (submits.isEmpty()) {
+            return true;
+        }
+        ChimeraEntityBridge.noteFamilyBatch(family, submits.size());
+        if (!ChimeraEntityBridge.beginDraw(family)) {
+            return false;
         }
         try {
             MultiBufferSource.BufferSource entityBufferSource =
                     ChimeraEntityBridge.entityBufferSource();
             if (entityBufferSource == null) {
-                return;
+                return false;
             }
             chimera$renderBatch(entityBufferSource, outlineBufferSource,
-                    storage.chimera$entitySubmits(), crumblingBufferSource);
-            // ModelFeatureRenderer normally flushes the caller's source later in the
-            // frame. This source is Chimera-owned, so flush it before the guarded
-            // format and descriptor window closes.
+                    submits, crumblingBufferSource);
             ChimeraEntityBridge.endEntityBatch();
+            return true;
         } finally {
             ChimeraEntityBridge.endDraw();
-            storage.chimera$clearEntitySubmits();
         }
     }
 

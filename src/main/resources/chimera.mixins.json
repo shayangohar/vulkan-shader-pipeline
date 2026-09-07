@@ -22,6 +22,8 @@
     "ChimeraByteBufferBuilderAccessor",
     "ChimeraDeviceAccessor",
     "ChimeraEntityRenderDispatcherMixin",
+    "ChimeraBlockEntityRenderDispatcherMixin",
+    "ChimeraItemInHandRendererMixin",
     "ChimeraModelFeatureRendererMixin",
     "ChimeraModelFeatureStorageMixin",
     "ChimeraModelSubmitMixin",

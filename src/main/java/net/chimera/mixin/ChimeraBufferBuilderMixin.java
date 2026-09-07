@@ -37,6 +37,7 @@ public abstract class ChimeraBufferBuilderMixin {
     @Unique private int chimera$position = -1;
     @Unique private int chimera$uv = -1;
     @Unique private int chimera$normal = -1;
+    @Unique private boolean chimera$particleLayout;
     @Unique private int chimera$extraMask;
     @Unique private int chimera$corners;
     @Unique private long[] chimera$cornerOffsets;
@@ -51,9 +52,11 @@ public abstract class ChimeraBufferBuilderMixin {
             VertexFormat format,
             CallbackInfo callback
     ) {
-        if (format != ChimeraVertexFormats.EXTENDED_ENTITY) {
+        if (format != ChimeraVertexFormats.EXTENDED_ENTITY
+                && format != ChimeraVertexFormats.EXTENDED_PARTICLE) {
             return;
         }
+        chimera$particleLayout = format == ChimeraVertexFormats.EXTENDED_PARTICLE;
         chimera$ids = offsetOf(format, "EntityIds");
         chimera$mid = offsetOf(format, "MidTexCoord");
         chimera$tangent = offsetOf(format, "Tangent");
@@ -66,7 +69,8 @@ public abstract class ChimeraBufferBuilderMixin {
         chimera$corners = mode == VertexFormat.Mode.QUADS ? 4
                 : mode == VertexFormat.Mode.TRIANGLES ? 3 : 0;
         if (chimera$ids < 0 || chimera$mid < 0 || chimera$tangent < 0
-                || chimera$position < 0 || chimera$uv < 0 || chimera$normal < 0) {
+                || chimera$position < 0 || chimera$uv < 0
+                || (!chimera$particleLayout && chimera$normal < 0)) {
             chimera$ids = -1;
             return;
         }
@@ -152,6 +156,11 @@ public abstract class ChimeraBufferBuilderMixin {
                     chimera$values[11], chimera$values[12], chimera$values[13], chimera$values[14]);
             for (int index = 0; index < 4; index++) {
                 chimera$write(base + chimera$cornerOffsets[index], midU, midV, tangent);
+            }
+        } else if (chimera$normal < 0) {
+            for (int index = 0; index < chimera$corners; index++) {
+                long vertex = base + chimera$cornerOffsets[index];
+                chimera$write(vertex, midU, midV, ChimeraEntityVertexData.FLAT_TANGENT);
             }
         } else {
             for (int index = 0; index < chimera$corners; index++) {

@@ -46,7 +46,7 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
             RenderPipeline renderPipeline,
             CallbackInfo callback
     ) {
-        if (!ChimeraEntityBridge.isDrawActive()) {
+        if (!ChimeraEntityBridge.shouldUsePackPipeline(renderPipeline)) {
             return;
         }
         if (this.pipeline == null || this.pipeline != renderPipeline) {
@@ -63,7 +63,9 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
             com.mojang.blaze3d.textures.GpuSampler sampler,
             CallbackInfo callback
     ) {
-        if (!ChimeraEntityBridge.isDrawActive() || view == null || sampler == null) {
+        if (!ChimeraEntityBridge.isDrawActive()
+                || !ChimeraEntityBridge.shouldUsePackPipeline(this.pipeline)
+                || view == null || sampler == null) {
             return;
         }
         int slot = chimera$textureSlot(name);
