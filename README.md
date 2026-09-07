@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete. M7.6 core family adapter implementation complete. M7.7 implementation in progress.**
+**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete. M7.6 core family adapter implementation complete. M7.7 temporal frame schedule complete.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
