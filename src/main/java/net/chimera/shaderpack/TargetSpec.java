@@ -36,4 +36,9 @@ public record TargetSpec(
     public boolean sameExtent(TargetSpec other) {
         return other != null && width == other.width && height == other.height;
     }
+
+    /** Persistent doubled targets need one extra side for previous-frame reads. */
+    public boolean requiresHistory() {
+        return persistent && doubled;
+    }
 }

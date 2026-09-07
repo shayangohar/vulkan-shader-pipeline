@@ -57,12 +57,15 @@ import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
 public final class PackPostTargets {
     private static final int TARGET_COUNT = PackTargetGraphPlan.MAX_TARGET + 1;
 
-    private final VulkanImage[][] images = new VulkanImage[2][TARGET_COUNT];
+    private static final int SIDE_COUNT = 3;
+    private final VulkanImage[][] images = new VulkanImage[SIDE_COUNT][TARGET_COUNT];
     private final boolean[] used = new boolean[TARGET_COUNT];
     private final boolean[] valid = new boolean[TARGET_COUNT];
     private final boolean[] pendingOutputs = new boolean[TARGET_COUNT];
     private final boolean[] doubled = new boolean[TARGET_COUNT];
+    private final int[] sideCounts = new int[TARGET_COUNT];
     private final int[] activeSide = new int[TARGET_COUNT];
+    private final int[] previousSide = new int[TARGET_COUNT];
     private final int[] pendingWriteSide = new int[TARGET_COUNT];
     private final VulkanImage[] sourceImages = new VulkanImage[TARGET_COUNT];
     private final VulkanImage[] pendingImages = new VulkanImage[TARGET_COUNT];
@@ -73,6 +76,7 @@ public final class PackPostTargets {
     private RenderPass pipelineRenderPass;
     private boolean configured;
     private boolean rendering;
+    private final PackTemporalState temporal = new PackTemporalState();
     private TargetStep currentStep;
     private PostTargetPlan currentPlan;
 
@@ -90,7 +94,9 @@ public final class PackPostTargets {
         Arrays.fill(this.valid, false);
         Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.doubled, false);
+        Arrays.fill(this.sideCounts, 1);
         Arrays.fill(this.activeSide, 0);
+        Arrays.fill(this.previousSide, 0);
         Arrays.fill(this.pendingWriteSide, 0);
         for (TargetSpec target : graph.targets()) {
             int index = target.index();
@@ -99,6 +105,7 @@ public final class PackPostTargets {
             }
             this.used[index] = true;
             this.doubled[index] = target.doubled();
+            this.sideCounts[index] = target.doubled() ? (target.requiresHistory() ? 3 : 2) : 1;
             int usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                     | VK_IMAGE_USAGE_SAMPLED_BIT
                     | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
@@ -113,6 +120,15 @@ public final class PackPostTargets {
             if (this.doubled[index]) {
                 this.images[1][index] = VulkanImage.builder(target.width(), target.height())
                         .setName("chimeraPackColortex" + index + "Side1")
+                        .setFormat(target.format())
+                        .setUsage(usage)
+                        .setLinearFiltering(true)
+                        .setClamp(true)
+                        .createVulkanImage();
+            }
+            if (this.sideCounts[index] == 3) {
+                this.images[2][index] = VulkanImage.builder(target.width(), target.height())
+                        .setName("chimeraPackColortex" + index + "History")
                         .setFormat(target.format())
                         .setUsage(usage)
                         .setLinearFiltering(true)
@@ -169,6 +185,7 @@ public final class PackPostTargets {
             throw new IllegalStateException("pack target graph is not configured");
         }
         this.hdrIdentitySource = hdrColor;
+        this.temporal.beginFrame(hdrColor != null);
         Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.pendingImages, null);
         Arrays.fill(this.sourceImages, null);
@@ -185,8 +202,10 @@ public final class PackPostTargets {
                     clearImage(stack, commandBuffer, image, target.clearColorCopy());
                     this.valid[index] = true;
                     this.sourceImages[index] = image;
+                    this.temporal.seedCurrent(index);
                 } else if (this.valid[index]) {
                     this.sourceImages[index] = imageFor(index, this.activeSide[index]);
+                    this.temporal.seedCurrent(index);
                 }
             }
         }
@@ -200,6 +219,7 @@ public final class PackPostTargets {
             this.pendingOutputs[target] = false;
             this.valid[target] = false;
             this.sourceImages[target] = target == 0 ? this.hdrIdentitySource : null;
+            this.temporal.invalidate(target);
         }
     }
 
@@ -227,7 +247,8 @@ public final class PackPostTargets {
                 if (target < 0 || target >= TARGET_COUNT || !this.used[target]) {
                     throw new IllegalStateException("missing output target " + target);
                 }
-                int side = this.doubled[target] ? 1 - this.activeSide[target] : this.activeSide[target];
+                int side = this.doubled[target]
+                        ? nextWriteSide(target) : this.activeSide[target];
                 this.pendingWriteSide[target] = side;
                 VulkanImage destination = imageFor(target, side);
                 this.pendingImages[target] = destination;
@@ -319,15 +340,22 @@ public final class PackPostTargets {
             if (committed) {
                 for (int target = 0; target < TARGET_COUNT; target++) {
                     if (this.pendingImages[target] != null) {
+                        this.previousSide[target] = this.activeSide[target];
                         this.activeSide[target] = this.pendingWriteSide[target];
                         this.valid[target] = true;
                         this.sourceImages[target] = this.pendingImages[target];
+                        this.temporal.stageWrite(target);
                     }
                 }
             }
             clearPendingState();
             finishRendererState();
         }
+    }
+
+    /** Commits the current frame's logical state after all scheduled windows finish. */
+    public boolean commitFrame() {
+        return this.temporal.commit();
     }
 
     /** Aborts pending writes without changing committed logical state. */
@@ -351,6 +379,7 @@ public final class PackPostTargets {
                 }
             }
         } finally {
+            this.temporal.abort();
             clearPendingState();
             finishRendererState();
         }
@@ -369,6 +398,26 @@ public final class PackPostTargets {
         if (target < 0 || target >= TARGET_COUNT) return null;
         if (target == 0 && !this.valid[0]) return this.sourceImages[0];
         return this.valid[target] ? imageFor(target, this.activeSide[target]) : null;
+    }
+
+    /** Returns the last committed frame image when temporal history exists. */
+    public VulkanImage previousTarget(int target) {
+        if (target < 0 || target >= TARGET_COUNT || !this.valid[target]
+                || !this.temporal.previousAvailable(target)) return null;
+        return imageFor(target, this.previousSide[target]);
+    }
+
+    public boolean currentTargetAvailable(int target) {
+        return isTargetAvailable(target);
+    }
+
+    public boolean previousTargetAvailable(int target) {
+        return target >= 0 && target < TARGET_COUNT && this.temporal.previousAvailable(target);
+    }
+
+    public void resetTemporalState() {
+        this.temporal.reset();
+        Arrays.fill(this.previousSide, 0);
     }
 
     static boolean isTargetAvailable(int target, boolean hdrIdentity, boolean[] written) {
@@ -419,11 +468,14 @@ public final class PackPostTargets {
         Arrays.fill(this.valid, false);
         Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.doubled, false);
+        Arrays.fill(this.sideCounts, 1);
+        Arrays.fill(this.previousSide, 0);
         this.hdrIdentitySource = null;
         this.graph = null;
         this.currentStep = null;
         this.currentPlan = null;
         this.configured = false;
+        this.temporal.reset();
         MrtPipelineContext.end();
     }
 
@@ -435,7 +487,14 @@ public final class PackPostTargets {
 
     private VulkanImage imageFor(int target, int side) {
         if (target < 0 || target >= TARGET_COUNT) return null;
-        return this.images[this.doubled[target] ? side : 0][target];
+        int count = this.sideCounts[target];
+        int safeSide = count <= 1 ? 0 : Math.floorMod(side, count);
+        return this.images[safeSide][target];
+    }
+
+    private int nextWriteSide(int target) {
+        int count = this.sideCounts[target];
+        return count <= 1 ? 0 : Math.floorMod(this.activeSide[target] + 1, count);
     }
 
     private void pendingWriteSideReset() {

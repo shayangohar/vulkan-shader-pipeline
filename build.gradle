@@ -400,6 +400,15 @@ tasks.register('m76ConformanceTest', JavaExec) {
                     ?: Boolean.getBoolean('chimera.m76.printBaseline')).toString()
 }
 
+tasks.register('m77ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M7.7 frame schedule, depth seam, and temporal state checks.'
+    dependsOn tasks.named('m75ConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.M77ConformanceHarness'
+    jvmArgs '-ea'
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
@@ -412,6 +421,7 @@ tasks.named('check') {
     dependsOn tasks.named('m74ConformanceTest')
     dependsOn tasks.named('m75ConformanceTest')
     dependsOn tasks.named('m76ConformanceTest')
+    dependsOn tasks.named('m77ConformanceTest')
 }
 
 tasks.named('test') {

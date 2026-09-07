@@ -1,0 +1,8 @@
+{
+  "programs": [
+    { "name": "deferred", "fragment": "deferred.fsh" },
+    { "name": "composite", "fragment": "composite.fsh" },
+    { "name": "composite1", "fragment": "composite1.fsh" },
+    { "name": "final", "fragment": "final.fsh" }
+  ]
+}

@@ -27,6 +27,7 @@ public final class PackDepthTargets {
     private final Framebuffer[] framebuffers = new Framebuffer[3];
     private final RenderPass[] renderPasses = new RenderPass[3];
     private final boolean[] valid = new boolean[3];
+    private final boolean[] previousValid = new boolean[3];
     private DepthGraphPlan plan = DepthGraphPlan.empty();
     private GraphicsPipeline conversionPipeline;
     private boolean configured;
@@ -36,6 +37,7 @@ public final class PackDepthTargets {
         this.plan = plan == null ? DepthGraphPlan.empty() : plan;
         if (!this.plan.any()) return false;
         java.util.Arrays.fill(this.valid, false);
+        java.util.Arrays.fill(this.previousValid, false);
         MrtPipelineContext.begin(new int[] {this.plan.format()}, 1);
         try {
             this.conversionPipeline = ChimeraPostPipelines.createDepthPipeline();
@@ -63,16 +65,30 @@ public final class PackDepthTargets {
 
     public boolean captureScene(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
         if (!this.configured || rawDepth == null) return false;
-        for (int index = 0; index < images.length; index++) {
-            if (required(index) && !convert(commandBuffer, rawDepth, index, false)) return false;
-        }
-        return true;
+        return !required(0) || convert(commandBuffer, rawDepth, 0, false);
     }
 
     /** Captures one seam-specific depth snapshot and restores the source layout. */
     public boolean captureOpaque(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
         return configured && rawDepth != null && required(1)
                 && convert(commandBuffer, rawDepth, 1, true);
+    }
+
+    /** Captures the pre-hand seam. It is intentionally separate from scene depth. */
+    public boolean capturePreHand(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
+        return configured && rawDepth != null && required(2)
+                && convert(commandBuffer, rawDepth, 2, false);
+    }
+
+    /** Starts a new world frame while retaining the previous capture validity. */
+    public void beginFrame() {
+        System.arraycopy(this.valid, 0, this.previousValid, 0, this.valid.length);
+        java.util.Arrays.fill(this.valid, false);
+    }
+
+    /** Publishes the captures made during the current world frame. */
+    public void commitFrame() {
+        System.arraycopy(this.valid, 0, this.previousValid, 0, this.valid.length);
     }
 
     private boolean convert(
@@ -120,6 +136,24 @@ public final class PackDepthTargets {
     public boolean isConfigured() { return configured; }
     public DepthGraphPlan plan() { return plan; }
 
+    public boolean currentAvailable(String name) {
+        return switch (name) {
+            case "depthtex0" -> valid[0];
+            case "depthtex1" -> valid[1];
+            case "depthtex2" -> valid[2];
+            default -> false;
+        };
+    }
+
+    public boolean previousAvailable(String name) {
+        return switch (name) {
+            case "depthtex0" -> previousValid[0];
+            case "depthtex1" -> previousValid[1];
+            case "depthtex2" -> previousValid[2];
+            default -> false;
+        };
+    }
+
     public void cleanUp() {
         for (RenderPass pass : renderPasses) if (pass != null) pass.cleanUp();
         for (Framebuffer framebuffer : framebuffers) if (framebuffer != null) framebuffer.cleanUp(false);
@@ -129,6 +163,7 @@ public final class PackDepthTargets {
         java.util.Arrays.fill(framebuffers, null);
         java.util.Arrays.fill(images, null);
         java.util.Arrays.fill(valid, false);
+        java.util.Arrays.fill(previousValid, false);
         conversionPipeline = null;
         configured = false;
         plan = DepthGraphPlan.empty();

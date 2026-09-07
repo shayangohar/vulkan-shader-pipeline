@@ -1,6 +1,7 @@
 package net.chimera.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.minecraft.client.player.LocalPlayer;
@@ -28,6 +29,10 @@ public abstract class ChimeraItemInHandRendererMixin {
             CallbackInfo callback
     ) {
         if (ChimeraRenderer.segmentsActive()) {
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            if (pass != null) {
+                pass.beginHandSegment();
+            }
             chimera$handDrawActive = ChimeraEntityBridge.beginHandDraw();
         }
     }
@@ -46,5 +51,11 @@ public abstract class ChimeraItemInHandRendererMixin {
             ChimeraEntityBridge.endDraw();
         }
         chimera$handDrawActive = false;
+        if (ChimeraRenderer.segmentsActive()) {
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            if (pass != null) {
+                pass.finishPackFinalAfterHand();
+            }
+        }
     }
 }
