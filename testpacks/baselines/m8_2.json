@@ -1,0 +1,12 @@
+{
+  "slice": "M8.2",
+  "fixture": "scene_seed",
+  "contract": {
+    "coverageFormat": "R32_SFLOAT",
+    "coverageSentinel": -1.0,
+    "sceneSeed": "preserve-covered-pack-geometry"
+  },
+  "expectedDeviations": [
+    "SCENE_SEED_PLAN_APPLIED"
+  ]
+}

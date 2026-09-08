@@ -43,6 +43,22 @@ public abstract class WorldRendererMixin {
     }
 
     @Inject(method = "renderSectionLayer", at = @At("HEAD"))
+    private void chimera$beginPackCoverage(TerrainRenderType renderType, double camX, double camY,
+            double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
+        if (!ChimeraRenderer.segmentsActive()) return;
+        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+        if (pass != null) pass.beginPackCoverageWindow(renderType);
+    }
+
+    @Inject(method = "renderSectionLayer", at = @At("RETURN"))
+    private void chimera$endPackCoverage(TerrainRenderType renderType, double camX, double camY,
+            double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
+        if (!ChimeraRenderer.segmentsActive()) return;
+        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+        if (pass != null) pass.endPackCoverageWindow(renderType);
+    }
+
+    @Inject(method = "renderSectionLayer", at = @At("HEAD"))
     private void chimera$captureOpaqueDepthBeforeTranslucent(TerrainRenderType renderType,
             double camX, double camY, double camZ, Matrix4f modelView, Matrix4f projection,
             CallbackInfo ci) {

@@ -11,6 +11,7 @@ import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.render.shader.MrtPipelineContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -125,7 +126,7 @@ public final class PackPipelines {
     /** Builds the extended terrain pipeline from the shared program plan. */
     public static PackTerrain buildTerrain(PackProgramPlan plan, String fixedVertexSource) {
         return buildTerrainLikePlan(plan, fixedVertexSource,
-                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial());
+                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0);
     }
 
     /** Builds terrain with the pack-wide union format selected at load time. */
@@ -134,13 +135,20 @@ public final class PackPipelines {
             String fixedVertexSource,
             TerrainMaterialPlan materialPlan
     ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan);
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0);
+    }
+
+    public static PackTerrain buildTerrain(
+            PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
+            boolean coverage, int targetFormat
+    ) {
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat);
     }
 
     /** Builds the translucent terrain pipeline from the shared program plan. */
     public static PackTerrain buildTranslucent(PackProgramPlan plan, String fixedVertexSource) {
         return buildTerrainLikePlan(plan, fixedVertexSource,
-                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial());
+                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0);
     }
 
     /** Builds water with the pack-wide union format selected at load time. */
@@ -149,7 +157,14 @@ public final class PackPipelines {
             String fixedVertexSource,
             TerrainMaterialPlan materialPlan
     ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan);
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0);
+    }
+
+    public static PackTerrain buildTranslucent(
+            PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
+            boolean coverage, int targetFormat
+    ) {
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat);
     }
 
     /** Builds the shadow pipeline from the shared program plan. */
@@ -489,7 +504,9 @@ public final class PackPipelines {
     private static PackTerrain buildTerrainLikePlan(
             PackProgramPlan plan,
             String fixedVertexSource,
-            TerrainMaterialPlan materialPlan
+            TerrainMaterialPlan materialPlan,
+            boolean coverage,
+            int targetFormat
     ) {
         if (plan == null || !plan.executable() || plan.convertedFragment() == null) {
             return null;
@@ -509,16 +526,31 @@ public final class PackPipelines {
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
                     plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex());
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            String fragment = coverage
+                    ? LegacyGlslConverter.withCoverageOutput(plan.convertedFragment())
+                    : plan.convertedFragment();
+            if (coverage) {
+                MrtPipelineContext.beginGeometry(targetFormat,
+                        org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT, deviceMaxColorAttachments());
+            }
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragment);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            if (coverage) MrtPipelineContext.end();
             for (var buffer : pipeline.getBuffers()) {
                 buffer.setUseGlobalBuffer(true);
             }
-            return new PackTerrain(pipeline, slots, plan.convertedFragment());
+            return new PackTerrain(pipeline, slots, fragment);
         } catch (Exception e) {
+            MrtPipelineContext.end();
             LOGGER.warn("[chimera] pack {}: planned terrain build failed: {}", plan.name(), e.getMessage());
             return null;
         }
+    }
+
+    private static int deviceMaxColorAttachments() {
+        if (net.vulkanmod.vulkan.device.DeviceManager.device == null) return 8;
+        return ((net.chimera.mixin.ChimeraDeviceAccessor) net.vulkanmod.vulkan.device.DeviceManager.device)
+                .chimera$properties().limits().maxColorAttachments();
     }
 
     /** One generated fragment UBO, or an empty array for the M4 no-uniform path. */

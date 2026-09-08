@@ -36,6 +36,11 @@ public final class ChimeraPostPipelines {
         return create("chimera_depth");
     }
 
+    /** Creates the M8.2 host-to-pack scene seed pipeline. */
+    public static GraphicsPipeline createSceneSeedPipeline() {
+        return create("chimera_scene_seed");
+    }
+
     /** Creates an extended terrain-format pipeline for shadow rendering. */
     public static GraphicsPipeline createTerrainPipeline(String name, VertexFormat vertexFormat) {
         JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");

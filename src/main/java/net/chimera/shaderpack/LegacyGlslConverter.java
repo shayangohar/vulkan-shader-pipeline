@@ -831,6 +831,31 @@ public final class LegacyGlslConverter {
         return convertModernTerrainVertex(source, null, fragmentSource) != null;
     }
 
+    /** Adds the M8.2 coverage output to a converted geometry fragment. */
+    public static String withCoverageOutput(String source) {
+        if (source == null || source.contains("gl_FragDepth")
+                || source.matches("(?s).*\\bchimeraCoverage\\b.*")) {
+            throw new IllegalArgumentException("coverage requires implicit fragment depth");
+        }
+        Matcher matcher = Pattern.compile(
+                "layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*out\\s+"
+                        + "(?:float|vec2|vec3|vec4)\\s+\\w+\\s*;").matcher(source);
+        int max = -1;
+        while (matcher.find()) max = Math.max(max, Integer.parseInt(matcher.group(1)));
+        if (max < 0 || max >= 7) {
+            throw new IllegalArgumentException("coverage output has no safe color location");
+        }
+        String declaration = "layout(location = " + (max + 1) + ") out float chimeraCoverage;\n";
+        int versionEnd = source.indexOf('\n');
+        int insertAt = versionEnd < 0 ? 0 : versionEnd + 1;
+        String result = source.substring(0, insertAt) + declaration + source.substring(insertAt);
+        int closing = result.lastIndexOf('}');
+        if (closing < 0) throw new IllegalArgumentException("coverage fragment has no main body");
+        return result.substring(0, closing)
+                + "\n    chimeraCoverage = gl_FragCoord.z;\n"
+                + result.substring(closing);
+    }
+
     /** Static probe helper for the strict shadow vertex bridge. */
     public static boolean supportsShadowVertex(String source, String fragmentSource) {
         return convertShadowVertex(source, null, fragmentSource) != null;

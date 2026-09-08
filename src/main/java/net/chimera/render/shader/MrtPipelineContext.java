@@ -25,6 +25,11 @@ public final class MrtPipelineContext {
         COLOR_FORMATS.set(formats.clone());
     }
 
+    /** Enables the two-output geometry contract: pack color plus coverage depth. */
+    public static void beginGeometry(int targetFormat, int coverageFormat, int deviceMaxColorAttachments) {
+        begin(new int[] {targetFormat, coverageFormat}, deviceMaxColorAttachments);
+    }
+
     public static void end() {
         COLOR_FORMATS.remove();
     }

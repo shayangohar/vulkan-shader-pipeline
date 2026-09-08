@@ -208,6 +208,32 @@ public final class PackPostTargets {
         }
     }
 
+    /** Clears target 0 before pack geometry writes its color and coverage outputs. */
+    public void prepareGeometryTarget(VkCommandBuffer commandBuffer) {
+        if (!this.configured || !this.used[0]) {
+            throw new IllegalStateException("pack geometry target 0 is unavailable");
+        }
+        VulkanImage target = imageFor(0, this.activeSide[0]);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            clearImage(stack, commandBuffer, target, new float[] {0.0f, 0.0f, 0.0f, 0.0f});
+        }
+        this.valid[0] = false;
+        this.sourceImages[0] = null;
+    }
+
+    public VulkanImage geometryTarget0() {
+        return this.configured && this.used[0] ? imageFor(0, this.activeSide[0]) : null;
+    }
+
+    /** Commits target 0 after the scene seed successfully merged host pixels. */
+    public void commitSceneSeed(VulkanImage target) {
+        if (target == null || target != geometryTarget0()) {
+            throw new IllegalStateException("scene seed target does not match active target 0");
+        }
+        this.valid[0] = true;
+        this.sourceImages[0] = target;
+    }
+
     /** Invalidates logical outputs while retaining physical images. */
     public void invalidateOutputs(List<Integer> targets) {
         if (targets == null) return;
