@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "passes": [
+    "final",
+    "gbuffers_entities",
+    "gbuffers_entities_translucent",
+    "gbuffers_entities_glowing",
+    "gbuffers_block",
+    "gbuffers_damagedblock",
+    "gbuffers_hand",
+    "gbuffers_hand_water",
+    "gbuffers_particles",
+    "gbuffers_particles_translucent",
+    "gbuffers_weather",
+    "gbuffers_skybasic"
+  ]
+}

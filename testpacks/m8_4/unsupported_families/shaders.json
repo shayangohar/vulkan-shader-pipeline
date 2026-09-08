@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "passes": [
+    "final",
+    "gbuffers_entities",
+    "gbuffers_damagedblock",
+    "gbuffers_skybasic"
+  ]
+}

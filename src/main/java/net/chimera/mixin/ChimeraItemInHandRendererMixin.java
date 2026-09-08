@@ -46,8 +46,7 @@ public abstract class ChimeraItemInHandRendererMixin {
             int packedLight,
             CallbackInfo callback
     ) {
-        if (chimera$handDrawActive
-                && ChimeraEntityBridge.isDrawActive(ChimeraEntityBridge.Family.HAND)) {
+        if (chimera$handDrawActive && ChimeraEntityBridge.isHandDrawActive()) {
             ChimeraEntityBridge.endDraw();
         }
         chimera$handDrawActive = false;

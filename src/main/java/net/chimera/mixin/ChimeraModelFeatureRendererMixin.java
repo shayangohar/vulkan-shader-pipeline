@@ -88,18 +88,12 @@ public abstract class ChimeraModelFeatureRendererMixin {
             return;
         }
         try {
-            boolean entityHandled = chimera$renderFamily(ChimeraEntityBridge.Family.ENTITY,
-                    storage.chimera$entitySubmits(), outlineBufferSource, crumblingBufferSource);
-            if (!entityHandled && !storage.chimera$entitySubmits().isEmpty()) {
-                chimera$renderBatch(bufferSource, outlineBufferSource,
-                        storage.chimera$entitySubmits(), crumblingBufferSource);
-            }
-            boolean blockHandled = chimera$renderFamily(ChimeraEntityBridge.Family.BLOCK,
-                    storage.chimera$blockSubmits(), outlineBufferSource, crumblingBufferSource);
-            if (!blockHandled && !storage.chimera$blockSubmits().isEmpty()) {
-                chimera$renderBatch(bufferSource, outlineBufferSource,
-                        storage.chimera$blockSubmits(), crumblingBufferSource);
-            }
+            chimera$renderFamily(ChimeraEntityBridge.Family.ENTITY,
+                    storage.chimera$entitySubmits(), bufferSource, outlineBufferSource,
+                    crumblingBufferSource);
+            chimera$renderFamily(ChimeraEntityBridge.Family.BLOCK,
+                    storage.chimera$blockSubmits(), bufferSource, outlineBufferSource,
+                    crumblingBufferSource);
         } finally {
             if (ChimeraEntityBridge.isDrawActive()) {
                 ChimeraEntityBridge.endDraw();
@@ -108,31 +102,40 @@ public abstract class ChimeraModelFeatureRendererMixin {
         }
     }
 
-    private boolean chimera$renderFamily(
+    private void chimera$renderFamily(
             ChimeraEntityBridge.Family family,
             Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> submits,
+            MultiBufferSource.BufferSource hostBufferSource,
             OutlineBufferSource outlineBufferSource,
             MultiBufferSource.BufferSource crumblingBufferSource
     ) {
         if (submits.isEmpty()) {
-            return true;
+            return;
         }
-        ChimeraEntityBridge.noteFamilyBatch(family, submits.size());
-        if (!ChimeraEntityBridge.beginDraw(family)) {
-            return false;
-        }
-        try {
-            MultiBufferSource.BufferSource entityBufferSource =
-                    ChimeraEntityBridge.entityBufferSource();
-            if (entityBufferSource == null) {
-                return false;
+        for (Map.Entry<RenderType, List<SubmitNodeStorage.ModelSubmit>> entry : submits.entrySet()) {
+            RenderType renderType = entry.getKey();
+            ChimeraEntityBridge.Family selected =
+                    ChimeraEntityBridge.familyForRenderType(family, renderType);
+            ChimeraEntityBridge.noteFamilyBatch(selected, 1);
+            if (!ChimeraEntityBridge.beginDraw(selected)) {
+                chimera$renderBatch(hostBufferSource, outlineBufferSource,
+                        Map.of(renderType, entry.getValue()), crumblingBufferSource);
+                continue;
             }
-            chimera$renderBatch(entityBufferSource, outlineBufferSource,
-                    submits, crumblingBufferSource);
-            ChimeraEntityBridge.endEntityBatch();
-            return true;
-        } finally {
-            ChimeraEntityBridge.endDraw();
+            try {
+                MultiBufferSource.BufferSource entityBufferSource =
+                        ChimeraEntityBridge.entityBufferSource();
+                if (entityBufferSource == null) {
+                    chimera$renderBatch(hostBufferSource, outlineBufferSource,
+                            Map.of(renderType, entry.getValue()), crumblingBufferSource);
+                    continue;
+                }
+                chimera$renderBatch(entityBufferSource, outlineBufferSource,
+                        Map.of(renderType, entry.getValue()), crumblingBufferSource);
+                ChimeraEntityBridge.endEntityBatch();
+            } finally {
+                ChimeraEntityBridge.endDraw();
+            }
         }
     }
 

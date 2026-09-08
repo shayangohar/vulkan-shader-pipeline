@@ -536,6 +536,18 @@ tasks.register('m83ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m84ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M8.4 common world-family adapter and fallback checks.'
+    dependsOn tasks.named('conformanceTest')
+    dependsOn tasks.named('m76ConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M84ConformanceHarness'
+    jvmArgs '-ea'
+    systemProperty 'chimera.m84.printBaseline',
+            (project.findProperty('m84PrintBaseline')?.toString()?.toBoolean() ?: false).toString()
+}
+
 
 tasks.register('m82ConformanceTest', JavaExec) {
     group = 'verification'
@@ -562,6 +574,7 @@ tasks.named('check') {
     dependsOn tasks.named('m80ConformanceTest')
     dependsOn tasks.named('m81ConformanceTest')
     dependsOn tasks.named('m82ConformanceTest')
+    dependsOn tasks.named('m84ConformanceTest')
 }
 
 tasks.named('test') {

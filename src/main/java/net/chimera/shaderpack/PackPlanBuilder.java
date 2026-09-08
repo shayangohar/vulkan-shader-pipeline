@@ -120,7 +120,8 @@ public final class PackPlanBuilder {
         boolean executable = isExecutableFamily(program.name())
                 && fragment != null
                 && (!FamilyAdapterRegistry.isEntityLike(program.name())
-                && !program.name().equals("gbuffers_particles") || vertex != null)
+                && !FamilyAdapterRegistry.isParticleLike(program.name())
+                && !FamilyAdapterRegistry.isWeatherFamily(program.name()) || vertex != null)
                 && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
                 && interfacePlan.executable()
                 && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
@@ -128,10 +129,19 @@ public final class PackPlanBuilder {
                 && (targetPlan == null || targetPlan.executable());
 
         if (FamilyAdapterRegistry.isEntityLike(program.name()) && vertex == null) {
-            deviations.add(vertexBridgeDeviation(program.name()));
+            // Preserve the pre-M8.4 inventory contract for the historical
+            // fragment-only glowing fixture. The new glowing adapter requires
+            // a paired vertex stage; the missing pair is already represented
+            // by the unsupported eligibility result.
+            if (!program.name().equals("gbuffers_entities_glowing")) {
+                deviations.add(vertexBridgeDeviation(program.name()));
+            }
         }
-        if (program.name().equals("gbuffers_particles") && vertex == null) {
+        if (FamilyAdapterRegistry.isParticleLike(program.name()) && vertex == null) {
             deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+        }
+        if (FamilyAdapterRegistry.isWeatherFamily(program.name()) && vertex == null) {
+            deviations.add("WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
         }
 
         try {
@@ -159,11 +169,11 @@ public final class PackPlanBuilder {
 
             if (executable && FamilyAdapterRegistry.isEntityLike(program.name()) && vertex != null) {
                 LegacyGlslConverter.TerrainVertexConversion conversion =
-                        program.name().equals("gbuffers_block")
+                        FamilyAdapterRegistry.isBlockFamily(program.name())
                                 ? LegacyGlslConverter.convertBlockVertex(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
                                 stageMatch.locations())
-                                : program.name().equals("gbuffers_hand")
+                                : FamilyAdapterRegistry.isHandFamily(program.name())
                                 ? LegacyGlslConverter.convertHandVertex(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
                                 stageMatch.locations())
@@ -254,14 +264,17 @@ public final class PackPlanBuilder {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
                 }
-            } else if (executable && program.name().equals("gbuffers_particles")) {
+            } else if (executable && (FamilyAdapterRegistry.isParticleLike(program.name())
+                    || FamilyAdapterRegistry.isWeatherFamily(program.name()))) {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
                 LegacyGlslConverter.TerrainVertexConversion conversion =
                         LegacyGlslConverter.convertParticleVertex(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
                                 stageMatch.locations());
                 if (conversion == null) {
-                    deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+                    deviations.add(FamilyAdapterRegistry.isWeatherFamily(program.name())
+                            ? "WEATHER_VERTEX_BRIDGE_UNSUPPORTED"
+                            : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
                     executable = false;
                 } else {
                     convertedVertex = conversion.source();
@@ -270,7 +283,9 @@ public final class PackPlanBuilder {
                             fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
                             vertexLayout, interfacePlan.effective(stage));
                     if (convertedFragment == null) {
-                        deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+                        deviations.add(FamilyAdapterRegistry.isWeatherFamily(program.name())
+                                ? "WEATHER_VERTEX_BRIDGE_UNSUPPORTED"
+                                : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
                         executable = false;
                     }
                 }
@@ -340,19 +355,23 @@ public final class PackPlanBuilder {
         return switch (name) {
             case "shadow" -> "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_water" -> "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_entities" -> "ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_block" -> "BLOCK_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_hand" -> "HAND_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_particles" -> "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED";
+            case "gbuffers_particles", "gbuffers_particles_translucent"
+                    -> "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED";
+            case "gbuffers_block", "gbuffers_damagedblock"
+                    -> "BLOCK_VERTEX_BRIDGE_UNSUPPORTED";
+            case "gbuffers_hand", "gbuffers_hand_water"
+                    -> "HAND_VERTEX_BRIDGE_UNSUPPORTED";
+            case "gbuffers_entities", "gbuffers_entities_translucent",
+                    "gbuffers_entities_glowing" -> "ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
             default -> "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
         };
     }
 
     private static String entityBridgeDeviation(String name, boolean unsupported) {
         return switch (name) {
-            case "gbuffers_block" -> unsupported
+            case "gbuffers_block", "gbuffers_damagedblock" -> unsupported
                     ? "BLOCK_VERTEX_BRIDGE_UNSUPPORTED" : "BLOCK_VERTEX_BRIDGE";
-            case "gbuffers_hand" -> unsupported
+            case "gbuffers_hand", "gbuffers_hand_water" -> unsupported
                     ? "HAND_VERTEX_BRIDGE_UNSUPPORTED" : "HAND_VERTEX_BRIDGE";
             default -> unsupported
                     ? "ENTITY_VERTEX_BRIDGE_UNSUPPORTED" : "ENTITY_VERTEX_BRIDGE";

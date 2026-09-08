@@ -147,7 +147,7 @@ public final class PackProbe {
             globalDeviations.addAll(entityIds.deviations());
         }
         if (loaded.programs().stream().anyMatch(program ->
-                program.name().equals("gbuffers_entities")
+                FamilyAdapterRegistry.isWorldEntityFamily(program.name())
                         && program.vertexSource() != null
                         && program.fragmentSource() != null)) {
             globalDeviations.add(entityIds.present()
@@ -290,7 +290,7 @@ public final class PackProbe {
                 && programPlan != null
                 && programPlan.terrainMaterial().modern();
         boolean modern = usesUnsupportedModernGlsl(stripped,
-                executablePostName, name.equals("gbuffers_entities"));
+                executablePostName, FamilyAdapterRegistry.isEntityLike(name));
         if (programPlan != null && executablePostName
                 && LegacyGlslConverter.supportsModernPost(fragment)) {
             modern = false;
@@ -370,7 +370,8 @@ public final class PackProbe {
         boolean executableName = FamilyAdapterRegistry.isExecutableFamily(name)
                 && (executablePostName || inventory.stages.contains("fragment"))
                 && (!FamilyAdapterRegistry.isEntityLike(name)
-                && !name.equals("gbuffers_particles")
+                && !FamilyAdapterRegistry.isParticleLike(name)
+                && !FamilyAdapterRegistry.isWeatherFamily(name)
                 || inventory.stages.contains("vertex"));
         vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         if (programPlan != null) {
@@ -401,6 +402,9 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_particles")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "PARTICLE_VERTEX_BRIDGE" : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "WEATHER_VERTEX_BRIDGE" : "WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
@@ -455,6 +459,12 @@ public final class PackProbe {
                 } else {
                     deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
                 }
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
+                if (LegacyGlslConverter.convertParticleVertex(vertex, null, fragment, Map.of()) != null) {
+                    deviations.add("WEATHER_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
+                }
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
@@ -489,6 +499,38 @@ public final class PackProbe {
             deviations.add("FAMILY_ADAPTER_INSTALLED");
             deviations.add("PARTICLE_STATE_FIXED_TO_HOST");
         }
+        if (FamilyAdapterRegistry.isWorldEntityFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            if (!name.equals("gbuffers_entities")) {
+                deviations.add("FAMILY_ADAPTER_INSTALLED");
+                deviations.add("ENTITY_STATE_FIXED_TO_HOST");
+            }
+        }
+        if (FamilyAdapterRegistry.isBlockFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            if (name.equals("gbuffers_damagedblock")) {
+                deviations.add("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED");
+            }
+        }
+        if (FamilyAdapterRegistry.isHandFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            if (name.equals("gbuffers_hand_water")) {
+                deviations.add("FAMILY_ADAPTER_INSTALLED");
+                deviations.add("HAND_WATER_SELECTION_FIXED_TO_CAMERA");
+            }
+        }
+        if (FamilyAdapterRegistry.isParticleLike(name)
+                && programPlan != null && programPlan.executable()) {
+            if (!name.equals("gbuffers_particles")) {
+                deviations.add("FAMILY_ADAPTER_INSTALLED");
+                deviations.add("PARTICLE_TRANSLUCENT_INSTALLED");
+            }
+        }
+        if (FamilyAdapterRegistry.isWeatherFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add("WEATHER_STATE_FIXED_TO_HOST");
+        }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
                         || stage.equals("tess_evaluation") || stage.equals("compute"))) {
@@ -505,8 +547,9 @@ public final class PackProbe {
                 ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
                 : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
-                : (name.equals("gbuffers_entities") || name.equals("gbuffers_block")
-                || name.equals("gbuffers_hand") || name.equals("gbuffers_particles"))
+                : (FamilyAdapterRegistry.isEntityLike(name)
+                || FamilyAdapterRegistry.isParticleLike(name)
+                || FamilyAdapterRegistry.isWeatherFamily(name))
                 ? UniformRegistry.ENTITY_NAME_TO_SLOT
                 : UniformRegistry.NAME_TO_SLOT;
         // PackPlanBuilder already resolved standard aliases and pack-owned
@@ -521,8 +564,9 @@ public final class PackProbe {
                             : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
                             : name.equals("shadow")
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
-                            : name.equals("gbuffers_entities") || name.equals("gbuffers_block")
-                            || name.equals("gbuffers_hand") || name.equals("gbuffers_particles")
+                            : FamilyAdapterRegistry.isEntityLike(name)
+                            || FamilyAdapterRegistry.isParticleLike(name)
+                            || FamilyAdapterRegistry.isWeatherFamily(name)
                             ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
                             : "SAMPLER_NOT_MAPPED:" + sampler);
                 }
@@ -585,6 +629,11 @@ public final class PackProbe {
                     || deviation.equals("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED")
                     || deviation.equals("ENTITY_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("BLOCK_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("HAND_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("WEATHER_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED")
                     || deviation.startsWith("ENTITY_SAMPLER_UNSUPPORTED:")
                     || deviation.startsWith("ENTITY_ID_UNSUPPORTED:")
                     || deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")

@@ -50,8 +50,7 @@ public abstract class ChimeraLevelRendererMixin {
             ResourceHandle main,
             CallbackInfo callback
     ) {
-        if (chimera$particleDrawActive
-                && ChimeraEntityBridge.isDrawActive(ChimeraEntityBridge.Family.PARTICLE)) {
+        if (chimera$particleDrawActive && ChimeraEntityBridge.isParticleDrawActive()) {
             ChimeraEntityBridge.endDraw();
         }
         chimera$particleDrawActive = false;

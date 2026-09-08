@@ -227,6 +227,24 @@ public final class PackPipelines {
         return buildEntityLike(plan, UniformRegistry.Stage.ENTITY, "pack_gbuffers_entities");
     }
 
+    /** Builds any world entity-family adapter with the family-specific host contract. */
+    public static PackEntity buildEntityFamily(PackProgramPlan plan) {
+        if (plan == null) {
+            return null;
+        }
+        FamilyAdapterPlan.Family family = plan.familyAdapter().family();
+        UniformRegistry.Stage stage = switch (family) {
+            case BLOCK, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
+            case HAND, HAND_WATER -> UniformRegistry.Stage.HAND;
+            default -> UniformRegistry.Stage.ENTITY;
+        };
+        VertexFormat format = switch (family) {
+            case HAND, HAND_WATER -> ChimeraVertexFormats.EXTENDED_PARTICLE;
+            default -> ChimeraVertexFormats.EXTENDED_ENTITY;
+        };
+        return buildEntityLike(plan, stage, "pack_" + plan.name(), format);
+    }
+
     /** Builds the block-entity adapter on the same append-only host format. */
     public static PackEntity buildBlock(PackProgramPlan plan) {
         return buildEntityLike(plan, UniformRegistry.Stage.BLOCK, "pack_gbuffers_block");
@@ -310,6 +328,15 @@ public final class PackPipelines {
 
     /** Builds the particle family on the host DefaultVertexFormat.PARTICLE path. */
     public static PackParticle buildParticle(PackProgramPlan plan) {
+        return buildParticle(plan, "pack_gbuffers_particles");
+    }
+
+    /** Builds an independent opaque or translucent particle-family pipeline. */
+    public static PackParticle buildParticleFamily(PackProgramPlan plan) {
+        return plan == null ? null : buildParticle(plan, "pack_" + plan.name());
+    }
+
+    private static PackParticle buildParticle(PackProgramPlan plan, String pipelineName) {
         if (plan == null || !plan.executable() || plan.convertedVertex() == null
                 || plan.convertedFragment() == null || plan.interfacePlan() == null
                 || plan.interfacePlan().effective(UniformRegistry.Stage.PARTICLE).stage()
@@ -348,7 +375,7 @@ public final class PackPipelines {
             }
             Pipeline.Builder builder = new Pipeline.Builder(
                     com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE,
-                    "pack_gbuffers_particles");
+                    pipelineName);
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(configBuilder.build());
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());

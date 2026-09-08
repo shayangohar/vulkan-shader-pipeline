@@ -39,6 +39,7 @@ import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackResourceStatus;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.PackCoveragePlan;
+import net.chimera.shaderpack.FamilyAdapterRegistry;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.engine.VkGpuDevice;
@@ -192,12 +193,24 @@ public class ChimeraMainPass implements MainPass {
     private int[] packShadowSlots;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
+    /** Pack translucent world-entity program on the guarded delayed model batch. */
+    private PackPipelines.PackEntity packTranslucentEntityPipeline;
+    /** Pack glowing world-entity program on the guarded delayed model batch. */
+    private PackPipelines.PackEntity packGlowingEntityPipeline;
     /** Pack block-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packBlockPipeline;
+    /** Pack damaged-block program on the guarded block draw lane. */
+    private PackPipelines.PackEntity packDamagedBlockPipeline;
     /** Pack first-person hand program on the guarded hand draw window. */
     private PackPipelines.PackEntity packHandPipeline;
+    /** Pack first-person water program on the guarded hand draw window. */
+    private PackPipelines.PackEntity packHandWaterPipeline;
     /** Pack particle program on the host particle draw window. */
     private PackPipelines.PackParticle packParticlePipeline;
+    /** Pack translucent particle program on the host translucent particle window. */
+    private PackPipelines.PackParticle packTranslucentParticlePipeline;
+    /** Pack weather program on the host weather draw window. */
+    private PackPipelines.PackParticle packWeatherPipeline;
     /** GL-registry slot-5 view of the shadow depth, for pack geometry sampling (shadowtex0). */
     private GpuTexture packShadowTexture;
     private GpuTextureView packShadowView;
@@ -1541,9 +1554,15 @@ public class ChimeraMainPass implements MainPass {
         if (this.packTranslucentPipeline != null) this.packTranslucentPipeline.cleanUp();
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
         if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
+        if (this.packTranslucentEntityPipeline != null) this.packTranslucentEntityPipeline.pipeline().cleanUp();
+        if (this.packGlowingEntityPipeline != null) this.packGlowingEntityPipeline.pipeline().cleanUp();
         if (this.packBlockPipeline != null) this.packBlockPipeline.pipeline().cleanUp();
+        if (this.packDamagedBlockPipeline != null) this.packDamagedBlockPipeline.pipeline().cleanUp();
         if (this.packHandPipeline != null) this.packHandPipeline.pipeline().cleanUp();
+        if (this.packHandWaterPipeline != null) this.packHandWaterPipeline.pipeline().cleanUp();
         if (this.packParticlePipeline != null) this.packParticlePipeline.pipeline().cleanUp();
+        if (this.packTranslucentParticlePipeline != null) this.packTranslucentParticlePipeline.pipeline().cleanUp();
+        if (this.packWeatherPipeline != null) this.packWeatherPipeline.pipeline().cleanUp();
         if (this.packResourceOwner != null) this.packResourceOwner.close();
         this.packResourceOwner = null;
         this.packPostStages.clear();
@@ -1564,10 +1583,16 @@ public class ChimeraMainPass implements MainPass {
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
         this.packEntityPipeline = null;
+        this.packTranslucentEntityPipeline = null;
+        this.packGlowingEntityPipeline = null;
         this.coverageGeometryReady = false;
         this.packBlockPipeline = null;
+        this.packDamagedBlockPipeline = null;
         this.packHandPipeline = null;
+        this.packHandWaterPipeline = null;
         this.packParticlePipeline = null;
+        this.packTranslucentParticlePipeline = null;
+        this.packWeatherPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.shadowFrameReady = false;
         this.shadowTransitionFallbackLogged = false;
@@ -2202,6 +2227,15 @@ public class ChimeraMainPass implements MainPass {
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
         this.packEntityPipeline = null;
+        this.packTranslucentEntityPipeline = null;
+        this.packGlowingEntityPipeline = null;
+        this.packBlockPipeline = null;
+        this.packDamagedBlockPipeline = null;
+        this.packHandPipeline = null;
+        this.packHandWaterPipeline = null;
+        this.packParticlePipeline = null;
+        this.packTranslucentParticlePipeline = null;
+        this.packWeatherPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = true;
 
@@ -2414,6 +2448,19 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.info("[chimera] pack gbuffers_entities converted fragment:\n{}",
                             entity.convertedFragment());
                 }
+            } else if (FamilyAdapterRegistry.isWorldEntityFamily(name)) {
+                PackPipelines.PackEntity entity = PackPipelines.buildEntityFamily(programPlan);
+                if (entity == null) {
+                    markFamilyPipelineFallback(name, "ENTITY_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                if (name.equals("gbuffers_entities_translucent")) {
+                    this.packTranslucentEntityPipeline = entity;
+                } else {
+                    this.packGlowingEntityPipeline = entity;
+                }
+                markFamilyPipelineInstalled(name, name.equals("gbuffers_entities_translucent")
+                        ? "TRANSLUCENT_ENTITY_INSTALLED" : "GLOWING_ENTITY_INSTALLED");
             } else if (name.equals("gbuffers_block")) {
                 PackPipelines.PackEntity block = PackPipelines.buildBlock(programPlan);
                 if (block == null) {
@@ -2445,6 +2492,13 @@ public class ChimeraMainPass implements MainPass {
                         + "stride={}, samplers={})",
                         net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                         Arrays.toString(block.samplerSlots()));
+            } else if (FamilyAdapterRegistry.isBlockFamily(name)) {
+                // The host crumbling lane uses a distinct format and render
+                // pass. EXTENDED_ENTITY is not a safe substitute. Keep the
+                // host damage overlay until a matching crumbling adapter is
+                // available rather than corrupting the block batch.
+                markFamilyPipelineFallback(name, "DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED");
+                this.packDamagedBlockPipeline = null;
             } else if (name.equals("gbuffers_hand")) {
                 PackPipelines.PackEntity hand = PackPipelines.buildHand(programPlan);
                 if (hand == null) {
@@ -2476,6 +2530,14 @@ public class ChimeraMainPass implements MainPass {
                         + "stride={}, samplers={})",
                         net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                         Arrays.toString(hand.samplerSlots()));
+            } else if (FamilyAdapterRegistry.isHandFamily(name)) {
+                PackPipelines.PackEntity hand = PackPipelines.buildEntityFamily(programPlan);
+                if (hand == null) {
+                    markFamilyPipelineFallback(name, "HAND_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                this.packHandWaterPipeline = hand;
+                markFamilyPipelineInstalled(name, "HAND_WATER_INSTALLED");
             } else if (name.equals("gbuffers_particles")) {
                 PackPipelines.PackParticle particle = PackPipelines.buildParticle(programPlan);
                 if (particle == null) {
@@ -2501,6 +2563,22 @@ public class ChimeraMainPass implements MainPass {
                         + "stride={}, samplers={})",
                         com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE.getVertexSize(),
                         Arrays.toString(particle.samplerSlots()));
+            } else if (FamilyAdapterRegistry.isParticleLike(name)) {
+                PackPipelines.PackParticle particle = PackPipelines.buildParticleFamily(programPlan);
+                if (particle == null) {
+                    markFamilyPipelineFallback(name, "PARTICLE_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                this.packTranslucentParticlePipeline = particle;
+                markFamilyPipelineInstalled(name, "PARTICLE_TRANSLUCENT_INSTALLED");
+            } else if (FamilyAdapterRegistry.isWeatherFamily(name)) {
+                PackPipelines.PackParticle weather = PackPipelines.buildParticleFamily(programPlan);
+                if (weather == null) {
+                    markFamilyPipelineFallback(name, "WEATHER_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                this.packWeatherPipeline = weather;
+                markFamilyPipelineInstalled(name, "WEATHER_PIPELINE_INSTALLED");
             } else {
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
@@ -2510,8 +2588,10 @@ public class ChimeraMainPass implements MainPass {
                 LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (unsupported program family)", name);
             }
         }
-        ChimeraEntityBridge.install(this.packEntityPipeline, this.packBlockPipeline,
-                this.packHandPipeline, this.packParticlePipeline,
+        ChimeraEntityBridge.install(this.packEntityPipeline, this.packTranslucentEntityPipeline,
+                this.packGlowingEntityPipeline, this.packBlockPipeline, this.packDamagedBlockPipeline,
+                this.packHandPipeline, this.packHandWaterPipeline, this.packParticlePipeline,
+                this.packTranslucentParticlePipeline, this.packWeatherPipeline,
                 this.packPlan == null ? null : this.packPlan.entityIds());
         this.packPostStages.sort(Comparator.comparing(
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
@@ -2528,6 +2608,22 @@ public class ChimeraMainPass implements MainPass {
             LOGGER.info("[chimera] conformance {}", this.conformanceReport.toJson());
             logConformanceSummary();
         }
+    }
+
+    private void markFamilyPipelineInstalled(String name, String deviation) {
+        if (this.conformanceReport != null) {
+            this.conformanceReport.markRuntime(name,
+                    ConformanceReport.RuntimeDisposition.INSTALLED, deviation);
+        }
+        LOGGER.info("[chimera] pack {}: ok ({})", name, deviation);
+    }
+
+    private void markFamilyPipelineFallback(String name, String reason) {
+        if (this.conformanceReport != null) {
+            this.conformanceReport.markRuntime(name,
+                    ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
+        }
+        LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
     }
 
     /** Builds the immutable post execution order once for the active pack. */

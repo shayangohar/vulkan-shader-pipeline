@@ -24,6 +24,7 @@
     "ChimeraEntityRenderDispatcherMixin",
     "ChimeraBlockEntityRenderDispatcherMixin",
     "ChimeraItemInHandRendererMixin",
+    "ChimeraWeatherEffectRendererMixin",
     "ChimeraModelFeatureRendererMixin",
     "ChimeraModelFeatureStorageMixin",
     "ChimeraModelSubmitMixin",

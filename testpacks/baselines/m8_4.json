@@ -1,0 +1,91 @@
+{
+  "formatVersion": 1,
+  "fixture": "m8_4",
+  "fixtures": {
+    "families": {
+      "reportSha256": "20c2abf94f81698ad28a527a47ebe978d47f163551ca0a19956791b05f93291a",
+      "sourceHashes": {
+        "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
+        "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_block.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_damagedblock.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_entities.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_entities.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_entities_glowing.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_entities_glowing.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_entities_translucent.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_entities_translucent.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_hand.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_hand.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_hand_water.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_hand_water.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_particles.fsh": "7712e70bcf6b5b65a09ad329e36169b4431a9ec1f08701a07e326699091da2a4",
+        "gbuffers_particles.vsh": "d34f41cb8f3b36dcef800237ae0175ad6abfc41813e5e76ec6b915386f42f7a7",
+        "gbuffers_particles_translucent.fsh": "7712e70bcf6b5b65a09ad329e36169b4431a9ec1f08701a07e326699091da2a4",
+        "gbuffers_particles_translucent.vsh": "d34f41cb8f3b36dcef800237ae0175ad6abfc41813e5e76ec6b915386f42f7a7",
+        "gbuffers_skybasic.fsh": "79f98c983f6d47410f587d4b1de75fdb15bbd2eb7a90c4b5df998a1ad0f2e3bd",
+        "gbuffers_weather.fsh": "7712e70bcf6b5b65a09ad329e36169b4431a9ec1f08701a07e326699091da2a4",
+        "gbuffers_weather.vsh": "d34f41cb8f3b36dcef800237ae0175ad6abfc41813e5e76ec6b915386f42f7a7"
+      },
+      "expectedExecutablePrograms": [
+        "final",
+        "gbuffers_block",
+        "gbuffers_entities",
+        "gbuffers_entities_glowing",
+        "gbuffers_entities_translucent",
+        "gbuffers_hand",
+        "gbuffers_hand_water",
+        "gbuffers_particles",
+        "gbuffers_particles_translucent",
+        "gbuffers_weather"
+      ],
+      "expectedFallbackPrograms": ["gbuffers_damagedblock"],
+      "expectedUnsupportedPrograms": ["gbuffers_skybasic"],
+      "expectedDeviations": [
+        "BLOCK_ENTITY_ID_DEFAULTED",
+        "BLOCK_VERTEX_BRIDGE",
+        "DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED",
+        "ENTITY_BATCH_ORIGIN_SPLIT",
+        "ENTITY_ID_DEFAULTED",
+        "ENTITY_SCREEN_DRAW_FALLBACK",
+        "ENTITY_STATE_FIXED_TO_HOST",
+        "ENTITY_VERTEX_BRIDGE",
+        "ENTITY_VERTEX_FORMAT_EXTENDED",
+        "FAMILY_ADAPTER_INSTALLED",
+        "FIXED_VERTEX_SUBSTITUTION",
+        "HAND_ITEM_ID_DEFAULTED",
+        "HAND_STATE_FIXED_TO_HOST",
+        "HAND_VERTEX_BRIDGE",
+        "HAND_WATER_SELECTION_FIXED_TO_CAMERA",
+        "PARTICLE_STATE_FIXED_TO_HOST",
+        "PARTICLE_TRANSLUCENT_INSTALLED",
+        "PARTICLE_VERTEX_BRIDGE",
+        "WEATHER_STATE_FIXED_TO_HOST",
+        "WEATHER_VERTEX_BRIDGE"
+      ]
+    },
+    "unsupported_families": {
+      "reportSha256": "fcc96e12919cff5122c2497c31a41ff55507661fabef126434edad291bb76f10",
+      "sourceHashes": {
+        "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
+        "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_damagedblock.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_entities.fsh": "e6e07a5b7bce5a08cf0ebabff32a570c6140b64b4e380cf1746d5097668a641a",
+        "gbuffers_entities.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_skybasic.fsh": "79f98c983f6d47410f587d4b1de75fdb15bbd2eb7a90c4b5df998a1ad0f2e3bd"
+      },
+      "expectedExecutablePrograms": ["final"],
+      "expectedFallbackPrograms": ["gbuffers_damagedblock", "gbuffers_entities"],
+      "expectedUnsupportedPrograms": ["gbuffers_skybasic"],
+      "expectedDeviations": [
+        "BLOCK_VERTEX_BRIDGE",
+        "DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED",
+        "ENTITY_ID_DEFAULTED",
+        "ENTITY_SAMPLER_UNSUPPORTED:unsupportedSampler",
+        "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
+        "FIXED_VERTEX_SUBSTITUTION"
+      ]
+    }
+  }
+}
