@@ -566,7 +566,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.packDepthTargets.isConfigured()) {
             this.packDepthTargets.beginFrame();
         }
-        if (this.packCoveragePlan.enabled() && this.packPostChainActive) {
+        if (packCoverageRuntimeEnabled() && this.packPostChainActive) {
             VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
             this.packPostTargets.beginFrame(commandBuffer, hdrColor);
@@ -626,7 +626,7 @@ public class ChimeraMainPass implements MainPass {
                 }
             }
 
-            if (this.packCoveragePlan.enabled() && this.packCoverageOwner.isLive()) {
+            if (packCoverageRuntimeEnabled()) {
                 seedPackScene(commandBuffer, hdrColor);
             }
 
@@ -645,7 +645,7 @@ public class ChimeraMainPass implements MainPass {
                 resolvePackWorldToOutput(commandBuffer, hdrColor);
                 this.packWorldResolved = true;
                 this.currentFramebuffer = this.compositeFramebuffer;
-                if (this.packCoveragePlan.enabled()) {
+                if (packCoverageRuntimeEnabled()) {
                     this.packCoverageState.endFrame();
                 }
                 return;
@@ -655,7 +655,7 @@ public class ChimeraMainPass implements MainPass {
                     this.packCompositePipeline, this.packCompositeSlots,
                     this.packCompositeSamplerNames, "composite");
             this.currentFramebuffer = this.compositeFramebuffer;
-            if (this.packCoveragePlan.enabled()) {
+            if (packCoverageRuntimeEnabled()) {
                 this.packCoverageState.endFrame();
             }
         }
@@ -663,8 +663,8 @@ public class ChimeraMainPass implements MainPass {
 
     /** Opens the two-attachment geometry target only for installed pack terrain. */
     public void beginPackCoverageWindow(TerrainRenderType renderType) {
-        if (!this.coverageGeometryReady || !this.packPostChainActive
-                || !this.packCoveragePlan.enabled() || this.shadowPassActive
+        if (!packCoverageRuntimeEnabled() || !this.packPostChainActive
+                || this.shadowPassActive
                 || this.hdrFramebuffer == null || this.packCoverageOwner.image() == null
                 || (renderType != TerrainRenderType.SOLID
                     && renderType != TerrainRenderType.CUTOUT)) {
@@ -679,6 +679,18 @@ public class ChimeraMainPass implements MainPass {
                 this.packCoverageOwner.image(),
                 this.hdrFramebuffer.getDepthAttachment());
         this.packCoverageState.beginPackWrite();
+    }
+
+    /**
+     * Static family inventory is not enough to activate the scene-seed path.
+     * The coverage target is safe to use only after the pack terrain adapter
+     * was built and the session-owned seed resources are live.
+     */
+    private boolean packCoverageRuntimeEnabled() {
+        return this.packCoveragePlan.enabled()
+                && this.coverageGeometryReady
+                && this.packCoverageOwner.isLive()
+                && this.sceneSeedPipeline != null;
     }
 
     /** Closes the coverage geometry window and reopens the normal HDR target. */
@@ -979,7 +991,11 @@ public class ChimeraMainPass implements MainPass {
         this.packDepthTargets.capturePreHand(commandBuffer,
                 this.hdrFramebuffer == null ? null : this.hdrFramebuffer.getDepthAttachment());
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            Renderer.getInstance().beginRenderPass(this.compositeRenderPass, this.compositeFramebuffer);
+            // The world resolve is already in the output image. The hand
+            // seam must load it; the clear variant would erase the world
+            // whenever a pack requests the pre-hand depth snapshot.
+            Renderer.getInstance().beginRenderPass(this.compositeAuxRenderPass,
+                    this.compositeFramebuffer);
             Renderer.setViewport(0, 0, this.compositeFramebuffer.getWidth(),
                     this.compositeFramebuffer.getHeight(), stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, this.compositeFramebuffer.scissor(stack));
@@ -1894,7 +1910,7 @@ public class ChimeraMainPass implements MainPass {
                 } finally {
                     MrtPipelineContext.end();
                 }
-                LOGGER.info("[chimera] scene seed: enabled families={} deviations={}",
+                LOGGER.info("[chimera] scene seed: planned families={} deviations={}",
                         this.packCoveragePlan.families(), this.packCoveragePlan.deviations());
             } else if (!this.packCoveragePlan.deviations().isEmpty()) {
                 LOGGER.info("[chimera] scene seed: fallback deviations={}",
@@ -2596,6 +2612,14 @@ public class ChimeraMainPass implements MainPass {
         this.packPostStages.sort(Comparator.comparing(
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
         buildPackPostExecutionPlan();
+        if (this.packCoveragePlan.enabled()) {
+            if (packCoverageRuntimeEnabled()) {
+                LOGGER.info("[chimera] scene seed: runtime enabled families={}",
+                        this.packCoveragePlan.families());
+            } else {
+                LOGGER.info("[chimera] scene seed: runtime fallback (no installed pack terrain adapter)");
+            }
+        }
         if (this.packShadowPipeline == null
                 && this.packPrograms.stream().noneMatch(program -> program.name().equals("shadow"))) {
             if (this.conformanceReport != null) {
