@@ -62,6 +62,9 @@ public final class PackPlanBuilder {
         }
 
         Map<String, PreparedShaderSource> stages = preparedStages(program);
+        if (stageFor(program.name()) == UniformRegistry.Stage.POST) {
+            stages = normalizeModernPostStages(stages);
+        }
         String fragment = source(stages, "fragment", program.executableFragmentSource());
         String vertex = source(stages, "vertex", program.executableVertexSource());
         // Preserve the M5 report contract: root-level packs are inventoried
@@ -352,6 +355,29 @@ public final class PackPlanBuilder {
             }
         }
         return result;
+    }
+
+    private static Map<String, PreparedShaderSource> normalizeModernPostStages(
+            Map<String, PreparedShaderSource> stages
+    ) {
+        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
+        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
+            PreparedShaderSource prepared = entry.getValue();
+            if (prepared.source() == null || !hasModernVersion(prepared.source())) {
+                continue;
+            }
+            String normalized = LegacyGlslConverter.normalizeModernPost(prepared.source());
+            List<String> deviations = new ArrayList<>(prepared.deviations());
+            deviations.add("MODERN_GLSL_TRANSLATED");
+            result.put(entry.getKey(), new PreparedShaderSource(
+                    prepared.stage(), prepared.relativePath(), normalized,
+                    prepared.dependencies(), deviations));
+        }
+        return result;
+    }
+
+    private static boolean hasModernVersion(String source) {
+        return source.matches("(?s).*#version\\s+(?:330|400)(?:\\s+.*)?(?:\\r?\\n|$).*");
     }
 
     private static String source(

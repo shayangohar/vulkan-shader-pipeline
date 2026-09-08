@@ -505,6 +505,15 @@ tasks.register('m78ConformanceTest', JavaExec) {
     }
 }
 
+tasks.register('m80ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M8.0 measured modern GLSL translation checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M80ConformanceHarness'
+    jvmArgs '-ea'
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
@@ -518,6 +527,7 @@ tasks.named('check') {
     dependsOn tasks.named('m75ConformanceTest')
     dependsOn tasks.named('m76ConformanceTest')
     dependsOn tasks.named('m77ConformanceTest')
+    dependsOn tasks.named('m80ConformanceTest')
 }
 
 tasks.named('test') {

@@ -59,6 +59,13 @@ public final class LegacyGlslConverter {
             Pattern.compile("(?m)^\\s*const\\s+(?:int|float|bool|vec4)\\s+(?:colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)\\s*=\\s*[A-Za-z0-9+_.(), -]+\\s*;\\s*(?://.*)?$");
     private static final Pattern KNOWN_LEGACY_EXTENSIONS = Pattern.compile(
             "(?im)^\\s*#extension\\s+GL_ARB_shader_texture_lod\\s*:\\s*(?:enable|require|disable)\\s*$\\r?\\n?");
+    private static final Pattern MODERN_LAYOUT_DECL = Pattern.compile(
+            "(?m)^([ \\t]*)layout\\s*\\([^;{}\\r\\n]*\\)\\s*((?:(?:flat|noperspective|smooth|centroid|sample)\\s+)?)"
+                    + "(in|out|varying)\\b");
+    private static final Pattern PRECISION_DECL = Pattern.compile(
+            "(?m)^\\s*precision\\s+(?:lowp|mediump|highp)\\s+(?:float|int)\\s*;\\s*$\\r?\\n?");
+    private static final Pattern GLOBAL_NONCONST = Pattern.compile(
+            "(?m)\\bconst\\s+((?:float|int|bool|vec[234]|mat[234]))\\s+([A-Za-z_]\\w*)\\s*=");
 
     /** Geometry fragments receive the fixed chimera terrain vertex's outputs by name. */
     private static final Map<String, Integer> GEOMETRY_VARYING_LOCATIONS = Map.of(
@@ -70,6 +77,46 @@ public final class LegacyGlslConverter {
     private static final int GEOMETRY_SAMPLER_BINDING_BASE = 3;
 
     private LegacyGlslConverter() {}
+
+    /**
+     * Normalizes the measured modern post subset before interface scanning.
+     * This is deliberately narrow: the existing token translator remains the
+     * only executable rewrite path and unsupported versions fail closed.
+     */
+    static String normalizeModernPost(String source) {
+        if (source == null) {
+            throw new IllegalArgumentException("post source is missing");
+        }
+        Matcher versions = Pattern.compile("(?im)^\\s*#version\\s+(\\d+)(?:\\s+.*)?$")
+                .matcher(source);
+        boolean found = false;
+        while (versions.find()) {
+            found = true;
+            int version = Integer.parseInt(versions.group(1));
+            if (version != 120 && version != 130 && version != 330 && version != 400) {
+                throw new IllegalArgumentException("unsupported modern post GLSL version: " + version);
+            }
+        }
+        if (!found) {
+            throw new IllegalArgumentException("post source is missing a GLSL version");
+        }
+        String result = VERSION_LINE.matcher(source).replaceAll("");
+        result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
+        result = PRECISION_DECL.matcher(result).replaceAll("");
+        result = MODERN_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
+        result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(
+                "lowp", "", "mediump", "", "highp", ""));
+        return GLOBAL_NONCONST.matcher(result).replaceAll("$1 $2 =");
+    }
+
+    static boolean supportsModernPost(String source) {
+        try {
+            normalizeModernPost(source);
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
 
     /** Deterministic interface shared by the narrow terrain vertex and fragment bridge. */
     public record TerrainVaryingLayout(Map<String, String> types, Map<String, Integer> locations) {
@@ -222,9 +269,6 @@ public final class LegacyGlslConverter {
                 if (input.type().equals("vec3")) {
                     deviations.add("POST_VARYING_SYNTHESIZED_ZERO:" + input.name());
                 }
-            }
-            if (assignments.length() == 0) {
-                throw new IllegalArgumentException("post vertex has no referenced outputs");
             }
             String generated = "#version 460\n"
                     + declarations
@@ -406,7 +450,33 @@ public final class LegacyGlslConverter {
 
     private static String convertPostOutputs(String source, PostTargetPlan targetPlan) {
         String result = POST_DRAWBUFFERS_DEFINE.matcher(source).replaceAll("");
+        result = rewriteModernOutputs(result, targetPlan);
         return GlslTokenRewriter.rewritePostOutputs(result, targetPlan);
+    }
+
+    private static String rewriteModernOutputs(String source, PostTargetPlan targetPlan) {
+        if (targetPlan == null) {
+            return source;
+        }
+        Matcher matcher = Pattern.compile("(?m)^\\s*out\\s+vec4\\s+([A-Za-z_]\\w*)\\s*;\\s*$")
+                .matcher(source);
+        List<String> names = new ArrayList<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        if (names.isEmpty()) {
+            return source;
+        }
+        List<Integer> locations = targetPlan.outputLocations();
+        if (names.size() > locations.size()) {
+            throw new IllegalArgumentException("modern fragment outputs exceed target route");
+        }
+        Map<String, String> replacements = new TreeMap<>();
+        for (int index = 0; index < names.size(); index++) {
+            replacements.put(names.get(index), "chimeraFragColor" + locations.get(index));
+        }
+        String result = matcher.replaceAll("");
+        return GlslTokenRewriter.replaceIdentifiers(result, replacements);
     }
 
     private static String postOutputDeclarations(PostTargetPlan targetPlan) {
@@ -983,7 +1053,7 @@ public final class LegacyGlslConverter {
                 .matcher(source);
         while (versions.find()) {
             int version = Integer.parseInt(versions.group(1));
-            if (version != 120 && version != 130) {
+            if (version != 120 && version != 130 && version != 330 && version != 400) {
                 throw new IllegalArgumentException("unsupported post GLSL version: " + version);
             }
         }

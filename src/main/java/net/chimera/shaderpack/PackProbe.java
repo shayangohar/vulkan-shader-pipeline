@@ -286,6 +286,10 @@ public final class PackProbe {
         boolean executablePostName = PostTargetPlan.isPostProgramName(name);
         boolean modern = usesUnsupportedModernGlsl(stripped,
                 executablePostName, name.equals("gbuffers_entities"));
+        if (programPlan != null && executablePostName
+                && LegacyGlslConverter.supportsModernPost(fragment)) {
+            modern = false;
+        }
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
         // including samplers. Keep that public inventory stable while the

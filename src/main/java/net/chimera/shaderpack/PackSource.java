@@ -169,6 +169,12 @@ public final class PackSource {
             boolean hasNestedVariants = variants.keySet().stream()
                     .anyMatch(value -> !value.isBlank());
 
+            if (hasNestedVariants && !hasDimensionProperties
+                    && !isStandardDimension(requested)
+                    && folder.equals("world0") && variants.containsKey("world0")) {
+                nextDeviations.add("DIMENSION_SOURCE_FALLBACK_TO_WORLD0:" + requested);
+            }
+
             if (selected == null && hasNestedVariants) {
                 if (!hasDimensionProperties && !isStandardDimension(requested)
                         && variants.containsKey("world0")) {

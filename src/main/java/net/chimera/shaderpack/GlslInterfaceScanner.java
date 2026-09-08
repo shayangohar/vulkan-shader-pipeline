@@ -90,6 +90,18 @@ public final class GlslInterfaceScanner {
                 continue;
             }
             int qualifierIndex = index;
+            if (token.identifier("layout")) {
+                int open = GlslLexer.nextSignificant(tokens, index);
+                int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
+                if (open < 0 || close < 0) {
+                    deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
+                    continue;
+                }
+                qualifierIndex = GlslLexer.nextSignificant(tokens, close);
+                if (qualifierIndex < 0) {
+                    continue;
+                }
+            }
             String interpolation = null;
             if (isInterpolation(tokens.get(qualifierIndex).text())) {
                 interpolation = tokens.get(qualifierIndex).text();

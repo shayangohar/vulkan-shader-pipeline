@@ -81,6 +81,7 @@ public final class PackTargetGraphPlan {
         int safeWindowWidth = Math.max(1, windowWidth);
         int safeWindowHeight = Math.max(1, windowHeight);
         int safeDimension = deviceMaxImageDimension <= 0 ? Integer.MAX_VALUE : deviceMaxImageDimension;
+        Set<Integer> unavailableFormatTargets = unavailableFormatTargets(config);
 
         Set<Integer> used = new TreeSet<>();
         used.add(0);
@@ -88,10 +89,16 @@ public final class PackTargetGraphPlan {
             for (PackProgramPlan program : programs) {
                 if (program == null || program.targetPlan() == null
                         || !program.executable() || !program.targetPlan().executable()) continue;
-                used.addAll(program.targetPlan().targetSlots());
+                for (int target : program.targetPlan().targetSlots()) {
+                    if (!unavailableFormatTargets.contains(target)) {
+                        used.add(target);
+                    }
+                }
                 for (String sampler : samplerNames(program)) {
                     Integer target = colorTarget(program, sampler, resourcePlan);
-                    if (target != null) used.add(target);
+                    if (target != null && !unavailableFormatTargets.contains(target)) {
+                        used.add(target);
+                    }
                 }
             }
         }
@@ -143,17 +150,19 @@ public final class PackTargetGraphPlan {
             reads.sort(Integer::compareTo);
             List<String> stepDeviations = new ArrayList<>(post.deviations());
             boolean executable = program.executable() && post.executable();
-            for (int target : outputs) {
-                PackConfig.TargetSettings setting = settings.get(target);
-                if (setting != null && setting.mipmapped()) {
-                    stepDeviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:" + target);
+            Set<Integer> referencedTargets = new TreeSet<>(outputs);
+            referencedTargets.addAll(reads);
+            for (int target : referencedTargets) {
+                if (unavailableFormatTargets.contains(target)) {
+                    stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
                     executable = false;
                 }
-            }
-            for (String deviation : config == null ? List.<String>of() : config.deviations()) {
-                if (deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")) {
-                    stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + program.name());
-                    executable = false;
+                PackConfig.TargetSettings setting = settings.get(target);
+                if (setting != null && setting.mipmapped()) {
+                    // The resource owner currently has one mip level. Keep the
+                    // pass valid with an explicit base-level sampling fallback.
+                    stepDeviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:" + target);
+                    stepDeviations.add("POST_TARGET_MIPMAP_BASE_LEVEL_FALLBACK:" + target);
                 }
             }
             if (outputs.size() > Math.min(LOGICAL_ATTACHMENT_LIMIT, Math.max(1, deviceMaxColorAttachments))) {
@@ -236,6 +245,41 @@ public final class PackTargetGraphPlan {
         return new PackTargetGraphPlan(finalTargets, steps,
                 new DepthGraphPlan(depth0, depth1, depth2, DepthGraphPlan.R32_SFLOAT, depthDeviations),
                 deviations, Math.max(1, deviceMaxColorAttachments));
+    }
+
+    private static Set<Integer> unavailableFormatTargets(PackConfig.PackConfigData config) {
+        Set<Integer> result = new TreeSet<>();
+        if (config == null) {
+            return result;
+        }
+        for (Map.Entry<Integer, Integer> entry : config.colortexFormats().entrySet()) {
+            if (!isSupportedFormat(entry.getValue())) {
+                result.add(entry.getKey());
+            }
+        }
+        for (String deviation : config.deviations()) {
+            if (!deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")) {
+                continue;
+            }
+            int marker = deviation.indexOf("colortex") + "colortex".length();
+            int end = marker;
+            while (end < deviation.length() && Character.isDigit(deviation.charAt(end))) {
+                end++;
+            }
+            if (end > marker) {
+                try {
+                    result.add(Integer.parseInt(deviation.substring(marker, end)));
+                } catch (NumberFormatException ignored) {
+                    // The parser already reported the malformed declaration.
+                }
+            }
+        }
+        return result;
+    }
+
+    private static boolean isSupportedFormat(int format) {
+        return PackConfig.FMT_TO_VK.containsValue(format)
+                || format == 37 || format == 97 || format == 109;
     }
 
     private static List<String> samplerNames(PackProgramPlan program) {

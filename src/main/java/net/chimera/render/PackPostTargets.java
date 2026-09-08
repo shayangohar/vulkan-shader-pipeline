@@ -86,9 +86,6 @@ public final class PackPostTargets {
         if (graph == null || graph.steps().isEmpty()) {
             return false;
         }
-        if (graph.deviations().stream().anyMatch(value -> value.startsWith("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED"))) {
-            throw new IllegalStateException("pack target graph contains unsupported formats");
-        }
         this.graph = graph;
         Arrays.fill(this.used, false);
         Arrays.fill(this.valid, false);

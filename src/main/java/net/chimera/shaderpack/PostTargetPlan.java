@@ -28,6 +28,8 @@ public final class PostTargetPlan {
             "(?i)\\b(?:DRAWBUFFERS|RENDERTARGETS)\\b");
     private static final Pattern FRAG_DATA = Pattern.compile(
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
+    private static final Pattern MODERN_OUTPUT = Pattern.compile(
+            "(?m)^\\s*out\\s+vec4\\s+[A-Za-z_]\\w*\\s*;");
 
     private final String programName;
     private final List<Integer> targetSlots;
@@ -88,6 +90,11 @@ public final class PostTargetPlan {
         }
         if (text.matches("(?s).*\\bgl_FragColor\\b.*")) {
             outputSet.add(0);
+        }
+        Matcher modernOutput = MODERN_OUTPUT.matcher(text);
+        int modernLocation = 0;
+        while (modernOutput.find()) {
+            outputSet.add(modernLocation++);
         }
 
         for (int target : targetSlots) {
