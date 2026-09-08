@@ -7,6 +7,7 @@ import net.chimera.ChimeraMod;
 import net.chimera.render.vertex.ChimeraExtTerrainBuilder;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.PackMaterialResolver;
+import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.minecraft.client.Minecraft;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.shader.PipelineManager;
@@ -32,7 +33,10 @@ public final class ChimeraTerrainPipelines {
     private static boolean initialized;
     private static boolean extendedMode;
     private static GraphicsPipeline terrainPipeline;
+    private static GraphicsPipeline modernTerrainPipeline;
+    private static GraphicsPipeline modernTerrainAoPipeline;
     private static PackMaterialResolver materialResolver = PackMaterialResolver.empty();
+    private static TerrainMaterialPlan materialPlan = TerrainMaterialPlan.legacy();
     /** Pack geometry program (gbuffers_terrain) installed over the chimera terrain pipeline; null = none. */
     private static GraphicsPipeline geometryOverride;
     /** Pack water program installed only over the host translucent terrain lane; null = none. */
@@ -96,7 +100,7 @@ public final class ChimeraTerrainPipelines {
     }
 
     public static GraphicsPipeline getTerrainPipeline() {
-        return geometryOverride != null ? geometryOverride : terrainPipeline;
+        return geometryOverride != null ? geometryOverride : fixedPipeline();
     }
 
     /** Selects the family override while preserving the fixed Chimera fallback. */
@@ -108,7 +112,20 @@ public final class ChimeraTerrainPipelines {
     }
 
     public static VertexFormat getTerrainVertexFormat() {
-        return ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
+        return ChimeraVertexFormats.terrainFormat(materialPlan);
+    }
+
+    /** Selects the one pack-wide append-only terrain layout before chunk rebuild. */
+    public static void setMaterialPlan(TerrainMaterialPlan plan) {
+        TerrainMaterialPlan next = plan == null ? TerrainMaterialPlan.legacy() : plan;
+        if (materialPlan.equals(next)) {
+            return;
+        }
+        materialPlan = next;
+        if (initialized && extendedMode) {
+            ensureFixedPipeline();
+            setTerrainMode(true);
+        }
     }
 
     public static void setMaterialResolver(PackMaterialResolver resolver) {
@@ -141,7 +158,7 @@ public final class ChimeraTerrainPipelines {
 
     private static void setTerrainMode(boolean chimeraMode) {
         VertexFormat desiredFormat = chimeraMode
-                ? ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN
+                ? ChimeraVertexFormats.terrainFormat(materialPlan)
                 : CustomVertexFormat.COMPRESSED_TERRAIN;
         boolean changed = extendedMode != chimeraMode
                 || PipelineManager.terrainVertexFormat != desiredFormat;
@@ -151,7 +168,7 @@ public final class ChimeraTerrainPipelines {
             ThreadBuilderPack.setTerrainBuilderConstructor(renderType -> {
                 int size = TerrainRenderType.getLayer(renderType).bufferSize()
                         / DefaultVertexFormat.BLOCK.getVertexSize();
-                return new ChimeraExtTerrainBuilder(size, materialResolver);
+                return new ChimeraExtTerrainBuilder(size, materialResolver, materialPlan);
             });
             PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         } else {
@@ -174,7 +191,15 @@ public final class ChimeraTerrainPipelines {
     }
 
     private static GraphicsPipeline buildPipeline(String name, VertexFormat vertexFormat) {
-        JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");
+        return buildPipeline(name, vertexFormat, name);
+    }
+
+    private static GraphicsPipeline buildPipeline(
+            String name,
+            VertexFormat vertexFormat,
+            String shaderConfigName
+    ) {
+        JsonObject json = ChimeraShaderLoader.loadJson(shaderConfigName + ".json");
         PipelineConfig config = PipelineConfig.fromJson(name, json);
 
         Pipeline.Builder builder = new Pipeline.Builder(vertexFormat, name);
@@ -193,5 +218,28 @@ public final class ChimeraTerrainPipelines {
         }
 
         return pipeline;
+    }
+
+    private static void ensureFixedPipeline() {
+        if (!initialized || !materialPlan.modern()) {
+            return;
+        }
+        if (materialPlan.separateAo()) {
+            if (modernTerrainAoPipeline == null) {
+                modernTerrainAoPipeline = buildPipeline("chimera_terrain_modern_ao",
+                        ChimeraVertexFormats.MODERN_COMPRESSED_TERRAIN_AO, "chimera_terrain");
+            }
+        } else if (modernTerrainPipeline == null) {
+            modernTerrainPipeline = buildPipeline("chimera_terrain_modern",
+                    ChimeraVertexFormats.MODERN_COMPRESSED_TERRAIN, "chimera_terrain");
+        }
+    }
+
+    private static GraphicsPipeline fixedPipeline() {
+        ensureFixedPipeline();
+        if (materialPlan.modern()) {
+            return materialPlan.separateAo() ? modernTerrainAoPipeline : modernTerrainPipeline;
+        }
+        return terrainPipeline;
     }
 }

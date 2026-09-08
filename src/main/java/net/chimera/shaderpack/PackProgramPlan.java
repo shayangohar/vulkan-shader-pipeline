@@ -22,7 +22,8 @@ public record PackProgramPlan(
         LegacyGlslConverter.TerrainVaryingLayout vertexLayout,
         List<String> deviations,
         boolean executable,
-        FamilyAdapterPlan familyAdapter
+        FamilyAdapterPlan familyAdapter,
+        TerrainMaterialPlan terrainMaterial
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -36,6 +37,7 @@ public record PackProgramPlan(
         familyAdapter = familyAdapter == null
                 ? FamilyAdapterRegistry.forProgram(program == null ? "" : program.name())
                 : familyAdapter;
+        terrainMaterial = terrainMaterial == null ? TerrainMaterialPlan.legacy() : terrainMaterial;
     }
 
     /** Compatibility constructor for callers using the pre-M6.1 plan shape. */
@@ -53,7 +55,8 @@ public record PackProgramPlan(
     ) {
         this(program, stages, interfacePlan, stageInterfaces, Map.of(), targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
-                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()));
+                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
+                TerrainMaterialPlan.legacy());
     }
 
     /** Compatibility constructor for pre-M7.6 callers. */
@@ -72,7 +75,8 @@ public record PackProgramPlan(
     ) {
         this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
-                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()));
+                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
+                TerrainMaterialPlan.legacy());
     }
 
     public String name() {

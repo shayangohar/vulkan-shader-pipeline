@@ -1,0 +1,6 @@
+{
+  "programs": [
+    { "name": "gbuffers_terrain", "vertex": "gbuffers_terrain.vsh", "fragment": "gbuffers_terrain.fsh" },
+    { "name": "gbuffers_water", "vertex": "gbuffers_water.vsh", "fragment": "gbuffers_water.fsh" }
+  ]
+}

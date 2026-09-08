@@ -2,7 +2,7 @@
 
 Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
 
-**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete. M7.6 core family adapter implementation complete. M7.7 temporal frame schedule complete. M7.8 qualification deferred pending Sodium + Iris reference evidence and follow-up compatibility work. M8.0 measured modern post translation implemented; real-pack runtime qualification pending.**
+**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete. M7.6 core family adapter implementation complete. M7.7 temporal frame schedule complete. M7.8 qualification deferred pending Sodium + Iris reference evidence and follow-up compatibility work. M8.0 measured modern post translation implemented. M8.1 modern terrain and water material bridge implemented; real-pack runtime qualification pending.**
 
 M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
 
@@ -49,6 +49,8 @@ Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfil
 | M7.6 | Core family adapters: gbuffers_block, gbuffers_hand, gbuffers_particles, shared host-state seams, and explicit unsupported-family fallback |
 | M7.7 | Complete frame schedule and temporal state: early deferred, world depth seams, late composite, final-before-GUI, and bounded previous-target validity |
 | M7.8 | Qualify core visual parity against exact Complementary and BSL packs using separate static, runtime, RenderDoc, visual, and performance evidence |
+| M8.0 | Bounded modern post translation for measured Complementary and BSL GLSL syntax |
+| M8.1 | Modern terrain and water material bridge with pack-session append-only vertex formats and explicit fallback |
 
 M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
 
@@ -93,6 +95,8 @@ M7.7 runs `m77ConformanceTest` for the immutable frame schedule and temporal val
 M7.8 is a qualification gate, not a renderer expansion. It checks exact Complementary Reimagined r5.8.1 and BSL v10.1.3 packs through static plan eligibility, runtime installation, RenderDoc execution, and optional Sodium + Iris reference evidence. The qualification is currently deferred because the Sodium + Iris instance does not yet provide a compatible reference capture path. Run the strict check with `tools\m78-qualification.ps1`, providing the two pack paths, versions, Chimera logs, and Chimera captures. Add `-RequireReference` only when matching Sodium + Iris captures are available. The harness never claims visual parity from static eligibility alone, and performance comparison remains deferred to `TASK-172`.
 
 M8.0 extends the shared load-time translator for the measured modern post syntax used by Complementary Reimagined r5.8.1 and BSL v10.1.3. Run `m80ConformanceTest` for the original modern post fixture and earlier baselines. GLSL 330 and 400 support is bounded to the existing post adapter; unsupported families, resources, and syntax remain explicit identity fallback.
+
+M8.1 extends the same shared plan to a bounded modern `gbuffers_terrain` and `gbuffers_water` material contract. It keeps the legacy 24-byte terrain path unchanged and selects a pack-session 36-byte or 40-byte append-only format for modern material inputs. The bridge supplies block identity, midpoint UV, midpoint block data, lightmap data, and a truthful normal/tangent fallback; `separateAo` is carried explicitly while host color ownership remains visible as a deviation. MRT, modern shadow stages, writable resources, and unsupported material declarations remain identity fallback. Run `m81ConformanceTest` before staging. Runtime qualification must prove the terrain and water pipeline, vertex stride, descriptor bindings, and safe fallback in Minecraft and RenderDoc.
 
 For headless runtime verification, run `powershell -NoProfile -ExecutionPolicy Bypass -File tools\\launch-chimera-world.ps1`. The script uses Prism Launcher world Quick Play, waits for `Chimera Dev` to be active, and prints the Minecraft PID for RenderDoc injection. It does not edit the instance configuration.
 

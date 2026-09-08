@@ -281,13 +281,20 @@ public final class PackProbe {
                 .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
         String source = combinedSource.toString();
         String fragment = sourceView.getOrDefault("fragment", source);
+        String vertex = sourceView.get("vertex");
         String name = inventory.name;
         String stripped = stripComments(source);
         boolean executablePostName = PostTargetPlan.isPostProgramName(name);
+        boolean modernTerrain = (name.equals("gbuffers_terrain") || name.equals("gbuffers_water"))
+                && programPlan != null
+                && programPlan.terrainMaterial().modern();
         boolean modern = usesUnsupportedModernGlsl(stripped,
                 executablePostName, name.equals("gbuffers_entities"));
         if (programPlan != null && executablePostName
                 && LegacyGlslConverter.supportsModernPost(fragment)) {
+            modern = false;
+        }
+        if (modernTerrain) {
             modern = false;
         }
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
@@ -364,17 +371,23 @@ public final class PackProbe {
                 && (!FamilyAdapterRegistry.isEntityLike(name)
                 && !name.equals("gbuffers_particles")
                 || inventory.stages.contains("vertex"));
-        String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
+        vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         if (programPlan != null) {
             if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
+                deviations.add(programPlan.terrainMaterial().modern()
+                        ? (programPlan.convertedVertex() != null
+                        ? "MODERN_TERRAIN_VERTEX_BRIDGE" : "MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
+                        : (programPlan.convertedVertex() != null
+                        ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"));
             } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "SHADOW_VERTEX_BRIDGE" : "SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "TRANSLUCENT_VERTEX_BRIDGE" : "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
+                deviations.add(programPlan.terrainMaterial().modern()
+                        ? (programPlan.convertedVertex() != null
+                        ? "MODERN_WATER_VERTEX_BRIDGE" : "MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED")
+                        : (programPlan.convertedVertex() != null
+                        ? "TRANSLUCENT_VERTEX_BRIDGE" : "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED"));
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_entities")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "ENTITY_VERTEX_BRIDGE" : "ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
@@ -409,10 +422,12 @@ public final class PackProbe {
                     deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
                 }
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
-                if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
+                if (LegacyGlslConverter.supportsModernTerrain(vertex, fragment)) {
+                    deviations.add("MODERN_WATER_VERTEX_BRIDGE");
+                } else if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
                     deviations.add("TRANSLUCENT_VERTEX_BRIDGE");
                 } else {
-                    deviations.add("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED");
+                    deviations.add("MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED");
                 }
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_entities")) {
                 if (LegacyGlslConverter.supportsEntityVertex(vertex, fragment)) {
@@ -558,6 +573,8 @@ public final class PackProbe {
                     || deviation.startsWith("POST_OUTPUT_INDEX_UNMAPPED:")
                     || deviation.equals("FINAL_MRT_UNSUPPORTED")
                     || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("SHADOW_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED")

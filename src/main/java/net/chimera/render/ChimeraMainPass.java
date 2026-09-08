@@ -34,6 +34,7 @@ import net.chimera.shaderpack.TargetStep;
 import net.chimera.shaderpack.PackResourceBinding;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackResourceStatus;
+import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.engine.VkGpuDevice;
@@ -1497,6 +1498,7 @@ public class ChimeraMainPass implements MainPass {
         this.hdrDepthReadable = false;
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
+        ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
         PackUniformProvider.resetSession();
     }
 
@@ -1896,6 +1898,7 @@ public class ChimeraMainPass implements MainPass {
         if (dir == null) {
             LOGGER.info("[chimera] pack disabled (identity selection)");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
+            ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             PackUniformProvider.installRuntimeSettings(null);
             this.packNeedsHdrDepth = false;
             return;
@@ -1911,6 +1914,7 @@ public class ChimeraMainPass implements MainPass {
                 : PackConfig.parse(this.packPrograms, result.shadersDir());
         this.packPlan = analysis.plan() == null
                 ? new PackPlan(this.packConfig, List.of()) : analysis.plan();
+        ChimeraTerrainPipelines.setMaterialPlan(this.packPlan.terrainMaterial());
         PackUniformProvider.installRuntimeSettings(this.packPlan.runtimeSettings());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 this.packPlan.selectedDimension(),
@@ -2069,7 +2073,10 @@ public class ChimeraMainPass implements MainPass {
                 continue;
             }
             if (name.equals("shadow")) {
-                PackPipelines.PackShadow shadow = PackPipelines.buildShadow(programPlan);
+                PackPipelines.PackShadow shadow = PackPipelines.buildShadow(programPlan,
+                        this.packPlan == null
+                                ? TerrainMaterialPlan.legacy()
+                                : this.packPlan.terrainMaterial());
                 if (shadow == null) {
                     if (this.conformanceReport != null) {
                         this.conformanceReport.markRuntime(name,
@@ -2121,7 +2128,9 @@ public class ChimeraMainPass implements MainPass {
                 }
             } else if (name.equals("gbuffers_terrain")) {
                 PackPipelines.PackTerrain terrain = PackPipelines.buildTerrain(programPlan,
-                        ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"));
+                        ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"),
+                        this.packPlan == null ? TerrainMaterialPlan.legacy()
+                                : this.packPlan.terrainMaterial());
                 if (terrain == null) {
                     if (this.conformanceReport != null) {
                         this.conformanceReport.markRuntime(name,
@@ -2155,7 +2164,9 @@ public class ChimeraMainPass implements MainPass {
                 }
             } else if (name.equals("gbuffers_water")) {
                 PackPipelines.PackTerrain water = PackPipelines.buildTranslucent(programPlan,
-                        ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"));
+                        ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"),
+                        this.packPlan == null ? TerrainMaterialPlan.legacy()
+                                : this.packPlan.terrainMaterial());
                 if (water == null) {
                     if (this.conformanceReport != null) {
                         this.conformanceReport.markRuntime(name,

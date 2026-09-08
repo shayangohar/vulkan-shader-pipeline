@@ -1,0 +1,49 @@
+{
+  "slice": "M8.1",
+  "fixture": "terrain_water",
+  "fixtures": {
+    "terrain_water": {
+      "reportSha256": "ae37a2159ad5e0a6948277e4cb2d88ae844519f862d832dae60f70d0ff9c1e12",
+      "sourceHashes": {
+        "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
+        "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
+        "gbuffers_water.fsh": "e211472b7d834107c6d31dd12eb34f8fefdab30fd58c2f70f5d295c118e16636",
+        "gbuffers_water.vsh": "069fc7daf92cdfa82e8625c95796be6406a37d96be031522c1853a2a69093abb"
+      },
+      "expectedExecutablePrograms": [
+        "gbuffers_terrain",
+        "gbuffers_water"
+      ],
+      "expectedFallbackPrograms": [],
+      "expectedUnsupportedPrograms": [],
+      "expectedDeviations": [
+        "MODERN_GLSL_TRANSLATED",
+        "MODERN_TERRAIN_VERTEX_BRIDGE",
+        "MODERN_WATER_VERTEX_BRIDGE",
+        "SEPARATE_AO_ATTRIBUTE",
+        "SEPARATE_AO_HOST_COLOR_FALLBACK",
+        "TERRAIN_NORMAL_AUTHORITATIVE",
+        "TERRAIN_TANGENT_DERIVED_FALLBACK",
+        "TRANSLUCENT_STATE_FIXED_TO_HOST"
+      ]
+    },
+    "unsupported_terrain": {
+      "reportSha256": "4512cb0dad1dbd24eb7ca6c4f75235bfced98e22e012e80974e71c91e2698944",
+      "sourceHashes": {
+        "gbuffers_terrain.fsh": "b975c6b21bc0196e572bbd83b8e826520805d60286f22dfe92e49e03825ed15d",
+        "gbuffers_terrain.vsh": "20d0a103fef28c0d9624ae1d372e9847f9aaafc0eb5570eb7447507e86288055"
+      },
+      "expectedExecutablePrograms": [],
+      "expectedFallbackPrograms": [
+        "gbuffers_terrain"
+      ],
+      "expectedUnsupportedPrograms": [],
+      "expectedDeviations": [
+        "MODERN_GLSL_UNSUPPORTED",
+        "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"
+      ]
+    }
+  },
+  "modernFamilies": ["gbuffers_terrain", "gbuffers_water"],
+  "supportedStrides": [36, 40]
+}

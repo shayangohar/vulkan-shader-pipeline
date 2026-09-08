@@ -64,9 +64,13 @@ public final class PackPlanBuilder {
         Map<String, PreparedShaderSource> stages = preparedStages(program);
         if (stageFor(program.name()) == UniformRegistry.Stage.POST) {
             stages = normalizeModernPostStages(stages);
+        } else if (isTerrainMaterialFamily(program.name())) {
+            stages = normalizeModernTerrainStages(stages);
         }
         String fragment = source(stages, "fragment", program.executableFragmentSource());
         String vertex = source(stages, "vertex", program.executableVertexSource());
+        TerrainMaterialPlan terrainMaterial = TerrainMaterialPlan.forProgram(
+                program.name(), vertex, fragment, config);
         // Preserve the M5 report contract: root-level packs are inventoried
         // from their authored declarations, while nested dimension variants
         // use the active preprocessed snapshot.
@@ -105,6 +109,7 @@ public final class PackPlanBuilder {
         deviations.addAll(interfacePlan.deviations());
         stageInterfaces.values().forEach(value -> deviations.addAll(value.deviations()));
         deviations.addAll(stageMatch.deviations());
+        deviations.addAll(terrainMaterial.deviations());
         if (targetPlan != null) {
             deviations.addAll(targetPlan.deviations());
         }
@@ -131,12 +136,16 @@ public final class PackPlanBuilder {
 
         try {
             if (isTerrainLike(program.name()) && vertex != null) {
-                LegacyGlslConverter.TerrainVertexConversion conversion = switch (program.name()) {
-                    case "shadow" -> LegacyGlslConverter.convertShadowVertex(
-                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
-                    default -> LegacyGlslConverter.convertTerrainVertex(
-                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
-                };
+                boolean modernTerrain = terrainMaterial.modern()
+                        && isTerrainMaterialFamily(program.name());
+                LegacyGlslConverter.TerrainVertexConversion conversion = modernTerrain
+                        ? LegacyGlslConverter.convertModernTerrainVertex(vertex, null, fragment)
+                        : switch (program.name()) {
+                            case "shadow" -> LegacyGlslConverter.convertShadowVertex(
+                                    vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
+                            default -> LegacyGlslConverter.convertTerrainVertex(
+                                    vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
+                        };
                 if (conversion == null) {
                     deviations.add(vertexBridgeDeviation(program.name()));
                     executable = false;
@@ -279,7 +288,7 @@ public final class PackPlanBuilder {
         return new PackProgramPlan(program, stages, interfacePlan, stageInterfaces,
                 varyingLocations, targetPlan, convertedFragment, convertedVertex,
                 vertexLayout, deviations, executable,
-                FamilyAdapterRegistry.forProgram(program.name()));
+                FamilyAdapterRegistry.forProgram(program.name()), terrainMaterial);
     }
 
     private static Map<String, Integer> postVaryingLocations(
@@ -315,6 +324,10 @@ public final class PackPlanBuilder {
     private static boolean isTerrainLike(String name) {
         return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
                 || name.equals("shadow");
+    }
+
+    private static boolean isTerrainMaterialFamily(String name) {
+        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
     }
 
     private static String vertexBridgeDeviation(String name) {
@@ -367,6 +380,25 @@ public final class PackPlanBuilder {
                 continue;
             }
             String normalized = LegacyGlslConverter.normalizeModernPost(prepared.source());
+            List<String> deviations = new ArrayList<>(prepared.deviations());
+            deviations.add("MODERN_GLSL_TRANSLATED");
+            result.put(entry.getKey(), new PreparedShaderSource(
+                    prepared.stage(), prepared.relativePath(), normalized,
+                    prepared.dependencies(), deviations));
+        }
+        return result;
+    }
+
+    private static Map<String, PreparedShaderSource> normalizeModernTerrainStages(
+            Map<String, PreparedShaderSource> stages
+    ) {
+        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
+        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
+            PreparedShaderSource prepared = entry.getValue();
+            if (prepared.source() == null || !hasModernVersion(prepared.source())) {
+                continue;
+            }
+            String normalized = LegacyGlslConverter.normalizeModernTerrain(prepared.source());
             List<String> deviations = new ArrayList<>(prepared.deviations());
             deviations.add("MODERN_GLSL_TRANSLATED");
             result.put(entry.getKey(), new PreparedShaderSource(

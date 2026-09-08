@@ -12,11 +12,12 @@ public record PackPlan(
         PackEntityIdResolver entityIds,
         PackSettingsPlan settings,
         PackResolutionPlan resolution,
-        PackResourcePlan resources
+        PackResourcePlan resources,
+        TerrainMaterialPlan terrainMaterial
 ) {
     public PackPlan(PackConfig.PackConfigData config, List<PackProgramPlan> programs) {
         this(config, programs, PackEntityIdResolver.empty(),
-                PackSettingsPlan.empty(), PackResolutionPlan.empty(), PackResourcePlan.empty());
+                PackSettingsPlan.empty(), PackResolutionPlan.empty(), PackResourcePlan.empty(), null);
     }
 
     public PackPlan(
@@ -25,7 +26,19 @@ public record PackPlan(
             PackEntityIdResolver entityIds
     ) {
         this(config, programs, entityIds, PackSettingsPlan.empty(),
-                PackResolutionPlan.empty(), PackResourcePlan.empty());
+                PackResolutionPlan.empty(), PackResourcePlan.empty(), null);
+    }
+
+    /** Compatibility constructor for the pre-M8.1 resource-plan shape. */
+    public PackPlan(
+            PackConfig.PackConfigData config,
+            List<PackProgramPlan> programs,
+            PackEntityIdResolver entityIds,
+            PackSettingsPlan settings,
+            PackResolutionPlan resolution,
+            PackResourcePlan resources
+    ) {
+        this(config, programs, entityIds, settings, resolution, resources, null);
     }
 
     public PackPlan {
@@ -37,6 +50,7 @@ public record PackPlan(
         settings = settings == null ? PackSettingsPlan.empty() : settings;
         resolution = resolution == null ? PackResolutionPlan.empty() : resolution;
         resources = resources == null ? PackResourcePlan.empty() : resources;
+        terrainMaterial = terrainMaterial == null ? deriveTerrainMaterial(programs) : terrainMaterial;
     }
 
     public Map<String, PackProgramPlan> byName() {
@@ -108,5 +122,22 @@ public record PackPlan(
 
     public PackResourcePlan resources() {
         return resources;
+    }
+
+    /** The one terrain layout selected for every chunk buffer in this session. */
+    public TerrainMaterialPlan terrainMaterial() {
+        return terrainMaterial;
+    }
+
+    private static TerrainMaterialPlan deriveTerrainMaterial(List<PackProgramPlan> values) {
+        TerrainMaterialPlan result = TerrainMaterialPlan.legacy();
+        if (values != null) {
+            for (PackProgramPlan value : values) {
+                if (value != null) {
+                    result = result.merge(value.terrainMaterial());
+                }
+            }
+        }
+        return result;
     }
 }

@@ -11,7 +11,15 @@ public final class ChimeraExtTerrainBuilder extends TerrainBuilder {
     private final ChimeraExtVertexBuilder extendedVertexBuilder;
 
     public ChimeraExtTerrainBuilder(int size, PackMaterialResolver materialResolver) {
-        super(size, new ChimeraExtVertexBuilder());
+        this(size, materialResolver, net.chimera.shaderpack.TerrainMaterialPlan.legacy());
+    }
+
+    public ChimeraExtTerrainBuilder(
+            int size,
+            PackMaterialResolver materialResolver,
+            net.chimera.shaderpack.TerrainMaterialPlan materialPlan
+    ) {
+        super(size, new ChimeraExtVertexBuilder(materialPlan));
         this.materialResolver = materialResolver == null ? PackMaterialResolver.empty() : materialResolver;
         this.extendedVertexBuilder = (ChimeraExtVertexBuilder) this.vertexBuilder;
     }

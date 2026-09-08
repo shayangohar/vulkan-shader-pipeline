@@ -27,7 +27,7 @@ public abstract class QuadSorterMixin {
     @Inject(method = "setupQuadSortingPoints", at = @At("HEAD"), cancellable = true)
     private void chimera$setupExtendedPoints(long bufferPtr, int vertexCount,
                                               VertexFormat format, CallbackInfo ci) {
-        if (format != ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN) {
+        if (!ChimeraVertexFormats.isTerrainFormat(format)) {
             return;
         }
 

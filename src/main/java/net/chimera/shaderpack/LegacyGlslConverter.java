@@ -44,6 +44,14 @@ public final class LegacyGlslConverter {
                     + "(float|vec2|vec3|vec4)\\s+(\\w+)\\s*;");
     private static final Pattern TERRAIN_ATTRIBUTE_DECL =
             Pattern.compile("(?m)\\battribute\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
+    private static final Pattern MODERN_TERRAIN_DECL = Pattern.compile(
+            "(?m)^\\s*(?:(flat|noperspective|smooth|centroid|sample)\\s+)?"
+                    + "(in|out|varying)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
+    private static final Pattern MODERN_TERRAIN_INPUT_DECL = Pattern.compile(
+            "(?m)^\\s*(?:(flat|noperspective|smooth|centroid|sample)\\s+)?"
+                    + "(?:in|varying)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
+    private static final Pattern MODERN_GEOMETRY_OUTPUT_DECL = Pattern.compile(
+            "(?m)^\\s*out\\s+vec4\\s+(\\w+)\\s*;\\s*");
     private static final Pattern TERRAIN_VERSION =
             Pattern.compile("(?m)^\\s*#version\\s+120(?:e)?\\s*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern ENTITY_VERSION = Pattern.compile(
@@ -352,6 +360,9 @@ public final class LegacyGlslConverter {
                 src = removeEntityIdDeclarations(src, interfacePlan);
                 src = replaceEntityIdReferences(src, terrainLayout);
             }
+            if (geometryStage && modern) {
+                src = convertModernGeometryOutputs(src);
+            }
             src = convertVaryings(src, geometryStage, terrainLayout, postVaryingLayout,
                     interfacePlan.stage());
             if (!geometryStage) {
@@ -498,6 +509,66 @@ public final class LegacyGlslConverter {
             String fragmentSource
     ) {
         return convertLegacyVertex(source, sourceFile, fragmentSource, TERRAIN_VERTEX_PREAMBLE);
+    }
+
+    /**
+     * Converts the bounded modern terrain/water contract. This is intentionally
+     * separate from the legacy bridge: modern source must use the shared
+     * append-only material inputs and cannot silently fall through to the
+     * 24-byte identity layout.
+     */
+    public static TerrainVertexConversion convertModernTerrainVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource
+    ) {
+        try {
+            String vertex = normalizeModernTerrain(prepareSource(source, sourceFile));
+            String fragment = fragmentSource == null ? "" : fragmentSource;
+            if (hasModernTerrainVersion(fragment)) {
+                fragment = normalizeModernTerrain(fragment);
+            }
+            String stripped = stripComments(vertex);
+            if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
+                    || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+                throw new IllegalArgumentException("modern terrain vertex main or position is missing");
+            }
+            if (stripped.matches("(?s).*\\b(?:uniform|buffer|image\\w*|geometry|tessellation|compute)\\b.*")) {
+                throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
+            }
+
+            Map<String, String> vertexTypes = modernTerrainVaryings(vertex, true);
+            Map<String, String> fragmentTypes = modernTerrainVaryings(fragment, false);
+            for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
+                if (!entry.getValue().equals(vertexTypes.get(entry.getKey()))) {
+                    throw new IllegalArgumentException("modern terrain varying mismatch: " + entry.getKey());
+                }
+            }
+            Map<String, Integer> locations = new TreeMap<>();
+            int location = 0;
+            for (String name : vertexTypes.keySet().stream().sorted().toList()) {
+                locations.put(name, location++);
+            }
+            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations);
+
+            // The prepared source keeps one version directive so the shared
+            // plan can inspect it. The generated bridge owns the final
+            // directive, so remove the prepared copy before composing the
+            // executable vertex shader.
+            String converted = VERSION_LINE.matcher(removeModernTerrainInputs(vertex, layout))
+                    .replaceAll("");
+            converted = GlslTokenRewriter.replaceIdentifiers(converted,
+                    modernTerrainInputReplacements(vertex));
+            converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
+                    "chimeraFtransform()");
+            if (MODERN_TERRAIN_INPUT_DECL.matcher(stripComments(converted)).find()) {
+                throw new IllegalArgumentException("modern terrain input was not consumed");
+            }
+            return new TerrainVertexConversion("#version 460\n"
+                    + MODERN_TERRAIN_VERTEX_PREAMBLE + converted, layout);
+        } catch (RuntimeException failure) {
+            return null;
+        }
     }
 
     /** Converts the same strict bridge for the shadow pipeline's one-matrix UBO. */
@@ -753,6 +824,13 @@ public final class LegacyGlslConverter {
         return convertTerrainVertex(source, null, fragmentSource) != null;
     }
 
+    public static boolean supportsModernTerrain(String source, String fragmentSource) {
+        if (!hasModernTerrainVersion(source)) {
+            return false;
+        }
+        return convertModernTerrainVertex(source, null, fragmentSource) != null;
+    }
+
     /** Static probe helper for the strict shadow vertex bridge. */
     public static boolean supportsShadowVertex(String source, String fragmentSource) {
         return convertShadowVertex(source, null, fragmentSource) != null;
@@ -887,6 +965,31 @@ public final class LegacyGlslConverter {
                 || stage == UniformRegistry.Stage.HAND
                 || stage == UniformRegistry.Stage.PARTICLE) {
             return replaceEntityVaryings(src, terrainLayout, "in", false);
+        }
+        if (src.contains("#version 460")) {
+            Matcher modern = MODERN_TERRAIN_INPUT_DECL.matcher(src);
+            StringBuilder modernOut = new StringBuilder();
+            int modernLast = 0;
+            while (modern.find()) {
+                String qualifier = modern.group(1);
+                String type = modern.group(2);
+                String name = modern.group(3);
+                int location = terrainLayout == null
+                        ? GEOMETRY_VARYING_LOCATIONS.getOrDefault(name, -1)
+                        : terrainLayout.location(name);
+                if (location < 0) {
+                    throw new IllegalArgumentException("modern geometry varying has no fixed slot: " + name);
+                }
+                modernOut.append(src, modernLast, modern.start());
+                modernOut.append("layout(location = ").append(location).append(") ");
+                if (qualifier != null) {
+                    modernOut.append(qualifier).append(' ');
+                }
+                modernOut.append("in ").append(type).append(' ').append(name).append(';');
+                modernLast = modern.end();
+            }
+            modernOut.append(src, modernLast, src.length());
+            return modernOut.toString();
         }
         Matcher matcher = VARYING_DECL.matcher(src);
         StringBuilder out = new StringBuilder();
@@ -1417,6 +1520,259 @@ public final class LegacyGlslConverter {
                 .replaceAll("(?m)//.*$", " ");
     }
 
+    private static boolean hasModernTerrainVersion(String source) {
+        if (source == null) {
+            return false;
+        }
+        Matcher versions = Pattern.compile("(?im)^\\s*#version\\s+(\\d+)(?:\\s+.*)?$")
+                .matcher(source);
+        boolean found = false;
+        while (versions.find()) {
+            found = true;
+            int version = Integer.parseInt(versions.group(1));
+            if (version != 330 && version != 400 && version != 460) {
+                return false;
+            }
+        }
+        return found;
+    }
+
+    static String normalizeModernTerrain(String source) {
+        if (!hasModernTerrainVersion(source)) {
+            throw new IllegalArgumentException("modern terrain requires GLSL 330, 400, or prepared 460");
+        }
+        String result = VERSION_LINE.matcher(source).replaceAll("");
+        result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
+        result = PRECISION_DECL.matcher(result).replaceAll("");
+        result = MODERN_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
+        result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(
+                "lowp", "", "mediump", "", "highp", ""));
+        // Keep the normalized source self-describing for the shared program
+        // plan. The converter also accepts this prepared 460 form, so the
+        // authored version is removed exactly once and never duplicated.
+        return "#version 460\n" + GLOBAL_NONCONST.matcher(result).replaceAll("$1 $2 =");
+    }
+
+    private static Map<String, String> modernTerrainVaryings(String source, boolean vertexStage) {
+        Map<String, String> result = new TreeMap<>();
+        Matcher matcher = MODERN_TERRAIN_DECL.matcher(source == null ? "" : source);
+        while (matcher.find()) {
+            String qualifier = matcher.group(2);
+            boolean applies = vertexStage
+                    ? qualifier.equals("out") || qualifier.equals("varying")
+                    : qualifier.equals("in") || qualifier.equals("varying");
+            if (!applies) {
+                continue;
+            }
+            String type = matcher.group(3);
+            String name = matcher.group(4);
+            if (!(type.equals("float") || type.equals("vec2")
+                    || type.equals("vec3") || type.equals("vec4"))) {
+                throw new IllegalArgumentException("unsupported modern terrain varying: " + name);
+            }
+            String withoutDeclaration = source.substring(0, matcher.start())
+                    + source.substring(matcher.end());
+            if (!vertexStage && !containsIdentifier(withoutDeclaration, name)) {
+                continue;
+            }
+            String previous = result.putIfAbsent(name, type);
+            if (previous != null && !previous.equals(type)) {
+                throw new IllegalArgumentException("modern terrain varying has two types: " + name);
+            }
+        }
+        return result;
+    }
+
+    private static String removeModernTerrainInputs(
+            String source,
+            TerrainVaryingLayout layout
+    ) {
+        Matcher matcher = MODERN_TERRAIN_DECL.matcher(source);
+        StringBuilder result = new StringBuilder();
+        int last = 0;
+        while (matcher.find()) {
+            String qualifier = matcher.group(2);
+            String type = matcher.group(3);
+            String name = matcher.group(4);
+            result.append(source, last, matcher.start());
+            if (qualifier.equals("in")) {
+                if (!modernTerrainInputExpression(type, name).isBlank()) {
+                    // The declaration is synthesized by the fixed preamble.
+                } else {
+                    throw new IllegalArgumentException("modern terrain input is unsupported: " + name);
+                }
+            } else if (qualifier.equals("out") || qualifier.equals("varying")) {
+                if (!layout.types().containsKey(name)) {
+                    throw new IllegalArgumentException("modern terrain output is not in the shared layout: " + name);
+                }
+                result.append("layout(location = ").append(layout.location(name)).append(") ");
+                result.append("out ").append(type).append(' ').append(name).append(';');
+            }
+            last = matcher.end();
+        }
+        result.append(source, last, source.length());
+        return result.toString();
+    }
+
+    private static Map<String, String> modernTerrainInputReplacements(String source) {
+        Map<String, String> replacements = new TreeMap<>();
+        Matcher matcher = MODERN_TERRAIN_DECL.matcher(source);
+        while (matcher.find()) {
+            if (!matcher.group(2).equals("in")) {
+                continue;
+            }
+            String type = matcher.group(3);
+            String name = matcher.group(4);
+            String expression = modernTerrainInputExpression(type, name);
+            if (!expression.isBlank()) {
+                replacements.put(name, expression);
+            }
+        }
+        replacements.putIfAbsent("gl_Vertex", "chimeraVertexValue()");
+        replacements.putIfAbsent("gl_Color", "chimeraColorValue()");
+        replacements.putIfAbsent("gl_MultiTexCoord0", "chimeraTexCoord0Value()");
+        replacements.putIfAbsent("gl_MultiTexCoord1", "chimeraTexCoord1Value()");
+        replacements.putIfAbsent("gl_Normal", "chimeraNormalValue()");
+        replacements.putIfAbsent("mc_Entity", "chimeraMcEntityValue()");
+        replacements.putIfAbsent("mc_midTexCoord", "chimeraMidTexCoordValue()");
+        replacements.putIfAbsent("at_midBlock", "chimeraMidBlockValue()");
+        replacements.putIfAbsent("at_tangent", "chimeraTangentValue()");
+        return replacements;
+    }
+
+    private static String modernTerrainInputExpression(String type, String name) {
+        String value;
+        String baseType;
+        switch (name) {
+            case "Position", "vaPosition", "a_Position" -> {
+                value = "chimeraVertexValue()";
+                baseType = "vec4";
+            }
+            case "Color", "vaColor", "a_Color" -> {
+                value = "chimeraColorValue()";
+                baseType = "vec4";
+            }
+            case "UV0", "vaUV0", "a_TexCoord" -> {
+                value = "chimeraTexCoord0Value()";
+                baseType = "vec4";
+            }
+            case "UV2", "vaUV2", "a_Light" -> {
+                if (type.equals("ivec2")) {
+                    return "ivec2(chimeraTexCoord1Value().xy * 256.0)";
+                }
+                value = "chimeraTexCoord1Value()";
+                baseType = "vec4";
+            }
+            case "Normal", "vaNormal", "a_Normal" -> {
+                value = "chimeraNormalValue()";
+                baseType = "vec3";
+            }
+            case "mc_Entity" -> {
+                value = "chimeraMcEntityValue()";
+                baseType = "vec2";
+            }
+            case "mc_midTexCoord" -> {
+                if (type.equals("uvec2")) {
+                    return "chimeraMidTexCoordRawValue()";
+                }
+                value = "chimeraMidTexCoordValue()";
+                baseType = "vec2";
+            }
+            case "at_midBlock" -> {
+                if (type.equals("ivec2") || type.equals("ivec3") || type.equals("ivec4")) {
+                    return switch (type) {
+                        case "ivec2" -> "chimeraMidBlockRawValue().xy";
+                        case "ivec3" -> "chimeraMidBlockRawValue().xyz";
+                        default -> "chimeraMidBlockRawValue()";
+                    };
+                }
+                value = "chimeraMidBlockValue()";
+                baseType = "vec3";
+            }
+            case "at_tangent" -> {
+                value = "chimeraTangentValue()";
+                baseType = "vec4";
+            }
+            default -> {
+                return "";
+            }
+        }
+        return adaptModernTerrainType(type, value, baseType);
+    }
+
+    private static String adaptModernTerrainType(String type, String value, String baseType) {
+        if (type.equals(baseType)) {
+            return value;
+        }
+        if (type.equals("float")) {
+            return value + ".x";
+        }
+        if (type.equals("int")) {
+            return "int(" + value + ".x)";
+        }
+        if (type.equals("uint")) {
+            return "uint(" + value + ".x)";
+        }
+        if (type.equals("vec2")) {
+            return baseType.equals("vec2") ? value : value + ".xy";
+        }
+        if (type.equals("vec3")) {
+            return switch (baseType) {
+                case "vec2" -> "vec3(" + value + ", 0.0)";
+                case "vec3" -> value;
+                default -> value + ".xyz";
+            };
+        }
+        if (type.equals("vec4")) {
+            return switch (baseType) {
+                case "vec2" -> "vec4(" + value + ", 0.0, 1.0)";
+                case "vec3" -> "vec4(" + value + ", 0.0)";
+                default -> value;
+            };
+        }
+        if (type.equals("ivec2")) {
+            return "ivec2(" + value + ")";
+        }
+        if (type.equals("ivec3")) {
+            return "ivec3(" + value + ")";
+        }
+        if (type.equals("ivec4")) {
+            return "ivec4(" + value + ")";
+        }
+        if (type.equals("uvec2")) {
+            return "uvec2(" + value + ")";
+        }
+        if (type.equals("uvec3")) {
+            return "uvec3(" + value + ")";
+        }
+        if (type.equals("uvec4")) {
+            return "uvec4(" + value + ")";
+        }
+        return "";
+    }
+
+    private static String convertModernGeometryOutputs(String source) {
+        Matcher matcher = MODERN_GEOMETRY_OUTPUT_DECL.matcher(source);
+        List<String> names = new ArrayList<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        if (names.isEmpty()) {
+            return source;
+        }
+        if (names.size() != 1) {
+            throw new IllegalArgumentException("modern terrain MRT output is unsupported");
+        }
+        String result = matcher.replaceAll("");
+        String name = names.get(0);
+        if (!name.equals("fragColor")) {
+            result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(name, "fragColor"));
+        }
+        // Keep the version directive at the start of the source. The final
+        // declaration pass inserts its other generated declarations after it.
+        return insertAfterFirstLine(result, "layout(location = 0) out vec4 fragColor;\n");
+    }
+
     private static final String TERRAIN_VERTEX_PREAMBLE = """
             layout(binding = 0) uniform ViewUBO {
                 mat4 MVP;
@@ -1480,6 +1836,50 @@ public final class LegacyGlslConverter {
 
             vec4 chimeraFtransform() {
                 return MVP * chimeraVertexValue();
+            }
+
+            """;
+
+    /** The legacy prefix plus the M8.1 append-only material attributes. */
+    private static final String MODERN_TERRAIN_VERTEX_PREAMBLE = TERRAIN_VERTEX_PREAMBLE + """
+            layout(location = 5) in uvec2 inMidTexCoord;
+            layout(location = 6) in int inMidBlock;
+            layout(location = 7) in vec4 inTangent;
+            layout(location = 8) in vec4 inSeparateAo;
+
+            vec2 chimeraMidTexCoordValue() {
+                return vec2(inMidTexCoord) / 32768.0;
+            }
+
+            uvec2 chimeraMidTexCoordRawValue() {
+                return inMidTexCoord;
+            }
+
+            ivec4 chimeraMidBlockRawValue() {
+                return ivec4(
+                        bitfieldExtract(inMidBlock, 0, 8),
+                        bitfieldExtract(inMidBlock, 8, 8),
+                        bitfieldExtract(inMidBlock, 16, 8),
+                        bitfieldExtract(inMidBlock, 24, 8));
+            }
+
+            vec3 chimeraMidBlockValue() {
+                return vec3(chimeraMidBlockRawValue().xyz) / 64.0;
+            }
+
+            vec4 chimeraTangentValue() {
+                vec3 normal = normalize(inTangent.xyz);
+                vec3 axis = abs(normal.y) < 0.999
+                        ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                return vec4(normalize(cross(axis, normal)), 1.0);
+            }
+
+            vec3 chimeraNormalValue() {
+                return normalize(inTangent.xyz);
+            }
+
+            vec4 chimeraSeparateAoValue() {
+                return inSeparateAo;
             }
 
             """;

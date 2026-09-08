@@ -514,6 +514,18 @@ tasks.register('m80ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m81ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M8.1 modern terrain and water material bridge checks.'
+    dependsOn tasks.named('conformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M81ConformanceHarness'
+    jvmArgs '-ea'
+    systemProperty 'chimera.m81.printBaseline',
+            (project.findProperty('m81PrintBaseline')?.toString()?.toBoolean()
+                    ?: Boolean.getBoolean('chimera.m81.printBaseline')).toString()
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
@@ -528,6 +540,7 @@ tasks.named('check') {
     dependsOn tasks.named('m76ConformanceTest')
     dependsOn tasks.named('m77ConformanceTest')
     dependsOn tasks.named('m80ConformanceTest')
+    dependsOn tasks.named('m81ConformanceTest')
 }
 
 tasks.named('test') {

@@ -124,16 +124,48 @@ public final class PackPipelines {
 
     /** Builds the extended terrain pipeline from the shared program plan. */
     public static PackTerrain buildTerrain(PackProgramPlan plan, String fixedVertexSource) {
-        return buildTerrainLikePlan(plan, fixedVertexSource);
+        return buildTerrainLikePlan(plan, fixedVertexSource,
+                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial());
+    }
+
+    /** Builds terrain with the pack-wide union format selected at load time. */
+    public static PackTerrain buildTerrain(
+            PackProgramPlan plan,
+            String fixedVertexSource,
+            TerrainMaterialPlan materialPlan
+    ) {
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan);
     }
 
     /** Builds the translucent terrain pipeline from the shared program plan. */
     public static PackTerrain buildTranslucent(PackProgramPlan plan, String fixedVertexSource) {
-        return buildTerrainLikePlan(plan, fixedVertexSource);
+        return buildTerrainLikePlan(plan, fixedVertexSource,
+                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial());
+    }
+
+    /** Builds water with the pack-wide union format selected at load time. */
+    public static PackTerrain buildTranslucent(
+            PackProgramPlan plan,
+            String fixedVertexSource,
+            TerrainMaterialPlan materialPlan
+    ) {
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan);
     }
 
     /** Builds the shadow pipeline from the shared program plan. */
     public static PackShadow buildShadow(PackProgramPlan plan) {
+        return buildShadow(plan, plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial());
+    }
+
+    /**
+     * Builds the shadow pipeline using the pack-wide terrain format. Shadow
+     * shaders remain on the legacy source contract, but their vertices must
+     * match the active terrain builder when a modern terrain family is live.
+     */
+    public static PackShadow buildShadow(
+            PackProgramPlan plan,
+            TerrainMaterialPlan materialPlan
+    ) {
         if (plan == null || !plan.executable() || plan.convertedFragment() == null
                 || plan.convertedVertex() == null) {
             return null;
@@ -151,7 +183,7 @@ public final class PackPipelines {
 
             PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
-                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + plan.name());
+                    ChimeraVertexFormats.terrainFormat(materialPlan), "pack_" + plan.name());
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
@@ -456,7 +488,8 @@ public final class PackPipelines {
 
     private static PackTerrain buildTerrainLikePlan(
             PackProgramPlan plan,
-            String fixedVertexSource
+            String fixedVertexSource,
+            TerrainMaterialPlan materialPlan
     ) {
         if (plan == null || !plan.executable() || plan.convertedFragment() == null) {
             return null;
@@ -472,7 +505,7 @@ public final class PackPipelines {
             json.add("samplers", samplerArray(slots));
             PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
-                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + plan.name());
+                    ChimeraVertexFormats.terrainFormat(materialPlan), "pack_" + plan.name());
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
                     plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex());
