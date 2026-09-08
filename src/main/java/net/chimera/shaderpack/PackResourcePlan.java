@@ -159,9 +159,10 @@ public final class PackResourcePlan {
                     PackResourceStatus.UNAVAILABLE, deviations);
         }
 
-        if (name.equals("texture") || name.equals("lightmap")) {
-            deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + name);
-            return new PackResourceBinding(program, name, name,
+        if (name.equals("texture") || name.equals("tex") || name.equals("lightmap")) {
+            String hostResource = name.equals("tex") ? "texture" : name;
+            deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + hostResource);
+            return new PackResourceBinding(program, name, hostResource,
                     PackResourceKind.TARGET, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
@@ -254,6 +255,7 @@ public final class PackResourcePlan {
 
     public static String canonicalResource(String sampler) {
         if (sampler == null) return "";
+        if (sampler.equals("tex")) return "texture";
         if (sampler.equals("gcolor")) return "colortex0";
         if (sampler.equals("gdepth")) return "colortex1";
         if (sampler.equals("gnormal")) return "colortex2";

@@ -195,10 +195,19 @@ public final class PackPipelines {
             JsonObject json = shadowPipelineJson();
             json.addProperty("fragment", "pack_" + plan.name());
             json.add("samplers", samplerArray(slots));
+            JsonArray shadowUniforms = uniformUboArray(interfacePlan, 3, "all");
+            if (shadowUniforms.size() > 0) {
+                JsonArray ubos = json.getAsJsonArray("UBOs");
+                for (var element : shadowUniforms) {
+                    ubos.add(element);
+                }
+            }
 
             PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
                     ChimeraVertexFormats.terrainFormat(materialPlan), "pack_" + plan.name());
+            // Shadow UBOs use the same canonical provider as post and family pipelines.
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
@@ -555,6 +564,14 @@ public final class PackPipelines {
 
     /** One generated fragment UBO, or an empty array for the M4 no-uniform path. */
     private static JsonArray uniformUboArray(UniformRegistry.ProgramInterface interfacePlan) {
+        return uniformUboArray(interfacePlan, 0, "fragment");
+    }
+
+    private static JsonArray uniformUboArray(
+            UniformRegistry.ProgramInterface interfacePlan,
+            int binding,
+            String type
+    ) {
         JsonArray ubos = new JsonArray();
         List<UniformRegistry.UniformDeclaration> uniforms = interfacePlan.executableUniforms();
         if (uniforms.isEmpty()) {
@@ -562,8 +579,8 @@ public final class PackPipelines {
         }
 
         JsonObject ubo = new JsonObject();
-        ubo.addProperty("type", "fragment");
-        ubo.addProperty("binding", 0);
+        ubo.addProperty("type", type);
+        ubo.addProperty("binding", binding);
         JsonArray fields = new JsonArray();
         for (UniformRegistry.UniformDeclaration uniform : uniforms) {
             JsonObject field = new JsonObject();
@@ -594,7 +611,8 @@ public final class PackPipelines {
             }
             LegacyGlslConverter.TerrainVertexConversion vertex =
                     LegacyGlslConverter.convertShadowVertex(
-                        vertexSourceText, prepared ? null : program.vertexPath(), fragmentSource);
+                        vertexSourceText, prepared ? null : program.vertexPath(), fragmentSource,
+                        interfacePlan);
             if (vertex == null) {
                 throw new IllegalStateException("legacy shadow vertex bridge rejected the source");
             }
@@ -617,6 +635,7 @@ public final class PackPipelines {
             PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
                     ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + program.name());
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex.source());
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
@@ -667,10 +686,10 @@ public final class PackPipelines {
     /** Keep the host's atlas/lightmap positions when a shadow shader asks for lightmap. */
     static int[] shadowSamplerSlots(int[] declaredSlots) {
         boolean hasLightmap = java.util.Arrays.stream(declaredSlots).anyMatch(slot -> slot == 2);
-        if (!hasLightmap) {
-            return declaredSlots;
-        }
-        return new int[] {0, 2};
+        java.util.TreeSet<Integer> slots = new java.util.TreeSet<>();
+        for (int slot : declaredSlots) slots.add(slot);
+        if (hasLightmap) slots.add(0);
+        return slots.stream().mapToInt(Integer::intValue).toArray();
     }
 
     /** Preserve the registry slots used by the host entity draw. */

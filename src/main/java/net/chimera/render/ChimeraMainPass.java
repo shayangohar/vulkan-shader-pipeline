@@ -189,6 +189,7 @@ public class ChimeraMainPass implements MainPass {
     private int[] packTranslucentSlots;
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     private GraphicsPipeline packShadowPipeline;
+    private int[] packShadowSlots;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
     /** Pack block-entity program on the guarded delayed model batch. */
@@ -203,6 +204,7 @@ public class ChimeraMainPass implements MainPass {
     private long packShadowSourceId;
 
     private ChimeraShadowMap shadowMap = new ChimeraShadowMap();
+    private final PackShadowDepth packShadowDepth = new PackShadowDepth();
 
     /** True after renderLevel opens the internal HDR world target. */
     private boolean levelPhase;
@@ -354,6 +356,11 @@ public class ChimeraMainPass implements MainPass {
         // Make renderSectionLayer's rebindMainTarget() open the SHADOW pass
         // rather than the HDR target. renderSectionLayer itself opens, draws,
         // and leaves the pass open; we close it afterward.
+        VulkanImage[] previousShadowSlots = null;
+        if (this.packShadowPipeline != null) {
+            previousShadowSlots = bindPackSamplers("shadow", this.packShadowSlots,
+                    null, null, null);
+        }
         this.shadowPassActive = true;
         try {
             // Switch to the pack shadow pipeline when it is valid. The fixed
@@ -387,6 +394,7 @@ public class ChimeraMainPass implements MainPass {
             }
         } finally {
             this.shadowPassActive = false;
+            restorePackSamplers(this.packShadowSlots, previousShadowSlots);
         }
 
         // Close the shadow render pass renderSectionLayer left open.
@@ -399,6 +407,10 @@ public class ChimeraMainPass implements MainPass {
             shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             shadowDepth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
+        if (this.packShadowPipeline != null && this.packShadowDepth.isConfigured()
+                && !this.packShadowDepth.capture(cmd, shadowDepth)) {
+            LOGGER.warn("[chimera] pack shadow depth conversion failed; using raw shadow depth fallback");
+        }
         this.shadowMap.markInitialSamplingLayoutReady();
 
         // Restore the family-aware terrain getter after the shadow segment.
@@ -406,6 +418,9 @@ public class ChimeraMainPass implements MainPass {
 
         // Bind shadow texture for terrain fragment shader sampling
         this.shadowMap.bindShadowTexture();
+        if (this.packShadowDepth.image() != null) {
+            VTextureSelector.bindTexture(5, this.packShadowDepth.image());
+        }
         maintainPackShadowGoal();
     }
 
@@ -1245,9 +1260,10 @@ public class ChimeraMainPass implements MainPass {
                     }
                 }
             } else if (slot == 5) {
-                VulkanImage shadowDepth = this.shadowMap.getShadowFramebuffer() != null
-                        ? this.shadowMap.getShadowFramebuffer().getDepthAttachment()
-                        : null;
+                VulkanImage shadowDepth = this.packShadowDepth.image();
+                if (shadowDepth == null && this.shadowMap.getShadowFramebuffer() != null) {
+                    shadowDepth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
+                }
                 if (shadowDepth != null) {
                     VTextureSelector.bindTexture(5, shadowDepth);
                 }
@@ -1504,6 +1520,7 @@ public class ChimeraMainPass implements MainPass {
         }
         releasePackShadowView();
         this.shadowMap.cleanUp();
+        this.packShadowDepth.cleanUp();
         this.packPostTargets.cleanUp();
         this.packDepthTargets.cleanUp();
         this.packCoverageOwner.close();
@@ -1545,6 +1562,7 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentPipeline = null;
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
+        this.packShadowSlots = null;
         this.packEntityPipeline = null;
         this.coverageGeometryReady = false;
         this.packBlockPipeline = null;
@@ -1808,7 +1826,7 @@ public class ChimeraMainPass implements MainPass {
                         PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
                         PackConfig.DEFAULT_SHADOW_DISTANCE,
                         Map.of(), List.of());
-        this.shadowMap.init(shadowSettings.resolution(), shadowSettings.distance());
+        this.shadowMap.init(shadowSettings);
         createHdrFramebuffer(width, height);
         createOutputFramebuffer(width, height);
         createRenderPasses();
@@ -1821,6 +1839,9 @@ public class ChimeraMainPass implements MainPass {
         this.earlyOutputPass = true;
         configurePackPostTargets(width, height);
         loadPackPipelines();
+        if (this.packShadowPipeline != null && this.shadowMap.isInitialized()) {
+            this.packShadowDepth.configure(this.shadowMap.getShadowMapSize());
+        }
     }
 
     private void configurePackPostTargets(int width, int height) {
@@ -2179,6 +2200,7 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentPipeline = null;
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
+        this.packShadowSlots = null;
         this.packEntityPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = true;
@@ -2249,6 +2271,7 @@ public class ChimeraMainPass implements MainPass {
                     continue;
                 }
                 this.packShadowPipeline = shadow.pipeline();
+                this.packShadowSlots = shadow.samplerSlots();
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
                             ConformanceReport.RuntimeDisposition.INSTALLED, null);
@@ -2605,7 +2628,10 @@ public class ChimeraMainPass implements MainPass {
         if (!this.shadowMap.isInitialized() || this.shadowMap.getShadowFramebuffer() == null) {
             return;
         }
-        VulkanImage shadowDepth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
+        VulkanImage shadowDepth = this.packShadowDepth.image();
+        if (shadowDepth == null) {
+            shadowDepth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
+        }
         if (this.packShadowView == null || shadowDepth.getId() != this.packShadowSourceId) {
             // A recreated shadow attachment retires the old view: drop it from
             // the main-family set (it stays closed below) and register the new

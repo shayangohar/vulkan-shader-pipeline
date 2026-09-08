@@ -291,7 +291,9 @@ public final class UniformRegistry {
     /** Shadow writes must not sample the resource they are currently filling. */
     public static final Map<String, Integer> SHADOW_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
-            Map.entry("lightmap", 2)
+            Map.entry("tex", 0),
+            Map.entry("lightmap", 2),
+            Map.entry("noisetex", 7)
     );
 
     /** Translucent terrain uses the host's atlas, lightmap, and shadow slots. */
@@ -590,7 +592,7 @@ public final class UniformRegistry {
             }
         }
 
-        if ((stage == Stage.GEOMETRY || stage == Stage.SHADOW) && !declarations.isEmpty()) {
+        if (stage == Stage.GEOMETRY && !declarations.isEmpty()) {
             for (String name : declarations.keySet()) {
                 deviations.add("UNIFORM_NAME_UNSUPPORTED:" + name);
             }

@@ -1,0 +1,13 @@
+{
+  "milestone": "M8.3",
+  "fixture": "m8_3/shadow",
+  "scope": "modern terrain and cutout shadow caster bridge",
+  "deferred": [
+    "entity shadow casters",
+    "block entity shadow casters",
+    "shadowcolor0",
+    "shadowcolor1",
+    "shadowcomp",
+    "translucent shadow copies"
+  ]
+}

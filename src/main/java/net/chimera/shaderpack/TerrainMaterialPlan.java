@@ -31,15 +31,20 @@ public record TerrainMaterialPlan(
             String fragmentSource,
             PackConfig.PackConfigData config
     ) {
-        if (!name.equals("gbuffers_terrain") && !name.equals("gbuffers_water")) {
+        if (!name.equals("gbuffers_terrain") && !name.equals("gbuffers_water")
+                && !name.equals("shadow")) {
             return legacy();
         }
-        if (!LegacyGlslConverter.supportsModernTerrain(vertexSource, fragmentSource)) {
+        boolean supportedModern = name.equals("shadow")
+                ? LegacyGlslConverter.supportsModernShadow(vertexSource, fragmentSource)
+                : LegacyGlslConverter.supportsModernTerrain(vertexSource, fragmentSource);
+        if (!supportedModern) {
             return legacy();
         }
         List<String> deviations = new ArrayList<>();
         deviations.add(name.equals("gbuffers_water")
                 ? "MODERN_WATER_VERTEX_BRIDGE"
+                : name.equals("shadow") ? "MODERN_SHADOW_VERTEX_BRIDGE"
                 : "MODERN_TERRAIN_VERTEX_BRIDGE");
         deviations.add("TERRAIN_NORMAL_AUTHORITATIVE");
         deviations.add("TERRAIN_TANGENT_DERIVED_FALLBACK");

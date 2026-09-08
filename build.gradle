@@ -526,6 +526,17 @@ tasks.register('m81ConformanceTest', JavaExec) {
                     ?: Boolean.getBoolean('chimera.m81.printBaseline')).toString()
 }
 
+tasks.register('m83ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M8.3 modern shadow and settings checks.'
+    dependsOn tasks.named('conformanceTest')
+    dependsOn tasks.named('m81ConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M83ConformanceHarness'
+    jvmArgs '-ea'
+}
+
+
 tasks.register('m82ConformanceTest', JavaExec) {
     group = 'verification'
     description = 'Runs deterministic M8.2 scene-seed and coverage state checks.'

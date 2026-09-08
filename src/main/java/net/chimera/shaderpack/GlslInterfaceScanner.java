@@ -89,6 +89,13 @@ public final class GlslInterfaceScanner {
             if (braceDepth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER) {
                 continue;
             }
+            int priorToken = GlslLexer.previousSignificant(tokens, index);
+            if (priorToken >= 0 && (tokens.get(priorToken).symbol("(")
+                    || tokens.get(priorToken).symbol(","))) {
+                // An `in` qualifier inside a function parameter list is not
+                // a program interface declaration.
+                continue;
+            }
             int qualifierIndex = index;
             if (token.identifier("layout")) {
                 int open = GlslLexer.nextSignificant(tokens, index);

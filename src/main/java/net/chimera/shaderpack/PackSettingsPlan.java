@@ -171,7 +171,16 @@ record PackSettingsPlan(
 
     /** Active defaults seed the shared shader preprocessor. */
     Map<String, String> preprocessorDefines() {
-        return defaults;
+        Map<String, String> result = new TreeMap<>();
+        defaults.forEach((name, value) -> {
+            Option option = options.get(name);
+            // Defines authored in an executable stage are local to that
+            // variant. Only explicit property defines are pack-wide inputs.
+            if (option != null && "shaders.properties".equals(option.source())) {
+                result.put(name, value);
+            }
+        });
+        return stageIndependentDefaults(result);
     }
 
     boolean enabled(String name) {
@@ -307,7 +316,8 @@ record PackSettingsPlan(
             Map<String, PackResourceDeclaration> resourceDeclarations,
             List<String> deviations
     ) {
-        PackConditionals.State conditions = new PackConditionals.State(defaults);
+        PackConditionals.State conditions = new PackConditionals.State(
+                stageIndependentDefaults(defaults));
         boolean invalidCondition = false;
         try {
             for (String line : Files.readAllLines(propertyFile, StandardCharsets.UTF_8)) {
@@ -318,7 +328,8 @@ record PackSettingsPlan(
                             conditions.apply(directive.group(1), directive.group(2).trim());
                         } catch (RuntimeException failure) {
                             deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                            conditions = new PackConditionals.State(defaults);
+                            conditions = new PackConditionals.State(
+                                    stageIndependentDefaults(defaults));
                             invalidCondition = true;
                         }
                     }
@@ -333,6 +344,9 @@ record PackSettingsPlan(
                 Matcher define = DEFINE.matcher(line);
                 if (define.matches()) {
                     String name = define.group(1);
+                    if (isStageContextMacro(name) || isDimensionContextMacro(name)) {
+                        continue;
+                    }
                     String value = define.group(2) == null || define.group(2).isBlank()
                             ? "1" : stripComment(define.group(2)).trim();
                     options.putIfAbsent(name, new Option(name, "define", value, valuesFrom(line),
@@ -491,11 +505,28 @@ record PackSettingsPlan(
         return name.equals("FSH") || name.equals("VSH") || name.equals("GSH")
                 || name.equals("CSH") || name.equals("TCS") || name.equals("TES")
                 || name.equals("VERTEX_SHADER") || name.equals("FRAGMENT_SHADER")
-                || name.equals("GEOMETRY_SHADER") || name.equals("COMPUTE_SHADER");
+                || name.equals("GEOMETRY_SHADER") || name.equals("COMPUTE_SHADER")
+                || name.equals("SHADOW") || name.equals("COMPOSITE")
+                || name.matches("COMPOSITE\\d+") || name.equals("DEFERRED")
+                || name.matches("DEFERRED\\d+") || name.equals("FINAL")
+                || name.equals("SETUP") || name.matches("GBUFFERS_[A-Za-z0-9_]+")
+                || name.matches("DH_[A-Za-z0-9_]+");
     }
 
     private static boolean isDimensionContextMacro(String name) {
         return name.equals("OVERWORLD") || name.equals("NETHER") || name.equals("END");
+    }
+
+    private static Map<String, String> stageIndependentDefaults(Map<String, String> source) {
+        Map<String, String> result = new TreeMap<>();
+        if (source != null) {
+            source.forEach((name, value) -> {
+                if (!isStageContextMacro(name) && !isDimensionContextMacro(name)) {
+                    result.put(name, value);
+                }
+            });
+        }
+        return Collections.unmodifiableMap(result);
     }
 
     private static String relative(Path root, Path path) {

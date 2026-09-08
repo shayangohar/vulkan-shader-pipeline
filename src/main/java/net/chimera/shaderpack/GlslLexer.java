@@ -142,6 +142,15 @@ final class GlslLexer {
         return -1;
     }
 
+    static int previousSignificant(List<Token> tokens, int index) {
+        for (int current = index - 1; current >= 0; current--) {
+            if (tokens.get(current).significant()) {
+                return current;
+            }
+        }
+        return -1;
+    }
+
     static int matching(List<Token> tokens, int open, String left, String right) {
         int depth = 0;
         for (int index = open; index < tokens.size(); index++) {

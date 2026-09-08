@@ -285,7 +285,8 @@ public final class PackProbe {
         String name = inventory.name;
         String stripped = stripComments(source);
         boolean executablePostName = PostTargetPlan.isPostProgramName(name);
-        boolean modernTerrain = (name.equals("gbuffers_terrain") || name.equals("gbuffers_water"))
+        boolean modernTerrain = (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
+                || name.equals("shadow"))
                 && programPlan != null
                 && programPlan.terrainMaterial().modern();
         boolean modern = usesUnsupportedModernGlsl(stripped,
@@ -416,7 +417,8 @@ public final class PackProbe {
                     deviations.add("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
                 }
             } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
-                if (LegacyGlslConverter.supportsShadowVertex(vertex, fragment)) {
+                if (LegacyGlslConverter.supportsModernShadow(vertex, fragment)
+                        || LegacyGlslConverter.supportsShadowVertex(vertex, fragment)) {
                     deviations.add("SHADOW_VERTEX_BRIDGE");
                 } else {
                     deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
@@ -532,7 +534,11 @@ public final class PackProbe {
             deviations.add("NOISETEX_PACK_RESOURCE");
         }
         if (targetResult == null && targets.size() > 1) {
-            deviations.add("MRT_NOT_SUPPORTED");
+            if (name.equals("shadow")) {
+                deviations.add("SHADOW_COLOR_TARGET_UNSUPPORTED");
+            } else {
+                deviations.add("MRT_NOT_SUPPORTED");
+            }
         } else if (targetResult == null && !targets.isEmpty() && targets.get(0) != 0) {
             deviations.add("TARGET_ROUTING_FIXED_TO_COLORTEX0");
         }

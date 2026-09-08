@@ -15,7 +15,7 @@
       "final"
     ]
   },
-  "reportSha256": "0ddcbd9b8c3e561cd20f3fe9638710c3985853d0a42f09e0cef1d4ccc109ae3e",
+  "reportSha256": "fb5923f779d2287f684a7150466c0c573e47fa5ef0109c92b0f7a9c25b4af006",
   "sourceHashes": {
     "composite.fsh": "6e2e77d0c03c62725953fbafb8f6151a9c0b294b4ed3bf16abca3c75d07dfc80",
     "composite1.fsh": "3486bd3b6b2c9b31e1e79d57309f35405e28a51733f5cbf78c3fb8e09e4c88a0",
@@ -28,18 +28,18 @@
   "expectedExecutablePrograms": [
     "composite",
     "composite1",
+    "composite2",
     "final",
     "gbuffers_terrain"
   ],
   "expectedFallbackPrograms": [
-    "composite2",
     "composite3"
   ],
   "expectedDeviations": [
     "BLOCK_PROPERTIES_MISSING",
     "LEGACY_TERRAIN_VERTEX_BRIDGE",
     "LIVE_UNIFORM_BRIDGE",
-    "MODERN_GLSL_UNSUPPORTED",
+    "MODERN_GLSL_TRANSLATED",
     "POST_CONVERTER_UNSUPPORTED",
     "POST_VARYING_UNSUPPORTED:unsupportedUv",
     "PREPROCESSOR_MACRO_REDEFINED:M61_FEATURE",

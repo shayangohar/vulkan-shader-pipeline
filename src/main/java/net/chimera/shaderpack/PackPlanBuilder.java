@@ -136,16 +136,18 @@ public final class PackPlanBuilder {
 
         try {
             if (isTerrainLike(program.name()) && vertex != null) {
-                boolean modernTerrain = terrainMaterial.modern()
-                        && isTerrainMaterialFamily(program.name());
-                LegacyGlslConverter.TerrainVertexConversion conversion = modernTerrain
-                        ? LegacyGlslConverter.convertModernTerrainVertex(vertex, null, fragment)
-                        : switch (program.name()) {
-                            case "shadow" -> LegacyGlslConverter.convertShadowVertex(
-                                    vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
-                            default -> LegacyGlslConverter.convertTerrainVertex(
-                                    vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
-                        };
+                boolean modernTerrain = terrainMaterial.modern();
+                LegacyGlslConverter.TerrainVertexConversion conversion;
+                if (program.name().equals("shadow")) {
+                    conversion = LegacyGlslConverter.convertShadowVertex(
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                            interfacePlan.effective(stage));
+                } else {
+                    conversion = modernTerrain
+                            ? LegacyGlslConverter.convertModernTerrainVertex(vertex, null, fragment)
+                            : LegacyGlslConverter.convertTerrainVertex(
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
+                }
                 if (conversion == null) {
                     deviations.add(vertexBridgeDeviation(program.name()));
                     executable = false;
@@ -217,7 +219,8 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
-                        vertexLayout, interfacePlan.effective(stage));
+                        vertexLayout, interfacePlan.effective(stage),
+                        config == null ? Map.of() : config.shaderConstants());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
@@ -226,7 +229,8 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
-                        vertexLayout, interfacePlan.effective(stage));
+                        vertexLayout, interfacePlan.effective(stage),
+                        config == null ? Map.of() : config.shaderConstants());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
@@ -235,7 +239,8 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
-                        vertexLayout, interfacePlan.effective(stage));
+                        vertexLayout, interfacePlan.effective(stage),
+                        config == null ? Map.of() : config.shaderConstants());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
@@ -327,7 +332,8 @@ public final class PackPlanBuilder {
     }
 
     private static boolean isTerrainMaterialFamily(String name) {
-        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
+        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
+                || name.equals("shadow");
     }
 
     private static String vertexBridgeDeviation(String name) {

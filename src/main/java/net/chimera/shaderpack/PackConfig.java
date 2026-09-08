@@ -46,7 +46,7 @@ public final class PackConfig {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul)"
+                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
                     + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
     private static final Pattern PACK_NUMERIC_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(int|float)\\s+"
@@ -110,6 +110,27 @@ public final class PackConfig {
         public ShadowSettings {
             rawValues = Collections.unmodifiableMap(new TreeMap<>(rawValues));
             deviations = List.copyOf(new TreeSet<>(deviations));
+        }
+
+        public float distanceRenderMultiplier() {
+            return finiteValue("shadowDistanceRenderMul", 1.0F);
+        }
+
+        public float sunPathRotation() {
+            return finiteValue("sunPathRotation", 0.0F);
+        }
+
+        public float sunPathOffset() {
+            return finiteValue("sunPathOffset", 0.0F);
+        }
+
+        private float finiteValue(String name, float fallback) {
+            try {
+                float value = Float.parseFloat(rawValues.getOrDefault(name, Float.toString(fallback)));
+                return Float.isFinite(value) ? value : fallback;
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
         }
     }
 
@@ -376,6 +397,16 @@ public final class PackConfig {
         ShadowSettings shadowSettings = validateShadowSettings(shadowValues);
         shaderConstants.put("shadowMapResolution", Integer.toString(shadowSettings.resolution()));
         shaderConstants.put("shadowDistance", Float.toString(shadowSettings.distance()));
+        if (shadowValues.containsKey("shadowDistanceRenderMul")) {
+            shaderConstants.put("shadowDistanceRenderMul",
+                    Float.toString(shadowSettings.distanceRenderMultiplier()));
+        }
+        if (shadowValues.containsKey("sunPathRotation")) {
+            shaderConstants.put("sunPathRotation", Float.toString(shadowSettings.sunPathRotation()));
+        }
+        if (shadowValues.containsKey("sunPathOffset")) {
+            shaderConstants.put("sunPathOffset", Float.toString(shadowSettings.sunPathOffset()));
+        }
         return new PackConfigData(colortexFormats, drawBufferCount,
                 shadowSettings, shaderConstants, deviations, settings,
                 targetSettings, flips, preFlips);
@@ -383,7 +414,7 @@ public final class PackConfig {
 
     private static final List<String> SHADOW_PROPERTIES = List.of(
             "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
-            "shadowDistanceRenderMul");
+            "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
     private static final Set<String> PACK_CONSTANT_NAMES = Set.of(
             "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
             "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
@@ -580,12 +611,39 @@ public final class PackConfig {
             }
         }
 
+        validateFiniteShadowSetting(rawValues, deviations, "shadowDistanceRenderMul", 0.0F, 4.0F);
+        validateFiniteShadowSetting(rawValues, deviations, "sunPathRotation", -360.0F, 360.0F);
+        validateFiniteShadowSetting(rawValues, deviations, "sunPathOffset", -360.0F, 360.0F);
+
         for (String key : rawValues.keySet()) {
-            if (!key.equals("shadowMapResolution") && !key.equals("shadowDistance")) {
+            if (!key.equals("shadowMapResolution") && !key.equals("shadowDistance")
+                    && !key.equals("shadowDistanceRenderMul")
+                    && !key.equals("sunPathRotation") && !key.equals("sunPathOffset")) {
                 deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
             }
         }
         return new ShadowSettings(resolution, distance, rawValues, deviations);
+    }
+
+    private static void validateFiniteShadowSetting(
+            Map<String, String> rawValues,
+            List<String> deviations,
+            String name,
+            float minimum,
+            float maximum
+    ) {
+        String raw = rawValues.get(name);
+        if (raw == null) {
+            return;
+        }
+        try {
+            float value = Float.parseFloat(raw);
+            if (!Float.isFinite(value) || value < minimum || value > maximum) {
+                deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
+            }
+        } catch (NumberFormatException ignored) {
+            deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
+        }
     }
 
     /** The number of draw targets a program writes: DRAWBUFFERS, RENDERTARGETS comment, or gl_FragData usage. */

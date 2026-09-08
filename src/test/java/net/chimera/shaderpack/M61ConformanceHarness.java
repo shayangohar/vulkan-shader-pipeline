@@ -76,9 +76,12 @@ public final class M61ConformanceHarness {
         assertTrue(terrain.convertedVertex() != null && terrain.convertedFragment() != null,
                 "M6.1 paired terrain conversion is incomplete");
 
-        assertFallback(first, "composite2", "MODERN_GLSL_UNSUPPORTED");
+        PackProgramPlan modern = requirePlan(first.plan(), "composite2");
+        assertTrue(modern.executable(), "M6.1 modern post compatibility regression");
+        assertTrue(modern.deviations().contains("MODERN_GLSL_TRANSLATED"),
+                "M6.1 modern post translation deviation is missing");
         assertFallback(first, "composite3", "POST_VARYING_UNSUPPORTED:unsupportedUv");
-        assertEquals(List.of("composite", "composite1", "final", "gbuffers_terrain"),
+        assertEquals(List.of("composite", "composite1", "composite2", "final", "gbuffers_terrain"),
                 eligibleNames(report), "M6.1 eligible program set");
 
         JsonElementChecks.verifyBaseline(report, baseline, fixture);

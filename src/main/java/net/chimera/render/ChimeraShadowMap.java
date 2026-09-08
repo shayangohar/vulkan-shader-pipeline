@@ -53,6 +53,9 @@ public class ChimeraShadowMap {
 
     private int shadowMapSize = PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION;
     private float shadowDistance = PackConfig.DEFAULT_SHADOW_DISTANCE;
+    private float shadowDistanceRenderMultiplier = 1.0F;
+    private float sunPathRotation;
+    private float sunPathOffset;
 
     private boolean initialized;
     /** True only until the newly created images receive their first read layout. */
@@ -63,10 +66,17 @@ public class ChimeraShadowMap {
     }
 
     public void init(int resolution, float distance) {
+        init(new PackConfig.ShadowSettings(resolution, distance, java.util.Map.of(), java.util.List.of()));
+    }
+
+    public void init(PackConfig.ShadowSettings settings) {
         if (this.initialized) return;
 
-        this.shadowMapSize = resolution;
-        this.shadowDistance = distance;
+        this.shadowMapSize = settings.resolution();
+        this.shadowDistance = settings.distance();
+        this.shadowDistanceRenderMultiplier = settings.distanceRenderMultiplier();
+        this.sunPathRotation = settings.sunPathRotation();
+        this.sunPathOffset = settings.sunPathOffset();
 
         this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", this.shadowMapSize, this.shadowMapSize, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
@@ -108,7 +118,8 @@ public class ChimeraShadowMap {
     public void updateLight(float celestialAngle) {
         // Sun direction: rotates around the X axis based on celestial angle
         // At celestialAngle=0 (noon), sun is overhead
-        float sunAngleRad = celestialAngle * (float) Math.PI * 2.0F;
+        float sunAngleRad = (celestialAngle * 360.0F + this.sunPathRotation + this.sunPathOffset)
+                * (float) Math.PI / 180.0F;
         float sunX = (float) Math.sin(sunAngleRad);
         float sunY = (float) Math.cos(sunAngleRad);
         float sunZ = 0.0F;
@@ -133,12 +144,13 @@ public class ChimeraShadowMap {
         );
 
         // Ortho projection covering the shadow distance
-        float halfExtent = this.shadowDistance * 0.5F;
+        float effectiveDistance = this.shadowDistance * this.shadowDistanceRenderMultiplier;
+        float halfExtent = effectiveDistance * 0.5F;
         this.lightProjection.identity();
         this.lightProjection.ortho(
                 -halfExtent, halfExtent,
                 -halfExtent, halfExtent,
-                SHADOW_NEAR, Math.max(SHADOW_FAR, this.shadowDistance * 4.0F)
+                SHADOW_NEAR, Math.max(SHADOW_FAR, effectiveDistance * 4.0F)
         );
 
         // Combined MVP
