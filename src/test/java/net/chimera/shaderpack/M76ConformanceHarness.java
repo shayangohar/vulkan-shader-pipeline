@@ -38,8 +38,12 @@ public final class M76ConformanceHarness {
                 "M7.6 hand family is not executable");
         assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_particles"),
                 "M7.6 particle family is not executable");
-        assertTrue(!FamilyAdapterRegistry.isExecutableFamily("gbuffers_skybasic"),
-                "M7.6 sky family silently became executable");
+        // M8.5b intentionally promotes the sky family from host fallback to
+        // its bounded adapter. Keep the historical harness aware of that
+        // deliberate capability addition instead of treating it as a regression.
+        assertEquals(UniformRegistry.Stage.SKY,
+                FamilyAdapterRegistry.stageFor("gbuffers_skybasic"),
+                "M8.5b sky stage");
         assertEquals(UniformRegistry.Stage.BLOCK,
                 FamilyAdapterRegistry.stageFor("gbuffers_block"), "M7.6 block stage");
         assertEquals(UniformRegistry.Stage.HAND,
@@ -126,11 +130,11 @@ public final class M76ConformanceHarness {
                 "M7.6 supported final pass was not converted with the fixed varying");
 
         ConformanceReport.ProgramReport sky = first.report().program("gbuffers_skybasic");
-        assertTrue(sky != null, "M7.6 unsupported sky family was not inventoried");
+        assertTrue(sky != null, "M7.6 sky family was not inventoried");
         assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED, sky.support(),
-                "M7.6 unsupported sky support status");
+                "M7.6 fragment-only sky support status");
         assertTrue(!first.report().shouldAttempt("gbuffers_skybasic"),
-                "M7.6 unsupported sky family remained eligible");
+                "M7.6 fragment-only sky family remained eligible");
         verifyBaseline(first.report(), baseline, "families");
         if (Boolean.getBoolean("chimera.m76.printBaseline")) {
             printBaseline("families", first.report());

@@ -63,7 +63,20 @@ public final class PackPipelines {
     }
 
     /** A successfully built pack geometry (terrain) pipeline plus its sampler slots. */
-    public record PackTerrain(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
+    public record PackTerrain(
+            GraphicsPipeline pipeline,
+            int[] samplerSlots,
+            String convertedFragment,
+            GeometryOutputPlan outputPlan
+    ) {
+        public PackTerrain(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {
+            this(pipeline, samplerSlots, convertedFragment, null);
+        }
+
+        public boolean requiresDynamicAttachments() {
+            return outputPlan != null && outputPlan.requiresMrt();
+        }
+    }
 
     /** A successfully built pack shadow pipeline plus its sampler slots. */
     public record PackShadow(GraphicsPipeline pipeline, int[] samplerSlots, String convertedFragment) {}
@@ -83,6 +96,110 @@ public final class PackPipelines {
             String convertedVertex,
             String convertedFragment
     ) {}
+
+    /** A sky or cloud pipeline that inherits the host pass state. */
+    public record PackSky(
+            GraphicsPipeline pipeline,
+            int[] samplerSlots,
+            String convertedVertex,
+            String convertedFragment,
+            VertexFormat vertexFormat
+    ) {}
+
+    public static PackSky buildSky(PackProgramPlan plan) {
+        return buildSkyLike(plan, UniformRegistry.Stage.SKY,
+                skyVertexFormat(plan),
+                "pack_" + (plan == null ? "sky" : plan.name()));
+    }
+
+    public static PackSky buildCloud(PackProgramPlan plan) {
+        return buildSkyLike(plan, UniformRegistry.Stage.CLOUD,
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR,
+                "pack_" + (plan == null ? "clouds" : plan.name()));
+    }
+
+    private static VertexFormat skyVertexFormat(PackProgramPlan plan) {
+        if (plan == null || plan.familyAdapter() == null) {
+            return null;
+        }
+        return switch (plan.familyAdapter().vertexContract()) {
+            case SKY_POSITION -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION;
+            case SKY_POSITION_COLOR -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR;
+            case SKY_POSITION_UV -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX;
+            case SKY_POSITION_COLOR_UV ->
+                    com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX_COLOR;
+            default -> null;
+        };
+    }
+
+    private static PackSky buildSkyLike(
+            PackProgramPlan plan, UniformRegistry.Stage stage, VertexFormat vertexFormat,
+            String pipelineName
+    ) {
+        if (plan == null || !plan.executable() || plan.convertedVertex() == null
+                || plan.convertedFragment() == null || plan.interfacePlan() == null
+                || plan.interfacePlan().effective(stage).stage() != stage) {
+            return null;
+        }
+        try {
+            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan().effective(stage);
+            int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
+            PipelineConfig.Builder configBuilder = PipelineConfig.builder()
+                    .addUB(PipelineConfig.UB.builder(0, VK_SHADER_STAGE_VERTEX_BIT)
+                            .addUniform("mat4", "ModelViewMat")
+                            .addUniform("vec4", "ColorModulator")
+                            .addUniform("vec3", "ModelOffset")
+                            .addUniform("mat4", "TextureMat")
+                            .build())
+                    .addUB(PipelineConfig.UB.builder(1, VK_SHADER_STAGE_VERTEX_BIT)
+                            .addUniform("mat4", "ProjMat")
+                            .build());
+            if (!interfacePlan.executableUniforms().isEmpty()) {
+                PipelineConfig.UB.Builder uniforms = PipelineConfig.UB.builder(
+                        2, VK_SHADER_STAGE_FRAGMENT_BIT);
+                for (UniformRegistry.UniformDeclaration uniform : interfacePlan.executableUniforms()) {
+                    uniforms.addUniform(uniform.glslType(), uniform.name());
+                }
+                configBuilder.addUB(uniforms.build());
+            } else {
+                // VulkanMod's descriptor-layout builder indexes by binding,
+                // not by a sparse binding list. Reserve binding 2 so the
+                // geometry sampler lane remains at binding 3 even when the
+                // pack declares no fragment UBO fields.
+                configBuilder.addUB(PipelineConfig.UB.builder(2, VK_SHADER_STAGE_FRAGMENT_BIT)
+                        .setSize(16)
+                        .build());
+            }
+            // Sky and cloud conversion uses the same geometry descriptor lane
+            // as the converter: bindings 0 and 1 are host transform UBOs,
+            // binding 2 is the optional pack UBO, and sampled resources start
+            // at the geometry sampler base.
+            int samplerBase = LegacyGlslConverter.geometrySamplerBindingBase()
+                    + (interfacePlan.executableUniforms().isEmpty() ? 0 : 1);
+            for (int index = 0; index < slots.length; index++) {
+                int slot = slots[index];
+                configBuilder.addImageDescriptor(samplerBase + index, "sampler2D",
+                        "Sampler" + slot, net.vulkanmod.vulkan.texture.VTextureSelector
+                                .getTextureIdx("Sampler" + slot));
+            }
+            Pipeline.Builder builder = new Pipeline.Builder(vertexFormat, pipelineName);
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
+            builder.applyConfig(configBuilder.build());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            for (var buffer : pipeline.getBuffers()) {
+                buffer.setUseGlobalBuffer(true);
+            }
+            return new PackSky(pipeline, slots, plan.convertedVertex(), plan.convertedFragment(),
+                    vertexFormat);
+        } catch (Exception e) {
+            LOGGER.warn("[chimera] pack {}: sky/cloud build failed: {} ({})", pipelineName,
+                    e.getMessage(), e.getClass().getSimpleName());
+            return null;
+        }
+    }
 
     /** Builds a post pipeline from the already prepared and translated plan. */
     public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
@@ -528,7 +645,7 @@ public final class PackPipelines {
                 buffer.setUseGlobalBuffer(true);
             }
 
-            return new PackTerrain(pipeline, slots, converted);
+            return new PackTerrain(pipeline, slots, converted, GeometryOutputPlan.empty(program.name()));
         } catch (Exception e) {
             LOGGER.warn("[chimera] pack {}: {} build failed: {}", program.name(),
                     stage == UniformRegistry.Stage.TRANSLUCENT ? "translucent" : "terrain",
@@ -556,31 +673,47 @@ public final class PackPipelines {
             JsonObject json = ChimeraShaderLoader.loadJson("chimera_terrain.json").deepCopy();
             json.addProperty("fragment", "pack_" + plan.name());
             json.add("samplers", samplerArray(slots));
+            if (stage != UniformRegistry.Stage.TRANSLUCENT
+                    && !interfacePlan.executableUniforms().isEmpty()) {
+                JsonArray ubos = json.getAsJsonArray("UBOs");
+                if (ubos == null) {
+                    ubos = new JsonArray();
+                    json.add("UBOs", ubos);
+                }
+                ubos.addAll(uniformUboArray(interfacePlan, 3, "all"));
+            }
             PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
                     ChimeraVertexFormats.terrainFormat(materialPlan), "pack_" + plan.name());
+            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
                     plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex());
             String fragment = coverage
                     ? LegacyGlslConverter.withCoverageOutput(plan.convertedFragment())
                     : plan.convertedFragment();
-            if (coverage) {
+            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
+            boolean dynamicMrt = outputPlan != null && outputPlan.requiresMrt();
+            if (dynamicMrt) {
+                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments());
+            } else if (coverage) {
                 MrtPipelineContext.beginGeometry(targetFormat,
                         org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT, deviceMaxColorAttachments());
             }
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragment);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
-            if (coverage) {
+            if (dynamicMrt) {
+                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray());
+            } else if (coverage) {
                 MrtPipelineContext.register(pipeline, new int[] {
                         targetFormat, org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT
                 });
             }
-            if (coverage) MrtPipelineContext.end();
+            if (dynamicMrt || coverage) MrtPipelineContext.end();
             for (var buffer : pipeline.getBuffers()) {
                 buffer.setUseGlobalBuffer(true);
             }
-            return new PackTerrain(pipeline, slots, fragment);
+            return new PackTerrain(pipeline, slots, fragment, outputPlan);
         } catch (Exception e) {
             MrtPipelineContext.end();
             LOGGER.warn("[chimera] pack {}: planned terrain build failed: {}", plan.name(), e.getMessage());
@@ -703,6 +836,7 @@ public final class PackPipelines {
     static int[] interleaveLightmap(int[] slots) {
         int[] withoutLightmap = java.util.Arrays.stream(slots)
                 .filter(slot -> slot != 2)
+                .distinct()
                 .toArray();
         boolean hasAtlas = java.util.Arrays.stream(withoutLightmap).anyMatch(slot -> slot == 0);
         int[] withAtlas = hasAtlas

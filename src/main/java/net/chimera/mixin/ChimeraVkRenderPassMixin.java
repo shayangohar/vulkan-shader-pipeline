@@ -3,6 +3,7 @@ package net.chimera.mixin;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.vulkanmod.render.engine.VkGpuTexture;
@@ -46,7 +47,8 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
             RenderPipeline renderPipeline,
             CallbackInfo callback
     ) {
-        if (!ChimeraEntityBridge.shouldUsePackPipeline(renderPipeline)) {
+        if (!ChimeraEntityBridge.shouldUsePackPipeline(renderPipeline)
+                && !ChimeraSkyBridge.shouldUsePackPipeline(renderPipeline)) {
             return;
         }
         if (this.pipeline == null || this.pipeline != renderPipeline) {
@@ -63,8 +65,10 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
             com.mojang.blaze3d.textures.GpuSampler sampler,
             CallbackInfo callback
     ) {
-        if (!ChimeraEntityBridge.isDrawActive()
-                || !ChimeraEntityBridge.shouldUsePackPipeline(this.pipeline)
+        if ((!ChimeraEntityBridge.isDrawActive()
+                || !ChimeraEntityBridge.shouldUsePackPipeline(this.pipeline))
+                && (!ChimeraSkyBridge.isDrawActive()
+                || !ChimeraSkyBridge.shouldUsePackPipeline(this.pipeline))
                 || view == null || sampler == null) {
             return;
         }

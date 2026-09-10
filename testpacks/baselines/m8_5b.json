@@ -1,0 +1,10 @@
+{
+  "slice": "M8.5b",
+  "fixture": "sky_clouds",
+  "families": ["gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_clouds"],
+  "contracts": {
+    "skybasic": "POSITION",
+    "skytextured": "POSITION_TEX",
+    "clouds": "POSITION_COLOR_HOST"
+  }
+}

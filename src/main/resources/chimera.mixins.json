@@ -33,7 +33,8 @@
     "ChimeraRenderTypeMixin",
     "ChimeraVkRenderPassMixin",
     "ChimeraFramebufferRenderPassMixin",
-    "ChimeraVkCommandEncoderMixin"
+    "ChimeraVkCommandEncoderMixin",
+    "ChimeraRendererPipelineMixin"
   ],
   "injectors": {
     "defaultRequire": 1

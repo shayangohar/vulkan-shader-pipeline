@@ -80,6 +80,7 @@ public final class PackConfig {
     private static final Map<String, Integer> APPROXIMATE_FMT_TO_VK = Map.of(
             "RGB8", 37,
             "RGB8_SNORM", 97,
+            "RGBA8_SNORM", 97,
             "RGB16F", 97,
             "RGBA16", 97,
             "R11F_G11F_B10F", 97

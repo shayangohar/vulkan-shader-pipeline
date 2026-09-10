@@ -44,7 +44,11 @@ public final class UniformRegistry {
         /** gbuffers_hand on the guarded first-person item lane. */
         HAND,
         /** gbuffers_particles on the host particle lane. */
-        PARTICLE
+        PARTICLE,
+        /** gbuffers_skybasic and gbuffers_skytextured host sky lanes. */
+        SKY,
+        /** gbuffers_clouds host cloud lane. */
+        CLOUD
     }
 
     /** One ordinary GLSL uniform declaration, excluding sampler declarations. */
@@ -284,8 +288,12 @@ public final class UniformRegistry {
     /** Geometry stage: the host's registry slots the terrain draw path fills. */
     public static final Map<String, Integer> GEOMETRY_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
+            Map.entry("tex", 0),
             Map.entry("lightmap", 2),
-            Map.entry("shadowtex0", 5)
+            Map.entry("shadowtex0", 5),
+            Map.entry("shadowtex1", 5),
+            Map.entry("shadowcolor0", 3),
+            Map.entry("noisetex", 7)
     );
 
     /** Shadow writes must not sample the resource they are currently filling. */
@@ -530,10 +538,11 @@ public final class UniformRegistry {
             case TRANSLUCENT -> TRANSLUCENT_NAME_TO_SLOT;
             case ENTITY, BLOCK, HAND -> ENTITY_NAME_TO_SLOT;
             case PARTICLE -> ENTITY_NAME_TO_SLOT;
+            case SKY, CLOUD -> GEOMETRY_NAME_TO_SLOT;
         };
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
-            if (allowUnusedDeclarations && !isReferenced(stripped, sampler.getKey())) {
+            if (allowUnusedDeclarations && !isSamplerReferenced(stripped, sampler.getKey())) {
                 deviations.add("SAMPLER_DECLARATION_UNUSED:" + sampler.getKey());
                 continue;
             }
@@ -566,7 +575,8 @@ public final class UniformRegistry {
                 continue;
             }
             bindings.add(new SamplerBinding(sampler.getKey(), slot, sampler.getValue()));
-            String resource = samplerResource(sampler.getKey());
+            String resource = stage == Stage.GEOMETRY && sampler.getKey().equals("shadowtex1")
+                    ? "shadowtex0" : samplerResource(sampler.getKey());
             String previousResource = samplerResources.putIfAbsent(slot, resource);
             if (previousResource != null && !previousResource.equals(resource)) {
                 deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
@@ -589,12 +599,6 @@ public final class UniformRegistry {
             }
             if (stage == Stage.POST && !targetedPost && sampler.getKey().matches("colortex[1-3]")) {
                 deviations.add("COLORTEX_ALIAS_TO_SEAM");
-            }
-        }
-
-        if (stage == Stage.GEOMETRY && !declarations.isEmpty()) {
-            for (String name : declarations.keySet()) {
-                deviations.add("UNIFORM_NAME_UNSUPPORTED:" + name);
             }
         }
 
@@ -628,6 +632,31 @@ public final class UniformRegistry {
     private static boolean isReferenced(String source, String name) {
         Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source);
         return matcher.find() && matcher.find();
+    }
+
+    private static boolean isSamplerReferenced(String source, String name) {
+        String withoutUniform = removeUniformDeclaration(source, name);
+        return Pattern.compile("(?i)\\b(?:texture|texture2D|texture2DLod|texture2DProj|"
+                + "textureProj|textureGrad|textureLod|shadow2D|texture2DShadow|texelFetch)"
+                + "\\s*\\(\\s*" + Pattern.quote(name) + "\\b")
+                .matcher(withoutUniform).find();
+    }
+
+    private static String removeUniformDeclaration(String source, String name) {
+        Matcher matcher = UNIFORM_DECLARATION.matcher(source);
+        StringBuilder result = new StringBuilder();
+        int last = 0;
+        while (matcher.find()) {
+            boolean contains = parseVariables(matcher.group(2)).stream()
+                    .anyMatch(value -> value.name().equals(name));
+            if (contains) {
+                result.append(source, last, matcher.start());
+                last = matcher.end();
+            }
+        }
+        if (last == 0) return source;
+        result.append(source, last, source.length());
+        return result.toString();
     }
 
     private static boolean isPresent(String source, String name) {

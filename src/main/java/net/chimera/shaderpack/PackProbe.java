@@ -310,6 +310,11 @@ public final class PackProbe {
         if (programPlan != null && programPlan.targetPlan() != null) {
             targetResult = new PostTargetPlan.ParseResult(
                     programPlan.targetPlan(), programPlan.targetPlan().deviations());
+        } else if (programPlan != null && programPlan.geometryOutputPlan() != null
+                && programPlan.geometryOutputPlan().requiresMrt()) {
+            targetResult = new PostTargetPlan.ParseResult(
+                    programPlan.geometryOutputPlan().targetPlan(),
+                    programPlan.geometryOutputPlan().deviations());
         } else if (executablePostName) {
             targetResult = PostTargetPlan.parse(inventory.name, fragment, packConfig.colortexFormats());
         }
@@ -342,11 +347,14 @@ public final class PackProbe {
         if (targetResult != null) {
             deviations.addAll(targetResult.deviations());
             if (targetResult.executable()
-                    && !targetResult.plan().targetSlots().equals(List.of(0))) {
-                deviations.add("POST_TARGET_ROUTE_APPLIED");
+                    && !targetResult.plan().targetSlots().equals(List.of(0))
+                    && (executablePostName || targetResult.plan().requiresMrt())) {
+                deviations.add(executablePostName
+                        ? "POST_TARGET_ROUTE_APPLIED" : "GEOMETRY_TARGET_ROUTE_APPLIED");
             }
-            if (targetResult.executable() && targetResult.plan().requiresMrt()) {
-                deviations.add("MRT_POST_BRIDGE");
+            if (targetResult.executable() && targetResult.plan().requiresMrt()
+                    && (executablePostName || programPlan == null || programPlan.executable())) {
+                deviations.add(executablePostName ? "MRT_POST_BRIDGE" : "MRT_GEOMETRY_BRIDGE");
             }
         }
 
@@ -372,6 +380,8 @@ public final class PackProbe {
                 && (!FamilyAdapterRegistry.isEntityLike(name)
                 && !FamilyAdapterRegistry.isParticleLike(name)
                 && !FamilyAdapterRegistry.isWeatherFamily(name)
+                && !FamilyAdapterRegistry.isSkyFamily(name)
+                && !FamilyAdapterRegistry.isCloudFamily(name)
                 || inventory.stages.contains("vertex"));
         vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         if (programPlan != null) {
@@ -405,6 +415,12 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "WEATHER_VERTEX_BRIDGE" : "WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isSkyFamily(name)) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "SKY_VERTEX_BRIDGE" : "SKY_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "CLOUD_VERTEX_BRIDGE" : "CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
@@ -464,6 +480,19 @@ public final class PackProbe {
                     deviations.add("WEATHER_VERTEX_BRIDGE");
                 } else {
                     deviations.add("WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
+                }
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isSkyFamily(name)) {
+                if (LegacyGlslConverter.convertSkyVertex(vertex, null, fragment,
+                        name.equals("gbuffers_skytextured")) != null) {
+                    deviations.add("SKY_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("SKY_VERTEX_BRIDGE_UNSUPPORTED");
+                }
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)) {
+                if (LegacyGlslConverter.convertCloudVertex(vertex, null, fragment) != null) {
+                    deviations.add("CLOUD_VERTEX_BRIDGE");
+                } else {
+                    deviations.add("CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
                 }
             } else if (name.equals("gbuffers_water")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
@@ -549,7 +578,9 @@ public final class PackProbe {
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
                 : (FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name)
-                || FamilyAdapterRegistry.isWeatherFamily(name))
+                || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isSkyFamily(name)
+                || FamilyAdapterRegistry.isCloudFamily(name))
                 ? UniformRegistry.ENTITY_NAME_TO_SLOT
                 : UniformRegistry.NAME_TO_SLOT;
         // PackPlanBuilder already resolved standard aliases and pack-owned
@@ -633,6 +664,8 @@ public final class PackProbe {
                     || deviation.equals("HAND_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("WEATHER_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("SKY_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("CLOUD_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED")
                     || deviation.startsWith("ENTITY_SAMPLER_UNSUPPORTED:")
                     || deviation.startsWith("ENTITY_ID_UNSUPPORTED:")

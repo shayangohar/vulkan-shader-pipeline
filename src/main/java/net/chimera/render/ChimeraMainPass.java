@@ -16,6 +16,7 @@ import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.mixin.ChimeraDeviceAccessor;
@@ -135,6 +136,8 @@ public class ChimeraMainPass implements MainPass {
     /** Pack programs swapped onto the resolve/present seams; null = identity. */
     private GraphicsPipeline packCompositePipeline;
     private GraphicsPipeline packFinalPipeline;
+    private PackPipelines.PackTerrain packGeometryTerrain;
+    private PackPipelines.PackTerrain packTranslucentTerrain;
     private int[] packCompositeSlots;
     private int[] packFinalSlots;
     private List<String> packCompositeSamplerNames = List.of();
@@ -159,6 +162,8 @@ public class ChimeraMainPass implements MainPass {
     /** Immutable world/post order for the active pack variant. */
     private PackFrameSchedulePlan packFrameSchedule = PackFrameSchedulePlan.empty();
     private boolean packPostChainActive;
+    /** Target images may be needed by geometry even when no post pass is installed. */
+    private boolean packTargetResourcesReady;
     /** Set only when the target graph itself cannot be configured. */
     private boolean packPostChainRejected;
     /** True after the current frame has opened the target executor state. */
@@ -192,6 +197,8 @@ public class ChimeraMainPass implements MainPass {
     /** Pack geometry program (gbuffers_terrain) on the terrain path; null = chimera's terrain pipeline. */
     private GraphicsPipeline packGeometryPipeline;
     private int[] packGeometrySlots;
+    /** Previous selector values for pack-owned geometry textures during one terrain draw. */
+    private Map<Integer, VulkanImage> packGeometryResourcePrevious = Map.of();
     /** Pack water program on the host translucent terrain path; null = host/chimera fallback. */
     private GraphicsPipeline packTranslucentPipeline;
     private int[] packTranslucentSlots;
@@ -218,6 +225,9 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackParticle packTranslucentParticlePipeline;
     /** Pack weather program on the host weather draw window. */
     private PackPipelines.PackParticle packWeatherPipeline;
+    private PackPipelines.PackSky packSkyBasicPipeline;
+    private PackPipelines.PackSky packSkyTexturedPipeline;
+    private PackPipelines.PackSky packCloudPipeline;
     /** GL-registry slot-5 view of the shadow depth, for pack geometry sampling (shadowtex0). */
     private GpuTexture packShadowTexture;
     private GpuTextureView packShadowView;
@@ -466,10 +476,11 @@ public class ChimeraMainPass implements MainPass {
 
         VkCommandBuffer cmd = Renderer.getCommandBuffer();
         boolean resumePackCoverage = PackGeometryContext.coverageActive();
-        VulkanImage coverageTarget = resumePackCoverage ? PackGeometryContext.target() : null;
-        VulkanImage coverageImage = resumePackCoverage ? this.packCoverageOwner.image() : null;
+        boolean resumePackTerrain = PackGeometryContext.terrainActive();
+        List<VulkanImage> resumeColors = PackGeometryContext.colors();
+        VulkanImage resumeDepth = PackGeometryContext.depth();
         Renderer.getInstance().endRenderPass(cmd);
-        if (resumePackCoverage) {
+        if (resumePackCoverage || resumePackTerrain) {
             // The nested shadow render must not be intercepted by the pack
             // geometry dynamic-rendering bridge. Otherwise its 2048 viewport
             // renders into the world target and its clear load-op erases the
@@ -479,14 +490,17 @@ public class ChimeraMainPass implements MainPass {
         try {
             this.renderShadowMap(cameraX, cameraY, cameraZ);
         } finally {
-            if (resumePackCoverage && coverageTarget != null && coverageImage != null
+            if (resumePackTerrain && !resumeColors.isEmpty() && resumeDepth != null
                     && this.hdrFramebuffer != null) {
+                PackGeometryContext.beginTerrain(resumeColors, resumeDepth);
+                this.rebindMainTarget();
+            } else if (resumePackCoverage && this.hdrFramebuffer != null) {
                 // Continue the interrupted opaque layer on the same pack
                 // target. The outer renderSectionLayer return will close and
                 // commit this resumed window normally.
                 PackGeometryContext.beginPreserving(
-                        coverageTarget,
-                        coverageImage,
+                        resumeColors.get(0),
+                        resumeColors.size() > 1 ? resumeColors.get(1) : this.packCoverageOwner.image(),
                         this.hdrFramebuffer.getDepthAttachment());
                 this.rebindMainTarget();
             } else {
@@ -697,22 +711,36 @@ public class ChimeraMainPass implements MainPass {
      * render pass; the post graph reads that complete HDR image as colortex0.
      */
     public void beginPackCoverageWindow(TerrainRenderType renderType) {
-        if (!packCoverageRuntimeEnabled() || !this.packPostChainActive
-                || this.shadowPassActive
-                || this.hdrFramebuffer == null || this.packCoverageOwner.image() == null
-                || (renderType != TerrainRenderType.SOLID
-                    && renderType != TerrainRenderType.CUTOUT)) {
+        beginPackResourceWindow(renderType);
+        PackPipelines.PackTerrain terrain = switch (renderType) {
+            case SOLID, CUTOUT -> this.packGeometryTerrain;
+            case TRANSLUCENT -> this.packTranslucentTerrain;
+            default -> null;
+        };
+        if (terrain == null || !terrain.requiresDynamicAttachments()
+                || !this.packTargetResourcesReady || this.shadowPassActive
+                || this.hdrFramebuffer == null || this.hdrFramebuffer.getDepthAttachment() == null) {
             return;
         }
         if (PackGeometryContext.active()) {
             return;
         }
-        Renderer.getInstance().endRenderPass();
-        PackGeometryContext.begin(
-                this.packPostTargets.geometryTarget0(),
-                this.packCoverageOwner.image(),
-                this.hdrFramebuffer.getDepthAttachment());
-        this.packCoverageState.beginPackWrite();
+        try {
+            List<Integer> outputs = terrain.outputPlan().targetSlots();
+            VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
+            Renderer.getInstance().endRenderPass();
+            this.packPostTargets.beginGeometry(Renderer.getCommandBuffer(), hdrColor, outputs);
+            PackGeometryContext.beginTerrain(
+                    this.packPostTargets.geometryAttachments(outputs),
+                    this.hdrFramebuffer.getDepthAttachment());
+        } catch (RuntimeException failure) {
+            this.packPostTargets.abortGeometry(this.hdrFramebuffer.getColorAttachment());
+            this.currentFramebuffer = this.hdrFramebuffer;
+            this.rebindMainTarget();
+            LOGGER.warn("[chimera] pack {} geometry outputs: host fallback ({})",
+                    renderType == TerrainRenderType.TRANSLUCENT ? "water" : "terrain",
+                    failure.getMessage());
+        }
     }
 
     /**
@@ -726,10 +754,39 @@ public class ChimeraMainPass implements MainPass {
 
     /** The direct-HDR terrain path has no separate coverage window to close. */
     public void endPackCoverageWindow(TerrainRenderType renderType) {
+        boolean terrainWindow = PackGeometryContext.terrainActive();
+        if (terrainWindow) {
+            PackPipelines.PackTerrain terrain = renderType == TerrainRenderType.TRANSLUCENT
+                    ? this.packTranslucentTerrain : this.packGeometryTerrain;
+            if (terrain == null || terrain.outputPlan() == null) {
+                PackGeometryContext.close();
+                restorePackResourceWindow();
+                return;
+            }
+            try {
+                Renderer.getInstance().endRenderPass();
+                PackGeometryContext.close();
+                this.packPostTargets.commitGeometry(terrain.outputPlan().targetSlots(),
+                        this.hdrFramebuffer.getColorAttachment());
+                this.currentFramebuffer = this.hdrFramebuffer;
+                this.rebindMainTarget();
+            } catch (RuntimeException failure) {
+                this.packPostTargets.abortGeometry(this.hdrFramebuffer.getColorAttachment());
+                LOGGER.warn("[chimera] pack geometry output commit: host fallback ({})",
+                        failure.getMessage());
+                if (PackGeometryContext.active()) PackGeometryContext.close();
+                this.rebindMainTarget();
+            } finally {
+                restorePackResourceWindow();
+            }
+            return;
+        }
         if (renderType != TerrainRenderType.SOLID && renderType != TerrainRenderType.CUTOUT) {
+            restorePackResourceWindow();
             return;
         }
         if (!PackGeometryContext.coverageActive()) {
+            restorePackResourceWindow();
             return;
         }
         Renderer.getInstance().endRenderPass();
@@ -737,6 +794,52 @@ public class ChimeraMainPass implements MainPass {
         this.packCoverageState.commitPackWrite();
         this.currentFramebuffer = this.hdrFramebuffer;
         this.rebindMainTarget();
+        restorePackResourceWindow();
+    }
+
+    /** Binds pack-owned sampled images for the guarded terrain draw only. */
+    private void beginPackResourceWindow(TerrainRenderType renderType) {
+        if (this.shadowPassActive || this.packResourceOwner == null
+                || !ChimeraRenderer.segmentsActive()
+                || (renderType != TerrainRenderType.SOLID
+                && renderType != TerrainRenderType.CUTOUT
+                && renderType != TerrainRenderType.TRANSLUCENT)) {
+            return;
+        }
+        if (renderType == TerrainRenderType.TRANSLUCENT
+                ? this.packTranslucentTerrain == null
+                : this.packGeometryTerrain == null) {
+            return;
+        }
+        String program = renderType == TerrainRenderType.TRANSLUCENT
+                ? "gbuffers_water" : "gbuffers_terrain";
+        Map<Integer, VulkanImage> previous = new java.util.TreeMap<>();
+        for (PackResourceBinding binding : this.packResourceOwner.plan().bindings(program)) {
+            if (binding.status() != PackResourceStatus.PACK_FILE
+                    && binding.status() != PackResourceStatus.GAME_RESOURCE) {
+                continue;
+            }
+            VulkanImage image = this.packResourceOwner.image(binding.resourceKey());
+            if (image == null) {
+                continue;
+            }
+            previous.putIfAbsent(binding.slot(), VTextureSelector.getImage(binding.slot()));
+            VTextureSelector.bindTexture(binding.slot(), image);
+        }
+        if (!previous.isEmpty()) {
+            this.packGeometryResourcePrevious = previous;
+        }
+    }
+
+    /** Restores host selector values after a guarded terrain draw. */
+    private void restorePackResourceWindow() {
+        if (this.packGeometryResourcePrevious.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<Integer, VulkanImage> entry : this.packGeometryResourcePrevious.entrySet()) {
+            VTextureSelector.bindTexture(entry.getKey(), entry.getValue());
+        }
+        this.packGeometryResourcePrevious = Map.of();
     }
 
     // ------------------------------------------------------------------
@@ -1656,10 +1759,12 @@ public class ChimeraMainPass implements MainPass {
     /** Releases only pack-owned state so a dimension variant can be rebuilt. */
     private void cleanUpPackVariant() {
         ChimeraEntityBridge.setEnabled(false);
+        ChimeraSkyBridge.setEnabled(false);
         // Release the dedicated entity source before its pipeline is destroyed.
         // This keeps any remaining host-side batch cleanup away from a dead
         // pack pipeline and leaves the host format/cache untouched.
         ChimeraEntityBridge.disable();
+        ChimeraSkyBridge.disable();
         VTextureSelector.bindTexture(7, null);
         for (int slot = 8; slot <= PackResourcePlan.PACK_SLOT_LAST; slot++) {
             VTextureSelector.bindTexture(slot, null);
@@ -1684,6 +1789,8 @@ public class ChimeraMainPass implements MainPass {
         }
         if (this.packGeometryPipeline != null) this.packGeometryPipeline.cleanUp();
         if (this.packTranslucentPipeline != null) this.packTranslucentPipeline.cleanUp();
+        this.packGeometryTerrain = null;
+        this.packTranslucentTerrain = null;
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
         if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
         if (this.packTranslucentEntityPipeline != null) this.packTranslucentEntityPipeline.pipeline().cleanUp();
@@ -1695,6 +1802,9 @@ public class ChimeraMainPass implements MainPass {
         if (this.packParticlePipeline != null) this.packParticlePipeline.pipeline().cleanUp();
         if (this.packTranslucentParticlePipeline != null) this.packTranslucentParticlePipeline.pipeline().cleanUp();
         if (this.packWeatherPipeline != null) this.packWeatherPipeline.pipeline().cleanUp();
+        if (this.packSkyBasicPipeline != null) this.packSkyBasicPipeline.pipeline().cleanUp();
+        if (this.packSkyTexturedPipeline != null) this.packSkyTexturedPipeline.pipeline().cleanUp();
+        if (this.packCloudPipeline != null) this.packCloudPipeline.pipeline().cleanUp();
         if (this.packResourceOwner != null) this.packResourceOwner.close();
         this.packResourceOwner = null;
         this.packPostStages.clear();
@@ -1710,6 +1820,7 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalExecution = null;
         this.packGeometryPipeline = null;
         this.packGeometrySlots = null;
+        restorePackResourceWindow();
         this.packTranslucentPipeline = null;
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
@@ -1724,6 +1835,9 @@ public class ChimeraMainPass implements MainPass {
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
         this.packWeatherPipeline = null;
+        this.packSkyBasicPipeline = null;
+        this.packSkyTexturedPipeline = null;
+        this.packCloudPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.shadowFrameReady = false;
         this.shadowTransitionFallbackLogged = false;
@@ -1936,6 +2050,7 @@ public class ChimeraMainPass implements MainPass {
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraEntityBridge.setEnabled(false);
+        ChimeraSkyBridge.setEnabled(false);
     }
 
     private void waitForImmediateDestruction(String reason) {
@@ -2035,7 +2150,9 @@ public class ChimeraMainPass implements MainPass {
                     this.packPlan.programs(), this.packTargetGraph);
             this.packNeedsHdrDepth = this.packTargetGraph.depth().any();
             this.packDepthTargets.configure(width, height, this.packTargetGraph.depth());
-            this.packPostChainActive = this.packPostTargets.configure(this.packTargetGraph);
+            this.packTargetResourcesReady = this.packPostTargets.configure(this.packTargetGraph);
+            this.packPostChainActive = this.packTargetResourcesReady
+                    && !this.packTargetGraph.steps().isEmpty();
             if (this.packPostChainActive) {
                 MrtPipelineContext.begin(new int[] {packGeometryTargetFormat()}, maxAttachments);
                 try {
@@ -2064,6 +2181,7 @@ public class ChimeraMainPass implements MainPass {
             this.packCoverageState.endFrame();
             this.packCoveragePlan = PackCoveragePlan.disabled();
             this.packPostChainActive = false;
+            this.packTargetResourcesReady = false;
             this.packTargetGraph = null;
             this.packFrameSchedule = PackFrameSchedulePlan.empty();
             this.packPostChainRejected = true;
@@ -2368,11 +2486,15 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalPost = null;
         this.packFinalExecution = null;
         this.packPostChainActive = false;
+        this.packTargetResourcesReady = false;
         this.packPostChainRejected = false;
         this.packGeometryPipeline = null;
         this.packGeometrySlots = null;
+        restorePackResourceWindow();
+        this.packGeometryTerrain = null;
         this.packTranslucentPipeline = null;
         this.packTranslucentSlots = null;
+        this.packTranslucentTerrain = null;
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
         this.packEntityPipeline = null;
@@ -2385,6 +2507,9 @@ public class ChimeraMainPass implements MainPass {
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
         this.packWeatherPipeline = null;
+        this.packSkyBasicPipeline = null;
+        this.packSkyTexturedPipeline = null;
+        this.packCloudPipeline = null;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = true;
 
@@ -2514,6 +2639,7 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.warn("[chimera] pack gbuffers_terrain: fallback=IDENTITY (build failed)");
                     continue;
                 }
+                this.packGeometryTerrain = terrain;
                 this.packGeometryPipeline = terrain.pipeline();
                 this.packGeometrySlots = terrain.samplerSlots();
                 ChimeraTerrainPipelines.setGeometryOverride(terrain.pipeline());
@@ -2526,11 +2652,9 @@ public class ChimeraMainPass implements MainPass {
                 if (TRACE_TRANSITIONS) {
                     LOGGER.info("[chimera] pack gbuffers_terrain converted fragment:\n{}", terrain.convertedFragment());
                 }
-                if (this.packConfig != null && this.packConfig.drawBufferCount() > 1) {
-                    LOGGER.warn("[chimera] pack gbuffers_terrain: DRAWBUFFERS={} not honored in M4 "
-                            + "(single attachment; multi-buffer gbuffers deferred to M5.6)",
-                            this.packConfig.drawBufferCount());
-                }
+                LOGGER.info("[chimera] pack gbuffers_terrain: outputs={} dynamicMrt={}",
+                        terrain.outputPlan() == null ? List.of(0) : terrain.outputPlan().targetSlots(),
+                        terrain.requiresDynamicAttachments());
             } else if (name.equals("gbuffers_water")) {
                 PackPipelines.PackTerrain water = PackPipelines.buildTranslucent(programPlan,
                         ChimeraShaderLoader.loadSource("chimera_terrain/chimera_terrain.vsh"),
@@ -2546,6 +2670,7 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.warn("[chimera] pack gbuffers_water: fallback=IDENTITY (build failed)");
                     continue;
                 }
+                this.packTranslucentTerrain = water;
                 this.packTranslucentPipeline = water.pipeline();
                 this.packTranslucentSlots = water.samplerSlots();
                 ChimeraTerrainPipelines.setTranslucentOverride(water.pipeline());
@@ -2559,6 +2684,33 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.info("[chimera] pack gbuffers_water converted fragment:\n{}",
                             water.convertedFragment());
                 }
+                LOGGER.info("[chimera] pack gbuffers_water: outputs={} dynamicMrt={}",
+                        water.outputPlan() == null ? List.of(0) : water.outputPlan().targetSlots(),
+                        water.requiresDynamicAttachments());
+            } else if (name.equals("gbuffers_skybasic") || name.equals("gbuffers_skytextured")) {
+                PackPipelines.PackSky sky = PackPipelines.buildSky(programPlan);
+                if (sky == null) {
+                    markFamilyPipelineFallback(name, "SKY_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                if (name.equals("gbuffers_skybasic")) {
+                    this.packSkyBasicPipeline = sky;
+                } else {
+                    this.packSkyTexturedPipeline = sky;
+                }
+                markFamilyPipelineInstalled(name, "SKY_PIPELINE_INSTALLED");
+                LOGGER.info("[chimera] pack {}: ok (sky pipeline installed, samplers={})",
+                        name, Arrays.toString(sky.samplerSlots()));
+            } else if (name.equals("gbuffers_clouds")) {
+                PackPipelines.PackSky cloud = PackPipelines.buildCloud(programPlan);
+                if (cloud == null) {
+                    markFamilyPipelineFallback(name, "CLOUD_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                this.packCloudPipeline = cloud;
+                markFamilyPipelineInstalled(name, "CLOUD_PIPELINE_INSTALLED");
+                LOGGER.info("[chimera] pack gbuffers_clouds: ok (cloud pipeline installed, samplers={})",
+                        Arrays.toString(cloud.samplerSlots()));
             } else if (name.equals("gbuffers_entities")) {
                 PackPipelines.PackEntity entity = PackPipelines.buildEntity(programPlan);
                 if (entity == null) {
@@ -2741,6 +2893,8 @@ public class ChimeraMainPass implements MainPass {
                 this.packHandPipeline, this.packHandWaterPipeline, this.packParticlePipeline,
                 this.packTranslucentParticlePipeline, this.packWeatherPipeline,
                 this.packPlan == null ? null : this.packPlan.entityIds());
+        ChimeraSkyBridge.install(this.packSkyBasicPipeline, this.packSkyTexturedPipeline,
+                this.packCloudPipeline);
         this.packPostStages.sort(Comparator.comparing(
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
         buildPackPostExecutionPlan();

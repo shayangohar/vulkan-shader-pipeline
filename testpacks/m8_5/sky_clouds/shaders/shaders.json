@@ -1,0 +1,7 @@
+{
+  "programs": [
+    { "name": "gbuffers_skybasic", "vertex": "gbuffers_skybasic.vsh", "fragment": "gbuffers_skybasic.fsh" },
+    { "name": "gbuffers_skytextured", "vertex": "gbuffers_skytextured.vsh", "fragment": "gbuffers_skytextured.fsh" },
+    { "name": "gbuffers_clouds", "vertex": "gbuffers_clouds.vsh", "fragment": "gbuffers_clouds.fsh" }
+  ]
+}

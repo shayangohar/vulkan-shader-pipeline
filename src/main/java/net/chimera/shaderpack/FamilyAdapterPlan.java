@@ -38,6 +38,14 @@ public record FamilyAdapterPlan(
         EXTENDED_ENTITY,
         EXTENDED_PARTICLE,
         HOST_PARTICLE,
+        SKY_POSITION,
+        SKY_POSITION_COLOR,
+        SKY_POSITION_UV,
+        SKY_POSITION_COLOR_UV,
+        CLOUD_POSITION_COLOR,
+        /** @deprecated retained for reports produced by older M8.5b builds. */
+        @Deprecated
+        CLOUD_GENERATED,
         FULLSCREEN,
         HOST_FALLBACK
     }
@@ -53,5 +61,10 @@ public record FamilyAdapterPlan(
     public static FamilyAdapterPlan unsupported(String name) {
         return new FamilyAdapterPlan(name, Family.UNKNOWN, UniformRegistry.Stage.POST,
                 VertexContract.HOST_FALLBACK, false, List.of("FAMILY_LANE_UNSUPPORTED"));
+    }
+
+    /** Returns the same family contract with a source-validated host vertex shape. */
+    public FamilyAdapterPlan withVertexContract(VertexContract contract) {
+        return new FamilyAdapterPlan(programName, family, stage, contract, executable, deviations);
     }
 }

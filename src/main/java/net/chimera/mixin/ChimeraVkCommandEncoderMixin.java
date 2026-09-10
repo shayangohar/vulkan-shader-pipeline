@@ -4,6 +4,7 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
 import net.vulkanmod.render.engine.VkCommandEncoder;
 import net.vulkanmod.render.engine.VkGpuBuffer;
@@ -22,11 +23,26 @@ public abstract class ChimeraVkCommandEncoderMixin {
             VkRenderPass renderPass,
             CallbackInfoReturnable<Boolean> callback
     ) {
+        RenderPipeline hostPipeline = renderPass.getPipeline();
+        if (ChimeraSkyBridge.isDrawActive()
+                && ChimeraSkyBridge.shouldUsePackPipeline(hostPipeline)) {
+            var packPipeline = ChimeraSkyBridge.pipeline();
+            if (packPipeline == null) {
+                callback.setReturnValue(false);
+                return;
+            }
+            VkCommandEncoder encoder = (VkCommandEncoder) (Object) this;
+            encoder.applyPipelineState(hostPipeline);
+            Renderer renderer = Renderer.getInstance();
+            renderer.bindGraphicsPipeline(packPipeline);
+            bindHostUniforms(renderPass, packPipeline);
+            renderer.uploadAndBindUBOs(packPipeline);
+            callback.setReturnValue(true);
+            return;
+        }
         if (!ChimeraEntityBridge.isDrawActive()) {
             return;
         }
-
-        RenderPipeline hostPipeline = renderPass.getPipeline();
         if (!ChimeraEntityBridge.shouldUsePackPipeline(hostPipeline)) {
             return;
         }

@@ -175,6 +175,13 @@ public final class PackResourcePlan {
         }
         if (canonical.startsWith("shadowtex")) {
             if (!canonical.equals("shadowtex0")) {
+                if (canonical.equals("shadowtex1")
+                        && UniformRegistry.GEOMETRY_NAME_TO_SLOT.containsKey(name)) {
+                    deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
+                    return new PackResourceBinding(program, name, "shadowtex0",
+                            PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
+                            PackResourceStatus.HOST_ALIAS, deviations);
+                }
                 deviations.add("STANDARD_RESOURCE_UNAVAILABLE:" + name);
                 return new PackResourceBinding(program, name, canonical,
                         PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",

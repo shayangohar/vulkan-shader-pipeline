@@ -61,7 +61,8 @@ final class GlslTokenRewriter {
             GlslLexer.Token token = tokens.get(index);
             if (token.kind() != GlslLexer.Kind.IDENTIFIER
                     || (!token.text().equals("shadow2D")
-                    && !token.text().equals("shadow2DLod"))) {
+                    && !token.text().equals("shadow2DLod")
+                    && !token.text().equals("texture2DShadow"))) {
                 continue;
             }
             int open = GlslLexer.nextSignificant(tokens, index);
@@ -81,21 +82,27 @@ final class GlslTokenRewriter {
                 throw new IllegalArgumentException("legacy shadow sampler is not declared: " + sampler);
             }
             String coordinate = argumentText(tokens, arguments.get(1));
+            boolean scalarCall = token.text().equals("texture2DShadow");
             String expression;
             if (samplerType.equals("sampler2DShadow")) {
-                expression = "vec4(texture(" + sampler + ", " + coordinate;
+                expression = (scalarCall ? "texture(" : "vec4(texture(")
+                        + sampler + ", " + coordinate;
                 if (lodCall) {
-                    expression = "vec4(textureLod(" + sampler + ", " + coordinate
-                            + ", " + argumentText(tokens, arguments.get(2)) + "))";
+                    expression = (scalarCall ? "textureLod(" : "vec4(textureLod(")
+                            + sampler + ", " + coordinate
+                            + ", " + argumentText(tokens, arguments.get(2))
+                            + (scalarCall ? ")" : "))");
                 } else {
-                    expression += "))";
+                    expression += scalarCall ? ")" : "))";
                 }
             } else if (samplerType.equals("sampler2D")) {
                 String depthSample = lodCall
                         ? "textureLod(" + sampler + ", " + coordinate + ".xy, "
                         + argumentText(tokens, arguments.get(2)) + ").r"
                         : "texture(" + sampler + ", " + coordinate + ".xy).r";
-                expression = "vec4(step(" + coordinate + ".z, " + depthSample + "))";
+                expression = scalarCall
+                        ? "step(" + coordinate + ".z, " + depthSample + ")"
+                        : "vec4(step(" + coordinate + ".z, " + depthSample + "))";
             } else {
                 throw new IllegalArgumentException("unsupported legacy shadow sampler type: "
                         + samplerType);

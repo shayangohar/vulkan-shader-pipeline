@@ -35,9 +35,12 @@ public final class FamilyAdapterRegistry {
             Map.entry("gbuffers_particles_translucent", plan("gbuffers_particles_translucent",
                     FamilyAdapterPlan.Family.PARTICLE_TRANSLUCENT, UniformRegistry.Stage.PARTICLE,
                     FamilyAdapterPlan.VertexContract.HOST_PARTICLE)),
-            Map.entry("gbuffers_skybasic", unsupported("gbuffers_skybasic", FamilyAdapterPlan.Family.SKY)),
-            Map.entry("gbuffers_skytextured", unsupported("gbuffers_skytextured", FamilyAdapterPlan.Family.SKY)),
-            Map.entry("gbuffers_clouds", unsupported("gbuffers_clouds", FamilyAdapterPlan.Family.CLOUD)),
+            Map.entry("gbuffers_skybasic", plan("gbuffers_skybasic", FamilyAdapterPlan.Family.SKY,
+                    UniformRegistry.Stage.SKY, FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR)),
+            Map.entry("gbuffers_skytextured", plan("gbuffers_skytextured", FamilyAdapterPlan.Family.SKY,
+                    UniformRegistry.Stage.SKY, FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV)),
+            Map.entry("gbuffers_clouds", plan("gbuffers_clouds", FamilyAdapterPlan.Family.CLOUD,
+                    UniformRegistry.Stage.CLOUD, FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR)),
             Map.entry("gbuffers_weather", plan("gbuffers_weather", FamilyAdapterPlan.Family.WEATHER,
                     UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_PARTICLE))
     );
@@ -58,10 +61,12 @@ public final class FamilyAdapterRegistry {
                     true, List.of());
         }
         if (name.startsWith("gbuffers_sky")) {
-            return unsupported(name, FamilyAdapterPlan.Family.SKY);
+            return new FamilyAdapterPlan(name, FamilyAdapterPlan.Family.SKY, UniformRegistry.Stage.SKY,
+                    FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR, true, List.of());
         }
         if (name.startsWith("gbuffers_cloud")) {
-            return unsupported(name, FamilyAdapterPlan.Family.CLOUD);
+            return new FamilyAdapterPlan(name, FamilyAdapterPlan.Family.CLOUD, UniformRegistry.Stage.CLOUD,
+                    FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR, true, List.of());
         }
         if (name.startsWith("gbuffers_weather")) {
             return unsupported(name, FamilyAdapterPlan.Family.WEATHER);
@@ -99,6 +104,14 @@ public final class FamilyAdapterRegistry {
 
     public static boolean isWeatherFamily(String name) {
         return forProgram(name).family() == FamilyAdapterPlan.Family.WEATHER;
+    }
+
+    public static boolean isSkyFamily(String name) {
+        return forProgram(name).family() == FamilyAdapterPlan.Family.SKY;
+    }
+
+    public static boolean isCloudFamily(String name) {
+        return forProgram(name).family() == FamilyAdapterPlan.Family.CLOUD;
     }
 
     public static boolean isWorldEntityFamily(String name) {

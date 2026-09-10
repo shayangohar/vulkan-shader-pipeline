@@ -23,7 +23,8 @@ public record PackProgramPlan(
         List<String> deviations,
         boolean executable,
         FamilyAdapterPlan familyAdapter,
-        TerrainMaterialPlan terrainMaterial
+        TerrainMaterialPlan terrainMaterial,
+        GeometryOutputPlan geometryOutputPlan
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -38,6 +39,7 @@ public record PackProgramPlan(
                 ? FamilyAdapterRegistry.forProgram(program == null ? "" : program.name())
                 : familyAdapter;
         terrainMaterial = terrainMaterial == null ? TerrainMaterialPlan.legacy() : terrainMaterial;
+        geometryOutputPlan = geometryOutputPlan == null ? null : geometryOutputPlan;
     }
 
     /** Compatibility constructor for callers using the pre-M6.1 plan shape. */
@@ -56,7 +58,7 @@ public record PackProgramPlan(
         this(program, stages, interfacePlan, stageInterfaces, Map.of(), targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
                 FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
-                TerrainMaterialPlan.legacy());
+                TerrainMaterialPlan.legacy(), null);
     }
 
     /** Compatibility constructor for pre-M7.6 callers. */
@@ -76,7 +78,7 @@ public record PackProgramPlan(
         this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
                 FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
-                TerrainMaterialPlan.legacy());
+                TerrainMaterialPlan.legacy(), null);
     }
 
     public String name() {

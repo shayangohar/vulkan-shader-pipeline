@@ -88,7 +88,7 @@ public final class PackPostTargets {
         trace("configure begin oldTarget0=" + imageId(this.images[0][0])
                 + " oldTarget1=" + imageId(this.images[1][0]));
         cleanUp();
-        if (graph == null || graph.steps().isEmpty()) {
+        if (graph == null || (graph.steps().isEmpty() && graph.targets().isEmpty())) {
             return false;
         }
         this.graph = graph;
@@ -235,6 +235,58 @@ public final class PackPostTargets {
                 + " activeSide=" + this.activeSide[0] + " sides=" + this.sideCounts[0]
                 + " image=" + imageId(image));
         return image;
+    }
+
+    /** Starts a geometry window whose first attachment is the live HDR image. */
+    public void beginGeometry(VkCommandBuffer commandBuffer, VulkanImage hdrColor,
+                              List<Integer> outputTargets) {
+        if (!this.configured || hdrColor == null || outputTargets == null || outputTargets.isEmpty()) {
+            throw new IllegalStateException("pack geometry target state is not ready");
+        }
+        this.hdrIdentitySource = hdrColor;
+        this.sourceImages[0] = hdrColor;
+        this.valid[0] = false;
+        this.rendering = false;
+        for (int target : outputTargets) {
+            if (target < 0 || target >= TARGET_COUNT || !this.used[target]) {
+                throw new IllegalStateException("missing geometry output target " + target);
+            }
+        }
+    }
+
+    /** Returns attachments in the same order as fragment output locations. */
+    public List<VulkanImage> geometryAttachments(List<Integer> outputTargets) {
+        if (outputTargets == null || outputTargets.isEmpty()) return List.of();
+        java.util.ArrayList<VulkanImage> result = new java.util.ArrayList<>();
+        for (int target : outputTargets) {
+            VulkanImage image = target == 0 ? this.hdrIdentitySource
+                    : imageFor(target, this.activeSide[target]);
+            if (image == null) {
+                throw new IllegalStateException("geometry output image is unavailable: " + target);
+            }
+            result.add(image);
+        }
+        return List.copyOf(result);
+    }
+
+    /** Commits only auxiliary geometry outputs; target 0 remains the HDR identity source. */
+    public void commitGeometry(List<Integer> outputTargets, VulkanImage hdrColor) {
+        if (outputTargets == null || hdrColor == null) return;
+        this.sourceImages[0] = hdrColor;
+        this.valid[0] = false;
+        for (int target : outputTargets) {
+            if (target <= 0 || target >= TARGET_COUNT) continue;
+            VulkanImage image = imageFor(target, this.activeSide[target]);
+            if (image != null) {
+                this.valid[target] = true;
+                this.sourceImages[target] = image;
+            }
+        }
+    }
+
+    public void abortGeometry(VulkanImage hdrColor) {
+        this.sourceImages[0] = hdrColor == null ? this.hdrIdentitySource : hdrColor;
+        this.valid[0] = false;
     }
 
     /** Commits target 0 after the scene seed successfully merged host pixels. */

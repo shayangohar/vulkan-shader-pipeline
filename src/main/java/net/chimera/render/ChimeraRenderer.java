@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -150,6 +151,7 @@ public final class ChimeraRenderer {
             Renderer.getInstance().setMainPass(hostPass);
             ChimeraTerrainPipelines.disable();
             ChimeraEntityBridge.setEnabled(false);
+            ChimeraSkyBridge.setEnabled(false);
             installed = false;
             resumeAfterVariant = chimeraEnabled;
             ChimeraMod.LOGGER.info("Pack change handed to host at safe boundary");
@@ -217,6 +219,7 @@ public final class ChimeraRenderer {
         Renderer.getInstance().setMainPass(chimeraPass);
         ChimeraTerrainPipelines.enable();
         ChimeraEntityBridge.setEnabled(ChimeraEntityBridge.isInstalled());
+        ChimeraSkyBridge.setEnabled(ChimeraSkyBridge.isInstalled());
         installed = true;
         ChimeraMod.LOGGER.info("chimera ACTIVE - HDR frame + terrain/entity pipelines (F8 to toggle back)");
         return true;
@@ -231,6 +234,7 @@ public final class ChimeraRenderer {
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.disable();
         ChimeraEntityBridge.setEnabled(false);
+        ChimeraSkyBridge.setEnabled(false);
         // Our post segments leave depth/cull/blend/topology state disabled;
         // restore the neutral state the host frame flow expects.
         VRenderSystem.enableDepthTest();
@@ -265,6 +269,7 @@ public final class ChimeraRenderer {
         Renderer.getInstance().setMainPass(hostPass);
         ChimeraTerrainPipelines.suspendForScreens();
         ChimeraEntityBridge.setEnabled(false);
+        ChimeraSkyBridge.setEnabled(false);
         // Return the global pipeline state VulkanMod snapshots at bind to the
         // neutral host defaults before the host's next frame records.
         VRenderSystem.enableDepthTest();
@@ -289,6 +294,7 @@ public final class ChimeraRenderer {
         }
         ChimeraTerrainPipelines.disable();
         ChimeraEntityBridge.setEnabled(false);
+        ChimeraSkyBridge.setEnabled(false);
         VRenderSystem.enableDepthTest();
         VRenderSystem.depthMask(true);
         VRenderSystem.enableCull();

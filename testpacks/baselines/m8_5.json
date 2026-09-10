@@ -1,0 +1,11 @@
+{
+  "fixtures": {
+    "terrain_gbuffers": {
+      "reportSha256": "62b7a1e5a766d430951f569ae1b35421b3db34aef07e8eb6082bcc2f695c0175",
+      "sourceHashes": {
+        "gbuffers_terrain.fsh": "8a4e00b958076b3b5182fe4b58f6a11747e4b66447e3a05981bd902282d51be6",
+        "gbuffers_terrain.vsh": "292a76ac95f5381e2b755f218d8a33b88f48419bc6954cce3a771964a8189d76"
+      }
+    }
+  }
+}

@@ -101,6 +101,17 @@ public final class PackTargetGraphPlan {
                     }
                 }
             }
+            for (PackProgramPlan program : programs) {
+                if (program == null || program.geometryOutputPlan() == null
+                        || !program.executable() || !program.geometryOutputPlan().executable()) {
+                    continue;
+                }
+                for (int target : program.geometryOutputPlan().targetSlots()) {
+                    if (!unavailableFormatTargets.contains(target)) {
+                        used.add(target);
+                    }
+                }
+            }
         }
 
         Map<Integer, Boolean> doubleTargets = new TreeMap<>();
