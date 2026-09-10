@@ -571,6 +571,11 @@ public final class PackPipelines {
             }
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragment);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            if (coverage) {
+                MrtPipelineContext.register(pipeline, new int[] {
+                        targetFormat, org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT
+                });
+            }
             if (coverage) MrtPipelineContext.end();
             for (var buffer : pipeline.getBuffers()) {
                 buffer.setUseGlobalBuffer(true);

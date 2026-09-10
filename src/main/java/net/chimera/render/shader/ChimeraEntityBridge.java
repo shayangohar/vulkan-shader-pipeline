@@ -62,14 +62,14 @@ public final class ChimeraEntityBridge {
     private static boolean textureSnapshot;
     private static boolean entityBufferUnavailable;
     private static boolean submissionTraceLogged;
-    private static boolean batchTraceLogged;
-    private static boolean drawTraceLogged;
     private static final EnumSet<Family> drawTraceFamilies = EnumSet.noneOf(Family.class);
+    private static final EnumSet<Family> separatedTraceFamilies = EnumSet.noneOf(Family.class);
+    private static final EnumSet<Family> modelTraceFamilies = EnumSet.noneOf(Family.class);
+    private static final EnumSet<Family> pipelineTraceFamilies = EnumSet.noneOf(Family.class);
+    private static final EnumSet<Family> meshTraceFamilies = EnumSet.noneOf(Family.class);
+    private static boolean separatedBatchTraceLogged;
     private static boolean unsupportedPipelineTraceLogged;
-    private static boolean modelTraceLogged;
     private static boolean flushTraceLogged;
-    private static boolean pipelineTraceLogged;
-    private static boolean meshTraceLogged;
     private static ByteBufferBuilder entityBuffer;
     private static MultiBufferSource.BufferSource entityBufferSource;
     private static final VulkanImage[] previousTextures =
@@ -82,13 +82,9 @@ public final class ChimeraEntityBridge {
             RenderPipelines.ENTITY_CUTOUT_NO_CULL_Z_OFFSET,
             RenderPipelines.ENTITY_SMOOTH_CUTOUT,
             RenderPipelines.ENTITY_NO_OUTLINE,
-            // Living entities, including the vanilla cow and zombie renderers,
-            // use this host translucent pipeline. It still inherits the host
-            // blend and depth state through the guarded Vulkan seam below.
             RenderPipelines.ENTITY_TRANSLUCENT,
             RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE
     );
-
     private ChimeraEntityBridge() {}
 
     public static void install(PackPipelines.PackEntity entity,
@@ -145,14 +141,14 @@ public final class ChimeraEntityBridge {
         textureSnapshot = false;
         entityBufferUnavailable = false;
         submissionTraceLogged = false;
-        batchTraceLogged = false;
-        drawTraceLogged = false;
         drawTraceFamilies.clear();
+        separatedTraceFamilies.clear();
+        modelTraceFamilies.clear();
+        pipelineTraceFamilies.clear();
+        meshTraceFamilies.clear();
+        separatedBatchTraceLogged = false;
         unsupportedPipelineTraceLogged = false;
-        modelTraceLogged = false;
         flushTraceLogged = false;
-        pipelineTraceLogged = false;
-        meshTraceLogged = false;
         clearScopedState();
         ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, glowing={}, "
                         + "block={}, damagedBlock={}, hand={}, handWater={}, particle={}, particleTranslucent={}",
@@ -305,7 +301,6 @@ public final class ChimeraEntityBridge {
             textureSnapshot = true;
             drawActive = true;
             if (drawTraceFamilies.add(family)) {
-                drawTraceLogged = true;
                 ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} batch",
                         family.name().toLowerCase());
             }
@@ -373,7 +368,6 @@ public final class ChimeraEntityBridge {
         textureSnapshot = true;
         drawActive = true;
         if (drawTraceFamilies.add(family)) {
-            drawTraceLogged = true;
             ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} draw",
                     family.name().toLowerCase());
         }
@@ -414,8 +408,8 @@ public final class ChimeraEntityBridge {
         return ensureEntityBuffer() ? entityBufferSource : null;
     }
 
-    /** Flushes the dedicated source while the extended-format draw window is active. */
-    public static void endEntityBatch() {
+    /** Flushes one dedicated source batch while the extended-format draw window is active. */
+    public static void endEntityBatch(RenderType renderType) {
         if (entityBufferSource == null || !drawActive) {
             return;
         }
@@ -423,7 +417,19 @@ public final class ChimeraEntityBridge {
             flushTraceLogged = true;
             ChimeraMod.LOGGER.info("[chimera] entity bridge: flushing separated world batch");
         }
-        entityBufferSource.endBatch();
+        if (renderType == null) {
+            entityBufferSource.endBatch();
+        } else {
+            // The dedicated source has no fixed-buffer table. Flush the exact
+            // render type so a started builder cannot remain queued when the
+            // guarded family window closes.
+            entityBufferSource.endBatch(renderType);
+        }
+    }
+
+    /** Compatibility overload for lifecycle cleanup and older callers. */
+    public static void endEntityBatch() {
+        endEntityBatch(null);
     }
 
     public static int currentEntityId() {
@@ -494,7 +500,7 @@ public final class ChimeraEntityBridge {
         return renderType.format() == DefaultVertexFormat.NEW_ENTITY;
     }
 
-    /** Returns whether the guarded pack batch may handle this world entity pipeline. */
+    /** Compatibility query retained for the M6.3 conformance surface. */
     public static boolean supportsWorldPipeline(RenderPipeline pipeline) {
         return pipeline != null && SUPPORTED_WORLD_PIPELINES.contains(pipeline);
     }
@@ -560,18 +566,17 @@ public final class ChimeraEntityBridge {
 
     /** Records which separated family is about to emit a model batch. */
     public static void noteFamilyBatch(Family family, int renderTypeCount) {
-        if (family == null || !drawTraceFamilies.add(family)) {
+        if (family == null || !separatedTraceFamilies.add(family)) {
             return;
         }
-        drawTraceLogged = true;
         ChimeraMod.LOGGER.info("[chimera] entity bridge: family={} separated render types={}",
                 family.name().toLowerCase(), renderTypeCount);
     }
 
     /** Emits one diagnostic for the first separated pack entity batch. */
     public static void noteSeparatedBatch(RenderType renderType, int count) {
-        if (!batchTraceLogged) {
-            batchTraceLogged = true;
+        if (!separatedBatchTraceLogged) {
+            separatedBatchTraceLogged = true;
             ChimeraMod.LOGGER.info("[chimera] entity bridge: separated world batch type={} count={}",
                     renderType == null ? "unknown" : renderType, count);
         }
@@ -589,8 +594,8 @@ public final class ChimeraEntityBridge {
 
     /** Emits one diagnostic when a delayed world entity reaches model emission. */
     public static void noteModelDraw(RenderType renderType) {
-        if (!modelTraceLogged) {
-            modelTraceLogged = true;
+        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
+        if (modelTraceFamilies.add(family)) {
             ChimeraMod.LOGGER.info("[chimera] entity bridge: model emission reached type={}",
                     renderType == null ? "unknown" : renderType);
         }
@@ -598,8 +603,8 @@ public final class ChimeraEntityBridge {
 
     /** Emits one diagnostic after the Vulkan seam binds the pack entity pipeline. */
     public static void notePipelineBound(RenderPipeline hostPipeline) {
-        if (!pipelineTraceLogged) {
-            pipelineTraceLogged = true;
+        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
+        if (pipelineTraceFamilies.add(family)) {
             ChimeraMod.LOGGER.info("[chimera] entity bridge: pack pipeline bound family={} hostPipeline={}",
                     activeFamily == null ? "unknown" : activeFamily.name().toLowerCase(),
                     hostPipeline == null ? "unknown" : hostPipeline);
@@ -608,8 +613,8 @@ public final class ChimeraEntityBridge {
 
     /** Emits one diagnostic for the mesh handed to the guarded Vulkan draw. */
     public static void noteMeshDraw(int vertexCount, int indexCount, int stride) {
-        if (!meshTraceLogged) {
-            meshTraceLogged = true;
+        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
+        if (meshTraceFamilies.add(family)) {
             ChimeraMod.LOGGER.info("[chimera] entity bridge: mesh ready family={} vertices={} indices={} stride={}B",
                     activeFamily == null ? "unknown" : activeFamily.name().toLowerCase(),
                     vertexCount, indexCount, stride);

@@ -181,10 +181,18 @@ public final class ChimeraRenderer {
 
     /** True when the view is a main-target-family view (chimera or host). */
     public static boolean isMainFamilyView(com.mojang.blaze3d.textures.GpuTextureView view) {
+        if (view == null) {
+            return false;
+        }
         if (chimeraPass != null && chimeraPass.isFamilyView(view)) {
             return true;
         }
-        return hostColorView != null && view == hostColorView;
+        com.mojang.blaze3d.textures.GpuTexture texture = view.texture();
+        if (hostColorView != null && texture == hostColorView.texture()) {
+            return true;
+        }
+        com.mojang.blaze3d.textures.GpuTexture current = getCurrentMainColorTexture();
+        return current != null && texture == current;
     }
 
     /** The live main-target color texture for the current phase. */

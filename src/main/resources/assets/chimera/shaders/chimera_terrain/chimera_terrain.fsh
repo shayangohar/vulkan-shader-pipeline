@@ -111,16 +111,19 @@ float fogRamp(float distance, float start, float end) {
 const float SHADOW_BIAS = 0.0025;
 
 float sampleShadow(vec4 lightSpacePos) {
-    // Perspective divide + half-offset + flip Y for texture coords
+    // VulkanMod uses a zero-to-one NDC Z range. Only X and Y need the
+    // normalized texture-coordinate transform. The shadow depth attachment
+    // is reversed-Z, so convert it to the forward legacy window before the
+    // comparison used by the fixed terrain path.
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    projCoords = projCoords * 0.5 + 0.5;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
     projCoords.y = 1.0 - projCoords.y;
 
     if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) {
         return 1.0; // Outside shadow map
     }
 
-    float storedDepth = texture(ShadowMap, projCoords.xy).r;
+    float storedDepth = 1.0 - texture(ShadowMap, projCoords.xy).r;
     return (projCoords.z - SHADOW_BIAS > storedDepth) ? 0.3 : 1.0;
 }
 

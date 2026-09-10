@@ -41,6 +41,11 @@ public final class ChimeraPostPipelines {
         return create("chimera_scene_seed");
     }
 
+    /** Creates the one-input copy used to snapshot host family draws. */
+    public static GraphicsPipeline createFinalSeedPipeline() {
+        return create("chimera_final_seed");
+    }
+
     /** Creates an extended terrain-format pipeline for shadow rendering. */
     public static GraphicsPipeline createTerrainPipeline(String name, VertexFormat vertexFormat) {
         JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");

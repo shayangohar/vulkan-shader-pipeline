@@ -67,7 +67,11 @@ public abstract class ChimeraModelFeatureRendererMixin {
         if (!(collection.getModelSubmits() instanceof ChimeraEntityStorage storage)) {
             return;
         }
-        if (!ChimeraRenderer.segmentsActive() || !ChimeraEntityBridge.isInstalled()) {
+        // When no Chimera family adapter is installed, the storage mixin leaves
+        // entity and block-entity submissions in the host model list. Do not
+        // clear the side maps merely because the pack has no entity adapter;
+        // that would turn a normal host fallback into a missing-draw path.
+        if (!ChimeraRenderer.segmentsActive()) {
             storage.chimera$clearEntitySubmits();
         }
     }
@@ -132,7 +136,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
                 }
                 chimera$renderBatch(entityBufferSource, outlineBufferSource,
                         Map.of(renderType, entry.getValue()), crumblingBufferSource);
-                ChimeraEntityBridge.endEntityBatch();
+                ChimeraEntityBridge.endEntityBatch(renderType);
             } finally {
                 ChimeraEntityBridge.endDraw();
             }

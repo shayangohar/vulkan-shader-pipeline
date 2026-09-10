@@ -18,6 +18,7 @@ import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
 
+
 /**
  * Builds and installs chimera's terrain pipelines.
  *
@@ -108,7 +109,7 @@ public final class ChimeraTerrainPipelines {
         if (renderType == TerrainRenderType.TRANSLUCENT && translucentOverride != null) {
             return translucentOverride;
         }
-        return getTerrainPipeline();
+        return renderType == TerrainRenderType.TRANSLUCENT ? fixedPipeline() : getTerrainPipeline();
     }
 
     public static VertexFormat getTerrainVertexFormat() {

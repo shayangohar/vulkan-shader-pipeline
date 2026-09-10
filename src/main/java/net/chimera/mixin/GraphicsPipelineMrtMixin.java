@@ -2,12 +2,16 @@ package net.chimera.mixin;
 
 import net.chimera.render.shader.MrtPipelineContext;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
+import net.vulkanmod.vulkan.shader.PipelineState;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.nio.IntBuffer;
 
@@ -20,6 +24,27 @@ import static org.lwjgl.system.MemoryStack.stackGet;
  */
 @Mixin(value = GraphicsPipeline.class, remap = false)
 public abstract class GraphicsPipelineMrtMixin {
+    @Inject(method = "createGraphicsPipeline", at = @At("HEAD"))
+    private void chimera$beginRegisteredMrt(
+            PipelineState state,
+            CallbackInfoReturnable<Long> callback
+    ) {
+        MrtPipelineContext.beginPipeline((GraphicsPipeline) (Object) this);
+    }
+
+    @Inject(method = "createGraphicsPipeline", at = @At("RETURN"))
+    private void chimera$endRegisteredMrt(
+            PipelineState state,
+            CallbackInfoReturnable<Long> callback
+    ) {
+        MrtPipelineContext.endPipeline();
+    }
+
+    @Inject(method = "cleanUp", at = @At("HEAD"))
+    private void chimera$unregisterMrt(CallbackInfo callback) {
+        MrtPipelineContext.unregister((GraphicsPipeline) (Object) this);
+    }
+
     @ModifyArg(
             method = "createGraphicsPipeline",
             at = @At(

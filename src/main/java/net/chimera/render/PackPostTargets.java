@@ -20,6 +20,8 @@ import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkClearColorValue;
@@ -55,6 +57,7 @@ import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
  * cannot make a cleared or stale image visible to a later pass.
  */
 public final class PackPostTargets {
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final int TARGET_COUNT = PackTargetGraphPlan.MAX_TARGET + 1;
 
     private static final int SIDE_COUNT = 3;
@@ -82,6 +85,8 @@ public final class PackPostTargets {
 
     /** Installs the validated graph and allocates only required physical sides. */
     public boolean configure(PackTargetGraphPlan graph) {
+        trace("configure begin oldTarget0=" + imageId(this.images[0][0])
+                + " oldTarget1=" + imageId(this.images[1][0]));
         cleanUp();
         if (graph == null || graph.steps().isEmpty()) {
             return false;
@@ -139,6 +144,9 @@ public final class PackPostTargets {
         this.pipelineFramebuffer = Framebuffer.builder(this.images[0][0], null).build();
         this.pipelineRenderPass = RenderPass.builder(this.pipelineFramebuffer).build();
         this.configured = true;
+        trace("configure done target0=" + imageId(this.images[0][0])
+                + " target1=" + imageId(this.images[1][0])
+                + " sides=" + this.sideCounts[0] + " doubled=" + this.doubled[0]);
         return true;
     }
 
@@ -188,6 +196,10 @@ public final class PackPostTargets {
         Arrays.fill(this.sourceImages, null);
         this.valid[0] = false;
         this.sourceImages[0] = hdrColor;
+        trace("beginFrame target0=" + imageId(this.images[0][0])
+                + " target1=" + imageId(this.images[1][0])
+                + " activeSide=" + this.activeSide[0]
+                + " sides=" + this.sideCounts[0]);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (TargetSpec target : this.graph.targets()) {
                 int index = target.index();
@@ -208,21 +220,21 @@ public final class PackPostTargets {
         }
     }
 
-    /** Clears target 0 before pack geometry writes its color and coverage outputs. */
+    /** Invalidates target 0 before pack geometry initializes it at render-pass load. */
     public void prepareGeometryTarget(VkCommandBuffer commandBuffer) {
         if (!this.configured || !this.used[0]) {
             throw new IllegalStateException("pack geometry target 0 is unavailable");
-        }
-        VulkanImage target = imageFor(0, this.activeSide[0]);
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            clearImage(stack, commandBuffer, target, new float[] {0.0f, 0.0f, 0.0f, 0.0f});
         }
         this.valid[0] = false;
         this.sourceImages[0] = null;
     }
 
     public VulkanImage geometryTarget0() {
-        return this.configured && this.used[0] ? imageFor(0, this.activeSide[0]) : null;
+        VulkanImage image = this.configured && this.used[0] ? imageFor(0, this.activeSide[0]) : null;
+        trace("geometryTarget0 configured=" + this.configured + " used=" + this.used[0]
+                + " activeSide=" + this.activeSide[0] + " sides=" + this.sideCounts[0]
+                + " image=" + imageId(image));
+        return image;
     }
 
     /** Commits target 0 after the scene seed successfully merged host pixels. */
@@ -423,6 +435,43 @@ public final class PackPostTargets {
         return this.valid[target] ? imageFor(target, this.activeSide[target]) : null;
     }
 
+    /**
+     * Returns the unused physical side for the final host-composition seed.
+     * The final pack pass runs after host hand and entity draws.  Those draws
+     * live in the stable output image, so the output must be copied into a
+     * pack-owned side before the final shader samples colortex0.  Returning a
+     * separate side keeps the final pass free of read/write feedback.
+     */
+    public VulkanImage nextFinalInputTarget() {
+        if (!this.configured || !this.used[0] || !this.doubled[0]) {
+            return null;
+        }
+        VulkanImage source = this.sourceImages[0];
+        VulkanImage destination = imageFor(0, nextWriteSide(0));
+        return destination == source ? null : destination;
+    }
+
+    /** Commits the host-composition seed as the current logical target 0. */
+    public void commitFinalInput(VulkanImage target) {
+        if (target == null || !this.used[0]) {
+            throw new IllegalArgumentException("final input target is unavailable");
+        }
+        int side = -1;
+        for (int candidate = 0; candidate < this.sideCounts[0]; candidate++) {
+            if (imageFor(0, candidate) == target) {
+                side = candidate;
+                break;
+            }
+        }
+        if (side < 0) {
+            throw new IllegalArgumentException("final input target does not belong to colortex0");
+        }
+        this.previousSide[0] = this.activeSide[0];
+        this.activeSide[0] = side;
+        this.valid[0] = true;
+        this.sourceImages[0] = target;
+    }
+
     /** Returns the last committed frame image when temporal history exists. */
     public VulkanImage previousTarget(int target) {
         if (target < 0 || target >= TARGET_COUNT || !this.valid[target]
@@ -472,6 +521,9 @@ public final class PackPostTargets {
     public boolean isConfigured() { return this.configured; }
 
     public void cleanUp() {
+        trace("cleanup target0=" + imageId(this.images[0][0])
+                + " target1=" + imageId(this.images[1][0])
+                + " configured=" + this.configured);
         if (this.rendering) throw new IllegalStateException("cannot clean up active pack post rendering");
         if (this.pipelineRenderPass != null) this.pipelineRenderPass.cleanUp();
         if (this.pipelineFramebuffer != null) this.pipelineFramebuffer.cleanUp(false);
@@ -571,6 +623,16 @@ public final class PackPostTargets {
     private static boolean contains(VulkanImage[] images, VulkanImage needle) {
         for (VulkanImage image : images) if (image == needle) return true;
         return false;
+    }
+
+    private static long imageId(VulkanImage image) {
+        return image == null ? 0L : image.getId();
+    }
+
+    private static void trace(String message) {
+        if (Boolean.getBoolean("chimera.traceTransitions")) {
+            LOGGER.info("[chimera] pack target {}", message);
+        }
     }
 
     private static void copyImage(

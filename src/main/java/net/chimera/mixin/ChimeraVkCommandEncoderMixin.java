@@ -30,6 +30,14 @@ public abstract class ChimeraVkCommandEncoderMixin {
         if (!ChimeraEntityBridge.shouldUsePackPipeline(hostPipeline)) {
             return;
         }
+        // The pack entity adapter inherits the host depth state and must have
+        // the host depth attachment available.  A depthless pass can be a
+        // screen, inventory, or other overlay draw that happens to reuse an
+        // entity-looking pipeline.  Keep that draw on the host path instead
+        // of placing its geometry in front of the world.
+        if (!renderPass.hasDepthTexture()) {
+            return;
+        }
         var packPipeline = ChimeraEntityBridge.pipeline();
         if (hostPipeline == null || packPipeline == null) {
             callback.setReturnValue(false);

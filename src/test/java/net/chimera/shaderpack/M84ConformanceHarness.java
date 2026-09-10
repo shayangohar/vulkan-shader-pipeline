@@ -27,6 +27,7 @@ public final class M84ConformanceHarness {
                 "chimera.m84.baseline", fixtureRoot.resolve("baselines/m8_4.json").toString()));
 
         verifyRegistry();
+        verifyHostShadowDepthContract();
         verifySupported(supported, baseline);
         verifyUnsupported(unsupported, baseline);
         if (Boolean.getBoolean("chimera.m84.printBaseline")) {
@@ -79,6 +80,17 @@ public final class M84ConformanceHarness {
                 "M8.4 entity stride");
         assertEquals(48, ChimeraVertexFormats.EXTENDED_PARTICLE.getVertexSize(),
                 "M8.4 particle stride");
+    }
+
+    private static void verifyHostShadowDepthContract() throws IOException {
+        Path shader = Path.of("src/main/resources/assets/chimera/shaders/chimera_terrain/chimera_terrain.fsh");
+        String source = Files.readString(shader, StandardCharsets.UTF_8);
+        assertTrue(source.contains("projCoords.xy = projCoords.xy * 0.5 + 0.5"),
+                "M8.4 host shadow must keep Vulkan zero-to-one Z");
+        assertTrue(source.contains("float storedDepth = 1.0 - texture(ShadowMap"),
+                "M8.4 host shadow must convert reversed depth");
+        assertTrue(!source.contains("projCoords = projCoords * 0.5 + 0.5"),
+                "M8.4 host shadow must not remap Z as OpenGL depth");
     }
 
     private static void verifySupported(Path fixture, Path baseline) throws IOException {
