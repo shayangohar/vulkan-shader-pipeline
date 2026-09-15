@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /** Immutable plan for the active pack variant. */
@@ -13,11 +14,13 @@ public record PackPlan(
         PackSettingsPlan settings,
         PackResolutionPlan resolution,
         PackResourcePlan resources,
-        TerrainMaterialPlan terrainMaterial
+        TerrainMaterialPlan terrainMaterial,
+        PackAdvancedResourcePlan advancedResources
 ) {
     public PackPlan(PackConfig.PackConfigData config, List<PackProgramPlan> programs) {
         this(config, programs, PackEntityIdResolver.empty(),
-                PackSettingsPlan.empty(), PackResolutionPlan.empty(), PackResourcePlan.empty(), null);
+                PackSettingsPlan.empty(), PackResolutionPlan.empty(), PackResourcePlan.empty(), null,
+                PackAdvancedResourcePlan.empty());
     }
 
     public PackPlan(
@@ -26,7 +29,8 @@ public record PackPlan(
             PackEntityIdResolver entityIds
     ) {
         this(config, programs, entityIds, PackSettingsPlan.empty(),
-                PackResolutionPlan.empty(), PackResourcePlan.empty(), null);
+                PackResolutionPlan.empty(), PackResourcePlan.empty(), null,
+                PackAdvancedResourcePlan.empty());
     }
 
     /** Compatibility constructor for the pre-M8.1 resource-plan shape. */
@@ -38,7 +42,20 @@ public record PackPlan(
             PackResolutionPlan resolution,
             PackResourcePlan resources
     ) {
-        this(config, programs, entityIds, settings, resolution, resources, null);
+        this(config, programs, entityIds, settings, resolution, resources, null,
+                PackAdvancedResourcePlan.empty());
+    }
+
+    public PackPlan(
+            PackConfig.PackConfigData config,
+            List<PackProgramPlan> programs,
+            PackEntityIdResolver entityIds,
+            PackSettingsPlan settings,
+            PackResolutionPlan resolution,
+            PackResourcePlan resources,
+            PackAdvancedResourcePlan advancedResources
+    ) {
+        this(config, programs, entityIds, settings, resolution, resources, null, advancedResources);
     }
 
     public PackPlan {
@@ -51,6 +68,8 @@ public record PackPlan(
         resolution = resolution == null ? PackResolutionPlan.empty() : resolution;
         resources = resources == null ? PackResourcePlan.empty() : resources;
         terrainMaterial = terrainMaterial == null ? deriveTerrainMaterial(programs) : terrainMaterial;
+        advancedResources = advancedResources == null
+                ? PackAdvancedResourcePlan.empty() : advancedResources;
     }
 
     public Map<String, PackProgramPlan> byName() {
@@ -74,7 +93,11 @@ public record PackPlan(
     public boolean shouldAttempt(String name) {
         PackProgramPlan program = program(name);
         return program != null && program.executable() && resolution.shouldAttempt(name)
-                && resources.programAllowed(name);
+                && resources.programAllowed(name)
+                && (!advancedResources.dependentPrograms().contains(name)
+                || advancedResources.capabilityPossible())
+                && (!advancedResources.customImageFeaturePrograms().contains(name)
+                || advancedResources.capabilityPossible());
     }
 
     public String selectedDimension() {
@@ -110,6 +133,16 @@ public record PackPlan(
         return settings.runtimeSettings();
     }
 
+    /** Shared load-time macros used by runtime-only stages such as shadowcomp. */
+    public Map<String, String> settingsPreprocessorDefines() {
+        return settings.preprocessorDefines();
+    }
+
+    /** Explicit option names whose values must survive source defaults. */
+    public Set<String> settingsOverriddenNames() {
+        return settings.overriddenNames();
+    }
+
     public boolean isProgramDisabled(String name) {
         PackProgramResolution value = resolution.resolution(name);
         return value != null && !value.enabled();
@@ -122,6 +155,10 @@ public record PackPlan(
 
     public PackResourcePlan resources() {
         return resources;
+    }
+
+    public PackAdvancedResourcePlan advancedResources() {
+        return advancedResources;
     }
 
     /** The one terrain layout selected for every chunk buffer in this session. */

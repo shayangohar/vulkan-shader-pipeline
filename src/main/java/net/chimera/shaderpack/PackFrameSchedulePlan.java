@@ -95,10 +95,20 @@ public final class PackFrameSchedulePlan {
                             PostTargetPlan.programComparator()))
                     .forEach(program -> {
                         PostTargetPlan target = program.targetPlan();
+                        boolean requiresLateDepth = program.interfacePlan() != null
+                                && program.interfacePlan().effective(UniformRegistry.Stage.POST)
+                                .samplers().stream()
+                                .map(UniformRegistry.SamplerBinding::name)
+                                .anyMatch(name -> name.equals("depthtex0")
+                                        || name.equals("depthtex2"));
                         PostWindow window = target.isFinal()
                                 ? PostWindow.FINAL
                                 : program.name().startsWith("deferred")
+                                && !requiresLateDepth
                                 ? PostWindow.EARLY : PostWindow.LATE;
+                        if (requiresLateDepth && !target.isFinal()) {
+                            deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
+                        }
                         TargetStep step = graph == null ? null : graph.step(program.name());
                         List<Integer> inputs = step == null ? List.of() : step.readTargets();
                         List<Integer> outputs = step == null

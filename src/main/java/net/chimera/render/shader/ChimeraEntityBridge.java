@@ -626,6 +626,7 @@ public final class ChimeraEntityBridge {
             return;
         }
         for (int index = 0; index < VTextureSelector.SIZE; index++) {
+            net.chimera.render.ChimeraTextureBindingState.clearPackBinding(index);
             VTextureSelector.bindTexture(index, previousTextures[index]);
             previousTextures[index] = null;
         }

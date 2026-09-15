@@ -50,11 +50,5 @@ public abstract class ChimeraItemInHandRendererMixin {
             ChimeraEntityBridge.endDraw();
         }
         chimera$handDrawActive = false;
-        if (ChimeraRenderer.segmentsActive()) {
-            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-            if (pass != null) {
-                pass.finishPackFinalAfterHand();
-            }
-        }
     }
 }

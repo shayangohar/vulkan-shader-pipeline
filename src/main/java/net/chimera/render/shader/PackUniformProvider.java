@@ -12,7 +12,9 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
 /**
@@ -100,6 +102,30 @@ public final class PackUniformProvider {
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
         INSTANCE.frameState.resetSession();
         INSTANCE.refreshBindings();
+    }
+
+    /** Writes the same captured frame values into a compute uniform block. */
+    public static void writeComputeUniforms(
+            List<UniformRegistry.UniformDeclaration> declarations,
+            int[] offsets,
+            int[] sizes,
+            ByteBuffer target
+    ) {
+        if (declarations == null || target == null) return;
+        for (int index = 0; index < declarations.size(); index++) {
+            if (offsets == null || sizes == null || index >= offsets.length || index >= sizes.length) {
+                break;
+            }
+            UniformRegistry.UniformDeclaration declaration = declarations.get(index);
+            UniformRegistry.UniformDescriptor descriptor = UniformRegistry.descriptor(
+                    declaration.name(), declaration.glslType());
+            if (descriptor == null) continue;
+            ByteBuffer duplicate = target.duplicate();
+            duplicate.position(offsets[index]);
+            duplicate.limit(offsets[index] + sizes[index]);
+            MappedBuffer mapped = MappedBuffer.createFromBuffer(duplicate.slice());
+            INSTANCE.frameState.write(descriptor, declaration.glslType(), mapped);
+        }
     }
 
     private void updateFrame(Camera camera, float partialTick,

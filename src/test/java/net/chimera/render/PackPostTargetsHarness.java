@@ -1,5 +1,10 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.TargetSpec;
+import net.chimera.shaderpack.TargetStep;
+import net.chimera.shaderpack.PackTargetGraphPlan;
+
+import java.util.Map;
 import java.util.List;
 
 /** Deterministic, Vulkan-free checks for pack post target availability. */
@@ -16,7 +21,6 @@ public final class PackPostTargetsHarness {
                 "target 2 must be unavailable before a pack write");
         assertTrue(!PackPostTargets.isTargetAvailable(3, true, unwritten),
                 "target 3 must be unavailable before a pack write");
-
         boolean[] targetZeroWritten = unwritten.clone();
         targetZeroWritten[0] = true;
         assertTrue(PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
@@ -60,6 +64,20 @@ public final class PackPostTargetsHarness {
         PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
         assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
                 "final fallback must resolve through target 0 when target 3 is unavailable");
+
+        TargetSpec persistent = new TargetSpec(2, 97, 16, 16, false,
+                new float[] {0, 0, 0, 0}, true, true, List.of());
+        TargetStep feedback = new TargetStep("feedback", List.of(2), List.of(2),
+                List.of(97), Map.of(2, 0), Map.of(2, 1), 16, 16,
+                false, true, List.of());
+        assertTrue(PackTargetGraphPlan.requiresInitialSeed(persistent, List.of(feedback)),
+                "persistent feedback target must be seeded before its first read");
+        assertTrue(!PackTargetGraphPlan.requiresInitialSeed(persistent, List.of(
+                        new TargetStep("producer", List.of(0), List.of(2),
+                                List.of(97), Map.of(0, 0), Map.of(2, 1), 16, 16,
+                                false, true, List.of()),
+                        feedback)),
+                "persistent target with a prior producer must not be reseeded");
 
         System.out.println("[chimera] post target availability harness: PASS");
     }

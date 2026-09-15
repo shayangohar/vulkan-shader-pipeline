@@ -9,9 +9,11 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
+import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,9 +21,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 import java.nio.file.Path;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
+import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
 
 /**
  * Builds GraphicsPipelines from pack programs, mirroring
@@ -41,6 +47,10 @@ import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
  */
 public final class PackPipelines {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
+    private static final Pattern STORAGE_IMAGE_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
+                    + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
+                    + "(u?i?image3D)\\s+([A-Za-z_]\\w*)\\s*;");
 
     private PackPipelines() {}
 
@@ -203,11 +213,22 @@ public final class PackPipelines {
 
     /** Builds a post pipeline from the already prepared and translated plan. */
     public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
+        return buildPost(plan, fixedVertexSource, PackAdvancedResourcePlan.empty());
+    }
+
+    /** Builds a post pipeline with the session's advanced-resource contract. */
+    public static PackPost buildPost(
+            PackProgramPlan plan,
+            String fixedVertexSource,
+            PackAdvancedResourcePlan advancedResources
+    ) {
         if (plan == null || !plan.executable() || plan.targetPlan() == null
                 || plan.convertedFragment() == null) {
             return null;
         }
         try {
+            advancedResources = advancedResources == null
+                    ? PackAdvancedResourcePlan.empty() : advancedResources;
             UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
                     .effective(UniformRegistry.Stage.POST);
             int[] slots = interfacePlan.samplers().stream()
@@ -223,17 +244,29 @@ public final class PackPipelines {
             json.add("UBOs", uniformUboArray(interfacePlan));
             json.add("PushConstants", new JsonArray());
 
+            int storageBindingBase = nextBinding(json, slots.length);
+            String vertexSource = bindStorageImages(
+                    plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex(),
+                    plan.name(), advancedResources, storageBindingBase);
+            String fragmentSource = bindStorageImages(
+                    plan.convertedFragment(), plan.name(), advancedResources, storageBindingBase);
+            if (vertexSource == null || fragmentSource == null) {
+                throw new IllegalStateException("advanced post image declaration rejected");
+            }
+
             PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
                     (VertexFormat) CustomVertexFormat.NONE, "pack_" + plan.name());
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
-                    plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex());
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            setStorageBackedSamplerLayouts(builder, slots, interfacePlan, advancedResources,
+                    plan.name(), nextBinding(json, 0));
+            addStorageImageDescriptors(builder, plan.name(), advancedResources, storageBindingBase);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
             return new PackPost(plan.name(), pipeline, slots, samplerNames,
-                    colorInputTargets(samplerNames), plan.convertedFragment(), plan.targetPlan());
+                    colorInputTargets(samplerNames), fragmentSource, plan.targetPlan());
         } catch (Exception e) {
             LOGGER.warn("[chimera] pack {}: planned post build failed: {}", plan.name(), e.getMessage());
             return null;
@@ -243,7 +276,8 @@ public final class PackPipelines {
     /** Builds the extended terrain pipeline from the shared program plan. */
     public static PackTerrain buildTerrain(PackProgramPlan plan, String fixedVertexSource) {
         return buildTerrainLikePlan(plan, fixedVertexSource,
-                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0);
+                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0,
+                PackAdvancedResourcePlan.empty());
     }
 
     /** Builds terrain with the pack-wide union format selected at load time. */
@@ -252,20 +286,31 @@ public final class PackPipelines {
             String fixedVertexSource,
             TerrainMaterialPlan materialPlan
     ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0);
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0,
+                PackAdvancedResourcePlan.empty());
     }
 
     public static PackTerrain buildTerrain(
             PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
             boolean coverage, int targetFormat
     ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat);
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat,
+                PackAdvancedResourcePlan.empty());
+    }
+
+    public static PackTerrain buildTerrain(
+            PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
+            boolean coverage, int targetFormat, PackAdvancedResourcePlan advancedResources
+    ) {
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat,
+                advancedResources);
     }
 
     /** Builds the translucent terrain pipeline from the shared program plan. */
     public static PackTerrain buildTranslucent(PackProgramPlan plan, String fixedVertexSource) {
         return buildTerrainLikePlan(plan, fixedVertexSource,
-                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0);
+                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0,
+                PackAdvancedResourcePlan.empty());
     }
 
     /** Builds water with the pack-wide union format selected at load time. */
@@ -274,14 +319,24 @@ public final class PackPipelines {
             String fixedVertexSource,
             TerrainMaterialPlan materialPlan
     ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0);
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0,
+                PackAdvancedResourcePlan.empty());
     }
 
     public static PackTerrain buildTranslucent(
             PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
             boolean coverage, int targetFormat
     ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat);
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat,
+                PackAdvancedResourcePlan.empty());
+    }
+
+    public static PackTerrain buildTranslucent(
+            PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
+            boolean coverage, int targetFormat, PackAdvancedResourcePlan advancedResources
+    ) {
+        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat,
+                advancedResources);
     }
 
     /** Builds the shadow pipeline from the shared program plan. */
@@ -297,6 +352,14 @@ public final class PackPipelines {
     public static PackShadow buildShadow(
             PackProgramPlan plan,
             TerrainMaterialPlan materialPlan
+    ) {
+        return buildShadow(plan, materialPlan, PackAdvancedResourcePlan.empty());
+    }
+
+    public static PackShadow buildShadow(
+            PackProgramPlan plan,
+            TerrainMaterialPlan materialPlan,
+            PackAdvancedResourcePlan advancedResources
     ) {
         if (plan == null || !plan.executable() || plan.convertedFragment() == null
                 || plan.convertedVertex() == null) {
@@ -320,19 +383,34 @@ public final class PackPipelines {
                 }
             }
 
+            int storageBindingBase = nextBinding(json, slots.length);
+            String fragmentSource = bindStorageImages(plan.convertedFragment(), plan.name(),
+                    advancedResources, storageBindingBase);
+            if (fragmentSource == null) {
+                throw new IllegalStateException("advanced shadow image declaration rejected");
+            }
+            String vertexSource = bindStorageImages(plan.convertedVertex(), plan.name(),
+                    advancedResources, storageBindingBase);
+            if (vertexSource == null) {
+                throw new IllegalStateException("advanced shadow vertex image declaration rejected");
+            }
+
             PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
                     ChimeraVertexFormats.terrainFormat(materialPlan), "pack_" + plan.name());
             // Shadow UBOs use the same canonical provider as post and family pipelines.
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, plan.convertedVertex());
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, plan.convertedFragment());
+            setStorageBackedSamplerLayouts(builder, slots, interfacePlan, advancedResources, plan.name(),
+                    nextBinding(json, 0));
+            addStorageImageDescriptors(builder, plan.name(), advancedResources, storageBindingBase);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
             for (var buffer : pipeline.getBuffers()) {
                 buffer.setUseGlobalBuffer(true);
             }
-            return new PackShadow(pipeline, slots, plan.convertedFragment());
+            return new PackShadow(pipeline, slots, fragmentSource);
         } catch (Exception e) {
             LOGGER.warn("[chimera] pack {}: planned shadow build failed: {}", plan.name(), e.getMessage());
             return null;
@@ -659,7 +737,8 @@ public final class PackPipelines {
             String fixedVertexSource,
             TerrainMaterialPlan materialPlan,
             boolean coverage,
-            int targetFormat
+            int targetFormat,
+            PackAdvancedResourcePlan advancedResources
     ) {
         if (plan == null || !plan.executable() || plan.convertedFragment() == null) {
             return null;
@@ -682,16 +761,33 @@ public final class PackPipelines {
                 }
                 ubos.addAll(uniformUboArray(interfacePlan, 3, "all"));
             }
+            int storageBindingBase = nextBinding(json, slots.length);
+            String fragment = coverage
+                    ? LegacyGlslConverter.withCoverageOutput(plan.convertedFragment())
+                    : plan.convertedFragment();
+            fragment = bindStorageImages(fragment, plan.name(), advancedResources, storageBindingBase);
+            if (fragment == null) {
+                throw new IllegalStateException("advanced terrain image declaration rejected");
+            }
+            String vertex = plan.convertedVertex() == null
+                    ? fixedVertexSource : plan.convertedVertex();
+            vertex = bindStorageImages(vertex, plan.name(), advancedResources, storageBindingBase);
+            if (vertex == null) {
+                throw new IllegalStateException("advanced terrain vertex image declaration rejected");
+            }
             PipelineConfig config = PipelineConfig.fromJson("pack_" + plan.name(), json);
             Pipeline.Builder builder = new Pipeline.Builder(
                     ChimeraVertexFormats.terrainFormat(materialPlan), "pack_" + plan.name());
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
-                    plan.convertedVertex() == null ? fixedVertexSource : plan.convertedVertex());
-            String fragment = coverage
-                    ? LegacyGlslConverter.withCoverageOutput(plan.convertedFragment())
-                    : plan.convertedFragment();
+            // A terrain shader may sample an image that it also writes through
+            // an image3D descriptor. Keep the combined sampler in GENERAL for
+            // that shared image. The shadow builder already applies this rule;
+            // omitting it here leaves one descriptor read-only and the other
+            // GENERAL for the same Vulkan image, which is invalid at draw time.
+            setStorageBackedSamplerLayouts(builder, slots, interfacePlan, advancedResources, plan.name(),
+                    nextBinding(json, 0));
+            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex);
             GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
             boolean dynamicMrt = outputPlan != null && outputPlan.requiresMrt();
             if (dynamicMrt) {
@@ -700,6 +796,7 @@ public final class PackPipelines {
                 MrtPipelineContext.beginGeometry(targetFormat,
                         org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT, deviceMaxColorAttachments());
             }
+            addStorageImageDescriptors(builder, plan.name(), advancedResources, storageBindingBase);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragment);
             GraphicsPipeline pipeline = builder.createGraphicsPipeline();
             if (dynamicMrt) {
@@ -866,6 +963,131 @@ public final class PackPipelines {
     /** Return an isolated copy so pack sampler and fragment fields cannot alter the host config. */
     static JsonObject shadowPipelineJson() {
         return ChimeraShaderLoader.loadJson("chimera_shadow.json").deepCopy();
+    }
+
+    private static int nextBinding(JsonObject json, int samplerCount) {
+        int next = 0;
+        JsonArray ubos = json == null ? null : json.getAsJsonArray("UBOs");
+        if (ubos != null) {
+            for (var element : ubos) {
+                if (!element.isJsonObject()) continue;
+                next = Math.max(next, element.getAsJsonObject().get("binding").getAsInt() + 1);
+            }
+        }
+        return next + samplerCount;
+    }
+
+    private static void addStorageImageDescriptors(
+            Pipeline.Builder builder,
+            String program,
+            PackAdvancedResourcePlan advancedResources,
+            int bindingBase
+    ) {
+        if (builder == null || advancedResources == null) return;
+        int index = 0;
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding
+                : advancedResources.graphicsImages(program)) {
+            builder.addImageDescriptor(new ImageDescriptor(
+                    bindingBase + index++, "image3D", "Sampler" + binding.selectorSlot(),
+                    binding.selectorSlot(), VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));
+        }
+    }
+
+    /**
+     * Keep a combined sampler on GENERAL when it aliases a pack-owned storage
+     * image. VulkanMod's default descriptor path assumes every sampler is
+     * read-only and would otherwise issue an unsupported GENERAL ->
+     * SHADER_READ_ONLY transition during descriptor binding.
+     */
+    private static void setStorageBackedSamplerLayouts(
+            Pipeline.Builder builder,
+            int[] slots,
+            UniformRegistry.ProgramInterface interfacePlan,
+            PackAdvancedResourcePlan advancedResources,
+            String program,
+            int samplerBase
+    ) {
+        if (builder == null || advancedResources == null) return;
+        java.util.Set<Integer> storageSlots = advancedResources.graphicsImages(program).stream()
+                .map(PackAdvancedResourcePlan.GraphicsImageBinding::selectorSlot)
+                .collect(java.util.stream.Collectors.toSet());
+        if (interfacePlan != null) {
+            java.util.Set<String> advancedSamplers = advancedResources.images().values().stream()
+                    .map(PackAdvancedResourcePlan.ImageSpec::sampler)
+                    .filter(name -> name != null && !name.isBlank())
+                    .collect(java.util.stream.Collectors.toSet());
+            interfacePlan.samplers().stream()
+                    .filter(binding -> advancedSamplers.contains(binding.name()))
+                    .map(UniformRegistry.SamplerBinding::slot)
+                    .forEach(storageSlots::add);
+        }
+        if (storageSlots.isEmpty()) return;
+        List<ImageDescriptor> descriptors = ((ChimeraPipelineBuilderAccessor) (Object) builder)
+                .chimera$imageDescriptors();
+        for (int index = 0; index < slots.length; index++) {
+            if (!storageSlots.contains(slots[index])) continue;
+            int binding = samplerBase + index;
+            for (ImageDescriptor descriptor : descriptors) {
+                if (descriptor.getBinding() == binding) {
+                    descriptor.setLayout(VK_IMAGE_LAYOUT_GENERAL);
+                    break;
+                }
+            }
+        }
+    }
+
+    private static String bindStorageImages(
+            String source,
+            String program,
+            PackAdvancedResourcePlan advancedResources,
+            int bindingBase
+    ) {
+        if (source == null) return null;
+        List<PackAdvancedResourcePlan.GraphicsImageBinding> bindings = advancedResources == null
+                ? List.of() : advancedResources.graphicsImages(program);
+        if (bindings.isEmpty()) {
+            return STORAGE_IMAGE_DECLARATION.matcher(source).find() ? null : source;
+        }
+        Map<String, PackAdvancedResourcePlan.GraphicsImageBinding> bySymbol = new java.util.TreeMap<>();
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : bindings) {
+            bySymbol.put(binding.symbol(), binding);
+        }
+        Matcher matcher = STORAGE_IMAGE_DECLARATION.matcher(source);
+        StringBuffer result = new StringBuffer();
+        java.util.Set<String> emitted = new java.util.TreeSet<>();
+        while (matcher.find()) {
+            PackAdvancedResourcePlan.GraphicsImageBinding binding = bySymbol.get(matcher.group(2));
+            if (binding == null) {
+                return null;
+            }
+            PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
+                    .get(binding.imageName());
+            if (spec == null || !spec.supported()) return null;
+            int index = bindings.indexOf(binding);
+            String replacement = "layout(" + spec.internalFormat() + ", binding = "
+                    + (bindingBase + index) + ") uniform " + matcher.group(1)
+                    + " " + matcher.group(2) + ";";
+            matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+            emitted.add(binding.symbol());
+        }
+        matcher.appendTail(result);
+        String rewritten = result.toString();
+        StringBuilder generated = new StringBuilder();
+        for (int index = 0; index < bindings.size(); index++) {
+            PackAdvancedResourcePlan.GraphicsImageBinding binding = bindings.get(index);
+            if (emitted.contains(binding.symbol())) continue;
+            PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
+                    .get(binding.imageName());
+            if (spec == null || !spec.supported()) return null;
+            generated.append("layout(").append(spec.internalFormat())
+                    .append(", binding = ").append(bindingBase + index)
+                    .append(") uniform ").append(binding.glslType()).append(' ')
+                    .append(binding.symbol()).append(";\n");
+        }
+        if (generated.isEmpty()) return rewritten;
+        int versionEnd = rewritten.indexOf('\n');
+        int insertAt = versionEnd < 0 ? 0 : versionEnd + 1;
+        return rewritten.substring(0, insertAt) + generated + rewritten.substring(insertAt);
     }
 
     /** Derives the logical post color inputs once from the shared interface plan. */

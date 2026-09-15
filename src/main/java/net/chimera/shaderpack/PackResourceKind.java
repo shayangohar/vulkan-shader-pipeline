@@ -9,6 +9,7 @@ public enum PackResourceKind {
     NOISE,
     PACK_TEXTURE,
     GAME_RESOURCE,
+    ADVANCED_IMAGE,
     MATERIAL_ATLAS,
     UNSERVED
 }

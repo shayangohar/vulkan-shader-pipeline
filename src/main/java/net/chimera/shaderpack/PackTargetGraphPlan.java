@@ -382,6 +382,43 @@ public final class PackTargetGraphPlan {
         return targets.stream().filter(value -> value.index() == index).findFirst().orElse(null);
     }
 
+    /**
+     * Returns true when a persistent target must be seeded before the first
+     * successful producer can run. This covers feedback passes that read a
+     * clear=false target before they write it, while leaving unrelated
+     * uninitialized targets unavailable.
+     */
+    public boolean requiresInitialSeed(int target) {
+        return requiresInitialSeed(target(target), steps);
+    }
+
+    /** Pure form used by the target-owner tests. */
+    public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps) {
+        if (spec == null || !spec.persistent() || spec.clear()) {
+            return false;
+        }
+        boolean producerSeen = false;
+        boolean readBeforeProducer = false;
+        for (TargetStep step : steps == null ? List.<TargetStep>of() : steps) {
+            if (step == null) {
+                continue;
+            }
+            if (!step.executable()) {
+                continue;
+            }
+            if (!producerSeen && step.reads(spec.index())) {
+                readBeforeProducer = true;
+            }
+            if (step.writes(spec.index())) {
+                if (readBeforeProducer) {
+                    return true;
+                }
+                producerSeen = true;
+            }
+        }
+        return false;
+    }
+
     public TargetStep step(String name) {
         return steps.stream().filter(value -> value.programName().equals(name)).findFirst().orElse(null);
     }

@@ -1,0 +1,8 @@
+{
+  "programs": [
+    { "name": "composite", "vertex": "composite.vsh", "fragment": "composite.fsh" },
+    { "name": "composite1", "vertex": "composite1.vsh", "fragment": "composite1.fsh" },
+    { "name": "composite2", "vertex": "composite2.vsh", "fragment": "composite2.fsh" },
+    { "name": "final", "vertex": "final.vsh", "fragment": "final.fsh" }
+  ]
+}

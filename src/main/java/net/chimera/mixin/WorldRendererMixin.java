@@ -47,7 +47,26 @@ public abstract class WorldRendererMixin {
             double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
         if (!ChimeraRenderer.segmentsActive()) return;
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass != null) pass.beginPackCoverageWindow(renderType);
+        if (pass == null) return;
+        // Capture depth before the pack geometry window can install its guarded
+        // dynamic-rendering attachments. The depth conversion is an independent
+        // fullscreen pass and must never be intercepted as terrain rendering.
+        if (renderType == TerrainRenderType.TRANSLUCENT) {
+            pass.captureOpaqueDepthBeforeTranslucent();
+        }
+        pass.beginPackCoverageWindow(renderType);
+    }
+
+    @Inject(method = "renderSectionLayer",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/vulkanmod/vulkan/texture/VTextureSelector;bindShaderTextures(Lnet/vulkanmod/vulkan/shader/Pipeline;)V",
+                    shift = At.Shift.AFTER),
+            require = 1)
+    private void chimera$bindActualTerrainAtlas(TerrainRenderType renderType, double camX, double camY,
+            double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
+        if (!ChimeraRenderer.segmentsActive()) return;
+        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+        if (pass != null) pass.bindTerrainAtlasAfterSelector(renderType);
     }
 
     @Inject(method = "renderSectionLayer", at = @At("RETURN"))
@@ -58,12 +77,4 @@ public abstract class WorldRendererMixin {
         if (pass != null) pass.endPackCoverageWindow(renderType);
     }
 
-    @Inject(method = "renderSectionLayer", at = @At("HEAD"))
-    private void chimera$captureOpaqueDepthBeforeTranslucent(TerrainRenderType renderType,
-            double camX, double camY, double camZ, Matrix4f modelView, Matrix4f projection,
-            CallbackInfo ci) {
-        if (renderType != TerrainRenderType.TRANSLUCENT || !ChimeraRenderer.segmentsActive()) return;
-        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass != null) pass.captureOpaqueDepthBeforeTranslucent();
-    }
 }

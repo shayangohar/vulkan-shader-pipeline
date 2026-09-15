@@ -1,6 +1,8 @@
 package net.chimera.shaderpack;
 
 import java.nio.file.Path;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -47,6 +49,7 @@ public final class M80ConformanceHarness {
                 "M8.0 unsupported version was accepted");
         verifyFixedFullscreenVertex();
         verifyPerTargetFallback(root);
+        verifyOrientationFixture(root);
         System.out.println("[chimera] M8.0 modern GLSL conformance: PASS");
     }
 
@@ -64,6 +67,75 @@ public final class M80ConformanceHarness {
                         fragmentInterface, match);
         assertTrue(conversion != null && conversion.source().contains("gl_Position"),
                 "M8.0 paired post vertex without varyings was rejected");
+        assertCanonicalOrientation(conversion.source(), "converted post vertex");
+        assertCanonicalOrientation(readResource(
+                "/assets/chimera/shaders/chimera_composite/chimera_composite.vsh"),
+                "fixed post vertex");
+    }
+
+    private static void verifyOrientationFixture(Path root) {
+        PackProbe.Analysis analysis = PackProbe.analyze(root.resolve("m8_0/orientation"));
+        String[] executable = {"composite", "composite1", "final"};
+        for (String name : executable) {
+            PackProgramPlan plan = require(analysis.plan(), name);
+            assertTrue(plan.executable() && plan.convertedVertex() != null,
+                    "M8.0 orientation stage is not executable: " + name
+                            + " deviations=" + plan.deviations()
+                            + " interface=" + plan.interfacePlan().deviations()
+                            + " target=" + (plan.targetPlan() == null
+                            ? "null" : plan.targetPlan().deviations()));
+            assertCanonicalOrientation(plan.convertedVertex(), name, true);
+        }
+
+        PackProgramPlan fallback = require(analysis.plan(), "composite2");
+        assertTrue(!fallback.executable(),
+                "M8.0 orientation middle fallback unexpectedly executes");
+
+        // The stage count may change when the middle pass falls back. The
+        // fullscreen coordinate contract must remain identical for the one,
+        // two, and three stage schedules.
+        for (boolean skipMiddle : new boolean[] {false, true}) {
+            String[] schedule = skipMiddle
+                    ? new String[] {"composite", "final"}
+                    : new String[] {"composite", "composite1", "final"};
+            for (String name : schedule) {
+                PackProgramPlan plan = require(analysis.plan(), name);
+                assertCanonicalOrientation(plan.convertedVertex(),
+                        (skipMiddle ? "fallback schedule " : "full schedule ") + name, true);
+            }
+        }
+    }
+
+    private static void assertCanonicalOrientation(String source, String label) {
+        assertCanonicalOrientation(source, label, false);
+    }
+
+    private static void assertCanonicalOrientation(
+            String source,
+            String label,
+            boolean requireVaryingAssignment
+    ) {
+        assertTrue(source != null && source.contains("vec2 chimeraUv"),
+                label + " is missing the canonical fullscreen coordinate");
+        assertTrue(!source.contains("chimeraPackUv"),
+                label + " contains the obsolete pack UV coordinate");
+        assertTrue(!source.contains("1.0 - chimeraUv.y"),
+                label + " contains a pack-only V inversion");
+        assertTrue(source.contains("gl_Position = vec4(chimeraUv"),
+                label + " does not use the canonical fullscreen position");
+        if (requireVaryingAssignment) {
+            assertTrue(source.contains("= chimeraUv"),
+                    label + " does not pass the canonical coordinate to the varying");
+        }
+    }
+
+    private static String readResource(String path) {
+        try (InputStream stream = M80ConformanceHarness.class.getResourceAsStream(path)) {
+            if (stream == null) throw new AssertionError("Missing shader resource: " + path);
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new AssertionError("Unable to read shader resource: " + path, e);
+        }
     }
 
     private static void verifyPerTargetFallback(Path root) {

@@ -77,6 +77,7 @@ public final class PackPlanBuilder {
         // use the active preprocessed snapshot.
         boolean prepared = !program.variantFolder().isBlank();
         boolean preparedSnapshot = !program.preparedSources().isEmpty();
+        boolean allowUnusedDeclarations = prepared;
         UniformRegistry.Stage stage = stageFor(program.name());
         PostTargetPlan targetPlan = PostTargetPlan.isPostProgramName(program.name())
                 ? PostTargetPlan.parse(program.name(), fragment,
@@ -87,7 +88,7 @@ public final class PackPlanBuilder {
                 config == null ? Map.of() : config.colortexFormats())
                 : null;
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
-                fragment, vertex, stage, targetPlan, prepared,
+                fragment, vertex, stage, targetPlan, allowUnusedDeclarations,
                 config == null || config.settings() == null
                         ? Map.of() : config.settings().runtimeSettings().customDescriptors(),
                 config == null || config.settings() == null

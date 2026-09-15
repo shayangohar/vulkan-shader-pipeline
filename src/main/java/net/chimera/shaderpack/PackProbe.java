@@ -80,7 +80,9 @@ public final class PackProbe {
         String packName = logicalPackName(packPath);
         Path shadersDir = loaded.shadersDir();
         PackSettingsPlan settingsPlan = PackSettingsPlan.parse(loaded.rawProgramsAllVariants(), shadersDir);
-        loaded.prepare(settingsPlan.preprocessorDefines());
+        loaded.prepare(
+                PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
+                PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false, false));
         Map<String, String> metadataHashes = new TreeMap<>();
         List<String> globalDeviations = new ArrayList<>(loaded.deviations());
         List<String> settings = new ArrayList<>();
@@ -161,8 +163,46 @@ public final class PackProbe {
         PackPlan initialPlan = PackPlanBuilder.build(
                 loaded.programs(), packConfig, entityIds.resolver(), resolution);
         PackResourcePlan resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
+        PackAdvancedResourcePlan advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
+
+        // Some real packs intentionally hide their writable-image producers
+        // behind the Iris custom-image capability. The first plan tells us
+        // whether the pack declares a supported image set and a compute stage;
+        // only then do we negotiate that capability and rebuild every plan
+        // from the same prepared source snapshot. Packs without that contract
+        // retain their original preparation and fallback behavior.
+        if (advancedPlan.hasSupportedImages()
+                && advancedPlan.computeStages().containsKey("shadowcomp")) {
+            loaded.prepare(
+                    PackEngineDefines.forCustomImages(settingsPlan.preprocessorDefines()),
+                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true, false));
+            globalDeviations.addAll(loaded.deviations());
+            inventories.values().forEach(inventory -> {
+                inventory.preparedSources.clear();
+                inventory.deviations.clear();
+            });
+            for (PackProgram program : loaded.programs()) {
+                Inventory inventory = inventories.computeIfAbsent(program.name(), Inventory::new);
+                inventory.variantFolder = program.variantFolder();
+                addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
+                        program.preparedFragmentSource(), shadersDir);
+                if (program.vertexSource() != null) {
+                    addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
+                            program.preparedVertexSource(), shadersDir);
+                }
+                inventory.deviations.addAll(program.preparationDeviations());
+            }
+            packConfig = PackConfig.parse(loaded.programs(), shadersDir, settingsPlan);
+            resolution = PackResolutionPlan.build(
+                    loaded.selectedDimension(), loaded.selectedVariantFolder(),
+                    loaded.programs(), settingsPlan);
+            initialPlan = PackPlanBuilder.build(
+                    loaded.programs(), packConfig, entityIds.resolver(), resolution);
+            resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
+            advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
+        }
         PackPlan packPlan = new PackPlan(packConfig, initialPlan.programs(), entityIds.resolver(),
-                settingsPlan, resolution, resourcePlan);
+                settingsPlan, resolution, resourcePlan, advancedPlan);
         globalDeviations.addAll(packConfig.deviations());
         // Keep standard sampler aliases program-scoped. Adding every binding
         // deviation to the pack-wide list changes old fixture support status
@@ -178,7 +218,8 @@ public final class PackProbe {
         ConformanceReport report = report(packName, passListPresent, passInventory, metadataHashes,
                 settings, globalDeviations, loaded);
         for (Inventory inventory : inventories.values()) {
-            report.addProgram(toProgram(inventory, packConfig, packPlan.program(inventory.name), resourcePlan));
+            report.addProgram(toProgram(inventory, packConfig, packPlan.program(inventory.name),
+                    resourcePlan, packPlan));
         }
         return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
     }
@@ -270,7 +311,8 @@ public final class PackProbe {
             Inventory inventory,
             PackConfig.PackConfigData packConfig,
             PackProgramPlan programPlan,
-            PackResourcePlan resourcePlan
+            PackResourcePlan resourcePlan,
+            PackPlan packPlan
     ) {
         boolean relaxed = !inventory.variantFolder.isBlank();
         StringBuilder combinedSource = new StringBuilder();
@@ -283,6 +325,11 @@ public final class PackProbe {
         String fragment = sourceView.getOrDefault("fragment", source);
         String vertex = sourceView.get("vertex");
         String name = inventory.name;
+        PackAdvancedResourcePlan.ComputeSpec computeSpec = packPlan == null
+                ? null : packPlan.advancedResources().computeStages().get(name);
+        if (computeSpec != null && inventory.stages.contains("compute")) {
+            return computeProgram(inventory, computeSpec, packPlan);
+        }
         String stripped = stripComments(source);
         boolean executablePostName = PostTargetPlan.isPostProgramName(name);
         boolean modernTerrain = (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
@@ -568,7 +615,8 @@ public final class PackProbe {
         if (modern) {
             deviations.add("MODERN_GLSL_UNSUPPORTED");
         }
-        if (stripped.matches("(?s).*\\b(?:image\\w*|buffer)\\b.*")) {
+        if (stripped.matches("(?s).*\\b(?:image\\w*|buffer)\\b.*")
+                && !advancedResourcesArePlanned(name, packPlan)) {
             deviations.add("ADVANCED_RESOURCE_UNSUPPORTED");
         }
 
@@ -637,6 +685,64 @@ public final class PackProbe {
                 sorted(inventory.stages), inventory.sourceHashes, samplers, uniforms,
                 targets, support, ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
                 List.copyOf(deviations));
+    }
+
+    /** Builds a truthful report for a native compute stage without applying graphics rules. */
+    private static ConformanceReport.ProgramReport computeProgram(
+            Inventory inventory,
+            PackAdvancedResourcePlan.ComputeSpec computeSpec,
+            PackPlan packPlan
+    ) {
+        TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
+        deviations.addAll(computeSpec.deviations());
+        boolean capability = packPlan != null
+                && packPlan.advancedResources().capabilityPossible();
+        boolean executable = computeSpec.supported() && capability;
+        if (executable) {
+            deviations.add("COMPUTE_NATIVE_BRIDGE");
+        } else if (!computeSpec.supported()) {
+            deviations.add("COMPUTE_STAGE_UNSUPPORTED:" + computeSpec.program());
+        } else {
+            deviations.add("COMPUTE_CAPABILITY_UNAVAILABLE:" + computeSpec.program());
+        }
+        ConformanceReport.SupportStatus support = executable
+                ? ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION
+                : ConformanceReport.SupportStatus.IDENTITY_FALLBACK;
+        ConformanceReport.RuntimeDisposition runtime = executable
+                ? ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED
+                : ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK;
+        String source = inventory.sources.getOrDefault("compute", "");
+        String stripped = stripComments(source);
+        List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
+        TreeSet<String> uniforms = new TreeSet<>(samplers);
+        uniforms.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
+                .map(UniformRegistry.UniformDeclaration::name).toList());
+        return new ConformanceReport.ProgramReport(
+                inventory.name,
+                "compute",
+                "COMPUTE_GLSL",
+                List.of("compute"),
+                inventory.sourceHashes,
+                samplers,
+                List.copyOf(uniforms),
+                List.of(),
+                support,
+                runtime,
+                List.copyOf(deviations));
+    }
+
+    /**
+     * M8.6 advanced image declarations are not an old generic-resource
+     * failure when the shared plan has admitted the program. The runtime
+     * still performs the final pipeline/resource checks, so an individual
+     * build failure remains an explicit identity fallback.
+     */
+    private static boolean advancedResourcesArePlanned(String program, PackPlan packPlan) {
+        if (packPlan == null || packPlan.advancedResources() == null
+                || !packPlan.advancedResources().capabilityPossible()) {
+            return false;
+        }
+        return packPlan.advancedResources().dependentPrograms().contains(program);
     }
 
     private static boolean hasSevereDeviation(Collection<String> deviations) {

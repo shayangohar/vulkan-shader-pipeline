@@ -57,20 +57,28 @@ public final class PostTargetPlan {
         String text = source == null ? "" : source;
         Map<Integer, Integer> safeFormats = formats == null ? Map.of() : formats;
         List<String> deviations = new ArrayList<>();
-        List<Integer> directive = null;
+        List<List<Integer>> directives = new ArrayList<>();
         boolean directiveSeen = false;
 
         Matcher define = DRAWBUFFERS_DEFINE.matcher(text);
         while (define.find()) {
             List<Integer> parsed = parseDigits(define.group(1), deviations);
-            directive = mergeDirective(directive, parsed, deviations);
+            if (parsed.isEmpty()) {
+                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+            } else {
+                directives.add(parsed);
+            }
             directiveSeen = true;
         }
 
         Matcher comment = TARGET_COMMENT.matcher(text);
         while (comment.find()) {
             List<Integer> parsed = parseCommentTargets(comment.group(2), deviations);
-            directive = mergeDirective(directive, parsed, deviations);
+            if (parsed.isEmpty()) {
+                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+            } else {
+                directives.add(parsed);
+            }
             directiveSeen = true;
         }
 
@@ -78,7 +86,7 @@ public final class PostTargetPlan {
             deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
         }
 
-        List<Integer> targetSlots = directive == null ? List.of(0) : directive;
+        List<Integer> targetSlots = selectDirective(directives, deviations);
         Set<Integer> outputSet = new TreeSet<>();
         Matcher fragData = FRAG_DATA.matcher(text);
         while (fragData.find()) {
@@ -158,20 +166,35 @@ public final class PostTargetPlan {
         }
     }
 
-    private static List<Integer> mergeDirective(
-            List<Integer> previous,
-            List<Integer> next,
+    /**
+     * Selects the route that can describe the most outputs after preprocessing.
+     * Conditional pack branches can leave both a short inactive route and a
+     * longer active route in the prepared text.  Equal-length alternatives
+     * are ambiguous and remain a hard fallback rather than being guessed.
+     */
+    private static List<Integer> selectDirective(
+            List<List<Integer>> directives,
             List<String> deviations
     ) {
-        if (next == null || next.isEmpty()) {
-            deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
-            return previous;
+        if (directives == null || directives.isEmpty()) {
+            return List.of(0);
         }
-        if (previous != null && !previous.equals(next)) {
+        int longestLength = directives.stream().mapToInt(List::size).max().orElse(0);
+        if (longestLength == 0) {
+            return List.of(0);
+        }
+        List<Integer> selected = directives.stream()
+                .filter(route -> route.size() == longestLength)
+                .findFirst()
+                .orElse(List.of(0));
+        Set<List<Integer>> longest = new HashSet<>();
+        directives.stream()
+                .filter(route -> route.size() == longestLength)
+                .forEach(longest::add);
+        if (longest.size() > 1) {
             deviations.add("POST_TARGET_DIRECTIVE_CONFLICT");
-            return previous;
         }
-        return next;
+        return selected;
     }
 
     private static List<Integer> parseDigits(String digits, List<String> deviations) {

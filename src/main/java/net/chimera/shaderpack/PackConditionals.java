@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.TreeMap;
 
 /** Shared bounded expression evaluator for shader and pack-property conditions. */
@@ -221,23 +223,30 @@ final class PackConditionals {
                     return number();
                 }
                 String name = identifier();
-                String value = macros.get(name);
-                if (value == null) {
-                    return unknownNamesAreTrue ? 1.0 : 0.0;
-                }
-                if (value.equalsIgnoreCase("true")) {
-                    return 1.0;
-                }
-                if (value.equalsIgnoreCase("false")) {
-                    return 0.0;
-                }
-                try {
-                    return Double.parseDouble(value.replace("f", "").replace("F", ""));
-                } catch (NumberFormatException ignored) {
-                    return unknownNamesAreTrue ? 1.0 : 0.0;
-                }
+                return resolveMacroValue(name, new HashSet<>());
             } finally {
                 recursionDepth--;
+            }
+        }
+
+        private double resolveMacroValue(String name, Set<String> visiting) {
+            if (!visiting.add(name)) {
+                return unknownNamesAreTrue ? 1.0 : 0.0;
+            }
+            String value = macros.get(name);
+            if (value == null) {
+                return unknownNamesAreTrue ? 1.0 : 0.0;
+            }
+            String normalized = value.trim();
+            if (normalized.equalsIgnoreCase("true")) return 1.0;
+            if (normalized.equalsIgnoreCase("false")) return 0.0;
+            try {
+                return Double.parseDouble(normalized.replace("f", "").replace("F", ""));
+            } catch (NumberFormatException ignored) {
+                if (normalized.matches("[A-Za-z_]\\w*")) {
+                    return resolveMacroValue(normalized, visiting);
+                }
+                return unknownNamesAreTrue ? 1.0 : 0.0;
             }
         }
 

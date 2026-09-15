@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -72,7 +73,8 @@ public final class PackSource {
             this.variants = Map.of();
             this.programs = List.of();
             this.deviations = this.baseDeviations;
-            prepare(Map.of());
+            prepare(PackEngineDefines.forPack(Map.of()),
+                    PackEngineDefines.lockedNames(Set.of(), false, false));
             selectDimension(initialDimension);
         }
 
@@ -96,9 +98,14 @@ public final class PackSource {
 
         /** Re-prepares every variant with the active load-time option defaults. */
         public void prepare(Map<String, String> initialMacros) {
+            prepare(initialMacros, Set.of());
+        }
+
+        /** Re-prepares variants while preserving explicit option overrides. */
+        public void prepare(Map<String, String> initialMacros, Set<String> lockedMacros) {
             Map<String, List<PackProgram>> prepared = new TreeMap<>();
             rawVariants.forEach((folder, values) -> prepared.put(folder, preparePrograms(
-                    values, shadersDir, folder, variantMacros(folder, initialMacros))));
+                    values, shadersDir, folder, variantMacros(folder, initialMacros), lockedMacros)));
             this.variants = Map.copyOf(prepared);
             selectDimension(this.selectedDimension);
         }
@@ -563,16 +570,19 @@ public final class PackSource {
             List<PackProgram> candidates,
             Path shadersRoot,
             String variantFolder,
-            Map<String, String> initialMacros
+            Map<String, String> initialMacros,
+            Set<String> lockedMacros
     ) {
         List<PackProgram> result = new ArrayList<>();
         for (PackProgram candidate : candidates) {
             ShaderSourcePreprocessor.Result fragment = ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros);
+                    shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros,
+                    lockedMacros);
             ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
                     ? new ShaderSourcePreprocessor.Result(null, List.of())
                     : ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros);
+                    shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros,
+                    lockedMacros);
             List<String> prepDeviations = new ArrayList<>();
             prepDeviations.addAll(fragment.deviations());
             prepDeviations.addAll(vertex.deviations());

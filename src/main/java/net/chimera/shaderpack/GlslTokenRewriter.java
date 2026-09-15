@@ -3,9 +3,10 @@ package net.chimera.shaderpack;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Token-safe rewrites for the small legacy-to-Vulkan GLSL bridge. */
-final class GlslTokenRewriter {
+public final class GlslTokenRewriter {
     private GlslTokenRewriter() {}
 
     static String replaceIdentifiers(String source, Map<String, String> replacements) {
@@ -23,7 +24,31 @@ final class GlslTokenRewriter {
         return GlslLexer.render(tokens);
     }
 
-    static String rewriteTextureCalls(String source) {
+    /**
+     * Renames a sampler identifier without renaming a function with the same
+     * spelling.  The OptiFine atlas sampler is commonly named {@code texture},
+     * which collides with the GLSL texture lookup function.
+     */
+    static String renameSamplerIdentifier(String source, String sampler, String replacement) {
+        if (source == null || sampler == null || replacement == null || sampler.equals(replacement)) {
+            return source;
+        }
+        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (!token.identifier(sampler)) {
+                continue;
+            }
+            int next = GlslLexer.nextSignificant(tokens, index);
+            if (next >= 0 && tokens.get(next).symbol("(")) {
+                continue;
+            }
+            tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, replacement));
+        }
+        return GlslLexer.render(tokens);
+    }
+
+    public static String rewriteTextureCalls(String source) {
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
@@ -44,6 +69,47 @@ final class GlslTokenRewriter {
                 throw new IllegalArgumentException("unbalanced texture call");
             }
             tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, replacement));
+        }
+        return GlslLexer.render(tokens);
+    }
+
+    /**
+     * Keeps legacy 3D texture reads inside the declared image volume. Iris
+     * packs commonly use camera-relative coordinates for these reads. Vulkan
+     * does not guarantee a safe result for an out-of-range texelFetch, so the
+     * bounded compute bridge makes the access explicit before shaderc sees it.
+     */
+    public static String rewriteTexelFetchBounds(String source, Set<String> samplerNames) {
+        if (source == null || source.isBlank() || samplerNames == null || samplerNames.isEmpty()) {
+            return source;
+        }
+        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
+        for (int index = tokens.size() - 1; index >= 0; index--) {
+            GlslLexer.Token token = tokens.get(index);
+            if (!token.identifier("texelFetch")) {
+                continue;
+            }
+            int open = GlslLexer.nextSignificant(tokens, index);
+            int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
+            if (open < 0 || close < 0) {
+                throw new IllegalArgumentException("unbalanced texelFetch call");
+            }
+            List<int[]> arguments = argumentRanges(tokens, open + 1, close);
+            if (arguments.size() != 3) {
+                continue;
+            }
+            String sampler = singleIdentifier(tokens, arguments.get(0));
+            if (!samplerNames.contains(sampler)) {
+                continue;
+            }
+            String coordinate = argumentText(tokens, arguments.get(1));
+            String lod = argumentText(tokens, arguments.get(2));
+            String expression = "texelFetch(" + sampler + ", clamp(" + coordinate
+                    + ", ivec3(0), textureSize(" + sampler + ", 0) - ivec3(1)), " + lod + ")";
+            tokens.set(index, raw(expression));
+            for (int clear = index + 1; clear <= close; clear++) {
+                tokens.set(clear, raw(""));
+            }
         }
         return GlslLexer.render(tokens);
     }
@@ -234,13 +300,21 @@ final class GlslTokenRewriter {
         return GlslLexer.render(tokens);
     }
 
-    static boolean containsIdentifier(String source, String name) {
+    public static boolean containsIdentifier(String source, String name) {
         for (GlslLexer.Token token : GlslLexer.lex(source)) {
             if (token.identifier(name)) {
                 return true;
             }
         }
         return false;
+    }
+
+    public static int identifierCount(String source, String name) {
+        int count = 0;
+        for (GlslLexer.Token token : GlslLexer.lex(source)) {
+            if (token.identifier(name)) count++;
+        }
+        return count;
     }
 
     private static GlslLexer.Token identifier(String value) {

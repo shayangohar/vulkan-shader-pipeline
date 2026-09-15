@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
  * OptiFine and Iris packs. It expands includes and removes inactive branches
  * before the pack interface is inspected or converted.
  */
-final class ShaderSourcePreprocessor {
+public final class ShaderSourcePreprocessor {
     private static final int MAX_INCLUDE_DEPTH = 32;
     private static final int MAX_EXPANDED_FILES = 256;
     private static final int MAX_EMITTED_LINES = 200_000;
@@ -40,10 +40,20 @@ final class ShaderSourcePreprocessor {
             String source,
             Map<String, String> initialMacros
     ) {
+        return prepare(shadersRoot, sourceFile, source, initialMacros, Set.of());
+    }
+
+    static Result prepare(
+            Path shadersRoot,
+            Path sourceFile,
+            String source,
+            Map<String, String> initialMacros,
+            Set<String> lockedMacros
+    ) {
         if (source == null) {
             return new Result(null, List.of("SOURCE_PREPARATION_FAILED"), List.of());
         }
-        Context context = new Context(shadersRoot, initialMacros);
+        Context context = new Context(shadersRoot, initialMacros, lockedMacros);
         try {
             context.process(source, sourceFile, 0);
             try {
@@ -61,12 +71,32 @@ final class ShaderSourcePreprocessor {
         }
     }
 
-    record Result(String source, List<String> deviations, List<String> dependencies) {
+    /** Runtime bridge for load-time stages discovered outside PackProgram. */
+    public static Result prepareForRuntime(
+            Path shadersRoot,
+            Path sourceFile,
+            String source,
+            Map<String, String> initialMacros
+    ) {
+        return prepare(shadersRoot, sourceFile, source, initialMacros);
+    }
+
+    public static Result prepareForRuntime(
+            Path shadersRoot,
+            Path sourceFile,
+            String source,
+            Map<String, String> initialMacros,
+            Set<String> lockedMacros
+    ) {
+        return prepare(shadersRoot, sourceFile, source, initialMacros, lockedMacros);
+    }
+
+    public record Result(String source, List<String> deviations, List<String> dependencies) {
         Result(String source, List<String> deviations) {
             this(source, deviations, List.of());
         }
 
-        Result {
+        public Result {
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
             dependencies = dependencies == null ? List.of() : dependencies.stream().distinct().sorted().toList();
         }
@@ -80,17 +110,34 @@ final class ShaderSourcePreprocessor {
         private final Path shadersRoot;
         private final StringBuilder output = new StringBuilder();
         private final PackConditionals.State conditionState;
+        private final Map<String, String> lockedMacros;
         private final Set<Path> includeStack = new HashSet<>();
         private final Set<String> deviations = new TreeSet<>();
         private final Set<String> dependencies = new TreeSet<>();
         private int expandedFiles;
         private int emittedLines;
         private int emittedChars;
+        private boolean lockedDefinitionsEmitted;
 
-        private Context(Path shadersRoot, Map<String, String> initialMacros) {
+        private Context(
+                Path shadersRoot,
+                Map<String, String> initialMacros,
+                Set<String> lockedMacroNames
+        ) {
             this.shadersRoot = shadersRoot == null ? Path.of(".").toAbsolutePath().normalize()
                     : shadersRoot.toAbsolutePath().normalize();
             this.conditionState = new PackConditionals.State(initialMacros);
+            this.lockedMacros = new java.util.TreeMap<>();
+            if (lockedMacroNames != null) {
+                for (String name : lockedMacroNames) {
+                    if (name != null && name.matches("[A-Za-z_]\\w*")) {
+                        String value = initialMacros == null ? null : initialMacros.get(name);
+                        if (value != null && !value.isBlank()) {
+                            this.lockedMacros.put(name, value.trim());
+                        }
+                    }
+                }
+            }
         }
 
         private void process(String source, Path sourceFile, int depth) throws IOException {
@@ -120,6 +167,7 @@ final class ShaderSourcePreprocessor {
             Matcher matcher = DIRECTIVE.matcher(line);
             if (!matcher.matches()) {
                 if (active()) {
+                    emitLockedDefinitions();
                     emit(line);
                 }
                 return;
@@ -141,6 +189,10 @@ final class ShaderSourcePreprocessor {
                         if (!argument.matches("[A-Za-z_]\\w*")) {
                             throw new PreparationFailure("PREPROCESSOR_DEFINE_UNSUPPORTED");
                         }
+                        if (lockedMacros.containsKey(argument)) {
+                            emitLockedDefinitions();
+                            return;
+                        }
                         conditionState.undefine(argument);
                         emit("#undef " + argument);
                     }
@@ -149,6 +201,9 @@ final class ShaderSourcePreprocessor {
                 case "version", "extension", "pragma", "line" -> {
                     if (active()) {
                         emit(line);
+                        if (directive.equals("version")) {
+                            emitLockedDefinitions();
+                        }
                     }
                 }
                 default -> {
@@ -163,6 +218,7 @@ final class ShaderSourcePreprocessor {
             if (!active()) {
                 return;
             }
+            emitLockedDefinitions();
             Matcher matcher = INCLUDE.matcher(argument);
             if (!matcher.matches()) {
                 throw new PreparationFailure("SOURCE_INCLUDE_UNRESOLVED");
@@ -222,7 +278,17 @@ final class ShaderSourcePreprocessor {
             String name = matcher.group(1);
             String value = matcher.group(2);
             String definition = value == null || value.isBlank() ? "1" : normalize(value);
+            if (lockedMacros.containsKey(name)) {
+                emitLockedDefinitions();
+                return;
+            }
             emitDefinition(name, argument, definition);
+        }
+
+        private void emitLockedDefinitions() {
+            if (lockedDefinitionsEmitted || lockedMacros.isEmpty()) return;
+            lockedDefinitionsEmitted = true;
+            lockedMacros.forEach((name, value) -> emit("#define " + name + " " + value));
         }
 
         private void emitDefinition(String name, String source, String definition) {

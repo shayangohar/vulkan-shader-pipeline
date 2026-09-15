@@ -64,7 +64,6 @@ public final class PackPostTargets {
     private final VulkanImage[][] images = new VulkanImage[SIDE_COUNT][TARGET_COUNT];
     private final boolean[] used = new boolean[TARGET_COUNT];
     private final boolean[] valid = new boolean[TARGET_COUNT];
-    private final boolean[] pendingOutputs = new boolean[TARGET_COUNT];
     private final boolean[] doubled = new boolean[TARGET_COUNT];
     private final int[] sideCounts = new int[TARGET_COUNT];
     private final int[] activeSide = new int[TARGET_COUNT];
@@ -94,7 +93,6 @@ public final class PackPostTargets {
         this.graph = graph;
         Arrays.fill(this.used, false);
         Arrays.fill(this.valid, false);
-        Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.doubled, false);
         Arrays.fill(this.sideCounts, 1);
         Arrays.fill(this.activeSide, 0);
@@ -191,7 +189,6 @@ public final class PackPostTargets {
         }
         this.hdrIdentitySource = hdrColor;
         this.temporal.beginFrame(hdrColor != null);
-        Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.pendingImages, null);
         Arrays.fill(this.sourceImages, null);
         this.valid[0] = false;
@@ -215,6 +212,16 @@ public final class PackPostTargets {
                 } else if (this.valid[index]) {
                     this.sourceImages[index] = imageFor(index, this.activeSide[index]);
                     this.temporal.seedCurrent(index);
+                } else if (this.graph.requiresInitialSeed(index)) {
+                    // A persistent feedback target has no defined Vulkan
+                    // contents on its first allocation. Seed it once so the
+                    // first read/write pass cannot sample undefined memory.
+                    VulkanImage image = imageFor(index, this.activeSide[index]);
+                    clearImage(stack, commandBuffer, image, target.clearColorCopy());
+                    this.valid[index] = true;
+                    this.sourceImages[index] = image;
+                    this.temporal.seedCurrent(index);
+                    trace("seedPersistent target=" + index + " image=" + imageId(image));
                 }
             }
         }
@@ -303,7 +310,6 @@ public final class PackPostTargets {
         if (targets == null) return;
         for (int target : targets) {
             if (target < 0 || target >= TARGET_COUNT) continue;
-            this.pendingOutputs[target] = false;
             this.valid[target] = false;
             this.sourceImages[target] = target == 0 ? this.hdrIdentitySource : null;
             this.temporal.invalidate(target);
@@ -339,7 +345,6 @@ public final class PackPostTargets {
                 this.pendingWriteSide[target] = side;
                 VulkanImage destination = imageFor(target, side);
                 this.pendingImages[target] = destination;
-                this.pendingOutputs[target] = true;
                 if (step.reads(target) && this.sourceImages[target] != null
                         && this.sourceImages[target] != destination) {
                     copyImage(stack, commandBuffer, this.sourceImages[target], destination);
@@ -487,43 +492,6 @@ public final class PackPostTargets {
         return this.valid[target] ? imageFor(target, this.activeSide[target]) : null;
     }
 
-    /**
-     * Returns the unused physical side for the final host-composition seed.
-     * The final pack pass runs after host hand and entity draws.  Those draws
-     * live in the stable output image, so the output must be copied into a
-     * pack-owned side before the final shader samples colortex0.  Returning a
-     * separate side keeps the final pass free of read/write feedback.
-     */
-    public VulkanImage nextFinalInputTarget() {
-        if (!this.configured || !this.used[0] || !this.doubled[0]) {
-            return null;
-        }
-        VulkanImage source = this.sourceImages[0];
-        VulkanImage destination = imageFor(0, nextWriteSide(0));
-        return destination == source ? null : destination;
-    }
-
-    /** Commits the host-composition seed as the current logical target 0. */
-    public void commitFinalInput(VulkanImage target) {
-        if (target == null || !this.used[0]) {
-            throw new IllegalArgumentException("final input target is unavailable");
-        }
-        int side = -1;
-        for (int candidate = 0; candidate < this.sideCounts[0]; candidate++) {
-            if (imageFor(0, candidate) == target) {
-                side = candidate;
-                break;
-            }
-        }
-        if (side < 0) {
-            throw new IllegalArgumentException("final input target does not belong to colortex0");
-        }
-        this.previousSide[0] = this.activeSide[0];
-        this.activeSide[0] = side;
-        this.valid[0] = true;
-        this.sourceImages[0] = target;
-    }
-
     /** Returns the last committed frame image when temporal history exists. */
     public VulkanImage previousTarget(int target) {
         if (target < 0 || target >= TARGET_COUNT || !this.valid[target]
@@ -593,7 +561,6 @@ public final class PackPostTargets {
         Arrays.fill(this.pendingImages, null);
         Arrays.fill(this.used, false);
         Arrays.fill(this.valid, false);
-        Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.doubled, false);
         Arrays.fill(this.sideCounts, 1);
         Arrays.fill(this.previousSide, 0);
@@ -625,7 +592,6 @@ public final class PackPostTargets {
     }
 
     private void pendingWriteSideReset() {
-        Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.pendingImages, null);
         Arrays.fill(this.pendingWriteSide, 0);
         this.currentStep = null;
@@ -633,7 +599,6 @@ public final class PackPostTargets {
     }
 
     private void clearPendingState() {
-        Arrays.fill(this.pendingOutputs, false);
         Arrays.fill(this.pendingImages, null);
         this.rendering = false;
         this.currentStep = null;

@@ -14,6 +14,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -52,10 +53,14 @@ record PackSettingsPlan(
     private static final Pattern CUSTOM_VALUE = Pattern.compile(
             "^\\s*(uniform|variable)\\.(float|int|bool)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
     private static final Pattern CONDITION = Pattern.compile(
-            "^#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
+            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");
     private static final Set<String> SUPPORTED_FEATURES = Set.of(
             "LEGACY_GLSL", "COMPOSITE", "GBUFFERS", "SHADOWS", "WATER", "ENTITIES");
+    private static final String OPTION_OVERRIDE_PREFIX = "chimera.option.";
+    private static final Pattern SAFE_OVERRIDE_VALUE = Pattern.compile(
+            "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?[fF]?|true|false",
+            Pattern.CASE_INSENSITIVE);
 
     PackSettingsPlan {
         options = immutableOptions(options);
@@ -117,6 +122,15 @@ record PackSettingsPlan(
     }
 
     static PackSettingsPlan parse(List<PackProgram> programs, Path shadersDir) {
+        return parse(programs, shadersDir, systemOptionOverrides());
+    }
+
+    /** Parses settings with explicit load-time option overrides. */
+    static PackSettingsPlan parse(
+            List<PackProgram> programs,
+            Path shadersDir,
+            Map<String, String> explicitOverrides
+    ) {
         Map<String, Option> options = new TreeMap<>();
         Map<String, String> defaults = new TreeMap<>();
         List<String> deviations = new ArrayList<>();
@@ -144,6 +158,22 @@ record PackSettingsPlan(
             collectSourceOptions(file.getValue(), file.getKey(), options, defaults, deviations);
         }
 
+        // Real packs keep their authored options in included settings files,
+        // while shaders.properties uses those names in conditional image and
+        // program declarations. Read those defaults for the property
+        // condition state without turning every helper define into a pack
+        // option or changing the report schema.
+        Map<String, Option> helperOptions = new TreeMap<>();
+        Map<String, String> helperDefaults = new TreeMap<>();
+        collectHelperDefaults(shadersDir, helperOptions, helperDefaults, deviations);
+        Map<String, String> overrides = normalizeOverrides(explicitOverrides, deviations);
+        defaults.putAll(overrides);
+        for (Map.Entry<String, String> override : overrides.entrySet()) {
+            options.put(override.getKey(), new Option(override.getKey(), "chimera.option",
+                    override.getValue(), List.of(), "chimera.option"));
+            deviations.add("PACK_OPTION_OVERRIDE:" + override.getKey());
+        }
+
         Map<String, Profile> profiles = new TreeMap<>();
         Map<String, String> properties = new TreeMap<>();
         Map<String, Boolean> programEnabled = new TreeMap<>();
@@ -154,7 +184,8 @@ record PackSettingsPlan(
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
             parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
-                    required, optional, customValues, resourceDeclarations, deviations);
+                    required, optional, customValues, resourceDeclarations, deviations,
+                    mergedConditionMacros(defaults, helperDefaults, overrides));
         }
         Set<String> unsupportedRequired = new TreeSet<>();
         for (String feature : required) {
@@ -169,6 +200,80 @@ record PackSettingsPlan(
                 runtimeSettings, resourceDeclarations);
     }
 
+    private static Map<String, String> mergedConditionMacros(
+            Map<String, String> defaults,
+            Map<String, String> helperDefaults,
+            Map<String, String> overrides
+    ) {
+        Map<String, String> result = new TreeMap<>();
+        if (defaults != null) result.putAll(defaults);
+        if (helperDefaults != null) result.putAll(helperDefaults);
+        if (overrides != null) result.putAll(overrides);
+        return result;
+    }
+
+    private static void collectHelperDefaults(
+            Path shadersDir,
+            Map<String, Option> options,
+            Map<String, String> defaults,
+            List<String> deviations
+    ) {
+        if (shadersDir == null || !Files.isDirectory(shadersDir)) return;
+        try (var paths = Files.walk(shadersDir, 32)) {
+            paths.filter(Files::isRegularFile)
+                    .filter(PackSettingsPlan::isShaderSourceFile)
+                    .sorted(Comparator.comparing(path -> path.toString().replace('\\', '/')))
+                    .limit(512)
+                    .forEach(path -> {
+                        try {
+                            collectSourceOptions(Files.readString(path, StandardCharsets.UTF_8),
+                                    path.getFileName().toString(), options, defaults,
+                                    new ArrayList<>());
+                        } catch (IOException ignored) {
+                            // Executable sources remain authoritative when a
+                            // helper file cannot be read.
+                        }
+                    });
+        } catch (IOException ignored) {
+            // Helper defaults are an enhancement to the authored source path.
+        }
+    }
+
+    private static boolean isShaderSourceFile(Path path) {
+        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        return name.endsWith(".glsl") || name.endsWith(".vsh") || name.endsWith(".fsh")
+                || name.endsWith(".gsh") || name.endsWith(".csh")
+                || name.endsWith(".tcs") || name.endsWith(".tes");
+    }
+
+    private static Map<String, String> normalizeOverrides(
+            Map<String, String> source,
+            List<String> deviations
+    ) {
+        Map<String, String> result = new TreeMap<>();
+        if (source == null) return result;
+        for (Map.Entry<String, String> entry : source.entrySet()) {
+            String name = entry.getKey() == null ? "" : entry.getKey().trim();
+            String value = entry.getValue() == null ? "" : entry.getValue().trim();
+            if (!name.matches("[A-Za-z_]\\w*") || !SAFE_OVERRIDE_VALUE.matcher(value).matches()) {
+                if (!name.isBlank()) deviations.add("PACK_OPTION_OVERRIDE_UNSUPPORTED:" + name);
+                continue;
+            }
+            result.put(name, value);
+        }
+        return result;
+    }
+
+    private static Map<String, String> systemOptionOverrides() {
+        Map<String, String> result = new TreeMap<>();
+        for (String property : System.getProperties().stringPropertyNames()) {
+            if (!property.startsWith(OPTION_OVERRIDE_PREFIX)) continue;
+            String name = property.substring(OPTION_OVERRIDE_PREFIX.length());
+            result.put(name, System.getProperty(property, ""));
+        }
+        return result;
+    }
+
     /** Active defaults seed the shared shader preprocessor. */
     Map<String, String> preprocessorDefines() {
         Map<String, String> result = new TreeMap<>();
@@ -176,11 +281,20 @@ record PackSettingsPlan(
             Option option = options.get(name);
             // Defines authored in an executable stage are local to that
             // variant. Only explicit property defines are pack-wide inputs.
-            if (option != null && "shaders.properties".equals(option.source())) {
+            if (option != null && ("shaders.properties".equals(option.source())
+                    || "chimera.option".equals(option.source()))) {
                 result.put(name, value);
             }
         });
         return stageIndependentDefaults(result);
+    }
+
+    /** Names whose values were explicitly supplied by the Chimera launcher. */
+    Set<String> overriddenNames() {
+        return options.entrySet().stream()
+                .filter(entry -> "chimera.option".equals(entry.getValue().source()))
+                .map(Map.Entry::getKey)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     boolean enabled(String name) {
@@ -244,6 +358,26 @@ record PackSettingsPlan(
             }
             if (next <= PackResourcePlan.PACK_SLOT_LAST) {
                 slots.put(declaration.sampler(), next++);
+            }
+        }
+        // M8.6 image declarations expose their sampler aliases to graphics
+        // stages through the same isolated pack selector range. The advanced
+        // owner remains responsible for the actual image lifetime.
+        for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
+            if (!entry.getKey().startsWith("image.")) {
+                continue;
+            }
+            String[] values = entry.getValue() == null
+                    ? new String[0] : entry.getValue().trim().split("\\s+");
+            if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) {
+                continue;
+            }
+            String sampler = values[0];
+            if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) {
+                continue;
+            }
+            if (next <= PackResourcePlan.PACK_SLOT_LAST) {
+                slots.put(sampler, next++);
             }
         }
         return Collections.unmodifiableMap(slots);
@@ -314,10 +448,11 @@ record PackSettingsPlan(
             Set<String> optional,
             List<PackRuntimeSettings.Declaration> customValues,
             Map<String, PackResourceDeclaration> resourceDeclarations,
-            List<String> deviations
+            List<String> deviations,
+            Map<String, String> initialMacros
     ) {
         PackConditionals.State conditions = new PackConditionals.State(
-                stageIndependentDefaults(defaults));
+                stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
         boolean invalidCondition = false;
         try {
             for (String line : Files.readAllLines(propertyFile, StandardCharsets.UTF_8)) {

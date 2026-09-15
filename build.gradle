@@ -31,6 +31,8 @@ dependencies {
 
     // Vulkan bindings: bundled by VulkanMod at runtime; compile-only here
     compileOnly "org.lwjgl:lwjgl-vulkan:3.3.3"
+    compileOnly "org.lwjgl:lwjgl-vma:3.3.3"
+    compileOnly "org.lwjgl:lwjgl-shaderc:3.3.3"
 }
 
 processResources {
@@ -581,6 +583,30 @@ tasks.register('m85bConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m86ConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M8.6a advanced image and shadow-compute plan checks.'
+    dependsOn tasks.named('conformanceTest')
+    dependsOn tasks.named('m85bConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M86ConformanceHarness'
+    jvmArgs '-ea'
+    doFirst {
+        ['m86Complementary': 'chimera.m86.complementary',
+         'm86Bsl': 'chimera.m86.bsl'].each { projectKey, systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value != null && !value.toString().isBlank()) {
+                def pack = file(value.toString())
+                if (!pack.isDirectory() && !pack.isFile()) {
+                    throw new GradleException("M8.6 pack path does not exist: ${pack}")
+                }
+                systemProperty systemKey, pack.absolutePath
+            }
+        }
+    }
+}
+
+
 
 tasks.register('m82ConformanceTest', JavaExec) {
     group = 'verification'
@@ -610,6 +636,7 @@ tasks.named('check') {
     dependsOn tasks.named('m84ConformanceTest')
     dependsOn tasks.named('m85ConformanceTest')
     dependsOn tasks.named('m85bConformanceTest')
+    dependsOn tasks.named('m86ConformanceTest')
 }
 
 tasks.named('test') {

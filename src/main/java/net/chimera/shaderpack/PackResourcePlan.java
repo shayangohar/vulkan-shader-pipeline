@@ -19,7 +19,12 @@ import java.util.regex.Pattern;
 
 /** Immutable load-time resource plan shared by probing, pipelines, and runtime. */
 public final class PackResourcePlan {
-    public static final int PACK_SLOT_FIRST = 14;
+    /** Slot 14 is reserved by the runtime for pack coverage. */
+    public static final int COVERAGE_SLOT = 14;
+    /** Slot 15 is the distinct post shadowtex1 selector. */
+    public static final int SHADOW_TEX1_SLOT = 15;
+    /** Pack-owned sampled resources must not overlap reserved selectors. */
+    public static final int PACK_SLOT_FIRST = 16;
     public static final int PACK_SLOT_LAST = 21;
 
     private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-7])");
@@ -101,7 +106,8 @@ public final class PackResourcePlan {
                     .effective(stage).samplers();
             List<PackResourceBinding> programBindings = new ArrayList<>();
             for (UniformRegistry.SamplerBinding sampler : samplers) {
-                PackResourceBinding binding = resolve(programPlan.name(), sampler, declarations, shadersDir);
+                PackResourceBinding binding = resolve(programPlan.name(), sampler, declarations, shadersDir,
+                        settings == null ? Map.of() : settings.propertyValues());
                 programBindings.add(binding);
                 deviations.addAll(binding.deviations());
             }
@@ -114,7 +120,8 @@ public final class PackResourcePlan {
             String program,
             UniformRegistry.SamplerBinding sampler,
             Map<String, PackResourceDeclaration> declarations,
-            Path shadersDir
+            Path shadersDir,
+            Map<String, String> propertyValues
     ) {
         String name = sampler.name();
         String canonical = canonicalResource(name);
@@ -164,6 +171,14 @@ public final class PackResourcePlan {
             deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + hostResource);
             return new PackResourceBinding(program, name, hostResource,
                     PackResourceKind.TARGET, "", slot, "linear", "repeat",
+                    PackResourceStatus.HOST_ALIAS, deviations);
+        }
+
+        String advancedImage = advancedImageName(propertyValues, name);
+        if (advancedImage != null) {
+            deviations.add("ADVANCED_RESOURCE_ALIAS:" + name + ":" + advancedImage);
+            return new PackResourceBinding(program, name, advancedImage,
+                    PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
 
@@ -351,5 +366,18 @@ public final class PackResourcePlan {
     private static boolean isNamespacedSource(String source) {
         return source != null && source.contains(":") && !isUnsafePath(source)
                 && !source.startsWith("./") && !source.startsWith("../");
+    }
+
+    private static String advancedImageName(Map<String, String> propertyValues, String sampler) {
+        if (propertyValues == null || sampler == null || sampler.isBlank()) return null;
+        for (Map.Entry<String, String> entry : new TreeMap<>(propertyValues).entrySet()) {
+            if (!entry.getKey().startsWith("image.")) continue;
+            String[] values = entry.getValue() == null
+                    ? new String[0] : entry.getValue().trim().split("\\s+");
+            if (values.length > 0 && sampler.equals(values[0])) {
+                return entry.getKey().substring("image.".length());
+            }
+        }
+        return null;
     }
 }

@@ -276,7 +276,11 @@ public final class UniformRegistry {
             Map.entry("colortex2", 2),
             Map.entry("colortex3", 3),
             Map.entry("shadowtex0", 5),
-            Map.entry("shadowtex1", 5),
+            // Keep shadowtex1 separate from shadowtex0. The current renderer
+            // supplies the same truthful shadow-depth image to both names,
+            // but a shared selector slot creates a false resource conflict
+            // when a post shader declares both samplers.
+            Map.entry("shadowtex1", PackResourcePlan.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", 3),
             Map.entry("shadowcolor1", 3),
             Map.entry("depthtex0", 6),
@@ -440,6 +444,14 @@ public final class UniformRegistry {
                     samplerNames.putIfAbsent(variable.name(), type);
                     continue;
                 }
+                // Writable 3D images belong to the M8.6 advanced-resource
+                // plan, not to the ordinary generated UBO. Keeping them out
+                // of this catalog lets the graphics image bridge assign one
+                // explicit storage descriptor later.
+                if (isStorageImageType(type)) {
+                    deviations.add("ADVANCED_IMAGE_DECLARATION:" + variable.name());
+                    continue;
+                }
                 String declaredType = variable.array() ? type + "[]" : type;
                 UniformDeclaration declaration = new UniformDeclaration(variable.name(), declaredType);
                 UniformDeclaration previous = declarations.putIfAbsent(variable.name(), declaration);
@@ -485,7 +497,7 @@ public final class UniformRegistry {
                     && name.equals("entityId")) {
                 if (!type.equals("int") && !type.equals("float")) {
                     deviations.add("ENTITY_ID_UNSUPPORTED:" + type);
-                } else if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+                } else if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
                     deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
                 } else {
                     deviations.add("ENTITY_ID_VERTEX_DATA");
@@ -499,7 +511,7 @@ public final class UniformRegistry {
                 spec = customDescriptors.get(name);
             }
             if (!SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
-                if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+                if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
                     deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
                 } else {
                     deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + name);
@@ -507,7 +519,7 @@ public final class UniformRegistry {
                 continue;
             }
             if (spec == null) {
-                if (allowUnusedDeclarations && !isReferenced(stripped, name)) {
+                if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
                     deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
                 } else {
                     deviations.add("UNIFORM_NAME_UNSUPPORTED:" + name);
@@ -515,7 +527,7 @@ public final class UniformRegistry {
                 continue;
             }
             if (allowUnusedDeclarations && !implicitDeclarations.contains(name)
-                    && !isReferenced(stripped, name)) {
+                    && !isReferencedForStage(stripped, name, stage)) {
                 deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
                 continue;
             }
@@ -550,11 +562,16 @@ public final class UniformRegistry {
             if (stage == Stage.POST && slot == null) {
                 slot = extendedPostColorSlot(sampler.getKey());
             }
-            if (stage == Stage.POST && slot == null && customSamplerSlots != null) {
+            if (slot == null && customSamplerSlots != null) {
                 slot = customSamplerSlots.get(sampler.getKey());
             }
             boolean mappedType = sampler.getValue().equals("sampler2D")
-                    || sampler.getValue().equals("sampler2DShadow");
+                    || sampler.getValue().equals("sampler2DShadow")
+                    || ((sampler.getValue().equals("sampler3D")
+                    || sampler.getValue().equals("isampler3D")
+                    || sampler.getValue().equals("usampler3D"))
+                    && customSamplerSlots != null
+                    && customSamplerSlots.containsKey(sampler.getKey()));
             if (!mappedType || slot == null) {
                 if (stage == Stage.SHADOW && sampler.getKey().startsWith("shadowcolor")) {
                     deviations.add("SHADOW_COLOR_INPUT_UNSUPPORTED");
@@ -634,11 +651,37 @@ public final class UniformRegistry {
         return matcher.find() && matcher.find();
     }
 
+    /**
+     * Accounts for fixed-adapter aliases introduced after interface planning.
+     * The modern shadow bridge maps legacy matrix built-ins to
+     * gbufferModelView, so that canonical field is live even when the authored
+     * source references only gl_ModelViewMatrix or gl_NormalMatrix.
+     */
+    private static boolean isReferencedForStage(String source, String name, Stage stage) {
+        if (isReferenced(source, name)) {
+            return true;
+        }
+        return stage == Stage.SHADOW && name.equals("gbufferModelView")
+                && (isReferenced(source, "gl_ModelViewMatrix")
+                || isReferenced(source, "gl_NormalMatrix")
+                || isReferenced(source, "gl_ProjectionMatrix"));
+    }
+
     private static boolean isSamplerReferenced(String source, String name) {
         String withoutUniform = removeUniformDeclaration(source, name);
-        return Pattern.compile("(?i)\\b(?:texture|texture2D|texture2DLod|texture2DProj|"
-                + "textureProj|textureGrad|textureLod|shadow2D|texture2DShadow|texelFetch)"
+        if (Pattern.compile("(?i)\\b(?:texture|texture2D|texture2DLod|texture2DProj|"
+                + "texture3D|texture3DLod|textureProj|textureGrad|textureLod|shadow2D|"
+                + "texture2DShadow|texelFetch)"
                 + "\\s*\\(\\s*" + Pattern.quote(name) + "\\b")
+                .matcher(withoutUniform).find()) {
+            return true;
+        }
+        // Real packs commonly pass a sampler through a helper such as
+        // textureCatmullRom(sampler, uv). Restrict this fallback to call
+        // arguments. A broad identifier search mistakes a local variable that
+        // shadows a sampler, such as `float specular`, for a texture use.
+        return Pattern.compile("\\b[A-Za-z_]\\w*\\s*\\([^;{}\\r\\n]*\\b"
+                        + Pattern.quote(name) + "\\b[^;{}\\r\\n]*\\)")
                 .matcher(withoutUniform).find();
     }
 
@@ -807,6 +850,10 @@ public final class UniformRegistry {
         return type.startsWith("sampler") || type.startsWith("isampler") || type.startsWith("usampler");
     }
 
+    private static boolean isStorageImageType(String type) {
+        return "image3D".equals(type) || "iimage3D".equals(type) || "uimage3D".equals(type);
+    }
+
     private static String samplerResource(String name) {
         return PackResourcePlan.canonicalResource(name);
     }
@@ -944,6 +991,10 @@ public final class UniformRegistry {
         addLive(specs, "gbufferProjectionInverse", "mat4");
         addLive(specs, "shadowModelViewInverse", "mat4");
         addLive(specs, "shadowProjectionInverse", "mat4");
+        // The shadow adapter renders the terrain caster lane as one fixed
+        // stage. Iris normally supplies this value from its render scheduler;
+        // Chimera uses the solid-terrain value as an explicit adapter default.
+        addDefault(specs, "renderStage", "int");
 
         addLive(specs, "MVP", "mat4");
         addLive(specs, "ModelViewMat", "mat4");

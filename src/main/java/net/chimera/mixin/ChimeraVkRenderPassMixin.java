@@ -5,6 +5,7 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
+import net.chimera.render.ChimeraTextureBindingState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.vulkanmod.render.engine.VkGpuTexture;
 import net.vulkanmod.render.engine.VkRenderPass;
@@ -65,19 +66,20 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
             com.mojang.blaze3d.textures.GpuSampler sampler,
             CallbackInfo callback
     ) {
-        if ((!ChimeraEntityBridge.isDrawActive()
-                || !ChimeraEntityBridge.shouldUsePackPipeline(this.pipeline))
-                && (!ChimeraSkyBridge.isDrawActive()
-                || !ChimeraSkyBridge.shouldUsePackPipeline(this.pipeline))
-                || view == null || sampler == null) {
-            return;
-        }
-        int slot = chimera$textureSlot(name);
-        if (slot < 0 || !(view.texture() instanceof VkGpuTexture texture)
+        if (view == null || sampler == null
+                || !(view.texture() instanceof VkGpuTexture texture)
                 || !(sampler instanceof VkSampler vkSampler)) {
             return;
         }
-        texture.getVulkanImage().setSampler(vkSampler.getId());
+        int slot = chimera$textureSlot(name);
+        if (slot < 0 || ((!ChimeraEntityBridge.isDrawActive()
+                || !ChimeraEntityBridge.shouldUsePackPipeline(this.pipeline))
+                && (!ChimeraSkyBridge.isDrawActive()
+                || !ChimeraSkyBridge.shouldUsePackPipeline(this.pipeline)))) {
+            return;
+        }
+        ChimeraTextureBindingState.markPackBinding(
+                slot, texture.getVulkanImage(), vkSampler.getId());
         VTextureSelector.bindTexture(slot, texture.getVulkanImage());
     }
 

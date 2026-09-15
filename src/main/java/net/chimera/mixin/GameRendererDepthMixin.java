@@ -7,7 +7,6 @@ import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.minecraft.client.renderer.GameRenderer;
 import net.vulkanmod.vulkan.Renderer;
-import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import org.lwjgl.opengl.GL11;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
