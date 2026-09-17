@@ -227,6 +227,10 @@ public final class PackPostTargets {
         }
     }
 
+    public void requireFrameStarted() {
+        this.temporal.requireFrameStarted();
+    }
+
     /** Invalidates target 0 before pack geometry initializes it at render-pass load. */
     public void prepareGeometryTarget(VkCommandBuffer commandBuffer) {
         if (!this.configured || !this.used[0]) {
@@ -247,6 +251,7 @@ public final class PackPostTargets {
     /** Starts a geometry window whose first attachment is the live HDR image. */
     public void beginGeometry(VkCommandBuffer commandBuffer, VulkanImage hdrColor,
                               List<Integer> outputTargets) {
+        requireFrameStarted();
         if (!this.configured || hdrColor == null || outputTargets == null || outputTargets.isEmpty()) {
             throw new IllegalStateException("pack geometry target state is not ready");
         }
@@ -287,6 +292,7 @@ public final class PackPostTargets {
             if (image != null) {
                 this.valid[target] = true;
                 this.sourceImages[target] = image;
+                this.temporal.seedCurrent(target);
             }
         }
     }

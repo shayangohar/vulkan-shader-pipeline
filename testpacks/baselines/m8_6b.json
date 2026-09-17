@@ -1,0 +1,13 @@
+{
+  "slice": "M8.6b",
+  "supportedFixture": {
+    "name": "ssbo_supported",
+    "description": "Small std430 buffer fixture with named and binding-resolved blocks"
+  },
+  "unsupportedFixture": {
+    "name": "unsupported_ssbo",
+    "description": "Invalid declarations and an unmapped storage block"
+  },
+  "supportedFingerprint": "689dfc8fb0046d79b71142b3fad4baa09a9db9c93ed614bd3e0fa74d2a2a11a3",
+  "unsupportedFingerprint": "b7b91b6d5f3dcb65fa794c202183a85f6dd058c23be5a997b0315222e9d18852"
+}

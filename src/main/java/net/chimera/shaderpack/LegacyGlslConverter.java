@@ -158,7 +158,7 @@ public final class LegacyGlslConverter {
     /** Converted terrain vertex source plus the interface used by its fragment stage. */
     public record TerrainVertexConversion(String source, TerrainVaryingLayout layout) {}
 
-    /** Converted fullscreen vertex adapter plus the explicit values it synthesizes. */
+    /** Authored fullscreen vertex translation and named compatibility deviations. */
     public record PostVertexConversion(String source, List<String> deviations) {
         public PostVertexConversion {
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
@@ -270,81 +270,119 @@ public final class LegacyGlslConverter {
                 null, packConstants == null ? Map.of() : packConstants, layout);
     }
 
-    /**
-     * Builds the small fixed fullscreen adapter used for a paired post vertex
-     * source. The adapter preserves the fullscreen position and UV contract,
-     * and synthesizes only the common legacy lighting varyings that have no
-     * equivalent input in CustomVertexFormat.NONE.
-     */
+    /** Translates the authored vertex body against the fullscreen triangle inputs. */
     public static PostVertexConversion convertPostVertex(
             String source,
             GlslInterfaceScanner.StageInterface vertexInterface,
             GlslInterfaceScanner.StageInterface fragmentInterface,
-            GlslInterfaceScanner.ProgramMatch match
+            GlslInterfaceScanner.ProgramMatch match,
+            UniformRegistry.ProgramInterface interfacePlan,
+            Map<String, String> packConstants
     ) {
         try {
             if (source == null || vertexInterface == null || fragmentInterface == null
-                    || match == null || !match.executable()) {
-                throw new IllegalArgumentException("post vertex interface is not matched");
+                    || match == null || !match.executable() || interfacePlan == null
+                    || !interfacePlan.executable()) {
+                throw new IllegalArgumentException("POST_VERTEX_INTERFACE_UNSUPPORTED");
             }
-            validatePostVersion(source);
-            if (!source.contains("void") || !source.contains("main")) {
-                throw new IllegalArgumentException("post vertex main is missing");
+            String converted = prepareSource(source, null);
+            validatePostVersion(converted);
+            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(converted);
+            if (!usage.successful()) {
+                throw new IllegalArgumentException("POST_VERTEX_RESOURCE_ANALYSIS_UNSUPPORTED");
             }
-
-            StringBuilder declarations = new StringBuilder();
-            StringBuilder assignments = new StringBuilder();
-            List<String> deviations = new ArrayList<>();
-            for (GlslInterfaceScanner.Declaration input : fragmentInterface.inputs()) {
-                if (!input.referenced()) {
-                    continue;
+            converted = GlslTokenRewriter.removeUnreachableFunctions(converted, usage);
+            if (!stripComments(converted).matches("(?s).*\\bvoid\\s+main\\s*\\(.*")) {
+                throw new IllegalArgumentException("POST_VERTEX_MAIN_MISSING");
+            }
+            for (GlslInterfaceScanner.Declaration input : vertexInterface.inputs()) {
+                throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + input.name());
+            }
+            Map<String, Integer> locations = new TreeMap<>(match.locations());
+            int nextLocation = locations.values().stream().mapToInt(Integer::intValue).max().orElse(-1) + 1;
+            for (GlslInterfaceScanner.Declaration output : vertexInterface.outputs()) {
+                if (!locations.containsKey(output.name())) locations.put(output.name(), nextLocation++);
+            }
+            converted = expandModernVaryingLists(VERSION_LINE.matcher(converted).replaceAll(""));
+            Matcher varying = MODERN_TERRAIN_DECL.matcher(converted);
+            StringBuilder rewritten = new StringBuilder();
+            int last = 0;
+            while (varying.find()) {
+                String name = varying.group(4);
+                Integer location = locations.get(name);
+                if (varying.group(2).equals("in") || location == null) {
+                    throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + name);
                 }
-                GlslInterfaceScanner.Declaration output = vertexInterface.output(input.name());
-                Integer location = match.locations().get(input.name());
-                if (output == null || location == null || !output.type().equals(input.type())) {
-                    throw new IllegalArgumentException("post vertex varying is not matched: " + input.name());
-                }
-                String expression = postVertexExpression(input.name(), input.type());
-                if (expression == null) {
-                    throw new IllegalArgumentException("post vertex varying is not synthesized: " + input.name());
-                }
-                declarations.append("layout(location = ").append(location).append(") ");
-                if (output.qualifier() != null) {
-                    declarations.append(output.qualifier()).append(' ');
-                }
-                declarations.append("out ").append(input.type()).append(' ')
-                        .append(input.name()).append(";\n");
-                assignments.append("    ").append(input.name()).append(" = ")
-                        .append(expression).append(";\n");
-                deviations.add("POST_VARYING_ADAPTER:" + input.name());
-                if (input.type().equals("vec3")) {
-                    deviations.add("POST_VARYING_SYNTHESIZED_ZERO:" + input.name());
+                rewritten.append(converted, last, varying.start());
+                rewritten.append("layout(location = ").append(location).append(") ");
+                if (varying.group(1) != null) rewritten.append(varying.group(1)).append(' ');
+                rewritten.append("out ").append(varying.group(3)).append(' ').append(name).append(';');
+                last = varying.end();
+            }
+            rewritten.append(converted, last, converted.length());
+            converted = UniformRegistry.removeUniformDeclarations(rewritten.toString(), interfacePlan);
+            converted = KNOWN_LEGACY_EXTENSIONS.matcher(converted).replaceAll("");
+            converted = removePackMetadataConstants(converted);
+            converted = CONSUMED_CONSTS.matcher(converted).replaceAll("");
+            converted = injectPackConstants(converted, packConstants);
+            converted = expandSamplerAliases(converted, interfacePlan.samplers());
+            converted = convertTextureCalls(converted);
+            int samplerBase = interfacePlan.executableUniforms().isEmpty() ? 0 : 1;
+            Map<String, String> samplerTypes = new TreeMap<>();
+            for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
+                samplerTypes.put(sampler.name(), sampler.glslType());
+                if (hasSamplerDeclaration(converted, sampler.name())) {
+                    converted = rewriteSamplerDeclaration(converted, sampler.name(),
+                            samplerBase + interfacePlan.samplerIndex(sampler.name()));
                 }
             }
-            String generated = "#version 460\n"
-                    + declarations
-                    + "void main() {\n"
-                    + "    vec2 chimeraUv = vec2(float((gl_VertexIndex << 1) & 2), "
-                    + "-(float(gl_VertexIndex & 2)) + 1.0);\n"
-                    + "    gl_Position = vec4(chimeraUv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), 0.0, 1.0);\n"
-                    + assignments
-                    + "}\n";
-            return new PostVertexConversion(generated, deviations);
-        } catch (Exception e) {
-            return null;
+            converted = GlslTokenRewriter.rewriteShadowCalls(converted, samplerTypes);
+            Map<String, String> inputs = new TreeMap<>();
+            inputs.put("gl_Vertex", "vec4(chimeraFullscreenUv(), 0.0, 1.0)");
+            inputs.put("gl_MultiTexCoord0", "vec4(chimeraFullscreenUv(), 0.0, 1.0)");
+            // A fullscreen draw has only position/UV0, exactly as the legacy
+            // fullscreen contract: other texture coordinates have no mesh data.
+            for (int unit = 1; unit < 8; unit++) {
+                inputs.put("gl_MultiTexCoord" + unit, "vec4(0.0, 0.0, 0.0, 1.0)");
+            }
+            inputs.put("gl_Color", "vec4(1.0)");
+            inputs.put("gl_Normal", "vec3(0.0, 0.0, 1.0)");
+            inputs.put("gl_ModelViewMatrix", "mat4(1.0)");
+            inputs.put("gl_ModelViewProjectionMatrix", "chimeraFullscreenProjection()");
+            inputs.put("gl_ProjectionMatrix", "chimeraFullscreenProjection()");
+            inputs.put("gl_NormalMatrix", "mat3(1.0)");
+            inputs.put("gl_VertexID", "gl_VertexIndex");
+            converted = GlslTokenRewriter.replaceIdentifiers(converted, inputs);
+            converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*[0-7]\\s*\\]", "mat4(1.0)");
+            converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)", "chimeraFullscreenPosition()");
+            for (GlslLexer.Token token : GlslLexer.lex(converted)) {
+                if (token.text().startsWith("gl_") && !Set.of("gl_Position", "gl_VertexIndex",
+                        "gl_InstanceIndex", "gl_PointSize", "gl_ClipDistance", "gl_CullDistance").contains(token.text())) {
+                    throw new IllegalArgumentException("POST_VERTEX_BUILTIN_UNSUPPORTED:" + token.text());
+                }
+            }
+            String uniforms = interfacePlan.executableUniforms().isEmpty() ? ""
+                    : generatedUniformBlock(interfacePlan.executableUniforms());
+            return new PostVertexConversion("#version 460\n" + uniforms + FULLSCREEN_VERTEX_INPUTS + converted,
+                    List.of("POST_VERTEX_AUTHORED_TRANSLATED"));
+        } catch (RuntimeException failure) {
+            return new PostVertexConversion(null, List.of(failure.getMessage() == null
+                    ? "POST_VERTEX_TRANSLATION_UNSUPPORTED" : failure.getMessage()));
         }
     }
 
-    private static String postVertexExpression(String name, String type) {
-        if (type.equals("vec2") && (name.equals("texCoord")
-                || name.equals("texcoord") || name.equals("uv"))) {
-            return "chimeraUv";
-        }
-        if (type.equals("vec3") && (name.equals("upVec") || name.equals("sunVec"))) {
-            return "vec3(0.0, 1.0, 0.0)";
-        }
-        return null;
-    }
+    private static final String FULLSCREEN_VERTEX_INPUTS = """
+            vec2 chimeraFullscreenUv() {
+                return vec2(float((gl_VertexIndex << 1) & 2), 1.0 - float(gl_VertexIndex & 2));
+            }
+            mat4 chimeraFullscreenProjection() {
+                return mat4(2.0, 0.0, 0.0, 0.0, 0.0, -2.0, 0.0, 0.0,
+                            0.0, 0.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0);
+            }
+            vec4 chimeraFullscreenPosition() {
+                return chimeraFullscreenProjection() * vec4(chimeraFullscreenUv(), 0.0, 1.0);
+            }
+            """;
 
     private static String convertFragment(
             String source,
@@ -385,6 +423,11 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("pack fragment source is missing");
             }
             src = prepareSource(src, sourceFile);
+            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(src);
+            if (!usage.successful()) {
+                throw new IllegalArgumentException(usage.deviations().toString());
+            }
+            src = GlslTokenRewriter.removeUnreachableFunctions(src, usage);
 
             boolean modern = false;
             if (!geometryStage) {
@@ -415,16 +458,16 @@ public final class LegacyGlslConverter {
                 src = removeEntityIdDeclarations(src, interfacePlan);
                 src = replaceEntityIdReferences(src, terrainLayout);
             }
-            if (geometryStage && modern && geometryOutputPlan == null) {
+            if (geometryStage && modern && geometryOutputPlan == null
+                    && interfacePlan.stage() != UniformRegistry.Stage.SHADOW) {
                 src = convertModernGeometryOutputs(src);
             }
             src = convertVaryings(src, geometryStage, terrainLayout, postVaryingLayout,
                     interfacePlan.stage());
             src = injectPackConstants(src, packConstants);
 
-            // Samplers in ascending slot order -> bindings base,base+1,... in config order.
-            // The interface plan is also the source of the generated config,
-            // so conversion cannot drift from descriptor order.
+            // Emit only the projected stage resources. Descriptor positions still
+            // come from the canonical program layout, never the filtered stage order.
             List<UniformRegistry.SamplerBinding> samplers = interfacePlan.samplers();
             int bindingBase = geometryStage
                     ? (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
@@ -467,11 +510,13 @@ public final class LegacyGlslConverter {
                 int binding = geometryStage
                         ? bindingBase + configIndexOf(name, geometrySamplerSlots,
                         interfacePlan.stage(), interfacePlan)
-                        : bindingBase + i;
+                        : bindingBase + interfacePlan.samplerIndex(name);
                 if (binding < bindingBase) {
                     throw new IllegalArgumentException("sampler is missing from the generated config: " + name);
                 }
-                src = rewriteSamplerDeclaration(src, srcName, binding);
+                if (hasSamplerDeclaration(src, srcName)) {
+                    src = rewriteSamplerDeclaration(src, srcName, binding);
+                }
             }
 
             String outDecl = null;
@@ -481,6 +526,21 @@ public final class LegacyGlslConverter {
             } else if (geometryOutputPlan != null) {
                 src = convertGeometryOutputs(src, geometryOutputPlan);
                 outDecl = geometryOutputDeclarations(geometryOutputPlan);
+            } else if (interfacePlan.stage() == UniformRegistry.Stage.SHADOW) {
+                PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", src).plan();
+                if (!shadowOutputs.executable() || shadowOutputs.targetSlots().stream()
+                        .anyMatch(target -> target < 0 || target > 1)) {
+                    throw new IllegalArgumentException("SHADOW_OUTPUT_TARGET_UNSUPPORTED");
+                }
+                src = convertPostOutputs(src, shadowOutputs);
+                Map<String, String> outputs = new TreeMap<>();
+                for (int location : shadowOutputs.outputLocations()) {
+                    outputs.put("chimeraFragColor" + location,
+                            "chimeraShadowColor" + shadowOutputs.targetForOutput(location));
+                }
+                src = GlslTokenRewriter.replaceIdentifiers(src, outputs);
+                outDecl = "layout(location = 0) out vec4 chimeraShadowColor0;\n"
+                        + "layout(location = 1) out vec4 chimeraShadowColor1;";
             } else if (src.contains("gl_FragColor") || src.contains("gl_FragData")) {
                 src = GlslTokenRewriter.rewriteSingleOutput(src);
                 // Targets beyond 0 are consumed by nothing in M4's single-attachment passes.
@@ -606,7 +666,18 @@ public final class LegacyGlslConverter {
             Path sourceFile,
             String fragmentSource
     ) {
-        return convertLegacyVertex(source, sourceFile, fragmentSource, TERRAIN_VERTEX_PREAMBLE);
+        return convertTerrainVertex(source, sourceFile, fragmentSource, false);
+    }
+
+    /** Converts legacy terrain source with storage blocks admitted by the plan. */
+    public static TerrainVertexConversion convertTerrainVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            boolean allowStorageBuffers
+    ) {
+        return convertLegacyVertex(source, sourceFile, fragmentSource,
+                TERRAIN_VERTEX_PREAMBLE, allowStorageBuffers);
     }
 
     /**
@@ -621,7 +692,7 @@ public final class LegacyGlslConverter {
             String fragmentSource
     ) {
         return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                MODERN_TERRAIN_VERTEX_PREAMBLE, null, false);
+                MODERN_TERRAIN_VERTEX_PREAMBLE, null, false, false);
     }
 
     /** Converts an extended terrain vertex with the shared ordinary-uniform plan. */
@@ -631,8 +702,20 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             UniformRegistry.ProgramInterface interfacePlan
     ) {
+        return convertModernTerrainVertex(source, sourceFile, fragmentSource,
+                interfacePlan, false);
+    }
+
+    /** Converts modern terrain source with storage blocks admitted by the plan. */
+    public static TerrainVertexConversion convertModernTerrainVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            UniformRegistry.ProgramInterface interfacePlan,
+            boolean allowStorageBuffers
+    ) {
         return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                MODERN_TERRAIN_VERTEX_PREAMBLE, interfacePlan, false);
+                MODERN_TERRAIN_VERTEX_PREAMBLE, interfacePlan, false, allowStorageBuffers);
     }
 
     /** Converts the measured modern shadow vertex subset onto the shadow inputs. */
@@ -642,7 +725,7 @@ public final class LegacyGlslConverter {
             String fragmentSource
     ) {
         return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                MODERN_SHADOW_VERTEX_PREAMBLE, null, true);
+                MODERN_SHADOW_VERTEX_PREAMBLE, null, true, false);
     }
 
     /** Converts a shadow vertex with the shared cross-stage uniform plan. */
@@ -653,7 +736,7 @@ public final class LegacyGlslConverter {
             UniformRegistry.ProgramInterface interfacePlan
     ) {
         return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                MODERN_SHADOW_VERTEX_PREAMBLE, interfacePlan, true);
+                MODERN_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, false);
     }
 
     private static TerrainVertexConversion convertModernTerrainVertexInternal(
@@ -662,7 +745,8 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             String vertexPreamble,
             UniformRegistry.ProgramInterface interfacePlan,
-            boolean shadowStage
+            boolean shadowStage,
+            boolean allowStorageBuffers
     ) {
         try {
             boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
@@ -677,6 +761,11 @@ public final class LegacyGlslConverter {
             }
             vertex = expandModernVaryingLists(vertex);
             fragment = expandModernVaryingLists(fragment);
+            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(vertex);
+            if (!usage.successful()) {
+                throw new IllegalArgumentException(usage.deviations().toString());
+            }
+            vertex = GlslTokenRewriter.removeUnreachableFunctions(vertex, usage);
             vertex = interfacePlan == null
                     ? stripShadowUniformDeclarations(vertex)
                     : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
@@ -685,7 +774,8 @@ public final class LegacyGlslConverter {
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
                 throw new IllegalArgumentException("modern terrain vertex main or position is missing");
             }
-            if (stripped.matches("(?s).*\\b(?:buffer|geometry|tessellation|compute)\\b.*")
+            if ((!allowStorageBuffers && stripped.matches("(?s).*\\bbuffer\\b.*"))
+                    || stripped.matches("(?s).*\\b(?:geometry|tessellation|compute)\\b.*")
                     || stripped.matches("(?s).*\\buniform\\s+(?!(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)))\\w+.*")) {
                 throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
             }
@@ -756,7 +846,7 @@ public final class LegacyGlslConverter {
             String fragmentSource
     ) {
         return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                MODERN_SHADOW_VERTEX_PREAMBLE, null, true);
+                MODERN_SHADOW_VERTEX_PREAMBLE, null, true, false);
     }
 
     /** Converts legacy and simple compatibility shadow vertices with one plan. */
@@ -766,8 +856,19 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             UniformRegistry.ProgramInterface interfacePlan
     ) {
+        return convertShadowVertex(source, sourceFile, fragmentSource, interfacePlan, false);
+    }
+
+    /** Converts a shadow vertex with an admitted storage-buffer declaration. */
+    public static TerrainVertexConversion convertShadowVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            UniformRegistry.ProgramInterface interfacePlan,
+            boolean allowStorageBuffers
+    ) {
         return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                MODERN_SHADOW_VERTEX_PREAMBLE, interfacePlan, true);
+                MODERN_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, allowStorageBuffers);
     }
 
     /** Converts the strict legacy entity vertex bridge onto EXTENDED_ENTITY. */
@@ -786,8 +887,19 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations
     ) {
+        return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations, false);
+    }
+
+    /** Converts an entity vertex with storage blocks admitted by the plan. */
+    public static TerrainVertexConversion convertEntityVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers
+    ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                ENTITY_VERTEX_PREAMBLE, false);
+                ENTITY_VERTEX_PREAMBLE, false, allowStorageBuffers);
     }
 
     /** Converts the block-entity variant, which uses the host ModelOffset field. */
@@ -797,8 +909,19 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations
     ) {
+        return convertBlockVertex(source, sourceFile, fragmentSource, sharedLocations, false);
+    }
+
+    /** Converts a block vertex with storage blocks admitted by the plan. */
+    public static TerrainVertexConversion convertBlockVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers
+    ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                BLOCK_VERTEX_PREAMBLE, false);
+                BLOCK_VERTEX_PREAMBLE, false, allowStorageBuffers);
     }
 
     /** Converts the first-person hand contract onto EXTENDED_PARTICLE. */
@@ -808,8 +931,19 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations
     ) {
+        return convertHandVertex(source, sourceFile, fragmentSource, sharedLocations, false);
+    }
+
+    /** Converts a hand vertex with storage blocks admitted by the plan. */
+    public static TerrainVertexConversion convertHandVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers
+    ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                HAND_VERTEX_PREAMBLE, true);
+                HAND_VERTEX_PREAMBLE, true, allowStorageBuffers);
     }
 
     private static TerrainVertexConversion convertEntityVertex(
@@ -818,7 +952,8 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations,
             String vertexPreamble,
-            boolean particleInputs
+            boolean particleInputs,
+            boolean allowStorageBuffers
     ) {
         try {
             String src = prepareSource(source, sourceFile);
@@ -832,7 +967,8 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("entity vertex requires main and gl_Position");
             }
             String entityIdType = entityIdentifierType(stripped, fragmentSource);
-            rejectEntityVertexFeatures(removeEntityIdDeclarations(stripped), particleInputs);
+            rejectEntityVertexFeatures(removeEntityIdDeclarations(stripped), particleInputs,
+                    allowStorageBuffers);
 
             Map<String, String> vertexTypes = parseEntityVaryings(stripped, true);
             Map<String, String> fragmentTypes = parseEntityVaryings(stripComments(fragmentSource), false);
@@ -911,7 +1047,19 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations
     ) {
-        return convertLegacyVertex(source, sourceFile, fragmentSource, PARTICLE_VERTEX_PREAMBLE);
+        return convertParticleVertex(source, sourceFile, fragmentSource, sharedLocations, false);
+    }
+
+    /** Converts a particle vertex with storage blocks admitted by the plan. */
+    public static TerrainVertexConversion convertParticleVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers
+    ) {
+        return convertLegacyVertex(source, sourceFile, fragmentSource,
+                PARTICLE_VERTEX_PREAMBLE, allowStorageBuffers);
     }
 
     /** Converts a particle fragment with the shared host sampler and varying rules. */
@@ -955,6 +1103,16 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             String vertexPreamble
     ) {
+        return convertLegacyVertex(source, sourceFile, fragmentSource, vertexPreamble, false);
+    }
+
+    private static TerrainVertexConversion convertLegacyVertex(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            String vertexPreamble,
+            boolean allowStorageBuffers
+    ) {
         try {
             String src = prepareSource(source, sourceFile);
             String stripped = stripComments(src);
@@ -966,7 +1124,7 @@ public final class LegacyGlslConverter {
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
                 throw new IllegalArgumentException("legacy vertex requires main and gl_Position");
             }
-            rejectTerrainVertexFeatures(stripped);
+            rejectTerrainVertexFeatures(stripped, allowStorageBuffers);
 
             Map<String, String> vertexTypes = parseTerrainVaryings(stripped);
             Map<String, String> fragmentTypes = parseTerrainVaryings(stripComments(fragmentSource));
@@ -1073,7 +1231,7 @@ public final class LegacyGlslConverter {
         if (!hasModernTerrainVersion(source)) return false;
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(
                 fragmentSource, source, UniformRegistry.Stage.GEOMETRY, null, false, Map.of(), Map.of())
-                .effective(UniformRegistry.Stage.GEOMETRY);
+                .project("vertex", UniformRegistry.Stage.GEOMETRY);
         return convertModernTerrainVertex(source, null, fragmentSource, interfacePlan) != null;
     }
 
@@ -1295,18 +1453,23 @@ public final class LegacyGlslConverter {
 
     /** Compatibility adapter for callers that still pass raw source and a path. */
     private static String prepareSource(String source, Path sourceFile) {
-        if (sourceFile == null) {
-            return source;
+        String preparedSource = source;
+        if (sourceFile != null) {
+            Path root = sourceFile.getParent();
+            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
+                    root, sourceFile, source,
+                    PackEngineDefines.forPack(Map.of()),
+                    PackEngineDefines.lockedNames(Set.of(), false, false));
+            if (!prepared.successful()) {
+                throw new IllegalArgumentException(prepared.deviations().toString());
+            }
+            preparedSource = prepared.source();
         }
-        Path root = sourceFile.getParent();
-        ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
-                root, sourceFile, source,
-                PackEngineDefines.forPack(Map.of()),
-                PackEngineDefines.lockedNames(Set.of(), false, false));
-        if (!prepared.successful()) {
-            throw new IllegalArgumentException(prepared.deviations().toString());
+        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(preparedSource);
+        if (!normalized.successful()) {
+            throw new IllegalArgumentException(normalized.deviations().toString());
         }
-        return prepared.source();
+        return normalized.source();
     }
 
     private static String convertVaryings(
@@ -1825,11 +1988,14 @@ public final class LegacyGlslConverter {
         return entityType;
     }
 
-    private static void rejectTerrainVertexFeatures(String source) {
+    private static void rejectTerrainVertexFeatures(String source, boolean allowStorageBuffers) {
         if (source.matches("(?s).*\\b(?:uniform|gl_Normal|gl_NormalMatrix|gl_ModelViewMatrix|"
                 + "gl_ProjectionMatrix|gl_ModelViewProjectionMatrix|gl_TextureMatrix|"
-                + "mc_midTexCoord|at_tangent|tangent|image\\w*|buffer)\\b.*")) {
+                + "mc_midTexCoord|at_tangent|tangent|image\\w*)\\b.*")) {
             throw new IllegalArgumentException("unsupported terrain vertex feature");
+        }
+        if (!allowStorageBuffers && source.matches("(?s).*\\bbuffer\\b.*")) {
+            throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
         }
         if (source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective)\\b.*")) {
             throw new IllegalArgumentException("modern GLSL is not supported in terrain vertex");
@@ -1849,11 +2015,16 @@ public final class LegacyGlslConverter {
         }
     }
 
-    private static void rejectEntityVertexFeatures(String source, boolean particleInputs) {
+    private static void rejectEntityVertexFeatures(
+            String source, boolean particleInputs, boolean allowStorageBuffers
+    ) {
         if (source.matches("(?s).*\\b(?:uniform|gl_NormalMatrix|gl_ModelViewMatrix|"
                 + "gl_ProjectionMatrix|gl_ModelViewProjectionMatrix|gl_TextureMatrix|"
-                + "image\\w*|buffer|geometry|tessellation|compute)\\b.*")) {
+                + "image\\w*|geometry|tessellation|compute)\\b.*")) {
             throw new IllegalArgumentException("unsupported entity vertex feature");
+        }
+        if (!allowStorageBuffers && source.matches("(?s).*\\bbuffer\\b.*")) {
+            throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
         }
         Matcher attributes = Pattern.compile(
                 "(?m)\\b(attribute|in)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;").matcher(source);
@@ -2174,9 +2345,9 @@ public final class LegacyGlslConverter {
             result = GlslTokenRewriter.renameSamplerIdentifier(result, "texture", "chimeraTexture");
         }
         int[] slots = shadowStage
-                ? PackPipelines.shadowSamplerSlots(interfacePlan.samplers().stream()
+                ? PackPipelines.shadowSamplerSlots(interfacePlan.samplerLayout().stream()
                 .mapToInt(UniformRegistry.SamplerBinding::slot).toArray())
-                : PackPipelines.interleaveLightmap(interfacePlan.samplers().stream()
+                : PackPipelines.interleaveLightmap(interfacePlan.samplerLayout().stream()
                 .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
         int bindingBase = shadowStage
                 ? GEOMETRY_SAMPLER_BINDING_BASE
@@ -2791,50 +2962,6 @@ public final class LegacyGlslConverter {
                         "gl_VertexID", "gl_VertexIndex"));
     }
 
-    /** Emits vertex-stage shadow samplers with the same bindings as the fragment stage. */
-    private static String rewriteShadowVertexSamplers(
-            String source,
-            UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        if (interfacePlan == null || interfacePlan.samplers().isEmpty()) {
-            return source;
-        }
-        TreeSet<Integer> slots = new TreeSet<>();
-        for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
-            slots.add(sampler.slot());
-        }
-        if (interfacePlan.samplers().stream().anyMatch(sampler -> sampler.slot() == 2)) {
-            slots.add(0);
-        }
-        String result = source;
-        int bindingBase = interfacePlan.stage() == UniformRegistry.Stage.SHADOW
-                && !interfacePlan.executableUniforms().isEmpty()
-                ? GEOMETRY_SAMPLER_BINDING_BASE + 1
-                : GEOMETRY_SAMPLER_BINDING_BASE;
-        if (interfacePlan.samplers().stream().anyMatch(sampler -> sampler.name().equals("texture"))) {
-            result = GlslTokenRewriter.renameSamplerIdentifier(result, "texture", "chimeraTexture");
-        }
-        for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
-            int slotIndex = 0;
-            for (Integer slot : slots) {
-                if (slot == sampler.slot()) {
-                    break;
-                }
-                slotIndex++;
-            }
-            if (slotIndex >= slots.size()) {
-                throw new IllegalArgumentException("shadow sampler is missing from the generated config: "
-                        + sampler.name());
-            }
-            String sourceName = sampler.name().equals("texture")
-                    ? "chimeraTexture" : sampler.name();
-            if (hasSamplerDeclaration(result, sourceName)) {
-                result = rewriteSamplerDeclaration(result, sourceName,
-                        bindingBase + slotIndex);
-            }
-        }
-        return result;
-    }
 
     private static boolean hasSamplerDeclaration(String source, String name) {
         return Pattern.compile("(?:layout\\s*\\([^;{}]*\\)\\s*)?uniform\\s+"

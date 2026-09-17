@@ -100,6 +100,18 @@ public final class ChimeraTextureBindingState {
         }
     }
 
+    public record Snapshot(VulkanImage image, Long samplerOverride) {}
+
+    public static synchronized Snapshot capture(int slot, VulkanImage image) {
+        var entry = STORE.binding(slot);
+        return new Snapshot(image, entry != null && entry.image() == image ? entry.sampler() : null);
+    }
+
+    public static synchronized void restore(int slot, Snapshot snapshot) {
+        if (snapshot.samplerOverride() == null) STORE.clear(slot);
+        else STORE.bindExact(slot, snapshot.image(), snapshot.samplerOverride());
+    }
+
     public static void clearPackBinding(int slot) {
         synchronized (ChimeraTextureBindingState.class) {
             STORE.clear(slot);

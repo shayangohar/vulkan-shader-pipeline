@@ -1,8 +1,6 @@
 package net.chimera.shaderpack;
 
 import java.nio.file.Path;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -47,30 +45,185 @@ public final class M80ConformanceHarness {
                 "M8.0 version capability check failed");
         assertTrue(!LegacyGlslConverter.supportsModernPost("#version 450\nvoid main(){}"),
                 "M8.0 unsupported version was accepted");
-        verifyFixedFullscreenVertex();
+        verifyAuthoredFullscreenVertex();
+        verifyAuthoredPostConstants();
+        verifyDistinctPostResources();
+        verifyShadowColorOutputs();
         verifyPerTargetFallback(root);
         verifyOrientationFixture(root);
         System.out.println("[chimera] M8.0 modern GLSL conformance: PASS");
     }
 
-    private static void verifyFixedFullscreenVertex() {
-        String vertex = "#version 130\nvoid main() { gl_Position = ftransform(); }\n";
-        String fragment = "#version 130\nvoid main() { gl_FragColor = vec4(1.0); }\n";
-        GlslInterfaceScanner.StageInterface vertexInterface =
-                GlslInterfaceScanner.scan(vertex, true);
-        GlslInterfaceScanner.StageInterface fragmentInterface =
-                GlslInterfaceScanner.scan(fragment, false);
-        GlslInterfaceScanner.ProgramMatch match =
-                GlslInterfaceScanner.match(vertexInterface, fragmentInterface);
-        LegacyGlslConverter.PostVertexConversion conversion =
-                LegacyGlslConverter.convertPostVertex(vertex, vertexInterface,
-                        fragmentInterface, match);
-        assertTrue(conversion != null && conversion.source().contains("gl_Position"),
-                "M8.0 paired post vertex without varyings was rejected");
-        assertCanonicalOrientation(conversion.source(), "converted post vertex");
-        assertCanonicalOrientation(readResource(
-                "/assets/chimera/shaders/chimera_composite/chimera_composite.vsh"),
-                "fixed post vertex");
+    private static void verifyAuthoredFullscreenVertex() {
+        String vertex = """
+                #version 130
+                uniform sampler2D colortex5;
+                uniform mat4 gbufferModelView;
+                uniform vec3 sunPosition;
+                uniform float viewWidth, viewHeight;
+                uniform int frameCounter;
+                varying vec2 texCoord;
+                flat out vec3 upVec, sunVec;
+                flat out float vlFactor;
+                vec3 authoredSun() { return normalize(sunPosition); }
+                void main() {
+                    gl_Position = ftransform();
+                    texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                    upVec = normalize(gbufferModelView[1].xyz);
+                    sunVec = authoredSun();
+                    vlFactor = texelFetch(colortex5, ivec2(viewWidth-1, viewHeight-1), 0).a;
+                    if (frameCounter % 2 == 0) vlFactor = max(vlFactor - 0.1, 0.0);
+                }
+                """;
+        String fragment = """
+                #version 130
+                uniform sampler2D colortex0;
+                varying vec2 texCoord;
+                flat in vec3 upVec, sunVec;
+                flat in float vlFactor;
+                void main() {
+                    gl_FragColor = texture2D(colortex0, texCoord) * vlFactor
+                        + vec4(upVec + sunVec, 0.0);
+                }
+                """;
+        UniformRegistry.ProgramInterface plan = UniformRegistry.planProgram(fragment, vertex,
+                UniformRegistry.Stage.POST, null, true).effective(UniformRegistry.Stage.POST);
+        GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
+        GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
+        LegacyGlslConverter.PostVertexConversion conversion = LegacyGlslConverter.convertPostVertex(
+                vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, Map.of());
+        assertTrue(conversion.source() != null, "Authored post vertex rejected: " + conversion.deviations());
+        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(conversion.source());
+        assertTrue(usage.successful() && usage.liveSamplers().contains("colortex5"),
+                "Authored temporal texture read was discarded");
+        assertTrue(plan.hasSampler("colortex0") && plan.hasSampler("colortex5"),
+                "Post interface lost a stage's sampler dependency");
+        for (String expression : new String[] {
+                "upVec = normalize(gbufferModelView[1].xyz)", "sunVec = authoredSun()",
+                "vlFactor = texelFetch(colortex5, ivec2(viewWidth-1, viewHeight-1), 0).a",
+                "if (frameCounter % 2 == 0) vlFactor = max(vlFactor - 0.1, 0.0)"}) {
+            assertTrue(conversion.source().contains(expression), "Authored expression changed: " + expression);
+        }
+        assertTrue(GlslInterfaceScanner.match(GlslInterfaceScanner.scan(conversion.source(), true), fs)
+                        .executable(), "Translated vertex no longer provides its fragment inputs");
+        String convertedFragment = LegacyGlslConverter.convertPostFragment(fragment, null, plan,
+                PostTargetPlan.parse("composite", fragment).plan(), Map.of(),
+                GlslInterfaceScanner.match(vs, fs).locations(),
+                Map.of("texCoord", "vec2", "upVec", "vec3", "sunVec", "vec3", "vlFactor", "float"));
+        assertTrue(convertedFragment != null, "Vertex-only sampler prevented paired fragment conversion");
+        GlslResourceUsage.Analysis fragmentUsage = GlslResourceUsage.analyze(convertedFragment);
+        assertTrue(fragmentUsage.successful() && fragmentUsage.liveSamplers().contains("colortex0"),
+                "Paired fragment lost its authored color input");
+        String unsupported = vertex.replace("ftransform()", "gl_ModelViewMatrixInverse * gl_Vertex");
+        LegacyGlslConverter.PostVertexConversion rejected = LegacyGlslConverter.convertPostVertex(
+                unsupported, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, Map.of());
+        assertTrue(rejected.source() == null && rejected.deviations().contains(
+                        "POST_VERTEX_BUILTIN_UNSUPPORTED:gl_ModelViewMatrixInverse"),
+                "Unsupported authored builtin was not rejected by name");
+    }
+
+    private static void verifyAuthoredPostConstants() {
+        String declarations = """
+                const float shadowDistance = 192.0;
+                const float sunPathRotation = -25.0;
+                const int shadowMapResolution = 4096;
+                """;
+        String body = """
+                varying vec4 settings;
+                void main() {
+                    gl_Position = ftransform();
+                    settings = vec4(shadowDistance, sunPathRotation,
+                            float(shadowMapResolution), shadowDistanceRenderMul);
+                }
+                """;
+        String fragment = """
+                #version 130
+                varying vec4 settings;
+                void main() { gl_FragColor = settings; }
+                """;
+        Map<String, String> constants = Map.of("shadowDistance", "192.0",
+                "sunPathRotation", "-25.0", "shadowMapResolution", "4096",
+                "shadowDistanceRenderMul", "0.75");
+        for (String authored : new String[] {declarations, ""}) {
+            String vertex = "#version 130\n" + authored + body;
+            UniformRegistry.ProgramInterface plan = UniformRegistry.planProgram(fragment, vertex,
+                    UniformRegistry.Stage.POST, null, true).effective(UniformRegistry.Stage.POST);
+            GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
+            GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
+            LegacyGlslConverter.PostVertexConversion conversion = LegacyGlslConverter.convertPostVertex(
+                    vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, constants);
+            assertTrue(conversion.source() != null,
+                    "Post constants prevented authored vertex conversion: " + conversion.deviations());
+            var tokens = GlslLexer.lex(conversion.source()).stream()
+                    .filter(GlslLexer.Token::significant).toList();
+            Map<String, Double> values = new TreeMap<>();
+            for (int index = 1; index + 2 < tokens.size(); index++) {
+                String name = tokens.get(index).text();
+                if (!constants.containsKey(name) || !tokens.get(index + 1).symbol("=")) continue;
+                String type = tokens.get(index - 1).text();
+                assertTrue(type.equals(name.equals("shadowMapResolution") ? "int" : "float"),
+                        "Post constant has the wrong GLSL type: " + name);
+                StringBuilder initializer = new StringBuilder();
+                int end = index + 2;
+                while (end < tokens.size() && !tokens.get(end).symbol(";")) {
+                    initializer.append(tokens.get(end++).text());
+                }
+                assertTrue(end < tokens.size(), "Post constant initializer is incomplete: " + name);
+                assertTrue(values.putIfAbsent(name, Double.parseDouble(initializer.toString())) == null,
+                        "Post vertex redeclares pack constant: " + name);
+            }
+            Map<String, Double> expected = new TreeMap<>();
+            constants.forEach((name, value) -> expected.put(name, Double.parseDouble(value)));
+            assertTrue(values.equals(expected),
+                    "Post vertex lost authored or injected constant values: " + values);
+            assertTrue(GlslInterfaceScanner.match(GlslInterfaceScanner.scan(conversion.source(), true), fs)
+                            .executable(), "Post constants broke the authored fragment interface");
+        }
+    }
+
+    private static void verifyDistinctPostResources() {
+        String source = """
+                uniform sampler2D colortex3, shadowcolor0, shadowcolor1, colortex8;
+                void main() {
+                    gl_FragColor = texture2D(colortex3, vec2(0.5))
+                        + texture2D(shadowcolor0, vec2(0.5))
+                        + texture2D(shadowcolor1, vec2(0.5))
+                        + texture2D(colortex8, vec2(0.5));
+                }
+                """;
+        UniformRegistry.ProgramInterface plan = UniformRegistry.planPrepared(source, UniformRegistry.Stage.POST);
+        assertTrue(plan.executable() && plan.samplers().stream().map(UniformRegistry.SamplerBinding::slot)
+                        .distinct().count() == 4, "Distinct post resources collide: " + plan.deviations());
+        assertTrue(Integer.valueOf(8).equals(PackResourcePlan.targetIndex("colortex8")),
+                "Higher target lost its canonical identity");
+        UniformRegistry.ProgramInterfacePlan missing = UniformRegistry.planProgram(
+                "uniform sampler2D absent; void main() { gl_FragColor = texture2D(absent, vec2(0.5)); }",
+                "uniform sampler2D absent; void main() { gl_Position = vec4(0.0); }",
+                UniformRegistry.Stage.POST, null, true);
+        assertTrue(!missing.executable() && missing.deviations().contains("SAMPLER_NOT_MAPPED:absent")
+                        && !missing.deviations().contains("SAMPLER_DECLARATION_UNUSED:absent"),
+                "Live unmapped input was mislabeled unused: " + missing.deviations());
+    }
+
+    private static void verifyShadowColorOutputs() {
+        String source = """
+                #version 130
+                /* DRAWBUFFERS:10 */
+                void main() {
+                    gl_FragData[0] = vec4(0.2, 0.3, 0.4, 0.5);
+                    gl_FragData[1] = vec4(0.6, 0.7, 0.8, 0.9);
+                }
+                """;
+        String converted = LegacyGlslConverter.convertFragment(source, null, true, new int[0], null,
+                UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW));
+        assertTrue(converted != null && converted.contains(
+                        "chimeraShadowColor1 = vec4(0.2, 0.3, 0.4, 0.5)")
+                        && converted.contains("chimeraShadowColor0 = vec4(0.6, 0.7, 0.8, 0.9)"),
+                "Authored shadow drawbuffer routing or tint expression was lost");
+        assertTrue(LegacyGlslConverter.convertFragment(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:20"),
+                        null, true, new int[0], null,
+                        UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW)) == null,
+                "Unprovided shadow output target was silently dropped");
     }
 
     private static void verifyOrientationFixture(Path root) {
@@ -84,59 +237,14 @@ public final class M80ConformanceHarness {
                             + " interface=" + plan.interfacePlan().deviations()
                             + " target=" + (plan.targetPlan() == null
                             ? "null" : plan.targetPlan().deviations()));
-            assertCanonicalOrientation(plan.convertedVertex(), name, true);
         }
 
         PackProgramPlan fallback = require(analysis.plan(), "composite2");
         assertTrue(!fallback.executable(),
                 "M8.0 orientation middle fallback unexpectedly executes");
 
-        // The stage count may change when the middle pass falls back. The
-        // fullscreen coordinate contract must remain identical for the one,
-        // two, and three stage schedules.
-        for (boolean skipMiddle : new boolean[] {false, true}) {
-            String[] schedule = skipMiddle
-                    ? new String[] {"composite", "final"}
-                    : new String[] {"composite", "composite1", "final"};
-            for (String name : schedule) {
-                PackProgramPlan plan = require(analysis.plan(), name);
-                assertCanonicalOrientation(plan.convertedVertex(),
-                        (skipMiddle ? "fallback schedule " : "full schedule ") + name, true);
-            }
-        }
     }
 
-    private static void assertCanonicalOrientation(String source, String label) {
-        assertCanonicalOrientation(source, label, false);
-    }
-
-    private static void assertCanonicalOrientation(
-            String source,
-            String label,
-            boolean requireVaryingAssignment
-    ) {
-        assertTrue(source != null && source.contains("vec2 chimeraUv"),
-                label + " is missing the canonical fullscreen coordinate");
-        assertTrue(!source.contains("chimeraPackUv"),
-                label + " contains the obsolete pack UV coordinate");
-        assertTrue(!source.contains("1.0 - chimeraUv.y"),
-                label + " contains a pack-only V inversion");
-        assertTrue(source.contains("gl_Position = vec4(chimeraUv"),
-                label + " does not use the canonical fullscreen position");
-        if (requireVaryingAssignment) {
-            assertTrue(source.contains("= chimeraUv"),
-                    label + " does not pass the canonical coordinate to the varying");
-        }
-    }
-
-    private static String readResource(String path) {
-        try (InputStream stream = M80ConformanceHarness.class.getResourceAsStream(path)) {
-            if (stream == null) throw new AssertionError("Missing shader resource: " + path);
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            throw new AssertionError("Unable to read shader resource: " + path, e);
-        }
-    }
 
     private static void verifyPerTargetFallback(Path root) {
         PackProbe.Analysis resources = PackProbe.analyze(root.resolve("m7_5/resources"));

@@ -117,6 +117,9 @@ public final class PackTargetGraphPlan {
         Map<Integer, Boolean> doubleTargets = new TreeMap<>();
         List<TargetStep> steps = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
+        // Resource identity resolution can recognize targets beyond this backend's
+        // capability. Such references remain diagnostic inputs, never allocations.
+        used.removeIf(target -> target < 0 || target > MAX_TARGET);
         List<PackProgramPlan> sortedPrograms = programs == null ? List.of() : programs.stream()
                 .filter(value -> value != null && value.targetPlan() != null)
                 .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
@@ -164,6 +167,10 @@ public final class PackTargetGraphPlan {
             Set<Integer> referencedTargets = new TreeSet<>(outputs);
             referencedTargets.addAll(reads);
             for (int target : referencedTargets) {
+                if (target < 0 || target > MAX_TARGET) {
+                    stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
+                    executable = false;
+                }
                 if (unavailableFormatTargets.contains(target)) {
                     stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
                     executable = false;

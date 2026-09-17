@@ -31,15 +31,26 @@ public final class PackPlanBuilder {
             PackEntityIdResolver entityIds,
             PackResolutionPlan resolution
     ) {
+        return build(programs, config, entityIds, resolution,
+                PackAdvancedResourcePlan.empty());
+    }
+
+    public static PackPlan build(
+            List<PackProgram> programs,
+            PackConfig.PackConfigData config,
+            PackEntityIdResolver entityIds,
+            PackResolutionPlan resolution,
+            PackAdvancedResourcePlan advancedResources
+    ) {
         List<PackProgramPlan> plans = new ArrayList<>();
         if (programs != null) {
             for (PackProgram program : programs) {
-                plans.add(build(program, config, resolution));
+                plans.add(build(program, config, resolution, advancedResources));
             }
         }
         return new PackPlan(config, plans, entityIds,
                 config == null ? PackSettingsPlan.empty() : config.settings(), resolution,
-                PackResourcePlan.empty());
+                PackResourcePlan.empty(), advancedResources);
     }
 
     public static PackProgramPlan build(
@@ -53,6 +64,15 @@ public final class PackPlanBuilder {
             PackProgram program,
             PackConfig.PackConfigData config,
             PackResolutionPlan resolution
+    ) {
+        return build(program, config, resolution, PackAdvancedResourcePlan.empty());
+    }
+
+    public static PackProgramPlan build(
+            PackProgram program,
+            PackConfig.PackConfigData config,
+            PackResolutionPlan resolution,
+            PackAdvancedResourcePlan advancedResources
     ) {
         if (program == null) {
             return new PackProgramPlan(null, Map.of(),
@@ -100,7 +120,7 @@ public final class PackPlanBuilder {
         if (vertex != null) {
             stageInterfaces.put("vertex", GlslInterfaceScanner.scan(vertex, true));
         }
-        boolean pairedPostVertex = stage == UniformRegistry.Stage.POST && vertex != null && prepared;
+        boolean pairedPostVertex = stage == UniformRegistry.Stage.POST && vertex != null;
         boolean reconcileStages = vertex != null
                 && (stage != UniformRegistry.Stage.POST || pairedPostVertex);
         GlslInterfaceScanner.ProgramMatch stageMatch = !reconcileStages
@@ -126,6 +146,13 @@ public final class PackPlanBuilder {
         String convertedFragment = null;
         String convertedVertex = null;
         LegacyGlslConverter.TerrainVaryingLayout vertexLayout = null;
+        boolean allowStorageBuffers = advancedResources != null
+                && !advancedResources.storageBuffers(program.name()).isEmpty()
+                && advancedResources.storageBufferProgramSupported(program.name());
+        if (!allowStorageBuffers && advancedResources != null) {
+            allowStorageBuffers = advancedResources.buffers().values().stream()
+                    .anyMatch(PackAdvancedResourcePlan.BufferSpec::supported);
+        }
         boolean executable = isExecutableFamily(program.name())
                 && fragment != null
                 && (!FamilyAdapterRegistry.isEntityLike(program.name())
@@ -139,6 +166,33 @@ public final class PackPlanBuilder {
                 && stageMatch.executable()
                 && (targetPlan == null || targetPlan.executable())
                 && (geometryOutputPlan == null || geometryOutputPlan.executable());
+        if (stage == UniformRegistry.Stage.SHADOW) {
+            PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
+            for (String deviation : shadowOutputs.deviations()) {
+                deviations.add(deviation.replaceFirst("^POST_", "SHADOW_"));
+            }
+            for (int target : shadowOutputs.targetSlots()) {
+                if (target < 0 || target > 1) {
+                    deviations.add("SHADOW_OUTPUT_TARGET_UNSUPPORTED:" + target);
+                    executable = false;
+                }
+            }
+            executable &= shadowOutputs.executable();
+        }
+
+        boolean hasStorageBlock = stages.values().stream()
+                .filter(value -> value != null)
+                .anyMatch(value -> PackAdvancedResourcePlan.containsStorageBlock(value.source()));
+        if (hasStorageBlock && (advancedResources == null
+                || advancedResources.storageBuffers(program.name()).isEmpty())) {
+            boolean pendingCatalog = advancedResources != null
+                    && advancedResources.buffers().values().stream()
+                    .anyMatch(PackAdvancedResourcePlan.BufferSpec::supported);
+            if (!pendingCatalog) {
+                deviations.add("STORAGE_BUFFER_UNPLANNED:" + program.name());
+                executable = false;
+            }
+        }
 
         if (geometryOutputPlan != null && geometryOutputPlan.requiresMrt() && vertex == null) {
             // M8.5 MRT geometry requires a complete vertex/fragment pair. Keep
@@ -202,13 +256,14 @@ public final class PackPlanBuilder {
                 if (program.name().equals("shadow")) {
                     conversion = LegacyGlslConverter.convertShadowVertex(
                             vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                            interfacePlan.effective(stage));
+                            interfacePlan.project("vertex", stage), allowStorageBuffers);
                 } else {
                     conversion = modernTerrain
                             ? LegacyGlslConverter.convertModernTerrainVertex(vertex, null, fragment,
-                            interfacePlan.effective(stage))
+                            interfacePlan.project("vertex", stage), allowStorageBuffers)
                             : LegacyGlslConverter.convertTerrainVertex(
-                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment);
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                            allowStorageBuffers);
                 }
                 if (conversion == null) {
                     deviations.add(vertexBridgeDeviation(program.name()));
@@ -224,14 +279,14 @@ public final class PackPlanBuilder {
                         FamilyAdapterRegistry.isBlockFamily(program.name())
                                 ? LegacyGlslConverter.convertBlockVertex(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations())
+                                stageMatch.locations(), allowStorageBuffers)
                                 : FamilyAdapterRegistry.isHandFamily(program.name())
                                 ? LegacyGlslConverter.convertHandVertex(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations())
+                                stageMatch.locations(), allowStorageBuffers)
                                 : LegacyGlslConverter.convertEntityVertex(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations());
+                                stageMatch.locations(), allowStorageBuffers);
                 if (conversion == null) {
                     deviations.add(entityBridgeDeviation(program.name(), true));
                     executable = false;
@@ -249,9 +304,10 @@ public final class PackPlanBuilder {
                                     vertex,
                                     stageInterfaces.get("vertex"),
                                     stageInterfaces.get("fragment"),
-                                    stageMatch);
-                    if (postVertex == null) {
-                        deviations.addAll(LegacyGlslConverter.postVaryingDeviations(fragment));
+                                    stageMatch, interfacePlan.project("vertex", UniformRegistry.Stage.POST),
+                                    config == null ? Map.of() : config.shaderConstants());
+                    if (postVertex.source() == null) {
+                        deviations.addAll(postVertex.deviations());
                         deviations.add("POST_CONVERTER_UNSUPPORTED");
                         executable = false;
                     } else {
@@ -266,14 +322,14 @@ public final class PackPlanBuilder {
                     convertedFragment = LegacyGlslConverter.convertPostFragment(
                             fragment,
                             preparedSnapshot ? null : program.fragmentPath(),
-                            interfacePlan.effective(UniformRegistry.Stage.POST),
+                            interfacePlan.project("fragment", UniformRegistry.Stage.POST),
                             targetPlan,
                             config == null ? Map.of() : config.shaderConstants(),
                             postLayout == null ? null : postLayout.locations(),
                             postLayout == null ? null : postLayout.types());
                 }
                 if (convertedFragment == null) {
-                    deviations.addAll(LegacyGlslConverter.postVaryingDeviations(fragment));
+                    if (!pairedPostVertex) deviations.addAll(LegacyGlslConverter.postVaryingDeviations(fragment));
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
                 }
@@ -281,7 +337,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertGeometryFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                        vertexLayout, interfacePlan.effective(stage), geometryOutputPlan,
+                        vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan,
                         config == null ? Map.of() : config.shaderConstants());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -291,7 +347,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertGeometryFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                        vertexLayout, interfacePlan.effective(stage), geometryOutputPlan,
+                        vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan,
                         config == null ? Map.of() : config.shaderConstants());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -301,7 +357,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
-                        vertexLayout, interfacePlan.effective(stage),
+                        vertexLayout, interfacePlan.project("fragment", stage),
                         config == null ? Map.of() : config.shaderConstants());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -311,7 +367,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertEntityFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(),
-                        slots, vertexLayout, interfacePlan.effective(stage));
+                        slots, vertexLayout, interfacePlan.project("fragment", stage));
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
@@ -321,7 +377,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertSkyFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                        vertexLayout, interfacePlan.effective(stage));
+                        vertexLayout, interfacePlan.project("fragment", stage));
                 if (convertedFragment == null) {
                     deviations.add(FamilyAdapterRegistry.isCloudFamily(program.name())
                             ? "CLOUD_FRAGMENT_BRIDGE_UNSUPPORTED"
@@ -334,7 +390,7 @@ public final class PackPlanBuilder {
                 LegacyGlslConverter.TerrainVertexConversion conversion =
                         LegacyGlslConverter.convertParticleVertex(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations());
+                                stageMatch.locations(), allowStorageBuffers);
                 if (conversion == null) {
                     deviations.add(FamilyAdapterRegistry.isWeatherFamily(program.name())
                             ? "WEATHER_VERTEX_BRIDGE_UNSUPPORTED"
@@ -345,7 +401,7 @@ public final class PackPlanBuilder {
                     vertexLayout = conversion.layout();
                     convertedFragment = LegacyGlslConverter.convertParticleFragment(
                             fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                            vertexLayout, interfacePlan.effective(stage));
+                            vertexLayout, interfacePlan.project("fragment", stage));
                     if (convertedFragment == null) {
                         deviations.add(FamilyAdapterRegistry.isWeatherFamily(program.name())
                                 ? "WEATHER_VERTEX_BRIDGE_UNSUPPORTED"
@@ -359,6 +415,26 @@ public final class PackPlanBuilder {
         } catch (RuntimeException e) {
             deviations.add("TRANSLATION_UNSUPPORTED:" + safeReason(e));
             executable = false;
+        }
+
+        if (executable && advancedResources != null
+                && !advancedResources.storageBuffers(program.name()).isEmpty()) {
+            if (!advancedResources.storageBufferProgramSupported(program.name())) {
+                deviations.addAll(advancedResources.storageBuffers(program.name()).stream()
+                        .flatMap(value -> value.deviations().stream()).toList());
+                executable = false;
+            } else {
+                convertedFragment = advancedResources.rewriteStorageBuffers(
+                        program.name(), convertedFragment);
+                if (convertedVertex != null) {
+                    convertedVertex = advancedResources.rewriteStorageBuffers(
+                            program.name(), convertedVertex);
+                }
+                if (convertedFragment == null || (program.vertexSource() != null && convertedVertex == null)) {
+                    deviations.add("STORAGE_BUFFER_REWRITE_FAILED:" + program.name());
+                    executable = false;
+                }
+            }
         }
 
         PackProgramResolution resolved = resolution == null ? null : resolution.resolution(program.name());
@@ -569,7 +645,8 @@ public final class PackPlanBuilder {
             return false;
         }
         return source.deviations().stream().noneMatch(value ->
-                (value.startsWith("SOURCE_") || value.startsWith("PREPROCESSOR_"))
-                        && !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:"));
+                ((value.startsWith("SOURCE_") || value.startsWith("PREPROCESSOR_"))
+                        && !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:"))
+                        || value.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:"));
     }
 }

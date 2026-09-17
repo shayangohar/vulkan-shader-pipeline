@@ -14,10 +14,15 @@ public final class PackTemporalState {
     private boolean frameOpen;
 
     public void beginFrame(boolean hdrIdentity) {
+        if (frameOpen) throw new IllegalStateException("PACK_TARGET_FRAME_ALREADY_STARTED");
         Arrays.fill(current, false);
         Arrays.fill(pending, false);
         current[0] = hdrIdentity;
         frameOpen = true;
+    }
+
+    public void requireFrameStarted() {
+        if (!frameOpen) throw new IllegalStateException("PACK_TARGET_FRAME_NOT_STARTED");
     }
 
     public void seedCurrent(int target) {

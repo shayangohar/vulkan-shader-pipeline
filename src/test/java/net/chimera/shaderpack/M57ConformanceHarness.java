@@ -97,8 +97,15 @@ public final class M57ConformanceHarness {
                     || program.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
             assertEquals(eligible, report.shouldAttempt(program.name()),
                     "M5.7 " + spec.label() + " static eligibility: " + program.name());
-            assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
-                    program.runtime(), "M5.7 " + spec.label() + " static runtime: " + program.name());
+            if (eligible) {
+                assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
+                        program.runtime(), "M5.7 " + spec.label()
+                                + " eligible static runtime: " + program.name());
+            } else {
+                assertTrue(program.runtime() == ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED
+                                || program.runtime() == ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                        "M5.7 " + spec.label() + " fallback static runtime: " + program.name());
+            }
             deviations.addAll(program.deviations());
             if (!program.deviations().isEmpty()) {
                 programDeviations.put(program.name(), program.deviations());
@@ -227,7 +234,14 @@ public final class M57ConformanceHarness {
             entries.add(pack.label(), snapshot(pack, false));
         }
         root.add("packs", entries);
-        System.out.println(new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root));
+        String json = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root);
+        String outputPath = System.getProperty("chimera.m57.baselineOutput");
+        if (outputPath == null || outputPath.isBlank()) {
+            System.out.println(json);
+        } else {
+            Files.writeString(Path.of(outputPath), json + System.lineSeparator(),
+                    StandardCharsets.UTF_8);
+        }
     }
 
     private static void verifyArchiveEdges() throws IOException {

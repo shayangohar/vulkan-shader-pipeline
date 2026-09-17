@@ -79,6 +79,26 @@ public final class PackPostTargetsHarness {
                         feedback)),
                 "persistent target with a prior producer must not be reseeded");
 
+        PackTemporalState frame = new PackTemporalState();
+        frame.beginFrame(true);
+        frame.seedCurrent(6); // Geometry material output, before the first post window.
+        frame.requireFrameStarted();
+        assertTrue(frame.currentAvailable(6), "post boundary discarded geometry target 6");
+        boolean duplicateRejected = false;
+        try {
+            frame.beginFrame(true);
+        } catch (IllegalStateException expected) {
+            duplicateRejected = true;
+        }
+        assertTrue(duplicateRejected && frame.currentAvailable(6),
+                "late initialization must fail before clearing geometry target 6");
+        assertTrue(frame.commit() && frame.previousAvailable(6),
+                "geometry target 6 must survive the temporal frame commit");
+        frame.beginFrame(true);
+        assertTrue(!frame.currentAvailable(6) && frame.previousAvailable(6),
+                "next frame must reset current availability without losing committed history");
+        frame.abort();
+
         System.out.println("[chimera] post target availability harness: PASS");
     }
 

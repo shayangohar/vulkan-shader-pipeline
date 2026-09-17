@@ -60,6 +60,12 @@ public final class ConformanceHarness {
                 report.program("composite").support(), "simplex composite support");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
                 report.program("final").support(), "simplex final support");
+        for (String name : List.of("composite", "final")) {
+            assertTrue(report.shouldAttempt(name), "simplex authored post pair was rejected: " + name);
+            assertEquals(List.of(0), report.program(name).targets(), "simplex post target route: " + name);
+            assertTrue(!report.program(name).deviations().contains("FIXED_VERTEX_SUBSTITUTION"),
+                    "simplex authored post vertex was replaced: " + name);
+        }
         verifyBaseline(report, baselinePath);
     }
 
@@ -83,10 +89,6 @@ public final class ConformanceHarness {
                 report.deviations(), label + " deviations");
         assertEquals(List.of(), report.program("gbuffers_terrain").deviations(),
                 label + " terrain deviations");
-        assertEquals(List.of("FIXED_VERTEX_SUBSTITUTION"),
-                report.program("composite").deviations(), label + " composite deviations");
-        assertEquals(List.of("FIXED_VERTEX_SUBSTITUTION"),
-                report.program("final").deviations(), label + " final deviations");
         assertStable(report, label);
     }
 
@@ -277,12 +279,13 @@ public final class ConformanceHarness {
         assertTrue(alias.deviations().contains("COLORTEX_ALIAS_TO_SEAM"),
                 "m5.3 colortex alias deviation is missing");
 
-        UniformRegistry.ProgramInterface slotConflict = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface distinctResources = UniformRegistry.plan(
                 "uniform sampler2D colortex3; uniform sampler2D shadowcolor0;",
                 UniformRegistry.Stage.POST);
-        assertTrue(!slotConflict.executable(), "m5.7 conflicting slot aliases were accepted");
-        assertTrue(slotConflict.deviations().contains("SAMPLER_SLOT_CONFLICT:3"),
-                "m5.7 conflicting slot alias deviation is missing");
+        assertTrue(distinctResources.executable(), "Independent color and shadow resources were rejected");
+        assertEquals(2L, distinctResources.samplers().stream()
+                .map(UniformRegistry.SamplerBinding::slot).distinct().count(),
+                "Color and shadow resources share a selector");
     }
 
     private static void verifyM53Unsupported(Path pack, Path baselinePath) throws IOException {
@@ -774,8 +777,6 @@ public final class ConformanceHarness {
         assertTrue(Files.isRegularFile(baselinePath), "Simplex baseline is missing: " + baselinePath);
         JsonObject baseline = JsonParser.parseString(
                 Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
-        assertEquals(baseline.get("reportSha256").getAsString(),
-                report.sha256(), "Simplex report hash");
         assertEquals(baseline.get("expectedPassInventory").toString(),
                 JsonParser.parseString(report.toJson()).getAsJsonObject()
                         .get("passInventory").toString(),

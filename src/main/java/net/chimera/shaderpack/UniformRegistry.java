@@ -127,13 +127,25 @@ public final class UniformRegistry {
             Stage stage,
             List<UniformDeclaration> uniforms,
             List<SamplerBinding> samplers,
-            List<String> deviations
+            List<String> deviations,
+            List<SamplerBinding> samplerLayout
     ) {
         public ProgramInterface {
             stage = stage == null ? Stage.POST : stage;
             uniforms = sortedUniforms(uniforms);
             samplers = sortedSamplers(samplers);
             deviations = sortedStrings(deviations);
+            samplerLayout = sortedSamplers(samplerLayout);
+        }
+
+        /** A standalone stage uses its own sampler order as the descriptor layout. */
+        public ProgramInterface(
+                Stage stage,
+                List<UniformDeclaration> uniforms,
+                List<SamplerBinding> samplers,
+                List<String> deviations
+        ) {
+            this(stage, uniforms, samplers, deviations, samplers);
         }
 
         /** Uniforms safe to place in the generated UBO. */
@@ -161,8 +173,8 @@ public final class UniformRegistry {
         }
 
         public int samplerIndex(String name) {
-            for (int i = 0; i < samplers.size(); i++) {
-                if (samplers.get(i).name().equals(name)) {
+            for (int i = 0; i < samplerLayout.size(); i++) {
+                if (samplerLayout.get(i).name().equals(name)) {
                     return i;
                 }
             }
@@ -201,6 +213,22 @@ public final class UniformRegistry {
                     ? stages.values().stream().findFirst().map(ProgramInterface::stage).orElse(Stage.POST)
                     : stage;
             return new ProgramInterface(effectiveStage, uniforms, samplers, deviations);
+        }
+
+        /** Keeps shared uniform fields and binding order, but emits only this stage's samplers. */
+        public ProgramInterface project(String sourceStage, Stage familyStage) {
+            ProgramInterface source = stages.get(sourceStage);
+            if (source == null) {
+                throw new IllegalArgumentException("program source stage is missing: " + sourceStage);
+            }
+            List<String> projectedDeviations = new ArrayList<>(deviations);
+            for (String deviation : source.deviations()) {
+                if (deviation.startsWith("SAMPLER_DECLARATION_UNUSED:")) {
+                    projectedDeviations.add(deviation);
+                }
+            }
+            return new ProgramInterface(familyStage == null ? source.stage() : familyStage,
+                    uniforms, source.samplers(), projectedDeviations, samplers);
         }
 
         public boolean executable() {
@@ -275,19 +303,29 @@ public final class UniformRegistry {
             Map.entry("colortex1", 1),
             Map.entry("colortex2", 2),
             Map.entry("colortex3", 3),
+            Map.entry("colortex8", SelectorNamespace.COLORTEX8_SLOT),
             Map.entry("shadowtex0", 5),
             // Keep shadowtex1 separate from shadowtex0. The current renderer
             // supplies the same truthful shadow-depth image to both names,
             // but a shared selector slot creates a false resource conflict
             // when a post shader declares both samplers.
-            Map.entry("shadowtex1", PackResourcePlan.SHADOW_TEX1_SLOT),
-            Map.entry("shadowcolor0", 3),
-            Map.entry("shadowcolor1", 3),
+            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
+            Map.entry("shadowcolor0", SelectorNamespace.SHADOW_COLOR0_SLOT),
+            Map.entry("shadowcolor1", SelectorNamespace.SHADOW_COLOR1_SLOT),
             Map.entry("depthtex0", 6),
             Map.entry("depthtex1", 12),
             Map.entry("depthtex2", 13),
             Map.entry("noisetex", 7)
     );
+
+    /**
+     * A pack may expose its block atlas through a custom texture named
+     * textureAtlas.  Complementary also uses the legacy name tex in the
+     * material helper that reads that same declared resource.  The alias is
+     * resolved only when the pack has already allocated textureAtlas; it is
+     * not a host-texture fallback and does not consume a second selector slot.
+     */
+    private static final String PACK_ATLAS_SAMPLER = "textureAtlas";
 
     /** Geometry stage: the host's registry slots the terrain draw path fills. */
     public static final Map<String, Integer> GEOMETRY_NAME_TO_SLOT = Map.ofEntries(
@@ -435,6 +473,9 @@ public final class UniformRegistry {
         Map<String, String> samplerNames = new TreeMap<>();
         Map<Integer, String> samplerResources = new TreeMap<>();
         Set<String> deviations = new TreeSet<>();
+        Set<String> referencedValues = allowUnusedDeclarations
+                ? GlslResourceUsage.referencedValueIdentifiers(stripped, UNIFORM_SPECS.keySet())
+                : Set.of();
 
         Matcher matcher = UNIFORM_DECLARATION.matcher(stripped);
         while (matcher.find()) {
@@ -476,7 +517,7 @@ public final class UniformRegistry {
             for (UniformDescriptor descriptor : UNIFORM_SPECS.values()) {
                 if (descriptor.acceptedTypes().size() != 1
                         || declarations.containsKey(descriptor.name())
-                        || !isPresent(stripped, descriptor.name())
+                        || !referencedValues.contains(descriptor.name())
                         || isLocallyDeclared(stripped, descriptor.name())) {
                     continue;
                 }
@@ -554,13 +595,20 @@ public final class UniformRegistry {
         };
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
-            if (allowUnusedDeclarations && !isSamplerReferenced(stripped, sampler.getKey())) {
+            if (allowUnusedDeclarations && isSamplerUnused(stripped, sampler.getKey())) {
                 deviations.add("SAMPLER_DECLARATION_UNUSED:" + sampler.getKey());
                 continue;
             }
             Integer slot = slots.get(sampler.getKey());
             if (stage == Stage.POST && slot == null) {
                 slot = extendedPostColorSlot(sampler.getKey());
+            }
+            if (stage == Stage.POST && slot == null && sampler.getKey().equals("tex")
+                    && customSamplerSlots != null) {
+                slot = customSamplerSlots.get(PACK_ATLAS_SAMPLER);
+                if (slot != null) {
+                    deviations.add("SAMPLER_ALIAS_TO_PACK_RESOURCE:tex:textureAtlas");
+                }
             }
             if (slot == null && customSamplerSlots != null) {
                 slot = customSamplerSlots.get(sampler.getKey());
@@ -593,7 +641,11 @@ public final class UniformRegistry {
             }
             bindings.add(new SamplerBinding(sampler.getKey(), slot, sampler.getValue()));
             String resource = stage == Stage.GEOMETRY && sampler.getKey().equals("shadowtex1")
-                    ? "shadowtex0" : samplerResource(sampler.getKey());
+                    ? "shadowtex0"
+                    : stage == Stage.POST && sampler.getKey().equals("tex")
+                    && customSamplerSlots != null
+                    && customSamplerSlots.containsKey(PACK_ATLAS_SAMPLER)
+                    ? PACK_ATLAS_SAMPLER : samplerResource(sampler.getKey());
             String previousResource = samplerResources.putIfAbsent(slot, resource);
             if (previousResource != null && !previousResource.equals(resource)) {
                 deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
@@ -667,22 +719,9 @@ public final class UniformRegistry {
                 || isReferenced(source, "gl_ProjectionMatrix"));
     }
 
-    private static boolean isSamplerReferenced(String source, String name) {
-        String withoutUniform = removeUniformDeclaration(source, name);
-        if (Pattern.compile("(?i)\\b(?:texture|texture2D|texture2DLod|texture2DProj|"
-                + "texture3D|texture3DLod|textureProj|textureGrad|textureLod|shadow2D|"
-                + "texture2DShadow|texelFetch)"
-                + "\\s*\\(\\s*" + Pattern.quote(name) + "\\b")
-                .matcher(withoutUniform).find()) {
-            return true;
-        }
-        // Real packs commonly pass a sampler through a helper such as
-        // textureCatmullRom(sampler, uv). Restrict this fallback to call
-        // arguments. A broad identifier search mistakes a local variable that
-        // shadows a sampler, such as `float specular`, for a texture use.
-        return Pattern.compile("\\b[A-Za-z_]\\w*\\s*\\([^;{}\\r\\n]*\\b"
-                        + Pattern.quote(name) + "\\b[^;{}\\r\\n]*\\)")
-                .matcher(withoutUniform).find();
+    private static boolean isSamplerUnused(String source, String name) {
+        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source);
+        return usage.successful() && !usage.liveSamplers().contains(name);
     }
 
     private static String removeUniformDeclaration(String source, String name) {
@@ -700,10 +739,6 @@ public final class UniformRegistry {
         if (last == 0) return source;
         result.append(source, last, source.length());
         return result.toString();
-    }
-
-    private static boolean isPresent(String source, String name) {
-        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source).find();
     }
 
     private static boolean isLocallyDeclared(String source, String name) {
@@ -919,6 +954,7 @@ public final class UniformRegistry {
         // the remaining values are explicit zero or identity defaults.
         addLive(specs, "bedrockLevel", "int");
         addLive(specs, "blindFactor", "float");
+        addLive(specs, "blindness", "float", "blindness");
         addLive(specs, "darknessFactor", "float");
         addLive(specs, "darknessLightFactor", "float");
         addDefault(specs, "endFlashIntensity", "float");
@@ -1094,6 +1130,17 @@ public final class UniformRegistry {
             for (SamplerBinding sampler : stage.samplers()) {
                 if (!stage.deviations().contains("SAMPLER_DECLARATION_UNUSED:" + sampler.name())) {
                     usedSamplers.add(sampler.name());
+                }
+            }
+            // Mapping failure is not evidence that a sampler is dead. A live
+            // unsupported declaration may also be unused in the paired stage.
+            for (String deviation : stage.deviations()) {
+                for (String prefix : List.of("SAMPLER_NOT_MAPPED:",
+                        "SHADOW_SAMPLER_UNSUPPORTED:", "TRANSLUCENT_SAMPLER_UNSUPPORTED:",
+                        "ENTITY_SAMPLER_UNSUPPORTED:")) {
+                    if (deviation.startsWith(prefix)) {
+                        usedSamplers.add(deviation.substring(prefix.length()));
+                    }
                 }
             }
         }

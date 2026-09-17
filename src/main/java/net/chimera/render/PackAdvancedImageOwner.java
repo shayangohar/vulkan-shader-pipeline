@@ -49,7 +49,7 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return computeInstalled && resourcesAvailable()
                 && plan.capabilityPossible()
                 && (!plan.requiresGraphicsProducer()
-                || installedGraphicsPrograms.containsAll(plan.graphicsImages().keySet()));
+                || producerCoverage(installedGraphicsPrograms));
     }
 
     /**
@@ -60,7 +60,7 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     public boolean producerCandidatesReady() {
         return computeInstalled && resourcesAvailable() && plan.capabilityPossible()
                 && (!plan.requiresGraphicsProducer()
-                || candidateGraphicsPrograms.containsAll(plan.graphicsImages().keySet()));
+                || producerCoverage(candidateGraphicsPrograms));
     }
 
     /** Records a compiled producer before dependent consumer pipelines build. */
@@ -86,6 +86,26 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
 
     public void markComputeInstalled() {
         if (plan.hasSupportedCompute() && resourcesAvailable()) computeInstalled = true;
+    }
+
+    public boolean needsGraphicsTransition(net.chimera.shaderpack.ProgramImageBindingManifest manifest) {
+        for (var entry : manifest.entries()) {
+            if (entry.kind() != net.chimera.shaderpack.ProgramImageBindingManifest.Kind.ADVANCED_IMAGE) continue;
+            PackStorageImage image = images.get(entry.resourceKey());
+            if (image != null && image.getCurrentLayout() != org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL) return true;
+        }
+        return false;
+    }
+
+    public void prepareGraphicsImages(VkCommandBuffer commandBuffer,
+            net.chimera.shaderpack.ProgramImageBindingManifest manifest) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            for (var entry : manifest.entries()) {
+                if (entry.kind() != net.chimera.shaderpack.ProgramImageBindingManifest.Kind.ADVANCED_IMAGE) continue;
+                PackStorageImage image = images.get(entry.resourceKey());
+                if (image != null) image.transitionToGeneral(stack, commandBuffer);
+            }
+        }
     }
 
     /** Transitions the images written by one guarded graphics program to GENERAL. */
@@ -144,6 +164,18 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     public PackAdvancedResourcePlan plan() { return plan; }
     public Map<String, String> failures() { return Map.copyOf(failures); }
 
+    public int plannedImageCount() {
+        return (int) plan.images().values().stream().filter(PackAdvancedResourcePlan.ImageSpec::supported).count();
+    }
+
+    public int allocatedImageCount() {
+        return images.size();
+    }
+
+    public int initializedImageCount() {
+        return (int) images.values().stream().filter(PackStorageImage::initialized).count();
+    }
+
     public VulkanImage image(String name) {
         return images.get(name);
     }
@@ -183,12 +215,21 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     }
 
     private boolean requiredGraphicsImagesAvailable() {
-        for (var bindings : plan.graphicsImages().values()) {
-            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : bindings) {
+        for (String program : plan.graphicsImageReaders().keySet()) {
+            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
+                if (imageForSymbol(binding.symbol()) == null) return false;
+            }
+        }
+        for (String program : plan.graphicsImages().keySet()) {
+            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
                 if (imageForSymbol(binding.symbol()) == null) return false;
             }
         }
         return true;
+    }
+
+    private boolean producerCoverage(Set<String> programs) {
+        return plan.graphicsImageNames(programs).containsAll(plan.requiredGraphicsImageNames());
     }
 
     @Override

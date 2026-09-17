@@ -26,6 +26,7 @@ public final class M74ConformanceHarness {
         PackTargetGraphPlan graphAgain = PackTargetGraphPlan.build(
                 second.plan().programs(), second.config(), 1920, 1080, 8, 16384);
 
+        verifyUnsupportedSamplerTarget();
         assertEquals(graph.fingerprint(), graphAgain.fingerprint(), "M7.4 graph fingerprint stability");
         assertTrue(graph.target(0) != null, "M7.4 target 0 missing");
         assertTrue(graph.target(1) != null, "M7.4 target 1 missing");
@@ -89,6 +90,40 @@ public final class M74ConformanceHarness {
             assertTrue(expected.contains(graph.fingerprint()), "M7.4 graph baseline mismatch");
         }
         System.out.println("[chimera] M7.4 target and depth graph conformance: PASS");
+    }
+
+    private static void verifyUnsupportedSamplerTarget() throws Exception {
+        Path fixture = Files.createTempDirectory("chimera-target-boundary-");
+        try {
+            Path shaders = Files.createDirectories(fixture.resolve("shaders"));
+            Files.writeString(shaders.resolve("composite.vsh"),
+                    "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+            Files.writeString(shaders.resolve("composite.fsh"),
+                    "#version 120\nuniform sampler2D colortex8;\n"
+                            + "void main() { gl_FragColor = texture2D(colortex8, vec2(0.5)); }\n");
+            Files.writeString(shaders.resolve("final.vsh"),
+                    "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+            Files.writeString(shaders.resolve("final.fsh"),
+                    "#version 120\nuniform sampler2D colortex0;\n"
+                            + "void main() { gl_FragColor = texture2D(colortex0, vec2(0.5)); }\n");
+            PackProbe.Analysis analysis = PackProbe.analyze(fixture);
+            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                    analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+            assertTrue(graph.target(8) == null,
+                    "unsupported sampler target entered runtime allocation graph");
+            TargetStep rejected = graph.step("composite");
+            assertTrue(rejected != null && !rejected.executable()
+                            && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:8"),
+                    "unsupported sampler target must reject its consumer by name");
+            assertTrue(graph.step("final").executable() && graph.target(0) != null,
+                    "unsupported consumer disabled unrelated supported targets");
+        } finally {
+            try (var paths = Files.walk(fixture)) {
+                for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    Files.delete(path);
+                }
+            }
+        }
     }
 
     private static void assertTrue(boolean condition, String message) {

@@ -32,6 +32,7 @@ public final class PackGeometryContext {
     private static boolean active;
     private static boolean terrainWindow;
     private static boolean clearFirstColor;
+    private static boolean clearShadowAttachments;
 
     private PackGeometryContext() {}
 
@@ -48,6 +49,12 @@ public final class PackGeometryContext {
     /** Begins a terrain or water window with the exact pack output attachment list. */
     public static void beginTerrain(List<VulkanImage> colorImages, VulkanImage depthImage) {
         beginInternal(colorImages, depthImage, false, true);
+    }
+
+    /** Opens the authored shadow MRT, clearing colors and depth once, not per terrain layer. */
+    public static void beginShadow(List<VulkanImage> colorImages, VulkanImage depthImage) {
+        beginInternal(colorImages, depthImage, false, true);
+        clearShadowAttachments = true;
     }
 
     private static void beginInternal(List<VulkanImage> colorImages, VulkanImage depthImage,
@@ -104,12 +111,13 @@ public final class PackGeometryContext {
             info.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
                     .imageView(colors.get(index).getImageView())
                     .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-                    .loadOp(!terrainWindow && index == 0 && clearFirstColor
+                    .loadOp(clearShadowAttachments || (!terrainWindow && index == 0 && clearFirstColor)
                             ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)
                     .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
-            if (!terrainWindow && index == 0 && clearFirstColor) {
+            if (clearShadowAttachments || (!terrainWindow && index == 0 && clearFirstColor)) {
                 VkClearValue clear = VkClearValue.calloc(stack);
-                clear.color().float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
+                float value = clearShadowAttachments ? 1.0f : 0.0f;
+                clear.color().float32(stack.floats(value, value, value, value));
                 info.clearValue(clear);
             }
         }
@@ -126,11 +134,17 @@ public final class PackGeometryContext {
         depthInfo.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
                 .imageView(depth.getImageView())
                 .imageLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD)
+                .loadOp(clearShadowAttachments ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)
                 .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+        if (clearShadowAttachments) {
+            VkClearValue clear = VkClearValue.calloc(stack);
+            clear.depthStencil().set(1.0f, 0);
+            depthInfo.clearValue(clear);
+        }
         rendering.pDepthAttachment(depthInfo);
         vkCmdBeginRenderingKHR(commandBuffer, rendering);
         clearFirstColor = false;
+        clearShadowAttachments = false;
     }
 
     public static void endRendering(VkCommandBuffer commandBuffer, MemoryStack stack) {
@@ -153,6 +167,7 @@ public final class PackGeometryContext {
         active = false;
         terrainWindow = false;
         clearFirstColor = false;
+        clearShadowAttachments = false;
     }
 
     private static void trace(String message) {

@@ -14,4 +14,18 @@ public abstract class ChimeraRendererPipelineMixin {
     private GraphicsPipeline chimera$replaceCloudPipeline(GraphicsPipeline host) {
         return ChimeraSkyBridge.replaceCloudPipeline(host);
     }
+
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "uploadAndBindUBOs", at = @At(value = "INVOKE",
+            target = "Lnet/vulkanmod/vulkan/shader/Pipeline;bindDescriptorSets(Lorg/lwjgl/vulkan/VkCommandBuffer;I)V"), require = 1)
+    private void chimera$bindImages(net.vulkanmod.vulkan.shader.Pipeline pipeline,
+            org.lwjgl.vulkan.VkCommandBuffer commandBuffer, int frame) {
+        var pass = net.chimera.render.ChimeraRenderer.getMainPass();
+        if (pass == null || !(pipeline instanceof GraphicsPipeline graphics)) {
+            pipeline.bindDescriptorSets(commandBuffer, frame);
+            return;
+        }
+        try (var bindings = pass.bindDescriptorImages(graphics)) {
+            pipeline.bindDescriptorSets(commandBuffer, frame);
+        }
+    }
 }

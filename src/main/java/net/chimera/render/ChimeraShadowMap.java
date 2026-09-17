@@ -7,6 +7,7 @@ import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.PackConfig;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.SamplerInfo;
@@ -38,6 +39,8 @@ public class ChimeraShadowMap {
 
     private Framebuffer shadowFramebuffer;
     private RenderPass shadowRenderPass;
+    private VulkanImage shadowColor1;
+    private java.util.List<VulkanImage> shadowColors = java.util.List.of();
     private GraphicsPipeline shadowPipeline;
     private long shadowSampler;
 
@@ -81,6 +84,12 @@ public class ChimeraShadowMap {
         this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", this.shadowMapSize, this.shadowMapSize, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
                 .build();
+        this.shadowColor1 = VulkanImage.builder(this.shadowMapSize, this.shadowMapSize)
+                .setName("chimeraShadowColor1")
+                .setFormat(VK_FORMAT_R8G8B8A8_UNORM)
+                .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
+                .setLinearFiltering(true).setClamp(true).createVulkanImage();
+        this.shadowColors = java.util.List.of(this.shadowFramebuffer.getColorAttachment(), this.shadowColor1);
 
         createRenderPass();
         this.shadowPipeline = ChimeraPostPipelines.createTerrainPipeline("chimera_shadow", ChimeraTerrainPipelines.getTerrainVertexFormat());
@@ -173,6 +182,28 @@ public class ChimeraShadowMap {
         VTextureSelector.bindTexture(5, shadowDepth); // slot 5 for pack shadowtex0
     }
 
+    public VulkanImage shadowColor(int index) {
+        return index >= 0 && index < this.shadowColors.size() ? this.shadowColors.get(index) : null;
+    }
+
+    public java.util.List<VulkanImage> shadowColors() { return this.shadowColors; }
+
+    /** Initial contents must be defined before geometry samples the first shadow frame. */
+    public void initializeSampling(VkCommandBuffer commandBuffer) {
+        PackGeometryContext.beginShadow(this.shadowColors, this.shadowFramebuffer.getDepthAttachment());
+        try {
+            Renderer.getInstance().beginRenderPass(this.shadowRenderPass, this.shadowFramebuffer);
+            Renderer.getInstance().endRenderPass(commandBuffer);
+        } finally {
+            PackGeometryContext.close();
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            this.shadowFramebuffer.getDepthAttachment().transitionImageLayout(stack, commandBuffer,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        this.needsInitialSamplingLayout = false;
+    }
+
     public Matrix4f getLightProjection() {
         return this.lightProjection;
     }
@@ -217,6 +248,9 @@ public class ChimeraShadowMap {
         if (this.shadowFramebuffer != null) this.shadowFramebuffer.cleanUp(true);
         if (this.shadowRenderPass != null) this.shadowRenderPass.cleanUp();
         if (this.shadowPipeline != null) this.shadowPipeline.cleanUp();
+        if (this.shadowColor1 != null) this.shadowColor1.free();
+        this.shadowColor1 = null;
+        this.shadowColors = java.util.List.of();
         this.shadowFramebuffer = null;
         this.shadowRenderPass = null;
         this.shadowPipeline = null;

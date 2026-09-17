@@ -9,6 +9,42 @@ import java.util.Set;
 public final class GlslTokenRewriter {
     private GlslTokenRewriter() {}
 
+    /**
+     * Blanks complete unreachable function definitions while preserving line
+     * breaks. Source positions remain stable for compiler diagnostics and the
+     * later declaration rewrites cannot leave dead resource references behind.
+     */
+    static String removeUnreachableFunctions(
+            String source, GlslResourceUsage.Analysis usage
+    ) {
+        if (source == null || usage == null || !usage.successful()
+                || usage.unreachableFunctions().isEmpty()) {
+            return source;
+        }
+        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
+        for (GlslResourceUsage.FunctionDefinition function : usage.unreachableFunctions()) {
+            int start = Math.max(0, function.definitionStart());
+            int end = Math.min(tokens.size() - 1, function.definitionEnd());
+            for (int index = start; index <= end; index++) {
+                String text = tokens.get(index).text();
+                tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.TRIVIA,
+                        lineBreaks(text)));
+            }
+        }
+        return GlslLexer.render(tokens);
+    }
+
+    private static String lineBreaks(String text) {
+        StringBuilder result = new StringBuilder();
+        for (int index = 0; index < text.length(); index++) {
+            char value = text.charAt(index);
+            if (value == '\r' || value == '\n') {
+                result.append(value);
+            }
+        }
+        return result.toString();
+    }
+
     static String replaceIdentifiers(String source, Map<String, String> replacements) {
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
         for (int index = 0; index < tokens.size(); index++) {
@@ -324,4 +360,5 @@ public final class GlslTokenRewriter {
     private static GlslLexer.Token raw(String value) {
         return new GlslLexer.Token(GlslLexer.Kind.TRIVIA, value);
     }
+
 }

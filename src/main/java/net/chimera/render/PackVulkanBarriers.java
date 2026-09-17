@@ -2,7 +2,11 @@ package net.chimera.render;
 
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkBufferMemoryBarrier;
 import org.lwjgl.vulkan.VkMemoryBarrier;
+import net.vulkanmod.vulkan.memory.buffer.Buffer;
+
+import java.util.Collection;
 
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_WRITE_BIT;
@@ -40,6 +44,41 @@ final class PackVulkanBarriers {
                 VK_ACCESS_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    }
+
+    static void afterStorageBufferTransfer(VkCommandBuffer commandBuffer) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            afterTransfer(commandBuffer, stack);
+        }
+    }
+
+    static void beforeStorageBufferUse(VkCommandBuffer commandBuffer,
+                                       Collection<Buffer> buffers) {
+        if (commandBuffer == null || buffers == null || buffers.isEmpty()) return;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkBufferMemoryBarrier.Buffer barriers = VkBufferMemoryBarrier.calloc(buffers.size(), stack);
+            int index = 0;
+            for (Buffer buffer : buffers) {
+                if (buffer == null) continue;
+                barriers.get(index++)
+                        .sType$Default()
+                        .srcAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
+                                | VK_ACCESS_TRANSFER_WRITE_BIT)
+                        .dstAccessMask(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT)
+                        .srcQueueFamilyIndex(-1)
+                        .dstQueueFamilyIndex(-1)
+                        .buffer(buffer.getId())
+                        .offset(0L)
+                        .size(buffer.getBufferSize());
+            }
+            if (index > 0) {
+                barriers.limit(index);
+                vkCmdPipelineBarrier(commandBuffer,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        0, null, barriers, null);
+            }
+        }
     }
 
     static void beforeCompute(VkCommandBuffer commandBuffer, MemoryStack stack) {

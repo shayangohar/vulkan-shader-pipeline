@@ -323,7 +323,7 @@ final class PackFrameState {
             case "aspectRatio" -> target.putFloat(0, aspectRatio);
             case "near" -> target.putFloat(0, nearPlane);
             case "far" -> target.putFloat(0, farPlane);
-            case "blindFactor" -> target.putFloat(0, blindness);
+            case "blindFactor", "blindness" -> target.putFloat(0, blindness);
             case "darknessFactor" -> target.putFloat(0, darknessFactor);
             case "darknessLightFactor" -> target.putFloat(0, darknessLightFactor);
             case "nightVision" -> target.putFloat(0, nightVision);
@@ -453,8 +453,9 @@ final class PackFrameState {
         alphaCutout = VRenderSystem.alphaCutout;
         currentTime = VRenderSystem.getCurrentTime();
         FogData fogData = VRenderSystem.getFogData();
-        fogStart = fogData == null ? 0.0f : fogData.renderDistanceStart;
-        fogEnd = fogData == null ? 0.0f : fogData.renderDistanceEnd;
+        // Legacy pack fog is environmental fog, not the render-distance fade.
+        fogStart = fogData == null ? 0.0f : fogData.environmentalStart;
+        fogEnd = fogData == null ? 0.0f : fogData.environmentalEnd;
         fogEnvironmentalStart = fogData == null ? 0.0f : fogData.environmentalStart;
         fogEnvironmentalEnd = fogData == null ? 0.0f : fogData.environmentalEnd;
         fogSkyEnd = fogData == null ? 0.0f : fogData.skyEnd;
@@ -563,7 +564,7 @@ final class PackFrameState {
             case "aspectRatio" -> aspectRatio;
             case "near" -> nearPlane;
             case "far" -> farPlane;
-            case "blindFactor" -> blindness;
+            case "blindFactor", "blindness" -> blindness;
             case "darknessFactor" -> darknessFactor;
             case "darknessLightFactor" -> darknessLightFactor;
             case "nightVision" -> nightVision;

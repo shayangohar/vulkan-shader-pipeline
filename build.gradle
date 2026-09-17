@@ -157,6 +157,11 @@ tasks.register('m57ConformanceTest', JavaExec) {
         systemProperty 'chimera.m57.independentVersion',
                 requiredVersion('m57IndependentVersion', 'chimera.m57.independentVersion')
         systemProperty 'chimera.m57.baseline', baseline.absolutePath
+        def baselineOutput = project.findProperty('m57BaselineOutput')
+                ?: System.getProperty('chimera.m57.baselineOutput')
+        if (baselineOutput != null && !baselineOutput.toString().isBlank()) {
+            systemProperty 'chimera.m57.baselineOutput', file(baselineOutput.toString()).absolutePath
+        }
         if (project.findProperty('m57EmitBaseline')?.toString()?.toBoolean()) {
             systemProperty 'chimera.m57.emitBaseline', 'true'
         }
@@ -606,6 +611,29 @@ tasks.register('m86ConformanceTest', JavaExec) {
     }
 }
 
+tasks.register('m86bConformanceTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic M8.6b bounded storage-buffer bridge checks.'
+    dependsOn tasks.named('m86ConformanceTest')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M86bConformanceHarness'
+    jvmArgs '-ea'
+    doFirst {
+        ['m86Complementary': 'chimera.m86.complementary',
+         'm86Bsl': 'chimera.m86.bsl'].each { projectKey, systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value != null && !value.toString().isBlank()) {
+                def pack = file(value.toString())
+                if (!pack.isDirectory() && !pack.isFile()) {
+                    throw new GradleException("M8.6b pack path does not exist: ${pack}")
+                }
+                systemProperty systemKey, pack.absolutePath
+            }
+        }
+    }
+}
+
+
 
 
 tasks.register('m82ConformanceTest', JavaExec) {
@@ -637,6 +665,7 @@ tasks.named('check') {
     dependsOn tasks.named('m85ConformanceTest')
     dependsOn tasks.named('m85bConformanceTest')
     dependsOn tasks.named('m86ConformanceTest')
+    dependsOn tasks.named('m86bConformanceTest')
 }
 
 tasks.named('test') {

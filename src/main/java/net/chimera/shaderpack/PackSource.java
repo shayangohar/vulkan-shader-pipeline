@@ -575,14 +575,15 @@ public final class PackSource {
     ) {
         List<PackProgram> result = new ArrayList<>();
         for (PackProgram candidate : candidates) {
-            ShaderSourcePreprocessor.Result fragment = ShaderSourcePreprocessor.prepare(
+            ShaderSourcePreprocessor.Result fragment = normalizePreparedSource(
+                    ShaderSourcePreprocessor.prepare(
                     shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros,
-                    lockedMacros);
+                    lockedMacros));
             ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
                     ? new ShaderSourcePreprocessor.Result(null, List.of())
-                    : ShaderSourcePreprocessor.prepare(
+                    : normalizePreparedSource(ShaderSourcePreprocessor.prepare(
                     shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros,
-                    lockedMacros);
+                    lockedMacros));
             List<String> prepDeviations = new ArrayList<>();
             prepDeviations.addAll(fragment.deviations());
             prepDeviations.addAll(vertex.deviations());
@@ -602,6 +603,21 @@ public final class PackSource {
                     fragment.source(), vertex.source(), prepDeviations, variantFolder, preparedSources));
         }
         return List.copyOf(result);
+    }
+
+    private static ShaderSourcePreprocessor.Result normalizePreparedSource(
+            ShaderSourcePreprocessor.Result prepared
+    ) {
+        if (prepared == null || !prepared.successful()) {
+            return prepared;
+        }
+        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(prepared.source());
+        List<String> deviations = new ArrayList<>(prepared.deviations());
+        deviations.addAll(normalized.deviations());
+        return new ShaderSourcePreprocessor.Result(
+                normalized.successful() ? normalized.source() : null,
+                deviations,
+                prepared.dependencies());
     }
 
     private static void loadFromPassList(

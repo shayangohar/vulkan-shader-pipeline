@@ -35,7 +35,9 @@ record PackSettingsPlan(
         List<String> deviations,
         String activeProfile,
         PackRuntimeSettings runtimeSettings,
-        Map<String, PackResourceDeclaration> resourceDeclarations
+        Map<String, PackResourceDeclaration> resourceDeclarations,
+        Map<String, Integer> samplerSlots,
+        boolean samplerSlotsFinalized
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Pattern DEFINE = Pattern.compile(
@@ -77,6 +79,8 @@ record PackSettingsPlan(
         runtimeSettings = runtimeSettings == null ? PackRuntimeSettings.empty() : runtimeSettings;
         resourceDeclarations = resourceDeclarations == null
                 ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(resourceDeclarations));
+        samplerSlots = samplerSlots == null
+                ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(samplerSlots));
     }
 
     /** Compatibility constructor for the M7.1 settings shape. */
@@ -94,7 +98,7 @@ record PackSettingsPlan(
     ) {
         this(options, defaults, profiles, propertyValues, programEnabled,
                 requiredFeatures, optionalFeatures, unsupportedRequiredFeatures,
-                deviations, activeProfile, PackRuntimeSettings.empty(), Map.of());
+                deviations, activeProfile, PackRuntimeSettings.empty(), Map.of(), Map.of(), false);
     }
 
     /** Compatibility constructor for callers using the M7.2 settings shape. */
@@ -113,12 +117,13 @@ record PackSettingsPlan(
     ) {
         this(options, defaults, profiles, propertyValues, programEnabled,
                 requiredFeatures, optionalFeatures, unsupportedRequiredFeatures,
-                deviations, activeProfile, runtimeSettings, Map.of());
+                deviations, activeProfile, runtimeSettings, Map.of(), Map.of(), false);
     }
 
     static PackSettingsPlan empty() {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
-                Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty(), Map.of());
+                Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty(),
+                Map.of(), Map.of(), false);
     }
 
     static PackSettingsPlan parse(List<PackProgram> programs, Path shadersDir) {
@@ -197,7 +202,7 @@ record PackSettingsPlan(
         PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(customValues, defaults, deviations);
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
-                runtimeSettings, resourceDeclarations);
+                runtimeSettings, resourceDeclarations, Map.of(), false);
     }
 
     private static Map<String, String> mergedConditionMacros(
@@ -348,21 +353,34 @@ record PackSettingsPlan(
                 .sorted().toList();
     }
 
+    /** Returns the resolved live sampler slots, or the compatibility default before resolution. */
     Map<String, Integer> customSamplerSlots() {
+        if (samplerSlotsFinalized) {
+            return samplerSlots;
+        }
+        return defaultSamplerSlots();
+    }
+
+    /** Resolves only samplers proven live in the prepared source snapshot. */
+    Map<String, Integer> customSamplerSlots(Set<String> liveSamplers) {
         Map<String, Integer> slots = new TreeMap<>();
-        int next = PackResourcePlan.PACK_SLOT_FIRST;
-        for (PackResourceDeclaration declaration : resourceDeclarations.values().stream()
-                .sorted(Comparator.comparing(PackResourceDeclaration::key)).toList()) {
-            if (declaration.sampler().isBlank() || slots.containsKey(declaration.sampler())) {
-                continue;
-            }
-            if (next <= PackResourcePlan.PACK_SLOT_LAST) {
-                slots.put(declaration.sampler(), next++);
+        Set<Integer> reserved = new TreeSet<>();
+        if (liveSamplers != null) {
+            for (String sampler : liveSamplers) {
+                Integer target = PackResourcePlan.targetIndex(sampler);
+                if (target != null && target >= 4 && target <= 7) {
+                    reserved.add(target + 4);
+                }
             }
         }
-        // M8.6 image declarations expose their sampler aliases to graphics
-        // stages through the same isolated pack selector range. The advanced
-        // owner remains responsible for the actual image lifetime.
+        List<Integer> available = SelectorNamespace.PACK_SELECTOR_SLOTS.stream()
+                .filter(slot -> !reserved.contains(slot)).toList();
+        int next = 0;
+        // Advanced image samplers are allocated first. They participate in
+        // compute and graphics producer/consumer schedules, so a decorative
+        // texture declaration must not starve a required image such as the
+        // WSR or voxel sampler. The ordering remains deterministic by the
+        // property key.
         for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
             if (!entry.getKey().startsWith("image.")) {
                 continue;
@@ -373,14 +391,58 @@ record PackSettingsPlan(
                 continue;
             }
             String sampler = values[0];
-            if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) {
+            String image = entry.getKey().substring("image.".length());
+            if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)
+                    || liveSamplers == null
+                    || (!liveSamplers.contains(sampler) && !liveSamplers.contains(image))) {
                 continue;
             }
-            if (next <= PackResourcePlan.PACK_SLOT_LAST) {
-                slots.put(sampler, next++);
+            if (next < available.size()) {
+                slots.put(sampler, available.get(next++));
+            }
+        }
+        for (PackResourceDeclaration declaration : resourceDeclarations.values().stream()
+                .sorted(Comparator.comparing(PackResourceDeclaration::key)).toList()) {
+            if (declaration.sampler().isBlank() || slots.containsKey(declaration.sampler())
+                    || liveSamplers == null || !liveSamplers.contains(declaration.sampler())) {
+                continue;
+            }
+            if (next < available.size()) {
+                slots.put(declaration.sampler(), available.get(next++));
             }
         }
         return Collections.unmodifiableMap(slots);
+    }
+
+    private Map<String, Integer> defaultSamplerSlots() {
+        Map<String, Integer> slots = new TreeMap<>();
+        int next = 0;
+        for (PackResourceDeclaration declaration : resourceDeclarations.values().stream()
+                .sorted(Comparator.comparing(PackResourceDeclaration::key)).toList()) {
+            if (declaration.sampler().isBlank() || slots.containsKey(declaration.sampler())) continue;
+            if (next < SelectorNamespace.PACK_SELECTOR_SLOTS.size()) {
+                slots.put(declaration.sampler(), SelectorNamespace.PACK_SELECTOR_SLOTS.get(next++));
+            }
+        }
+        for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
+            if (!entry.getKey().startsWith("image.")) continue;
+            String[] values = entry.getValue() == null
+                    ? new String[0] : entry.getValue().trim().split("\\s+");
+            if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) continue;
+            String sampler = values[0];
+            if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) continue;
+            if (next < SelectorNamespace.PACK_SELECTOR_SLOTS.size()) {
+                slots.put(sampler, SelectorNamespace.PACK_SELECTOR_SLOTS.get(next++));
+            }
+        }
+        return Collections.unmodifiableMap(slots);
+    }
+
+    PackSettingsPlan withSamplerSlots(Map<String, Integer> resolved) {
+        return new PackSettingsPlan(options, defaults, profiles, propertyValues, programEnabled,
+                requiredFeatures, optionalFeatures, unsupportedRequiredFeatures, deviations,
+                activeProfile, runtimeSettings, resourceDeclarations,
+                resolved == null ? Map.of() : resolved, true);
     }
 
     private String resourceFingerprint() {
@@ -553,8 +615,14 @@ record PackSettingsPlan(
                     deviations.add("CUSTOM_IMAGE_UNSUPPORTED:" + key);
                     continue;
                 }
-                if (key.startsWith("bufferObject.") || key.startsWith("ssbo.")
-                        || key.startsWith("storage.")) {
+                if (key.startsWith("bufferObject.")) {
+                    // M8.6b admits bounded bufferObject.N declarations. The
+                    // source plan remains responsible for proving that a
+                    // matching std430 block and supported schedule exist.
+                    deviations.add("STORAGE_BUFFER_DECLARED:" + key);
+                    continue;
+                }
+                if (key.startsWith("ssbo.") || key.startsWith("storage.")) {
                     deviations.add("STORAGE_RESOURCE_UNSUPPORTED:" + key);
                     continue;
                 }

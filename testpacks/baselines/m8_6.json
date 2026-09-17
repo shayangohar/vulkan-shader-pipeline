@@ -4,17 +4,17 @@
     "fixture": "advanced_images",
     "images": ["lightimg0", "voxel_img"],
     "compute": "shadowcomp",
-    "fingerprint": "98e90c7ee72baa6e41e0e0589d1a1e7ffaf4362f8f1ee34e61777ee7f38f558e"
+    "fingerprint": "81c332e2d6cbf8a00cf0f4efc27bd9c3eb43bae9186601e93550fec3261e5b8c"
   },
   "unsupported": {
     "fixture": "unsupported_advanced",
     "requires": ["ADVANCED_IMAGE_UNSUPPORTED:too_large", "STORAGE_BUFFER_DEFERRED:bufferObject.0"],
-    "fingerprint": "2c0c8f4f2f21004206bb0c3a89981c8f6a277b734e6bc29a17f54ea65098ee4a"
+    "fingerprint": "134c025fff633ca5229732f2c2a7a5f63a642ce8047cdaeab0bfd2b37a3fc1a1"
   },
   "budgetIsolation": {
     "fixture": "budget_isolation",
     "validImage": "small_image",
     "rejectedImage": "large_image",
-    "fingerprint": "3d96fa6e074d0893622a2a73ceab593499e970ca1cccf2b0c0bc890299920b1d"
+    "fingerprint": "2d0736fd57dd728da4c96b193f36db51072c78d299787311ae701013292418a4"
   }
 }

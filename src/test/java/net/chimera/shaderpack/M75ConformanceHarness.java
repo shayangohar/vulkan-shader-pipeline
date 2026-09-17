@@ -97,6 +97,11 @@ public final class M75ConformanceHarness {
         assertTrue(unsafe != null && unsafe.deviations().stream().anyMatch(value ->
                         value.startsWith("PACK_TEXTURE_PATH_UNSAFE:")),
                 "M7.5 unsafe path was not named");
+        String reason = resources.unavailableReason("composite");
+        assertTrue(resources.bindings("composite").stream()
+                        .filter(binding -> !binding.available())
+                        .anyMatch(binding -> binding.deviations().contains(reason)),
+                "M7.5 resource failure reason must identify an unavailable binding");
         assertTrue(!plan.shouldAttempt("composite"),
                 "M7.5 dependent program was not rejected");
         assertTrue(plan.shouldAttempt("composite1") && plan.shouldAttempt("final"),

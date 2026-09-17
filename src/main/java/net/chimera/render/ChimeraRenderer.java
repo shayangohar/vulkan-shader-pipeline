@@ -218,8 +218,8 @@ public final class ChimeraRenderer {
         }
         Renderer.getInstance().setMainPass(chimeraPass);
         ChimeraTerrainPipelines.enable();
-        ChimeraEntityBridge.setEnabled(ChimeraEntityBridge.isInstalled());
-        ChimeraSkyBridge.setEnabled(ChimeraSkyBridge.isInstalled());
+        ChimeraEntityBridge.setEnabled(!chimeraPass.packRuntimeRejected() && ChimeraEntityBridge.isInstalled());
+        ChimeraSkyBridge.setEnabled(!chimeraPass.packRuntimeRejected() && ChimeraSkyBridge.isInstalled());
         installed = true;
         ChimeraMod.LOGGER.info("chimera ACTIVE - HDR frame + terrain/entity pipelines (F8 to toggle back)");
         return true;

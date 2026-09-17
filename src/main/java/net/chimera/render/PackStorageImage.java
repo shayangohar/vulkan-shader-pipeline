@@ -64,7 +64,7 @@ import static org.lwjgl.vulkan.VK10.vkCreateSampler;
 import static org.lwjgl.vulkan.VK10.vkDestroySampler;
 import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
 
-/** A pack-owned true 3D storage image. It is not a sampled texture slot. */
+/** A pack-owned true 3D image with storage and sampled descriptor views. */
 final class PackStorageImage extends VulkanImage {
     private final long allocation;
     private final long view;

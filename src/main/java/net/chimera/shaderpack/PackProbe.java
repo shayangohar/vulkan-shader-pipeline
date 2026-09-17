@@ -83,6 +83,8 @@ public final class PackProbe {
         loaded.prepare(
                 PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
                 PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false, false));
+        settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
+                loaded.selectedVariantFolder());
         Map<String, String> metadataHashes = new TreeMap<>();
         List<String> globalDeviations = new ArrayList<>(loaded.deviations());
         List<String> settings = new ArrayList<>();
@@ -160,8 +162,9 @@ public final class PackProbe {
         PackResolutionPlan resolution = PackResolutionPlan.build(
                 loaded.selectedDimension(), loaded.selectedVariantFolder(),
                 loaded.programs(), settingsPlan);
+        PackAdvancedResourcePlan bufferCatalog = PackAdvancedResourcePlan.catalog(settingsPlan);
         PackPlan initialPlan = PackPlanBuilder.build(
-                loaded.programs(), packConfig, entityIds.resolver(), resolution);
+                loaded.programs(), packConfig, entityIds.resolver(), resolution, bufferCatalog);
         PackResourcePlan resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
         PackAdvancedResourcePlan advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
 
@@ -176,6 +179,8 @@ public final class PackProbe {
             loaded.prepare(
                     PackEngineDefines.forCustomImages(settingsPlan.preprocessorDefines()),
                     PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true, false));
+            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
+                    loaded.selectedVariantFolder());
             globalDeviations.addAll(loaded.deviations());
             inventories.values().forEach(inventory -> {
                 inventory.preparedSources.clear();
@@ -196,11 +201,23 @@ public final class PackProbe {
             resolution = PackResolutionPlan.build(
                     loaded.selectedDimension(), loaded.selectedVariantFolder(),
                     loaded.programs(), settingsPlan);
+            bufferCatalog = PackAdvancedResourcePlan.catalog(settingsPlan);
             initialPlan = PackPlanBuilder.build(
-                    loaded.programs(), packConfig, entityIds.resolver(), resolution);
+                    loaded.programs(), packConfig, entityIds.resolver(), resolution, bufferCatalog);
             resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
             advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
         }
+        // The first pass admits only property-declared blocks so the full
+        // source scan can build exact stage masks and bindings. Rebuild once
+        // from that immutable result so probing and pipeline construction use
+        // the same storage-buffer eligibility and rewritten GLSL.
+        initialPlan = PackPlanBuilder.build(
+                loaded.programs(), packConfig, entityIds.resolver(), resolution, advancedPlan);
+        resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
+        advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
+        initialPlan = PackPlanBuilder.build(
+                loaded.programs(), packConfig, entityIds.resolver(), resolution, advancedPlan);
+        resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
         PackPlan packPlan = new PackPlan(packConfig, initialPlan.programs(), entityIds.resolver(),
                 settingsPlan, resolution, resourcePlan, advancedPlan);
         globalDeviations.addAll(packConfig.deviations());
@@ -307,6 +324,38 @@ public final class PackProbe {
                 : name;
     }
 
+    private static PackSettingsPlan resolveLiveSamplerSlots(
+            PackSettingsPlan settings,
+            List<PackProgram> programs,
+            Path shadersDir,
+            String selectedFolder
+    ) {
+        if (settings == null) return PackSettingsPlan.empty();
+        Set<String> live = new TreeSet<>();
+        if (programs != null) {
+            for (PackProgram program : programs) {
+                if (program == null) continue;
+                if (program.preparedFragmentSource() != null) {
+                    GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(
+                            program.preparedFragmentSource());
+                    live.addAll(usage.liveSamplers());
+                    live.addAll(usage.liveImages());
+                }
+                if (program.preparedVertexSource() != null) {
+                    GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(
+                            program.preparedVertexSource());
+                    live.addAll(usage.liveSamplers());
+                    live.addAll(usage.liveImages());
+                }
+            }
+        }
+        boolean customImages = settings.propertyValues().keySet().stream()
+                .anyMatch(name -> name.startsWith("image."));
+        live.addAll(PackAdvancedResourcePlan.liveComputeResourceNames(
+                shadersDir, selectedFolder, settings, customImages));
+        return settings.withSamplerSlots(settings.customSamplerSlots(live));
+    }
+
     private static ConformanceReport.ProgramReport toProgram(
             Inventory inventory,
             PackConfig.PackConfigData packConfig,
@@ -343,6 +392,17 @@ public final class PackProbe {
             modern = false;
         }
         if (modernTerrain) {
+            modern = false;
+        }
+        // A prepared std430 storage block is an admitted M8.6b resource, not
+        // the unsupported modern GLSL feature that the historical probe used
+        // to classify every occurrence of the word "buffer" as. Keep this
+        // correction tied to the immutable program plan so an unrelated or
+        // rejected block still reports identity fallback.
+        if (programPlan != null && packPlan != null
+                && packPlan.advancedResources().bufferDependentPrograms().contains(name)
+                && packPlan.advancedResources().storageBufferProgramSupported(name)
+                && programPlan.executable()) {
             modern = false;
         }
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
@@ -473,8 +533,12 @@ public final class PackProbe {
             } else if (name.equals("shadow")) {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex")) {
-                deviations.add(programPlan.convertedVertex() != null
-                        && executablePostName ? "POST_VERTEX_ADAPTER" : "FIXED_VERTEX_SUBSTITUTION");
+                if (programPlan.convertedVertex() != null && executablePostName) {
+                    deviations.add(programPlan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
+                            ? "POST_VERTEX_AUTHORED_TRANSLATED" : "POST_VERTEX_ADAPTER");
+                } else {
+                    deviations.add("FIXED_VERTEX_SUBSTITUTION");
+                }
             }
         } else {
             if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
@@ -656,13 +720,15 @@ public final class PackProbe {
             // standard resource requirement without embedding a path.
             deviations.add("NOISETEX_PACK_RESOURCE");
         }
-        if (targetResult == null && targets.size() > 1) {
+        boolean authoredShadowOutputs = name.equals("shadow") && programPlan != null
+                && programPlan.convertedFragment() != null && programPlan.executable();
+        if (!authoredShadowOutputs && targetResult == null && targets.size() > 1) {
             if (name.equals("shadow")) {
                 deviations.add("SHADOW_COLOR_TARGET_UNSUPPORTED");
             } else {
                 deviations.add("MRT_NOT_SUPPORTED");
             }
-        } else if (targetResult == null && !targets.isEmpty() && targets.get(0) != 0) {
+        } else if (!authoredShadowOutputs && targetResult == null && !targets.isEmpty() && targets.get(0) != 0) {
             deviations.add("TARGET_ROUTING_FIXED_TO_COLORTEX0");
         }
         if (!hasFragment) {
@@ -738,11 +804,18 @@ public final class PackProbe {
      * build failure remains an explicit identity fallback.
      */
     private static boolean advancedResourcesArePlanned(String program, PackPlan packPlan) {
-        if (packPlan == null || packPlan.advancedResources() == null
-                || !packPlan.advancedResources().capabilityPossible()) {
+        if (packPlan == null || packPlan.advancedResources() == null) {
             return false;
         }
-        return packPlan.advancedResources().dependentPrograms().contains(program);
+        PackAdvancedResourcePlan advanced = packPlan.advancedResources();
+        boolean usesImages = advanced.dependentPrograms().contains(program);
+        boolean usesStorage = advanced.bufferDependentPrograms().contains(program);
+        if (!usesImages && !usesStorage) {
+            return false;
+        }
+        boolean imagesReady = !usesImages || advanced.capabilityPossible();
+        boolean storageReady = !usesStorage || advanced.storageBufferProgramSupported(program);
+        return imagesReady && storageReady;
     }
 
     private static boolean hasSevereDeviation(Collection<String> deviations) {
@@ -794,8 +867,10 @@ public final class PackProbe {
                     || deviation.startsWith("SOURCE_INCLUDE_")
                     || deviation.equals("POST_CONVERTER_UNSUPPORTED")
                     || deviation.startsWith("TRANSLATION_UNSUPPORTED:")
+                    || deviation.startsWith("STORAGE_BUFFER_")
                     || deviation.startsWith("PROGRAM_INTERFACE_")
                     || deviation.startsWith("POST_VARYING_UNSUPPORTED:")
+                    || deviation.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:")
                     || isBlockingPreprocessorDeviation(deviation)) {
                 return true;
             }

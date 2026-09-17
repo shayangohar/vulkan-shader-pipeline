@@ -19,15 +19,7 @@ import java.util.regex.Pattern;
 
 /** Immutable load-time resource plan shared by probing, pipelines, and runtime. */
 public final class PackResourcePlan {
-    /** Slot 14 is reserved by the runtime for pack coverage. */
-    public static final int COVERAGE_SLOT = 14;
-    /** Slot 15 is the distinct post shadowtex1 selector. */
-    public static final int SHADOW_TEX1_SLOT = 15;
-    /** Pack-owned sampled resources must not overlap reserved selectors. */
-    public static final int PACK_SLOT_FIRST = 16;
-    public static final int PACK_SLOT_LAST = 21;
-
-    private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-7])");
+    private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-9]+)");
 
     private final Map<String, List<PackResourceBinding>> byProgram;
     private final Map<String, PackResourceDeclaration> declarations;
@@ -131,10 +123,12 @@ public final class PackResourcePlan {
         PackResourceDeclaration declaration = declarations.get("texture." + program + "." + name);
         if (declaration == null) declaration = declarations.get("texture.*." + name);
         if (declaration == null) declaration = declarations.get("customTexture." + name);
+        if (declaration == null && name.equals("tex") && stageFor(program) == UniformRegistry.Stage.POST) {
+            declaration = declarations.get("customTexture.textureAtlas");
+        }
         if (declaration == null && name.equals("noisetex")) {
             declaration = declarations.get("texture.noise");
         }
-
         // Pack declarations take precedence over canonical aliases. This is
         // important for a stage that deliberately replaces a logical target
         // with a sampled pack texture.
@@ -146,6 +140,12 @@ public final class PackResourcePlan {
             String filter = name.equals("noisetex") ? "linear" : "nearest";
             String wrap = "repeat";
             int resolvedSlot = name.equals("noisetex") ? 7 : slot;
+            if (isHostBlockAtlasSource(declaration.source())) {
+                deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":texture");
+                return new PackResourceBinding(program, name, "texture",
+                        PackResourceKind.TARGET, declaration.source(), resolvedSlot,
+                        "linear", "repeat", PackResourceStatus.HOST_ALIAS, deviations);
+            }
             if (game) {
                 deviations.add("PACK_TEXTURE_DECLARED:" + key);
                 return new PackResourceBinding(program, name, key, kind,
@@ -182,6 +182,13 @@ public final class PackResourcePlan {
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
 
+        Integer target = targetIndex(canonical);
+        if (target != null && target > PostTargetPlan.MAX_TARGET) {
+            deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
+            return new PackResourceBinding(program, name, canonical,
+                    PackResourceKind.TARGET, "", slot, "linear", "clamp",
+                    PackResourceStatus.UNSUPPORTED, deviations);
+        }
         if (canonical.startsWith("colortex") || canonical.startsWith("depthtex")) {
             deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + canonical);
             return new PackResourceBinding(program, name, canonical,
@@ -207,17 +214,11 @@ public final class PackResourcePlan {
                     PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
-        if (canonical.equals("shadowcolor0")) {
+        if (canonical.equals("shadowcolor0") || canonical.equals("shadowcolor1")) {
             deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
             return new PackResourceBinding(program, name, canonical,
                     PackResourceKind.SHADOW_COLOR, "", slot, "linear", "clamp",
                     PackResourceStatus.HOST_ALIAS, deviations);
-        }
-        if (canonical.equals("shadowcolor1")) {
-            deviations.add("STANDARD_RESOURCE_UNAVAILABLE:" + name);
-            return new PackResourceBinding(program, name, canonical,
-                    PackResourceKind.SHADOW_COLOR, "", slot, "linear", "clamp",
-                    PackResourceStatus.UNAVAILABLE, deviations);
         }
         if (canonical.equals("noisetex")) {
             String source = "tex/noise.png";
@@ -265,6 +266,15 @@ public final class PackResourcePlan {
         return bindings(program).stream().allMatch(PackResourceBinding::available);
     }
 
+    /** Reports the binding that failed, never an unrelated successful resource declaration. */
+    public String unavailableReason(String program) {
+        return bindings(program).stream().filter(binding -> !binding.available())
+                .map(binding -> binding.deviations().isEmpty()
+                        ? "PACK_RESOURCE_UNAVAILABLE:" + binding.sampler()
+                        : binding.deviations().get(0))
+                .findFirst().orElse("PACK_RESOURCE_UNAVAILABLE:" + program);
+    }
+
     public List<String> deviationsForProgram(String program) {
         return bindings(program).stream().flatMap(value -> value.deviations().stream())
                 .distinct().sorted().toList();
@@ -285,7 +295,7 @@ public final class PackResourcePlan {
         if (sampler.matches("gaux[1-4]")) {
             return "colortex" + (3 + Integer.parseInt(sampler.substring(4)));
         }
-        if (sampler.matches("colortex[0-7]")) return sampler;
+        if (COLOR_TARGET.matcher(sampler).matches()) return sampler;
         if (sampler.matches("depthtex[0-2]")) return sampler;
         if (sampler.matches("shadowtex[0-1]")) return sampler;
         if (sampler.matches("shadowcolor[0-1]")) return sampler;
@@ -366,6 +376,12 @@ public final class PackResourcePlan {
     private static boolean isNamespacedSource(String source) {
         return source != null && source.contains(":") && !isUnsafePath(source)
                 && !source.startsWith("./") && !source.startsWith("../");
+    }
+
+    /** The block atlas is generated by Minecraft and already owned by selector slot 0. */
+    private static boolean isHostBlockAtlasSource(String source) {
+        return source != null
+                && source.trim().equalsIgnoreCase("minecraft:textures/atlas/blocks.png");
     }
 
     private static String advancedImageName(Map<String, String> propertyValues, String sampler) {

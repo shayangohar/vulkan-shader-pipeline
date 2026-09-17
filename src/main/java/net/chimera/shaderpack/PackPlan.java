@@ -96,6 +96,8 @@ public record PackPlan(
                 && resources.programAllowed(name)
                 && (!advancedResources.dependentPrograms().contains(name)
                 || advancedResources.capabilityPossible())
+                && (!advancedResources.bufferDependentPrograms().contains(name)
+                || advancedResources.storageBufferProgramSupported(name))
                 && (!advancedResources.customImageFeaturePrograms().contains(name)
                 || advancedResources.capabilityPossible());
     }
