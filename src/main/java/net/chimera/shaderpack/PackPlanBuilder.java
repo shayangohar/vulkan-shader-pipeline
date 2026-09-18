@@ -107,6 +107,8 @@ public final class PackPlanBuilder {
                 ? GeometryOutputPlan.parse(program.name(), fragment,
                 config == null ? Map.of() : config.colortexFormats())
                 : null;
+        PackAlphaTestPlan alphaTestPlan = PackAlphaTestPlan.forProgram(
+                program.name(), config == null ? PackSettingsPlan.empty() : config.settings());
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
                 fragment, vertex, stage, targetPlan, allowUnusedDeclarations,
                 config == null || config.settings() == null
@@ -142,6 +144,7 @@ public final class PackPlanBuilder {
         if (geometryOutputPlan != null) {
             deviations.addAll(geometryOutputPlan.deviations());
         }
+        deviations.addAll(alphaTestPlan.deviations());
 
         String convertedFragment = null;
         String convertedVertex = null;
@@ -165,7 +168,8 @@ public final class PackPlanBuilder {
                 && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
                 && stageMatch.executable()
                 && (targetPlan == null || targetPlan.executable())
-                && (geometryOutputPlan == null || geometryOutputPlan.executable());
+                && (geometryOutputPlan == null || geometryOutputPlan.executable())
+                && alphaTestPlan.valid();
         if (stage == UniformRegistry.Stage.SHADOW) {
             PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
             for (String deviation : shadowOutputs.deviations()) {
@@ -338,7 +342,10 @@ public final class PackPlanBuilder {
                 convertedFragment = LegacyGlslConverter.convertGeometryFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
                         vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan,
-                        config == null ? Map.of() : config.shaderConstants());
+                        config == null ? Map.of() : config.shaderConstants(),
+                        PackResourcePlan.terrainAtlasSamplers(program.name(),
+                                interfacePlan.project("fragment", stage), config == null ? null : config.settings()),
+                        vertex != null ? alphaTestPlan : PackAlphaTestPlan.disabled());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
@@ -348,7 +355,10 @@ public final class PackPlanBuilder {
                 convertedFragment = LegacyGlslConverter.convertGeometryFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
                         vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan,
-                        config == null ? Map.of() : config.shaderConstants());
+                        config == null ? Map.of() : config.shaderConstants(),
+                        PackResourcePlan.terrainAtlasSamplers(program.name(),
+                                interfacePlan.project("fragment", stage), config == null ? null : config.settings()),
+                        PackAlphaTestPlan.disabled());
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
@@ -445,10 +455,24 @@ public final class PackPlanBuilder {
             }
         }
 
+        if (program.name().equals("gbuffers_terrain") && executable && vertex != null) {
+            String applied = alphaTestPlan.appliedDeviation(program.name());
+            if (!applied.isBlank()) deviations.add(applied);
+        } else if (program.name().equals("gbuffers_terrain")
+                && vertex == null
+                && alphaTestPlan.configured()
+                && (alphaTestPlan.active() || !alphaTestPlan.valid())) {
+            deviations.add("ALPHA_TEST_PLANNED_NOT_INSTALLED:gbuffers_terrain");
+        } else if (program.name().equals("gbuffers_water")
+                && alphaTestPlan.configured()
+                && (alphaTestPlan.active() || !alphaTestPlan.valid())) {
+            deviations.add("ALPHA_TEST_PLANNED_NOT_INSTALLED:gbuffers_water");
+        }
+
         return new PackProgramPlan(program, stages, interfacePlan, stageInterfaces,
                 varyingLocations, targetPlan, convertedFragment, convertedVertex,
                 vertexLayout, deviations, executable,
-                familyAdapter, terrainMaterial, geometryOutputPlan);
+                familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan);
     }
 
     private static Map<String, Integer> postVaryingLocations(

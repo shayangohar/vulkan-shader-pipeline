@@ -1,5 +1,7 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.PostTargetPlan;
+
 import java.util.Arrays;
 
 /**
@@ -7,9 +9,10 @@ import java.util.Arrays;
  * images remain owned by PackPostTargets and PackDepthTargets.
  */
 public final class PackTemporalState {
-    private final boolean[] current = new boolean[8];
-    private final boolean[] previous = new boolean[8];
-    private final boolean[] pending = new boolean[8];
+    private static final int TARGET_COUNT = PostTargetPlan.MAX_TARGET + 1;
+    private final boolean[] current = new boolean[TARGET_COUNT];
+    private final boolean[] previous = new boolean[TARGET_COUNT];
+    private final boolean[] pending = new boolean[TARGET_COUNT];
     private boolean firstFrame = true;
     private boolean frameOpen;
 
@@ -82,6 +85,6 @@ public final class PackTemporalState {
     }
 
     private static boolean valid(int target) {
-        return target >= 0 && target < 8;
+        return target >= 0 && target < TARGET_COUNT;
     }
 }

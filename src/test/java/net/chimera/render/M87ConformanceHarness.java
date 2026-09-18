@@ -1,0 +1,196 @@
+package net.chimera.render;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.shaderpack.ConformanceReport;
+import net.chimera.shaderpack.PackProbe;
+import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackResourcePlan;
+import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PostTargetPlan;
+import net.chimera.shaderpack.TargetSpec;
+import net.chimera.shaderpack.TargetStep;
+import net.chimera.shaderpack.UniformRegistry;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+/** Focused logical-colortex8 and Complementary producer-chain checks. */
+public final class M87ConformanceHarness {
+    private M87ConformanceHarness() {}
+
+    public static void main(String[] args) throws Exception {
+        Path root = Path.of(System.getProperty("chimera.fixtureRoot", "testpacks"));
+        Path fixture = root.resolve("m8_7/colortex8");
+        PackProbe.Analysis first = PackProbe.analyze(fixture);
+        PackProbe.Analysis second = PackProbe.analyze(fixture);
+        verifyFixture(first, second);
+        verifyTargetBoundary();
+        verifyOptionalRealPack(System.getProperty("chimera.m87.complementary"),
+                "Complementary", true);
+        verifyOptionalRealPack(System.getProperty("chimera.m87.bsl"), "BSL", false);
+        verifyBaseline(root.resolve("baselines/m8_7.json"), first);
+        System.out.println("[chimera] M8.7 colortex8 conformance: PASS");
+    }
+
+    private static void verifyFixture(PackProbe.Analysis first, PackProbe.Analysis second) {
+        PackProgramPlan composite = first.plan().program("composite");
+        assertTrue(composite != null && composite.executable(),
+                "M8.7 fixture composite is not executable: "
+                        + (composite == null ? "missing" : composite.deviations()));
+        UniformRegistry.SamplerBinding colortex8 = composite.interfacePlan()
+                .effective(UniformRegistry.Stage.POST).samplers().stream()
+                .filter(value -> value.name().equals("colortex8"))
+                .findFirst().orElseThrow(() -> new AssertionError("colortex8 sampler is missing"));
+        assertEquals(22, colortex8.slot(), "colortex8 selector slot changed");
+
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                first.plan().programs(), first.config(), first.plan().resources(),
+                1920, 1080, 8, 16384);
+        TargetSpec target = graph.target(8);
+        assertTrue(target != null && target.format() == 97 && target.clear()
+                        && target.width() == 1920 && target.height() == 1080,
+                "colortex8 was not planned as a cleared RGBA16F frame target");
+        TargetStep step = graph.step("composite");
+        assertTrue(step != null && step.executable() && step.readTargets().contains(8)
+                        && step.outputTargets().equals(List.of(0, 5)),
+                "colortex8 producer-chain step was not preserved");
+        assertEquals(8, PackResourcePlan.targetIndex("colortex8"),
+                "colortex8 logical identity changed");
+        assertEquals(9, PackResourcePlan.targetIndex("colortex9"),
+                "colortex9 parser identity changed");
+
+        PackTemporalState temporal = new PackTemporalState();
+        temporal.beginFrame(true);
+        assertTrue(!temporal.currentAvailable(8),
+                "unwritten colortex8 became available before a producer");
+        temporal.seedCurrent(8);
+        assertTrue(temporal.currentAvailable(8),
+                "logical colortex8 validity state is not addressable");
+        temporal.abort();
+
+        boolean[] written = new boolean[PostTargetPlan.MAX_TARGET + 1];
+        written[8] = true;
+        assertTrue(PackPostTargets.isTargetAvailable(8, true, written),
+                "colortex8 availability helper rejected a committed target");
+        assertEquals(first.report().toJson(), second.report().toJson(),
+                "M8.7 fixture report is not deterministic");
+        assertEquals(graph.fingerprint(), PackTargetGraphPlan.build(
+                second.plan().programs(), second.config(), second.plan().resources(),
+                1920, 1080, 8, 16384).fingerprint(),
+                "M8.7 target graph is not deterministic");
+        assertTrue(!graph.snapshot().contains("C:\\") && !graph.snapshot().contains("/Users/"),
+                "M8.7 graph snapshot contains an absolute path");
+    }
+
+    private static void verifyTargetBoundary() {
+        PostTargetPlan supported = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,8 */").plan();
+        assertTrue(supported.executable() && supported.targetSlots().equals(List.of(0, 8)),
+                "logical target 8 was rejected");
+        PostTargetPlan rejected = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,9 */").plan();
+        assertTrue(!rejected.executable()
+                        && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:9"),
+                "logical target 9 was not rejected");
+
+        MrtPipelineContext.begin(new int[8], 8);
+        MrtPipelineContext.end();
+        boolean rejectedNine = false;
+        try {
+            MrtPipelineContext.begin(new int[9], 8);
+        } catch (IllegalArgumentException expected) {
+            rejectedNine = true;
+        } finally {
+            MrtPipelineContext.end();
+        }
+        assertTrue(rejectedNine, "logical target growth changed the eight-attachment cap");
+    }
+
+    private static void verifyOptionalRealPack(String rawPath, String label, boolean requireComposite1)
+            throws Exception {
+        if (rawPath == null || rawPath.isBlank()) return;
+        Path path = Path.of(rawPath);
+        assertTrue(Files.isDirectory(path) || Files.isRegularFile(path),
+                "M8.7 " + label + " path is missing");
+        String previousLighting = System.getProperty("chimera.option.COLORED_LIGHTING");
+        String previousReflections = System.getProperty("chimera.option.WORLD_SPACE_REFLECTIONS");
+        System.setProperty("chimera.option.COLORED_LIGHTING", "128");
+        System.setProperty("chimera.option.WORLD_SPACE_REFLECTIONS", "1");
+        try {
+            PackProbe.Analysis analysis = PackProbe.analyze(path);
+            PackProgramPlan composite1 = analysis.plan().program("composite1");
+            if (!requireComposite1) {
+                assertTrue(composite1 == null || !analysis.report().deviations().contains(
+                                "POST_TARGET_INDEX_UNSUPPORTED:8"),
+                        "M8.7 BSL gained an unexpected target-8 rejection");
+                return;
+            }
+            assertTrue(composite1 != null && composite1.executable()
+                            && analysis.plan().shouldAttempt("composite1"),
+                    "M8.7 " + label + " composite1 is not executable: "
+                            + (composite1 == null ? "missing" : composite1.deviations()));
+            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                    analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
+                    2560, 1440, 8, 16384);
+            TargetStep step = graph.step("composite1");
+            assertTrue(step != null && step.executable() && step.readTargets().contains(8)
+                            && step.outputTargets().equals(List.of(0, 5)),
+                    "M8.7 " + label + " composite1 graph step is incorrect");
+            assertTrue(composite1.interfacePlan().effective(UniformRegistry.Stage.POST).samplers()
+                            .stream().anyMatch(value -> value.name().equals("colortex8")
+                                    && value.slot() == 22),
+                    "M8.7 " + label + " composite1 colortex8 descriptor is missing");
+            assertTrue(analysis.report().program("composite1") != null
+                            && analysis.report().program("composite1").support()
+                            != ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
+                    "M8.7 " + label + " composite1 remains a static identity fallback");
+            System.out.println("[chimera] M8.7 " + label + " composite1: PASS");
+        } finally {
+            restoreProperty("chimera.option.COLORED_LIGHTING", previousLighting);
+            restoreProperty("chimera.option.WORLD_SPACE_REFLECTIONS", previousReflections);
+        }
+    }
+
+    private static void verifyBaseline(Path path, PackProbe.Analysis analysis) throws Exception {
+        JsonObject baseline = JsonParser.parseString(
+                Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
+        if ("TO_BE_FILLED".equals(baseline.get("reportSha256").getAsString())) {
+            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                    analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
+                    1920, 1080, 8, 16384);
+            System.out.println("[chimera] M8.7 reportSha256=" + analysis.report().sha256());
+            System.out.println("[chimera] M8.7 graphFingerprint=" + graph.fingerprint());
+            System.out.println("[chimera] M8.7 resourceFingerprint="
+                    + analysis.plan().resources().fingerprint());
+            return;
+        }
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
+                1920, 1080, 8, 16384);
+        assertEquals(baseline.get("reportSha256").getAsString(), analysis.report().sha256(),
+                "M8.7 report baseline");
+        assertEquals(baseline.get("graphFingerprint").getAsString(), graph.fingerprint(),
+                "M8.7 graph baseline");
+        assertEquals(baseline.get("resourceFingerprint").getAsString(),
+                analysis.plan().resources().fingerprint(), "M8.7 resource baseline");
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) System.clearProperty(name);
+        else System.setProperty(name, value);
+    }
+
+    private static void assertTrue(boolean condition, String message) {
+        if (!condition) throw new AssertionError(message);
+    }
+
+    private static void assertEquals(Object expected, Object actual, String message) {
+        if (!java.util.Objects.equals(expected, actual)) {
+            throw new AssertionError(message + ": expected " + expected + ", got " + actual);
+        }
+    }
+}

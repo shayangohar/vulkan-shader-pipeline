@@ -175,7 +175,8 @@ public final class LegacyGlslConverter {
 
     public static String convertFragment(String source, Path sourceFile, boolean geometryStage, int[] geometrySamplerSlots) {
         return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, null,
-                UniformRegistry.plan(source, stageOf(geometryStage)));
+                UniformRegistry.plan(source, stageOf(geometryStage)), null, null, Map.of(), null,
+                Set.of(), PackAlphaTestPlan.disabled());
     }
 
     public static String convertFragment(
@@ -186,7 +187,8 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout terrainLayout
     ) {
         return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, terrainLayout,
-                UniformRegistry.plan(source, stageOf(geometryStage)));
+                UniformRegistry.plan(source, stageOf(geometryStage)), null, null, Map.of(), null,
+                Set.of(), PackAlphaTestPlan.disabled());
     }
 
     /** Converts a fragment with the interface plan already used by the caller. */
@@ -199,7 +201,9 @@ public final class LegacyGlslConverter {
             UniformRegistry.ProgramInterface interfacePlan
     ) {
         return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots,
-                terrainLayout, interfacePlan, null, null, Map.of(), null);
+                terrainLayout, interfacePlan, null, null, Map.of(), null,
+                PackResourcePlan.terrainAtlasSamplers("", interfacePlan, PackSettingsPlan.empty()),
+                PackAlphaTestPlan.disabled());
     }
 
     /** Converts a geometry fragment with the pack constants already parsed at load time. */
@@ -214,7 +218,9 @@ public final class LegacyGlslConverter {
     ) {
         return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots,
                 terrainLayout, interfacePlan, null, null,
-                packConstants == null ? Map.of() : packConstants, null);
+                packConstants == null ? Map.of() : packConstants, null,
+                PackResourcePlan.terrainAtlasSamplers("", interfacePlan, PackSettingsPlan.empty()),
+                PackAlphaTestPlan.disabled());
     }
 
     /** Converts a terrain or water fragment with its immutable output route. */
@@ -225,11 +231,30 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout terrainLayout,
             UniformRegistry.ProgramInterface interfacePlan,
             GeometryOutputPlan outputPlan,
-            Map<String, String> packConstants
+            Map<String, String> packConstants,
+            Set<String> atlasSamplers
+    ) {
+        return convertGeometryFragment(source, sourceFile, geometrySamplerSlots, terrainLayout,
+                interfacePlan, outputPlan, packConstants, atlasSamplers,
+                PackAlphaTestPlan.disabled());
+    }
+
+    /** Converts a geometry fragment with the immutable alpha-test contract. */
+    public static String convertGeometryFragment(
+            String source,
+            Path sourceFile,
+            int[] geometrySamplerSlots,
+            TerrainVaryingLayout terrainLayout,
+            UniformRegistry.ProgramInterface interfacePlan,
+            GeometryOutputPlan outputPlan,
+            Map<String, String> packConstants,
+            Set<String> atlasSamplers,
+            PackAlphaTestPlan alphaTestPlan
     ) {
         return convertFragment(source, sourceFile, true, geometrySamplerSlots, terrainLayout,
                 interfacePlan, null, outputPlan,
-                packConstants == null ? Map.of() : packConstants, null);
+                packConstants == null ? Map.of() : packConstants, null, atlasSamplers,
+                alphaTestPlan == null ? PackAlphaTestPlan.disabled() : alphaTestPlan);
     }
 
     /** Converts a post fragment with the M5.6 output target plan. */
@@ -251,7 +276,8 @@ public final class LegacyGlslConverter {
             Map<String, String> packConstants
     ) {
         return convertFragment(source, sourceFile, false, null, null, interfacePlan, targetPlan,
-                null, packConstants == null ? Map.of() : packConstants, null);
+                null, packConstants == null ? Map.of() : packConstants, null, Set.of(),
+                PackAlphaTestPlan.disabled());
     }
 
     /** Converts a post fragment against a paired fullscreen vertex layout. */
@@ -267,7 +293,8 @@ public final class LegacyGlslConverter {
         PostVaryingLayout layout = varyingLocations == null
                 ? null : new PostVaryingLayout(varyingLocations, varyingTypes);
         return convertFragment(source, sourceFile, false, null, null, interfacePlan, targetPlan,
-                null, packConstants == null ? Map.of() : packConstants, layout);
+                null, packConstants == null ? Map.of() : packConstants, layout, Set.of(),
+                PackAlphaTestPlan.disabled());
     }
 
     /** Translates the authored vertex body against the fullscreen triangle inputs. */
@@ -394,7 +421,9 @@ public final class LegacyGlslConverter {
             PostTargetPlan targetPlan,
             GeometryOutputPlan geometryOutputPlan,
             Map<String, String> packConstants,
-            PostVaryingLayout postVaryingLayout
+            PostVaryingLayout postVaryingLayout,
+            Set<String> atlasSamplers,
+            PackAlphaTestPlan alphaTestPlan
     ) {
         try {
             boolean geometryInterface = interfacePlan != null
@@ -418,6 +447,8 @@ public final class LegacyGlslConverter {
             if (geometryOutputPlan != null && (!geometryStage || !geometryOutputPlan.executable())) {
                 throw new IllegalArgumentException("geometry output plan is outside the executable contract");
             }
+            PackAlphaTestPlan alpha = alphaTestPlan == null
+                    ? PackAlphaTestPlan.disabled() : alphaTestPlan;
             String src = source;
             if (src == null) {
                 throw new IllegalArgumentException("pack fragment source is missing");
@@ -494,6 +525,14 @@ public final class LegacyGlslConverter {
             }
             src = expandSamplerAliases(src, samplers);
             src = convertTextureCalls(src);
+            if (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
+                    || interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT) {
+                Set<String> emittedAtlasSamplers = new java.util.HashSet<>();
+                for (String name : atlasSamplers) {
+                    emittedAtlasSamplers.add(name.equals("texture") ? "chimeraTexture" : name);
+                }
+                src = GlslTokenRewriter.rewriteTerrainAtlasSamples(src, emittedAtlasSamplers);
+            }
             src = removeLegacyShadowSamplerHelper(src);
             if (GlslTokenRewriter.containsIdentifier(src, "shadow2DProj")
                     || GlslTokenRewriter.containsIdentifier(src, "shadow2DProjLod")) {
@@ -548,6 +587,18 @@ public final class LegacyGlslConverter {
                 outDecl = "layout(location = 0) out vec4 fragColor;";
             }
 
+            String terrainHostInstance = null;
+            if (geometryStage && interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
+                    && geometryOutputPlan != null && alpha.active()) {
+                terrainHostInstance = alpha.needsHostThreshold()
+                        ? GlslTokenRewriter.uniqueIdentifier(src, "chimeraTerrainHost") : null;
+                String rejection = alpha.rejection(geometryOutputPlan.locationZeroOutputName(),
+                        terrainHostInstance);
+                if (!rejection.isBlank()) {
+                    src = GlslTokenRewriter.appendMainEpilogue(src, rejection);
+                }
+            }
+
             // GLSL requires global declarations to precede their first use;
             // an output declared at the end of the file is a forward reference
             // and glslang rejects it ("'fragColor' : undeclared identifier").
@@ -557,9 +608,15 @@ public final class LegacyGlslConverter {
                     && !interfacePlan.executableUniforms().isEmpty()) {
                 uniformBlock = generatedShadowUniformBlock(interfacePlan.executableUniforms());
                 src = qualifyShadowUniformReferences(src, interfacePlan.executableUniforms());
-            } else if (geometryStage && interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
-                    && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = generatedGeometryUniformBlock(interfacePlan.executableUniforms());
+            } else if (geometryStage && interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY) {
+                StringBuilder geometryBlocks = new StringBuilder();
+                if (terrainHostInstance != null) {
+                    geometryBlocks.append(terrainHostUniformBlock(src, terrainHostInstance));
+                }
+                if (!interfacePlan.executableUniforms().isEmpty()) {
+                    geometryBlocks.append(generatedGeometryUniformBlock(interfacePlan.executableUniforms()));
+                }
+                uniformBlock = geometryBlocks.toString();
             } else if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
                     && !interfacePlan.executableUniforms().isEmpty()) {
                 uniformBlock = terrainUniformBlock();
@@ -1072,8 +1129,9 @@ public final class LegacyGlslConverter {
     ) {
         try {
             String prepared = prepareSource(source, sourceFile);
-        return convertFragment(prepared, null, true, samplerSlots, particleLayout,
-                    interfacePlan, null, null, Map.of(), null);
+            return convertFragment(prepared, null, true, samplerSlots, particleLayout,
+                    interfacePlan, null, null, Map.of(), null, Set.of(),
+                    PackAlphaTestPlan.disabled());
         } catch (RuntimeException ignored) {
             return null;
         }
@@ -1091,7 +1149,7 @@ public final class LegacyGlslConverter {
             String prepared = prepareSource(source, sourceFile);
             validateEntityFragmentVersion(prepared);
             return convertFragment(prepared, null, true, samplerSlots, entityLayout, interfacePlan,
-                    null, null, Map.of(), null);
+                    null, null, Map.of(), null, Set.of(), PackAlphaTestPlan.disabled());
         } catch (RuntimeException ignored) {
             return null;
         }
@@ -1221,7 +1279,7 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout layout, UniformRegistry.ProgramInterface interfacePlan
     ) {
         return convertFragment(source, sourceFile, true, samplerSlots, layout,
-                interfacePlan, null, null, Map.of(), null);
+                interfacePlan, null, null, Map.of(), null, Set.of(), PackAlphaTestPlan.disabled());
     }
 
     public static boolean supportsModernTerrain(String source, String fragmentSource) {
@@ -1276,11 +1334,8 @@ public final class LegacyGlslConverter {
         int versionEnd = source.indexOf('\n');
         int insertAt = versionEnd < 0 ? 0 : versionEnd + 1;
         String result = source.substring(0, insertAt) + declaration + source.substring(insertAt);
-        int closing = result.lastIndexOf('}');
-        if (closing < 0) throw new IllegalArgumentException("coverage fragment has no main body");
-        return result.substring(0, closing)
-                + "\n    chimeraCoverage = gl_FragCoord.z;\n"
-                + result.substring(closing);
+        return GlslTokenRewriter.appendMainEpilogue(result,
+                "chimeraCoverage = gl_FragCoord.z;");
     }
 
     /** Static probe helper for the strict shadow vertex bridge. */
@@ -1439,6 +1494,26 @@ public final class LegacyGlslConverter {
                     int UseRgss;
                 };
                 """;
+    }
+
+    /** Exact binding-1 layout, with an instance reserved for generated alpha testing. */
+    private static String terrainHostUniformBlock(String source, String instance) {
+        String block = GlslTokenRewriter.uniqueIdentifier(source, "ChimeraTerrainHostBlock");
+        return """
+                layout(binding = 1) uniform %s {
+                    vec4 FogColor;
+                    float FogEnvironmentalStart;
+                    float FogEnvironmentalEnd;
+                    float FogRenderDistanceStart;
+                    float FogRenderDistanceEnd;
+                    float FogSkyEnd;
+                    float FogCloudsEnd;
+                    float AlphaCutout;
+                    ivec2 TextureSize;
+                    vec2 TexelSize;
+                    int UseRgss;
+                } %s;
+                """.formatted(block, instance);
     }
 
     /** Generated entity fragment UBO. Vertex transform blocks are supplied by the host. */

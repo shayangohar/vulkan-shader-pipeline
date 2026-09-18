@@ -26,7 +26,7 @@ public final class M74ConformanceHarness {
         PackTargetGraphPlan graphAgain = PackTargetGraphPlan.build(
                 second.plan().programs(), second.config(), 1920, 1080, 8, 16384);
 
-        verifyUnsupportedSamplerTarget();
+        verifyTargetEightAndUnsupportedNine();
         assertEquals(graph.fingerprint(), graphAgain.fingerprint(), "M7.4 graph fingerprint stability");
         assertTrue(graph.target(0) != null, "M7.4 target 0 missing");
         assertTrue(graph.target(1) != null, "M7.4 target 1 missing");
@@ -92,7 +92,7 @@ public final class M74ConformanceHarness {
         System.out.println("[chimera] M7.4 target and depth graph conformance: PASS");
     }
 
-    private static void verifyUnsupportedSamplerTarget() throws Exception {
+    private static void verifyTargetEightAndUnsupportedNine() throws Exception {
         Path fixture = Files.createTempDirectory("chimera-target-boundary-");
         try {
             Path shaders = Files.createDirectories(fixture.resolve("shaders"));
@@ -101,20 +101,31 @@ public final class M74ConformanceHarness {
             Files.writeString(shaders.resolve("composite.fsh"),
                     "#version 120\nuniform sampler2D colortex8;\n"
                             + "void main() { gl_FragColor = texture2D(colortex8, vec2(0.5)); }\n");
+            Files.writeString(shaders.resolve("composite9.fsh"),
+                    "#version 120\nuniform sampler2D colortex9;\n"
+                            + "void main() { gl_FragColor = texture2D(colortex9, vec2(0.5)); }\n");
             Files.writeString(shaders.resolve("final.vsh"),
                     "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
             Files.writeString(shaders.resolve("final.fsh"),
                     "#version 120\nuniform sampler2D colortex0;\n"
                             + "void main() { gl_FragColor = texture2D(colortex0, vec2(0.5)); }\n");
+            Files.writeString(shaders.resolve("shaders.json"),
+                    "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"},"
+                            + "{\"name\":\"composite9\",\"fragment\":\"composite9.fsh\"},"
+                            + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
             PackProbe.Analysis analysis = PackProbe.analyze(fixture);
             PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                     analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
-            assertTrue(graph.target(8) == null,
-                    "unsupported sampler target entered runtime allocation graph");
-            TargetStep rejected = graph.step("composite");
+            assertTrue(graph.target(8) != null,
+                    "supported sampler target did not enter runtime allocation graph");
+            TargetStep supported = graph.step("composite");
+            assertTrue(supported != null && supported.executable(),
+                    "colortex8 consumer was rejected");
+            TargetStep rejected = graph.step("composite9");
             assertTrue(rejected != null && !rejected.executable()
-                            && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:8"),
-                    "unsupported sampler target must reject its consumer by name");
+                            && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:9"),
+                    "unsupported sampler target must reject its consumer by name: steps="
+                            + graph.steps() + ", programs=" + analysis.plan().programs());
             assertTrue(graph.step("final").executable() && graph.target(0) != null,
                     "unsupported consumer disabled unrelated supported targets");
         } finally {

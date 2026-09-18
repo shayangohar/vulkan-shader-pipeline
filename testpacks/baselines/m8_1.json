@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "ae37a2159ad5e0a6948277e4cb2d88ae844519f862d832dae60f70d0ff9c1e12",
+      "reportSha256": "79f408a8ab6673d404c83a5563a0c9a46e04ba050868e81dc22b31ca6a39b511",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -17,6 +17,7 @@
       "expectedFallbackPrograms": [],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
+        "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
         "MODERN_GLSL_TRANSLATED",
         "MODERN_TERRAIN_VERTEX_BRIDGE",
         "MODERN_WATER_VERTEX_BRIDGE",

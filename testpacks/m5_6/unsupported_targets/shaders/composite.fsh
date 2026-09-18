@@ -2,7 +2,7 @@
 
 uniform sampler2D colortex0;
 varying vec2 texcoord;
-/* RENDERTARGETS: 0,8 */
+/* RENDERTARGETS: 0,9 */
 
 void main() {
     gl_FragData[0] = texture2D(colortex0, texcoord);

@@ -1,1 +1,48 @@
-{"formatVersion":1,"fixtures":{"post_chain":{"reportSha256":"aab2defb6d0b835269a5df528836d4fad272eb3a25b3b259dea2642821ce03df","expectedPassInventory":["composite","final"],"expectedStages":{"composite":["fragment"],"composite1":["fragment"],"deferred":["fragment"],"final":["fragment"]},"expectedDeviations":{"global":[],"composite":["MRT_POST_BRIDGE","POST_TARGET_ROUTE_APPLIED"],"composite1":[],"deferred":["MRT_POST_BRIDGE","POST_TARGET_ROUTE_APPLIED"],"final":[]},"sourceHashes":{"composite.fsh":"9ef8d469b4f61d93832a7808fab9defefa384db3120cc64c3297513dfb020c06","composite1.fsh":"f721245e37a5382e35a1d89e800beed6fcf697e66caf623dbc243475a2af500b","deferred.fsh":"c59ee8266514c65cba46c59a105fa98a24a56195d6db2ffec4f5575f3055d1b3","final.fsh":"abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4","shaders.json":"30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32","shaders.properties":"b37560c10d9a2b13e978bff06b31b725880640a51e4b73104f25a37e19ccfd08"}},"unsupported_targets":{"reportSha256":"1ca28f02afb69a61fdfcd7a769ad5ea2020318f4b1104d1c1d4a3c45a51972f3","expectedPassInventory":["composite","final"],"expectedStages":{"composite":["fragment"],"final":["fragment"]},"expectedDeviations":{"global":[],"composite":["POST_TARGET_INDEX_UNSUPPORTED:8"],"final":[]},"sourceHashes":{"composite.fsh":"36830aa44faba0677741b573512988ece660bb1141ca55f30c0ac872e6c940fb","final.fsh":"abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4","shaders.json":"30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32"}}}}
+{
+  "formatVersion": 1,
+  "fixtures": {
+    "post_chain": {
+      "reportSha256": "aab2defb6d0b835269a5df528836d4fad272eb3a25b3b259dea2642821ce03df",
+      "expectedPassInventory": ["composite", "final"],
+      "expectedStages": {
+        "composite": ["fragment"],
+        "composite1": ["fragment"],
+        "deferred": ["fragment"],
+        "final": ["fragment"]
+      },
+      "expectedDeviations": {
+        "global": [],
+        "composite": ["MRT_POST_BRIDGE", "POST_TARGET_ROUTE_APPLIED"],
+        "composite1": [],
+        "deferred": ["MRT_POST_BRIDGE", "POST_TARGET_ROUTE_APPLIED"],
+        "final": []
+      },
+      "sourceHashes": {
+        "composite.fsh": "9ef8d469b4f61d93832a7808fab9defefa384db3120cc64c3297513dfb020c06",
+        "composite1.fsh": "f721245e37a5382e35a1d89e800beed6fcf697e66caf623dbc243475a2af500b",
+        "deferred.fsh": "c59ee8266514c65cba46c59a105fa98a24a56195d6db2ffec4f5575f3055d1b3",
+        "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
+        "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
+        "shaders.properties": "b37560c10d9a2b13e978bff06b31b725880640a51e4b73104f25a37e19ccfd08"
+      }
+    },
+    "unsupported_targets": {
+      "reportSha256": "bde9322bfce7edd76b41e002fd57e3d71c21298a721dadd0ab9d8b4d45703d06",
+      "expectedPassInventory": ["composite", "final"],
+      "expectedStages": {
+        "composite": ["fragment"],
+        "final": ["fragment"]
+      },
+      "expectedDeviations": {
+        "global": [],
+        "composite": ["POST_TARGET_INDEX_UNSUPPORTED:9"],
+        "final": []
+      },
+      "sourceHashes": {
+        "composite.fsh": "f34b16f6df39f42c00f75318c1937036b2d4ce4082e115601f2a260bd07e0368",
+        "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
+        "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32"
+      }
+    }
+  }
+}

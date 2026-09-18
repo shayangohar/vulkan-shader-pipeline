@@ -108,6 +108,24 @@ public final class PackResourcePlan {
         return new PackResourcePlan(bindings, declarations, deviations);
     }
 
+    /** Resolve only the live block atlas, honoring pack texture overrides. */
+    static java.util.Set<String> terrainAtlasSamplers(String program,
+            UniformRegistry.ProgramInterface iface, PackSettingsPlan settings) {
+        if (iface == null || (iface.stage() != UniformRegistry.Stage.GEOMETRY
+                && iface.stage() != UniformRegistry.Stage.TRANSLUCENT)) return java.util.Set.of();
+        PackSettingsPlan resources = settings == null ? PackSettingsPlan.empty() : settings;
+        java.util.Set<String> names = new TreeSet<>();
+        for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
+            if (sampler.slot() != 0 || !sampler.glslType().equals("sampler2D")) continue;
+            PackResourceBinding binding = resolve(program, sampler, resources.resourceDeclarations(),
+                    null, resources.propertyValues());
+            if (binding.kind() == PackResourceKind.TARGET
+                    && binding.status() == PackResourceStatus.HOST_ALIAS
+                    && binding.resourceKey().equals("texture")) names.add(sampler.name());
+        }
+        return java.util.Set.copyOf(names);
+    }
+
     private static PackResourceBinding resolve(
             String program,
             UniformRegistry.SamplerBinding sampler,

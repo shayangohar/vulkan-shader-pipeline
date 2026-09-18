@@ -649,6 +649,7 @@ record PackSettingsPlan(
                 || key.matches("colortex\\d+MipmapEnabled")
                 || key.startsWith("size.buffer.colortex") || key.startsWith("flip.")
                 || key.startsWith("customTexture.") || key.startsWith("texture.")
+                || key.startsWith("alphaTest.")
                 || key.startsWith("shadow") || key.equals("sunPathRotation")
                 || key.equals("sunPathOffset") || key.equals("shadowMapResolution")
                 || key.equals("shadowDistance");

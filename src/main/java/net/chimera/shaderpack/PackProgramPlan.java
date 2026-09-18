@@ -24,7 +24,8 @@ public record PackProgramPlan(
         boolean executable,
         FamilyAdapterPlan familyAdapter,
         TerrainMaterialPlan terrainMaterial,
-        GeometryOutputPlan geometryOutputPlan
+        GeometryOutputPlan geometryOutputPlan,
+        PackAlphaTestPlan alphaTestPlan
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -40,6 +41,9 @@ public record PackProgramPlan(
                 : familyAdapter;
         terrainMaterial = terrainMaterial == null ? TerrainMaterialPlan.legacy() : terrainMaterial;
         geometryOutputPlan = geometryOutputPlan == null ? null : geometryOutputPlan;
+        alphaTestPlan = alphaTestPlan == null
+                ? PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty())
+                : alphaTestPlan;
     }
 
     /** Compatibility constructor for callers using the pre-M6.1 plan shape. */
@@ -58,7 +62,8 @@ public record PackProgramPlan(
         this(program, stages, interfacePlan, stageInterfaces, Map.of(), targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
                 FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
-                TerrainMaterialPlan.legacy(), null);
+                TerrainMaterialPlan.legacy(), null,
+                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()));
     }
 
     /** Compatibility constructor for pre-M7.6 callers. */
@@ -78,7 +83,8 @@ public record PackProgramPlan(
         this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
                 FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
-                TerrainMaterialPlan.legacy(), null);
+                TerrainMaterialPlan.legacy(), null,
+                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()));
     }
 
     public String name() {

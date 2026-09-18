@@ -131,6 +131,11 @@ public record GeometryOutputPlan(
         return targetSlots().size() > 1;
     }
 
+    /** The generated symbol for logical output location zero. */
+    public String locationZeroOutputName() {
+        return targetSlots().size() == 1 ? "fragColor" : "chimeraFragColor0";
+    }
+
     public int targetForOutput(int location) {
         return targetPlan.targetForOutput(location);
     }

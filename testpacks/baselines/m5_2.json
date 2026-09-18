@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "material": {
-      "reportSha256": "c5bf11d0ab17899caf07c2ace8ed01a8310a0ca6467a19c5de3633c39066b8bb",
+      "reportSha256": "189e25f6fb47ae6cd010df0f73629bfb287aee8b83ce9c27f1414b8a7877c900",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -27,6 +27,7 @@
         "composite": [],
         "final": [],
         "gbuffers_terrain": [
+          "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
           "LEGACY_TERRAIN_VERTEX_BRIDGE"
         ]
       },

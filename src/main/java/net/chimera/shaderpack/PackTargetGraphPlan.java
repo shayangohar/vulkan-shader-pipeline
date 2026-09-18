@@ -17,7 +17,8 @@ import java.util.TreeSet;
  * are interpreted together.
  */
 public final class PackTargetGraphPlan {
-    public static final int MAX_TARGET = 7;
+    /** Keep the graph range identical to the post target parser. */
+    public static final int MAX_TARGET = PostTargetPlan.MAX_TARGET;
     public static final int LOGICAL_ATTACHMENT_LIMIT = 8;
 
     private final List<TargetSpec> targets;
@@ -163,6 +164,17 @@ public final class PackTargetGraphPlan {
             }
             reads.sort(Integer::compareTo);
             List<String> stepDeviations = new ArrayList<>(post.deviations());
+            if (!program.executable()) {
+                stepDeviations.addAll(program.deviations());
+                for (String deviation : program.deviations()) {
+                    if (!deviation.startsWith("SAMPLER_NOT_MAPPED:")) continue;
+                    Integer target = PackResourcePlan.targetIndex(
+                            deviation.substring("SAMPLER_NOT_MAPPED:".length()));
+                    if (target != null && target > MAX_TARGET) {
+                        stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
+                    }
+                }
+            }
             boolean executable = program.executable() && post.executable();
             Set<Integer> referencedTargets = new TreeSet<>(outputs);
             referencedTargets.addAll(reads);

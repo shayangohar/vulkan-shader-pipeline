@@ -98,7 +98,7 @@ public final class M77ConformanceHarness {
     }
 
     private static void verifyStaticAvailability() {
-        boolean[] written = new boolean[8];
+        boolean[] written = new boolean[PackTargetGraphPlan.MAX_TARGET + 1];
         assertTrue(PackPostTargets.isTargetAvailable(0, true, written),
                 "M7.7 target 0 HDR identity is unavailable");
         assertTrue(!PackPostTargets.isTargetAvailable(1, true, written),

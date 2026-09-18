@@ -90,6 +90,7 @@ public final class PackProbe {
         List<String> settings = new ArrayList<>();
         List<String> passInventory = new ArrayList<>();
         Set<String> shadowPropertySettings = new TreeSet<>();
+        Set<String> alphaTestPropertySettings = new TreeSet<>();
         boolean passListPresent = false;
 
         Path passList = shadersDir.resolve("shaders.json");
@@ -102,7 +103,8 @@ public final class PackProbe {
         Path properties = shadersDir.resolve("shaders.properties");
         if (Files.isRegularFile(properties)) {
             readMetadata(properties, "shaders.properties", metadataHashes, globalDeviations);
-            readProperties(properties, settings, globalDeviations, shadowPropertySettings);
+            readProperties(properties, settings, globalDeviations, shadowPropertySettings,
+                    alphaTestPropertySettings);
         }
 
         if (!Files.isDirectory(shadersDir)) {
@@ -231,6 +233,7 @@ public final class PackProbe {
                 .forEach(globalDeviations::add);
         applyShadowPropertyReporting(inventories, shadowPropertySettings,
                 packConfig.shadowSettings(), globalDeviations);
+        applyAlphaTestPropertyReporting(packPlan, alphaTestPropertySettings, globalDeviations);
 
         ConformanceReport report = report(packName, passListPresent, passInventory, metadataHashes,
                 settings, globalDeviations, loaded);
@@ -870,6 +873,7 @@ public final class PackProbe {
                     || deviation.startsWith("STORAGE_BUFFER_")
                     || deviation.startsWith("PROGRAM_INTERFACE_")
                     || deviation.startsWith("POST_VARYING_UNSUPPORTED:")
+                    || deviation.startsWith("ALPHA_TEST_MALFORMED:")
                     || deviation.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:")
                     || isBlockingPreprocessorDeviation(deviation)) {
                 return true;
@@ -1029,7 +1033,8 @@ public final class PackProbe {
             Path properties,
             List<String> settings,
             List<String> deviations,
-            Set<String> shadowPropertySettings
+            Set<String> shadowPropertySettings,
+            Set<String> alphaTestPropertySettings
     ) {
         try {
             for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
@@ -1042,14 +1047,39 @@ public final class PackProbe {
                 boolean colortexFormat = COLORTEX_FORMAT.matcher(key).matches();
                 boolean shadowSetting = SHADOW_SETTING.matcher(key).matches();
                 boolean customValue = key.matches("(?:uniform|variable)\\.(?:float|int|bool)\\.[A-Za-z_]\\w*");
+                boolean alphaTest = key.equals("alphaTest.gbuffers_terrain")
+                        || key.equals("alphaTest.gbuffers_water");
                 if (shadowSetting) {
                     shadowPropertySettings.add(key);
-                } else if (!colortexFormat && !customValue) {
+                } else if (alphaTest) {
+                    alphaTestPropertySettings.add(key);
+                } else if (!colortexFormat && !customValue && !alphaTest) {
                     deviations.add("SETTING_NOT_APPLIED:" + key);
                 }
             }
         } catch (IOException e) {
             deviations.add("SHADERS_PROPERTIES_READ_FAILED");
+        }
+    }
+
+    private static void applyAlphaTestPropertyReporting(
+            PackPlan packPlan,
+            Set<String> alphaTestPropertySettings,
+            List<String> deviations
+    ) {
+        for (String key : alphaTestPropertySettings) {
+            String programName = key.substring("alphaTest.".length());
+            PackProgramPlan programPlan = packPlan == null ? null : packPlan.program(programName);
+            boolean consumed = programPlan != null
+                    && programPlan.executable()
+                    && programPlan.alphaTestPlan().valid()
+                    && programPlan.alphaTestPlan().configured()
+                    && (programName.equals("gbuffers_terrain")
+                    ? programPlan.convertedVertex() != null
+                    : false);
+            if (!consumed) {
+                deviations.add("SETTING_NOT_APPLIED:" + key);
+            }
         }
     }
 
