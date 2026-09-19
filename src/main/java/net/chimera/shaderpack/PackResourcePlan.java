@@ -255,10 +255,13 @@ public final class PackResourcePlan {
                     PackResourceStatus.UNAVAILABLE, deviations);
         }
         if (name.equals("normals") || name.equals("specular")) {
-            deviations.add("MATERIAL_MAP_DEFERRED:" + name);
-            return new PackResourceBinding(program, name, name,
-                    PackResourceKind.MATERIAL_ATLAS, "", slot, "nearest", "repeat",
-                    PackResourceStatus.MATERIAL_ATLAS, deviations);
+            int expected = name.equals("normals")
+                    ? SelectorNamespace.NORMALS_SLOT : SelectorNamespace.SPECULAR_SLOT;
+            if (slot == expected) {
+                return new PackResourceBinding(program, name, name,
+                        PackResourceKind.MATERIAL_MAP, "", slot, "linear", "repeat",
+                        PackResourceStatus.MATERIAL_MAP, deviations);
+            }
         }
         deviations.add("SAMPLER_NOT_MAPPED:" + name);
         return new PackResourceBinding(program, name, name,

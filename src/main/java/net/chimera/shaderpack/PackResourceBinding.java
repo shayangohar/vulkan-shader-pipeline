@@ -55,6 +55,7 @@ public record PackResourceBinding(
     public boolean available() {
         return status == PackResourceStatus.HOST_ALIAS
                 || status == PackResourceStatus.PACK_FILE
-                || status == PackResourceStatus.GAME_RESOURCE;
+                || status == PackResourceStatus.GAME_RESOURCE
+                || status == PackResourceStatus.MATERIAL_MAP;
     }
 }

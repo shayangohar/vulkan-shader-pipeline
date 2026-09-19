@@ -19,27 +19,27 @@ import java.nio.file.Path;
 import java.util.List;
 
 /** Focused logical-colortex8 and Complementary producer-chain checks. */
-public final class M87ConformanceHarness {
-    private M87ConformanceHarness() {}
+public final class PostTarget8ConformanceHarness {
+    private PostTarget8ConformanceHarness() {}
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of(System.getProperty("chimera.fixtureRoot", "testpacks"));
-        Path fixture = root.resolve("m8_7/colortex8");
+        Path fixture = root.resolve("post_target8/colortex8");
         PackProbe.Analysis first = PackProbe.analyze(fixture);
         PackProbe.Analysis second = PackProbe.analyze(fixture);
         verifyFixture(first, second);
         verifyTargetBoundary();
-        verifyOptionalRealPack(System.getProperty("chimera.m87.complementary"),
+        verifyOptionalRealPack(System.getProperty("chimera.postTarget8.complementary"),
                 "Complementary", true);
-        verifyOptionalRealPack(System.getProperty("chimera.m87.bsl"), "BSL", false);
-        verifyBaseline(root.resolve("baselines/m8_7.json"), first);
-        System.out.println("[chimera] M8.7 colortex8 conformance: PASS");
+        verifyOptionalRealPack(System.getProperty("chimera.postTarget8.bsl"), "BSL", false);
+        verifyBaseline(root.resolve("baselines/post_target8.json"), first);
+        System.out.println("[chimera] Post-target-8 colortex8 conformance: PASS");
     }
 
     private static void verifyFixture(PackProbe.Analysis first, PackProbe.Analysis second) {
         PackProgramPlan composite = first.plan().program("composite");
         assertTrue(composite != null && composite.executable(),
-                "M8.7 fixture composite is not executable: "
+                "Post-target-8 fixture composite is not executable: "
                         + (composite == null ? "missing" : composite.deviations()));
         UniformRegistry.SamplerBinding colortex8 = composite.interfacePlan()
                 .effective(UniformRegistry.Stage.POST).samplers().stream()
@@ -77,13 +77,13 @@ public final class M87ConformanceHarness {
         assertTrue(PackPostTargets.isTargetAvailable(8, true, written),
                 "colortex8 availability helper rejected a committed target");
         assertEquals(first.report().toJson(), second.report().toJson(),
-                "M8.7 fixture report is not deterministic");
+                "Post-target-8 fixture report is not deterministic");
         assertEquals(graph.fingerprint(), PackTargetGraphPlan.build(
                 second.plan().programs(), second.config(), second.plan().resources(),
                 1920, 1080, 8, 16384).fingerprint(),
-                "M8.7 target graph is not deterministic");
+                "Post-target-8 target graph is not deterministic");
         assertTrue(!graph.snapshot().contains("C:\\") && !graph.snapshot().contains("/Users/"),
-                "M8.7 graph snapshot contains an absolute path");
+                "Post-target-8 graph snapshot contains an absolute path");
     }
 
     private static void verifyTargetBoundary() {
@@ -115,7 +115,7 @@ public final class M87ConformanceHarness {
         if (rawPath == null || rawPath.isBlank()) return;
         Path path = Path.of(rawPath);
         assertTrue(Files.isDirectory(path) || Files.isRegularFile(path),
-                "M8.7 " + label + " path is missing");
+                "Post-target-8 " + label + " path is missing");
         String previousLighting = System.getProperty("chimera.option.COLORED_LIGHTING");
         String previousReflections = System.getProperty("chimera.option.WORLD_SPACE_REFLECTIONS");
         System.setProperty("chimera.option.COLORED_LIGHTING", "128");
@@ -126,12 +126,12 @@ public final class M87ConformanceHarness {
             if (!requireComposite1) {
                 assertTrue(composite1 == null || !analysis.report().deviations().contains(
                                 "POST_TARGET_INDEX_UNSUPPORTED:8"),
-                        "M8.7 BSL gained an unexpected target-8 rejection");
+                        "Post-target-8 BSL gained an unexpected target-8 rejection");
                 return;
             }
             assertTrue(composite1 != null && composite1.executable()
                             && analysis.plan().shouldAttempt("composite1"),
-                    "M8.7 " + label + " composite1 is not executable: "
+                    "Post-target-8 " + label + " composite1 is not executable: "
                             + (composite1 == null ? "missing" : composite1.deviations()));
             PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                     analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
@@ -139,16 +139,16 @@ public final class M87ConformanceHarness {
             TargetStep step = graph.step("composite1");
             assertTrue(step != null && step.executable() && step.readTargets().contains(8)
                             && step.outputTargets().equals(List.of(0, 5)),
-                    "M8.7 " + label + " composite1 graph step is incorrect");
+                    "Post-target-8 " + label + " composite1 graph step is incorrect");
             assertTrue(composite1.interfacePlan().effective(UniformRegistry.Stage.POST).samplers()
                             .stream().anyMatch(value -> value.name().equals("colortex8")
                                     && value.slot() == 22),
-                    "M8.7 " + label + " composite1 colortex8 descriptor is missing");
+                    "Post-target-8 " + label + " composite1 colortex8 descriptor is missing");
             assertTrue(analysis.report().program("composite1") != null
                             && analysis.report().program("composite1").support()
                             != ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                    "M8.7 " + label + " composite1 remains a static identity fallback");
-            System.out.println("[chimera] M8.7 " + label + " composite1: PASS");
+                    "Post-target-8 " + label + " composite1 remains a static identity fallback");
+            System.out.println("[chimera] Post-target-8 " + label + " composite1: PASS");
         } finally {
             restoreProperty("chimera.option.COLORED_LIGHTING", previousLighting);
             restoreProperty("chimera.option.WORLD_SPACE_REFLECTIONS", previousReflections);
@@ -162,9 +162,9 @@ public final class M87ConformanceHarness {
             PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                     analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
                     1920, 1080, 8, 16384);
-            System.out.println("[chimera] M8.7 reportSha256=" + analysis.report().sha256());
-            System.out.println("[chimera] M8.7 graphFingerprint=" + graph.fingerprint());
-            System.out.println("[chimera] M8.7 resourceFingerprint="
+            System.out.println("[chimera] Post-target-8 reportSha256=" + analysis.report().sha256());
+            System.out.println("[chimera] Post-target-8 graphFingerprint=" + graph.fingerprint());
+            System.out.println("[chimera] Post-target-8 resourceFingerprint="
                     + analysis.plan().resources().fingerprint());
             return;
         }
@@ -172,11 +172,11 @@ public final class M87ConformanceHarness {
                 analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
                 1920, 1080, 8, 16384);
         assertEquals(baseline.get("reportSha256").getAsString(), analysis.report().sha256(),
-                "M8.7 report baseline");
+                "Post-target-8 report baseline");
         assertEquals(baseline.get("graphFingerprint").getAsString(), graph.fingerprint(),
-                "M8.7 graph baseline");
+                "Post-target-8 graph baseline");
         assertEquals(baseline.get("resourceFingerprint").getAsString(),
-                analysis.plan().resources().fingerprint(), "M8.7 resource baseline");
+                analysis.plan().resources().fingerprint(), "Post-target-8 resource baseline");
     }
 
     private static void restoreProperty(String name, String value) {

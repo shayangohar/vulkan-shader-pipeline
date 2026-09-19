@@ -88,7 +88,8 @@ public final class PackResourceOwner implements AutoCloseable {
                     || binding.kind() == PackResourceKind.DEPTH
                     || binding.kind() == PackResourceKind.SHADOW_DEPTH
                     || binding.kind() == PackResourceKind.SHADOW_COLOR
-                    || binding.kind() == PackResourceKind.ADVANCED_IMAGE) {
+                    || binding.kind() == PackResourceKind.ADVANCED_IMAGE
+                    || binding.kind() == PackResourceKind.MATERIAL_MAP) {
                 continue;
             }
             if (!textures.containsKey(binding.resourceKey())) return false;

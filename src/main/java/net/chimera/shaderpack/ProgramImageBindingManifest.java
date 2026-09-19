@@ -9,7 +9,7 @@ import java.util.Objects;
 /** Finalized image descriptors and their explicit, program-scoped execution resolvers. */
 public record ProgramImageBindingManifest(List<Entry> entries) {
     public enum Kind { COLOR_TARGET, DEPTH_TARGET, SHADOW_DEPTH, SHADOW_COLOR,
-        PACK_TEXTURE, HOST_TEXTURE, ADVANCED_IMAGE }
+        PACK_TEXTURE, HOST_TEXTURE, ADVANCED_IMAGE, MATERIAL_MAP }
 
     public record Entry(String symbol, int slot, int descriptorType, int stageMask,
             Kind kind, String resourceKey, int set, int binding, String sourceSymbol) {
@@ -40,6 +40,7 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
                 case SHADOW_DEPTH -> Kind.SHADOW_DEPTH;
                 case SHADOW_COLOR -> Kind.SHADOW_COLOR;
                 case PACK_TEXTURE, NOISE, GAME_RESOURCE -> Kind.PACK_TEXTURE;
+                case MATERIAL_MAP -> Kind.MATERIAL_MAP;
                 default -> throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
             };
             entries.add(new Entry(descriptor.symbol(), slot, descriptor.type(), descriptor.stages(),

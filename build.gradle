@@ -635,21 +635,21 @@ tasks.register('m86bConformanceTest', JavaExec) {
     }
 }
 
-tasks.register('m87ConformanceTest', JavaExec) {
+tasks.register('postTarget8ConformanceTest', JavaExec) {
     group = 'verification'
     description = 'Runs deterministic logical colortex8 and Complementary producer-chain checks.'
     dependsOn tasks.named('m86bConformanceTest')
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'net.chimera.render.M87ConformanceHarness'
+    mainClass = 'net.chimera.render.PostTarget8ConformanceHarness'
     jvmArgs '-ea'
     doFirst {
-        ['m87Complementary': 'chimera.m87.complementary',
-         'm87Bsl': 'chimera.m87.bsl'].each { projectKey, systemKey ->
+        ['postTarget8Complementary': 'chimera.postTarget8.complementary',
+         'postTarget8Bsl': 'chimera.postTarget8.bsl'].each { projectKey, systemKey ->
             def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
             if (value != null && !value.toString().isBlank()) {
                 def pack = file(value.toString())
                 if (!pack.isDirectory() && !pack.isFile()) {
-                    throw new GradleException("M8.7 pack path does not exist: ${pack}")
+                    throw new GradleException("Post-target-8 pack path does not exist: ${pack}")
                 }
                 systemProperty systemKey, pack.absolutePath
             }
@@ -700,6 +700,15 @@ tasks.register('m82ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('materialPlanConformance', JavaExec) {
+    group = 'verification'
+    description = 'Checks material selector reservation, stage gating, resource identity, and manifest kind.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.MaterialPlanConformanceHarness'
+    jvmArgs '-ea'
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
@@ -721,9 +730,10 @@ tasks.named('check') {
     dependsOn tasks.named('m85bConformanceTest')
     dependsOn tasks.named('m86ConformanceTest')
     dependsOn tasks.named('m86bConformanceTest')
-    dependsOn tasks.named('m87ConformanceTest')
+    dependsOn tasks.named('postTarget8ConformanceTest')
     dependsOn tasks.named('terrainAtlasSamplingTest')
     dependsOn tasks.named('alphaTestConformance')
+    dependsOn tasks.named('materialPlanConformance')
 }
 
 tasks.named('test') {

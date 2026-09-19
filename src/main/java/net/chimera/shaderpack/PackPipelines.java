@@ -1195,7 +1195,9 @@ public final class PackPipelines {
                     ? PackResourceKind.TARGET : key.startsWith("depthtex") ? PackResourceKind.DEPTH
                     : key.startsWith("shadowtex") ? PackResourceKind.SHADOW_DEPTH
                     : key.startsWith("shadowcolor") ? PackResourceKind.SHADOW_COLOR
-                    : key.equals("noisetex") ? PackResourceKind.NOISE : PackResourceKind.UNSERVED;
+                    : key.equals("noisetex") ? PackResourceKind.NOISE
+                    : key.equals("normals") || key.equals("specular") ? PackResourceKind.MATERIAL_MAP
+                    : PackResourceKind.UNSERVED;
             resources.add(new PackResourceBinding("", name, key, kind, "", image.imageIdx(),
                     "nearest", "repeat", PackResourceStatus.HOST_ALIAS, List.of()));
         }

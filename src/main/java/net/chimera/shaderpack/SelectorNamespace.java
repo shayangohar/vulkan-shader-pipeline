@@ -15,7 +15,11 @@ public final class SelectorNamespace {
     public static final int COLORTEX8_SLOT = 22;
     public static final int SHADOW_COLOR0_SLOT = 23;
     public static final int SHADOW_COLOR1_SLOT = 24;
-    public static final int LAST_RESERVED = SHADOW_COLOR1_SLOT;
+    /** Slot 25 carries the resource-pack normal map for material-capable stages. */
+    public static final int NORMALS_SLOT = 25;
+    /** Slot 26 carries the resource-pack specular map for material-capable stages. */
+    public static final int SPECULAR_SLOT = 26;
+    public static final int LAST_RESERVED = SPECULAR_SLOT;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
     /** Unreserved selector slots available to pack-owned sampled resources. */
     public static final List<Integer> PACK_SELECTOR_SLOTS = List.of(

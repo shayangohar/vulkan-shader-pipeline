@@ -11,5 +11,7 @@ public enum PackResourceKind {
     GAME_RESOURCE,
     ADVANCED_IMAGE,
     MATERIAL_ATLAS,
+    /** Resource-pack normal/specular map resolved at draw time from the bound albedo. */
+    MATERIAL_MAP,
     UNSERVED
 }

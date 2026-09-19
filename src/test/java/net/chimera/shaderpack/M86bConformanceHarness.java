@@ -282,7 +282,7 @@ public final class M86bConformanceHarness {
         for (var method : List.of(read, bound, name, bind)) method.setAccessible(true);
         var backing = mixin.getDeclaredField("chimera$extendedTextures");
         backing.setAccessible(true);
-        assertEquals(17, java.lang.reflect.Array.getLength(backing.get(null)), "Backing must cover 8..24");
+        assertEquals(SelectorNamespace.EXTENDED_CAPACITY, java.lang.reflect.Array.getLength(backing.get(null)), "Backing must cover 8..26");
         // CPU-only image metadata constructor: no image allocation, views, or Vulkan device.
         var constructor = net.vulkanmod.vulkan.texture.VulkanImage.class.getDeclaredConstructor(
                 net.vulkanmod.vulkan.texture.VulkanImage.Builder.class);
@@ -290,7 +290,7 @@ public final class M86bConformanceHarness {
         var original = constructor.newInstance(net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
         var replacement = constructor.newInstance(net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
         Object[] host = new Object[12];
-        for (int slot = 8; slot <= 24; slot++) {
+        for (int slot = 8; slot <= SelectorNamespace.LAST_RESERVED; slot++) {
             assertTrue(SelectorNamespace.isAddressable(slot), "Reserved selector rejected: " + slot);
             var named = new org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Integer>("name", true);
             name.invoke(null, "Sampler" + slot, named);
@@ -307,8 +307,8 @@ public final class M86bConformanceHarness {
             try { selectorBind(bind, slot, null, host); cleared.set(slot); }
             catch (Exception failure) { throw new AssertionError(failure); }
         });
-        assertEquals(25, cleared.cardinality(), "Teardown did not clear full owned range");
-        for (int slot = 0; slot <= 24; slot++) {
+        assertEquals(SelectorNamespace.LAST_RESERVED + 1, cleared.cardinality(), "Teardown did not clear full owned range");
+        for (int slot = 0; slot <= SelectorNamespace.LAST_RESERVED; slot++) {
             assertTrue(selectorRead(read, slot, host) == null, "Teardown retained image: " + slot);
         }
         int unsupported = SelectorNamespace.LAST_RESERVED + 1;

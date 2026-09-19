@@ -361,6 +361,23 @@ public final class UniformRegistry {
     );
 
     /**
+     * Resource-pack material maps ride fixed extended selectors, but only in
+     * stages whose draws bind a real albedo image. Sky and cloud reuse the
+     * geometry slot table without material draws, and post/shadow never
+     * serve material names, so the overlay is keyed on stage, not on table.
+     */
+    public static final Map<String, Integer> MATERIAL_NAME_TO_SLOT = Map.of(
+            "normals", SelectorNamespace.NORMALS_SLOT,
+            "specular", SelectorNamespace.SPECULAR_SLOT
+    );
+
+    /** Stages whose draws carry an albedo image that material maps can follow. */
+    public static final Set<Stage> MATERIAL_STAGES = Set.of(
+            Stage.GEOMETRY, Stage.TRANSLUCENT, Stage.ENTITY,
+            Stage.BLOCK, Stage.HAND, Stage.PARTICLE
+    );
+
+    /**
      * The water bridge is intentionally limited to fields already present in
      * the host terrain UBO. Lower-case names are the small accepted pack
      * aliases; their values are rewritten to the corresponding host fields.
@@ -612,6 +629,10 @@ public final class UniformRegistry {
             }
             if (slot == null && customSamplerSlots != null) {
                 slot = customSamplerSlots.get(sampler.getKey());
+            }
+            if (slot == null && MATERIAL_NAME_TO_SLOT.containsKey(sampler.getKey())
+                    && MATERIAL_STAGES.contains(stage)) {
+                slot = MATERIAL_NAME_TO_SLOT.get(sampler.getKey());
             }
             boolean mappedType = sampler.getValue().equals("sampler2D")
                     || sampler.getValue().equals("sampler2DShadow")

@@ -3177,6 +3177,7 @@ public class ChimeraMainPass implements MainPass {
                 case SHADOW_COLOR -> this.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
                 case PACK_TEXTURE -> this.packResourceOwner == null ? null : this.packResourceOwner.image(entry.resourceKey());
                 case ADVANCED_IMAGE -> this.packAdvancedImageOwner == null ? null : this.packAdvancedImageOwner.image(entry.resourceKey());
+                case MATERIAL_MAP -> null;
                 case HOST_TEXTURE -> throw new AssertionError();
             };
             return new ChimeraTextureBindingState.Snapshot(image, image == null ? null : image.getSampler());
