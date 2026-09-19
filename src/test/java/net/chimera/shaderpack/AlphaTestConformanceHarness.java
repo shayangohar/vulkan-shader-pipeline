@@ -20,6 +20,7 @@ public final class AlphaTestConformanceHarness {
         testWaterRemainsUninstalled();
         testOptionalRealPack("chimera.alpha.complementary", "Complementary");
         testOptionalRealPack("chimera.alpha.bsl", "BSL");
+        testBslMaterialTerrain();
         System.out.println("[chimera] terrain alpha-test conformance: PASS");
     }
 
@@ -184,6 +185,41 @@ public final class AlphaTestConformanceHarness {
                         && terrain.convertedFragment().contains("AlphaCutout")
                         && terrain.convertedFragment().contains("discard;"),
                 label + " terrain has no generated alpha rejection");
+    }
+
+    /**
+     * BSL material terrain must survive the full path that crashed the
+     * game session: MATERIAL_FORMAT=1 activates explicit-gradient atlas
+     * sampling, which previously reached shaderc untranslated.
+     */
+    private static void testBslMaterialTerrain() {
+        String value = System.getProperty("chimera.alpha.bsl");
+        if (value == null || value.isBlank()) return;
+        String previousFormat = System.getProperty("chimera.option.MATERIAL_FORMAT");
+        String previousAdvanced = System.getProperty("chimera.option.ADVANCED_MATERIALS");
+        System.setProperty("chimera.option.MATERIAL_FORMAT", "1");
+        System.setProperty("chimera.option.ADVANCED_MATERIALS", "1");
+        try {
+            PackProbe.Analysis analysis = PackProbe.analyze(Path.of(value));
+            PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
+            check(terrain != null && terrain.executable(),
+                    "BSL material terrain is not conversion-eligible: "
+                            + (terrain == null ? "missing" : terrain.deviations()));
+            check(terrain.convertedFragment() != null
+                            && !terrain.convertedFragment().contains("texture2DGradARB"),
+                    "BSL material terrain kept untranslated explicit-gradient sampling");
+            check(terrain.convertedFragment().contains("textureGrad("),
+                    "BSL material terrain lost its explicit gradients");
+            compile(terrain.convertedFragment());
+        } finally {
+            restoreProperty("chimera.option.MATERIAL_FORMAT", previousFormat);
+            restoreProperty("chimera.option.ADVANCED_MATERIALS", previousAdvanced);
+        }
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) System.clearProperty(name);
+        else System.setProperty(name, value);
     }
 
     private static PackSettingsPlan settings(Map<String, String> properties) {

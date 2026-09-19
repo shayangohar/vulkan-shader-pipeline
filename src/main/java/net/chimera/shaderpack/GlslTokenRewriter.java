@@ -185,6 +185,7 @@ public final class GlslTokenRewriter {
                 case "texture2DLod", "texture3DLod" -> "textureLod";
                 case "texture2D", "texture3D" -> "texture";
                 case "texture2DProj" -> "textureProj";
+                case "texture2DGradARB" -> "textureGrad";
                 default -> null;
             };
             if (token.kind() != GlslLexer.Kind.IDENTIFIER || replacement == null) {

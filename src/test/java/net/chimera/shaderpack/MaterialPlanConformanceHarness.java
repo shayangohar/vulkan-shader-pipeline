@@ -30,6 +30,7 @@ public final class MaterialPlanConformanceHarness {
         verifyManifest(analysis);
         verifyOwnerIgnoresMaterial(analysis);
         verifyFallbackDispatch();
+        verifyExplicitGradientTranslation();
         System.out.println("[chimera] material planner conformance: PASS");
     }
 
@@ -183,6 +184,13 @@ public final class MaterialPlanConformanceHarness {
         } finally {
             owner.close();
         }
+    }
+
+    private static void verifyExplicitGradientTranslation() {
+        String converted = GlslTokenRewriter.rewriteTextureCalls(
+                "vec4 albedo = texture2DGradARB(texture, newCoord, dcdx, dcdy);");
+        assertTrue(converted.contains("textureGrad(") && !converted.contains("texture2DGradARB"),
+                "explicit-gradient sampling was not translated: " + converted);
     }
 
     private static void assertTrue(boolean condition, String message) {
