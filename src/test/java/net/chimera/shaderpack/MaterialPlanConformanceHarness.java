@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.PackResourceOwner;
 
 import java.nio.file.Path;
@@ -28,6 +29,7 @@ public final class MaterialPlanConformanceHarness {
         verifyFixturePlan(analysis);
         verifyManifest(analysis);
         verifyOwnerIgnoresMaterial(analysis);
+        verifyFallbackDispatch();
         System.out.println("[chimera] material planner conformance: PASS");
     }
 
@@ -139,6 +141,38 @@ public final class MaterialPlanConformanceHarness {
                         .distinct().count() == 2,
                 "material manifest descriptor bindings collide");
         manifest.verify(new java.util.ArrayList<>(ordinary.descriptors()));
+    }
+
+    private static void verifyFallbackDispatch() throws Exception {
+        assertEquals("normals", MaterialMapOwner.MaterialMapKind.NORMALS.sampler(), "normals name");
+        assertEquals("_n", MaterialMapOwner.MaterialMapKind.NORMALS.suffix(), "normals suffix");
+        assertEquals(0xFFFF7F7F, MaterialMapOwner.MaterialMapKind.NORMALS.fallbackAbgr(),
+                "normals flat texel");
+        assertEquals("specular", MaterialMapOwner.MaterialMapKind.SPECULAR.sampler(), "specular name");
+        assertEquals("_s", MaterialMapOwner.MaterialMapKind.SPECULAR.suffix(), "specular suffix");
+        assertEquals(0x00000000, MaterialMapOwner.MaterialMapKind.SPECULAR.fallbackAbgr(),
+                "specular flat texel");
+        var constructor = net.vulkanmod.vulkan.texture.VulkanImage.class.getDeclaredConstructor(
+                net.vulkanmod.vulkan.texture.VulkanImage.Builder.class);
+        constructor.setAccessible(true);
+        net.vulkanmod.vulkan.texture.VulkanImage normals = constructor.newInstance(
+                net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
+        net.vulkanmod.vulkan.texture.VulkanImage specular = constructor.newInstance(
+                net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
+        MaterialMapOwner owner = MaterialMapOwner.withImages(normals, specular);
+        try {
+            assertTrue(owner.snapshot("normals").image() == normals, "normals resolved elsewhere");
+            assertTrue(owner.snapshot("specular").image() == specular, "specular resolved elsewhere");
+            boolean rejected = false;
+            try {
+                owner.snapshot("colortex0");
+            } catch (IllegalArgumentException expected) {
+                rejected = true;
+            }
+            assertTrue(rejected, "unknown material name did not fail loudly");
+        } finally {
+            owner.close();
+        }
     }
 
     private static void verifyOwnerIgnoresMaterial(PackProbe.Analysis analysis) {

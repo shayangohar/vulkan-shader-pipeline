@@ -265,6 +265,8 @@ public class ChimeraMainPass implements MainPass {
     private Path packPath;
     /** All pack-owned sampled images, retained for the pack session. */
     private PackResourceOwner packResourceOwner;
+    /** Resource-pack material images and flat fallbacks, retained for the pack session. */
+    private MaterialMapOwner materialMapOwner;
     /** All pack-owned writable images, retained for the pack session. */
     private PackAdvancedImageOwner packAdvancedImageOwner;
     /** Owns exact-size pack storage buffers for the active session. */
@@ -1823,6 +1825,8 @@ public class ChimeraMainPass implements MainPass {
         this.packTargetFrameNotStartedLogged = false;
         if (this.packResourceOwner != null) this.packResourceOwner.close();
         this.packResourceOwner = null;
+        if (this.materialMapOwner != null) this.materialMapOwner.close();
+        this.materialMapOwner = null;
         if (this.packAdvancedImageOwner != null) this.packAdvancedImageOwner.close();
         this.packAdvancedImageOwner = null;
         this.packPostStages.clear();
@@ -2424,6 +2428,7 @@ public class ChimeraMainPass implements MainPass {
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
         this.packHdrFormat = this.packConfig.colortexFormats().getOrDefault(0, 97);
         this.packResourceOwner = PackResourceOwner.load(this.packPlan.resources(), result.shadersDir());
+        this.materialMapOwner = MaterialMapOwner.create();
         this.packAdvancedImageOwner = PackAdvancedImageOwner.load(this.packPlan.advancedResources());
         this.packStorageBufferOwner = PackStorageBufferOwner.load(this.packPlan.advancedResources());
         this.packShadowCompute = PackShadowCompute.load(this.packPlan.advancedResources(),
@@ -3177,7 +3182,8 @@ public class ChimeraMainPass implements MainPass {
                 case SHADOW_COLOR -> this.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
                 case PACK_TEXTURE -> this.packResourceOwner == null ? null : this.packResourceOwner.image(entry.resourceKey());
                 case ADVANCED_IMAGE -> this.packAdvancedImageOwner == null ? null : this.packAdvancedImageOwner.image(entry.resourceKey());
-                case MATERIAL_MAP -> null;
+                case MATERIAL_MAP -> this.materialMapOwner == null ? null
+                        : this.materialMapOwner.image(entry.resourceKey());
                 case HOST_TEXTURE -> throw new AssertionError();
             };
             return new ChimeraTextureBindingState.Snapshot(image, image == null ? null : image.getSampler());
