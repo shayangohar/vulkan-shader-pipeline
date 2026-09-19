@@ -214,15 +214,19 @@ public final class M80ConformanceHarness {
                     gl_FragData[1] = vec4(0.6, 0.7, 0.8, 0.9);
                 }
                 """;
-        String converted = LegacyGlslConverter.convertFragment(source, null, true, new int[0], null,
-                UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW));
+        String converted = LegacyGlslConverter.FragmentConversionRequest
+                .of(source, null, true, new int[0])
+                .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
+                .convert();
         assertTrue(converted != null && converted.contains(
                         "chimeraShadowColor1 = vec4(0.2, 0.3, 0.4, 0.5)")
                         && converted.contains("chimeraShadowColor0 = vec4(0.6, 0.7, 0.8, 0.9)"),
                 "Authored shadow drawbuffer routing or tint expression was lost");
-        assertTrue(LegacyGlslConverter.convertFragment(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:20"),
-                        null, true, new int[0], null,
-                        UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW)) == null,
+        assertTrue(LegacyGlslConverter.FragmentConversionRequest
+                        .of(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:20"),
+                                null, true, new int[0])
+                        .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
+                        .convert() == null,
                 "Unprovided shadow output target was silently dropped");
     }
 

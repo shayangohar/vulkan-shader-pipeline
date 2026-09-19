@@ -173,88 +173,100 @@ public final class LegacyGlslConverter {
         }
     }
 
-    public static String convertFragment(String source, Path sourceFile, boolean geometryStage, int[] geometrySamplerSlots) {
-        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, null,
-                UniformRegistry.plan(source, stageOf(geometryStage)), null, null, Map.of(), null,
-                Set.of(), PackAlphaTestPlan.disabled());
-    }
-
-    public static String convertFragment(
-            String source,
-            Path sourceFile,
-            boolean geometryStage,
-            int[] geometrySamplerSlots,
-            TerrainVaryingLayout terrainLayout
-    ) {
-        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots, terrainLayout,
-                UniformRegistry.plan(source, stageOf(geometryStage)), null, null, Map.of(), null,
-                Set.of(), PackAlphaTestPlan.disabled());
-    }
-
-    /** Converts a fragment with the interface plan already used by the caller. */
-    public static String convertFragment(
-            String source,
-            Path sourceFile,
-            boolean geometryStage,
-            int[] geometrySamplerSlots,
-            TerrainVaryingLayout terrainLayout,
-            UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots,
-                terrainLayout, interfacePlan, null, null, Map.of(), null,
-                PackResourcePlan.terrainAtlasSamplers("", interfacePlan, PackSettingsPlan.empty()),
-                PackAlphaTestPlan.disabled());
-    }
-
-    /** Converts a geometry fragment with the pack constants already parsed at load time. */
-    public static String convertFragment(
+    /**
+     * Immutable inputs for one fragment conversion. Replaces the former
+     * positional overload ladder: callers start from {@link #of} or
+     * {@link #withAutoPlan} and add only the plans their stage needs.
+     * Missing plans keep the old overload defaults (empty or disabled),
+     * so migrating a caller is behavior-preserving by construction.
+     */
+    public record FragmentConversionRequest(
             String source,
             Path sourceFile,
             boolean geometryStage,
             int[] geometrySamplerSlots,
             TerrainVaryingLayout terrainLayout,
             UniformRegistry.ProgramInterface interfacePlan,
-            Map<String, String> packConstants
-    ) {
-        return convertFragment(source, sourceFile, geometryStage, geometrySamplerSlots,
-                terrainLayout, interfacePlan, null, null,
-                packConstants == null ? Map.of() : packConstants, null,
-                PackResourcePlan.terrainAtlasSamplers("", interfacePlan, PackSettingsPlan.empty()),
-                PackAlphaTestPlan.disabled());
-    }
-
-    /** Converts a terrain or water fragment with its immutable output route. */
-    public static String convertGeometryFragment(
-            String source,
-            Path sourceFile,
-            int[] geometrySamplerSlots,
-            TerrainVaryingLayout terrainLayout,
-            UniformRegistry.ProgramInterface interfacePlan,
-            GeometryOutputPlan outputPlan,
+            PostTargetPlan targetPlan,
+            GeometryOutputPlan geometryOutputPlan,
             Map<String, String> packConstants,
-            Set<String> atlasSamplers
-    ) {
-        return convertGeometryFragment(source, sourceFile, geometrySamplerSlots, terrainLayout,
-                interfacePlan, outputPlan, packConstants, atlasSamplers,
-                PackAlphaTestPlan.disabled());
-    }
-
-    /** Converts a geometry fragment with the immutable alpha-test contract. */
-    public static String convertGeometryFragment(
-            String source,
-            Path sourceFile,
-            int[] geometrySamplerSlots,
-            TerrainVaryingLayout terrainLayout,
-            UniformRegistry.ProgramInterface interfacePlan,
-            GeometryOutputPlan outputPlan,
-            Map<String, String> packConstants,
+            PostVaryingLayout postVaryingLayout,
             Set<String> atlasSamplers,
             PackAlphaTestPlan alphaTestPlan
     ) {
-        return convertFragment(source, sourceFile, true, geometrySamplerSlots, terrainLayout,
-                interfacePlan, null, outputPlan,
-                packConstants == null ? Map.of() : packConstants, null, atlasSamplers,
-                alphaTestPlan == null ? PackAlphaTestPlan.disabled() : alphaTestPlan);
+        public FragmentConversionRequest {
+            packConstants = packConstants == null ? Map.of() : packConstants;
+            atlasSamplers = atlasSamplers == null ? Set.of() : atlasSamplers;
+            alphaTestPlan = alphaTestPlan == null ? PackAlphaTestPlan.disabled() : alphaTestPlan;
+        }
+
+        /** Minimal request; every plan defaults to empty or disabled. */
+        public static FragmentConversionRequest of(String source, Path sourceFile,
+                boolean geometryStage, int[] geometrySamplerSlots) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    null, null, null, null, Map.of(), null, Set.of(), PackAlphaTestPlan.disabled());
+        }
+
+        /** Minimal request with the interface plan derived from the source, as the old shims did. */
+        public static FragmentConversionRequest withAutoPlan(String source, Path sourceFile,
+                boolean geometryStage, int[] geometrySamplerSlots, TerrainVaryingLayout terrainLayout) {
+            return of(source, sourceFile, geometryStage, geometrySamplerSlots)
+                    .withTerrainLayout(terrainLayout)
+                    .withInterfacePlan(UniformRegistry.plan(source, stageOf(geometryStage)));
+        }
+
+        public FragmentConversionRequest withTerrainLayout(TerrainVaryingLayout terrainLayout) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        public FragmentConversionRequest withInterfacePlan(UniformRegistry.ProgramInterface interfacePlan) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        public FragmentConversionRequest withTargetPlan(PostTargetPlan targetPlan) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        public FragmentConversionRequest withGeometryOutputPlan(GeometryOutputPlan geometryOutputPlan) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        public FragmentConversionRequest withPackConstants(Map<String, String> packConstants) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        public FragmentConversionRequest withPostVaryingLayout(PostVaryingLayout postVaryingLayout) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        public FragmentConversionRequest withAtlasSamplers(Set<String> atlasSamplers) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        public FragmentConversionRequest withAlphaTestPlan(PackAlphaTestPlan alphaTestPlan) {
+            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
+                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
+                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+        }
+
+        /** Runs the conversion; returns null when the source is outside the executable contract. */
+        public String convert() {
+            return convertFragment(this);
+        }
     }
 
     /** Converts a post fragment with the M5.6 output target plan. */
@@ -275,9 +287,11 @@ public final class LegacyGlslConverter {
             PostTargetPlan targetPlan,
             Map<String, String> packConstants
     ) {
-        return convertFragment(source, sourceFile, false, null, null, interfacePlan, targetPlan,
-                null, packConstants == null ? Map.of() : packConstants, null, Set.of(),
-                PackAlphaTestPlan.disabled());
+        return FragmentConversionRequest.of(source, sourceFile, false, null)
+                .withInterfacePlan(interfacePlan)
+                .withTargetPlan(targetPlan)
+                .withPackConstants(packConstants)
+                .convert();
     }
 
     /** Converts a post fragment against a paired fullscreen vertex layout. */
@@ -292,9 +306,12 @@ public final class LegacyGlslConverter {
     ) {
         PostVaryingLayout layout = varyingLocations == null
                 ? null : new PostVaryingLayout(varyingLocations, varyingTypes);
-        return convertFragment(source, sourceFile, false, null, null, interfacePlan, targetPlan,
-                null, packConstants == null ? Map.of() : packConstants, layout, Set.of(),
-                PackAlphaTestPlan.disabled());
+        return FragmentConversionRequest.of(source, sourceFile, false, null)
+                .withInterfacePlan(interfacePlan)
+                .withTargetPlan(targetPlan)
+                .withPackConstants(packConstants)
+                .withPostVaryingLayout(layout)
+                .convert();
     }
 
     /** Translates the authored vertex body against the fullscreen triangle inputs. */
@@ -411,20 +428,19 @@ public final class LegacyGlslConverter {
             }
             """;
 
-    private static String convertFragment(
-            String source,
-            Path sourceFile,
-            boolean geometryStage,
-            int[] geometrySamplerSlots,
-            TerrainVaryingLayout terrainLayout,
-            UniformRegistry.ProgramInterface interfacePlan,
-            PostTargetPlan targetPlan,
-            GeometryOutputPlan geometryOutputPlan,
-            Map<String, String> packConstants,
-            PostVaryingLayout postVaryingLayout,
-            Set<String> atlasSamplers,
-            PackAlphaTestPlan alphaTestPlan
-    ) {
+    private static String convertFragment(FragmentConversionRequest request) {
+        String source = request.source();
+        Path sourceFile = request.sourceFile();
+        boolean geometryStage = request.geometryStage();
+        int[] geometrySamplerSlots = request.geometrySamplerSlots();
+        TerrainVaryingLayout terrainLayout = request.terrainLayout();
+        UniformRegistry.ProgramInterface interfacePlan = request.interfacePlan();
+        PostTargetPlan targetPlan = request.targetPlan();
+        GeometryOutputPlan geometryOutputPlan = request.geometryOutputPlan();
+        Map<String, String> packConstants = request.packConstants();
+        PostVaryingLayout postVaryingLayout = request.postVaryingLayout();
+        Set<String> atlasSamplers = request.atlasSamplers();
+        PackAlphaTestPlan alphaTestPlan = request.alphaTestPlan();
         try {
             boolean geometryInterface = interfacePlan != null
                     && (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
@@ -447,8 +463,7 @@ public final class LegacyGlslConverter {
             if (geometryOutputPlan != null && (!geometryStage || !geometryOutputPlan.executable())) {
                 throw new IllegalArgumentException("geometry output plan is outside the executable contract");
             }
-            PackAlphaTestPlan alpha = alphaTestPlan == null
-                    ? PackAlphaTestPlan.disabled() : alphaTestPlan;
+            PackAlphaTestPlan alpha = alphaTestPlan;
             String src = source;
             if (src == null) {
                 throw new IllegalArgumentException("pack fragment source is missing");
@@ -1129,9 +1144,10 @@ public final class LegacyGlslConverter {
     ) {
         try {
             String prepared = prepareSource(source, sourceFile);
-            return convertFragment(prepared, null, true, samplerSlots, particleLayout,
-                    interfacePlan, null, null, Map.of(), null, Set.of(),
-                    PackAlphaTestPlan.disabled());
+            return FragmentConversionRequest.of(prepared, null, true, samplerSlots)
+                    .withTerrainLayout(particleLayout)
+                    .withInterfacePlan(interfacePlan)
+                    .convert();
         } catch (RuntimeException ignored) {
             return null;
         }
@@ -1148,8 +1164,10 @@ public final class LegacyGlslConverter {
         try {
             String prepared = prepareSource(source, sourceFile);
             validateEntityFragmentVersion(prepared);
-            return convertFragment(prepared, null, true, samplerSlots, entityLayout, interfacePlan,
-                    null, null, Map.of(), null, Set.of(), PackAlphaTestPlan.disabled());
+            return FragmentConversionRequest.of(prepared, null, true, samplerSlots)
+                    .withTerrainLayout(entityLayout)
+                    .withInterfacePlan(interfacePlan)
+                    .convert();
         } catch (RuntimeException ignored) {
             return null;
         }
@@ -1278,8 +1296,10 @@ public final class LegacyGlslConverter {
             String source, Path sourceFile, int[] samplerSlots,
             TerrainVaryingLayout layout, UniformRegistry.ProgramInterface interfacePlan
     ) {
-        return convertFragment(source, sourceFile, true, samplerSlots, layout,
-                interfacePlan, null, null, Map.of(), null, Set.of(), PackAlphaTestPlan.disabled());
+        return FragmentConversionRequest.of(source, sourceFile, true, samplerSlots)
+                .withTerrainLayout(layout)
+                .withInterfacePlan(interfacePlan)
+                .convert();
     }
 
     public static boolean supportsModernTerrain(String source, String fragmentSource) {

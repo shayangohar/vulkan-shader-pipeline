@@ -834,8 +834,11 @@ public final class PackPipelines {
                 vertexSource = vertex.source();
                 terrainLayout = vertex.layout();
             }
-            String converted = LegacyGlslConverter.convertFragment(
-                    fragmentSource, prepared ? null : program.fragmentPath(), true, slots, terrainLayout, interfacePlan);
+            String converted = LegacyGlslConverter.FragmentConversionRequest
+                    .of(fragmentSource, prepared ? null : program.fragmentPath(), true, slots)
+                    .withTerrainLayout(terrainLayout)
+                    .withInterfacePlan(interfacePlan)
+                    .convert();
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -1008,9 +1011,11 @@ public final class PackPipelines {
                     .mapToInt(UniformRegistry.SamplerBinding::slot)
                     .toArray();
             int[] slots = shadowSamplerSlots(declaredSlots);
-            String converted = LegacyGlslConverter.convertFragment(
-                    fragmentSource, prepared ? null : program.fragmentPath(), true, slots,
-                    vertex.layout(), interfacePlan);
+            String converted = LegacyGlslConverter.FragmentConversionRequest
+                    .of(fragmentSource, prepared ? null : program.fragmentPath(), true, slots)
+                    .withTerrainLayout(vertex.layout())
+                    .withInterfacePlan(interfacePlan)
+                    .convert();
             if (converted == null) {
                 throw new IllegalStateException("legacy shadow fragment conversion failed");
             }

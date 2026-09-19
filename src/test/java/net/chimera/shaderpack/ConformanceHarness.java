@@ -155,9 +155,9 @@ public final class ConformanceHarness {
                 "m5.2 material varying layout was not emitted");
         assertTrue(converted.source().contains("inMaterialId"),
                 "m5.2 material input attribute was not emitted");
-        String convertedFragment = LegacyGlslConverter.convertFragment(
+        String convertedFragment = LegacyGlslConverter.FragmentConversionRequest.withAutoPlan(
                 terrainProgram.fragmentSource(), terrainProgram.fragmentPath(), true,
-                new int[] {0, 2}, converted.layout());
+                new int[] {0, 2}, converted.layout()).convert();
         assertTrue(convertedFragment != null && convertedFragment.contains("layout(location = 0) in"),
                 "m5.2 material fragment varying bridge failed");
 
@@ -235,8 +235,10 @@ public final class ConformanceHarness {
                 .filter(program -> program.name().equals("composite"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("m5.3 live composite source is missing"));
-        String converted = LegacyGlslConverter.convertFragment(
-                compositeProgram.fragmentSource(), compositeProgram.fragmentPath(), false, null, null, interfacePlan);
+        String converted = LegacyGlslConverter.FragmentConversionRequest
+                .of(compositeProgram.fragmentSource(), compositeProgram.fragmentPath(), false, null)
+                .withInterfacePlan(interfacePlan)
+                .convert();
         assertTrue(converted != null, "m5.3 live composite conversion failed");
         assertTrue(converted.contains("layout(binding = 0) uniform ChimeraPackUniforms"),
                 "m5.3 generated UBO is missing");
@@ -303,9 +305,9 @@ public final class ConformanceHarness {
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.POST);
         assertTrue(!interfacePlan.executable(), "m5.3 unsupported interface was accepted");
-        assertTrue(LegacyGlslConverter.convertFragment(
+        assertTrue(LegacyGlslConverter.FragmentConversionRequest.withAutoPlan(
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
-                pack.resolve("shaders/composite.fsh"), false, null) == null,
+                pack.resolve("shaders/composite.fsh"), false, null, null).convert() == null,
                 "m5.3 unsupported source converted");
         verifyM53Baseline(report, baselinePath, "unsupported_uniform");
     }
@@ -485,9 +487,12 @@ public final class ConformanceHarness {
         LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertTerrainVertex(
                 waterProgram.vertexSource(), waterProgram.vertexPath(), waterProgram.fragmentSource());
         assertTrue(vertex != null, "m5.5 water vertex conversion failed");
-        String convertedFragment = LegacyGlslConverter.convertFragment(
-                waterProgram.fragmentSource(), waterProgram.fragmentPath(), true,
-                new int[] {0, 2, 5}, vertex.layout(), interfacePlan);
+        String convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+                .of(waterProgram.fragmentSource(), waterProgram.fragmentPath(), true,
+                        new int[] {0, 2, 5})
+                .withTerrainLayout(vertex.layout())
+                .withInterfacePlan(interfacePlan)
+                .convert();
         assertTrue(convertedFragment != null, "m5.5 water fragment conversion failed");
         assertTrue(convertedFragment.contains("layout(binding = 1) uniform ChimeraTerrainUniforms"),
                 "m5.5 terrain UBO is missing");
@@ -554,10 +559,11 @@ public final class ConformanceHarness {
                 Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!interfacePlan.executable(), "m5.5 unsupported water interface was accepted");
-        assertTrue(LegacyGlslConverter.convertFragment(
-                Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
-                pack.resolve("shaders/gbuffers_water.fsh"), true, new int[] {0, 2}, null,
-                interfacePlan) == null,
+        assertTrue(LegacyGlslConverter.FragmentConversionRequest
+                .of(Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
+                        pack.resolve("shaders/gbuffers_water.fsh"), true, new int[] {0, 2})
+                .withInterfacePlan(interfacePlan)
+                .convert() == null,
                 "m5.5 unsupported water source converted");
         verifyM55Baseline(report, baselinePath, "unsupported_water");
     }
@@ -622,9 +628,12 @@ public final class ConformanceHarness {
         assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
                 "m5.4 shadow render-type input is missing");
 
-        String convertedFragment = LegacyGlslConverter.convertFragment(
-                shadowProgram.fragmentSource(), shadowProgram.fragmentPath(), true,
-                new int[] {0, 2}, vertex.layout(), interfacePlan);
+        String convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+                .of(shadowProgram.fragmentSource(), shadowProgram.fragmentPath(), true,
+                        new int[] {0, 2})
+                .withTerrainLayout(vertex.layout())
+                .withInterfacePlan(interfacePlan)
+                .convert();
         assertTrue(convertedFragment != null, "m5.4 shadow fragment conversion failed");
         assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
                 "m5.4 shadow atlas binding is missing");

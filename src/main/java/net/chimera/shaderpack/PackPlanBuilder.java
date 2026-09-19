@@ -339,36 +339,43 @@ public final class PackPlanBuilder {
                 }
             } else if (executable && program.name().equals("gbuffers_terrain")) {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
-                convertedFragment = LegacyGlslConverter.convertGeometryFragment(
-                        fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                        vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan,
-                        config == null ? Map.of() : config.shaderConstants(),
-                        PackResourcePlan.terrainAtlasSamplers(program.name(),
-                                interfacePlan.project("fragment", stage), config == null ? null : config.settings()),
-                        vertex != null ? alphaTestPlan : PackAlphaTestPlan.disabled());
+                convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+                        .of(fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots)
+                        .withTerrainLayout(vertexLayout)
+                        .withInterfacePlan(interfacePlan.project("fragment", stage))
+                        .withGeometryOutputPlan(geometryOutputPlan)
+                        .withPackConstants(config == null ? Map.of() : config.shaderConstants())
+                        .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(program.name(),
+                                interfacePlan.project("fragment", stage), config == null ? null : config.settings()))
+                        .withAlphaTestPlan(vertex != null ? alphaTestPlan : PackAlphaTestPlan.disabled())
+                        .convert();
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
                 }
             } else if (executable && program.name().equals("gbuffers_water")) {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
-                convertedFragment = LegacyGlslConverter.convertGeometryFragment(
-                        fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                        vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan,
-                        config == null ? Map.of() : config.shaderConstants(),
-                        PackResourcePlan.terrainAtlasSamplers(program.name(),
-                                interfacePlan.project("fragment", stage), config == null ? null : config.settings()),
-                        PackAlphaTestPlan.disabled());
+                convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+                        .of(fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots)
+                        .withTerrainLayout(vertexLayout)
+                        .withInterfacePlan(interfacePlan.project("fragment", stage))
+                        .withGeometryOutputPlan(geometryOutputPlan)
+                        .withPackConstants(config == null ? Map.of() : config.shaderConstants())
+                        .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(program.name(),
+                                interfacePlan.project("fragment", stage), config == null ? null : config.settings()))
+                        .convert();
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
                 }
             } else if (executable && program.name().equals("shadow")) {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));
-                convertedFragment = LegacyGlslConverter.convertFragment(
-                        fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots,
-                        vertexLayout, interfacePlan.project("fragment", stage),
-                        config == null ? Map.of() : config.shaderConstants());
+                convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+                        .of(fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots)
+                        .withTerrainLayout(vertexLayout)
+                        .withInterfacePlan(interfacePlan.project("fragment", stage))
+                        .withPackConstants(config == null ? Map.of() : config.shaderConstants())
+                        .convert();
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
