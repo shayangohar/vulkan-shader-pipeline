@@ -5,7 +5,6 @@ public enum PackResourceStatus {
     HOST_ALIAS,
     PACK_FILE,
     GAME_RESOURCE,
-    MATERIAL_ATLAS,
     /** A material map is always servable: a missing file resolves to the flat fallback at runtime. */
     MATERIAL_MAP,
     UNAVAILABLE,
