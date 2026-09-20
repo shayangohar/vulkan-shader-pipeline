@@ -79,6 +79,15 @@ public final class PackPostTargetsHarness {
                         feedback)),
                 "persistent target with a prior producer must not be reseeded");
 
+        // A target the pack clears every frame but reads before its first
+        // write still carries cross-frame state: the per-frame clear must
+        // skip it (seeded once at install instead), or temporal readers
+        // see clear-black instead of last frame.
+        TargetSpec clearedFeedback = new TargetSpec(2, 97, 16, 16, true,
+                new float[] {0, 0, 0, 0}, true, true, List.of());
+        assertTrue(PackTargetGraphPlan.requiresInitialSeed(clearedFeedback, List.of(feedback)),
+                "read-before-write target must seed even when the pack clears it");
+
         PackTemporalState frame = new PackTemporalState();
         frame.beginFrame(true);
         frame.seedCurrent(6); // Geometry material output, before the first post window.

@@ -211,6 +211,12 @@ public final class AlphaTestConformanceHarness {
             check(terrain.convertedFragment().contains("textureGrad("),
                     "BSL material terrain lost its explicit gradients");
             compile(terrain.convertedFragment());
+            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                    analysis.plan().programs(), analysis.config(), 2560, 1440, 8, 16384);
+            check(graph.target(2) != null && graph.target(2).persistent(),
+                    "BSL temporal target lost cross-frame persistence");
+            check(graph.target(0) != null && !graph.target(0).persistent(),
+                    "BSL geometry target must not persist across frames");
         } finally {
             restoreProperty("chimera.option.MATERIAL_FORMAT", previousFormat);
             restoreProperty("chimera.option.ADVANCED_MATERIALS", previousAdvanced);

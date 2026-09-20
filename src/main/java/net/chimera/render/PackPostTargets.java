@@ -203,7 +203,7 @@ public final class PackPostTargets {
                 if (index == 0 || !this.used[index]) {
                     continue;
                 }
-                if (target.clear()) {
+                if (target.clear() && !target.persistent()) {
                     VulkanImage image = imageFor(index, this.activeSide[index]);
                     clearImage(stack, commandBuffer, image, target.clearColorCopy());
                     this.valid[index] = true;

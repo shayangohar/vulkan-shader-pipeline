@@ -246,10 +246,30 @@ public final class PackTargetGraphPlan {
         }
 
         List<TargetSpec> finalTargets = new ArrayList<>();
+        // Geometry outputs always precede post in frame order, so a post
+        // read of one is never a cross-frame dependency.
+        Set<Integer> geometryWritten = new TreeSet<>();
+        if (programs != null) {
+            for (PackProgramPlan program : programs) {
+                if (program == null || program.geometryOutputPlan() == null
+                        || !program.executable() || !program.geometryOutputPlan().executable()) {
+                    continue;
+                }
+                geometryWritten.addAll(program.geometryOutputPlan().targetSlots());
+            }
+        }
         for (Map.Entry<Integer, TargetSpec> entry : preliminary.entrySet()) {
             TargetSpec source = entry.getValue();
+            // Target 0 is reseeded from the HDR identity source every frame
+            // and reinitialized by geometry, so graph-level persistence must
+            // not apply to it. Every other read-before-write target carries
+            // cross-frame state: the per-frame clear skips it and the install
+            // seed covers the first frame instead.
+            boolean persistent = source.persistent()
+                    || (source.index() != 0
+                    && hasReadBeforeWrite(source.index(), steps, geometryWritten));
             finalTargets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
-                    source.clear(), source.clearColorCopy(), source.persistent(),
+                    source.clear(), source.clearColorCopy(), persistent,
                     doubleTargets.getOrDefault(source.index(), false), source.deviations()));
         }
         boolean depth0 = false;
@@ -413,10 +433,22 @@ public final class PackTargetGraphPlan {
 
     /** Pure form used by the target-owner tests. */
     public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps) {
-        if (spec == null || !spec.persistent() || spec.clear()) {
+        if (spec == null || !spec.persistent()) {
             return false;
         }
-        boolean producerSeen = false;
+        return hasReadBeforeWrite(spec.index(), steps, Set.of());
+    }
+
+    /**
+     * True when a program reads the target before any program writes it in
+     * frame order. Such targets carry cross-frame state by construction:
+     * clearing them every frame destroys what their first reader expects.
+     *
+     * @param preProduced targets already produced before the steps run,
+     *                    such as geometry outputs that always precede post
+     */
+    static boolean hasReadBeforeWrite(int index, List<TargetStep> steps, Set<Integer> preProduced) {
+        boolean producerSeen = preProduced != null && preProduced.contains(index);
         boolean readBeforeProducer = false;
         for (TargetStep step : steps == null ? List.<TargetStep>of() : steps) {
             if (step == null) {
@@ -425,10 +457,10 @@ public final class PackTargetGraphPlan {
             if (!step.executable()) {
                 continue;
             }
-            if (!producerSeen && step.reads(spec.index())) {
+            if (!producerSeen && step.reads(index)) {
                 readBeforeProducer = true;
             }
-            if (step.writes(spec.index())) {
+            if (step.writes(index)) {
                 if (readBeforeProducer) {
                     return true;
                 }
