@@ -59,10 +59,12 @@ public final class M75ConformanceHarness {
                 "M7.5 stage-specific marker was not loaded");
         assertEquals("tex/override.png", marker.source(),
                 "M7.5 stage-specific declaration did not win");
+        // Iris texture stages cover numbered programs: composite1 is in the
+        // composite stage, so texture.composite.marker also wins there.
         assertTrue(globalMarker != null && globalMarker.status() == PackResourceStatus.PACK_FILE,
-                "M7.5 global marker was not loaded");
-        assertEquals("tex/custom.png", globalMarker.source(),
-                "M7.5 global custom texture source changed");
+                "M7.5 composite1 marker was not loaded");
+        assertEquals("tex/override.png", globalMarker.source(),
+                "M7.5 composite-stage declaration did not reach composite1");
         assertTrue(noise != null && noise.slot() == 7
                         && noise.status() == PackResourceStatus.PACK_FILE,
                 "M7.5 noisetex plan is not a pack file at slot 7");
@@ -134,6 +136,14 @@ public final class M75ConformanceHarness {
                 "M7.5 gaux4 alias");
         assertEquals(4, PackResourcePlan.targetIndex("gaux1"),
                 "M7.5 gaux target index");
+        // Iris texture stages: texture.<stage>.<sampler> covers numbered programs.
+        assertEquals("deferred", PackResourcePlan.textureStage("deferred1"), "M7.5 deferred stage");
+        assertEquals("composite", PackResourcePlan.textureStage("composite5"), "M7.5 composite stage");
+        assertEquals("composite", PackResourcePlan.textureStage("final"), "M7.5 final stage");
+        assertEquals("shadowcomp", PackResourcePlan.textureStage("shadowcomp1"), "M7.5 shadowcomp stage");
+        assertEquals("gbuffers", PackResourcePlan.textureStage("gbuffers_water"), "M7.5 gbuffers stage");
+        assertEquals("gbuffers", PackResourcePlan.textureStage("shadow"), "M7.5 shadow stage");
+        assertEquals(null, PackResourcePlan.textureStage("deferred_extra"), "M7.5 unknown stage");
     }
 
     private static void verifySnapshot(String snapshot) {

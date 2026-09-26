@@ -108,7 +108,12 @@ public final class PackResourcePlan {
         return new PackResourcePlan(bindings, declarations, deviations);
     }
 
-    /** Resolve only the live block atlas, honoring pack texture overrides. */
+    /**
+     * Resolve the live block atlas and its stitched material companions,
+     * honoring pack texture overrides. Terrain normals/specular share the
+     * atlas texel topology and UVs, so they take the same magnification
+     * reconstruction as the albedo (Iris samples all three nearest).
+     */
     static java.util.Set<String> terrainAtlasSamplers(String program,
             UniformRegistry.ProgramInterface iface, PackSettingsPlan settings) {
         if (iface == null || (iface.stage() != UniformRegistry.Stage.GEOMETRY
@@ -116,12 +121,14 @@ public final class PackResourcePlan {
         PackSettingsPlan resources = settings == null ? PackSettingsPlan.empty() : settings;
         java.util.Set<String> names = new TreeSet<>();
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
-            if (sampler.slot() != 0 || !sampler.glslType().equals("sampler2D")) continue;
+            if (!sampler.glslType().equals("sampler2D")) continue;
             PackResourceBinding binding = resolve(program, sampler, resources.resourceDeclarations(),
                     null, resources.propertyValues());
-            if (binding.kind() == PackResourceKind.TARGET
+            boolean albedo = sampler.slot() == 0
+                    && binding.kind() == PackResourceKind.TARGET
                     && binding.status() == PackResourceStatus.HOST_ALIAS
-                    && binding.resourceKey().equals("texture")) names.add(sampler.name());
+                    && binding.resourceKey().equals("texture");
+            if (albedo || binding.status() == PackResourceStatus.MATERIAL_MAP) names.add(sampler.name());
         }
         return java.util.Set.copyOf(names);
     }
@@ -138,8 +145,12 @@ public final class PackResourcePlan {
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
 
-        PackResourceDeclaration declaration = declarations.get("texture." + program + "." + name);
-        if (declaration == null) declaration = declarations.get("texture.*." + name);
+        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name);
+        String textureStage = textureStage(program);
+        if (declaration == null && textureStage != null) {
+            declaration = textureDeclaration(declarations, textureStage, name);
+        }
+        if (declaration == null) declaration = textureDeclaration(declarations, "*", name);
         if (declaration == null) declaration = declarations.get("customTexture." + name);
         if (declaration == null && name.equals("tex") && stageFor(program) == UniformRegistry.Stage.POST) {
             declaration = declarations.get("customTexture.textureAtlas");
@@ -326,6 +337,43 @@ public final class PackResourcePlan {
     public static Integer targetIndex(String sampler) {
         Matcher matcher = COLOR_TARGET.matcher(canonicalResource(sampler));
         return matcher.matches() ? Integer.parseInt(matcher.group(1)) : null;
+    }
+
+    /**
+     * {@code texture.<scope>.<sampler>} for this sampler or any alias of the
+     * same target: Iris overrides colortex7 and gaux4 together.
+     */
+    private static PackResourceDeclaration textureDeclaration(
+            Map<String, PackResourceDeclaration> declarations, String scope, String name) {
+        String prefix = "texture." + scope + ".";
+        PackResourceDeclaration exact = declarations.get(prefix + name);
+        if (exact != null) return exact;
+        String canonical = canonicalResource(name);
+        for (PackResourceDeclaration declaration : declarations.values()) {
+            if (declaration.key().startsWith(prefix)
+                    && canonicalResource(declaration.sampler()).equals(canonical)) {
+                return declaration;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Iris texture stage named by {@code texture.<stage>.<sampler>}. One stage
+     * covers its numbered programs (deferred1 reads texture.deferred.*); shadow
+     * programs share the gbuffers stage and final shares the composite stage.
+     */
+    static String textureStage(String program) {
+        if (program == null) return null;
+        for (String stage : List.of("begin", "shadowcomp", "prepare", "deferred", "composite")) {
+            if (program.startsWith(stage) && program.substring(stage.length()).matches("\\d*")) {
+                return stage;
+            }
+        }
+        if (program.equals("final")) return "composite";
+        if (program.startsWith("gbuffers_") || program.startsWith("dh_")
+                || program.equals("shadow") || program.startsWith("shadow_")) return "gbuffers";
+        return null;
     }
 
     private static UniformRegistry.Stage stageFor(String name) {

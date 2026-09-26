@@ -1,0 +1,7 @@
+{
+  "programs": [
+    { "name": "gbuffers_entities", "vertex": "gbuffers_entities.vsh", "fragment": "gbuffers_entities.fsh" },
+    { "name": "composite", "fragment": "composite.fsh" },
+    { "name": "final", "fragment": "final.fsh" }
+  ]
+}

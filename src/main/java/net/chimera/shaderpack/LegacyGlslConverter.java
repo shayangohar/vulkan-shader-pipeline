@@ -44,6 +44,15 @@ public final class LegacyGlslConverter {
     private static final Pattern ENTITY_VARYING_DECL = Pattern.compile(
             "(?m)^\\s*(?:(flat|noperspective)\\s+)?(varying|in|out)\\s+"
                     + "(float|vec2|vec3|vec4)\\s+(\\w+)\\s*;");
+    /**
+     * Legacy built-ins with token mappings in the entity vertex inputs
+     * table. Every other gl_ builtin fails closed with its own name.
+     */
+    private static final Set<String> ENTITY_SERVED_BUILTINS = Set.of(
+            "gl_Vertex", "gl_Color", "gl_MultiTexCoord0", "gl_MultiTexCoord1",
+            "gl_MultiTexCoord2", "gl_Normal", "gl_NormalMatrix", "gl_ModelViewMatrix",
+            "gl_ModelViewProjectionMatrix", "gl_ProjectionMatrix", "gl_TextureMatrix",
+            "gl_Position");
     private static final Pattern TERRAIN_ATTRIBUTE_DECL =
             Pattern.compile("(?m)\\battribute\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
     private static final Pattern SHADOW_ATTRIBUTE_DECL = Pattern.compile(
@@ -73,7 +82,32 @@ public final class LegacyGlslConverter {
             "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
     private static final Pattern CONSUMED_CONSTS =
-            Pattern.compile("(?m)^\\s*(?:const\\s+)?(?:int|float|bool|vec4)\\s+(?:colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)\\s*=\\s*[A-Za-z0-9+_.(), /-]+\\s*;\\s*(?://.*)?$");
+            Pattern.compile("(?m)^\\s*(?:const\\s+)?(?:int|float|bool|vec4)\\s+(colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)\\s*=\\s*[A-Za-z0-9+_.(), /-]+\\s*;\\s*(?://.*)?$");
+
+    /**
+     * Removes consumed metadata constants unless something reads them
+     * without a replacement. A referenced constant stays when no pack
+     * constant will be injected for it (BSL's shadowMapBias initializer
+     * reading shadowDistance); it goes when injection supplies the value,
+     * and dead ones always go.
+     */
+    private static String stripUnusedConsumedConsts(
+            String source, Map<String, String> packConstants) {
+        if (source == null || source.isBlank()) return source;
+        String checkSource = CONSUMED_CONSTS.matcher(source).replaceAll("");
+        Matcher matcher = CONSUMED_CONSTS.matcher(source);
+        StringBuffer output = new StringBuffer();
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            boolean injected = packConstants != null && packConstants.containsKey(name);
+            boolean referenced =
+                    GlslTokenRewriter.containsIdentifier(checkSource, name);
+            matcher.appendReplacement(output,
+                    !referenced || injected ? "" : Matcher.quoteReplacement(matcher.group(0)));
+        }
+        matcher.appendTail(output);
+        return output.toString();
+    }
     private static final Pattern KNOWN_LEGACY_EXTENSIONS = Pattern.compile(
             "(?im)^\\s*#extension\\s+GL_ARB_shader_texture_lod\\s*:\\s*(?:enable|require|disable)\\s*$\\r?\\n?");
     private static final Pattern MODERN_LAYOUT_DECL = Pattern.compile(
@@ -140,10 +174,21 @@ public final class LegacyGlslConverter {
     }
 
     /** Deterministic interface shared by the narrow terrain vertex and fragment bridge. */
-    public record TerrainVaryingLayout(Map<String, String> types, Map<String, Integer> locations) {
+    public record TerrainVaryingLayout(Map<String, String> types, Map<String, Integer> locations,
+            Map<String, String> qualifiers) {
+        public TerrainVaryingLayout(Map<String, String> types, Map<String, Integer> locations) {
+            this(types, locations, Map.of());
+        }
         public TerrainVaryingLayout {
             types = Collections.unmodifiableMap(new TreeMap<>(types));
             locations = Collections.unmodifiableMap(new TreeMap<>(locations));
+            qualifiers = Collections.unmodifiableMap(new TreeMap<>(qualifiers));
+        }
+
+        /** Interpolation qualifier carried from the authored declaration, or empty when smooth. */
+        public String qualifier(String name) {
+            String qualifier = qualifiers.get(name);
+            return qualifier == null ? "" : qualifier;
         }
 
         public int location(String name) {
@@ -367,7 +412,7 @@ public final class LegacyGlslConverter {
             converted = UniformRegistry.removeUniformDeclarations(rewritten.toString(), interfacePlan);
             converted = KNOWN_LEGACY_EXTENSIONS.matcher(converted).replaceAll("");
             converted = removePackMetadataConstants(converted);
-            converted = CONSUMED_CONSTS.matcher(converted).replaceAll("");
+            converted = stripUnusedConsumedConsts(converted, packConstants);
             converted = injectPackConstants(converted, packConstants);
             converted = expandSamplerAliases(converted, interfacePlan.samplers());
             converted = convertTextureCalls(converted);
@@ -493,7 +538,7 @@ public final class LegacyGlslConverter {
             }
 
             src = removePackMetadataConstants(src);
-            src = CONSUMED_CONSTS.matcher(src).replaceAll("");
+            src = stripUnusedConsumedConsts(src, packConstants);
             src = KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT) {
@@ -503,6 +548,12 @@ public final class LegacyGlslConverter {
                     || interfacePlan.stage() == UniformRegistry.Stage.HAND) {
                 src = removeEntityIdDeclarations(src, interfacePlan);
                 src = replaceEntityIdReferences(src, terrainLayout);
+            }
+            if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
+                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
+                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE) {
+                src = rewriteElytraFlyingBool(src, interfacePlan);
             }
             if (geometryStage && modern && geometryOutputPlan == null
                     && interfacePlan.stage() != UniformRegistry.Stage.SHADOW) {
@@ -876,6 +927,7 @@ public final class LegacyGlslConverter {
             Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
             if (shadowStage) {
                 inputReplacements.putAll(shadowAttributeInputReplacements(vertex));
+                inputReplacements.putAll(shadowMatrixBuiltinReplacements());
             }
             converted = GlslTokenRewriter.replaceIdentifiers(converted, inputReplacements);
             converted = converted.replaceAll(
@@ -903,9 +955,10 @@ public final class LegacyGlslConverter {
             }
             String effectivePreamble = shadowStage && !extendedShadow
                     ? SHADOW_VERTEX_PREAMBLE : vertexPreamble;
+            String body = shadowStage ? shadowClipRangeWrapper(converted) : converted;
             return new TerrainVertexConversion("#version 460\n"
                     + effectivePreamble + SHADOW_RENDER_STAGE_DEFINES
-                    + uniformBlock + converted, layout);
+                    + uniformBlock + body, layout);
         } catch (RuntimeException failure) {
             return null;
         }
@@ -919,6 +972,30 @@ public final class LegacyGlslConverter {
     ) {
         return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
                 MODERN_SHADOW_VERTEX_PREAMBLE, null, true, false);
+    }
+
+    /** Name the pack-authored shadow entry point keeps after the wrapper claims {@code main}. */
+    private static final String AUTHORED_SHADOW_ENTRY = "chimeraAuthoredShadowMain";
+    /** Converts the final legacy OpenGL clip range after the pack's authored vertex code runs. */
+    private static String shadowClipRangeWrapper(String source) {
+        return GlslTokenRewriter.replaceIdentifiers(source, Map.of("main", AUTHORED_SHADOW_ENTRY))
+                + "\nvoid main() {\n"
+                + "    " + AUTHORED_SHADOW_ENTRY + "();\n"
+                + "    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n"
+                + "}\n";
+    }
+
+    /**
+     * The shadow adapter's legacy built-ins describe the matrices used by the
+     * current shadow draw. Camera gbuffer matrices remain separately exposed
+     * through their Iris names.
+     */
+    private static Map<String, String> shadowMatrixBuiltinReplacements() {
+        return Map.of(
+                "gl_ModelViewMatrix", "shadowModelView",
+                "gl_NormalMatrix", "mat3(transpose(shadowModelViewInverse))",
+                "gl_ProjectionMatrix", "shadowProjection",
+                "gl_ModelViewProjectionMatrix", "MVP");
     }
 
     /** Converts legacy and simple compatibility shadow vertices with one plan. */
@@ -971,7 +1048,24 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                ENTITY_VERTEX_PREAMBLE, false, allowStorageBuffers);
+                ENTITY_VERTEX_PREAMBLE, false, allowStorageBuffers, List.of());
+    }
+
+    /**
+     * Entity vertex conversion that reports the first concrete failure.
+     * PackPlanBuilder records the reason alongside the generic bridge
+     * deviation instead of collapsing every failure into one code.
+     */
+    public static TerrainVertexConversion convertEntityVertexChecked(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
+        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
+                ENTITY_VERTEX_PREAMBLE, false, allowStorageBuffers, fragmentUniforms);
     }
 
     /** Converts the block-entity variant, which uses the host ModelOffset field. */
@@ -993,7 +1087,20 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                BLOCK_VERTEX_PREAMBLE, false, allowStorageBuffers);
+                BLOCK_VERTEX_PREAMBLE, false, allowStorageBuffers, List.of());
+    }
+
+    /** Block vertex conversion that reports the first concrete failure. */
+    public static TerrainVertexConversion convertBlockVertexChecked(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
+        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
+                BLOCK_VERTEX_PREAMBLE, false, allowStorageBuffers, fragmentUniforms);
     }
 
     /** Converts the first-person hand contract onto EXTENDED_PARTICLE. */
@@ -1015,7 +1122,20 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                HAND_VERTEX_PREAMBLE, true, allowStorageBuffers);
+                HAND_VERTEX_PREAMBLE, true, allowStorageBuffers, List.of());
+    }
+
+    /** Hand vertex conversion that reports the first concrete failure. */
+    public static TerrainVertexConversion convertHandVertexChecked(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
+        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
+                HAND_VERTEX_PREAMBLE, true, allowStorageBuffers, fragmentUniforms);
     }
 
     private static TerrainVertexConversion convertEntityVertex(
@@ -1025,10 +1145,36 @@ public final class LegacyGlslConverter {
             Map<String, Integer> sharedLocations,
             String vertexPreamble,
             boolean particleInputs,
-            boolean allowStorageBuffers
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
         try {
+            return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
+                    vertexPreamble, particleInputs, allowStorageBuffers, fragmentUniforms);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Entity vertex conversion that reports the first concrete failure
+     * instead of collapsing to null. PackPlanBuilder records the reason
+     * alongside the generic bridge deviation; capability predicates keep
+     * using the null-returning overloads.
+     */
+    private static TerrainVertexConversion convertEntityVertexOrThrow(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            String vertexPreamble,
+            boolean particleInputs,
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
             String src = prepareSource(source, sourceFile);
+            src = expandModernVaryingLists(src);
+            src = pruneUnreachableVertexFunctions(src);
             String stripped = stripComments(src);
             if (!ENTITY_VERSION.matcher(src).find()
                     || stripped.matches("(?s).*#version\\s+(?!120(?:e)?|130\\b)\\d+.*")) {
@@ -1039,15 +1185,33 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("entity vertex requires main and gl_Position");
             }
             String entityIdType = entityIdentifierType(stripped, fragmentSource);
-            rejectEntityVertexFeatures(removeEntityIdDeclarations(stripped), particleInputs,
+            // Catalog uniforms, legacy matrix built-ins, and stage-level
+            // flat/layout qualifiers in real entity sources are translated
+            // below; reject only what no adapter path can serve.
+            String beforeFeatures = removeEntityIdDeclarations(stripped);
+            rejectEntityVertexFeatures(
+                    stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
+                    particleInputs,
                     allowStorageBuffers);
 
             Map<String, String> vertexTypes = parseEntityVaryings(stripped, true);
-            Map<String, String> fragmentTypes = parseEntityVaryings(stripComments(fragmentSource), false);
+            String expandedFragment = expandModernVaryingLists(
+                    fragmentSource == null ? "" : stripComments(fragmentSource));
+            Map<String, String> fragmentTypes = parseEntityVaryings(expandedFragment, false);
+            Map<String, String> vertexQualifiers =
+                    parseEntityVaryingDeclarations(stripped, true).qualifiers();
+            Map<String, String> fragmentQualifiers =
+                    parseEntityVaryingDeclarations(expandedFragment, false).qualifiers();
             for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
                 String vertexType = vertexTypes.get(entry.getKey());
                 if (!entry.getValue().equals(vertexType)) {
                     throw new IllegalArgumentException("entity varying mismatch: " + entry.getKey());
+                }
+                String vertexQualifier = vertexQualifiers.getOrDefault(entry.getKey(), "");
+                String fragmentQualifier = fragmentQualifiers.getOrDefault(entry.getKey(), "");
+                if (!vertexQualifier.equals(fragmentQualifier)) {
+                    throw new IllegalArgumentException(
+                            "entity varying qualifier mismatch: " + entry.getKey());
                 }
             }
 
@@ -1066,19 +1230,28 @@ public final class LegacyGlslConverter {
                 locations.put(ENTITY_ID_VARYING, location++);
                 vertexTypes.put(ENTITY_ID_VARYING, entityIdType);
             }
-            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations);
+            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations,
+                    parseEntityVaryingDeclarations(stripped, true).qualifiers());
 
             String converted = VERSION_LINE.matcher(src).replaceAll("");
             converted = removeEntityIdDeclarations(converted);
             converted = removeEntityAttributes(converted);
             converted = replaceEntityVaryings(converted, layout, "out", true);
+            // Served and dead uniform declarations leave before identifier
+            // replacement: the replacement would otherwise rewrite names
+            // inside their own declarations into garbage.
+            converted = stripUnusableUniformDeclarations(converted, fragmentUniforms);
+            // Unused sampler declarations would fail Vulkan compilation:
+            // opaque uniforms require layout(binding) even when unread.
+            // Referenced samplers already failed loudly in rejection.
+            converted = stripUnreferencedSamplerDeclarations(converted);
             Map<String, String> inputs = particleInputs
                     ? Map.ofEntries(
                     Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
                     Map.entry("gl_Color", "Color"),
                     Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
                     Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2) / 256.0, 0.0, 1.0)"),
-                    Map.entry("mc_midTexCoord", "MidTexCoord"),
+                    Map.entry("mc_midTexCoord", midTexCoordValue(stripped)),
                     Map.entry("at_tangent", "Tangent"),
                     Map.entry("entityId", entityIdExpression(layout)))
                     : Map.ofEntries(
@@ -1088,28 +1261,69 @@ public final class LegacyGlslConverter {
                     Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV1), 0.0, 1.0)"),
                     Map.entry("gl_MultiTexCoord2", "vec4(vec2(UV2), 0.0, 1.0)"),
                     Map.entry("gl_Normal", "Normal.xyz"),
-                    Map.entry("mc_midTexCoord", "MidTexCoord"),
-                    Map.entry("at_tangent", "Tangent"),
+                    Map.entry("gl_NormalMatrix", "mat3(ModelViewMat)"),
+                    Map.entry("gl_ModelViewMatrix", "ModelViewMat"),
+                    Map.entry("gl_ModelViewProjectionMatrix", "chimeraEntityFtransform()"),
+                    Map.entry("gl_ProjectionMatrix", "ProjMat"),
+                    Map.entry("gbufferModelView", "ModelViewMat"),
+                    Map.entry("gbufferModelViewInverse", "chimeraEntityInverseModelView()"),
+                    Map.entry("mc_midTexCoord", midTexCoordValue(stripped)),
+                    Map.entry("at_tangent", "chimeraEntityTangentValue()"),
+                    Map.entry("Tangent", "chimeraEntityTangentValue()"),
+                    Map.entry("isElytraFlying", "(chimeraIsElytraFlying != 0)"),
                     Map.entry("entityId", entityIdExpression(layout)));
+            // ProjMat and gl_ProjectionMatrix belong to the host raster path.
+            // Iris gbufferProjection uniforms stay in the shared pack UBO so
+            // they use the legacy clip-depth convention instead.
             converted = GlslTokenRewriter.replaceIdentifiers(converted, inputs);
+            converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*[01]\\s*\\]", "mat4(1.0)");
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraEntityFtransform()");
             if (entityIdType != null) {
                 converted = injectEntityIdAssignment(converted);
             }
-            if (Pattern.compile("(?m)^\\s*(?:attribute|varying|in|out)\\s+")
-                    .matcher(stripComments(converted)).find()) {
-                throw new IllegalArgumentException("entity declaration was not consumed");
+            Matcher leftoverDeclaration = Pattern.compile("(?m)^\\s*(?:attribute|varying|in|out)\\s+.*$")
+                    .matcher(stripComments(converted));
+            if (leftoverDeclaration.find()) {
+                String line = leftoverDeclaration.group().trim();
+                throw new IllegalArgumentException("entity declaration was not consumed: "
+                        + line.substring(0, Math.min(80, line.length())));
             }
             String entityIdVarying = entityIdType == null ? ""
                     : "layout(location = " + layout.location(ENTITY_ID_VARYING)
                     + ") flat out uint " + ENTITY_ID_VARYING + ";\n";
+            String cameraBlock = entityCameraUniformBlock(converted, fragmentUniforms);
             return new TerrainVertexConversion("#version 460\n" + vertexPreamble
-                    + entityIdVarying + converted,
+                    + entityIdVarying + cameraBlock + converted,
                     layout);
-        } catch (Exception e) {
-            return null;
+    }
+
+    /**
+     * Live uniforms for the entity vertex path. The converted body keeps
+     * its authored references; this emits the same fragment uniform block
+     * so the shared pack buffer supplies live values at identical offsets.
+     * Emitted whenever the body references any served member (cameraPosition
+     * is the common case, not the only one). Fails when a referenced name
+     * has no live uniform behind it instead of falling back to a placeholder.
+     */
+    private static String entityCameraUniformBlock(
+            String converted,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
+        if (fragmentUniforms == null) {
+            fragmentUniforms = List.of();
         }
+        boolean referenced = false;
+        for (UniformRegistry.UniformDeclaration uniform : fragmentUniforms) {
+            if (GlslTokenRewriter.containsIdentifier(converted, uniform.name())) {
+                referenced = true;
+                break;
+            }
+        }
+        if (!referenced) {
+            return "";
+        }
+        return entityUniformBlock(fragmentUniforms);
     }
 
     /** Converts the legacy particle vertex contract onto DefaultVertexFormat.PARTICLE. */
@@ -1142,17 +1356,30 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout particleLayout,
             UniformRegistry.ProgramInterface interfacePlan
     ) {
+        return convertParticleFragment(source, sourceFile, samplerSlots,
+                particleLayout, interfacePlan, null);
+    }
+
+    /** Particle fragment conversion carrying the authored geometry output plan. */
+    public static String convertParticleFragment(
+            String source,
+            Path sourceFile,
+            int[] samplerSlots,
+            TerrainVaryingLayout particleLayout,
+            UniformRegistry.ProgramInterface interfacePlan,
+            GeometryOutputPlan geometryOutputPlan
+    ) {
         try {
             String prepared = prepareSource(source, sourceFile);
             return FragmentConversionRequest.of(prepared, null, true, samplerSlots)
                     .withTerrainLayout(particleLayout)
                     .withInterfacePlan(interfacePlan)
+                    .withGeometryOutputPlan(geometryOutputPlan)
                     .convert();
         } catch (RuntimeException ignored) {
             return null;
         }
     }
-
     /** Converts an entity fragment with the shared varying and descriptor rules. */
     public static String convertEntityFragment(
             String source,
@@ -1161,12 +1388,26 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout entityLayout,
             UniformRegistry.ProgramInterface interfacePlan
     ) {
+        return convertEntityFragment(source, sourceFile, samplerSlots, entityLayout,
+                interfacePlan, null);
+    }
+
+    /** Entity fragment conversion carrying the authored geometry output plan. */
+    public static String convertEntityFragment(
+            String source,
+            Path sourceFile,
+            int[] samplerSlots,
+            TerrainVaryingLayout entityLayout,
+            UniformRegistry.ProgramInterface interfacePlan,
+            GeometryOutputPlan geometryOutputPlan
+    ) {
         try {
             String prepared = prepareSource(source, sourceFile);
             validateEntityFragmentVersion(prepared);
             return FragmentConversionRequest.of(prepared, null, true, samplerSlots)
                     .withTerrainLayout(entityLayout)
                     .withInterfacePlan(interfacePlan)
+                    .withGeometryOutputPlan(geometryOutputPlan)
                     .convert();
         } catch (RuntimeException ignored) {
             return null;
@@ -1586,7 +1827,7 @@ public final class LegacyGlslConverter {
                 || stage == UniformRegistry.Stage.PARTICLE
                 || stage == UniformRegistry.Stage.SKY
                 || stage == UniformRegistry.Stage.CLOUD) {
-            return replaceEntityVaryings(src, terrainLayout, "in", false);
+            return replaceEntityVaryings(expandModernVaryingLists(src), terrainLayout, "in", false);
         }
         if (src.contains("#version 460")) {
             Matcher modern = MODERN_TERRAIN_INPUT_DECL.matcher(src);
@@ -1894,15 +2135,8 @@ public final class LegacyGlslConverter {
         StringBuilder out = new StringBuilder();
         int last = 0;
         while (matcher.find()) {
-            String qualifier = matcher.group(2);
             String type = matcher.group(3);
             String name = matcher.group(4);
-            boolean declarationApplies = vertexStage
-                    ? qualifier.equals("varying") || qualifier.equals("out")
-                    : qualifier.equals("varying") || qualifier.equals("in");
-            if (!declarationApplies) {
-                continue;
-            }
             if (!layout.types().containsKey(name) || !layout.types().get(name).equals(type)) {
                 throw new IllegalArgumentException("entity varying is not in the shared layout: " + name);
             }
@@ -1914,12 +2148,40 @@ public final class LegacyGlslConverter {
                 continue;
             }
             out.append(source, last, matcher.start());
+            String qualifier = layout.qualifier(name);
             out.append("layout(location = ").append(layout.location(name)).append(") ")
-                    .append(direction).append(' ').append(type).append(' ').append(name).append(';');
+                    .append(direction).append(' ');
+            if (!qualifier.isEmpty()) {
+                out.append(qualifier).append(' ');
+            }
+            out.append(type).append(' ').append(name).append(';');
             last = matcher.end();
         }
         out.append(source, last, source.length());
         return out.toString();
+    }
+
+    /**
+     * Rewrites the boolean Iris isElytraFlying uniform onto the live int
+     * catalog field. Pack sources read it as {@code !isElytraFlying}, which
+     * VulkanMod's admitted int UBO type cannot express, so the negation
+     * becomes an integer comparison and other uses cast to bool.
+     */
+    private static String rewriteElytraFlyingBool(
+            String source, UniformRegistry.ProgramInterface interfacePlan
+    ) {
+        if (source == null || !GlslTokenRewriter.containsIdentifier(source, "isElytraFlying")) {
+            return source;
+        }
+        boolean live = interfacePlan != null && interfacePlan.executableUniforms().stream()
+                .anyMatch(uniform -> uniform.name().equals("isElytraFlying"));
+        if (!live) {
+            return source;
+        }
+        String result = source.replaceAll(
+                "(?s)\\b!\\s*isElytraFlying\\b", "chimeraIsElytraFlying == 0");
+        return GlslTokenRewriter.replaceIdentifiers(result,
+                Map.of("isElytraFlying", "(chimeraIsElytraFlying != 0)"));
     }
 
     private static String removeEntityIdDeclarations(String source) {
@@ -1956,11 +2218,126 @@ public final class LegacyGlslConverter {
     }
 
     private static String removeEntityAttributes(String source) {
+        // The trailing class eats spaces and tabs but never newlines: an
+        // eager \s* would swallow the next line's indentation and hide the
+        // following declaration from the ^ anchor, silently keeping every
+        // second consecutive attribute.
         Matcher matcher = Pattern.compile(
                 "(?m)^\\s*(?:attribute|in)\\s+(?:float|vec2|vec4)\\s+"
-                        + "(?:mc_midTexCoord|at_tangent)\\s*;\\s*")
+                        + "(?:mc_Entity|mc_midTexCoord|at_tangent|Tangent)[ \\t]*;[ \\t]*")
                 .matcher(source == null ? "" : source);
         return matcher.replaceAll("");
+    }
+
+    /**
+     * Removes value-type uniform declarations the pipeline can already
+     * serve or safely ignore: every declarator is either served through
+     * the shared pack uniform block (a fragment-list member) or never
+     * referenced outside declarations. Initializers do not protect a
+     * declaration. Referenced unknowns stay visible so rejection names
+     * the first one instead of failing at shaderc.
+     */
+    private static String stripUnusableUniformDeclarations(
+            String source, List<UniformRegistry.UniformDeclaration> fragmentUniforms) {
+        if (source == null || source.isBlank()) return source;
+        Set<String> served = new TreeSet<>();
+        if (fragmentUniforms != null) {
+            for (UniformRegistry.UniformDeclaration uniform : fragmentUniforms) {
+                served.add(uniform.name());
+            }
+        }
+        Pattern declarations = Pattern.compile(
+                "(?m)^\\s*uniform\\s+(?:highp|mediump|lowp\\s+)?"
+                        + "(?:bool|int|float|vec[234]|ivec[234]|mat[234])\\s+([^;]+);\\s*$");
+        Matcher matcher = declarations.matcher(source);
+        StringBuffer stripped = new StringBuffer();
+        while (matcher.find()) {
+            boolean removable = true;
+            for (String name : declaratorNames(matcher.group(1))) {
+                if (name == null || !served.contains(name)) {
+                    removable = false;
+                    break;
+                }
+            }
+            matcher.appendReplacement(stripped, removable ? "" : Matcher.quoteReplacement(matcher.group(0)));
+        }
+        matcher.appendTail(stripped);
+        String withoutServed = stripped.toString();
+        String checkSource = declarations.matcher(withoutServed).replaceAll("");
+        Matcher remaining = declarations.matcher(withoutServed);
+        StringBuffer output = new StringBuffer();
+        while (remaining.find()) {
+            boolean referenced = false;
+            for (String name : declaratorNames(remaining.group(1))) {
+                if (name != null && GlslTokenRewriter.containsIdentifier(checkSource, name)) {
+                    referenced = true;
+                    break;
+                }
+            }
+            remaining.appendReplacement(output,
+                    referenced ? Matcher.quoteReplacement(remaining.group(0)) : "");
+        }
+        remaining.appendTail(output);
+        return output.toString();
+    }
+
+    /**
+     * Drops functions the vertex main never reaches so dead library code
+     * cannot ghost-reference samplers or uniforms into the feature checks.
+     * Best-effort: an unanalyzable source keeps its dead code and fails
+     * loudly downstream instead of being rewritten on a guess.
+     */
+    private static String pruneUnreachableVertexFunctions(String src) {
+        try {
+            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(src);
+            if (!usage.successful()) {
+                return src;
+            }
+            return GlslTokenRewriter.removeUnreachableFunctions(src, usage);
+        } catch (RuntimeException e) {
+            return src;
+        }
+    }
+
+    /** Plain declarator names from a uniform declaration list, or null entries for exotic forms. */
+    private static List<String> declaratorNames(String declarators) {
+        List<String> names = new ArrayList<>();
+        for (String declarator : declarators.split(",")) {
+            String name = declarator.trim();
+            int equals = name.indexOf('=');
+            if (equals >= 0) name = name.substring(0, equals).trim();
+            names.add(name.matches("[A-Za-z_]\\w*") ? name : null);
+        }
+        return names;
+    }
+
+    /**
+     * Removes sampler declarations nothing reads. Vulkan requires
+     * layout(binding) on every opaque uniform, so even a dead sampler
+     * declaration fails compilation. Referenced samplers fail loudly in
+     * rejection instead; layout-qualified lines are never touched.
+     */
+    private static String stripUnreferencedSamplerDeclarations(String source) {
+        if (source == null || source.isBlank()) return source;
+        Matcher matcher = Pattern.compile(
+                "(?m)^\\s*uniform\\s+(?:[iu]?sampler\\w*|u?i?image\\w*)\\s+([^;]+);\\s*$")
+                .matcher(source);
+        StringBuffer output = new StringBuffer();
+        while (matcher.find()) {
+            String checkSource = source.substring(0, matcher.start())
+                    + source.substring(matcher.end());
+            boolean referenced = false;
+            for (String name : declaratorNames(matcher.group(1))) {
+                if (name != null && GlslTokenRewriter.containsIdentifier(checkSource, name)) {
+                    referenced = true;
+                    break;
+                }
+            }
+            matcher.appendReplacement(output, referenced
+                    ? Matcher.quoteReplacement(matcher.group(0)) : "");
+        }
+        matcher.appendTail(output);
+        return output.toString();
     }
 
     private static String entityIdentifierType(String vertexSource, String fragmentSource) {
@@ -1978,6 +2355,17 @@ public final class LegacyGlslConverter {
             return "int";
         }
         return null;
+    }
+
+    /**
+     * Mid-texture coordinates arrive as a host vec2. A vec4-authored
+     * declaration (BSL advanced materials) keeps matrix-multiplication
+     * shape through an explicit constructor; vec2 uses the value directly.
+     */
+    private static String midTexCoordValue(String strippedSource) {
+        boolean vec4 = Pattern.compile("(?m)^\\s*(?:attribute|in)\\s+vec4\\s+mc_midTexCoord\\s*;")
+                .matcher(strippedSource).find();
+        return vec4 ? "vec4(MidTexCoord, 0.0, 1.0)" : "MidTexCoord";
     }
 
     private static String entityIdExpression(TerrainVaryingLayout layout) {
@@ -2039,7 +2427,16 @@ public final class LegacyGlslConverter {
     }
 
     private static Map<String, String> parseEntityVaryings(String source, boolean vertexStage) {
+        return parseEntityVaryingDeclarations(source, vertexStage).types();
+    }
+
+    /** Varying types plus their authored interpolation qualifiers (flat/noperspective or empty). */
+    private record EntityVaryingDeclarations(Map<String, String> types, Map<String, String> qualifiers) {}
+
+    private static EntityVaryingDeclarations parseEntityVaryingDeclarations(
+            String source, boolean vertexStage) {
         Map<String, String> result = new TreeMap<>();
+        Map<String, String> qualifiers = new TreeMap<>();
         Matcher matcher = ENTITY_VARYING_DECL.matcher(source == null ? "" : source);
         while (matcher.find()) {
             String qualifier = matcher.group(2);
@@ -2051,6 +2448,7 @@ public final class LegacyGlslConverter {
             }
             String type = matcher.group(3);
             String name = matcher.group(4);
+            String interpolation = matcher.group(1) == null ? "" : matcher.group(1);
             if (!vertexStage && !containsIdentifier(
                     source.substring(0, matcher.start()) + source.substring(matcher.end()), name)) {
                 continue;
@@ -2059,8 +2457,13 @@ public final class LegacyGlslConverter {
             if (previous != null && !previous.equals(type)) {
                 throw new IllegalArgumentException("entity varying declared with two types: " + name);
             }
+            String previousQualifier = qualifiers.putIfAbsent(name, interpolation);
+            if (previousQualifier != null && !previousQualifier.equals(interpolation)) {
+                throw new IllegalArgumentException(
+                        "entity varying declared with two interpolation qualifiers: " + name);
+            }
         }
-        return result;
+        return new EntityVaryingDeclarations(result, qualifiers);
     }
 
     private static String terrainEntityType(String source) {
@@ -2113,9 +2516,52 @@ public final class LegacyGlslConverter {
     private static void rejectEntityVertexFeatures(
             String source, boolean particleInputs, boolean allowStorageBuffers
     ) {
-        if (source.matches("(?s).*\\b(?:uniform|gl_NormalMatrix|gl_ModelViewMatrix|"
-                + "gl_ProjectionMatrix|gl_ModelViewProjectionMatrix|gl_TextureMatrix|"
-                + "image\\w*|geometry|tessellation|compute)\\b.*")) {
+        // Served and dead uniform declarations are stripped before this
+        // check, so a remaining value-type uniform names a referenced
+        // custom with no adapter. Matrix and texture built-ins below have
+        // token mappings in the inputs table.
+        Matcher leftoverUniform = Pattern.compile(
+                "(?m)^\\s*uniform\\s+(?:highp|mediump|lowp\\s+)?(?:bool|int|float|vec[234]|ivec[234]|mat[234])\\s+"
+                        + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*;").matcher(source);
+        while (leftoverUniform.find()) {
+            String checkSource = source.substring(0, leftoverUniform.start())
+                    + source.substring(leftoverUniform.end());
+            for (String declarator : leftoverUniform.group(1).split(",")) {
+                String name = declarator.trim();
+                if (GlslTokenRewriter.containsIdentifier(checkSource, name)) {
+                    throw new IllegalArgumentException(
+                            "unsupported entity vertex uniform: " + name);
+                }
+            }
+        }
+        Matcher vertexSampler = Pattern.compile(
+                "(?m)^\\s*uniform\\s+(?:[iu]?sampler\\w*|u?i?image\\w*)\\s+"
+                        + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*;\\s*$").matcher(source);
+        StringBuffer keptSamplers = new StringBuffer();
+        while (vertexSampler.find()) {
+            String checkSource = source.substring(0, vertexSampler.start())
+                    + source.substring(vertexSampler.end());
+            boolean referenced = false;
+            for (String declarator : vertexSampler.group(1).split(",")) {
+                if (GlslTokenRewriter.containsIdentifier(checkSource, declarator.trim())) {
+                    referenced = true;
+                    break;
+                }
+            }
+            if (referenced) {
+                String first = vertexSampler.group(1).split(",")[0].trim();
+                throw new IllegalArgumentException(
+                        "unsupported entity vertex sampler: " + first);
+            }
+        }
+        Matcher builtin = Pattern.compile("\\bgl_[A-Za-z]\\w*\\b").matcher(source);
+        while (builtin.find()) {
+            if (!ENTITY_SERVED_BUILTINS.contains(builtin.group())) {
+                throw new IllegalArgumentException(
+                        "unsupported entity vertex builtin: " + builtin.group());
+            }
+        }
+        if (source.matches("(?s).*\\b(?:image\\w*|geometry|tessellation|compute)\\b.*")) {
             throw new IllegalArgumentException("unsupported entity vertex feature");
         }
         if (!allowStorageBuffers && source.matches("(?s).*\\bbuffer\\b.*")) {
@@ -2128,20 +2574,29 @@ public final class LegacyGlslConverter {
             String name = attributes.group(3);
             boolean supported = (name.equals("entityId")
                     && (type.equals("float") || type.equals("int")))
-                    || (name.equals("mc_midTexCoord") && type.equals("vec2"))
-                    || (name.equals("at_tangent") && type.equals("vec4"));
+                    || (name.equals("mc_midTexCoord") && (type.equals("vec2") || type.equals("vec4")))
+                    || (name.equals("at_tangent") && type.equals("vec4"))
+                    // Iris capital-T tangent names the same host input.
+                    || (name.equals("Tangent") && type.equals("vec4"))
+                    // Real packs declare standard Iris attributes the active
+                    // body may not use; declared-but-unused is acceptable.
+                    || name.equals("mc_Entity") && type.equals("vec4");
             if (!supported) {
                 throw new IllegalArgumentException("unsupported entity attribute: " + name);
             }
         }
         if (source.matches("(?s).*\\b(attribute|in)\\b.*")
                 && !source.matches("(?s).*\\b(attribute|in)\\s+(?:float|vec2|vec4)\\s+"
-                + "(?:entityId|mc_midTexCoord|at_tangent)\\s*;.*")) {
+                + "(?:entityId|mc_midTexCoord|at_tangent|mc_Entity)\\s*;.*")) {
             throw new IllegalArgumentException("unsupported entity attribute declaration");
         }
-        if (source.matches("(?s).*\\b(?:layout|flat|noperspective)\\b.*")) {
-            // Simple version 130 is accepted, but pack-authored explicit layouts
-            // would conflict with the generated locations.
+        // Simple version 130 is accepted, and flat/noperspective survive
+        // on recognized varying declarations via the shared layout.
+        // Pack-authored explicit layouts would conflict with the generated
+        // locations, and interpolation qualifiers anywhere else have no
+        // adapter path.
+        if (ENTITY_VARYING_DECL.matcher(source).replaceAll(" ")
+                .matches("(?s).*\\b(?:layout|flat|noperspective)\\b.*")) {
             throw new IllegalArgumentException("entity vertex layout is fixed by Chimera");
         }
         if (particleInputs && source.matches("(?s).*\\b(?:gl_Normal|gl_MultiTexCoord2)\\b.*")) {
@@ -2793,7 +3248,7 @@ public final class LegacyGlslConverter {
             layout(location = 5) in vec3 Normal;
             layout(location = 6) in uvec4 EntityIds;
             layout(location = 7) in vec2 MidTexCoord;
-            layout(location = 8) in vec4 Tangent;
+            layout(location = 8) in vec4 ChimeraPackedTangent;
 
             vec4 chimeraEntityVertexValue() {
                 return vec4(Position, 1.0);
@@ -2801,6 +3256,35 @@ public final class LegacyGlslConverter {
 
             vec4 chimeraEntityFtransform() {
                 return ProjMat * ModelViewMat * chimeraEntityVertexValue();
+            }
+
+            mat4 chimeraEntityInverseModelView() {
+                return inverse(ModelViewMat);
+            }
+
+            vec3 chimeraEntityNormalValue() {
+                float lengthSquared = dot(Normal, Normal);
+                return lengthSquared > 1.0e-8
+                        ? Normal * inversesqrt(lengthSquared) : vec3(0.0, 1.0, 0.0);
+            }
+
+            vec4 chimeraEntityTangentValue() {
+                vec3 normal = chimeraEntityNormalValue();
+                vec3 candidate = ChimeraPackedTangent.xyz
+                        - normal * dot(ChimeraPackedTangent.xyz, normal);
+                float lengthSquared = dot(candidate, candidate);
+                if (!(lengthSquared > 1.0e-8)) {
+                    vec3 absoluteNormal = abs(normal);
+                    vec3 axis = absoluteNormal.x <= absoluteNormal.y
+                            && absoluteNormal.x <= absoluteNormal.z
+                            ? vec3(1.0, 0.0, 0.0)
+                            : (absoluteNormal.y <= absoluteNormal.z
+                            ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0));
+                    candidate = cross(axis, normal);
+                    lengthSquared = dot(candidate, candidate);
+                }
+                float handedness = ChimeraPackedTangent.w < 0.0 ? -1.0 : 1.0;
+                return vec4(candidate * inversesqrt(lengthSquared), handedness);
             }
 
             """;
@@ -3050,7 +3534,6 @@ public final class LegacyGlslConverter {
                 "\\bgl_TextureMatrix\\s*\\[\\s*\\d+\\s*\\]", "mat4(1.0)");
         return GlslTokenRewriter.replaceIdentifiers(result,
                 Map.of(
-                        "gl_NormalMatrix", "mat3(1.0)",
                         // Vulkan GLSL exposes the vertex invocation index as
                         // gl_VertexIndex.  Iris legacy shadow code commonly
                         // uses gl_VertexID for quad/voxel producer gating.

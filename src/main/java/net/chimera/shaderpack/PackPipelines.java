@@ -98,7 +98,10 @@ public final class PackPipelines {
                 plan.convertedVertex() == null ? fixedVertex : plan.convertedVertex());
     }
 
-    private static PreparedPipeline prepare(PackProgramPlan plan, PackAdvancedResourcePlan resources,
+    /** Package-visible preparation seam: builds sources, descriptors, and the
+     * image manifest without allocating a native pipeline, so headless gates
+     * can exercise the exact descriptor-contract layer runtime installs. */
+    static PreparedPipeline prepare(PackProgramPlan plan, PackAdvancedResourcePlan resources,
             UniformRegistry.Stage stage, String vertex) {
         if (plan.interfacePlan() == null || vertex == null || plan.convertedFragment() == null) {
             throw new PreparationFailure("source-projection", "STAGE_SOURCE_MISSING");
@@ -237,9 +240,17 @@ public final class PackPipelines {
             int[] samplerSlots,
             String convertedVertex,
             String convertedFragment,
+            GeometryOutputPlan outputPlan,
             ProgramImageBindingManifest imageBindings
     ) {
-        public PackEntity { java.util.Objects.requireNonNull(imageBindings); }
+        public PackEntity {
+            java.util.Objects.requireNonNull(imageBindings);
+        }
+
+        /** True when the pipeline writes multiple authored color targets. */
+        public boolean requiresDynamicAttachments() {
+            return outputPlan != null && outputPlan.executable() && outputPlan.requiresMrt();
+        }
     }
 
     /** A successfully built host particle pipeline plus its sampler slots. */
@@ -629,19 +640,34 @@ public final class PackPipelines {
             addStorageBufferDescriptors(builder, plan.name(), advancedResources);
             addStorageImageDescriptors(builder, plan.name(), advancedResources);
             addAdvancedSamplerDescriptors(builder, plan.name(), advancedResources);
+            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
+            boolean dynamicMrt = outputPlan != null && outputPlan.executable()
+                    && outputPlan.requiresMrt();
+            if (dynamicMrt) {
+                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments());
+            }
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
             verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource, fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
-            GraphicsPipeline pipeline = createNative(builder, imageBindings);
+            GraphicsPipeline pipeline;
+            try {
+                pipeline = createNative(builder, imageBindings);
+            } finally {
+                if (dynamicMrt) MrtPipelineContext.end();
+            }
+            if (dynamicMrt) {
+                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray());
+            }
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
                     buffer.setUseGlobalBuffer(true);
                 }
             }
-            return new PackEntity(pipeline, slots, vertexSource, fragmentSource, imageBindings);
+            return new PackEntity(pipeline, slots, vertexSource, fragmentSource,
+                    outputPlan, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(plan.name(), e);
+            logBuildFailure(pipelineName, e);
             return null;
         }
     }
@@ -1152,14 +1178,25 @@ public final class PackPipelines {
             config = new PipelineConfig(parsed.shaderPaths, parsed.ubs, images, parsed.pushConstantsInfo);
         } else {
             PipelineConfig.Builder builder = PipelineConfig.builder()
-                    .addUB(PipelineConfig.UB.builder(0, VK_SHADER_STAGE_VERTEX_BIT)
+                    .addUB(PipelineConfig.UB.builder(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
+                                    VK_SHADER_STAGE_VERTEX_BIT)
                             .addUniform("mat4", "ModelViewMat").addUniform("vec4", "ColorModulator")
                             .addUniform("vec3", "ModelOffset").addUniform("mat4", "TextureMat").build())
-                    .addUB(PipelineConfig.UB.builder(1, VK_SHADER_STAGE_VERTEX_BIT)
+                    .addUB(PipelineConfig.UB.builder(UniformRegistry.PROJECTION_BINDING,
+                            VK_SHADER_STAGE_VERTEX_BIT)
                             .addUniform("mat4", "ProjMat").build());
             boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
             if (!iface.executableUniforms().isEmpty()) {
-                var uniforms = PipelineConfig.UB.builder(2, VK_SHADER_STAGE_FRAGMENT_BIT);
+                // Entity-family vertex shaders may declare the same pack
+                // uniform block the fragment uses (live cameraPosition). The
+                // buffer is shared, so the binding must be visible to both
+                // stages whenever the converted vertex actually declares it.
+                boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
+                        .contains("layout(binding = 2) uniform ChimeraEntityUniforms");
+                int uniformStages = vertexUniforms
+                        ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                        : VK_SHADER_STAGE_FRAGMENT_BIT;
+                var uniforms = PipelineConfig.UB.builder(2, uniformStages);
                 for (var uniform : iface.executableUniforms()) uniforms.addUniform(uniform.glslType(), uniform.name());
                 builder.addUB(uniforms.build());
             } else if (sky) {
@@ -1170,7 +1207,14 @@ public final class PackPipelines {
                     base + index, "sampler2D", "Sampler" + slots[index], slots[index]);
             config = builder.build();
         }
-        return new OrdinaryDescriptorContract(config, ordinaryResources(config, iface));
+        // A guarded family contract owns the host transform blocks at bindings
+        // 0 and 1, so those two blocks must carry the host semantic names for
+        // the bridge's name-based lookups.
+        boolean familyContract = stage != UniformRegistry.Stage.SHADOW
+                && stage != UniformRegistry.Stage.GEOMETRY
+                && stage != UniformRegistry.Stage.TRANSLUCENT
+                && stage != UniformRegistry.Stage.POST;
+        return new OrdinaryDescriptorContract(config, ordinaryResources(config, iface), familyContract);
     }
 
     private static ProgramImageBindingManifest legacyImageBindings(PipelineConfig config,

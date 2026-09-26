@@ -678,7 +678,8 @@ public final class PackAdvancedResourcePlan {
                 shadersDir, plan.resolution().selectedSourceFolder(), images, deviations,
                 computeMacros,
                 PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
-                graphicsProducedImages);
+                graphicsProducedImages,
+                plan.settings().runtimeSettings().customDescriptors());
         ComputeSpec shadowCompute = compute.get("shadowcomp");
         boolean shadowComputeSupported = shadowCompute != null
                 && shadowCompute.supported()
@@ -1076,7 +1077,8 @@ public final class PackAdvancedResourcePlan {
             List<String> deviations,
             Map<String, String> initialMacros,
             java.util.Set<String> lockedMacros,
-            Set<String> graphicsProducedImages
+            Set<String> graphicsProducedImages,
+            Map<String, UniformRegistry.UniformDescriptor> customDescriptors
     ) {
         if (shadersDir == null) return Map.of();
         Path root = selectedFolder == null || selectedFolder.isBlank()
@@ -1157,7 +1159,7 @@ public final class PackAdvancedResourcePlan {
             Matcher valueUniform = VALUE_UNIFORM_DECLARATION.matcher(text);
             while (valueUniform.find()) {
                 String name = valueUniform.group(2);
-                if (UniformRegistry.descriptor(name, valueUniform.group(1)) != null) {
+                if (UniformRegistry.resolve(name, valueUniform.group(1), customDescriptors) != null) {
                     if (GlslTokenRewriter.identifierCount(text, name) > 1) {
                         localDeviations.add("COMPUTE_UNIFORM_LIVE:" + name);
                     } else {

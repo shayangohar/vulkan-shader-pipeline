@@ -346,6 +346,7 @@ public final class M86bConformanceHarness {
      */
     private static void verifyExactPackBuilderMetadata() throws Exception {
         List<String> failures = new java.util.ArrayList<>();
+        long skyColourDeclarations = 0L;
         for (String[] configured : new String[][] {
                 {"Complementary", "chimera.m86.complementary"},
                 {"BSL", "chimera.m86.bsl"}}) {
@@ -363,7 +364,19 @@ public final class M86bConformanceHarness {
                 Path packPath = Path.of(value);
                 assertTrue(Files.isRegularFile(packPath) || Files.isDirectory(packPath),
                         label + ": missing pack " + packPath);
-                PackPlan pack = PackProbe.analyze(packPath).plan();
+                PackProbe.Analysis probe = PackProbe.analyze(packPath);
+                // The pinned packs colour their atmosphere from the pack-facing sky state, and a
+                // program handed the zero default cannot do it. These manifest rows are per
+                // program, so scan them rather than the aggregate, and count the declarations so
+                // the check cannot pass by finding nothing to look at.
+                List<String> skyColourDefaulted = probe.report().programs().stream()
+                        .filter(program -> program.deviations().contains("UNIFORM_DEFAULTED:skyColor"))
+                        .map(program -> program.name()).toList();
+                assertTrue(skyColourDefaulted.isEmpty(),
+                        label + ": sky colour is still a default in " + skyColourDefaulted);
+                skyColourDeclarations += probe.report().programs().stream()
+                        .filter(program -> program.uniforms().contains("skyColor")).count();
+                PackPlan pack = probe.plan();
                 PackProgramPlan shadow = pack.program("shadow");
                 PackProgramPlan composite = pack.program("composite");
                 PackAdvancedResourcePlan resources = pack.advancedResources();
@@ -436,6 +449,8 @@ public final class M86bConformanceHarness {
                 });
             }
         }
+        assertTrue(skyColourDeclarations > 0L,
+                "no exact pack program declares skyColor, so the manifest check proved nothing");
         assertTrue(failures.isEmpty(), "Exact pack builder parity failed: " + String.join("; ", failures));
     }
 

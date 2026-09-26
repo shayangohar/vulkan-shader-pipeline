@@ -87,8 +87,16 @@ public record PackProgramPlan(
                 PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()));
     }
 
+    /** The authored cloud program provably draws nothing (see AuthoredOutput). */
+    public static final String CLOUD_AUTHORED_NO_OUTPUT = "CLOUD_AUTHORED_NO_OUTPUT";
+
     public String name() {
         return program == null ? "" : program.name();
+    }
+
+    /** True when executing the authored cloud program would draw nothing. */
+    public boolean cloudDrawsNothing() {
+        return deviations.contains(CLOUD_AUTHORED_NO_OUTPUT);
     }
 
     public String stageSource(String stage) {

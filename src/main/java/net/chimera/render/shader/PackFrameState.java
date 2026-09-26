@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import net.chimera.shaderpack.BiomeIds;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.shaderpack.PackRuntimeSettings;
 import net.minecraft.client.Camera;
@@ -8,6 +9,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.fog.FogData;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.GameType;
@@ -33,6 +35,7 @@ final class PackFrameState {
     static final double CAMERA_TELEPORT_RANGE = 1000.0;
 
     private final Matrix4f modelView = new Matrix4f();
+    private final Matrix4f rasterProjection = new Matrix4f();
     private final Matrix4f projection = new Matrix4f();
     private final Matrix4f previousModelView = new Matrix4f();
     private final Matrix4f previousProjection = new Matrix4f();
@@ -55,6 +58,9 @@ final class PackFrameState {
     private final Vector3f sunPosition = new Vector3f(0.0f, 1.0f, 0.0f);
     private final Vector3f moonPosition = new Vector3f(0.0f, -1.0f, 0.0f);
     private final Vector3f shadowLightPosition = new Vector3f(0.0f, 1.0f, 0.0f);
+    private final Vector3f upPosition = new Vector3f(0.0f, 1.0f, 0.0f);
+    private final Vector3f skyColor = new Vector3f(0.0f, 0.0f, 0.0f);
+    private final Vector3f sunLightVector = new Vector3f(0.0f, 1.0f, 0.0f);
     private final float[] fogColor = new float[4];
     private final float[] shaderColor = new float[4];
     private final float[] lightDirection0 = new float[3];
@@ -69,8 +75,7 @@ final class PackFrameState {
     private final float[] cameraPositionFract = new float[3];
     private final float[] previousCameraPositionFract = new float[3];
     private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
-    private double[] customScratch = new double[0];
-    private float[] customValues = new float[0];
+    private PackRuntimeSettings.Session session = runtimeSettings.newSession();
 
     private ClientLevel lastLevel;
     private boolean viewInitialized;
@@ -82,14 +87,20 @@ final class PackFrameState {
     private int moonPhase;
     private float rainStrength;
     private float thunderStrength;
-    private float sunAngle;
+    private float sunAngle01;
+    private float shadowAngle01;
+    private float sunPathRotation;
+    private float sunPathOffset;
     private float screenBrightness;
     private float blindness;
-    private float darknessFactor;
     private float darknessLightFactor;
+    private float darknessFactor;
+    private int isElytraFlying;
     private float nightVision;
     private float wetness;
-    private float frameTimeSmooth;
+    private float eyeAltitude;
+    private int biomeId;
+    private int biomePrecipitation;
     private float viewWidth;
     private float viewHeight;
     private float aspectRatio;
@@ -105,6 +116,8 @@ final class PackFrameState {
     private int bedrockLevel;
     private float screenSizeWidth;
     private float screenSizeHeight;
+    private int lastViewportWidth;
+    private int lastViewportHeight;
     private int isEyeInWater;
     private int dimension;
     private int heightLimit;
@@ -134,19 +147,13 @@ final class PackFrameState {
 
     void resetSession() {
         this.lastLevel = null;
+        this.session.reset();
         resetTemporalState();
     }
 
     void installRuntimeSettings(PackRuntimeSettings settings) {
         this.runtimeSettings = settings == null ? PackRuntimeSettings.empty() : settings;
-        int count = this.runtimeSettings.valueCount();
-        if (customScratch.length != count) {
-            customScratch = new double[count];
-            customValues = new float[count];
-        } else {
-            java.util.Arrays.fill(customScratch, 0.0);
-            java.util.Arrays.fill(customValues, 0.0f);
-        }
+        this.session = this.runtimeSettings.newSession();
     }
 
     void begin(Minecraft minecraft, Camera camera, float partialTick,
@@ -155,10 +162,9 @@ final class PackFrameState {
         this.frameTimeCounter = wrapped(this.frameTimeCounter + this.frameTime,
                 FRAME_TIME_COUNTER_WRAP);
         this.frameCounter = (this.frameCounter + 1) % FRAME_COUNTER_WRAP;
-        this.frameTimeSmooth = this.frameTime;
 
+        boolean viewportChanged = captureWindow(minecraft);
         captureMatrices(capturedModelView, capturedProjection);
-        captureWindow(minecraft);
         captureHostState();
 
         if (camera == null || minecraft == null) {
@@ -169,8 +175,7 @@ final class PackFrameState {
         }
 
         var position = camera.position();
-        this.cameraOrigin.advance(position.x, position.y, position.z);
-        writeCameraPosition();
+        advanceCamera(position.x, position.y, position.z, viewportChanged);
 
         Entity cameraEntity = minecraft.getCameraEntity();
         if (cameraEntity == null) {
@@ -189,9 +194,11 @@ final class PackFrameState {
             if (cameraEntity instanceof LivingEntity living) {
                 this.blindness = blindness(living);
                 this.darknessFactor = living.getEffectBlendFactor(MobEffects.DARKNESS, partialTick);
+                this.isElytraFlying = living.isFallFlying() ? 1 : 0;
             } else {
                 this.blindness = 0.0f;
                 this.darknessFactor = 0.0f;
+                this.isElytraFlying = 0;
             }
             captureEyeBrightness(minecraft.level, eye.x, eye.y, eye.z);
         }
@@ -204,11 +211,11 @@ final class PackFrameState {
         this.darknessLightFactor = darknessLightFactor(minecraft, partialTick);
         this.screenBrightness = minecraft.options.gamma().get().floatValue();
 
-        captureWorld(minecraft.level, minecraft, partialTick);
+        captureWorld(minecraft.level, minecraft, camera, partialTick);
         evaluateCustomValues();
     }
 
-    void updateShadow(Matrix4f modelView, Matrix4f projection, Vector3f lightPosition) {
+    void updateShadow(Matrix4f modelView, Matrix4f projection) {
         if (modelView != null) {
             this.shadowModelView.set(modelView);
             invertOrIdentity(this.shadowModelView, this.shadowModelViewInverse);
@@ -217,19 +224,23 @@ final class PackFrameState {
             this.shadowProjection.set(projection);
             invertOrIdentity(this.shadowProjection, this.shadowProjectionInverse);
         }
-        if (lightPosition != null) {
-            this.shadowLightPosition.set(lightPosition);
-        }
     }
 
-    float sunAngle() {
-        return sunAngle;
+    /** The pack's sun path, which the shadow matrix and the celestial frame both follow. */
+    void installSunPath(float rotationDegrees, float offsetDegrees) {
+        this.sunPathRotation = rotationDegrees;
+        this.sunPathOffset = offsetDegrees;
+    }
+
+    /** World-space light direction the shadow matrix looks along, derived with the uniforms. */
+    Vector3f sunLightVector() {
+        return sunLightVector;
     }
 
     void write(UniformRegistry.UniformDescriptor descriptor, String type, MappedBuffer target) {
         if (descriptor.sourceKey().startsWith("custom:")) {
             int index = runtimeSettings.indexOf(descriptor.name());
-            float value = index < 0 ? 0.0f : customValues[index];
+            float value = index < 0 ? 0.0f : session.values()[index];
             if (type.startsWith("i")) {
                 target.putInt(0, (int) value);
             } else {
@@ -266,22 +277,20 @@ final class PackFrameState {
             case "frameCounter" -> target.putInt(0, frameCounter);
             case "CurrentTime" -> target.putInt(0, currentTime);
             case "isEyeInWater" -> target.putInt(0, isEyeInWater);
+            case "isElytraFlying" -> target.putInt(0, isElytraFlying);
             case "eyeBrightness" -> writeInts(target, eyeBrightness);
             case "eyeBrightnessSmooth" -> writeInts(target, eyeBrightnessSmooth);
-            case "eyeBrightnessM" -> target.putFloat(0,
-                    Math.max(eyeBrightness[0], eyeBrightness[1]) / 16.0f);
             case "frameTime" -> target.putFloat(0, frameTime);
             case "frameTimeCounter" -> target.putFloat(0, frameTimeCounter);
-            case "framemod2" -> target.putFloat(0, frameCounter % 2);
-            case "framemod4" -> target.putFloat(0, frameCounter % 4);
-            case "framemod8" -> target.putFloat(0, frameCounter % 8);
-            case "framemod600" -> target.putFloat(0, frameCounter % 600);
-            case "rainStrength", "rainFactor" -> target.putFloat(0, rainStrength);
+            case "rainStrength" -> target.putFloat(0, rainStrength);
             case "thunderStrength" -> target.putFloat(0, thunderStrength);
             case "wetness" -> target.putFloat(0, wetness);
-            case "sunAngle", "timeAngle" -> target.putFloat(0, sunAngle);
+            case "sunAngle" -> target.putFloat(0, sunAngle01);
+            case "shadowAngle" -> target.putFloat(0, shadowAngle01);
             case "sunPosition" -> writeVec3(target, sunPosition.x, sunPosition.y, sunPosition.z);
             case "moonPosition" -> writeVec3(target, moonPosition.x, moonPosition.y, moonPosition.z);
+            case "upPosition" -> writeVec3(target, upPosition.x, upPosition.y, upPosition.z);
+            case "skyColor" -> writeVec3(target, skyColor.x, skyColor.y, skyColor.z);
             case "shadowLightPosition" -> writeVec3(target,
                     shadowLightPosition.x, shadowLightPosition.y, shadowLightPosition.z);
             case "shadowModelView" -> writeMatrix(target, shadowModelView);
@@ -292,7 +301,8 @@ final class PackFrameState {
             case "gbufferModelViewInverse" -> writeMatrix(target, modelViewInverse);
             case "gbufferPreviousModelView" -> writeMatrix(target, previousModelView);
             case "gbufferPreviousProjection" -> writeMatrix(target, previousProjection);
-            case "gbufferProjection", "ProjMat" -> writeMatrix(target, projection);
+            case "gbufferProjection" -> writeMatrix(target, projection);
+            case "ProjMat" -> writeMatrix(target, rasterProjection);
             case "gbufferProjectionInverse" -> writeMatrix(target, projectionInverse);
             case "MVP" -> writeMatrix(target, mvp);
             case "TextureMat" -> writeMatrix(target, textureMatrix);
@@ -329,9 +339,9 @@ final class PackFrameState {
             case "nightVision" -> target.putFloat(0, nightVision);
             case "screenBrightness" -> target.putFloat(0, screenBrightness);
             case "bedrockLevel" -> target.putInt(0, bedrockLevel);
-            case "shadowFade" -> target.putFloat(0, 1.0f);
-            case "timeBrightness" -> target.putFloat(0, 1.0f);
-            case "frameTimeSmooth" -> target.putFloat(0, frameTimeSmooth);
+            case "eyeAltitude" -> target.putFloat(0, eyeAltitude);
+            case "biome" -> target.putInt(0, biomeId);
+            case "biome_precipitation" -> target.putInt(0, biomePrecipitation);
             case "AlphaCutout" -> target.putFloat(0, alphaCutout);
             case "ColorModulator" -> writeFloatArray(target, shaderColor, 4);
             case "Light0_Direction" -> writeVec3(target, lightDirection0);
@@ -344,7 +354,6 @@ final class PackFrameState {
     static int wrapFrameCounter(int value) {
         return Math.floorMod(value, FRAME_COUNTER_WRAP);
     }
-
     static float wrapFrameTimeCounter(float value) {
         return wrapped(value, FRAME_TIME_COUNTER_WRAP);
     }
@@ -388,48 +397,122 @@ final class PackFrameState {
     }
 
     private void captureMatrices(Matrix4f capturedModelView, Matrix4f capturedProjection) {
-        if (capturedModelView == null || capturedProjection == null) {
-            if (!viewInitialized) {
-                modelView.identity();
-                projection.identity();
-                previousModelView.identity();
-                previousProjection.identity();
-            }
-        } else if (!viewInitialized) {
-            modelView.set(capturedModelView);
-            projection.set(capturedProjection);
-            previousModelView.set(capturedModelView);
-            previousProjection.set(capturedProjection);
-        } else {
-            previousModelView.set(modelView);
-            previousProjection.set(projection);
-            modelView.set(capturedModelView);
-            projection.set(capturedProjection);
-        }
-        invertOrIdentity(modelView, modelViewInverse);
-        invertOrIdentity(projection, projectionInverse);
-        invertOrIdentity(previousModelView, previousModelViewInverse);
-        invertOrIdentity(previousProjection, previousProjectionInverse);
-        mvp.set(projection).mul(modelView);
+        rotateView(capturedModelView, capturedProjection);
+        updateViewMatrices();
         MappedBuffer textureMatrixBuffer = VRenderSystem.getTextureMatrix();
         for (int index = 0; index < 16; index++) {
             matrixScratch[index] = textureMatrixBuffer.getFloat(index * 4);
         }
         textureMatrix.set(matrixScratch);
+    }
+
+    private void updateViewMatrices() {
+        invertOrIdentity(modelView, modelViewInverse);
+        invertOrIdentity(projection, projectionInverse);
+        invertOrIdentity(previousModelView, previousModelViewInverse);
+        invertOrIdentity(previousProjection, previousProjectionInverse);
+        mvp.set(rasterProjection).mul(modelView);
+    }
+
+    /**
+     * Advances current matrices and rotates the previous pair. First frame
+     * seeds previous from current; later frames shift current into
+     * previous before capturing. Reloads and resizes restart the sequence
+     * by clearing {@code viewInitialized} through the temporal reset.
+     */
+    private void rotateView(Matrix4f capturedModelView, Matrix4f capturedProjection) {
+        if (capturedModelView == null || capturedProjection == null) {
+            if (!viewInitialized) {
+                modelView.identity();
+                rasterProjection.identity();
+                projection.identity();
+                previousModelView.identity();
+                previousProjection.identity();
+            }
+            return;
+        }
+        if (!viewInitialized) {
+            modelView.set(capturedModelView);
+            rasterProjection.set(capturedProjection);
+            convertProjectionToLegacyClipRange(rasterProjection, projection);
+            previousModelView.set(capturedModelView);
+            previousProjection.set(projection);
+        } else {
+            previousModelView.set(modelView);
+            previousProjection.set(projection);
+            modelView.set(capturedModelView);
+            rasterProjection.set(capturedProjection);
+            convertProjectionToLegacyClipRange(rasterProjection, projection);
+        }
         viewInitialized = true;
     }
 
-    private void captureWindow(Minecraft minecraft) {
-        if (minecraft == null) {
-            screenSizeWidth = 1.0f;
-            screenSizeHeight = 1.0f;
-        } else {
-            screenSizeWidth = Math.max(minecraft.getWindow().getWidth(), 1);
-            screenSizeHeight = Math.max(minecraft.getWindow().getHeight(), 1);
+    /** Maps host forward-Z [0,1] clip depth to the legacy pack [-1,1] clip range. */
+    private static void convertProjectionToLegacyClipRange(Matrix4f rendered, Matrix4f destination) {
+        destination.set(rendered);
+        destination.m02(2.0f * rendered.m02() - rendered.m03());
+        destination.m12(2.0f * rendered.m12() - rendered.m13());
+        destination.m22(2.0f * rendered.m22() - rendered.m23());
+        destination.m32(2.0f * rendered.m32() - rendered.m33());
+    }
+
+    /** Test-only entry for the previous-matrix rotation; skips host render state. */
+    void rotateViewForTest(Matrix4f capturedModelView, Matrix4f capturedProjection) {
+        rotateView(capturedModelView, capturedProjection);
+        updateViewMatrices();
+    }
+
+    Matrix4f modelViewForTest() {
+        return new Matrix4f(modelView);
+    }
+
+    Matrix4f projectionForTest() {
+        return new Matrix4f(projection);
+    }
+
+    Matrix4f rasterProjectionForTest() {
+        return new Matrix4f(rasterProjection);
+    }
+
+    Matrix4f projectionInverseForTest() {
+        return new Matrix4f(projectionInverse);
+    }
+
+    Matrix4f mvpForTest() {
+        return new Matrix4f(mvp);
+    }
+
+    Matrix4f previousModelViewForTest() {
+        return new Matrix4f(previousModelView);
+    }
+
+    Matrix4f previousProjectionForTest() {
+        return new Matrix4f(previousProjection);
+    }
+
+    private boolean captureWindow(Minecraft minecraft) {
+        int width = minecraft == null ? 1 : Math.max(minecraft.getWindow().getWidth(), 1);
+        int height = minecraft == null ? 1 : Math.max(minecraft.getWindow().getHeight(), 1);
+        return updateViewport(width, height);
+    }
+
+    /** Updates viewport values and reseeds reprojection history after a resize. */
+    boolean updateViewport(int width, int height) {
+        width = Math.max(width, 1);
+        height = Math.max(height, 1);
+        boolean resized = lastViewportWidth != 0
+                && (lastViewportWidth != width || lastViewportHeight != height);
+        lastViewportWidth = width;
+        lastViewportHeight = height;
+        if (resized) {
+            viewInitialized = false;
         }
+        screenSizeWidth = width;
+        screenSizeHeight = height;
         viewWidth = screenSizeWidth;
         viewHeight = screenSizeHeight;
         aspectRatio = screenSizeWidth / screenSizeHeight;
+        return resized;
     }
 
     private void captureHostState() {
@@ -462,7 +545,8 @@ final class PackFrameState {
         fogCloudsEnd = fogData == null ? 0.0f : fogData.cloudEnd;
     }
 
-    private void captureWorld(ClientLevel level, Minecraft minecraft, float partialTick) {
+    private void captureWorld(ClientLevel level, Minecraft minecraft, Camera camera,
+                              float partialTick) {
         if (level == null) {
             clearWorldState();
             return;
@@ -476,7 +560,7 @@ final class PackFrameState {
         moonPhase = (int) Math.floorMod(worldDay, 8);
         rainStrength = clamp(level.getRainLevel(partialTick), 0.0f, 1.0f);
         thunderStrength = clamp(level.getThunderLevel(partialTick), 0.0f, 1.0f);
-        sunAngle = (float) (Math.floorMod(dayTime, 24000L) + partialTick) / 24000.0f;
+        captureCelestial(camera, partialTick);
         dimension = dimensionOrdinal(level);
         bedrockLevel = level.dimensionType().minY();
         heightLimit = level.dimensionType().height();
@@ -491,13 +575,10 @@ final class PackFrameState {
         var biome = level.getBiome(biomePos).value();
         biomeTemperature = biome.getBaseTemperature();
         rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
+        eyeAltitude = (float) cameraOrigin.y;
+        biomeId = BiomeIds.id(biomeKey(level, biomePos));
+        biomePrecipitation = precipitation(biome, biomePos, level.getSeaLevel());
         farPlane = Math.max(minecraft.options.getEffectiveRenderDistance(), 1) * 16.0f;
-        double angle = sunAngle * Math.PI * 2.0;
-        sunPosition.set((float) Math.sin(angle), (float) Math.cos(angle), 0.0f);
-        moonPosition.set(-sunPosition.x, -sunPosition.y, 0.0f);
-        if (shadowLightPosition.lengthSquared() == 0.0f) {
-            shadowLightPosition.set(sunPosition);
-        }
         if (!smoothingStarted) {
             wetnessValue = rainStrength;
             eyeBrightnessBlockSmooth = eyeBrightness[0];
@@ -521,6 +602,61 @@ final class PackFrameState {
         eyeBrightnessSmooth[1] = (int) eyeBrightnessSkySmooth;
     }
 
+    /**
+     * Samples the host's own sky state for this frame and derives the celestial frame from it.
+     * The angles come from the attribute probe the host ticks for its own sky and fog, so a
+     * dimension, a datapack or an option that moves the sky moves the shadows with it.
+     */
+    private void captureCelestial(Camera camera, float partialTick) {
+        var probe = camera.attributeProbe();
+        deriveCelestial(probe.getValue(EnvironmentAttributes.SUN_ANGLE, partialTick),
+                probe.getValue(EnvironmentAttributes.MOON_ANGLE, partialTick),
+                probe.getValue(EnvironmentAttributes.SKY_COLOR, partialTick));
+    }
+
+    /** Test seam: the same derivation from explicit host samples. */
+    void setCelestialForTest(float sunAngleDegrees, float moonAngleDegrees, int skyColorPacked) {
+        deriveCelestial(sunAngleDegrees, moonAngleDegrees, skyColorPacked);
+    }
+
+    /**
+     * One source for the pack-facing angles and positions, the up direction, and the shadow light
+     * vector, so a caster and a receiver cannot disagree about where the light is.
+     */
+    private void deriveCelestial(float sunAngleDegrees, float moonAngleDegrees,
+                                 int skyColorPacked) {
+        float lightAngleDegrees = CelestialSnapshot.isDay(sunAngleDegrees)
+                ? sunAngleDegrees : moonAngleDegrees;
+
+        sunAngle01 = CelestialSnapshot.angle01(sunAngleDegrees);
+        shadowAngle01 = CelestialSnapshot.angle01(lightAngleDegrees);
+        CelestialSnapshot.position(modelView, sunPathRotation, sunPathOffset,
+                sunAngleDegrees, sunPosition);
+        CelestialSnapshot.position(modelView, sunPathRotation, sunPathOffset,
+                moonAngleDegrees, moonPosition);
+        CelestialSnapshot.position(modelView, sunPathRotation, sunPathOffset,
+                lightAngleDegrees, shadowLightPosition);
+        CelestialSnapshot.upPosition(modelView, upPosition);
+        CelestialSnapshot.lightVector(sunPathRotation, sunPathOffset,
+                lightAngleDegrees, sunLightVector);
+        CelestialSnapshot.skyColor(skyColorPacked, skyColor);
+    }
+
+    /** The camera biome's key, which is the name the constant table numbers. */
+    private static net.minecraft.resources.Identifier biomeKey(ClientLevel level, BlockPos pos) {
+        return level.getBiome(pos).unwrapKey().map(key -> key.identifier()).orElse(null);
+    }
+
+    /** The pack's precipitation input: none, rain or snow, as the packs compare it. */
+    private static int precipitation(net.minecraft.world.level.biome.Biome biome, BlockPos pos,
+                                     int seaLevel) {
+        return switch (biome.getPrecipitationAt(pos, seaLevel)) {
+            case NONE -> 0;
+            case RAIN -> 1;
+            case SNOW -> 2;
+        };
+    }
+
     private void captureEyeBrightness(ClientLevel level, double x, double y, double z) {
         if (level == null) {
             eyeBrightness[0] = 0;
@@ -533,7 +669,68 @@ final class PackFrameState {
     }
 
     private void evaluateCustomValues() {
-        runtimeSettings.evaluate(this::scalarValue, customScratch, customValues);
+        runtimeSettings.evaluate(this::engineValue, session, frameTime);
+    }
+
+    /** Declarations whose expression produced a non-finite result this session, with context. */
+    java.util.Map<String, String> valueFailures() {
+        return session.failures();
+    }
+
+    void clearShadowState() {
+        shadowModelView.identity();
+        shadowProjection.identity();
+        shadowModelViewInverse.identity();
+        shadowProjectionInverse.identity();
+    }
+
+    /**
+     * The host's own answer for a name, or one component of it. Custom values are resolved before
+     * this, so everything here is a canonical engine input -- which is exactly why a pack may not
+     * author one.
+     */
+    private double engineValue(String name, int component) {
+        if (component < 0) {
+            return scalarValue(name);
+        }
+        return switch (name) {
+            case "eyeBrightness" -> componentOf(eyeBrightness, component);
+            case "eyeBrightnessSmooth" -> componentOf(eyeBrightnessSmooth, component);
+            case "cameraPosition" ->
+                    componentOf(cameraOrigin.x, cameraOrigin.y, cameraOrigin.z, component);
+            case "previousCameraPosition" -> componentOf(cameraOrigin.previousX,
+                    cameraOrigin.previousY, cameraOrigin.previousZ, component);
+            case "cameraPositionFract" -> componentOf(cameraPositionFract, component);
+            case "previousCameraPositionFract" -> componentOf(previousCameraPositionFract, component);
+            case "cameraPositionInt" -> componentOf(cameraPositionInt, component);
+            case "previousCameraPositionInt" -> componentOf(previousCameraPositionInt, component);
+            case "eyePosition" -> componentOf(eyePosition, component);
+            case "relativeEyePosition" -> componentOf(relativeEyePosition, component);
+            case "playerLookVector" -> componentOf(playerLookVector, component);
+            case "sunPosition" -> componentOf(sunPosition, component);
+            case "moonPosition" -> componentOf(moonPosition, component);
+            case "shadowLightPosition" -> componentOf(shadowLightPosition, component);
+            case "upPosition" -> componentOf(upPosition, component);
+            case "skyColor" -> componentOf(skyColor, component);
+            // Unreachable: the plan rejects a component of a name with no component source.
+            default -> Double.NaN;
+        };
+    }
+
+    private static double componentOf(int[] values, int component) {
+        return component < values.length ? values[component] : Double.NaN;
+    }
+
+    private static double componentOf(float[] values, int component) {
+        return component < values.length ? values[component] : Double.NaN;
+    }
+
+    private static double componentOf(Vector3f value, int component) {
+        return componentOf(value.x, value.y, value.z, component);
+    }
+
+    private static double componentOf(float x, float y, float z, int component) {
+        return component == 0 ? x : component == 1 ? y : z;
     }
 
     private double scalarValue(String name) {
@@ -544,10 +741,11 @@ final class PackFrameState {
             case "worldTime" -> worldTime;
             case "worldDay" -> worldDay;
             case "moonPhase" -> moonPhase;
-            case "rainStrength", "rainFactor" -> rainStrength;
+            case "rainStrength" -> rainStrength;
             case "thunderStrength" -> thunderStrength;
             case "wetness" -> wetness;
-            case "sunAngle", "timeAngle" -> sunAngle;
+            case "sunAngle" -> sunAngle01;
+            case "shadowAngle" -> shadowAngle01;
             case "dimension" -> dimension;
             case "bedrockLevel" -> bedrockLevel;
             case "heightLimit" -> heightLimit;
@@ -564,13 +762,16 @@ final class PackFrameState {
             case "aspectRatio" -> aspectRatio;
             case "near" -> nearPlane;
             case "far" -> farPlane;
-            case "blindFactor", "blindness" -> blindness;
+            case "blindness" -> blindness;
             case "darknessFactor" -> darknessFactor;
             case "darknessLightFactor" -> darknessLightFactor;
             case "nightVision" -> nightVision;
             case "screenBrightness" -> screenBrightness;
             case "isEyeInWater" -> isEyeInWater;
-            case "eyeBrightnessM" -> Math.max(eyeBrightness[0], eyeBrightness[1]) / 16.0;
+            case "isElytraFlying" -> isElytraFlying;
+            case "eyeAltitude" -> eyeAltitude;
+            case "biome" -> biomeId;
+            case "biome_precipitation" -> biomePrecipitation;
             case "eyeBrightness" -> eyeBrightness[0];
             default -> 0.0;
         };
@@ -650,6 +851,18 @@ final class PackFrameState {
                 - Math.floor(cameraOrigin.previousRawZ));
     }
 
+    private void advanceCamera(double x, double y, double z, boolean reseedHistory) {
+        cameraOrigin.advance(x, y, z);
+        if (reseedHistory) {
+            cameraOrigin.seedPreviousFromCurrent();
+        }
+        writeCameraPosition();
+    }
+
+    void advanceCameraForTest(double x, double y, double z, boolean reseedHistory) {
+        advanceCamera(x, y, z, reseedHistory);
+    }
+
     private void clearCameraState() {
         cameraOrigin.reset();
         eyePosition.zero();
@@ -664,8 +877,8 @@ final class PackFrameState {
         eyeBrightness[0] = 0;
         eyeBrightness[1] = 0;
         eyeBrightnessSmooth[0] = 0;
-        eyeBrightnessSmooth[1] = 0;
         isEyeInWater = 0;
+        isElytraFlying = 0;
     }
 
     private void clearWorldState() {
@@ -674,7 +887,8 @@ final class PackFrameState {
         moonPhase = 0;
         rainStrength = 0.0f;
         thunderStrength = 0.0f;
-        sunAngle = 0.0f;
+        sunAngle01 = 0.0f;
+        shadowAngle01 = 0.0f;
         farPlane = 0.0f;
         bedrockLevel = 0;
         dimension = 0;
@@ -687,9 +901,15 @@ final class PackFrameState {
         cloudHeight = 0.0f;
         biomeTemperature = 0.0f;
         rainfall = 0.0f;
+        eyeAltitude = 0.0f;
+        biomeId = 0;
+        biomePrecipitation = 0;
         sunPosition.set(0.0f, 1.0f, 0.0f);
         moonPosition.set(0.0f, -1.0f, 0.0f);
         shadowLightPosition.set(0.0f, 1.0f, 0.0f);
+        upPosition.set(0.0f, 1.0f, 0.0f);
+        skyColor.set(0.0f, 0.0f, 0.0f);
+        sunLightVector.set(0.0f, 1.0f, 0.0f);
     }
 
     private void resetTemporalState() {
@@ -703,6 +923,7 @@ final class PackFrameState {
         eyeBrightnessSkySmooth = 0.0f;
         smoothingStarted = false;
         modelView.identity();
+        rasterProjection.identity();
         projection.identity();
         previousModelView.identity();
         previousProjection.identity();
@@ -712,6 +933,8 @@ final class PackFrameState {
         previousProjectionInverse.identity();
         mvp.identity();
         textureMatrix.identity();
+        lastViewportWidth = 0;
+        lastViewportHeight = 0;
         shadowModelView.identity();
         shadowProjection.identity();
         shadowModelViewInverse.identity();
@@ -844,6 +1067,15 @@ final class PackFrameState {
             x = y = z = previousX = previousY = previousZ = 0.0f;
             shiftX = shiftZ = 0.0;
             seeded = false;
+        }
+
+        private void seedPreviousFromCurrent() {
+            previousRawX = rawX;
+            previousRawY = rawY;
+            previousRawZ = rawZ;
+            previousX = x;
+            previousY = y;
+            previousZ = z;
         }
     }
 }

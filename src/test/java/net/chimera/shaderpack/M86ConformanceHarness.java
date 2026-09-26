@@ -224,13 +224,13 @@ public final class M86ConformanceHarness {
                 Map.of(), List.of());
         assertTrue(settings.indexOf("fogScaleProbe") >= 0,
                 "Normalized fog scale expression is not evaluable");
-        float[] values = new float[settings.valueCount()];
-        settings.evaluate(name -> switch (name) {
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> switch (name) {
             case "fogStart" -> 2.0;
             case "fogEnd" -> 8.0;
             default -> throw new AssertionError("Unexpected fog dependency: " + name);
-        }, new double[settings.valueCount()], values);
-        assertEquals(36.0f, values[settings.indexOf("fogScaleProbe")],
+        }, session, 0.05f);
+        assertEquals(36.0f, session.values()[settings.indexOf("fogScaleProbe")],
                 "gl_Fog.scale reciprocal lost expression precedence");
     }
 
@@ -328,11 +328,16 @@ public final class M86ConformanceHarness {
                     "M8.6 " + label + " shadow producer is not executable with advanced resources");
             if (label.equals("BSL") || label.equals("Complementary")) {
                 String vertex = shadow.executableVertexSource();
+                // M8.7 keeps camera gbuffer uniforms distinct from the legacy
+                // shadow-stage built-ins. Do not require a camera matrix to
+                // survive conversion when only the shadow draw pair is used.
                 assertTrue(vertex.contains("ChimeraShadowUniforms")
-                                && vertex.contains("gbufferModelView"),
+                                && vertex.contains("shadowModelView")
+                                && vertex.contains("shadowProjection"),
                         "M8.6 " + label + " shadow adapter lost its canonical matrix UBO");
-                assertTrue(vertex.contains("chimeraShadowUniforms.gbufferModelView"),
-                        "M8.6 " + label + " shadow adapter did not qualify matrix UBO access");
+                assertTrue(vertex.contains("chimeraShadowUniforms.shadowModelView")
+                                && vertex.contains("chimeraShadowUniforms.shadowProjection"),
+                        "M8.6 " + label + " shadow adapter did not qualify its draw matrix UBO access");
                 assertTrue(!vertex.contains("gl_VertexID"),
                         "M8.6 " + label + " shadow adapter left Vulkan-incompatible gl_VertexID");
             }

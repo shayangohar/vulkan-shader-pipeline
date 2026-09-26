@@ -111,7 +111,8 @@ public final class M76ConformanceHarness {
 
         PackProgramPlan particles = first.plan().program("gbuffers_particles");
         assertTrue(particles != null && particles.executable(),
-                "M7.6 particle plan was not executable");
+                "M7.6 particle plan was not executable: "
+                        + (particles == null ? List.of() : particles.deviations()));
         assertEquals(UniformRegistry.Stage.PARTICLE,
                 particles.interfacePlan().effective(UniformRegistry.Stage.PARTICLE).stage(),
                 "M7.6 particle interface stage");

@@ -198,7 +198,11 @@ public final class PackPlanBuilder {
             }
         }
 
-        if (geometryOutputPlan != null && geometryOutputPlan.requiresMrt() && vertex == null) {
+        if (geometryOutputPlan != null && geometryOutputPlan.requiresMrt()
+                && vertex == null
+                && !FamilyAdapterRegistry.isEntityLike(program.name())
+                && !FamilyAdapterRegistry.isParticleLike(program.name())
+                && !FamilyAdapterRegistry.isWeatherFamily(program.name())) {
             // M8.5 MRT geometry requires a complete vertex/fragment pair. Keep
             // the older fragment-only single-target adapter unchanged.
             deviations.add("MRT_NOT_SUPPORTED");
@@ -239,6 +243,12 @@ public final class PackPlanBuilder {
                     vertexLayout = conversion.layout();
                     deviations.add("SKY_VERTEX_BRIDGE");
                 }
+            } else if (FamilyAdapterRegistry.isCloudFamily(program.name()) && vertex != null
+                    && AuthoredOutput.producesNothing(vertex, fragment)) {
+                // The selected branch draws no cloud at all. There is no
+                // pipeline to build; the runtime skips the host cloud draw.
+                deviations.add(PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
+                executable = false;
             } else if (FamilyAdapterRegistry.isCloudFamily(program.name()) && vertex != null) {
                 familyAdapter = familyAdapter.withVertexContract(
                         FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR);
@@ -279,20 +289,26 @@ public final class PackPlanBuilder {
             }
 
             if (executable && FamilyAdapterRegistry.isEntityLike(program.name()) && vertex != null) {
-                LegacyGlslConverter.TerrainVertexConversion conversion =
-                        FamilyAdapterRegistry.isBlockFamily(program.name())
-                                ? LegacyGlslConverter.convertBlockVertex(
-                                vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations(), allowStorageBuffers)
-                                : FamilyAdapterRegistry.isHandFamily(program.name())
-                                ? LegacyGlslConverter.convertHandVertex(
-                                vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations(), allowStorageBuffers)
-                                : LegacyGlslConverter.convertEntityVertex(
-                                vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations(), allowStorageBuffers);
-                if (conversion == null) {
+                LegacyGlslConverter.TerrainVertexConversion conversion = null;
+                try {
+                    java.util.List<UniformRegistry.UniformDeclaration> fragmentUniforms =
+                            interfacePlan.project("fragment", stage).executableUniforms();
+                    conversion = FamilyAdapterRegistry.isBlockFamily(program.name())
+                            ? LegacyGlslConverter.convertBlockVertexChecked(
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms)
+                            : FamilyAdapterRegistry.isHandFamily(program.name())
+                            ? LegacyGlslConverter.convertHandVertexChecked(
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms)
+                            : LegacyGlslConverter.convertEntityVertexChecked(
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms);
+                } catch (IllegalArgumentException failure) {
                     deviations.add(entityBridgeDeviation(program.name(), true));
+                    deviations.add(entityConversionDeviation(program.name(), failure));
+                }
+                if (conversion == null) {
                     executable = false;
                 } else {
                     convertedVertex = conversion.source();
@@ -384,11 +400,8 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertEntityFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(),
-                        slots, vertexLayout, interfacePlan.project("fragment", stage));
-                if (convertedFragment == null) {
-                    deviations.add("POST_CONVERTER_UNSUPPORTED");
-                    executable = false;
-                }
+                        slots, vertexLayout, interfacePlan.project("fragment", stage),
+                        geometryOutputPlan);
             } else if (executable && (FamilyAdapterRegistry.isSkyFamily(program.name())
                     || FamilyAdapterRegistry.isCloudFamily(program.name()))) {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
@@ -418,11 +431,12 @@ public final class PackPlanBuilder {
                     vertexLayout = conversion.layout();
                     convertedFragment = LegacyGlslConverter.convertParticleFragment(
                             fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                            vertexLayout, interfacePlan.project("fragment", stage));
+                            vertexLayout, interfacePlan.project("fragment", stage),
+                            geometryOutputPlan);
                     if (convertedFragment == null) {
                         deviations.add(FamilyAdapterRegistry.isWeatherFamily(program.name())
-                                ? "WEATHER_VERTEX_BRIDGE_UNSUPPORTED"
-                                : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+                                ? "WEATHER_FRAGMENT_BRIDGE_UNSUPPORTED"
+                                : "PARTICLE_FRAGMENT_BRIDGE_UNSUPPORTED");
                         executable = false;
                     }
                 }
@@ -522,8 +536,18 @@ public final class PackPlanBuilder {
                 || name.equals("shadow");
     }
 
+    /**
+     * Families whose active sources can write multiple outputs through
+     * DRAWBUFFERS/RENDERTARGETS. Each gets an immutable geometry output
+     * plan; single-output plans stay executable and unused directives
+     * never block the family.
+     */
     private static boolean isGeometryOutputFamily(String name) {
-        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
+        return FamilyAdapterRegistry.isEntityLike(name)
+                || FamilyAdapterRegistry.isParticleLike(name)
+                || FamilyAdapterRegistry.isWeatherFamily(name)
+                || name.equals("gbuffers_terrain")
+                || name.equals("gbuffers_water");
     }
 
     private static String vertexBridgeDeviation(String name) {
@@ -550,6 +574,24 @@ public final class PackPlanBuilder {
                     ? "HAND_VERTEX_BRIDGE_UNSUPPORTED" : "HAND_VERTEX_BRIDGE";
             default -> unsupported
                     ? "ENTITY_VERTEX_BRIDGE_UNSUPPORTED" : "ENTITY_VERTEX_BRIDGE";
+        };
+    }
+
+    /**
+     * Preserves the first concrete vertex conversion failure next to the
+     * generic bridge code so diagnostics name the actual blocker. The
+     * generic code keeps driving severity routing; this code is
+     * diagnostic-only and never matches a severe prefix.
+     */
+    private static String entityConversionDeviation(String name, IllegalArgumentException failure) {
+        String reason = failure.getMessage() == null ? "unknown" : failure.getMessage();
+        int cut = Math.min(reason.length(), 120);
+        return switch (name) {
+            case "gbuffers_block", "gbuffers_damagedblock" ->
+                    "BLOCK_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);
+            case "gbuffers_hand", "gbuffers_hand_water" ->
+                    "HAND_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);
+            default -> "ENTITY_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);
         };
     }
 

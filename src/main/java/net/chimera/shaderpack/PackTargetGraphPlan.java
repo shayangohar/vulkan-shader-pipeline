@@ -246,28 +246,18 @@ public final class PackTargetGraphPlan {
         }
 
         List<TargetSpec> finalTargets = new ArrayList<>();
-        // Geometry outputs always precede post in frame order, so a post
-        // read of one is never a cross-frame dependency.
-        Set<Integer> geometryWritten = new TreeSet<>();
-        if (programs != null) {
-            for (PackProgramPlan program : programs) {
-                if (program == null || program.geometryOutputPlan() == null
-                        || !program.executable() || !program.geometryOutputPlan().executable()) {
-                    continue;
-                }
-                geometryWritten.addAll(program.geometryOutputPlan().targetSlots());
-            }
-        }
+        // Persistence is declaration-driven: a target persists across
+        // frames only when the pack contract says it is not cleared every
+        // frame (colortexNClear=false). A read-before-write shape alone
+        // never implies persistence; declared persistent feedback targets
+        // still receive their one-time initial seed through
+        // requiresInitialSeed.
         for (Map.Entry<Integer, TargetSpec> entry : preliminary.entrySet()) {
             TargetSpec source = entry.getValue();
             // Target 0 is reseeded from the HDR identity source every frame
             // and reinitialized by geometry, so graph-level persistence must
-            // not apply to it. Every other read-before-write target carries
-            // cross-frame state: the per-frame clear skips it and the install
-            // seed covers the first frame instead.
-            boolean persistent = source.persistent()
-                    || (source.index() != 0
-                    && hasReadBeforeWrite(source.index(), steps, geometryWritten));
+            // not apply to it.
+            boolean persistent = source.index() != 0 && source.persistent();
             finalTargets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
                     source.clear(), source.clearColorCopy(), persistent,
                     doubleTargets.getOrDefault(source.index(), false), source.deviations()));
@@ -288,7 +278,7 @@ public final class PackTargetGraphPlan {
         List<String> depthDeviations = new ArrayList<>();
         if (depth0 || depth1 || depth2) {
             depthDeviations.add("DEPTH_COPY_GRAPH_APPLIED");
-            depthDeviations.add("DEPTH_COPY_REVERSED_Z_CONVERTED");
+            depthDeviations.add("DEPTH_COPY_FORWARD_Z_PRESERVED");
             if (depth2) depthDeviations.add("DEPTH2_PREHAND_AT_LEVEL_END");
         }
         deviations.addAll(depthDeviations);

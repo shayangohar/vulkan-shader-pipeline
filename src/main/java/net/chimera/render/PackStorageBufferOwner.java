@@ -236,11 +236,11 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         if (commandBuffer == null || closed || initialized || buffers.isEmpty()) return false;
         for (Map.Entry<Integer, Buffer> entry : buffers.entrySet()) {
             PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
-            if (spec == null) continue;
+            if (spec == null) return false;
             vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, spec.size(), 0);
         }
-        initialized = true;
         PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
+        initialized = true;
         return true;
     }
 

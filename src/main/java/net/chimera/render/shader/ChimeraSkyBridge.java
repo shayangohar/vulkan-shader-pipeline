@@ -16,6 +16,7 @@ public final class ChimeraSkyBridge {
     private static PackPipelines.PackSky skyBasic;
     private static PackPipelines.PackSky skyTextured;
     private static PackPipelines.PackSky clouds;
+    private static boolean cloudsDrawNothing;
     private static PackPipelines.PackSky active;
     private static boolean enabled;
     private static boolean cloudTraceLogged;
@@ -24,10 +25,12 @@ public final class ChimeraSkyBridge {
 
     public static void install(PackPipelines.PackSky basic,
                                PackPipelines.PackSky textured,
-                               PackPipelines.PackSky cloud) {
+                               PackPipelines.PackSky cloud,
+                               boolean authoredCloudsDrawNothing) {
         skyBasic = basic;
         skyTextured = textured;
         clouds = cloud;
+        cloudsDrawNothing = authoredCloudsDrawNothing;
         active = null;
         enabled = false;
         cloudTraceLogged = false;
@@ -44,11 +47,20 @@ public final class ChimeraSkyBridge {
         skyBasic = null;
         skyTextured = null;
         clouds = null;
+        cloudsDrawNothing = false;
         cloudTraceLogged = false;
     }
 
     public static boolean isInstalled() {
-        return skyBasic != null || skyTextured != null || clouds != null;
+        return skyBasic != null || skyTextured != null || clouds != null || cloudsDrawNothing;
+    }
+
+    /**
+     * True when the active pack cloud program draws nothing, so VulkanMod's
+     * host cloud mesh must not be drawn in its place.
+     */
+    public static boolean skipHostClouds() {
+        return enabled && cloudsDrawNothing;
     }
 
     public static boolean isDrawActive() {

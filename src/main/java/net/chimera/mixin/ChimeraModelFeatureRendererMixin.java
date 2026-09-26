@@ -116,6 +116,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
         if (submits.isEmpty()) {
             return;
         }
+        net.chimera.render.ChimeraMainPass mainPass = net.chimera.render.ChimeraRenderer.getMainPass();
         for (Map.Entry<RenderType, List<SubmitNodeStorage.ModelSubmit>> entry : submits.entrySet()) {
             RenderType renderType = entry.getKey();
             ChimeraEntityBridge.Family selected =
@@ -126,19 +127,51 @@ public abstract class ChimeraModelFeatureRendererMixin {
                         Map.of(renderType, entry.getValue()), crumblingBufferSource);
                 continue;
             }
+            // The pipeline follows the selected family, not the base family:
+            // translucent and glowing draws need their own MRT windows.
+            net.chimera.shaderpack.PackPipelines.PackEntity selectedPipeline = mainPass == null
+                    ? null : mainPass.familyPipeline(selected);
+            boolean windowOpen = false;
+            boolean admitted = false;
             try {
+                // The upload widens the host vertex format for as long as the
+                // draw is active, so every admission check runs before the
+                // batch is emitted. A family window that cannot open, or a
+                // batch whose pipeline or buffer is unavailable, keeps the
+                // host format and the host draw from the outset: a widened mesh
+                // can never be handed back to the host pipeline.
+                if (selectedPipeline != null && selectedPipeline.requiresDynamicAttachments()) {
+                    windowOpen = mainPass != null
+                            && mainPass.beginPackFamilyWindow(selectedPipeline);
+                    if (!windowOpen) {
+                        ChimeraEntityBridge.endDraw();
+                        chimera$renderBatch(hostBufferSource, outlineBufferSource,
+                                Map.of(renderType, entry.getValue()), crumblingBufferSource);
+                        continue;
+                    }
+                }
                 MultiBufferSource.BufferSource entityBufferSource =
                         ChimeraEntityBridge.entityBufferSource();
                 if (entityBufferSource == null) {
+                    ChimeraEntityBridge.endDraw();
                     chimera$renderBatch(hostBufferSource, outlineBufferSource,
                             Map.of(renderType, entry.getValue()), crumblingBufferSource);
                     continue;
                 }
+                admitted = true;
                 chimera$renderBatch(entityBufferSource, outlineBufferSource,
                         Map.of(renderType, entry.getValue()), crumblingBufferSource);
                 ChimeraEntityBridge.endEntityBatch(renderType);
             } finally {
-                ChimeraEntityBridge.endDraw();
+                if (windowOpen) {
+                    mainPass.endPackFamilyWindow(selectedPipeline);
+                }
+                if (ChimeraEntityBridge.isDrawActive()) {
+                    ChimeraEntityBridge.endDraw();
+                }
+                if (!admitted) {
+                    ChimeraEntityBridge.noteFamilyHostFallback(selected, renderType);
+                }
             }
         }
     }

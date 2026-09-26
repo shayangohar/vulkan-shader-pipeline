@@ -2,8 +2,11 @@ package net.chimera.render;
 
 import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TargetStep;
+import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.List;
 
@@ -79,14 +82,13 @@ public final class PackPostTargetsHarness {
                         feedback)),
                 "persistent target with a prior producer must not be reseeded");
 
-        // A target the pack clears every frame but reads before its first
-        // write still carries cross-frame state: the per-frame clear must
-        // skip it (seeded once at install instead), or temporal readers
-        // see clear-black instead of last frame.
+        // A declared-persistent feedback target seeds once at install so
+        // its first read cannot sample undefined memory. Seeding fixes
+        // first-frame contents only; it never redefines clear semantics.
         TargetSpec clearedFeedback = new TargetSpec(2, 97, 16, 16, true,
                 new float[] {0, 0, 0, 0}, true, true, List.of());
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(clearedFeedback, List.of(feedback)),
-                "read-before-write target must seed even when the pack clears it");
+                "declared feedback target must seed even when the pack clears it");
 
         PackTemporalState frame = new PackTemporalState();
         frame.beginFrame(true);
@@ -108,7 +110,77 @@ public final class PackPostTargetsHarness {
                 "next frame must reset current availability without losing committed history");
         frame.abort();
 
+        try {
+            verifyDeclarationDrivenPersistence();
+        } catch (AssertionError failure) {
+            throw failure;
+        } catch (Exception failure) {
+            throw new AssertionError("declaration-driven persistence check failed", failure);
+        }
+
         System.out.println("[chimera] post target availability harness: PASS");
+    }
+
+    /**
+     * Persistence comes only from the pack's clear contract. A nonzero
+     * target cleared every frame stays nonpersistent even when a pass
+     * reads it before writing it; the same shape with
+     * colortexNClear=false persists and seeds its first frame once.
+     */
+    private static void verifyDeclarationDrivenPersistence() throws Exception {
+        Path cleared = Files.createTempDirectory("chimera-target-clear-contract-");
+        try {
+            writeFeedbackFixture(cleared.resolve("pack"), true);
+            PackProbe.Analysis analysis = PackProbe.analyze(cleared.resolve("pack"));
+            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                    analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+            assertTrue(graph.target(2) != null && graph.target(2).clear(),
+                    "clear=true declaration was not retained for target 2");
+            assertTrue(!graph.target(2).persistent(),
+                    "clear=true read-before-write target must not persist across frames");
+            assertTrue(!PackTargetGraphPlan.requiresInitialSeed(graph.target(2), graph.steps()),
+                    "clear=true target must not seed persistent history");
+        } finally {
+            deleteTree(cleared);
+        }
+
+        Path retained = Files.createTempDirectory("chimera-target-retain-contract-");
+        try {
+            writeFeedbackFixture(retained.resolve("pack"), false);
+            PackProbe.Analysis analysis = PackProbe.analyze(retained.resolve("pack"));
+            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                    analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+            assertTrue(graph.target(2) != null && graph.target(2).persistent(),
+                    "clear=false read-before-write target must persist across frames");
+            assertTrue(PackTargetGraphPlan.requiresInitialSeed(graph.target(2), graph.steps()),
+                    "clear=false feedback target must seed its first frame");
+        } finally {
+            deleteTree(retained);
+        }
+    }
+
+    private static void writeFeedbackFixture(Path root, boolean clear) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"),
+                "#version 120\nconst bool colortex2Clear = " + clear + ";\n"
+                        + "/* RENDERTARGETS: 2 */\nuniform sampler2D colortex2;\n"
+                        + "varying vec2 texcoord;\n\nvoid main() {\n"
+                        + "    gl_FragColor = texture2D(colortex2, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"),
+                "#version 120\nuniform sampler2D colortex0;\n"
+                        + "varying vec2 texcoord;\n\nvoid main() {\n"
+                        + "    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+    }
+
+    private static void deleteTree(Path root) throws Exception {
+        try (var paths = Files.walk(root)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.delete(path);
+            }
+        }
     }
 
     private static void assertTrue(boolean condition, String message) {

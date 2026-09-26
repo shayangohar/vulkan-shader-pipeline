@@ -25,6 +25,22 @@ public final class UniformRegistry {
     private static final Pattern UNIFORM_BLOCK = Pattern.compile(
             "\\buniform\\s+([A-Za-z_]\\w*)\\s*\\{");
 
+    /**
+     * Host ordinary-transform block names for the guarded family lanes.
+     *
+     * <p>They must match the converted GLSL preambles in
+     * {@link LegacyGlslConverter} and the name-based
+     * {@code Pipeline.getUBO(String)} lookups, which compare names exactly.
+     * VulkanMod's own reflected pipelines carry these same semantic names, and
+     * a host render pass stores its per-draw transform slices under them.</p>
+     */
+    public static final String DYNAMIC_TRANSFORMS_UBO = "DynamicTransforms";
+    public static final String PROJECTION_UBO = "Projection";
+
+    /** Descriptor bindings of the host ordinary-transform blocks. */
+    public static final int DYNAMIC_TRANSFORMS_BINDING = 0;
+    public static final int PROJECTION_BINDING = 1;
+
     private UniformRegistry() {}
 
     /** Shader stage of the pipeline a pack program is built onto. */
@@ -80,7 +96,9 @@ public final class UniformRegistry {
     /** Whether Chimera reads a value from the current frame or uses a declared default. */
     public enum Availability {
         LIVE,
-        DEFAULTED
+        DEFAULTED,
+        /** Declared by the pack, refused by Chimera: never a value, always a diagnostic. */
+        REJECTED
     }
 
     /** One canonical source and default policy for a standard pack uniform. */
@@ -353,13 +371,21 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5)
     );
 
-    /** World entities use the host atlas, lightmap, and optional shadow map. */
+    /** World entities use the host atlas, lightmap, noise, and optional shadow map. */
     public static final Map<String, Integer> ENTITY_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("lightmap", 2),
-            Map.entry("shadowtex0", 5)
+            Map.entry("tex", 0),
+            Map.entry("shadowtex0", 5),
+            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
+            Map.entry("shadowcolor0", SelectorNamespace.SHADOW_COLOR0_SLOT),
+            // Noise stays on the canonical fixed selector 7, matching the
+            // post, geometry, and shadow tables and the resource plan. A
+            // custom pack-selector allocation here leaves the ordinary
+            // descriptor without a same-slot manifest resource and rejects
+            // the pipeline (DOC-348 repair 1).
+            Map.entry("noisetex", 7)
     );
-
     /**
      * Resource-pack material maps ride fixed extended selectors, but only in
      * stages whose draws bind a real albedo image. Sky and cloud reuse the
@@ -490,9 +516,20 @@ public final class UniformRegistry {
         Map<String, String> samplerNames = new TreeMap<>();
         Map<Integer, String> samplerResources = new TreeMap<>();
         Set<String> deviations = new TreeSet<>();
-        Set<String> referencedValues = allowUnusedDeclarations
+        Set<String> referencedValues = new TreeSet<>(allowUnusedDeclarations
                 ? GlslResourceUsage.referencedValueIdentifiers(stripped, UNIFORM_SPECS.keySet())
-                : Set.of();
+                : Set.of());
+        if (allowUnusedDeclarations && stage == Stage.SHADOW) {
+            if (containsIdentifier(stripped, "gl_ModelViewMatrix")) {
+                referencedValues.add("shadowModelView");
+            }
+            if (containsIdentifier(stripped, "gl_NormalMatrix")) {
+                referencedValues.add("shadowModelViewInverse");
+            }
+            if (containsIdentifier(stripped, "gl_ProjectionMatrix")) {
+                referencedValues.add("shadowProjection");
+            }
+        }
 
         Matcher matcher = UNIFORM_DECLARATION.matcher(stripped);
         while (matcher.find()) {
@@ -510,8 +547,17 @@ public final class UniformRegistry {
                     deviations.add("ADVANCED_IMAGE_DECLARATION:" + variable.name());
                     continue;
                 }
-                String declaredType = variable.array() ? type + "[]" : type;
-                UniformDeclaration declaration = new UniformDeclaration(variable.name(), declaredType);
+                // Pack authors write bool for Iris's isElytraFlying; the
+                // catalog field is int, so a bool declaration of that name
+                // plans as the live int field rather than failing type
+                // support.
+                String declaredType = type;
+                if (variable.name().equals("isElytraFlying") && type.equals("bool")) {
+                    declaredType = "int";
+                }
+                String effectiveType = variable.array() ? declaredType + "[]" : declaredType;
+                UniformDeclaration declaration = new UniformDeclaration(
+                        variable.name(), effectiveType);
                 UniformDeclaration previous = declarations.putIfAbsent(variable.name(), declaration);
                 if (previous != null && !previous.glslType().equals(declaredType)) {
                     conflicts.add(variable.name());
@@ -567,6 +613,17 @@ public final class UniformRegistry {
             UniformDescriptor spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
             if (spec == null && customDescriptors != null) {
                 spec = customDescriptors.get(name);
+            }
+            UniformDescriptor custom = customDescriptors == null ? null : customDescriptors.get(name);
+            if (custom != null && custom.availability() == Availability.REJECTED) {
+                // The pack wrote this declaration and Chimera could not honour it. A program that
+                // reads the name must not run with a substitute value, so it fails closed here.
+                if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
+                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
+                } else {
+                    deviations.add("CUSTOM_VALUE_REJECTED:" + name);
+                }
+                continue;
             }
             if (!SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
                 if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
@@ -661,7 +718,8 @@ public final class UniformRegistry {
                 continue;
             }
             bindings.add(new SamplerBinding(sampler.getKey(), slot, sampler.getValue()));
-            String resource = stage == Stage.GEOMETRY && sampler.getKey().equals("shadowtex1")
+            String resource = (stage == Stage.GEOMETRY || stage == Stage.ENTITY || stage == Stage.BLOCK)
+                    && sampler.getKey().equals("shadowtex1")
                     ? "shadowtex0"
                     : stage == Stage.POST && sampler.getKey().equals("tex")
                     && customSamplerSlots != null
@@ -719,25 +777,95 @@ public final class UniformRegistry {
         return spec.accepts(type);
     }
 
+    /**
+     * The catalog entry a program's declaration resolves to, the pack's own authored values
+     * included: a refused declaration resolves to nothing, so nothing serves it a substitute.
+     */
+    public static UniformDescriptor resolve(
+            String name,
+            String glslType,
+            Map<String, UniformDescriptor> customDescriptors
+    ) {
+        UniformDescriptor spec = descriptor(name, glslType);
+        if (spec != null) {
+            return spec;
+        }
+        spec = customDescriptors == null ? null : customDescriptors.get(name);
+        if (spec == null) {
+            return null;
+        }
+        return spec.availability() == Availability.REJECTED || !spec.accepts(glslType) ? null : spec;
+    }
+
+    /**
+     * The names the host answers for. A pack may not author a declaration under one of these: it
+     * would replace a value the host is responsible for. Every other name is the pack's own.
+     */
+    public static boolean isEngineInput(String name) {
+        return name != null && UNIFORM_SPECS.containsKey(name);
+    }
+
+    /**
+     * The engine inputs with a per-component source, so {@code eyeBrightness.y} resolves to
+     * something the host actually reads. A component of any other name is a declaration error
+     * rather than a zero.
+     */
+    private static final Set<String> COMPONENT_INPUTS = Set.of(
+            "eyeBrightness", "eyeBrightnessSmooth",
+            "cameraPosition", "previousCameraPosition",
+            "cameraPositionFract", "previousCameraPositionFract",
+            "cameraPositionInt", "previousCameraPositionInt",
+            "eyePosition", "relativeEyePosition", "playerLookVector",
+            "sunPosition", "moonPosition", "shadowLightPosition", "upPosition", "skyColor");
+
+    /** Whether a component of the uniform's own vector type exists, for {@code name.x}. */
+    public static boolean supportsComponent(UniformDescriptor descriptor, int component) {
+        if (descriptor == null || component < 0) {
+            return true;
+        }
+        if (!COMPONENT_INPUTS.contains(descriptor.name())) {
+            return false;
+        }
+        for (String type : descriptor.acceptedTypes()) {
+            if (componentCount(type) > component) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int componentCount(String glslType) {
+        return switch (glslType) {
+            case "vec2", "ivec2" -> 2;
+            case "vec3", "ivec3" -> 3;
+            case "vec4", "ivec4" -> 4;
+            default -> 0;
+        };
+    }
+
     private static boolean isReferenced(String source, String name) {
         Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source);
         return matcher.find() && matcher.find();
     }
 
-    /**
-     * Accounts for fixed-adapter aliases introduced after interface planning.
-     * The modern shadow bridge maps legacy matrix built-ins to
-     * gbufferModelView, so that canonical field is live even when the authored
-     * source references only gl_ModelViewMatrix or gl_NormalMatrix.
-     */
+    /** Accounts for stage-local legacy shadow matrix aliases during planning. */
     private static boolean isReferencedForStage(String source, String name, Stage stage) {
         if (isReferenced(source, name)) {
             return true;
         }
-        return stage == Stage.SHADOW && name.equals("gbufferModelView")
-                && (isReferenced(source, "gl_ModelViewMatrix")
-                || isReferenced(source, "gl_NormalMatrix")
-                || isReferenced(source, "gl_ProjectionMatrix"));
+        if (stage != Stage.SHADOW) {
+            return false;
+        }
+        return switch (name) {
+            case "shadowModelView" -> containsIdentifier(source, "gl_ModelViewMatrix");
+            case "shadowModelViewInverse" -> containsIdentifier(source, "gl_NormalMatrix");
+            case "shadowProjection" -> containsIdentifier(source, "gl_ProjectionMatrix");
+            default -> false;
+        };
+    }
+
+    private static boolean containsIdentifier(String source, String name) {
+        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source).find();
     }
 
     private static boolean isSamplerUnused(String source, String name) {
@@ -891,6 +1019,7 @@ public final class UniformRegistry {
     private static boolean isExecutionBlocking(String deviation) {
         return deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                 || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
+                || deviation.startsWith("CUSTOM_VALUE_REJECTED:")
                 || deviation.startsWith("UNIFORM_CONFLICT:")
                 || deviation.startsWith("SAMPLER_SLOT_CONFLICT:")
                 || deviation.startsWith("SAMPLER_NOT_MAPPED:")
@@ -962,6 +1091,9 @@ public final class UniformRegistry {
         addLive(specs, "far", "float");
         addLive(specs, "wetness", "float");
         addLive(specs, "sunAngle", "float");
+        addLive(specs, "shadowAngle", "float");
+        addLive(specs, "upPosition", "vec3");
+        addLive(specs, "skyColor", "vec3");
         addLive(specs, "frameCounter", "int");
         addLive(specs, "cameraPositionInt", "ivec3");
         addLive(specs, "previousCameraPositionInt", "ivec3");
@@ -974,52 +1106,26 @@ public final class UniformRegistry {
         // provider supplies live values where Chimera has a source of truth;
         // the remaining values are explicit zero or identity defaults.
         addLive(specs, "bedrockLevel", "int");
-        addLive(specs, "blindFactor", "float");
         addLive(specs, "blindness", "float", "blindness");
         addLive(specs, "darknessFactor", "float");
         addLive(specs, "darknessLightFactor", "float");
+        addLive(specs, "isElytraFlying", "int");
         addDefault(specs, "endFlashIntensity", "float");
         addDefault(specs, "endFlashPosition", "vec3");
         addLive(specs, "frameTime", "float");
-        addLive(specs, "frameTimeSmooth", "float");
-        addLive(specs, "framemod2", "float");
-        addLive(specs, "framemod4", "float");
-        addLive(specs, "framemod8", "float");
-        addLive(specs, "framemod600", "float");
-        addDefault(specs, "isCold", "float");
-        addDefault(specs, "isDesert", "float");
-        addDefault(specs, "isJungle", "float");
-        addDefault(specs, "isMesa", "float");
-        addDefault(specs, "isMushroom", "float");
-        addDefault(specs, "isSavanna", "float");
-        addDefault(specs, "isSwamp", "float");
-        addDefault(specs, "inBasaltDeltas", "float");
-        addDefault(specs, "inCrimsonForest", "float");
-        addDefault(specs, "inDry", "float");
-        addDefault(specs, "inNetherWastes", "float");
-        addDefault(specs, "inPaleGarden", "float");
-        addDefault(specs, "inRainy", "float");
-        addDefault(specs, "inSnowy", "float");
-        addDefault(specs, "inSoulValley", "float");
-        addDefault(specs, "inWarpedForest", "float");
-        addDefault(specs, "isEyeInCave", "float");
-        addDefault(specs, "maxBlindnessDarkness", "float");
         addLive(specs, "nightVision", "float");
-        addLive(specs, "rainFactor", "float", "rainStrength");
         addLive(specs, "screenBrightness", "float");
-        addDefault(specs, "shadowFade", "float", DefaultPolicy.ONE);
-        addDefault(specs, "starter", "float");
-        addLive(specs, "timeAngle", "float", "sunAngle");
-        addDefault(specs, "timeBrightness", "float", DefaultPolicy.ONE);
         addDefault(specs, "velocity", "float");
         addLive(specs, "worldDay", "int");
         addDefault(specs, "atlasSize", "ivec2");
         addLive(specs, "eyeBrightness", "ivec2");
         addLive(specs, "eyeBrightnessSmooth", "ivec2");
-        addLive(specs, "eyeBrightnessM", "float");
+        addLive(specs, "eyeAltitude", "float");
         addLive(specs, "eyePosition", "vec3");
         addLive(specs, "playerLookVector", "vec3");
         addLive(specs, "relativeEyePosition", "vec3");
+        addLive(specs, "biome", "int");
+        addLive(specs, "biome_precipitation", "int");
         addLive(specs, "dimension", "int");
         addLive(specs, "heightLimit", "int");
         addLive(specs, "logicalHeightLimit", "int");
@@ -1030,7 +1136,6 @@ public final class UniformRegistry {
         addLive(specs, "temperature", "float");
         addLive(specs, "rainfall", "float");
         addDefault(specs, "centerDepthSmooth", "float");
-        addDefault(specs, "skyColor", "vec3");
         addDefault(specs, "entityColor", "vec4");
         addDefault(specs, "lightningBoltPosition", "vec4");
         addDefault(specs, "blockEntityId", "int");

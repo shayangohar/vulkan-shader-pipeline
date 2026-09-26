@@ -147,6 +147,9 @@ public final class ChimeraRenderer {
         if (!ready || chimeraPass == null) {
             return;
         }
+        // Material companions are independent of shader-pack state: atlas
+        // uploads arrive whether or not a pack is installed.
+        chimeraPass.pumpMaterialMapBuilds();
         if (chimeraPass.hasPendingPackChange() && installed) {
             Renderer.getInstance().setMainPass(hostPass);
             ChimeraTerrainPipelines.disable();
@@ -173,6 +176,34 @@ public final class ChimeraRenderer {
     /** Chimera's world segments may run while its pass owns the frame. */
     public static boolean segmentsActive() {
         return installed && !screenMode;
+    }
+
+    /**
+     * True when this frame's world is rendered for a loaded shader pack, which
+     * reads gbufferProjection with the vanilla finite far plane (see
+     * ChimeraProjectionFarMixin).
+     */
+    public static boolean packProjectionActive() {
+        return segmentsActive() && chimeraPass != null && chimeraPass.packLoaded();
+    }
+
+    /**
+     * Opens Chimera's level segment only on a recording main command buffer.
+     * A nested Minecraft.runTick (the respawn loading screen) makes VulkanMod
+     * submit the outer frame before that frame renders its level. VulkanMod's
+     * own passes resume through Renderer.beginRenderPass; Chimera records raw
+     * commands, so it resumes the same way before its first barrier. The new
+     * frame boundary may hand the frame to the host, so re-check ownership.
+     */
+    public static boolean beginLevelSegments() {
+        if (!segmentsActive()) {
+            return false;
+        }
+        if (!Renderer.isRecording()) {
+            ChimeraMod.LOGGER.info("[chimera] level segment: resuming a frame submitted by a nested tick");
+            Renderer.getInstance().beginFrame();
+        }
+        return segmentsActive();
     }
 
     public static ChimeraMainPass getMainPass() {

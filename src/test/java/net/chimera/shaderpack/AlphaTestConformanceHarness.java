@@ -210,11 +210,34 @@ public final class AlphaTestConformanceHarness {
                     "BSL material terrain kept untranslated explicit-gradient sampling");
             check(terrain.convertedFragment().contains("textureGrad("),
                     "BSL material terrain lost its explicit gradients");
+            String bslFragment = terrain.convertedFragment();
+            java.util.regex.Matcher gradPrefix = java.util.regex.Pattern.compile(
+                            "(\\w*Atlas\\w*)SampleGrad\\(chimeraTexture, newCoord, dcdx, dcdy\\)")
+                    .matcher(bslFragment);
+            check(gradPrefix.find(),
+                    "BSL parallax overwrite missed the explicit-gradient atlas helper");
+            check(!bslFragment.contains("textureGrad(chimeraTexture, newCoord, dcdx, dcdy)"),
+                    "raw explicit-gradient albedo sample remains outside the helper");
+            check(bslFragment.contains("textureGrad(normals,"),
+                    "material normal explicit-gradient reads changed");
+            check(!bslFragment.contains("SampleGrad(normals")
+                            && !bslFragment.contains("SampleGrad(specular"),
+                    "material maps entered the atlas helper");
+            java.util.Set<Integer> bslSlots = new java.util.HashSet<>();
+            for (UniformRegistry.SamplerBinding binding : terrain.interfacePlan().samplers()) {
+                bslSlots.add(binding.slot());
+            }
+            check(bslSlots.contains(25) && bslSlots.contains(26),
+                    "BSL material selectors 25/26 missing: " + bslSlots);
             compile(terrain.convertedFragment());
+            PackConfig.TargetSettings bslTarget2Contract = analysis.config()
+                    .targetSettings().get(2);
+            check(bslTarget2Contract != null && !bslTarget2Contract.clear(),
+                    "BSL colortex2Clear=false declaration was not parsed from the pack source");
             PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                     analysis.plan().programs(), analysis.config(), 2560, 1440, 8, 16384);
             check(graph.target(2) != null && graph.target(2).persistent(),
-                    "BSL temporal target lost cross-frame persistence");
+                    "BSL temporal target lost declaration-driven cross-frame persistence");
             check(graph.target(0) != null && !graph.target(0).persistent(),
                     "BSL geometry target must not persist across frames");
         } finally {

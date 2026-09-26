@@ -42,23 +42,39 @@ public class ChimeraShadowMap {
     private VulkanImage shadowColor1;
     private java.util.List<VulkanImage> shadowColors = java.util.List.of();
     private GraphicsPipeline shadowPipeline;
+    private final DepthSampleView depthSampleView = new DepthSampleView();
     private long shadowSampler;
 
     // CPU-side buffer for the light MVP, read by the Uniforms system during upload
     private MappedBuffer lightMVPBuffer;
 
-    // Light-space matrices (updated each frame)
-    private final Matrix4f lightProjection = new Matrix4f();
+    // Current caster state. Host and pack projections intentionally use
+    // different Vulkan clip-depth conventions.
+    private final Matrix4f hostLightProjection = new Matrix4f();
+    private final Matrix4f packLightProjection = new Matrix4f();
     private final Matrix4f lightView = new Matrix4f();
     private final Matrix4f lightMVP = new Matrix4f();
     private final Vector3f lightDir = new Vector3f();
     private final float[] matrixScratch = new float[16];
+    private final Matrix4f receiverScratch = new Matrix4f();
+    // Clip X that the fixed receiver maps to u = 1.5, outside the map.
+    private static final float OUTSIDE_MAP_X = 2.0F;
+    // False while the bound image holds pack-caster depth.
+    private boolean hostReadableMap = true;
+
+    // State that describes the depth image currently bound to receivers.
+    private final Matrix4f mapLightView = new Matrix4f();
+    private final Matrix4f mapPackProjection = new Matrix4f();
+    private final Matrix4f samplingView = new Matrix4f();
+    private double mapCameraX;
+    private double mapCameraY;
+    private double mapCameraZ;
+    private boolean mapSnapshotValid;
+    private long mapGeneration;
 
     private int shadowMapSize = PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION;
     private float shadowDistance = PackConfig.DEFAULT_SHADOW_DISTANCE;
     private float shadowDistanceRenderMultiplier = 1.0F;
-    private float sunPathRotation;
-    private float sunPathOffset;
 
     private boolean initialized;
     /** True only until the newly created images receive their first read layout. */
@@ -78,8 +94,9 @@ public class ChimeraShadowMap {
         this.shadowMapSize = settings.resolution();
         this.shadowDistance = settings.distance();
         this.shadowDistanceRenderMultiplier = settings.distanceRenderMultiplier();
-        this.sunPathRotation = settings.sunPathRotation();
-        this.sunPathOffset = settings.sunPathOffset();
+        // The celestial frame derives the light direction from the pack's sun path, so the shadow
+        // matrix follows the same numbers the pack reads instead of repeating the trigonometry.
+        PackUniformProvider.installSunPath(settings.sunPathRotation(), settings.sunPathOffset());
 
         this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", this.shadowMapSize, this.shadowMapSize, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
@@ -90,6 +107,9 @@ public class ChimeraShadowMap {
                 .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
                 .setLinearFiltering(true).setClamp(true).createVulkanImage();
         this.shadowColors = java.util.List.of(this.shadowFramebuffer.getColorAttachment(), this.shadowColor1);
+        // Receivers sample this D24S8 image; VulkanMod's view carries both aspects.
+        VulkanImage depth = this.shadowFramebuffer.getDepthAttachment();
+        ChimeraDepthViewOverride.registerOwned(depth, this.depthSampleView.ensure(depth));
 
         createRenderPass();
         this.shadowPipeline = ChimeraPostPipelines.createTerrainPipeline("chimera_shadow", ChimeraTerrainPipelines.getTerrainVertexFormat());
@@ -101,6 +121,8 @@ public class ChimeraShadowMap {
         Uniforms.mat4f_uniformMap.put("LightMVP", () -> this.lightMVPBuffer);
 
         this.needsInitialSamplingLayout = true;
+        this.mapSnapshotValid = false;
+        this.mapGeneration = 0L;
         this.initialized = true;
     }
 
@@ -121,25 +143,11 @@ public class ChimeraShadowMap {
     }
 
     /**
-     * Computes camera-relative light-space matrices from the celestial angle.
+     * Builds camera-relative light-space matrices from the frame's celestial light vector.
      * Called each frame before the shadow pass.
      */
-    public void updateLight(float celestialAngle) {
-        // Sun direction: rotates around the X axis based on celestial angle
-        // At celestialAngle=0 (noon), sun is overhead
-        float sunAngleRad = (celestialAngle * 360.0F + this.sunPathRotation + this.sunPathOffset)
-                * (float) Math.PI / 180.0F;
-        float sunX = (float) Math.sin(sunAngleRad);
-        float sunY = (float) Math.cos(sunAngleRad);
-        float sunZ = 0.0F;
-
-        // At night, use moon direction (opposite the sun)
-        if (celestialAngle > 0.5F) {
-            sunX = -sunX;
-            sunY = -sunY;
-        }
-
-        this.lightDir.set(sunX, sunY, sunZ).normalize();
+    public void updateLight(Vector3f light) {
+        this.lightDir.set(light).normalize();
 
         // DrawBuffers already subtracts the render camera from terrain
         // positions, so the light view must use the same relative origin.
@@ -155,20 +163,128 @@ public class ChimeraShadowMap {
         // Ortho projection covering the shadow distance
         float effectiveDistance = this.shadowDistance * this.shadowDistanceRenderMultiplier;
         float halfExtent = effectiveDistance * 0.5F;
-        this.lightProjection.identity();
-        this.lightProjection.ortho(
-                -halfExtent, halfExtent,
-                -halfExtent, halfExtent,
-                SHADOW_NEAR, Math.max(SHADOW_FAR, effectiveDistance * 4.0F)
-        );
+        createLightProjection(this.hostLightProjection, halfExtent, effectiveDistance, true);
+        createLightProjection(this.packLightProjection, halfExtent, effectiveDistance, false);
 
         // Combined MVP
-        this.lightMVP.set(this.lightProjection).mul(this.lightView);
+        this.lightMVP.set(this.hostLightProjection).mul(this.lightView);
+        writeHostReceiverMatrix();
+    }
 
-        // Write to the mapped buffer for GPU upload
-        this.lightMVP.get(this.matrixScratch);
-        this.lightMVPBuffer.buffer.asFloatBuffer().put(this.matrixScratch);
-        PackUniformProvider.updateShadowState(this.lightView, this.lightProjection, this.lightDir);
+    /**
+     * Fills the fixed receiver's LightMVP for the map currently bound. A map
+     * written by the pack caster holds authored distortion and clip depth the
+     * fixed shader cannot decode, so its receivers get a constant coordinate
+     * outside the map, which chimera_terrain.fsh defines as lit. Host fallback
+     * programs then match Iris's unshadowed vanilla fallback.
+     */
+    private void writeHostReceiverMatrix() {
+        hostReceiverMatrix().get(this.matrixScratch);
+        if (this.lightMVPBuffer != null) {
+            this.lightMVPBuffer.buffer.asFloatBuffer().put(this.matrixScratch);
+        }
+    }
+
+    private void setHostReadableMap(boolean readable) {
+        if (this.hostReadableMap == readable) return;
+        this.hostReadableMap = readable;
+        writeHostReceiverMatrix();
+    }
+
+    Matrix4f hostReceiverMatrix() {
+        return this.hostReadableMap
+                ? this.lightMVP
+                : this.receiverScratch.zero().m30(OUTSIDE_MAP_X).m33(1.0F);
+    }
+
+    static void createLightProjection(
+            Matrix4f destination, float halfExtent, float effectiveDistance, boolean zZeroToOne) {
+        destination.identity().ortho(
+                -halfExtent, halfExtent,
+                -halfExtent, halfExtent,
+                SHADOW_NEAR, Math.max(SHADOW_FAR, effectiveDistance * 4.0F),
+                zZeroToOne);
+    }
+
+    /** Seeds a newly cleared all-lit depth image with a coherent receiver matrix pair. */
+    void seedClearedMap(double cameraX, double cameraY, double cameraZ) {
+        storeMapState(cameraX, cameraY, cameraZ);
+    }
+
+    /** Commits the map state only after its producer and attachment transitions succeed. */
+    void commitRenderedMap(double cameraX, double cameraY, double cameraZ) {
+        storeMapState(cameraX, cameraY, cameraZ);
+        setHostReadableMap(false);
+    }
+
+    private void storeMapState(double cameraX, double cameraY, double cameraZ) {
+        this.mapLightView.set(this.lightView);
+        this.mapPackProjection.set(this.packLightProjection);
+        this.mapCameraX = cameraX;
+        this.mapCameraY = cameraY;
+        this.mapCameraZ = cameraZ;
+        this.mapSnapshotValid = true;
+        this.needsInitialSamplingLayout = false;
+        this.mapGeneration++;
+    }
+
+    /**
+     * Invalidates the matrix/image association after a partial write. The next
+     * frame must clear and reinitialize the image before any pack samples it.
+     */
+    void invalidateMapSnapshot() {
+        this.mapSnapshotValid = false;
+        this.needsInitialSamplingLayout = true;
+    }
+
+    /** Invalidates pack-facing matrices when the fixed host pipeline wrote the image. */
+    void invalidatePackMapSnapshot() {
+        this.mapSnapshotValid = false;
+        setHostReadableMap(true);
+    }
+
+    /** Publishes the previous map's matrices expressed relative to this frame's camera. */
+    void publishMapState(double cameraX, double cameraY, double cameraZ) {
+        if (!this.mapSnapshotValid) {
+            return;
+        }
+        Matrix4f view = mapViewAt(cameraX, cameraY, cameraZ);
+        PackUniformProvider.updateShadowState(view, this.mapPackProjection);
+    }
+
+    Matrix4f mapViewAt(double cameraX, double cameraY, double cameraZ) {
+        if (!this.mapSnapshotValid) {
+            return null;
+        }
+        return compensatedView(this.samplingView, this.mapLightView,
+                this.mapCameraX, this.mapCameraY, this.mapCameraZ,
+                cameraX, cameraY, cameraZ);
+    }
+
+    /** Publishes the current caster pair only while its shadow draw is active. */
+    void publishCurrentDrawState() {
+        PackUniformProvider.updateShadowState(this.lightView, this.packLightProjection);
+    }
+
+    static Matrix4f compensatedView(
+            Matrix4f destination,
+            Matrix4f mapView,
+            double mapX, double mapY, double mapZ,
+            double currentX, double currentY, double currentZ
+    ) {
+        // Subtract in world-space double precision before storing the local delta.
+        return destination.set(mapView).translate(
+                (float) (currentX - mapX),
+                (float) (currentY - mapY),
+                (float) (currentZ - mapZ));
+    }
+
+    boolean hasMapSnapshot() {
+        return this.mapSnapshotValid;
+    }
+
+    long mapGeneration() {
+        return this.mapGeneration;
     }
 
     /** Binds the shadow map texture for sampling by the terrain shader. */
@@ -190,6 +306,12 @@ public class ChimeraShadowMap {
 
     /** Initial contents must be defined before geometry samples the first shadow frame. */
     public void initializeSampling(VkCommandBuffer commandBuffer) {
+        VulkanImage color = this.shadowFramebuffer.getColorAttachment();
+        VulkanImage depth = this.shadowFramebuffer.getDepthAttachment();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            color.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            depth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        }
         PackGeometryContext.beginShadow(this.shadowColors, this.shadowFramebuffer.getDepthAttachment());
         try {
             Renderer.getInstance().beginRenderPass(this.shadowRenderPass, this.shadowFramebuffer);
@@ -198,14 +320,20 @@ public class ChimeraShadowMap {
             PackGeometryContext.close();
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.shadowFramebuffer.getDepthAttachment().transitionImageLayout(stack, commandBuffer,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            color.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            depth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
         this.needsInitialSamplingLayout = false;
     }
 
-    public Matrix4f getLightProjection() {
-        return this.lightProjection;
+    /** Forward [0,1] projection for the fixed VulkanMod fallback pipeline. */
+    public Matrix4f getHostLightProjection() {
+        return this.hostLightProjection;
+    }
+
+    /** Legacy [-1,1] projection for converted pack shadow programs. */
+    public Matrix4f getPackLightProjection() {
+        return this.packLightProjection;
     }
 
     public Matrix4f getLightView() {
@@ -245,6 +373,10 @@ public class ChimeraShadowMap {
     }
 
     public void cleanUp() {
+        if (this.shadowFramebuffer != null) {
+            ChimeraDepthViewOverride.unregisterOwned(this.shadowFramebuffer.getDepthAttachment());
+        }
+        this.depthSampleView.destroy();
         if (this.shadowFramebuffer != null) this.shadowFramebuffer.cleanUp(true);
         if (this.shadowRenderPass != null) this.shadowRenderPass.cleanUp();
         if (this.shadowPipeline != null) this.shadowPipeline.cleanUp();
@@ -255,6 +387,9 @@ public class ChimeraShadowMap {
         this.shadowRenderPass = null;
         this.shadowPipeline = null;
         this.needsInitialSamplingLayout = false;
+        this.mapSnapshotValid = false;
+        this.hostReadableMap = true;
+        this.mapGeneration = 0L;
         this.initialized = false;
     }
 }

@@ -80,15 +80,26 @@ public final class ChimeraEntityVertexData {
         float dv2 = v2 - v0;
         float determinant = du1 * dv2 - du2 * dv1;
         if (!Float.isFinite(determinant) || Math.abs(determinant) <= TINY) {
-            return FLAT_TANGENT;
+            return fallbackTangent(nx, ny, nz);
         }
         float scale = 1.0f / determinant;
         float tx = scale * (dv2 * e1x - dv1 * e2x);
         float ty = scale * (dv2 * e1y - dv1 * e2y);
         float tz = scale * (dv2 * e1z - dv1 * e2z);
+        float normalLength = nx * nx + ny * ny + nz * nz;
+        if (Float.isFinite(normalLength) && normalLength > TINY) {
+            float normalUnit = (float) (1.0 / Math.sqrt(normalLength));
+            nx *= normalUnit;
+            ny *= normalUnit;
+            nz *= normalUnit;
+            float alongNormal = tx * nx + ty * ny + tz * nz;
+            tx -= alongNormal * nx;
+            ty -= alongNormal * ny;
+            tz -= alongNormal * nz;
+        }
         float length = tx * tx + ty * ty + tz * tz;
-        if (length <= TINY) {
-            return FLAT_TANGENT;
+        if (!Float.isFinite(length) || length <= TINY) {
+            return fallbackTangent(nx, ny, nz);
         }
         float unit = (float) (1.0 / Math.sqrt(length));
         tx *= unit;
@@ -101,6 +112,48 @@ public final class ChimeraEntityVertexData {
                 + by * (tz * nx - tx * nz)
                 + bz * (tx * ny - ty * nx);
         return pack(tx, ty, tz, handedness < 0.0f ? -1.0f : 1.0f);
+    }
+
+    /**
+     * Produces a deterministic unit tangent perpendicular to the supplied normal.
+     * A fixed axis is not a valid fallback: it becomes parallel on one face of
+     * every axis-aligned model and makes pack TBN construction undefined.
+     */
+    public static int fallbackTangent(float nx, float ny, float nz) {
+        float normalLength = nx * nx + ny * ny + nz * nz;
+        if (!Float.isFinite(normalLength) || normalLength <= TINY) {
+            return FLAT_TANGENT;
+        }
+        float normalUnit = (float) (1.0 / Math.sqrt(normalLength));
+        nx *= normalUnit;
+        ny *= normalUnit;
+        nz *= normalUnit;
+
+        float ax;
+        float ay;
+        float az;
+        float absX = Math.abs(nx);
+        float absY = Math.abs(ny);
+        float absZ = Math.abs(nz);
+        if (absX <= absY && absX <= absZ) {
+            ax = 1.0f;
+            ay = 0.0f;
+            az = 0.0f;
+        } else if (absY <= absZ) {
+            ax = 0.0f;
+            ay = 1.0f;
+            az = 0.0f;
+        } else {
+            ax = 0.0f;
+            ay = 0.0f;
+            az = 1.0f;
+        }
+
+        float tx = ay * nz - az * ny;
+        float ty = az * nx - ax * nz;
+        float tz = ax * ny - ay * nx;
+        float tangentUnit = (float) (1.0 / Math.sqrt(tx * tx + ty * ty + tz * tz));
+        return pack(tx * tangentUnit, ty * tangentUnit, tz * tangentUnit, 1.0f);
     }
 
     private static int snorm(float value) {

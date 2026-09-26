@@ -95,6 +95,57 @@ public final class M77ConformanceHarness {
         state.reset();
         assertTrue(state.firstFrame() && !state.previousAvailable(3),
                 "M7.7 temporal reset did not clear history");
+
+        verifyTwoFrameHistory();
+    }
+
+    /**
+     * Models two complete frames plus the failure seams a temporal reader
+     * depends on. History must advance every committed frame, a skipped
+     * writer must retain (not invent) previous availability exactly as the
+     * runtime seeds it, an aborted frame must keep the last commit, and a
+     * resize/reload must restart with no stale previous frame.
+     */
+    private static void verifyTwoFrameHistory() {
+        PackTemporalState frames = new PackTemporalState();
+        frames.beginFrame(true);
+        frames.seedCurrent(2);
+        frames.stageWrite(2);
+        assertTrue(frames.commit(), "M7.7 first history commit failed");
+        assertTrue(frames.previousAvailable(2), "M7.7 first frame produced no history");
+
+        frames.beginFrame(true);
+        assertTrue(frames.previousAvailable(2), "M7.7 history was lost between frames");
+        assertTrue(!frames.currentAvailable(2), "M7.7 new frame kept stale current state");
+        frames.seedCurrent(2);
+        frames.stageWrite(2);
+        assertTrue(frames.commit(), "M7.7 second history commit failed");
+        assertTrue(frames.previousAvailable(2), "M7.7 second frame produced no history");
+
+        // Skipped writer: the runtime still seeds a valid persistent
+        // target at frame start, so the previous frame stays available
+        // instead of degrading to unseeded history.
+        frames.beginFrame(true);
+        frames.seedCurrent(2);
+        assertTrue(frames.commit(), "M7.7 skipped-writer commit failed");
+        assertTrue(frames.previousAvailable(2),
+                "M7.7 skipped writer must retain the last committed history");
+
+        // Failed writer: abort drops the pending write and the commit is
+        // refused, so the last good history survives untouched.
+        frames.beginFrame(true);
+        frames.seedCurrent(2);
+        frames.stageWrite(2);
+        frames.abort();
+        assertTrue(frames.previousAvailable(2),
+                "M7.7 aborted frame must keep the last committed history");
+
+        // Resize/reload restarts the sequence with no stale previous frame.
+        frames.reset();
+        assertTrue(frames.firstFrame(), "M7.7 reset did not restart the frame sequence");
+        frames.beginFrame(true);
+        assertTrue(!frames.previousAvailable(2) && !frames.currentAvailable(2),
+                "M7.7 reloaded session exposed stale temporal state");
     }
 
     private static void verifyStaticAvailability() {

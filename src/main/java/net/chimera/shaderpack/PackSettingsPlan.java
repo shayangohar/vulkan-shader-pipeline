@@ -199,7 +199,8 @@ record PackSettingsPlan(
                 deviations.add("REQUIRED_FEATURE_UNSUPPORTED:" + feature);
             }
         }
-        PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(customValues, defaults, deviations);
+        PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(
+                customValues, defaults, deviations, BiomeIds.constants());
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
                 runtimeSettings, resourceDeclarations, Map.of(), false);
@@ -517,7 +518,7 @@ record PackSettingsPlan(
                 stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
         boolean invalidCondition = false;
         try {
-            for (String line : Files.readAllLines(propertyFile, StandardCharsets.UTF_8)) {
+            for (String line : logicalLines(propertyFile)) {
                 Matcher directive = CONDITION.matcher(line);
                 if (directive.matches()) {
                     if (!invalidCondition) {
@@ -640,6 +641,29 @@ record PackSettingsPlan(
         } catch (IOException e) {
             deviations.add("SHADERS_PROPERTIES_READ_FAILED");
         }
+    }
+
+    /**
+     * Joins a trailing backslash continuation into one logical line, which is how a pack writes an
+     * expression too long for a line: BSL's {@code isCold} is four of them. Directives are read
+     * through here too, so a conditioned block keeps its shape either way.
+     */
+    private static List<String> logicalLines(Path propertyFile) throws IOException {
+        List<String> lines = new ArrayList<>();
+        StringBuilder pending = new StringBuilder();
+        for (String line : Files.readAllLines(propertyFile, StandardCharsets.UTF_8)) {
+            String trimmed = line.stripTrailing();
+            if (trimmed.endsWith("\\")) {
+                pending.append(trimmed, 0, trimmed.length() - 1).append(' ');
+                continue;
+            }
+            lines.add(pending.length() == 0 ? line : pending + line);
+            pending.setLength(0);
+        }
+        if (pending.length() > 0) {
+            lines.add(pending.toString());
+        }
+        return lines;
     }
 
     private static boolean isSupportedProperty(String key) {

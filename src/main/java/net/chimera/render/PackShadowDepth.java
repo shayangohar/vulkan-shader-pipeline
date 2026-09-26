@@ -1,110 +1,81 @@
 package net.chimera.render;
 
-import net.chimera.render.shader.ChimeraPostPipelines;
-import net.chimera.render.shader.MrtPipelineContext;
-import net.vulkanmod.vulkan.Renderer;
-import net.vulkanmod.vulkan.framebuffer.Framebuffer;
-import net.vulkanmod.vulkan.framebuffer.RenderPass;
-import net.vulkanmod.vulkan.shader.GraphicsPipeline;
-import net.vulkanmod.vulkan.texture.VTextureSelector;
+import net.vulkanmod.vulkan.texture.SamplerInfo;
+import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
-import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VkCommandBuffer;
 
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_CLEAR;
-import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT;
-import static org.lwjgl.vulkan.VK10.vkCmdDraw;
+import static org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
 
-/** Converts the engine shadow depth into one pack-readable shadowtex0 image. */
+/**
+ * Owns the comparison sampler that pack shadow lookups need.
+ *
+ * <p>Pack programs sample the engine shadow depth directly: `sampler2DShadow`
+ * lookups compare against the stored depth and `sampler2D` lookups read it, so
+ * the pack-facing shadow texture is the shadow attachment and not a converted
+ * copy. The shadow vertex stage already maps the authored clip output into the
+ * OpenGL window range the receivers expect, so a comparison against the stored
+ * depth is the documented OptiFine behaviour.</p>
+ *
+ * <p>A copy of the depth into a colour image was tried first. Comparison
+ * sampling against a colour image is the one configuration that faulted the
+ * driver (device lost under BSL and Complementary), while comparison sampling
+ * against the depth image itself ran stably for both packs, so the copy is
+ * gone and the descriptor sampler carries the contract instead.</p>
+ */
 public final class PackShadowDepth {
-    private VulkanImage image;
-    private Framebuffer framebuffer;
-    private RenderPass renderPass;
-    private GraphicsPipeline conversionPipeline;
-    private boolean valid;
+    /** Address mode and filters of the engine shadow sampler, mirrored for pack lookups. */
+    private static final int SHADOW_ADDRESS_MODE = 2;
+    private static final int SHADOW_FILTER = 1;
 
-    public boolean configure(int size) {
-        cleanUp();
-        int extent = Math.max(1, size);
-        try {
-            this.image = VulkanImage.builder(extent, extent)
-                    .setName("chimeraPackShadowDepth")
-                    .setFormat(100) // VK_FORMAT_R32_SFLOAT
-                    .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
-                    .setLinearFiltering(true)
-                    .setClamp(true)
-                    .createVulkanImage();
-            this.framebuffer = Framebuffer.builder(this.image, null).build();
-            RenderPass.Builder builder = RenderPass.builder(this.framebuffer);
-            builder.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR,
-                    VK_ATTACHMENT_STORE_OP_STORE);
-            this.renderPass = builder.build();
-            MrtPipelineContext.begin(new int[] {VK_FORMAT_R32_SFLOAT}, 1);
-            try {
-                this.conversionPipeline = ChimeraPostPipelines.createDepthPipeline();
-            } finally {
-                MrtPipelineContext.end();
-            }
-            this.valid = this.conversionPipeline != null;
-            if (!this.valid) cleanUp();
-            return this.valid;
-        } catch (RuntimeException failure) {
-            cleanUp();
-            return false;
-        }
+    private long compareSampler;
+
+    /** Creates the shared comparison sampler. Safe to call for every pack load. */
+    public void install() {
+        this.compareSampler = SamplerManager.getSampler(compareSamplerInfo());
     }
 
-    public boolean capture(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
-        if (!this.valid || commandBuffer == null || rawDepth == null) {
-            return false;
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.image.transitionImageLayout(stack, commandBuffer,
-                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            VTextureSelector.bindTexture(6, rawDepth);
-            Renderer renderer = Renderer.getInstance();
-            renderer.beginRenderPass(this.renderPass, this.framebuffer);
-            Renderer.setViewport(0, 0, this.image.width, this.image.height, stack);
-            renderer.bindGraphicsPipeline(this.conversionPipeline);
-            renderer.uploadAndBindUBOs(this.conversionPipeline);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-            renderer.endRenderPass(commandBuffer);
-            this.image.transitionImageLayout(stack, commandBuffer,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            renderer.setBoundRenderPass(null);
-            renderer.setBoundFramebuffer(null);
-            this.valid = true;
-            return true;
-        } catch (RuntimeException failure) {
-            Renderer.getInstance().setBoundRenderPass(null);
-            Renderer.getInstance().setBoundFramebuffer(null);
-            this.valid = false;
-            return false;
-        }
+    /**
+     * Compare-enabled sampler description for shadow lookups: the engine shadow
+     * sampler's clamp state with the OpenGL shadow comparison the packs author
+     * against.
+     */
+    static SamplerInfo compareSamplerInfo() {
+        return SamplerInfo.builder()
+                .setAddressMode(SHADOW_ADDRESS_MODE)
+                .setFiltering(SHADOW_FILTER, SHADOW_FILTER, SHADOW_FILTER)
+                .setCompare(true, VK_COMPARE_OP_LESS_OR_EQUAL)
+                .createSamplerInfo();
     }
 
-    public VulkanImage image() {
-        return this.valid ? this.image : null;
+    /** Compare-enabled sampler, or 0 before {@link #install()}. */
+    public long compareSampler() {
+        return this.compareSampler;
     }
 
-    public boolean isConfigured() {
-        return this.valid && this.image != null;
+    /**
+     * True when a declared sampler type reads the shadow depth through a depth
+     * comparison. The converted GLSL decides this: {@code sampler2DShadow}
+     * lookups compare, while a program that declares the same texture as
+     * {@code sampler2D} reads and compares it by hand.
+     */
+    public static boolean requiresCompareSampler(String declaredType) {
+        return declaredType != null && declaredType.contains("Shadow");
+    }
+
+    /**
+     * Sampler one shadow descriptor binds: the compare-enabled sampler when the
+     * program's lookup needs a comparison, otherwise the depth image's own
+     * sampler, so a program that reads the same image without a shadow sampler
+     * keeps the non-compare path its shader was written for.
+     */
+    public long samplerFor(VulkanImage boundImage, boolean compareRequired) {
+        if (!compareRequired || this.compareSampler == 0L) {
+            return boundImage.getSampler();
+        }
+        return this.compareSampler;
     }
 
     public void cleanUp() {
-        if (this.renderPass != null) this.renderPass.cleanUp();
-        if (this.framebuffer != null) this.framebuffer.cleanUp(false);
-        if (this.image != null) this.image.free();
-        if (this.conversionPipeline != null) this.conversionPipeline.cleanUp();
-        this.renderPass = null;
-        this.framebuffer = null;
-        this.image = null;
-        this.conversionPipeline = null;
-        this.valid = false;
+        this.compareSampler = 0L;
     }
 }

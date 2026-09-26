@@ -97,13 +97,14 @@ public abstract class ChimeraLevelRendererMixin {
                                         Vector4f vector4f,
                                         boolean bl2,
                                         CallbackInfo ci) {
-        if (ChimeraRenderer.segmentsActive()) {
+        if (ChimeraRenderer.beginLevelSegments()) {
             ChimeraEntityBridge.beginWorldSubmissionWindow();
             PackUniformProvider.beginFrame(camera,
                     deltaTracker.getGameTimeDeltaPartialTick(false), modelView, projection);
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
-                pass.openLevelSegment();
+                var position = camera.position();
+                pass.openLevelSegment(position.x, position.y, position.z);
             }
         }
     }

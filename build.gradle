@@ -33,7 +33,9 @@ dependencies {
     compileOnly "org.lwjgl:lwjgl-vulkan:3.3.3"
     compileOnly "org.lwjgl:lwjgl-vma:3.3.3"
     compileOnly "org.lwjgl:lwjgl-shaderc:3.3.3"
+    testImplementation "org.lwjgl:lwjgl-vulkan:3.3.3"
     testImplementation "org.lwjgl:lwjgl-shaderc:3.3.3"
+    testRuntimeOnly "org.lwjgl:lwjgl:3.3.3:natives-windows"
     testRuntimeOnly "org.lwjgl:lwjgl-shaderc:3.3.3:natives-windows"
 }
 
@@ -545,6 +547,33 @@ tasks.register('m83ConformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m87ShadowMatrixTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks legacy/host shadow projection ownership and map-camera snapshot compensation.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.ShadowMapMatrixHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('m87VulkanBarrierTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks Vulkan memory-barrier structure types and access masks without a device.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.PackVulkanBarriersHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('authoredOutputTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks the load-time proof that an authored program draws nothing.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.AuthoredOutputHarness'
+    jvmArgs '-ea'
+}
+
 tasks.register('m84ConformanceTest', JavaExec) {
     group = 'verification'
     description = 'Runs deterministic M8.4 common world-family adapter and fallback checks.'
@@ -620,6 +649,12 @@ tasks.register('m86bConformanceTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.shaderpack.M86bConformanceHarness'
     jvmArgs '-ea'
+    // Headless analysis must see the same effective shader settings as the
+    // CHIMERA instance (instance.cfg JvmArgs): branch-resolved target routes
+    // depend on them.
+    systemProperty 'chimera.option.RP_MODE', '3'
+    systemProperty 'chimera.option.ADVANCED_MATERIALS', '1'
+    systemProperty 'chimera.option.BLOCK_REFLECT_QUALITY', '3'
     doFirst {
         ['m86Complementary': 'chimera.m86.complementary',
          'm86Bsl': 'chimera.m86.bsl'].each { projectKey, systemKey ->
@@ -642,6 +677,10 @@ tasks.register('postTarget8ConformanceTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.render.PostTarget8ConformanceHarness'
     jvmArgs '-ea'
+    // Same effective shader settings as the CHIMERA instance (see m86bConformanceTest).
+    systemProperty 'chimera.option.RP_MODE', '3'
+    systemProperty 'chimera.option.ADVANCED_MATERIALS', '1'
+    systemProperty 'chimera.option.BLOCK_REFLECT_QUALITY', '3'
     doFirst {
         ['postTarget8Complementary': 'chimera.postTarget8.complementary',
          'postTarget8Bsl': 'chimera.postTarget8.bsl'].each { projectKey, systemKey ->
@@ -673,6 +712,10 @@ tasks.register('alphaTestConformance', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.shaderpack.AlphaTestConformanceHarness'
     jvmArgs '-ea'
+    // Same effective shader settings as the CHIMERA instance (see m86bConformanceTest).
+    systemProperty 'chimera.option.RP_MODE', '3'
+    systemProperty 'chimera.option.ADVANCED_MATERIALS', '1'
+    systemProperty 'chimera.option.BLOCK_REFLECT_QUALITY', '3'
     doFirst {
         ['alphaComplementary': 'chimera.alpha.complementary',
          'alphaBsl': 'chimera.alpha.bsl'].each { projectKey, systemKey ->
@@ -709,6 +752,89 @@ tasks.register('materialPlanConformance', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m87EntityRealPackTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks locked-pack entity/block executability, exact target routes, and converted shader compilation.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M87EntityRealPackHarness'
+    jvmArgs '-ea'
+    // Complete CHIMERA instance option set (see instance.cfg JvmArgs).
+    // The manifest gate must see the same branch conditions as runtime;
+    // a subset silently drops samplers such as MCBL lighttex/noisetex.
+    systemProperty 'chimera.option.MULTICOLORED_BLOCKLIGHT', '1'
+    systemProperty 'chimera.option.MCBL_DISTANCE', '128'
+    systemProperty 'chimera.option.MCBL_HALF_HEIGHT', '1'
+    systemProperty 'chimera.option.COLORED_LIGHTING', '128'
+    systemProperty 'chimera.option.WORLD_SPACE_REFLECTIONS', '1'
+    systemProperty 'chimera.option.RP_MODE', '3'
+    systemProperty 'chimera.option.ADVANCED_MATERIALS', '1'
+    systemProperty 'chimera.option.MATERIAL_FORMAT', '1'
+    systemProperty 'chimera.option.BLOCK_REFLECT_QUALITY', '3'
+    doFirst {
+        ['m87EntityComplementary': 'chimera.m87.entity.complementary',
+         'm87EntityBsl': 'chimera.m87.entity.bsl'].each { projectKey, systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value != null && !value.toString().isBlank()) {
+                def pack = file(value.toString())
+                if (!pack.isDirectory() && !pack.isFile()) {
+                    throw new GradleException("M8.7 entity pack path does not exist: ${pack}")
+                }
+                systemProperty systemKey, pack.absolutePath
+            }
+        }
+    }
+}
+
+tasks.register('m87PostBypassTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks the mask-critical post bypass: HDR-only identity resolve plus fallback report.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.M87PostBypassHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('m87EntityTransformBindingTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks host matrix slice bounds and fail-closed entity pipeline selection.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.mixin.M87EntityTransformBindingHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('m87StaticCompanionsTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks M8.7 slice B static atlas companions from the checked-in mini resource pack.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.M87StaticCompanionsHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('customUniformInventoryTest', JavaExec) {
+    group = 'verification'
+    description = 'Audits the pinned packs authored uniform declarations against what Chimera serves.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.CustomUniformInventoryHarness'
+    jvmArgs '-ea'
+    doFirst {
+        ['customUniformComplementary': 'chimera.customUniform.complementary',
+         'customUniformBsl': 'chimera.customUniform.bsl'].each { projectKey, systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value != null && !value.toString().isBlank()) {
+                def pack = file(value.toString())
+                if (!pack.isDirectory() && !pack.isFile()) {
+                    throw new GradleException("Custom uniform pack path does not exist: ${pack}")
+                }
+                systemProperty systemKey, pack.absolutePath
+            }
+        }
+    }
+}
+
 tasks.named('check') {
     dependsOn tasks.named('conformanceTest')
     dependsOn tasks.named('m62ConformanceTest')
@@ -725,6 +851,7 @@ tasks.named('check') {
     dependsOn tasks.named('m80ConformanceTest')
     dependsOn tasks.named('m81ConformanceTest')
     dependsOn tasks.named('m82ConformanceTest')
+    dependsOn tasks.named('m83ConformanceTest')
     dependsOn tasks.named('m84ConformanceTest')
     dependsOn tasks.named('m85ConformanceTest')
     dependsOn tasks.named('m85bConformanceTest')
@@ -734,6 +861,14 @@ tasks.named('check') {
     dependsOn tasks.named('terrainAtlasSamplingTest')
     dependsOn tasks.named('alphaTestConformance')
     dependsOn tasks.named('materialPlanConformance')
+    dependsOn tasks.named('m87StaticCompanionsTest')
+    dependsOn tasks.named('m87PostBypassTest')
+    dependsOn tasks.named('m87EntityTransformBindingTest')
+    dependsOn tasks.named('m87EntityRealPackTest')
+    dependsOn tasks.named('m87ShadowMatrixTest')
+    dependsOn tasks.named('m87VulkanBarrierTest')
+    dependsOn tasks.named('authoredOutputTest')
+    dependsOn tasks.named('customUniformInventoryTest')
 }
 
 tasks.named('test') {

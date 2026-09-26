@@ -37,6 +37,10 @@ public final class M74ConformanceHarness {
         assertTrue(graph.target(2) != null && graph.target(2).persistent(),
                 "M7.4 persistent target was not planned");
         assertTrue(graph.depth().depthtex0(), "M7.4 depthtex0 was not planned");
+        assertTrue(graph.depth().deviations().contains("DEPTH_COPY_FORWARD_Z_PRESERVED"),
+                "M8.7 forward-Z depth semantics were not recorded");
+        assertTrue(!graph.depth().deviations().contains("DEPTH_COPY_REVERSED_Z_CONVERTED"),
+                "M8.7 stale reversed-Z depth claim remains active");
         assertTrue(graph.depth().slot("depthtex0") == 6,
                 "M7.4 depthtex0 slot changed");
         assertTrue(graph.depth().slot("depthtex1") == 12,

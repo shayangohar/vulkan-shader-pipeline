@@ -167,10 +167,13 @@ public final class PostTargetPlan {
     }
 
     /**
-     * Selects the route that can describe the most outputs after preprocessing.
-     * Conditional pack branches can leave both a short inactive route and a
-     * longer active route in the prepared text.  Equal-length alternatives
-     * are ambiguous and remain a hard fallback rather than being guessed.
+     * Selects the active output route from the surviving directives. The
+     * analyzed source is already branch-resolved, so surviving directives
+     * describe cumulative writes in file order and the pack author places
+     * the overriding route last (Iris last-directive-wins). Earlier routes
+     * are dormant remnants only when they differ in shape, which stays a
+     * hard conflict rather than a guess. Malformed parses never proxy for
+     * a real route.
      */
     private static List<Integer> selectDirective(
             List<List<Integer>> directives,
@@ -179,19 +182,31 @@ public final class PostTargetPlan {
         if (directives == null || directives.isEmpty()) {
             return List.of(0);
         }
-        int longestLength = directives.stream().mapToInt(List::size).max().orElse(0);
-        if (longestLength == 0) {
+        List<Integer> selected = directives.get(directives.size() - 1);
+        if (selected == null || selected.isEmpty()) {
             return List.of(0);
         }
-        List<Integer> selected = directives.stream()
-                .filter(route -> route.size() == longestLength)
-                .findFirst()
-                .orElse(List.of(0));
-        Set<List<Integer>> longest = new HashSet<>();
-        directives.stream()
-                .filter(route -> route.size() == longestLength)
-                .forEach(longest::add);
-        if (longest.size() > 1) {
+        if (selected.size() == 1 && selected.get(0) == 0) {
+            return selected;
+        }
+        Set<List<Integer>> distinct = new HashSet<>(directives);
+        boolean hasUsable = distinct.stream().anyMatch(route ->
+                route != null && !route.isEmpty());
+        if (!hasUsable) {
+            return List.of(0);
+        }
+        Set<List<Integer>> latestShape = new HashSet<>();
+        for (int index = directives.size() - 1; index >= 0; index--) {
+            List<Integer> route = directives.get(index);
+            if (route == null || route.isEmpty()) {
+                continue;
+            }
+            if (route.size() != selected.size()) {
+                break;
+            }
+            latestShape.add(route);
+        }
+        if (latestShape.size() > 1) {
             deviations.add("POST_TARGET_DIRECTIVE_CONFLICT");
         }
         return selected;

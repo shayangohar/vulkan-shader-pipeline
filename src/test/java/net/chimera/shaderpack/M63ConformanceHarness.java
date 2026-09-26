@@ -102,12 +102,16 @@ public final class M63ConformanceHarness {
                 0.0f, 1.0f, 1.0f, 1.0f, 1.0f);
         assertTrue(tangent != ChimeraEntityVertexData.FLAT_TANGENT,
                 "M6.3 tangent math used the flat fallback for a valid triangle");
-        assertEquals(ChimeraEntityVertexData.FLAT_TANGENT,
-                ChimeraEntityVertexData.tangent(0.0f, 0.0f, 1.0f, false,
+        int zeroUvZ = ChimeraEntityVertexData.tangent(0.0f, 0.0f, 1.0f, false,
                         0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                         1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                        0.0f, 1.0f, 0.0f, 0.0f, 0.0f),
-                "M6.3 zero-UV triangle fallback");
+                        0.0f, 1.0f, 0.0f, 0.0f, 0.0f);
+        assertTangentFrame(zeroUvZ, 0.0f, 0.0f, 1.0f,
+                "M6.3 zero-UV Z-face fallback");
+        assertTangentFrame(ChimeraEntityVertexData.fallbackTangent(1.0f, 0.0f, 0.0f),
+                1.0f, 0.0f, 0.0f, "M6.3 X-face fallback");
+        assertTangentFrame(ChimeraEntityVertexData.fallbackTangent(0.0f, 1.0f, 0.0f),
+                0.0f, 1.0f, 0.0f, "M6.3 Y-face fallback");
     }
 
     private static void verifyEntityIdUniformBridge() {
@@ -363,6 +367,20 @@ public final class M63ConformanceHarness {
         if (Math.abs(expected - actual) > 0.0001f) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
+    }
+
+    private static void assertTangentFrame(
+            int tangent, float nx, float ny, float nz, String message
+    ) {
+        float tx = ChimeraEntityVertexData.unpack(tangent, 0);
+        float ty = ChimeraEntityVertexData.unpack(tangent, 1);
+        float tz = ChimeraEntityVertexData.unpack(tangent, 2);
+        float length = (float) Math.sqrt(tx * tx + ty * ty + tz * tz);
+        float dot = tx * nx + ty * ny + tz * nz;
+        assertTrue(length > 0.98f && length <= 1.01f,
+                message + " tangent is not unit length: " + length);
+        assertTrue(Math.abs(dot) < 0.02f,
+                message + " tangent is not perpendicular: " + dot);
     }
 
     private static void assertTrue(boolean value, String message) {

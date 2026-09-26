@@ -105,10 +105,16 @@ final class PackVulkanBarriers {
             int destinationStage,
             int destinationAccess
     ) {
-        VkMemoryBarrier.Buffer memory = VkMemoryBarrier.calloc(1, stack)
-                .srcAccessMask(sourceAccess)
-                .dstAccessMask(destinationAccess);
+        VkMemoryBarrier.Buffer memory = createMemoryBarrier(stack, sourceAccess, destinationAccess);
         vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0,
                 memory, null, null);
+    }
+
+    static VkMemoryBarrier.Buffer createMemoryBarrier(
+            MemoryStack stack, int sourceAccess, int destinationAccess) {
+        return VkMemoryBarrier.calloc(1, stack)
+                .sType$Default()
+                .srcAccessMask(sourceAccess)
+                .dstAccessMask(destinationAccess);
     }
 }

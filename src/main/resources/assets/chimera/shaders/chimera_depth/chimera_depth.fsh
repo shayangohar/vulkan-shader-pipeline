@@ -4,8 +4,8 @@ layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outDepth;
 
 void main() {
-    // VulkanMod uses reversed Z. Iris/OptiFine depth samplers expose the
-    // conventional value, so convert while copying into R32_SFLOAT.
+    // The CHIMERA world depth attachment uses forward [0,1] depth. Keep that
+    // value unchanged; pack projection uniforms perform the clip-range mapping.
     float depth = texture(SceneDepth, inUv).r;
-    outDepth = vec4(1.0 - depth, 0.0, 0.0, 1.0);
+    outDepth = vec4(depth, 0.0, 0.0, 1.0);
 }

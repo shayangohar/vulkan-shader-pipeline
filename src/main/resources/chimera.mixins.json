@@ -39,7 +39,16 @@
     "ChimeraVkRenderPassMixin",
     "ChimeraFramebufferRenderPassMixin",
     "ChimeraVkCommandEncoderMixin",
-    "ChimeraRendererPipelineMixin"
+    "ChimeraRendererPipelineMixin",
+    "ChimeraShadowDecalMixin",
+    "ChimeraAtlasMaterialMixin",
+    "ChimeraTextureManagerAccessor",
+    "ChimeraSamplerAccessor",
+    "ChimeraCloudRendererMixin",
+    "ChimeraRasterOrientationMixin",
+    "ChimeraPipelineFrontFaceMixin",
+    "ChimeraPipelineStateAccessor",
+    "ChimeraProjectionFarMixin"
   ],
   "injectors": {
     "defaultRequire": 1

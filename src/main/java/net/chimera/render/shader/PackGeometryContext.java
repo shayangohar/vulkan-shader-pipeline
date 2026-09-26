@@ -30,7 +30,7 @@ public final class PackGeometryContext {
     private static List<VulkanImage> colors = List.of();
     private static VulkanImage depth;
     private static boolean active;
-    private static boolean terrainWindow;
+    private static boolean geometryWindow;
     private static boolean clearFirstColor;
     private static boolean clearShadowAttachments;
 
@@ -46,8 +46,8 @@ public final class PackGeometryContext {
         beginInternal(List.of(targetImage, coverageImage), depthImage, false, false);
     }
 
-    /** Begins a terrain or water window with the exact pack output attachment list. */
-    public static void beginTerrain(List<VulkanImage> colorImages, VulkanImage depthImage) {
+    /** Begins a geometry window with the exact pack output attachment list. */
+    public static void beginGeometry(List<VulkanImage> colorImages, VulkanImage depthImage) {
         beginInternal(colorImages, depthImage, false, true);
     }
 
@@ -58,7 +58,7 @@ public final class PackGeometryContext {
     }
 
     private static void beginInternal(List<VulkanImage> colorImages, VulkanImage depthImage,
-                                      boolean clearFirst, boolean terrain) {
+                                      boolean clearFirst, boolean geometry) {
         if (active) throw new IllegalStateException("pack geometry context already active");
         if (colorImages == null || colorImages.isEmpty() || colorImages.stream().anyMatch(value -> value == null)
                 || depthImage == null) {
@@ -67,18 +67,18 @@ public final class PackGeometryContext {
         colors = List.copyOf(colorImages);
         depth = depthImage;
         clearFirstColor = clearFirst;
-        terrainWindow = terrain;
+        geometryWindow = geometry;
         active = true;
-        trace("begin terrain=" + terrain + " colors=" + colors.stream()
+        trace("begin geometry=" + geometry + " colors=" + colors.stream()
                 .map(value -> Long.toString(value.getId())).toList()
                 + " depth=" + depthImage.getId());
     }
 
     public static boolean active() { return active; }
 
-    public static boolean coverageActive() { return active && !terrainWindow && colors.size() > 1; }
+    public static boolean coverageActive() { return active && !geometryWindow && colors.size() > 1; }
 
-    public static boolean terrainActive() { return active && terrainWindow; }
+    public static boolean geometryActive() { return active && geometryWindow; }
 
     public static VulkanImage target() { return colors.isEmpty() ? null : colors.get(0); }
 
@@ -111,10 +111,10 @@ public final class PackGeometryContext {
             info.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
                     .imageView(colors.get(index).getImageView())
                     .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-                    .loadOp(clearShadowAttachments || (!terrainWindow && index == 0 && clearFirstColor)
+                    .loadOp(clearShadowAttachments || (!geometryWindow && index == 0 && clearFirstColor)
                             ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)
                     .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
-            if (clearShadowAttachments || (!terrainWindow && index == 0 && clearFirstColor)) {
+            if (clearShadowAttachments || (!geometryWindow && index == 0 && clearFirstColor)) {
                 VkClearValue clear = VkClearValue.calloc(stack);
                 float value = clearShadowAttachments ? 1.0f : 0.0f;
                 clear.color().float32(stack.floats(value, value, value, value));
@@ -165,7 +165,7 @@ public final class PackGeometryContext {
         colors = List.of();
         depth = null;
         active = false;
-        terrainWindow = false;
+        geometryWindow = false;
         clearFirstColor = false;
         clearShadowAttachments = false;
     }

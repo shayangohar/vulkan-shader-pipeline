@@ -1,5 +1,7 @@
 package net.chimera.render;
 
+import net.vulkanmod.vulkan.texture.SamplerInfo;
+
 import java.util.Map;
 
 /** Behavioral checks for the scoped image-plus-sampler binding state. */
@@ -73,6 +75,31 @@ public final class ChimeraTextureBindingStateHarness {
         ChimeraMainPass.HandBoundaryPolicy handPolicy = ChimeraMainPass.handBoundaryPolicy();
         assertTrue(handPolicy.loadColor() && handPolicy.clearDepth(),
                 "hand continuation must load color and clear depth");
+
+        // DOC-375: the converted shadow image needs a compare-enabled sampler for
+        // sampler2DShadow lookups, and only for those: a program that declares the
+        // same texture as sampler2D keeps the image's non-compare sampler.
+        assertTrue(PackShadowDepth.requiresCompareSampler("sampler2DShadow"),
+                "sampler2DShadow did not request the compare sampler");
+        assertTrue(!PackShadowDepth.requiresCompareSampler("sampler2D"),
+                "plain sampler2D requested the compare sampler");
+        assertTrue(!PackShadowDepth.requiresCompareSampler(null),
+                "undeclared sampler type requested the compare sampler");
+        SamplerInfo compare = PackShadowDepth.compareSamplerInfo();
+        assertTrue(compare.compareEnabled(), "shadow sampler is not compare-enabled");
+        assertEquals(3L, compare.getCompareOp(), "shadow sampler comparison operator");
+        assertEquals(2L, compare.getAddressModeU(), "shadow sampler address mode");
+        assertEquals(1L, compare.getMinFilter(), "shadow sampler min filter");
+
+        // A depth-only override is scoped to one image identity and cleared after
+        // the conversion draw; the host image keeps its own view.
+        ChimeraDepthViewOverride.bind(null, 4242L);
+        assertEquals(4242L, ChimeraDepthViewOverride.viewFor(null),
+                "bound depth view was not visible");
+        ChimeraDepthViewOverride.clear();
+        assertEquals(0L, ChimeraDepthViewOverride.viewFor(null),
+                "cleared depth view was still visible");
+
         System.out.println("[chimera] M8.6a sampler ownership behavior: PASS");
     }
 

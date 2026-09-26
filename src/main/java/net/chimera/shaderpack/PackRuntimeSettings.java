@@ -12,9 +12,15 @@ import java.util.TreeSet;
 /**
  * Immutable, bounded runtime settings for one pack session.
  *
- * <p>This is deliberately smaller than a general expression engine. It only
- * evaluates scalar pack values that are declared in shaders.properties and
- * uses the already captured standard uniform values as inputs.</p>
+ * <p>Holds the pack's authored custom values: the declarations it wrote in
+ * {@code shaders.properties}, compiled into {@link PackExpression programs}, ordered so a value
+ * that reads another reads a resolved one, and evaluated once per frame into the storage the
+ * uniform writer serves. Session state, which is the smoothing, lives in {@link Session} and is
+ * dropped on reload.
+ *
+ * <p>A declaration may take a name Chimera only kept as a placeholder for it. It may not take a
+ * genuine engine input: those are the host's to answer, and a pack that redefines one is broken
+ * rather than accommodated. Anything else is the pack's own name and is admitted as it stands.
  */
 public final class PackRuntimeSettings {
     public static final float DEFAULT_WETNESS_RISE_HALF_LIFE = 600.0f;
@@ -27,6 +33,7 @@ public final class PackRuntimeSettings {
     private final List<Value> values;
     private final Map<String, Integer> indices;
     private final Map<String, UniformRegistry.UniformDescriptor> customDescriptors;
+    private final Set<String> rejected;
     private final List<String> deviations;
 
     private PackRuntimeSettings(
@@ -34,6 +41,8 @@ public final class PackRuntimeSettings {
             float wetnessFallHalfLife,
             float eyeBrightnessHalfLife,
             List<Value> values,
+            Map<String, UniformRegistry.UniformDescriptor> rejectedDescriptors,
+            Set<String> rejected,
             List<String> deviations
     ) {
         this.wetnessRiseHalfLife = wetnessRiseHalfLife;
@@ -52,8 +61,12 @@ public final class PackRuntimeSettings {
                         "custom:" + value.name(), UniformRegistry.DefaultPolicy.ZERO));
             }
         }
+        if (rejectedDescriptors != null) {
+            descriptors.putAll(rejectedDescriptors);
+        }
         this.indices = Collections.unmodifiableMap(indexMap);
         this.customDescriptors = Collections.unmodifiableMap(descriptors);
+        this.rejected = rejected == null ? Set.of() : Set.copyOf(rejected);
         this.deviations = deviations == null
                 ? List.of() : deviations.stream().filter(value -> value != null && !value.isBlank())
                 .distinct().sorted().toList();
@@ -65,6 +78,8 @@ public final class PackRuntimeSettings {
                 DEFAULT_WETNESS_FALL_HALF_LIFE,
                 DEFAULT_EYE_BRIGHTNESS_HALF_LIFE,
                 List.of(),
+                Map.of(),
+                Set.of(),
                 List.of());
     }
 
@@ -72,6 +87,15 @@ public final class PackRuntimeSettings {
             List<Declaration> declarations,
             Map<String, String> defaults,
             List<String> deviations
+    ) {
+        return build(declarations, defaults, deviations, BiomeIds.constants());
+    }
+
+    static PackRuntimeSettings build(
+            List<Declaration> declarations,
+            Map<String, String> defaults,
+            List<String> deviations,
+            PackExpression.Constants constants
     ) {
         List<String> result = new ArrayList<>(deviations == null ? List.of() : deviations);
         float wetnessRise = numeric(defaults, "wetnessHalflife",
@@ -90,52 +114,101 @@ public final class PackRuntimeSettings {
         }
 
         Map<String, ParsedValue> parsed = new TreeMap<>();
-        Set<String> invalid = new TreeSet<>();
+        Set<String> rejected = new TreeSet<>();
         for (Declaration declaration : byName.values()) {
             if (!isScalarType(declaration.type())) {
                 result.add("CUSTOM_VALUE_TYPE_UNSUPPORTED:" + declaration.name());
-                invalid.add(declaration.name());
+                rejected.add(declaration.name());
                 continue;
             }
-            if (UniformRegistry.descriptor(declaration.name()) != null) {
+            if (UniformRegistry.isEngineInput(declaration.name())) {
                 result.add("CUSTOM_VALUE_SHADOWS_BUILTIN:" + declaration.name());
-                invalid.add(declaration.name());
+                rejected.add(declaration.name());
                 continue;
             }
+            PackExpression.Program program;
             try {
-                Expression expression = new Parser(declaration.expression()).parse();
-                for (String dependency : expression.dependencies()) {
-                    if (!byName.containsKey(dependency)
-                            && UniformRegistry.descriptor(dependency) == null) {
-                        result.add("CUSTOM_EXPRESSION_UNKNOWN:" + declaration.name()
-                                + ":" + dependency);
-                        invalid.add(declaration.name());
-                    }
-                }
-                parsed.put(declaration.name(), new ParsedValue(declaration, expression));
-            } catch (ParseFailure failure) {
+                program = PackExpression.parse(declaration.expression(), constants);
+            } catch (PackExpression.Unsupported failure) {
                 result.add(failure.code() + ":" + declaration.name()
                         + (failure.detail().isBlank() ? "" : ":" + failure.detail()));
-                invalid.add(declaration.name());
+                rejected.add(declaration.name());
+                continue;
             }
+            String unknown = unresolved(program, byName.keySet());
+            if (unknown != null) {
+                result.add("CUSTOM_EXPRESSION_UNKNOWN:" + declaration.name() + ":" + unknown);
+                rejected.add(declaration.name());
+                continue;
+            }
+            String mismatch = mismatchedReference(program);
+            if (mismatch != null) {
+                result.add("CUSTOM_EXPRESSION_COMPONENT:" + declaration.name() + ":" + mismatch);
+                rejected.add(declaration.name());
+                continue;
+            }
+            parsed.put(declaration.name(), new ParsedValue(declaration, program));
         }
 
         Set<String> visiting = new HashSet<>();
         Set<String> resolved = new HashSet<>();
         List<String> order = new ArrayList<>();
         for (String name : parsed.keySet()) {
-            resolve(name, parsed, invalid, visiting, resolved, order, result);
+            resolve(name, parsed, rejected, visiting, resolved, order, result);
         }
 
         List<Value> values = new ArrayList<>();
         for (String name : order) {
-            if (!invalid.contains(name)) {
+            if (!rejected.contains(name)) {
                 ParsedValue value = parsed.get(name);
                 values.add(new Value(value.declaration().name(), value.declaration().type(),
-                        value.declaration().exposed(), value.expression()));
+                        value.declaration().exposed(), value.program()));
             }
         }
-        return new PackRuntimeSettings(wetnessRise, wetnessFall, eyeBrightness, values, result);
+        Map<String, UniformRegistry.UniformDescriptor> rejectedDescriptors = new TreeMap<>();
+        for (String name : rejected) {
+            Declaration declaration = byName.get(name);
+            if (declaration != null && declaration.exposed()) {
+                rejectedDescriptors.put(name, new UniformRegistry.UniformDescriptor(
+                        name, List.of(declaration.type().equals("bool") ? "int" : declaration.type()),
+                        UniformRegistry.Availability.REJECTED, "rejected:" + name,
+                        UniformRegistry.DefaultPolicy.ZERO));
+            }
+        }
+        return new PackRuntimeSettings(wetnessRise, wetnessFall, eyeBrightness, values,
+                rejectedDescriptors, rejected, result);
+    }
+
+    /** The first dependency that is neither a declared name nor a served uniform. */
+    private static String unresolved(PackExpression.Program program, Set<String> declared) {
+        for (String dependency : program.dependencies()) {
+            if (!declared.contains(dependency) && UniformRegistry.descriptor(dependency) == null) {
+                return dependency;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A reference that asks a scalar for a component, or a vector for one it does not have.
+     * The host answers those, so the declaration cannot mean what it says.
+     */
+    private static String mismatchedReference(PackExpression.Program program) {
+        for (String reference : program.componentReferences()) {
+            String name = reference.substring(0, reference.indexOf('.'));
+            UniformRegistry.UniformDescriptor descriptor = UniformRegistry.descriptor(name);
+            if (descriptor == null) {
+                continue;
+            }
+            if (!UniformRegistry.supportsComponent(descriptor, componentOf(reference))) {
+                return reference;
+            }
+        }
+        return null;
+    }
+
+    private static int componentOf(String reference) {
+        return "xyzw".indexOf(Character.toLowerCase(reference.charAt(reference.indexOf('.') + 1)));
     }
 
     public float wetnessRiseHalfLife() {
@@ -158,6 +231,11 @@ public final class PackRuntimeSettings {
         return customDescriptors;
     }
 
+    /** Declaration names that could not be compiled: they must not be served as a value. */
+    public Set<String> rejected() {
+        return rejected;
+    }
+
     public int valueCount() {
         return values.size();
     }
@@ -166,32 +244,122 @@ public final class PackRuntimeSettings {
         return indices.getOrDefault(name, -1);
     }
 
-    /** Evaluate every valid custom value once, in dependency order. */
-    public void evaluate(ValueLookup lookup, double[] scratch, float[] output) {
-        if (scratch.length < values.size() || output.length < values.size()) {
-            throw new IllegalArgumentException("custom value storage is too small");
+    /** Per-session storage: one smoothing state per value, one slot per value. */
+    public static final class Session {
+        private final PackExpression.State[] states;
+        private final double[] scratch;
+        private final float[] output;
+        private final double[] lastFinite;
+        private final Map<String, String> failures = new TreeMap<>();
+        private int frames;
+
+        private Session(List<Value> values) {
+            this.states = new PackExpression.State[values.size()];
+            for (int index = 0; index < values.size(); index++) {
+                this.states[index] = values.get(index).program().newState();
+            }
+            this.scratch = new double[values.size()];
+            this.output = new float[values.size()];
+            this.lastFinite = new double[values.size()];
         }
+
+        /** The frame's evaluated values, in dependency order. */
+        public float[] values() {
+            return this.output;
+        }
+
+        /**
+         * Declarations whose expression produced a non-finite result, with the context of the
+         * first frame that happened on. A failure here is never silent: it is reported once and
+         * the value holds its last finite result rather than an invented one.
+         */
+        public Map<String, String> failures() {
+            return Map.copyOf(this.failures);
+        }
+
+        /** Drops every accumulator and value, as a pack reload must. */
+        public void reset() {
+            for (PackExpression.State state : this.states) {
+                state.reset();
+            }
+            java.util.Arrays.fill(this.scratch, 0.0);
+            java.util.Arrays.fill(this.output, 0.0F);
+            java.util.Arrays.fill(this.lastFinite, 0.0);
+            this.failures.clear();
+            this.frames = 0;
+        }
+    }
+
+    public Session newSession() {
+        return new Session(values);
+    }
+
+    /**
+     * Evaluates every valid custom value once, in dependency order, before any program's uniform
+     * block is written. A value that reads another reads this frame's result, and a value that
+     * smooths folds one frame of its own call site's state.
+     */
+    public void evaluate(PackExpression.Inputs engine, Session session, float frameDelta) {
+        if (session == null) {
+            return;
+        }
+        session.frames++;
         for (int index = 0; index < values.size(); index++) {
             Value value = values.get(index);
-            double result = value.expression().evaluate(lookup, indices, scratch);
+            PackExpression.Inputs inputs = this.lookup(engine, session.scratch);
+            double result = value.program().evaluate(inputs, session.states[index], frameDelta);
             if (!Double.isFinite(result)) {
-                result = 0.0;
+                // Diagnosis over substitution: name the declaration, its expression and the
+                // inputs that produced it, and hold the last finite result rather than inventing
+                // a number. A silent zero here is what DOC-400 item 4 objects to.
+                session.failures.putIfAbsent(value.name(),
+                        "expression=" + value.program().source()
+                                + " frame=" + session.frames
+                                + " frameDelta=" + frameDelta
+                                + " inputs=" + context(value, inputs));
+                result = session.lastFinite[index];
+            } else {
+                session.lastFinite[index] = result;
             }
-            scratch[index] = result;
-            output[index] = value.type().equals("int") || value.type().equals("bool")
+            session.scratch[index] = result;
+            session.output[index] = value.type().equals("int") || value.type().equals("bool")
                     ? (float) ((int) result) : (float) result;
         }
     }
 
-    @FunctionalInterface
-    public interface ValueLookup {
-        double value(String name);
+    /** The engine inputs one expression read, as the values the failure saw them. */
+    private static String context(Value value, PackExpression.Inputs inputs) {
+        TreeMap<String, Double> named = new TreeMap<>();
+        for (String name : value.program().dependencies()) {
+            named.put(name, inputs.value(name, -1));
+        }
+        for (String reference : value.program().componentReferences()) {
+            int dot = reference.indexOf('.');
+            String name = reference.substring(0, dot);
+            if (named.containsKey(name)) {
+                continue;
+            }
+            named.put(reference, inputs.value(name, "xyzw".indexOf(reference.charAt(dot + 1))));
+        }
+        return named.toString();
+    }
+
+    /** Custom values win over the host for their own names; everything else is the host's. */
+    private PackExpression.Inputs lookup(PackExpression.Inputs engine, double[] scratch) {
+        return (name, component) -> {
+            Integer index = indices.get(name);
+            return index == null ? engine.value(name, component) : scratch[index];
+        };
     }
 
     static Declaration declaration(boolean exposed, String type, String name, String expression) {
         return new Declaration(exposed, type, name, expression);
     }
 
+    /**
+     * One authored declaration. {@code exposed} is whether shaders see it: {@code uniform.} lines
+     * do, {@code variable.} lines are the pack's own working values.
+     */
     record Declaration(boolean exposed, String type, String name, String expression) {
         Declaration {
             type = type == null ? "" : type.trim();
@@ -200,9 +368,9 @@ public final class PackRuntimeSettings {
         }
     }
 
-    private record ParsedValue(Declaration declaration, Expression expression) {}
+    private record ParsedValue(Declaration declaration, PackExpression.Program program) {}
 
-    private record Value(String name, String type, boolean exposed, Expression expression) {}
+    private record Value(String name, String type, boolean exposed, PackExpression.Program program) {}
 
     private static boolean isScalarType(String type) {
         return type.equals("float") || type.equals("int") || type.equals("bool");
@@ -237,28 +405,29 @@ public final class PackRuntimeSettings {
     private static boolean resolve(
             String name,
             Map<String, ParsedValue> parsed,
-            Set<String> invalid,
+            Set<String> rejected,
             Set<String> visiting,
             Set<String> resolved,
             List<String> order,
             List<String> deviations
     ) {
         if (resolved.contains(name)) {
-            return !invalid.contains(name);
+            return !rejected.contains(name);
         }
         if (!visiting.add(name)) {
-            invalid.add(name);
+            rejected.add(name);
             deviations.add("CUSTOM_VALUE_CYCLE:" + name);
             return false;
         }
         ParsedValue value = parsed.get(name);
-        boolean valid = value != null && !invalid.contains(name);
+        boolean valid = value != null && !rejected.contains(name);
         if (valid) {
-            for (String dependency : value.expression().dependencies()) {
+            for (String dependency : value.program().dependencies()) {
                 ParsedValue dependencyValue = parsed.get(dependency);
                 if (dependencyValue != null
-                        && !resolve(dependency, parsed, invalid, visiting, resolved, order, deviations)) {
-                    invalid.add(name);
+                        && !resolve(dependency, parsed, rejected, visiting, resolved, order,
+                        deviations)) {
+                    rejected.add(name);
                     deviations.add("CUSTOM_VALUE_DEPENDENCY_INVALID:" + name);
                     valid = false;
                 }
@@ -270,298 +439,5 @@ public final class PackRuntimeSettings {
             order.add(name);
         }
         return valid;
-    }
-
-    private interface Expression {
-        double evaluate(ValueLookup lookup, Map<String, Integer> indices, double[] values);
-
-        Set<String> dependencies();
-    }
-
-    private record Literal(double value) implements Expression {
-        @Override
-        public double evaluate(ValueLookup lookup, Map<String, Integer> indices, double[] values) {
-            return value;
-        }
-
-        @Override
-        public Set<String> dependencies() {
-            return Set.of();
-        }
-    }
-
-    private record Reference(String name) implements Expression {
-        @Override
-        public double evaluate(ValueLookup lookup, Map<String, Integer> indices, double[] values) {
-            Integer index = indices.get(name);
-            return index == null ? lookup.value(name) : values[index];
-        }
-
-        @Override
-        public Set<String> dependencies() {
-            return Set.of(name);
-        }
-    }
-
-    private record Unary(char operator, Expression value) implements Expression {
-        @Override
-        public double evaluate(ValueLookup lookup, Map<String, Integer> indices, double[] values) {
-            double result = value.evaluate(lookup, indices, values);
-            return operator == '!' ? result == 0.0 ? 1.0 : 0.0
-                    : operator == '-' ? -result : result;
-        }
-
-        @Override
-        public Set<String> dependencies() {
-            return value.dependencies();
-        }
-    }
-
-    private record Binary(String operator, Expression left, Expression right) implements Expression {
-        @Override
-        public double evaluate(ValueLookup lookup, Map<String, Integer> indices, double[] values) {
-            double a = left.evaluate(lookup, indices, values);
-            double b = right.evaluate(lookup, indices, values);
-            return switch (operator) {
-                case "+" -> a + b;
-                case "-" -> a - b;
-                case "*" -> a * b;
-                case "/" -> b == 0.0 ? 0.0 : a / b;
-                case "%" -> b == 0.0 ? 0.0 : a % b;
-                case "==" -> a == b ? 1.0 : 0.0;
-                case "!=" -> a != b ? 1.0 : 0.0;
-                case ">" -> a > b ? 1.0 : 0.0;
-                case ">=" -> a >= b ? 1.0 : 0.0;
-                case "<" -> a < b ? 1.0 : 0.0;
-                case "<=" -> a <= b ? 1.0 : 0.0;
-                case "&&" -> a != 0.0 && b != 0.0 ? 1.0 : 0.0;
-                case "||" -> a != 0.0 || b != 0.0 ? 1.0 : 0.0;
-                default -> 0.0;
-            };
-        }
-
-        @Override
-        public Set<String> dependencies() {
-            Set<String> result = new TreeSet<>(left.dependencies());
-            result.addAll(right.dependencies());
-            return result;
-        }
-    }
-
-    private record Conditional(Expression condition, Expression whenTrue, Expression whenFalse)
-            implements Expression {
-        @Override
-        public double evaluate(ValueLookup lookup, Map<String, Integer> indices, double[] values) {
-            return (condition.evaluate(lookup, indices, values) != 0.0 ? whenTrue : whenFalse)
-                    .evaluate(lookup, indices, values);
-        }
-
-        @Override
-        public Set<String> dependencies() {
-            Set<String> result = new TreeSet<>(condition.dependencies());
-            result.addAll(whenTrue.dependencies());
-            result.addAll(whenFalse.dependencies());
-            return result;
-        }
-    }
-
-    private static final class ParseFailure extends RuntimeException {
-        private final String code;
-        private final String detail;
-
-        private ParseFailure(String code, String detail) {
-            super(code + (detail == null || detail.isBlank() ? "" : ":" + detail));
-            this.code = code;
-            this.detail = detail == null ? "" : detail;
-        }
-
-        private String code() {
-            return code;
-        }
-
-        private String detail() {
-            return detail;
-        }
-    }
-
-    private static final class Parser {
-        private final String source;
-        private int index;
-        private int depth;
-
-        private Parser(String source) {
-            this.source = source == null ? "" : source;
-        }
-
-        private Expression parse() {
-            Expression result = conditional();
-            skip();
-            if (index != source.length()) {
-                throw new ParseFailure("CUSTOM_EXPRESSION_UNSUPPORTED", source.substring(index));
-            }
-            return result;
-        }
-
-        private Expression conditional() {
-            Expression result = or();
-            if (take("?")) {
-                Expression whenTrue = conditional();
-                require(":");
-                result = new Conditional(result, whenTrue, conditional());
-            }
-            return result;
-        }
-
-        private Expression or() {
-            Expression result = and();
-            while (take("||")) result = new Binary("||", result, and());
-            return result;
-        }
-
-        private Expression and() {
-            Expression result = equality();
-            while (take("&&")) result = new Binary("&&", result, equality());
-            return result;
-        }
-
-        private Expression equality() {
-            Expression result = relation();
-            while (true) {
-                String operator = operator("==", "!=");
-                if (operator == null) return result;
-                result = new Binary(operator, result, relation());
-            }
-        }
-
-        private Expression relation() {
-            Expression result = add();
-            while (true) {
-                String operator = operator(">=", "<=", ">", "<");
-                if (operator == null) return result;
-                result = new Binary(operator, result, add());
-            }
-        }
-
-        private Expression add() {
-            Expression result = multiply();
-            while (true) {
-                String operator = operator("+", "-");
-                if (operator == null) return result;
-                result = new Binary(operator, result, multiply());
-            }
-        }
-
-        private Expression multiply() {
-            Expression result = unary();
-            while (true) {
-                String operator = operator("*", "/", "%");
-                if (operator == null) return result;
-                result = new Binary(operator, result, unary());
-            }
-        }
-
-        private Expression unary() {
-            enter();
-            try {
-                if (take("!")) return new Unary('!', unary());
-                if (take("-")) return new Unary('-', unary());
-                if (take("+")) return unary();
-                if (take("(")) {
-                    Expression result = conditional();
-                    require(")");
-                    return result;
-                }
-                if (takeWord("true")) return new Literal(1.0);
-                if (takeWord("false")) return new Literal(0.0);
-                if (index < source.length()
-                        && (Character.isDigit(source.charAt(index)) || source.charAt(index) == '.')) {
-                    return new Literal(number());
-                }
-                String name = identifier();
-                skip();
-                if (index < source.length() && source.charAt(index) == '(') {
-                    throw new ParseFailure("CUSTOM_EXPRESSION_UNSUPPORTED", name);
-                }
-                if (UniformRegistry.descriptor(name) == null) {
-                    // Custom references are validated in build after parsing.
-                }
-                return new Reference(name);
-            } finally {
-                depth--;
-            }
-        }
-
-        private double number() {
-            int start = index;
-            while (index < source.length()
-                    && (Character.isDigit(source.charAt(index)) || ".eEfF+-".indexOf(source.charAt(index)) >= 0)) {
-                char current = source.charAt(index);
-                if ((current == '+' || current == '-') && index > start
-                        && source.charAt(index - 1) != 'e' && source.charAt(index - 1) != 'E') {
-                    break;
-                }
-                index++;
-            }
-            try {
-                return Double.parseDouble(source.substring(start, index).replace("f", "").replace("F", ""));
-            } catch (NumberFormatException failure) {
-                throw new ParseFailure("CUSTOM_EXPRESSION_UNSUPPORTED", source.substring(start, index));
-            }
-        }
-
-        private String identifier() {
-            skip();
-            int start = index;
-            if (index >= source.length()
-                    || !(Character.isLetter(source.charAt(index)) || source.charAt(index) == '_')) {
-                throw new ParseFailure("CUSTOM_EXPRESSION_UNSUPPORTED", "identifier");
-            }
-            index++;
-            while (index < source.length()
-                    && (Character.isLetterOrDigit(source.charAt(index)) || source.charAt(index) == '_')) {
-                index++;
-            }
-            return source.substring(start, index);
-        }
-
-        private String operator(String... operators) {
-            for (String operator : operators) {
-                if (take(operator)) return operator;
-            }
-            return null;
-        }
-
-        private boolean take(String token) {
-            skip();
-            if (source.startsWith(token, index)) {
-                index += token.length();
-                return true;
-            }
-            return false;
-        }
-
-        private boolean takeWord(String word) {
-            skip();
-            if (!source.startsWith(word, index)) return false;
-            int end = index + word.length();
-            if (end < source.length()
-                    && (Character.isLetterOrDigit(source.charAt(end)) || source.charAt(end) == '_')) {
-                return false;
-            }
-            index = end;
-            return true;
-        }
-
-        private void require(String token) {
-            if (!take(token)) throw new ParseFailure("CUSTOM_EXPRESSION_UNSUPPORTED", token);
-        }
-
-        private void enter() {
-            if (++depth > 64) throw new ParseFailure("CUSTOM_EXPRESSION_TOO_DEEP", "");
-        }
-
-        private void skip() {
-            while (index < source.length() && Character.isWhitespace(source.charAt(index))) index++;
-        }
     }
 }

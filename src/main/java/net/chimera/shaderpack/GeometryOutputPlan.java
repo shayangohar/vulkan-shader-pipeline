@@ -48,25 +48,50 @@ public record GeometryOutputPlan(
         }
         List<List<Integer>> routes = routes(text);
         if (routes.size() > 1 && routes.stream().allMatch(route -> route != null && !route.isEmpty())) {
-            List<Integer> selected = routes.stream()
-                    .max((left, right) -> Integer.compare(left.size(), right.size()))
-                    .orElse(List.of());
-            Set<List<Integer>> longest = new HashSet<>();
-            for (List<Integer> route : routes) {
-                if (route.size() == selected.size()) longest.add(route);
-            }
+            // The analyzed source is already branch-resolved, so surviving
+            // directives describe cumulative writes in file order. Pack
+            // authors place the overriding route last, matching Iris
+            // last-directive-wins and PostTargetPlan's latest rule. Route
+            // length never decides: a shorter override replaces a longer
+            // default exactly when the author puts it later.
+            List<Integer> selected = routes.get(routes.size() - 1);
             String canonical = selected.stream().map(String::valueOf)
                     .reduce((left, right) -> left + "," + right).orElse("0");
             text = DRAWBUFFERS_DEFINE.matcher(text).replaceAll("");
             text = TARGET_COMMENT.matcher(text).replaceAll("");
-            text = "/* RENDERTARGETS: " + canonical + " */\\n" + text;
+            text = "/* RENDERTARGETS: " + canonical + " */\n" + text;
             PostTargetPlan.ParseResult parsed = PostTargetPlan.parse(programName, text, formats);
             List<String> deviations = new ArrayList<>(parsed.deviations());
-            if (longest.size() > 1) deviations.add("GEOMETRY_TARGET_DIRECTIVE_CONFLICT");
+            if (!chainedRoutes(new HashSet<>(routes))) {
+                deviations.add("GEOMETRY_TARGET_DIRECTIVE_CONFLICT");
+            }
             return from(parsed, deviations);
         }
         PostTargetPlan.ParseResult parsed = PostTargetPlan.parse(programName, text, formats);
         return from(parsed, parsed.deviations());
+    }
+
+    /**
+     * Surviving directives describe cumulative writes when every shape
+     * extends a shared prefix (the normal guarded-branch pattern). Shapes
+     * that diverge are genuinely ambiguous and stay a hard conflict.
+     */
+    private static boolean chainedRoutes(Set<List<Integer>> shapes) {
+        for (List<Integer> left : shapes) {
+            for (List<Integer> right : shapes) {
+                if (!isPrefixExtension(left, right) && !isPrefixExtension(right, left)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean isPrefixExtension(List<Integer> prefix, List<Integer> full) {
+        if (prefix.size() > full.size()) {
+            return false;
+        }
+        return full.subList(0, prefix.size()).equals(prefix);
     }
 
     private static GeometryOutputPlan from(

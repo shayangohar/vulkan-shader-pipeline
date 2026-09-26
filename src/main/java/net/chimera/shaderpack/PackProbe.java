@@ -528,6 +528,9 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isSkyFamily(name)) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "SKY_VERTEX_BRIDGE" : "SKY_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)
+                    && programPlan.cloudDrawsNothing()) {
+                deviations.add(PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "CLOUD_VERTEX_BRIDGE" : "CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
@@ -602,6 +605,9 @@ public final class PackProbe {
                 } else {
                     deviations.add("SKY_VERTEX_BRIDGE_UNSUPPORTED");
                 }
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)
+                    && AuthoredOutput.producesNothing(vertex, fragment)) {
+                deviations.add(PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)) {
                 if (LegacyGlslConverter.convertCloudVertex(vertex, null, fragment) != null) {
                     deviations.add("CLOUD_VERTEX_BRIDGE");
@@ -974,8 +980,12 @@ public final class PackProbe {
         }
         Matcher comment = TARGET_COMMENT.matcher(source);
         while (comment.find()) {
-            for (String token : comment.group(1).split(",")) {
-                addTarget(result, token.trim());
+            String digits = comment.group(1).replaceAll("[,\\s]+", "");
+            if (digits.isEmpty() || !digits.matches("[0-9]+")) {
+                continue;
+            }
+            for (int index = 0; index < digits.length(); index++) {
+                addTarget(result, digits.substring(index, index + 1));
             }
         }
         Matcher fragData = FRAG_DATA.matcher(source);

@@ -23,6 +23,7 @@ public final class GlslTokenRewriter {
         String prefix = "chimeraAtlas";
         while (atlasPrefixUsed(identifiers, prefix)) prefix += "_";
         String helper = prefix + "Sample";
+        String gradHelper = prefix + "SampleGrad";
         boolean[] directive = atlasDirectiveTokens(tokens);
         Set<String> callableShadows = new java.util.HashSet<>();
         for (var function : functions) callableShadows.add(function.name());
@@ -34,6 +35,7 @@ public final class GlslTokenRewriter {
             }
         }
         boolean changed = false;
+        boolean changedGrad = false;
         for (var function : functions) {
             Set<String> eligible = new java.util.HashSet<>(atlasSamplers);
             for (int i = function.definitionStart(); i < function.bodyEnd(); i++) {
@@ -47,34 +49,45 @@ public final class GlslTokenRewriter {
             for (int i = function.bodyStart(); i < function.bodyEnd(); i++) {
                 var token = tokens.get(i);
                 if (directive[i] || token.kind() != GlslLexer.Kind.IDENTIFIER
-                        || !Set.of("texture2D", "texture", "chimeraTexture").contains(token.text())
+                        || !Set.of("texture2D", "texture", "chimeraTexture", "textureGrad").contains(token.text())
                         || callableShadows.contains(token.text())) continue;
                 int open = GlslLexer.nextSignificant(tokens, i);
                 if (open < 0 || !tokens.get(open).symbol("(")) continue;
                 int close = GlslLexer.matching(tokens, open, "(", ")");
                 if (close < 0) continue;
                 List<int[]> arguments = argumentRanges(tokens, open + 1, close);
-                if (arguments.size() != 2) continue;
+                // Plain lookups keep their two-argument shape; only authored
+                // explicit-gradient textureGrad calls take the gradient path.
+                // Every other arity is an unsupported overload: leave it.
+                boolean explicit = token.text().equals("textureGrad");
+                if (explicit ? arguments.size() != 4 : arguments.size() != 2) continue;
                 String sampler;
                 try { sampler = singleIdentifier(tokens, arguments.get(0)); }
                 catch (IllegalArgumentException ignored) { continue; }
                 if (!eligible.contains(sampler)) continue;
-                tokens.set(i, identifier(helper));
-                changed = true;
+                tokens.set(i, identifier(explicit ? gradHelper : helper));
+                if (explicit) changedGrad = true;
+                else changed = true;
             }
         }
-        if (!changed) return source;
+        if (!changed && !changedGrad) return source;
         int insertion = functions.stream().mapToInt(GlslResourceUsage.FunctionDefinition::definitionStart).min().orElseThrow();
         String p = prefix;
-        String definition = "vec4 " + helper + "(sampler2D " + p + "Tex, vec2 " + p + "Uv) {\n"
-                + "vec2 " + p + "Pixel = 1.0 / vec2(textureSize(" + p + "Tex, 0));\n"
-                + "vec2 " + p + "Du = dFdx(" + p + "Uv), " + p + "Dv = dFdy(" + p + "Uv);\n"
-                + "vec2 " + p + "Screen = max(sqrt(" + p + "Du * " + p + "Du + " + p + "Dv * " + p + "Dv), vec2(1e-20));\n"
-                + "vec2 " + p + "Coord = " + p + "Uv / " + p + "Pixel;\n"
-                + "vec2 " + p + "Center = round(" + p + "Coord) - 0.5;\n"
-                + "vec2 " + p + "Offset = clamp((" + p + "Coord - " + p + "Center - 0.5) * " + p + "Pixel / " + p + "Screen + 0.5, 0.0, 1.0);\n"
-                + "return textureGrad(" + p + "Tex, (" + p + "Center + " + p + "Offset) * " + p + "Pixel, " + p + "Du, " + p + "Dv);\n}\n";
-        tokens.add(insertion, raw(definition));
+        StringBuilder definitions = new StringBuilder();
+        definitions.append("vec4 ").append(gradHelper).append("(sampler2D ").append(p).append("Tex, vec2 ").append(p).append("Uv, vec2 ").append(p).append("Du, vec2 ").append(p).append("Dv) {\n")
+                .append("vec2 ").append(p).append("Pixel = 1.0 / vec2(textureSize(").append(p).append("Tex, 0));\n")
+                .append("vec2 ").append(p).append("Screen = max(sqrt(").append(p).append("Du * ").append(p).append("Du + ").append(p).append("Dv * ").append(p).append("Dv), vec2(1e-20));\n")
+                .append("vec2 ").append(p).append("Coord = ").append(p).append("Uv / ").append(p).append("Pixel;\n")
+                .append("vec2 ").append(p).append("Center = round(").append(p).append("Coord) - 0.5;\n")
+                .append("vec2 ").append(p).append("Offset = clamp((").append(p).append("Coord - ").append(p).append("Center - 0.5) * ").append(p).append("Pixel / ").append(p).append("Screen + 0.5, 0.0, 1.0);\n")
+                .append("return textureGrad(").append(p).append("Tex, (").append(p).append("Center + ").append(p).append("Offset) * ").append(p).append("Pixel, ").append(p).append("Du, ").append(p).append("Dv);\n}\n");
+        // The plain helper delegates so both call shapes share one
+        // pixel-center correction; it is always emitted with its target.
+        if (changed) {
+            definitions.append("vec4 ").append(helper).append("(sampler2D ").append(p).append("Tex, vec2 ").append(p).append("Uv) {\n")
+                    .append("return ").append(gradHelper).append("(").append(p).append("Tex, ").append(p).append("Uv, dFdx(").append(p).append("Uv), dFdy(").append(p).append("Uv));\n}\n");
+        }
+        tokens.add(insertion, raw(definitions.toString()));
         return GlslLexer.render(tokens);
     }
 

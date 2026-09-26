@@ -22,6 +22,8 @@ public final class ChimeraTextureBindingState {
     private static final ThreadLocal<DescriptorBinding> DESCRIPTOR = new ThreadLocal<>();
 
     private static TerrainSamplerInfo terrainSamplerInfo;
+    private static SamplerProfile terrainSamplerProfile;
+    private static final Map<Integer, SamplerProfile> samplerProfiles = new HashMap<>();
     private static long loggedTerrainImage = Long.MIN_VALUE;
     private static long loggedTerrainSampler = Long.MIN_VALUE;
 
@@ -33,6 +35,7 @@ public final class ChimeraTextureBindingState {
             synchronized (ChimeraTextureBindingState.class) {
                 STORE.clearTerrainSampler();
                 terrainSamplerInfo = null;
+                terrainSamplerProfile = null;
             }
             return;
         }
@@ -43,9 +46,25 @@ public final class ChimeraTextureBindingState {
                 String.valueOf(vkSampler.getAddressModeU()),
                 String.valueOf(vkSampler.getAddressModeV()),
                 vkSampler.getMaxAnisotropy());
+        SamplerProfile profile = SamplerProfile.of(sampler, vkSampler.getId());
         synchronized (ChimeraTextureBindingState.class) {
             STORE.setTerrainSampler(info.id());
             terrainSamplerInfo = info;
+            terrainSamplerProfile = profile;
+        }
+    }
+
+    /** Authoritative chunk sampler profile, or null when never captured. */
+    public static SamplerProfile terrainSamplerProfile() {
+        synchronized (ChimeraTextureBindingState.class) {
+            return terrainSamplerProfile;
+        }
+    }
+
+    /** Recorded profile for one selector slot, or null when never marked. */
+    public static SamplerProfile samplerProfile(int slot) {
+        synchronized (ChimeraTextureBindingState.class) {
+            return samplerProfiles.get(slot);
         }
     }
 
@@ -86,6 +105,7 @@ public final class ChimeraTextureBindingState {
         }
         synchronized (ChimeraTextureBindingState.class) {
             STORE.bind(slot, image, image.getSampler());
+            samplerProfiles.put(slot, SamplerProfile.ofId(image.getSampler()));
         }
     }
 
@@ -97,6 +117,23 @@ public final class ChimeraTextureBindingState {
         }
         synchronized (ChimeraTextureBindingState.class) {
             STORE.bindExact(slot, image, sampler);
+            samplerProfiles.put(slot, SamplerProfile.ofId(sampler));
+        }
+    }
+
+    /** Records a host texture pair with its exact sampler profile. */
+    public static void markPackBinding(int slot, VulkanImage image, GpuSampler sampler) {
+        if (image == null || sampler == null) {
+            clearPackBinding(slot);
+            return;
+        }
+        if (!(sampler instanceof VkSampler vkSampler) || vkSampler.getId() == 0L) {
+            markPackBinding(slot, image, image.getSampler());
+            return;
+        }
+        synchronized (ChimeraTextureBindingState.class) {
+            STORE.bindExact(slot, image, vkSampler.getId());
+            samplerProfiles.put(slot, SamplerProfile.of(sampler, vkSampler.getId()));
         }
     }
 
@@ -115,6 +152,7 @@ public final class ChimeraTextureBindingState {
     public static void clearPackBinding(int slot) {
         synchronized (ChimeraTextureBindingState.class) {
             STORE.clear(slot);
+            samplerProfiles.remove(slot);
         }
     }
 
@@ -139,7 +177,9 @@ public final class ChimeraTextureBindingState {
     public static void reset() {
         synchronized (ChimeraTextureBindingState.class) {
             STORE.reset();
+            samplerProfiles.clear();
             terrainSamplerInfo = null;
+            terrainSamplerProfile = null;
             loggedTerrainImage = Long.MIN_VALUE;
             loggedTerrainSampler = Long.MIN_VALUE;
         }

@@ -31,7 +31,7 @@ public final class ChimeraPostPipelines {
         return builder.createGraphicsPipeline();
     }
 
-    /** Creates the one internal reversed-Z depth conversion pipeline. */
+    /** Creates the internal forward-Z depth copy pipeline used by pack snapshots. */
     public static GraphicsPipeline createDepthPipeline() {
         return create("chimera_depth");
     }

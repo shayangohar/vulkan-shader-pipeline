@@ -79,7 +79,7 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
             return;
         }
         ChimeraTextureBindingState.markPackBinding(
-                slot, texture.getVulkanImage(), vkSampler.getId());
+                slot, texture.getVulkanImage(), sampler);
         VTextureSelector.bindTexture(slot, texture.getVulkanImage());
     }
 

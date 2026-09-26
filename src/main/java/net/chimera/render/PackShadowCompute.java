@@ -665,7 +665,7 @@ public final class PackShadowCompute implements AutoCloseable {
                 if (!name.matches("[A-Za-z_]\\w*")) {
                     throw new IllegalArgumentException("unsupported compute uniform declaration: " + raw);
                 }
-                if (UniformRegistry.descriptor(name, type) != null
+                if (PackUniformProvider.resolveUniform(name, type) != null
                         && GlslTokenRewriter.identifierCount(source, name) > 1) {
                     declarations.putIfAbsent(name, type);
                 } else if (GlslTokenRewriter.identifierCount(source, name) > 1) {

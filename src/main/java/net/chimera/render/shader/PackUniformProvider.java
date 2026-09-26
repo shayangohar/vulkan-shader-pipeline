@@ -12,8 +12,10 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
@@ -28,6 +30,7 @@ public final class PackUniformProvider {
     private static final PackUniformProvider INSTANCE = new PackUniformProvider();
 
     private final Map<UniformKey, Binding> bindings = new HashMap<>();
+    private final Set<String> loggedValueFailures = new HashSet<>();
     private final PackFrameState frameState = new PackFrameState();
     private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
     private long lastFrameNanos;
@@ -41,14 +44,7 @@ public final class PackUniformProvider {
 
     /** Called by Pipeline.Builder while it applies the generated UBO config. */
     public Supplier<MappedBuffer> supplier(Uniform.Info info) {
-        UniformRegistry.UniformDescriptor descriptor =
-                UniformRegistry.descriptor(info.name, info.type);
-        if (descriptor == null) {
-            descriptor = runtimeSettings.customDescriptors().get(info.name);
-            if (descriptor != null && !descriptor.accepts(info.type)) {
-                descriptor = null;
-            }
-        }
+        UniformRegistry.UniformDescriptor descriptor = resolveUniform(info.name, info.type);
         if (descriptor == null) {
             throw new IllegalArgumentException("uniform is not in the Chimera catalog: "
                     + info.name + " (" + info.type + ")");
@@ -65,6 +61,14 @@ public final class PackUniformProvider {
         return () -> stable.buffer;
     }
 
+    /**
+     * The catalog entry a declared name resolves to, the session's pack-authored values included.
+     * A refused declaration resolves to nothing, so nothing can serve a substitute value.
+     */
+    public static UniformRegistry.UniformDescriptor resolveUniform(String name, String glslType) {
+        return UniformRegistry.resolve(name, glslType, INSTANCE.runtimeSettings.customDescriptors());
+    }
+
     /** Captures the frame before any pack pipeline writes. */
     public static void beginFrame(Camera camera, float partialTick) {
         beginFrame(camera, partialTick, null, null);
@@ -76,21 +80,32 @@ public final class PackUniformProvider {
         INSTANCE.updateFrame(camera, partialTick, modelView, projection);
     }
 
-    /** The frame's celestial angle, shared with the shadow matrix builder. */
-    public static float currentCelestialAngle() {
-        return INSTANCE.frameState.sunAngle();
+    /** The frame's celestial frame, shared with the shadow matrix builder. */
+    public static Vector3f currentSunLightVector() {
+        return INSTANCE.frameState.sunLightVector();
+    }
+
+    /** Installs the pack's sun path for the celestial frame and the shadow matrix. */
+    public static void installSunPath(float rotationDegrees, float offsetDegrees) {
+        INSTANCE.frameState.installSunPath(rotationDegrees, offsetDegrees);
     }
 
     /** Publishes the exact shadow state used by the shadow render. */
-    public static void updateShadowState(Matrix4f modelView, Matrix4f projection,
-                                         Vector3f lightPosition) {
-        INSTANCE.frameState.updateShadow(modelView, projection, lightPosition);
+    public static void updateShadowState(Matrix4f modelView, Matrix4f projection) {
+        INSTANCE.frameState.updateShadow(modelView, projection);
+        INSTANCE.refreshBindings();
+    }
+
+    /** Prevents stale pack matrices from describing a host-produced or invalid shadow image. */
+    public static void clearShadowState() {
+        INSTANCE.frameState.clearShadowState();
         INSTANCE.refreshBindings();
     }
 
     /** Installs the immutable runtime settings for the active pack session. */
     public static void installRuntimeSettings(PackRuntimeSettings settings) {
         INSTANCE.runtimeSettings = settings == null ? PackRuntimeSettings.empty() : settings;
+        INSTANCE.loggedValueFailures.clear();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
         INSTANCE.refreshBindings();
     }
@@ -117,8 +132,8 @@ public final class PackUniformProvider {
                 break;
             }
             UniformRegistry.UniformDeclaration declaration = declarations.get(index);
-            UniformRegistry.UniformDescriptor descriptor = UniformRegistry.descriptor(
-                    declaration.name(), declaration.glslType());
+            UniformRegistry.UniformDescriptor descriptor =
+                    resolveUniform(declaration.name(), declaration.glslType());
             if (descriptor == null) continue;
             ByteBuffer duplicate = target.duplicate();
             duplicate.position(offsets[index]);
@@ -143,7 +158,23 @@ public final class PackUniformProvider {
                 now - lastFrameNanos), 0.0f), 0.25f);
         lastFrameNanos = now;
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
+        logDerivedValueFailures();
         refreshBindings();
+    }
+
+    /**
+     * Reports each declaration whose expression produced a non-finite result, once per session,
+     * with the expression and the inputs that produced it. The value itself holds its last finite
+     * result, so the frame is diagnosable rather than silently substituted.
+     */
+    private void logDerivedValueFailures() {
+        for (Map.Entry<String, String> failure : frameState.valueFailures().entrySet()) {
+            if (!loggedValueFailures.add(failure.getKey())) {
+                continue;
+            }
+            ChimeraMod.LOGGER.warn("[chimera] pack value {} produced a non-finite result; "
+                    + "holding its last finite value. {}", failure.getKey(), failure.getValue());
+        }
     }
 
     private void refreshBindings() {
