@@ -15,6 +15,7 @@ import net.vulkanmod.render.engine.VkRenderPass;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
+import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.memory.buffer.Buffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -42,7 +43,9 @@ public abstract class ChimeraVkCommandEncoderMixin {
             Renderer renderer = Renderer.getInstance();
             renderer.bindGraphicsPipeline(packPipeline);
             bindHostUniforms(renderPass, packPipeline);
+            PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
             renderer.uploadAndBindUBOs(packPipeline);
+            PackUniformProvider.restoreFrameAtlasSize();
             callback.setReturnValue(true);
             return;
         }
@@ -121,7 +124,9 @@ public abstract class ChimeraVkCommandEncoderMixin {
         ChimeraEntityBridge.noteHostTransformRoutes(describeTransformSources(
                 dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
         PackUniformProvider.updateEntityAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
+        PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
         renderer.uploadAndBindUBOs(packPipeline);
+        PackUniformProvider.restoreFrameAtlasSize();
         callback.setReturnValue(true);
     }
 

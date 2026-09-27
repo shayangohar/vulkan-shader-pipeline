@@ -18,10 +18,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *
  * Ordering contract: openLevelSegment (HEAD of LevelRenderer.renderLevel)
  * opens HDR and arms shadowPending; by the time the SOLID layer returns,
- * cullTerrain has filled the section draw queues and the SOLID pass itself
- * has just drawn 1:1 from them, so the shadow phase sees exactly the state
- * the solid pass saw. The previous hook point (right after
- * compileSections) raced section-graph updates against queue filling and
+ * cullTerrain has updated the section graph and the SOLID pass has drawn.
+ * The shadow phase then draws its own light-volume sections
+ * (ShadowSectionQueue), never the camera's culled queues. The previous hook
+ * point (right after compileSections) raced section-graph updates and
  * recorded zero draws.
  *
  * No recursion: consumeShadowPending() clears the flag before

@@ -1,14 +1,23 @@
 package net.chimera.mixin;
 
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.ShadowSectionQueue;
+import net.vulkanmod.render.chunk.RenderSection;
 import net.vulkanmod.render.chunk.buffer.DrawBuffers;
+import net.vulkanmod.render.chunk.cull.QuadFacing;
+import org.joml.Vector3d;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VK10;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Records execution only after a nonempty native terrain draw command. */
+/**
+ * Records execution only after a nonempty native terrain draw command, and
+ * draws every facing during the shadow pass.
+ */
 @Mixin(value = DrawBuffers.class, remap = false)
 public abstract class ChimeraDrawBuffersMixin {
     @Redirect(method = "buildDrawBatchesDirect", at = @At(value = "INVOKE",
@@ -17,6 +26,19 @@ public abstract class ChimeraDrawBuffersMixin {
         VK10.vkCmdDrawIndexed(cmd, count, instances, first, vertex, base);
         if (count > 0 && instances > 0 && ChimeraRenderer.getMainPass() != null)
             ChimeraRenderer.getMainPass().recordShadowDraw();
+    }
+
+    /**
+     * With backface culling on, VulkanMod stores each section's quads in
+     * per-facing slots and draws only the facings that point toward the
+     * camera. The light sees the others, so the shadow pass enables every
+     * facing. Turning the culling branch off instead would draw only the
+     * UNDEFINED slot, which holds almost nothing on those builds.
+     */
+    @Inject(method = "getMask", at = @At("HEAD"), cancellable = true, require = 1)
+    private void chimera$shadowFacings(Vector3d camera, RenderSection section,
+                                        CallbackInfoReturnable<Integer> mask) {
+        if (ShadowSectionQueue.active()) mask.setReturnValue((1 << QuadFacing.COUNT) - 1);
     }
 
     @Redirect(method = "buildDrawBatchesIndirect", at = @At(value = "INVOKE",

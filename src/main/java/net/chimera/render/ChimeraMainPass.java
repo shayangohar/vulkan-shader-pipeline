@@ -471,8 +471,8 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /**
-     * Records the shadow pass: re-renders SOLID terrain from the light's
-     * perspective into the shadow framebuffer, then binds the shadow texture
+     * Records the shadow pass: re-renders terrain sections inside the light
+     * volume, with every facing, into the shadow framebuffer, then binds the shadow texture
      * for sampling by the terrain shader. Runs with no render pass open;
      * renderSectionLayer's rebindMainTarget opens the shadow pass (via the
      * shadowPassActive redirect) and this method closes it afterward.
@@ -529,6 +529,7 @@ public class ChimeraMainPass implements MainPass {
                 VRenderSystem.applyProjectionMatrix(projection);
                 VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
                 VRenderSystem.calculateMVP();
+                beginShadowSections(cameraX, cameraY, cameraZ);
 
                 TerrainRenderType opaqueType = TerrainRenderType.getRemapped(TerrainRenderType.SOLID);
                 WorldRenderer.getInstance().renderSectionLayer(
@@ -549,6 +550,7 @@ public class ChimeraMainPass implements MainPass {
                             this.shadowMap.getLightView(), projection);
                 }
             } finally {
+                ShadowSectionQueue.end();
                 if (Renderer.getInstance().getBoundRenderPass() != null) {
                     Renderer.getInstance().endRenderPass(cmd);
                 }
@@ -628,15 +630,29 @@ public class ChimeraMainPass implements MainPass {
 
 
     /**
+     * Chooses the shadow pass's sections from the light volume. The pack
+     * projection carries GL clip depth, which the frustum test expects; both
+     * projections cover the same volume.
+     */
+    private void beginShadowSections(double cameraX, double cameraY, double cameraZ) {
+        if (!(WorldRenderer.getInstance() instanceof ChimeraSectionGridAccess access)) return;
+        var grid = access.chimera$sectionGrid();
+        if (grid == null) return;
+        ShadowSectionQueue.begin(grid, grid.getChunkAreaManager().size,
+                this.shadowMap.getPackLightProjection(), this.shadowMap.getLightView(),
+                cameraX, cameraY, cameraZ);
+    }
+
+    /**
      * Renders the shadow map at the tail of the SOLID section layer.
      * Closes the HDR pass opened at HEAD, draws terrain from the light's
      * perspective into the shadow map, then reopens the HDR pass (load ops)
      * so the remaining layers continue into it.
      *
-     * Timing matters: by this point cullTerrain has filled VulkanMod's
-     * section draw queues and the main SOLID pass has just drawn from them,
-     * so the shadow phase sees exactly the state the solid pass saw -
-     * never a possibly-empty fresh SectionGraph.
+     * Timing matters: by this point cullTerrain has updated VulkanMod's
+     * section graph for this frame and the main SOLID pass has drawn. The
+     * shadow phase draws its own sections chosen from the light volume
+     * ({@link ShadowSectionQueue}), not the camera's culled queues.
      */
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.isInitialized() || !this.shadowFrameReady || !shadowAttachmentsLive()) {

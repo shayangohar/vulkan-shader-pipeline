@@ -7,6 +7,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.vulkanmod.vulkan.shader.layout.Uniform;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -107,6 +108,31 @@ public final class PackUniformProvider {
                 new UniformKey(UniformRegistry.ENTITY_ALPHA_REFERENCE, "float"));
         if (binding != null) {
             INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+    }
+
+    /**
+     * Serves the next host-routed draw the size of the atlas it samples, or
+     * zero for a plain texture, as Iris answers {@code atlasSize} from
+     * texture unit 0. {@link #restoreFrameAtlasSize} puts the block atlas
+     * back once that draw's uniforms are uploaded.
+     */
+    public static void updateDrawAtlasSize(VulkanImage sampled) {
+        int[] size = AtlasSizes.of(sampled);
+        INSTANCE.writeAtlasSize(size[0], size[1]);
+    }
+
+    /** Restores the block atlas size that terrain and shadow draws read. */
+    public static void restoreFrameAtlasSize() {
+        int[] size = AtlasSizes.blocks();
+        INSTANCE.writeAtlasSize(size[0], size[1]);
+    }
+
+    private void writeAtlasSize(int width, int height) {
+        if (!frameState.setAtlasSize(width, height)) return;
+        Binding binding = bindings.get(new UniformKey("atlasSize", "ivec2"));
+        if (binding != null) {
+            frameState.write(binding.descriptor, binding.type, binding.buffer);
         }
     }
 

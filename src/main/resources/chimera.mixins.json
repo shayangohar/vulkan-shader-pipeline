@@ -15,6 +15,7 @@
     "VTextureSelectorMixin",
     "WorldRendererMixin",
     "ChimeraDrawBuffersMixin",
+    "ChimeraShadowSectionsMixin",
     "WorldRendererLevelMixin",
     "FluidRendererMixin",
     "QuadSorterMixin",

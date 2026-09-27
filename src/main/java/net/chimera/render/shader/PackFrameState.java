@@ -69,6 +69,8 @@ final class PackFrameState {
     private final float[] texelSize = new float[2];
 
     private final int[] eyeBrightness = new int[2];
+    // The atlas the current draw samples: the block atlas per frame, per draw for entities.
+    private final int[] atlasSize = new int[2];
     private final int[] eyeBrightnessSmooth = new int[2];
     private final int[] cameraPositionInt = new int[3];
     private final int[] previousCameraPositionInt = new int[3];
@@ -166,6 +168,8 @@ final class PackFrameState {
         this.frameCounter = (this.frameCounter + 1) % FRAME_COUNTER_WRAP;
 
         boolean viewportChanged = captureWindow(minecraft);
+        int[] blockAtlas = AtlasSizes.blocks();
+        setAtlasSize(blockAtlas[0], blockAtlas[1]);
         captureMatrices(capturedModelView, capturedProjection);
         captureHostState();
 
@@ -281,6 +285,7 @@ final class PackFrameState {
             case "isEyeInWater" -> target.putInt(0, isEyeInWater);
             case "isElytraFlying" -> target.putInt(0, isElytraFlying);
             case "eyeBrightness" -> writeInts(target, eyeBrightness);
+            case "atlasSize" -> writeInts(target, atlasSize);
             case "eyeBrightnessSmooth" -> writeInts(target, eyeBrightnessSmooth);
             case "frameTime" -> target.putFloat(0, frameTime);
             case "frameTimeCounter" -> target.putFloat(0, frameTimeCounter);
@@ -680,6 +685,14 @@ final class PackFrameState {
         return session.failures();
     }
 
+    /** Returns true when the atlas size served to the next draw changed. */
+    boolean setAtlasSize(int width, int height) {
+        if (atlasSize[0] == width && atlasSize[1] == height) return false;
+        atlasSize[0] = width;
+        atlasSize[1] = height;
+        return true;
+    }
+
     /** Returns true when the per-draw entity alpha reference changed. */
     boolean setEntityAlphaReference(float reference) {
         if (Float.compare(this.entityAlphaReference, reference) == 0) return false;
@@ -705,6 +718,7 @@ final class PackFrameState {
         }
         return switch (name) {
             case "eyeBrightness" -> componentOf(eyeBrightness, component);
+            case "atlasSize" -> componentOf(atlasSize, component);
             case "eyeBrightnessSmooth" -> componentOf(eyeBrightnessSmooth, component);
             case "cameraPosition" ->
                     componentOf(cameraOrigin.x, cameraOrigin.y, cameraOrigin.z, component);

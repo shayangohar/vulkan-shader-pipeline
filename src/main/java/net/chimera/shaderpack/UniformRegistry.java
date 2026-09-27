@@ -1119,7 +1119,7 @@ public final class UniformRegistry {
         addLive(specs, "screenBrightness", "float");
         addDefault(specs, "velocity", "float");
         addLive(specs, "worldDay", "int");
-        addDefault(specs, "atlasSize", "ivec2");
+        addLive(specs, "atlasSize", "ivec2");
         addLive(specs, "eyeBrightness", "ivec2");
         addLive(specs, "eyeBrightnessSmooth", "ivec2");
         addLive(specs, "eyeAltitude", "float");

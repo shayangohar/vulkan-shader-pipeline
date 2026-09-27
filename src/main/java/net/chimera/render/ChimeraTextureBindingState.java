@@ -1,11 +1,14 @@
 package net.chimera.render;
 
+import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import net.chimera.ChimeraMod;
+import net.chimera.mixin.ChimeraSamplerAccessor;
 import net.vulkanmod.render.engine.VkSampler;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.util.HashMap;
+import java.util.OptionalDouble;
 import java.util.Map;
 
 /**
@@ -26,11 +29,17 @@ public final class ChimeraTextureBindingState {
     private static final Map<Integer, SamplerProfile> samplerProfiles = new HashMap<>();
     private static long loggedTerrainImage = Long.MIN_VALUE;
     private static long loggedTerrainSampler = Long.MIN_VALUE;
+    private static VkSampler derivedFrom;
+    private static VkSampler derived;
 
     private ChimeraTextureBindingState() {}
 
-    /** Captures the exact sampler selected by LevelRenderer for chunk terrain. */
-    public static void captureChunkSampler(GpuSampler sampler) {
+    /**
+     * Captures the sampler LevelRenderer selected for chunk terrain, as pack
+     * programs must sample it (see {@link #packAtlasSampler}).
+     */
+    public static void captureChunkSampler(GpuSampler chunkSampler) {
+        GpuSampler sampler = chunkSampler instanceof VkSampler chunk ? packAtlasSampler(chunk) : chunkSampler;
         if (!(sampler instanceof VkSampler vkSampler) || vkSampler.getId() == 0L) {
             synchronized (ChimeraTextureBindingState.class) {
                 STORE.clearTerrainSampler();
@@ -52,6 +61,38 @@ public final class ChimeraTextureBindingState {
             terrainSamplerInfo = info;
             terrainSamplerProfile = profile;
         }
+    }
+
+    /**
+     * The chunk sampler as packs sample it. Under the RGSS texture-filtering
+     * option the host chunk sampler filters LINEAR and the host terrain shader
+     * supersamples to keep texels sharp. Packs never run that supersampling
+     * (UseRgss reads 0), so the linear sampler blurred every atlas read,
+     * including the parallax heights in normals.a, which seamed POM steps.
+     * Iris samples the atlas with the non-RGSS vanilla filtering: nearest
+     * texels, linear between mip levels. Other modes pass through unchanged.
+     */
+    static synchronized VkSampler packAtlasSampler(VkSampler chunk) {
+        if (chunk.getMagFilter() != FilterMode.LINEAR) return chunk;
+        if (chunk != derivedFrom) {
+            // VkSampler only looks up SamplerManager's cached Vulkan sampler,
+            // so the derived wrapper owns nothing and needs no close.
+            FilterMode min = chunk.getMaxAnisotropy() > 1 ? FilterMode.LINEAR : FilterMode.NEAREST;
+            derived = new VkSampler(chunk.getAddressModeU(), chunk.getAddressModeV(), min,
+                    FilterMode.NEAREST, chunk.getMaxAnisotropy(), maxLodOf(chunk));
+            derivedFrom = chunk;
+        }
+        return derived;
+    }
+
+    /**
+     * The chunk sampler's LOD ceiling in the form VkSampler's constructor
+     * takes. VkSampler.getMaxLod() returns null, so it is read through the
+     * accessor; the constructor stores an absent ceiling as 1000.
+     */
+    private static OptionalDouble maxLodOf(VkSampler chunk) {
+        float maxLod = ((ChimeraSamplerAccessor) (Object) chunk).chimera$maxLod();
+        return maxLod >= 1000.0f ? OptionalDouble.empty() : OptionalDouble.of(maxLod);
     }
 
     /** Authoritative chunk sampler profile, or null when never captured. */

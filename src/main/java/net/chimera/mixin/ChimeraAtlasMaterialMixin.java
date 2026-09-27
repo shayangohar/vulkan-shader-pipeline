@@ -3,8 +3,11 @@ package net.chimera.mixin;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.MaterialMapPixels;
+import net.chimera.render.shader.AtlasSizes;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.SpriteLoader;
 import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.data.AtlasIds;
 import net.vulkanmod.render.engine.VkTextureView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,7 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Reports stitched atlas layouts to the material owner.
+ * Reports stitched atlas layouts to the material owner, and each atlas's
+ * size to {@link AtlasSizes} for the {@code atlasSize} uniform.
  *
  * <p>At {@code TextureAtlas.upload} return the atlas texture is fully
  * uploaded, so the observation copies only immutable metadata (atlas
@@ -38,10 +42,6 @@ public abstract class ChimeraAtlasMaterialMixin {
     @Inject(method = "upload", at = @At("RETURN"), require = 1)
     private void chimera$noteAtlasUpload(SpriteLoader.Preparations preparations, CallbackInfo info) {
         try {
-            var pass = ChimeraRenderer.getMainPass();
-            if (pass == null) return;
-            MaterialMapOwner owner = pass.materialMaps();
-            if (owner == null) return;
             TextureAtlas atlas = (TextureAtlas) (Object) this;
             var view = atlas.getTextureView();
             if (!(view instanceof VkTextureView vulkanView)
@@ -50,6 +50,12 @@ public abstract class ChimeraAtlasMaterialMixin {
                         atlas.location());
                 return;
             }
+            AtlasSizes.note(vulkanView.texture().getVulkanImage(), preparations.width(),
+                    preparations.height(), chimera$isBlockAtlas(atlas));
+            var pass = ChimeraRenderer.getMainPass();
+            if (pass == null) return;
+            MaterialMapOwner owner = pass.materialMaps();
+            if (owner == null) return;
             List<MaterialMapOwner.AtlasSprite> sprites =
                     new ArrayList<>(preparations.regions().size());
             for (var entry : preparations.regions().entrySet()) {
@@ -73,6 +79,14 @@ public abstract class ChimeraAtlasMaterialMixin {
                     List.copyOf(sprites)), vulkanView.texture().getVulkanImage());
         } catch (RuntimeException failure) {
             LOGGER.warn("[chimera] material maps: atlas observation failed", failure);
+        }
+    }
+
+    private static boolean chimera$isBlockAtlas(TextureAtlas atlas) {
+        try {
+            return Minecraft.getInstance().getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS) == atlas;
+        } catch (RuntimeException notRegistered) {
+            return false;
         }
     }
 }
