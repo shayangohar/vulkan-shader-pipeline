@@ -373,9 +373,13 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5)
     );
 
-    /** World entities use the host atlas, lightmap, noise, and optional shadow map. */
+    /**
+     * World entities use the host atlas, overlay, lightmap, noise, and
+     * optional shadow map. The overlay is declared by EntityOverlayColor.
+     */
     public static final Map<String, Integer> ENTITY_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
+            Map.entry(PackResourcePlan.OVERLAY_SAMPLER, 1),
             Map.entry("lightmap", 2),
             Map.entry("tex", 0),
             Map.entry("shadowtex0", 5),

@@ -113,6 +113,7 @@ public final class PackPlanBuilder {
         // stage) receives the host alpha test.
         if (FamilyAdapterRegistry.isEntityLike(program.name()) && vertex != null) {
             fragment = alphaTestPlan.injectEntityTest(fragment);
+            fragment = EntityOverlayColor.inject(fragment);
         }
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
                 fragment, vertex, stage, targetPlan, allowUnusedDeclarations,

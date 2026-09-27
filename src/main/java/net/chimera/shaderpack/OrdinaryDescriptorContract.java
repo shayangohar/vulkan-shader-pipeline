@@ -64,7 +64,7 @@ final class OrdinaryDescriptorContract {
     OrdinaryDescriptorContract withResources(List<PackResourceBinding> resolved) {
         List<PackResourceBinding> bindings = new ArrayList<>(resolved);
         for (var resource : resources) {
-            if ((resource.resourceKey().equals("texture") || resource.resourceKey().equals("lightmap"))
+            if (PackResourcePlan.isHostTexture(resource.resourceKey())
                     && resolved.stream().noneMatch(value -> value.slot() == resource.slot())) bindings.add(resource);
         }
         return new OrdinaryDescriptorContract(config, bindings, semanticTransformBlocks);

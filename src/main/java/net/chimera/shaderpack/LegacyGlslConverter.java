@@ -701,11 +701,11 @@ public final class LegacyGlslConverter {
             } else {
                 uniformBlock = "";
             }
-            String entityIdDeclaration = (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+            String chimeraVaryingDeclaration = (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
                     || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
                     || interfacePlan.stage() == UniformRegistry.Stage.HAND)
-                    ? entityIdFragmentDeclaration(terrainLayout) : "";
-            String declarations = entityIdDeclaration
+                    ? chimeraFragmentVaryings(terrainLayout) : "";
+            String declarations = chimeraVaryingDeclaration
                     + (outDecl != null ? outDecl + "\n" : "") + uniformBlock;
             if (interfacePlan.stage() == UniformRegistry.Stage.SHADOW) {
                 declarations = SHADOW_RENDER_STAGE_DEFINES + declarations;
@@ -1230,6 +1230,12 @@ public final class LegacyGlslConverter {
                 locations.put(ENTITY_ID_VARYING, location++);
                 vertexTypes.put(ENTITY_ID_VARYING, entityIdType);
             }
+            boolean overlayUv = containsIdentifier(stripComments(fragmentSource == null ? "" : fragmentSource),
+                    EntityOverlayColor.UV_VARYING);
+            if (overlayUv) {
+                locations.put(EntityOverlayColor.UV_VARYING, location++);
+                vertexTypes.put(EntityOverlayColor.UV_VARYING, "ivec2");
+            }
             TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations,
                     parseEntityVaryingDeclarations(stripped, true).qualifiers());
 
@@ -1280,7 +1286,10 @@ public final class LegacyGlslConverter {
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraEntityFtransform()");
             if (entityIdType != null) {
-                converted = injectEntityIdAssignment(converted);
+                converted = injectMainPrologue(converted, ENTITY_ID_VARYING + " = EntityIds.x;");
+            }
+            if (overlayUv) {
+                converted = injectMainPrologue(converted, EntityOverlayColor.UV_VARYING + " = UV1;");
             }
             Matcher leftoverDeclaration = Pattern.compile("(?m)^\\s*(?:attribute|varying|in|out)\\s+.*$")
                     .matcher(stripComments(converted));
@@ -1289,12 +1298,16 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("entity declaration was not consumed: "
                         + line.substring(0, Math.min(80, line.length())));
             }
-            String entityIdVarying = entityIdType == null ? ""
+            String chimeraVaryings = entityIdType == null ? ""
                     : "layout(location = " + layout.location(ENTITY_ID_VARYING)
                     + ") flat out uint " + ENTITY_ID_VARYING + ";\n";
+            if (overlayUv) {
+                chimeraVaryings += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
+                        + ") flat out ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
+            }
             String cameraBlock = entityCameraUniformBlock(converted, fragmentUniforms);
             return new TerrainVertexConversion("#version 460\n" + vertexPreamble
-                    + entityIdVarying + cameraBlock + converted,
+                    + chimeraVaryings + cameraBlock + converted,
                     layout);
     }
 
@@ -2388,24 +2401,28 @@ public final class LegacyGlslConverter {
                 Map.of("entityId", entityIdExpression(layout)));
     }
 
-    private static String entityIdFragmentDeclaration(TerrainVaryingLayout layout) {
-        if (layout == null || !layout.locations().containsKey(ENTITY_ID_VARYING)) {
-            return "";
+    private static String chimeraFragmentVaryings(TerrainVaryingLayout layout) {
+        if (layout == null) return "";
+        String declarations = "";
+        if (layout.locations().containsKey(ENTITY_ID_VARYING)) {
+            declarations += "layout(location = " + layout.location(ENTITY_ID_VARYING)
+                    + ") flat in uint " + ENTITY_ID_VARYING + ";\n";
         }
-        return "layout(location = " + layout.location(ENTITY_ID_VARYING)
-                + ") flat in uint " + ENTITY_ID_VARYING + ";\n";
+        if (layout.locations().containsKey(EntityOverlayColor.UV_VARYING)) {
+            declarations += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
+                    + ") flat in ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
+        }
+        return declarations;
     }
 
-    private static String injectEntityIdAssignment(String source) {
+    private static String injectMainPrologue(String source, String statement) {
         Matcher main = Pattern.compile(
                 "\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)\\s*\\{")
                 .matcher(source);
         if (!main.find()) {
             throw new IllegalArgumentException("entity vertex main body is missing");
         }
-        return source.substring(0, main.end())
-                + "\n    " + ENTITY_ID_VARYING + " = EntityIds.x;"
-                + source.substring(main.end());
+        return source.substring(0, main.end()) + "\n    " + statement + source.substring(main.end());
     }
 
     private static Map<String, String> parseTerrainVaryings(String source) {

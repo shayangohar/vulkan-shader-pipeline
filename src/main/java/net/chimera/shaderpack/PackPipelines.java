@@ -1235,7 +1235,7 @@ public final class PackPipelines {
             if (name == null) continue;
             String key = PackResourcePlan.canonicalResource(name);
             if (key.equals("shadowtex1")) key = "shadowtex0";
-            PackResourceKind kind = key.startsWith("colortex") || key.equals("texture") || key.equals("lightmap")
+            PackResourceKind kind = key.startsWith("colortex") || PackResourcePlan.isHostTexture(key)
                     ? PackResourceKind.TARGET : key.startsWith("depthtex") ? PackResourceKind.DEPTH
                     : key.startsWith("shadowtex") ? PackResourceKind.SHADOW_DEPTH
                     : key.startsWith("shadowcolor") ? PackResourceKind.SHADOW_COLOR

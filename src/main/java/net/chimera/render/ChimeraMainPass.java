@@ -3429,7 +3429,7 @@ public class ChimeraMainPass implements MainPass {
         ProgramImages bound = program;
         return ProgramImageBindingTransaction.bind(bound.name(), bound.manifest(), IMAGE_STORE, entry -> {
             if (entry.kind() == ProgramImageBindingManifest.Kind.HOST_TEXTURE) {
-                int hostSlot = entry.resourceKey().equals("lightmap") ? 2 : 0;
+                int hostSlot = PackResourcePlan.HOST_TEXTURE_SLOTS.get(entry.resourceKey());
                 return IMAGE_STORE.capture(hostSlot);
             }
             if (entry.kind() == ProgramImageBindingManifest.Kind.MATERIAL_MAP) {

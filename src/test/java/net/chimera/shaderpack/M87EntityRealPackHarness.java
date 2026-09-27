@@ -70,11 +70,35 @@ public final class M87EntityRealPackHarness {
             System.out.println("[chimera] m8.7 real-pack converted " + expectation.pack + " "
                     + expectation.program() + ": vertex=" + plan.convertedVertex().length()
                     + " chars, fragment=" + plan.convertedFragment().length() + " chars");
+            verifyOverlayColour(expectation, plan);
             compileStage(plan.convertedVertex(), true,
                     expectation.pack + " " + expectation.program() + " vertex");
             compileStage(plan.convertedFragment(), false,
                     expectation.pack + " " + expectation.program() + " fragment");
             verifyManifest(analysis.plan().advancedResources(), expectation, plan);        }
+    }
+
+    /**
+     * Complementary tints hit mobs with entityColor. It must come from the
+     * overlay texel at the entity's UV1, per vertex as Iris makes it, and
+     * never from a uniform that answers every mob with one colour.
+     */
+    private static void verifyOverlayColour(Expectation expectation, PackProgramPlan plan) {
+        if (!expectation.pack().equals("complementary")
+                || !expectation.program().equals("gbuffers_entities")) return;
+        String what = expectation.pack() + " " + expectation.program();
+        String vertex = plan.convertedVertex();
+        String fragment = plan.convertedFragment();
+        assertTrue(vertex.contains("flat out ivec2 " + EntityOverlayColor.UV_VARYING)
+                        && vertex.contains(EntityOverlayColor.UV_VARYING + " = UV1;"),
+                what + " vertex does not forward the overlay coordinate");
+        assertTrue(fragment.contains("flat in ivec2 " + EntityOverlayColor.UV_VARYING)
+                        && fragment.contains("texelFetch(" + PackResourcePlan.OVERLAY_SAMPLER),
+                what + " fragment does not fetch entityColor from the overlay");
+        long declarations = java.util.regex.Pattern.compile("\\bvec4\\s+entityColor\\s*;")
+                .matcher(fragment).results().count();
+        assertTrue(declarations == 1 && !fragment.contains("uniform vec4 entityColor"),
+                what + " fragment still reads entityColor from a uniform (" + declarations + " declarations)");
     }
 
     /**

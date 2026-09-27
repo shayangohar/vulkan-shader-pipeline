@@ -34,7 +34,7 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
                     .filter(value -> value.slot() == slot).findFirst().orElse(null);
             if (resource == null) throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
             Kind kind = switch (resource.kind()) {
-                case TARGET -> resource.resourceKey().equals("texture") || resource.resourceKey().equals("lightmap")
+                case TARGET -> PackResourcePlan.isHostTexture(resource.resourceKey())
                         ? Kind.HOST_TEXTURE : Kind.COLOR_TARGET;
                 case DEPTH -> Kind.DEPTH_TARGET;
                 case SHADOW_DEPTH -> Kind.SHADOW_DEPTH;

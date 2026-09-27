@@ -21,6 +21,21 @@ import java.util.regex.Pattern;
 public final class PackResourcePlan {
     private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-9]+)");
 
+    /** Chimera's name for the host entity overlay, which entityColor is made from. */
+    public static final String OVERLAY_SAMPLER = "chimeraOverlay";
+
+    /**
+     * Host textures a program samples through the host's own selector slot:
+     * the draw's atlas, the entity overlay (hurt tint and flash) and the
+     * lightmap. Every host-texture decision reads this one table.
+     */
+    public static final Map<String, Integer> HOST_TEXTURE_SLOTS =
+            Map.of("texture", 0, OVERLAY_SAMPLER, 1, "lightmap", 2);
+
+    public static boolean isHostTexture(String resourceKey) {
+        return resourceKey != null && HOST_TEXTURE_SLOTS.containsKey(resourceKey);
+    }
+
     private final Map<String, List<PackResourceBinding>> byProgram;
     private final Map<String, PackResourceDeclaration> declarations;
     private final List<String> deviations;
@@ -195,9 +210,12 @@ public final class PackResourcePlan {
                     PackResourceStatus.UNAVAILABLE, deviations);
         }
 
-        if (name.equals("texture") || name.equals("tex") || name.equals("lightmap")) {
+        if (name.equals("tex") || isHostTexture(name)) {
             String hostResource = name.equals("tex") ? "texture" : name;
-            deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + hostResource);
+            // The overlay is Chimera's own declaration, not a pack alias.
+            if (!name.equals(OVERLAY_SAMPLER)) {
+                deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + hostResource);
+            }
             return new PackResourceBinding(program, name, hostResource,
                     PackResourceKind.TARGET, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
