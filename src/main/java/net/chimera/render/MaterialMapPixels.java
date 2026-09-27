@@ -217,6 +217,30 @@ public final class MaterialMapPixels {
         }
     }
 
+    /** A rectangle of ABGR pixels at a canvas position. */
+    public record Rect(int x, int y, int width, int height, int[] pixels) {}
+
+    /**
+     * The part of a rectangle placed at {@code (x, y)} that falls inside a
+     * {@code canvasWidth x canvasHeight} canvas, clipped exactly as
+     * {@link #placeRect} clips; null when nothing is inside.
+     */
+    public static Rect clipRect(int[] rect, int rectWidth, int rectHeight, int x, int y,
+            int canvasWidth, int canvasHeight) {
+        int x0 = Math.max(0, x);
+        int y0 = Math.max(0, y);
+        int x1 = Math.min(canvasWidth, x + rectWidth);
+        int y1 = Math.min(canvasHeight, y + rectHeight);
+        if (x0 >= x1 || y0 >= y1) return null;
+        int width = x1 - x0;
+        int height = y1 - y0;
+        int[] clipped = new int[width * height];
+        for (int row = 0; row < height; row++) {
+            System.arraycopy(rect, (y0 - y + row) * rectWidth + (x0 - x), clipped, row * width, width);
+        }
+        return new Rect(x0, y0, width, height, clipped);
+    }
+
     /**
      * Pads one logical mip with its own replicated edge on all four sides.
      * Returns a {@code (width + 2*pad) x (height + 2*pad)} image whose

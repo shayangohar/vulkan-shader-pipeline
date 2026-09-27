@@ -822,12 +822,21 @@ tasks.register('m87EntityTransformBindingTest', JavaExec) {
     jvmArgs '-ea'
 }
 
-tasks.register('m87StaticCompanionsTest', JavaExec) {
+// Every M8.7 material-map gate (DOC-290): selector, stage and manifest
+// planning, then static, simple, reload and animated companions.
+tasks.register('m87ConformanceTest') {
     group = 'verification'
-    description = 'Checks M8.7 slice B static atlas companions from the checked-in mini resource pack.'
+    description = 'Runs every M8.7 resource-pack material-map gate.'
+    dependsOn tasks.named('materialPlanConformance')
+    dependsOn tasks.named('m87MaterialMapsTest')
+}
+
+tasks.register('m87MaterialMapsTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks M8.7 material maps (static, simple, reload, animation) from the checked-in mini resource pack.'
     dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'net.chimera.render.M87StaticCompanionsHarness'
+    mainClass = 'net.chimera.render.M87MaterialMapsHarness'
     jvmArgs '-ea'
 }
 
@@ -879,7 +888,7 @@ tasks.named('check') {
     dependsOn tasks.named('terrainAtlasSamplingTest')
     dependsOn tasks.named('alphaTestConformance')
     dependsOn tasks.named('materialPlanConformance')
-    dependsOn tasks.named('m87StaticCompanionsTest')
+    dependsOn tasks.named('m87ConformanceTest')
     dependsOn tasks.named('m87PostBypassTest')
     dependsOn tasks.named('m87EntityTransformBindingTest')
     dependsOn tasks.named('m87EntityRealPackTest')

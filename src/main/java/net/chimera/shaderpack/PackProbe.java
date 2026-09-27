@@ -308,8 +308,7 @@ public final class PackProbe {
         }
         String relative = relativePath(root, path);
         inventory.stages.add(stage);
-        inventory.sourceHashes.put(relative, ConformanceReport.sha256(
-                source.getBytes(StandardCharsets.UTF_8)));
+        inventory.sourceHashes.put(relative, ConformanceReport.textSha256(source));
         inventory.sources.putIfAbsent(stage, source);
         if (prepared != null) {
             inventory.preparedSources.putIfAbsent(stage, prepared);
@@ -1124,7 +1123,7 @@ public final class PackProbe {
     private static void readMetadata(
             Path file, String name, Map<String, String> hashes, List<String> deviations) {
         try {
-            hashes.put(name, ConformanceReport.sha256(Files.readAllBytes(file)));
+            hashes.put(name, ConformanceReport.textSha256(Files.readAllBytes(file)));
         } catch (IOException e) {
             deviations.add("METADATA_READ_FAILED:" + name);
         }

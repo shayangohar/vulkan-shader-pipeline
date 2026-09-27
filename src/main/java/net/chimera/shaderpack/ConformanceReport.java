@@ -238,6 +238,25 @@ public final class ConformanceReport {
         return sha256(toJson().getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Hash of a pack text file with CRLF folded to LF. A pack's line endings
+     * depend on how it was saved or checked out, not on what it says, so the
+     * same pack must identify the same way either way.
+     */
+    public static String textSha256(byte[] bytes) {
+        int kept = 0;
+        byte[] folded = new byte[bytes.length];
+        for (int i = 0; i < bytes.length; i++) {
+            if (bytes[i] == '\r' && i + 1 < bytes.length && bytes[i + 1] == '\n') continue;
+            folded[kept++] = bytes[i];
+        }
+        return sha256(java.util.Arrays.copyOf(folded, kept));
+    }
+
+    public static String textSha256(String text) {
+        return textSha256(text.getBytes(StandardCharsets.UTF_8));
+    }
+
     public static String sha256(byte[] bytes) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);

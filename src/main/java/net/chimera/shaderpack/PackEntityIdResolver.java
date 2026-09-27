@@ -56,7 +56,7 @@ public final class PackEntityIdResolver {
         String sourceHash;
         try {
             byte[] bytes = Files.readAllBytes(file);
-            sourceHash = ConformanceReport.sha256(bytes);
+            sourceHash = ConformanceReport.textSha256(bytes);
             for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
                 parseLine(raw, ids, conflicts, deviations);
             }

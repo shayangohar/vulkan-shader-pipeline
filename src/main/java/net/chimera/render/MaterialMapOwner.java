@@ -35,9 +35,10 @@ import java.util.Set;
  * flat texels, so material-capable programs always bind something valid.
  * Static atlas companions join here: the upload mixin reports stitched
  * layouts, the pump builds exact-layout companions at a safe render-thread
- * seam, and descriptor resolution keeps answering flat fallbacks until
- * Slice C joins the transaction. Simple-texture companions, reload
- * generations, and animation uploads arrive in later slices.</p>
+ * seam, and draws resolve them by exact albedo identity. Simple-texture
+ * companions follow draw-observed entity images, reload generations retire
+ * stale identities, and animated maps tick with their atlas and rewrite
+ * only their own slots.</p>
  */
 public final class MaterialMapOwner implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(MaterialMapOwner.class);
@@ -80,6 +81,12 @@ public final class MaterialMapOwner implements AutoCloseable {
     private final Object companionsLock = new Object();
     /** Latest pending upload per atlas location; the pump drains this on the render thread. */
     private final Map<String, PendingUpload> pendingUploads = new LinkedHashMap<>();
+    /**
+     * Atlas ticks seen since an atlas upload that has not been built yet.
+     * The build fast-forwards its animations by this count, so maps keep
+     * lockstep with the albedo, which starts ticking at upload.
+     */
+    private final Map<String, Integer> ticksSinceUpload = new LinkedHashMap<>();
     /** Built companions per atlas location, keyed by exact base-image identity. */
     private final Map<String, BuiltAtlas> builtAtlases = new LinkedHashMap<>();
     /** Draw-observed non-atlas albedo images awaiting pump-time identification. */
@@ -148,6 +155,10 @@ public final class MaterialMapOwner implements AutoCloseable {
     /** GPU backing for one kind's companion. Tests substitute a recording fake. */
     public interface CompanionSet extends AutoCloseable {
         VulkanImage image();
+
+        /** Rewrites one rectangle of one mip level; only animation calls this, at the pump. */
+        void writeRegion(int level, int x, int y, int width, int height, int[] pixels);
+
         @Override void close();
     }
 
@@ -159,8 +170,22 @@ public final class MaterialMapOwner implements AutoCloseable {
 
     private record PendingUpload(AtlasUpload upload, VulkanImage baseImage) {}
 
+    /** One animated map in a built companion: where it lives and what it shows now. */
+    private static final class AnimatedSlot {
+        final MaterialMapKind kind;
+        final AtlasSprite sprite;
+        final MaterialAnimation animation;
+        boolean dirty;
+
+        AnimatedSlot(MaterialMapKind kind, AtlasSprite sprite, MaterialAnimation animation) {
+            this.kind = kind;
+            this.sprite = sprite;
+            this.animation = animation;
+        }
+    }
+
     private record BuiltAtlas(VulkanImage baseImage, Map<MaterialMapKind, CompanionSet> sets,
-            boolean labPbr) implements AutoCloseable {
+            boolean labPbr, int width, int height, List<AnimatedSlot> animated) implements AutoCloseable {
         @Override
         public void close() {
             for (CompanionSet set : sets.values()) {
@@ -349,6 +374,25 @@ public final class MaterialMapOwner implements AutoCloseable {
         synchronized (companionsLock) {
             if (closed) return;
             pendingUploads.put(upload.location(), new PendingUpload(upload, baseImage));
+            ticksSinceUpload.put(upload.location(), 0);
+        }
+    }
+
+    /**
+     * One {@code TextureAtlas.cycleAnimationFrames} call for {@code location}:
+     * advances every animated map of that atlas by one tick, as the game
+     * advances the albedo. Marks changed slots for the next pump; never
+     * touches the GPU.
+     */
+    public void tickAtlas(String location) {
+        synchronized (companionsLock) {
+            if (closed) return;
+            ticksSinceUpload.computeIfPresent(location, (key, ticks) -> ticks + 1);
+            BuiltAtlas built = builtAtlases.get(location);
+            if (built == null || ticksSinceUpload.containsKey(location)) return;
+            for (AnimatedSlot slot : built.animated()) {
+                if (slot.animation.tick()) slot.dirty = true;
+            }
         }
     }
 
@@ -381,13 +425,60 @@ public final class MaterialMapOwner implements AutoCloseable {
             try {
                 buildAtlas(pending.upload(), pending.baseImage(), lookup, decoder, labPbr);
             } catch (RuntimeException failure) {
+                synchronized (companionsLock) {
+                    ticksSinceUpload.remove(pending.upload().location());
+                }
                 LOGGER.warn("[chimera] material maps: atlas build failed, keeping previous: {}",
                         pending.upload().location(), failure);
             }
         }
         pumpSimpleWanted(lookup, decoder, source, labPbr);
+        flushAnimations();
         synchronized (companionsLock) {
             closeRetiredLocked();
+        }
+    }
+
+    /**
+     * Writes every animated slot that changed since the last pump: each mip
+     * level, including its replicated padding, at the slot's own origin.
+     * Runs at the pump, where no render pass is open. A failed write warns
+     * and leaves that slot showing its last good frame.
+     */
+    private void flushAnimations() {
+        synchronized (companionsLock) {
+            if (closed) return;
+            for (BuiltAtlas built : builtAtlases.values()) {
+                for (AnimatedSlot slot : built.animated()) {
+                    if (!slot.dirty) continue;
+                    slot.dirty = false;
+                    CompanionSet set = built.sets().get(slot.kind);
+                    if (set == null) continue;
+                    try {
+                        writeSlot(set, slot, built.width(), built.height());
+                    } catch (RuntimeException failure) {
+                        LOGGER.warn("[chimera] material maps: animated {} {} write failed",
+                                slot.sprite.id(), slot.kind.sampler(), failure);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void writeSlot(CompanionSet set, AnimatedSlot slot, int atlasWidth, int atlasHeight) {
+        MaterialAnimation animation = slot.animation;
+        for (int level = 0; level < animation.levels(); level++) {
+            int pad = slot.sprite.padX() >> level;
+            int width = MaterialMapPixels.levelSize(animation.width(), level);
+            int height = MaterialMapPixels.levelSize(animation.height(), level);
+            int[] padded = MaterialMapPixels.padReplicate(animation.level(level), width, height, pad);
+            MaterialMapPixels.Rect rect = MaterialMapPixels.clipRect(padded, width + pad * 2, height + pad * 2,
+                    slot.sprite.x() >> level, slot.sprite.y() >> level,
+                    MaterialMapPixels.levelSize(atlasWidth, level),
+                    MaterialMapPixels.levelSize(atlasHeight, level));
+            if (rect != null) {
+                set.writeRegion(level, rect.x(), rect.y(), rect.width(), rect.height(), rect.pixels());
+            }
         }
     }
 
@@ -676,18 +767,29 @@ public final class MaterialMapOwner implements AutoCloseable {
             ResourceLookup lookup, MapImageDecoder decoder, boolean labPbr) {
         long started = System.nanoTime();
         Map<MaterialMapKind, CompanionSet> sets = new EnumMap<>(MaterialMapKind.class);
+        List<AnimatedSlot> animated = new ArrayList<>();
         int mappedSprites = 0;
         try {
+            MaterialMapPixels.checkSize(upload.width(), upload.height(), upload.location());
+            if (upload.mipLevels() < 1) {
+                throw new IllegalArgumentException("MATERIAL_MAP_MIPS:" + upload.location());
+            }
             List<AtlasSprite> sprites = upload.sprites().stream()
                     .sorted(Comparator.comparing(AtlasSprite::id))
                     .toList();
             for (MaterialMapKind kind : MaterialMapKind.values()) {
-                List<PlacedSprite> placed = decodeKind(sprites, kind, lookup, decoder);
+                List<PlacedSprite> placed = decodeKind(sprites, kind, lookup, decoder,
+                        upload.mipLevels(), labPbr);
                 if (placed.isEmpty()) continue;
                 mappedSprites = Math.max(mappedSprites, placed.size());
-                List<LevelPixels> levels = buildLevels(upload, kind, placed, labPbr);
+                List<LevelPixels> levels = buildLevels(upload, kind, placed);
                 sets.put(kind, companionFactory.build(
                         upload.location(), kind, upload.width(), upload.height(), levels));
+                for (PlacedSprite sprite : placed) {
+                    if (sprite.animation() != null) {
+                        animated.add(new AnimatedSlot(kind, sprite.sprite(), sprite.animation()));
+                    }
+                }
             }
         } catch (RuntimeException | Error failure) {
             for (CompanionSet set : sets.values()) {
@@ -710,8 +812,16 @@ public final class MaterialMapOwner implements AutoCloseable {
                 }
                 return;
             }
-            BuiltAtlas previous = builtAtlases.put(upload.location(),
-                    new BuiltAtlas(baseImage, sets, labPbr));
+            // The albedo has been ticking since its upload; catch the maps up
+            // so both show the same point of their schedules.
+            Integer missed = ticksSinceUpload.remove(upload.location());
+            for (int tick = 0; missed != null && tick < missed; tick++) {
+                for (AnimatedSlot slot : animated) {
+                    if (slot.animation.tick()) slot.dirty = true;
+                }
+            }
+            BuiltAtlas previous = builtAtlases.put(upload.location(), new BuiltAtlas(baseImage, sets,
+                    labPbr, upload.width(), upload.height(), List.copyOf(animated)));
             if (previous != null) previous.close();
         }
         long millis = (System.nanoTime() - started) / 1_000_000L;
@@ -720,11 +830,11 @@ public final class MaterialMapOwner implements AutoCloseable {
                     + "fallbacks stay bound ({}x{}, {} mips)",
                     upload.location(), upload.width(), upload.height(), upload.mipLevels());
         } else {
-            LOGGER.info("[chimera] material maps: atlas {} kinds={} sprites={}/{} {}x{} {} mips "
-                    + "labpbr={} base={} in {}ms",
+            LOGGER.info("[chimera] material maps: atlas {} kinds={} sprites={}/{} animated={} {}x{} {} mips "
+                    + "labpbr={} base={} generation={} in {}ms",
                     upload.location(), sets.keySet(), mappedSprites, upload.sprites().size(),
-                    upload.width(), upload.height(), upload.mipLevels(), labPbr,
-                    baseImage.getId(), millis);
+                    animated.size(), upload.width(), upload.height(), upload.mipLevels(), labPbr,
+                    baseImage.getId(), generation, millis);
         }
     }
 
@@ -740,11 +850,15 @@ public final class MaterialMapOwner implements AutoCloseable {
         }
     }
 
-    /** One sprite whose material file decoded cleanly, scaled to its logical slot size. */
-    private record PlacedSprite(AtlasSprite sprite, int[] levelZero, int width, int height) {}
+    /**
+     * One sprite whose material file decoded cleanly: its logical mip chain
+     * as the slot shows it at build time, plus its animation when the map
+     * carries its own cycling schedule.
+     */
+    private record PlacedSprite(AtlasSprite sprite, int[][] chain, MaterialAnimation animation) {}
 
     private static List<PlacedSprite> decodeKind(List<AtlasSprite> sprites, MaterialMapKind kind,
-            ResourceLookup lookup, MapImageDecoder decoder) {
+            ResourceLookup lookup, MapImageDecoder decoder, int mipLevels, boolean labPbr) {
         List<PlacedSprite> placed = new ArrayList<>();
         for (AtlasSprite sprite : sprites) {
             if (sprite.padX() != sprite.padY()) {
@@ -757,82 +871,122 @@ public final class MaterialMapOwner implements AutoCloseable {
                         sprite.id(), sprite.padX());
                 continue;
             }
-            String resource = MaterialMapPixels.siblingResource(
-                    sprite.namespace(), sprite.path(), kind.suffix());
-            int separator = resource.indexOf(':');
-            DecodedImage decoded;
-            try (InputStream in = lookup.open(
-                    resource.substring(0, separator), resource.substring(separator + 1))
-                    .orElse(null)) {
-                if (in == null) continue;
-                decoded = decoder.decode(in);
-                MaterialMapPixels.checkSize(decoded.width(), decoded.height(), resource);
-            } catch (IOException | IllegalArgumentException failure) {
-                LOGGER.warn("[chimera] material maps: skipping {} for {}: {}",
-                        resource, sprite.id(), failure.toString());
-                continue;
-            }
             if (sprite.width() <= 0 || sprite.height() <= 0) {
                 LOGGER.warn("[chimera] material maps: skipping {} with empty slot {}x{}",
                         sprite.id(), sprite.width(), sprite.height());
                 continue;
             }
-            int[] scaled = MaterialMapPixels.scale(
-                    decoded.pixels(), decoded.width(), decoded.height(),
-                    sprite.width(), sprite.height());
-            placed.add(new PlacedSprite(sprite, scaled, sprite.width(), sprite.height()));
+            String resource = MaterialMapPixels.siblingResource(
+                    sprite.namespace(), sprite.path(), kind.suffix());
+            int separator = resource.indexOf(':');
+            String namespace = resource.substring(0, separator);
+            String path = resource.substring(separator + 1);
+            try {
+                DecodedImage decoded;
+                try (InputStream in = lookup.open(namespace, path).orElse(null)) {
+                    if (in == null) continue;
+                    decoded = decoder.decode(in);
+                }
+                MaterialMapPixels.checkSize(decoded.width(), decoded.height(), resource);
+                MaterialAnimationSchedule schedule = readSchedule(lookup, namespace, path,
+                        decoded.width(), decoded.height());
+                placed.add(place(sprite, kind, decoded, schedule, mipLevels, labPbr));
+            } catch (IOException | IllegalArgumentException failure) {
+                LOGGER.warn("[chimera] material maps: skipping {} for {}: {}",
+                        resource, sprite.id(), failure.toString());
+            }
         }
         return placed;
     }
 
+    /** The map's own {@code .mcmeta} animation table, or null when it has none. */
+    private static MaterialAnimationSchedule readSchedule(ResourceLookup lookup, String namespace,
+            String path, int width, int height) throws IOException {
+        try (InputStream in = lookup.open(namespace, path + ".mcmeta").orElse(null)) {
+            if (in == null) return null;
+            return MaterialAnimationSchedule.parse(
+                    new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8), width, height);
+        }
+    }
+
+    /**
+     * Places one decoded map in its slot. Without a schedule the whole image
+     * is the map, as for a static sprite. A single-entry schedule shows the
+     * strip's first frame. A cycling schedule keeps every frame it names as
+     * its own scaled mip chain and starts on its first entry.
+     */
+    private static PlacedSprite place(AtlasSprite sprite, MaterialMapKind kind, DecodedImage decoded,
+            MaterialAnimationSchedule schedule, int mipLevels, boolean labPbr) {
+        if (schedule == null) {
+            return new PlacedSprite(sprite, chain(kind, labPbr, decoded.pixels(), decoded.width(),
+                    decoded.height(), sprite, mipLevels), null);
+        }
+        if (!schedule.animated()) {
+            int[] first = schedule.crop(decoded.pixels(), decoded.width(), 0);
+            return new PlacedSprite(sprite, chain(kind, labPbr, first, schedule.frameWidth(),
+                    schedule.frameHeight(), sprite, mipLevels), null);
+        }
+        int[][][] frameLevels = new int[schedule.frameCount(decoded.height())][][];
+        for (MaterialAnimation.Frame frame : schedule.frames()) {
+            if (frameLevels[frame.index()] != null) continue;
+            int[] pixels = schedule.crop(decoded.pixels(), decoded.width(), frame.index());
+            frameLevels[frame.index()] = chain(kind, labPbr, pixels, schedule.frameWidth(),
+                    schedule.frameHeight(), sprite, mipLevels);
+        }
+        MaterialAnimation animation = new MaterialAnimation(schedule.frames(), schedule.interpolate(),
+                frameLevels, sprite.width(), sprite.height());
+        int[][] initial = new int[mipLevels][];
+        for (int level = 0; level < mipLevels; level++) {
+            initial[level] = animation.level(level);
+        }
+        return new PlacedSprite(sprite, initial, animation);
+    }
+
+    /**
+     * One frame's logical mip chain: scaled to the slot's logical size, then
+     * reduced sprite-locally level by level with the kind's mip policy.
+     */
+    private static int[][] chain(MaterialMapKind kind, boolean labPbr, int[] pixels, int width,
+            int height, AtlasSprite sprite, int mipLevels) {
+        int[][] chain = new int[mipLevels][];
+        chain[0] = MaterialMapPixels.scale(pixels, width, height, sprite.width(), sprite.height());
+        for (int level = 1; level < mipLevels; level++) {
+            chain[level] = reduceFor(kind, labPbr, chain[level - 1],
+                    MaterialMapPixels.levelSize(sprite.width(), level - 1),
+                    MaterialMapPixels.levelSize(sprite.height(), level - 1),
+                    MaterialMapPixels.levelSize(sprite.width(), level),
+                    MaterialMapPixels.levelSize(sprite.height(), level));
+        }
+        return chain;
+    }
+
     /**
      * Builds one exact-layout mip chain per kind. Each sprite contributes
-     * its own padded image: the logical chain reduces sprite-locally, each
-     * level grows a replicated border of {@code pad >> level}, and the
-     * complete padded image lands at the slot origin shifted by level. The
-     * canvas starts at fallback, so missing sprites leave their whole
-     * padded slot untouched. Sprites never negotiate shared pixels, so no
-     * occupancy map or ring algorithm exists.
+     * its own padded image: its logical level grows a replicated border of
+     * {@code pad >> level}, and the complete padded image lands at the slot
+     * origin shifted by level. The canvas starts at fallback, so missing
+     * sprites leave their whole padded slot untouched. Sprites never
+     * negotiate shared pixels, so no occupancy map or ring algorithm exists.
      */
     private static List<LevelPixels> buildLevels(AtlasUpload upload, MaterialMapKind kind,
-            List<PlacedSprite> placed, boolean labPbr) {
-        MaterialMapPixels.checkSize(upload.width(), upload.height(), upload.location());
-        if (upload.mipLevels() < 1) {
-            throw new IllegalArgumentException("MATERIAL_MAP_MIPS:" + upload.location());
-        }
+            List<PlacedSprite> placed) {
         List<LevelPixels> levels = new ArrayList<>(upload.mipLevels());
-        List<int[]> current = new ArrayList<>(placed.size());
-        for (PlacedSprite sprite : placed) {
-            current.add(sprite.levelZero());
-        }
         for (int level = 0; level < upload.mipLevels(); level++) {
             int canvasWidth = MaterialMapPixels.levelSize(upload.width(), level);
             int canvasHeight = MaterialMapPixels.levelSize(upload.height(), level);
             int[] canvas = new int[canvasWidth * canvasHeight];
             Arrays.fill(canvas, kind.fallbackAbgr());
-            for (int i = 0; i < placed.size(); i++) {
-                PlacedSprite sprite = placed.get(i);
+            for (PlacedSprite sprite : placed) {
                 int pad = sprite.sprite().padX() >> level;
-                int logicalWidth = MaterialMapPixels.levelSize(sprite.width(), level);
-                int logicalHeight = MaterialMapPixels.levelSize(sprite.height(), level);
+                int logicalWidth = MaterialMapPixels.levelSize(sprite.sprite().width(), level);
+                int logicalHeight = MaterialMapPixels.levelSize(sprite.sprite().height(), level);
                 int[] padded = MaterialMapPixels.padReplicate(
-                        current.get(i), logicalWidth, logicalHeight, pad);
+                        sprite.chain()[level], logicalWidth, logicalHeight, pad);
                 MaterialMapPixels.placeRect(canvas, canvasWidth, canvasHeight,
                         sprite.sprite().x() >> level, sprite.sprite().y() >> level,
                         padded, logicalWidth + pad * 2, logicalHeight + pad * 2);
             }
             levels.add(new LevelPixels(canvas, canvasWidth, canvasHeight));
-            if (level + 1 < upload.mipLevels()) {
-                List<int[]> next = new ArrayList<>(placed.size());
-                for (int i = 0; i < placed.size(); i++) {
-                    int w = MaterialMapPixels.levelSize(placed.get(i).width(), level + 1);
-                    int h = MaterialMapPixels.levelSize(placed.get(i).height(), level + 1);
-                    next.add(reduceFor(kind, labPbr, current.get(i),
-                            MaterialMapPixels.levelSize(placed.get(i).width(), level),
-                            MaterialMapPixels.levelSize(placed.get(i).height(), level), w, h));
-                }
-                current = next;
-            }
         }
         return levels;
     }
@@ -844,7 +998,6 @@ public final class MaterialMapOwner implements AutoCloseable {
         }
         return MaterialMapPixels.reduceLinear(src, srcWidth, srcHeight, dstWidth, dstHeight);
     }
-
     /** Production decoder over {@code NativeImage}; the caller closes the stream. */
     public static DecodedImage decodeNative(InputStream in) throws IOException {
         NativeImage image = NativeImage.read(in);
@@ -891,6 +1044,16 @@ public final class MaterialMapOwner implements AutoCloseable {
     private record GpuCompanionSet(GpuTexture texture, GpuTextureView view, VulkanImage image,
             List<NativeImage> retainedLevels) implements CompanionSet {
         @Override
+        public void writeRegion(int level, int x, int y, int width, int height, int[] pixels) {
+            // VulkanMod copies the pixels into its staging buffer during the
+            // call, so the temporary image closes as soon as it returns.
+            try (NativeImage region = toNative(pixels, width, height)) {
+                RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, region,
+                        level, 0, x, y, width, height, 0, 0);
+            }
+        }
+
+        @Override
         public void close() {
             for (NativeImage level : retainedLevels) {
                 try {
@@ -927,6 +1090,7 @@ public final class MaterialMapOwner implements AutoCloseable {
         closed = true;
         synchronized (companionsLock) {
             pendingUploads.clear();
+            ticksSinceUpload.clear();
             wantedSimple.clear();
             for (BuiltAtlas built : builtAtlases.values()) {
                 try {

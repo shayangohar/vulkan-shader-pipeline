@@ -60,7 +60,7 @@ public final class PackMaterialResolver {
         String sourceHash;
         try {
             byte[] bytes = Files.readAllBytes(file);
-            sourceHash = ConformanceReport.sha256(bytes);
+            sourceHash = ConformanceReport.textSha256(bytes);
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             for (String line : lines) {
                 parseLine(line, ids, conflicts, deviations);

@@ -82,6 +82,24 @@ public abstract class ChimeraAtlasMaterialMixin {
         }
     }
 
+    /**
+     * Advances animated material maps in lockstep with this atlas: the game
+     * ticks every sprite animation here once per client tick. Metadata only;
+     * the pump writes the changed slots.
+     */
+    @Inject(method = "cycleAnimationFrames", at = @At("RETURN"), require = 1)
+    private void chimera$tickMaterialAnimations(CallbackInfo info) {
+        try {
+            var pass = ChimeraRenderer.getMainPass();
+            if (pass == null) return;
+            MaterialMapOwner owner = pass.materialMaps();
+            if (owner == null) return;
+            owner.tickAtlas(((TextureAtlas) (Object) this).location().toString());
+        } catch (RuntimeException failure) {
+            LOGGER.warn("[chimera] material maps: animation tick failed", failure);
+        }
+    }
+
     private static boolean chimera$isBlockAtlas(TextureAtlas atlas) {
         try {
             return Minecraft.getInstance().getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS) == atlas;
