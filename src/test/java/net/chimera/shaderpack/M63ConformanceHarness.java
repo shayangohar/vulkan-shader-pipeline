@@ -255,10 +255,14 @@ public final class M63ConformanceHarness {
                 "M6.3 entity marker varying");
         assertTrue(!plan.convertedVertex().contains("attribute float entityId"),
                 "M6.3 legacy entity attribute declaration remained");
-        assertTrue(plan.convertedFragment().contains("layout(binding = 2) uniform sampler2D chimeraTexture"),
+        // The host alpha-test reference gives the fragment a uniform block at
+        // binding 2, so the samplers follow it, as in any entity program with uniforms.
+        assertTrue(plan.convertedFragment().contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
                 "M6.3 entity atlas binding");
-        assertTrue(plan.convertedFragment().contains("layout(binding = 3) uniform sampler2D lightmap"),
+        assertTrue(plan.convertedFragment().contains("layout(binding = 4) uniform sampler2D lightmap"),
                 "M6.3 entity lightmap binding");
+        assertTrue(plan.convertedFragment().contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                "M6.3 entity program lacks the host alpha test");
         assertTrue(plan.convertedFragment().contains("layout(location = 0) in vec4 entityColor"),
                 "M6.3 entity fragment varying input");
         assertEquals(new int[] {0, 2}, PackPipelines.entitySamplerSlots(new int[] {2, 0, 2}),

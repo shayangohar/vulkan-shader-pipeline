@@ -314,8 +314,15 @@ public final class MaterialPlanConformanceHarness {
         assertTrue(names(blocks).contains(UniformRegistry.PROJECTION_UBO),
                 "binding 1 does not answer to " + UniformRegistry.PROJECTION_UBO
                         + ": " + names(blocks));
-        assertTrue(blocks.stream().noneMatch(block -> block.name.startsWith("UBO: ")),
+        assertTrue(blocks.stream()
+                        .filter(block -> block.getBinding() == UniformRegistry.DYNAMIC_TRANSFORMS_BINDING
+                                || block.getBinding() == UniformRegistry.PROJECTION_BINDING)
+                        .noneMatch(block -> block.name.startsWith("UBO: ")),
                 "transform blocks kept their numeric names: " + names(blocks));
+        // The fragment block carries the per-draw host alpha-test reference.
+        assertTrue(plan.interfacePlan().uniforms().stream()
+                        .anyMatch(u -> u.name().equals(UniformRegistry.ENTITY_ALPHA_REFERENCE)),
+                "entity program lacks the host alpha-test reference uniform");
         // VulkanMod computes the std140 size from the declared fields; the
         // converted preamble declares the same layout, so the blocks must match
         // the host 160B/64B contract or the descriptor would misdescribe it.

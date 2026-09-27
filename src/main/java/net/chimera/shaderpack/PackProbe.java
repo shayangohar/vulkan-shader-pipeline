@@ -1084,6 +1084,7 @@ public final class PackProbe {
                     && programPlan.alphaTestPlan().valid()
                     && programPlan.alphaTestPlan().configured()
                     && (programName.equals("gbuffers_terrain")
+                    || FamilyAdapterRegistry.isEntityLike(programName)
                     ? programPlan.convertedVertex() != null
                     : false);
             if (!consumed) {

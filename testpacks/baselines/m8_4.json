@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "20c2abf94f81698ad28a527a47ebe978d47f163551ca0a19956791b05f93291a",
+      "reportSha256": "1a5219b7c52edcfc366351f4d2a8a76a4e2ae677a4ea716f0318da2576617116",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -58,6 +58,7 @@
         "HAND_STATE_FIXED_TO_HOST",
         "HAND_VERTEX_BRIDGE",
         "HAND_WATER_SELECTION_FIXED_TO_CAMERA",
+        "LIVE_UNIFORM_BRIDGE",
         "PARTICLE_STATE_FIXED_TO_HOST",
         "PARTICLE_TRANSLUCENT_INSTALLED",
         "PARTICLE_VERTEX_BRIDGE",
@@ -66,7 +67,7 @@
       ]
     },
     "unsupported_families": {
-      "reportSha256": "fcc96e12919cff5122c2497c31a41ff55507661fabef126434edad291bb76f10",
+      "reportSha256": "848a03ee0668fa1b484bf51e493c34100bfc3e424125fdfa19ef7f8502cfa925",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -84,7 +85,8 @@
         "ENTITY_ID_DEFAULTED",
         "ENTITY_SAMPLER_UNSUPPORTED:unsupportedSampler",
         "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
-        "FIXED_VERTEX_SUBSTITUTION"
+        "FIXED_VERTEX_SUBSTITUTION",
+        "LIVE_UNIFORM_BRIDGE"
       ]
     }
   }

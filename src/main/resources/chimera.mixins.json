@@ -48,7 +48,9 @@
     "ChimeraRasterOrientationMixin",
     "ChimeraPipelineFrontFaceMixin",
     "ChimeraPipelineStateAccessor",
-    "ChimeraProjectionFarMixin"
+    "ChimeraProjectionFarMixin",
+    "ChimeraSpirvLocalInitMixin",
+    "ChimeraSpirvAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

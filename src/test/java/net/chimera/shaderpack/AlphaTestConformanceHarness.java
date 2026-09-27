@@ -21,7 +21,60 @@ public final class AlphaTestConformanceHarness {
         testOptionalRealPack("chimera.alpha.complementary", "Complementary");
         testOptionalRealPack("chimera.alpha.bsl", "BSL");
         testBslMaterialTerrain();
+        testEntityAlphaTest();
         System.out.println("[chimera] terrain alpha-test conformance: PASS");
+    }
+
+    /**
+     * Entity programs test against the host render type's threshold per draw
+     * (Iris iris_currentAlphaTest); a pack alphaTest directive fixes it. The
+     * injected source must compile, and an output-less fragment stays authored.
+     */
+    private static void testEntityAlphaTest() {
+        PackAlphaTestPlan dynamic = PackAlphaTestPlan.forProgram("gbuffers_entities", settings(Map.of()));
+        check(dynamic.mode() == PackAlphaTestPlan.Mode.DYNAMIC_ENTITY && dynamic.active(),
+                "entity default is not the dynamic host threshold");
+        String legacy = "#version 120\nuniform sampler2D texture;\nvarying vec2 uv;\n"
+                + "void main() {\n    gl_FragData[0] = texture2D(texture, uv);\n}\n";
+        String injected = dynamic.injectEntityTest(legacy);
+        check(injected.startsWith("#version 120\nuniform float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + ";\n"),
+                "entity reference uniform is not declared after the version line");
+        check(injected.contains("if (" + UniformRegistry.ENTITY_ALPHA_REFERENCE + " > 0.0 && !(gl_FragData[0].a > "
+                        + UniformRegistry.ENTITY_ALPHA_REFERENCE + "))"),
+                "entity test does not follow Iris's GREATER reference");
+
+        String modern = "#version 460\nlayout(location = 0) out vec4 albedo;\n"
+                + "void main() { albedo = vec4(1.0, 0.0, 0.0, 0.05); }\n";
+        PackAlphaTestPlan fixed = PackAlphaTestPlan.forProgram("gbuffers_entities",
+                settings(Map.of("alphaTest.gbuffers_entities", "GREATER 0.5")));
+        String fixedSource = fixed.injectEntityTest(modern);
+        check(fixed.mode() == PackAlphaTestPlan.Mode.FIXED && fixedSource.contains("albedo.a > 0.5")
+                        && !fixedSource.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                "pack alphaTest directive does not fix the entity test");
+        compileFragment(fixedSource);
+        compileFragment(dynamic.injectEntityTest(modern).replace(
+                "uniform float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + ";",
+                "layout(binding = 0) uniform Ref { float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + "; };"));
+
+        String noOutput = "#version 120\nvoid main() {}\n";
+        check(dynamic.injectEntityTest(noOutput).equals(noOutput), "output-less entity fragment was changed");
+        check(PackAlphaTestPlan.forProgram("gbuffers_entities", settings(Map.of(
+                        "alphaTest.gbuffers_entities", "off"))).injectEntityTest(legacy).equals(legacy),
+                "alphaTest off still injected an entity test");
+    }
+
+    private static void compileFragment(String source) {
+        long compiler = Shaderc.shaderc_compiler_initialize();
+        long result = Shaderc.shaderc_compile_into_spv(compiler, source,
+                Shaderc.shaderc_glsl_fragment_shader, "entity_alpha.fsh", "main", 0L);
+        try {
+            check(result != 0 && Shaderc.shaderc_result_get_compilation_status(result)
+                            == Shaderc.shaderc_compilation_status_success,
+                    result == 0 ? "no shader result" : Shaderc.shaderc_result_get_error_message(result));
+        } finally {
+            if (result != 0) Shaderc.shaderc_result_release(result);
+            Shaderc.shaderc_compiler_release(compiler);
+        }
     }
 
     private static void testSettings() {

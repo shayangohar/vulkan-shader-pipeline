@@ -522,6 +522,22 @@ public final class ChimeraEntityBridge {
     }
 
     /** Compatibility query retained for the M6.3 conformance surface. */
+    /**
+     * The host pipeline's own discard threshold (its ALPHA_CUTOUT define), or
+     * 0 for a pipeline that never discards. The pack entity program tests
+     * against it per draw, as Iris does with iris_currentAlphaTest.
+     */
+    public static float alphaReference(RenderPipeline pipeline) {
+        String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
+        if (cutout == null) return 0.0F;
+        try {
+            float value = Float.parseFloat(cutout.trim().replaceFirst("[fF]$", ""));
+            return Float.isFinite(value) && value > 0.0F ? value : 0.0F;
+        } catch (NumberFormatException malformed) {
+            return 0.0F;
+        }
+    }
+
     public static boolean supportsWorldPipeline(RenderPipeline pipeline) {
         return pipeline != null && SUPPORTED_WORLD_PIPELINES.contains(pipeline);
     }

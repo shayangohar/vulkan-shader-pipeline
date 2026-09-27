@@ -3,7 +3,7 @@
   "fixture": "m7_6/families",
   "fixtures": {
     "families": {
-      "reportSha256": "8026154007ee3894078aaa6279d40ed251b34f8868cd2b34d84649e515596b9f",
+      "reportSha256": "1daaeaba245eeb0c678de7fddb44cc4b7ff3f2741dfe3e246217de3f156f742d",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "80d96b5eab7d4baeee89f8f0a4d9a268fa79bfd7466b21ea0b608bed6f4219da",
@@ -38,6 +38,7 @@
         "HAND_ITEM_ID_DEFAULTED",
         "HAND_STATE_FIXED_TO_HOST",
         "HAND_VERTEX_BRIDGE",
+        "LIVE_UNIFORM_BRIDGE",
         "PARTICLE_STATE_FIXED_TO_HOST",
         "PARTICLE_VERTEX_BRIDGE"
       ]

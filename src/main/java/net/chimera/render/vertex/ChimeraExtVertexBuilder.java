@@ -56,7 +56,8 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         MemoryUtil.memPutShort(ptr + 24, (short) 0);
         MemoryUtil.memPutShort(ptr + 26, (short) 0);
         MemoryUtil.memPutInt(ptr + 28, encodeMidBlock(x, y, z));
-        MemoryUtil.memPutInt(ptr + 32, packedNormal);
+        // The fourth byte carries the quad tangent once the polygon closes.
+        MemoryUtil.memPutInt(ptr + 32, packedNormal & 0x00FFFFFF);
         if (materialPlan.separateAo()) {
             MemoryUtil.memPutInt(ptr + 36, 0xFFFFFFFF);
         }
@@ -92,6 +93,16 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         }
         midU = clamp01(midU * 0.25F);
         midV = clamp01(midV * 0.25F);
+        // Iris's at_tangent: the texture U direction of the quad's first
+        // triangle, with the V handedness in w.
+        int firstNormal = polygonNormals[0];
+        int tangent = ChimeraEntityVertexData.tangent(
+                ChimeraEntityVertexData.unpack(firstNormal, 0),
+                ChimeraEntityVertexData.unpack(firstNormal, 1),
+                ChimeraEntityVertexData.unpack(firstNormal, 2), false,
+                polygonValues[0], polygonValues[1], polygonValues[2], polygonValues[3], polygonValues[4],
+                polygonValues[5], polygonValues[6], polygonValues[7], polygonValues[8], polygonValues[9],
+                polygonValues[10], polygonValues[11], polygonValues[12], polygonValues[13], polygonValues[14]);
         for (int index = 0; index < 4; index++) {
             long ptr = polygonPointers[index];
             MemoryUtil.memPutShort(ptr + 24, (short) Math.round(midU * 32768.0F));
@@ -99,9 +110,9 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
             int into = index * 5;
             MemoryUtil.memPutInt(ptr + 28, encodeMidBlock(
                     polygonValues[into], polygonValues[into + 1], polygonValues[into + 2]));
-            // VulkanMod already provides a packed face normal. The shader uses
-            // this authoritative normal to derive a stable tangent fallback.
-            MemoryUtil.memPutInt(ptr + 32, polygonNormals[index]);
+            // VulkanMod's packed face normal, with the quad tangent frame in
+            // its spare byte (TerrainTangentCodec).
+            MemoryUtil.memPutInt(ptr + 32, TerrainTangentCodec.encode(polygonNormals[index], tangent));
             if (materialPlan.separateAo()) {
                 MemoryUtil.memPutInt(ptr + 36, 0xFFFFFFFF);
             }

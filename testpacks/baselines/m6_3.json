@@ -3,7 +3,7 @@
   "fixture": "m6_3/entities",
   "fixtures": {
     "entities": {
-      "reportSha256": "b97f675aeb0dfd559f6a568f9eede5c2c5e77b87519f68716385b54201c304f9",
+      "reportSha256": "dd29d4f50d24e4453997f4392a04fe864cc6ccfd42d8e0a6677f52d75a5ca1b0",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "1d9fc1ec14a079ee287fabc03344c028032138b1383189c3cff26c06c0c458f5",
@@ -17,11 +17,12 @@
         "ENTITY_SCREEN_DRAW_FALLBACK",
         "ENTITY_STATE_FIXED_TO_HOST",
         "ENTITY_VERTEX_BRIDGE",
-        "ENTITY_VERTEX_FORMAT_EXTENDED"
+        "ENTITY_VERTEX_FORMAT_EXTENDED",
+        "LIVE_UNIFORM_BRIDGE"
       ]
     },
     "unsupported_entities": {
-      "reportSha256": "2e3c9fed9bc24bd3a966a278a6f3f5e114b3c0eabb773cfb645a5a2676817bca",
+      "reportSha256": "feef9b1772ba025e4f7ddeff81429d86fdf7ea253a27b4d16120a8db1ca9d7b9",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "f66ceb456c20495e724ea97e83a138a48fb5fd80668857f4b7d0c108179576a4",
@@ -32,7 +33,8 @@
       "expectedDeviations": [
         "ENTITY_ID_DEFAULTED",
         "ENTITY_SAMPLER_UNSUPPORTED:unknownEntityTexture",
-        "ENTITY_VERTEX_BRIDGE_UNSUPPORTED"
+        "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
+        "LIVE_UNIFORM_BRIDGE"
       ]
     }
   }

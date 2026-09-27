@@ -174,7 +174,7 @@ public final class PackPipelines {
     static GraphicsPipeline createNative(Pipeline.Builder builder, ProgramImageBindingManifest imageBindings) {
         imageBindings.verify(builderDescriptors(builder));
         try {
-            return builder.createGraphicsPipeline();
+            return SpirvLocalInitializer.forPackCompile(builder::createGraphicsPipeline);
         } catch (RuntimeException failure) {
             boolean compilation = java.util.Arrays.stream(failure.getStackTrace()).anyMatch(frame ->
                     frame.getClassName().equals(SPIRVUtils.class.getName())

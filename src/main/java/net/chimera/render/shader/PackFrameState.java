@@ -112,6 +112,8 @@ final class PackFrameState {
     private float fogSkyEnd;
     private float fogCloudsEnd;
     private float alphaCutout;
+    // Per draw: the host entity pipeline's ALPHA_CUTOUT, 0 where it has none.
+    private float entityAlphaReference;
     private int currentTime;
     private int bedrockLevel;
     private float screenSizeWidth;
@@ -343,6 +345,7 @@ final class PackFrameState {
             case "biome" -> target.putInt(0, biomeId);
             case "biome_precipitation" -> target.putInt(0, biomePrecipitation);
             case "AlphaCutout" -> target.putFloat(0, alphaCutout);
+            case UniformRegistry.ENTITY_ALPHA_REFERENCE -> target.putFloat(0, entityAlphaReference);
             case "ColorModulator" -> writeFloatArray(target, shaderColor, 4);
             case "Light0_Direction" -> writeVec3(target, lightDirection0);
             case "Light1_Direction" -> writeVec3(target, lightDirection1);
@@ -675,6 +678,13 @@ final class PackFrameState {
     /** Declarations whose expression produced a non-finite result this session, with context. */
     java.util.Map<String, String> valueFailures() {
         return session.failures();
+    }
+
+    /** Returns true when the per-draw entity alpha reference changed. */
+    boolean setEntityAlphaReference(float reference) {
+        if (Float.compare(this.entityAlphaReference, reference) == 0) return false;
+        this.entityAlphaReference = reference;
+        return true;
     }
 
     void clearShadowState() {

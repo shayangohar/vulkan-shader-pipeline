@@ -109,6 +109,11 @@ public final class PackPlanBuilder {
                 : null;
         PackAlphaTestPlan alphaTestPlan = PackAlphaTestPlan.forProgram(
                 program.name(), config == null ? PackSettingsPlan.empty() : config.settings());
+        // Only a program that can execute (entity families need a vertex
+        // stage) receives the host alpha test.
+        if (FamilyAdapterRegistry.isEntityLike(program.name()) && vertex != null) {
+            fragment = alphaTestPlan.injectEntityTest(fragment);
+        }
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
                 fragment, vertex, stage, targetPlan, allowUnusedDeclarations,
                 config == null || config.settings() == null

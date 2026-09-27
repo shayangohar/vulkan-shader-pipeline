@@ -7,6 +7,7 @@ import net.chimera.render.EntityTransformBinding;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
+import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.render.engine.VkCommandEncoder;
 import net.vulkanmod.render.engine.VkGpuBuffer;
@@ -119,6 +120,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
         applyTransformRoute(projectionRoute, projection, projectionUbo);
         ChimeraEntityBridge.noteHostTransformRoutes(describeTransformSources(
                 dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
+        PackUniformProvider.updateEntityAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
         renderer.uploadAndBindUBOs(packPipeline);
         callback.setReturnValue(true);
     }

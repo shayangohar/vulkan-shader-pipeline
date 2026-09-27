@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackEngineDefines;
 import net.chimera.shaderpack.GlslTokenRewriter;
+import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.ShaderSourcePreprocessor;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.render.shader.PackUniformProvider;
@@ -444,7 +445,7 @@ public final class PackShadowCompute implements AutoCloseable {
                 }
                 return null;
             }
-            ByteBuffer bytes = Shaderc.shaderc_result_get_bytes(result);
+            ByteBuffer bytes = SpirvLocalInitializer.apply(Shaderc.shaderc_result_get_bytes(result));
             ByteBuffer copy = MemoryUtil.memAlloc(bytes.remaining());
             MemoryUtil.memCopy(bytes, copy);
             return copy;

@@ -3181,11 +3181,19 @@ public final class LegacyGlslConverter {
                 return vec3(chimeraMidBlockRawValue().xyz) / 64.0;
             }
 
+            // Iris at_tangent from the quad's UVs, stored as a turn around the
+            // normal plus handedness in the normal word's spare byte
+            // (TerrainTangentCodec); 0 means the plain reference tangent.
             vec4 chimeraTangentValue() {
                 vec3 normal = normalize(inTangent.xyz);
                 vec3 axis = abs(normal.y) < 0.999
                         ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-                return vec4(normalize(cross(axis, normal)), 1.0);
+                vec3 reference = normalize(cross(axis, normal));
+                int code = int(round(inTangent.w * 127.0));
+                if (code == 0) return vec4(reference, 1.0);
+                float angle = 6.28318530718 * float(abs(code) - 1) / 64.0;
+                vec3 tangent = cos(angle) * reference + sin(angle) * cross(normal, reference);
+                return vec4(tangent, code < 0 ? -1.0 : 1.0);
             }
 
             vec3 chimeraNormalValue() {

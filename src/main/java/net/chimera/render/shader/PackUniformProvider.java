@@ -96,6 +96,20 @@ public final class PackUniformProvider {
         INSTANCE.refreshBindings();
     }
 
+    /**
+     * Sets the alpha-test reference for the next entity-family draw. The
+     * pipeline copies its uniform buffers per draw, so only this one binding
+     * is rewritten, and only when the reference changes.
+     */
+    public static void updateEntityAlphaReference(float reference) {
+        if (!INSTANCE.frameState.setEntityAlphaReference(reference)) return;
+        Binding binding = INSTANCE.bindings.get(
+                new UniformKey(UniformRegistry.ENTITY_ALPHA_REFERENCE, "float"));
+        if (binding != null) {
+            INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+    }
+
     /** Prevents stale pack matrices from describing a host-produced or invalid shadow image. */
     public static void clearShadowState() {
         INSTANCE.frameState.clearShadowState();

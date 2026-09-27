@@ -14,8 +14,15 @@ record PackAlphaTestPlan(
     enum Mode {
         OFF,
         DYNAMIC_TERRAIN,
+        /** Each entity-family draw tests against its host pipeline's ALPHA_CUTOUT. */
+        DYNAMIC_ENTITY,
         FIXED
     }
+
+    private static final java.util.regex.Pattern VERSION_LINE =
+            java.util.regex.Pattern.compile("(?m)^[ \\t]*#[ \\t]*version\\b[^\\r\\n]*\\R?");
+    private static final java.util.regex.Pattern MODERN_OUTPUT_ZERO = java.util.regex.Pattern.compile(
+            "layout\\s*\\(\\s*location\\s*=\\s*0\\s*\\)\\s*out\\s+vec4\\s+(\\w+)\\s*;");
 
     private static final List<String> FUNCTIONS = List.of(
             "NEVER", "LESS", "EQUAL", "LEQUAL", "GREATER", "NOTEQUAL", "GEQUAL", "ALWAYS");
@@ -30,16 +37,53 @@ record PackAlphaTestPlan(
     static PackAlphaTestPlan forProgram(String programName, PackSettingsPlan settings) {
         String name = programName == null ? "" : programName;
         boolean geometry = name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
-        if (!geometry) {
+        boolean entity = FamilyAdapterRegistry.isEntityLike(name);
+        if (!geometry && !entity) {
             return off(false);
         }
         String key = "alphaTest." + name;
         String value = settings == null ? null : settings.propertyValues().get(key);
         if (value == null) {
-            return new PackAlphaTestPlan(
-                    Mode.DYNAMIC_TERRAIN, "DYNAMIC", 0.0F, false, List.of());
+            // Iris tests entity programs against the render type's own
+            // threshold (iris_currentAlphaTest); packs rely on it to drop the
+            // transparent texels of layered skins and cutout models.
+            return new PackAlphaTestPlan(entity ? Mode.DYNAMIC_ENTITY : Mode.DYNAMIC_TERRAIN,
+                    "DYNAMIC", 0.0F, false, List.of());
         }
         return parse(name, value);
+    }
+
+    /**
+     * Appends the entity-family alpha test to the authored fragment, as Iris
+     * does, before its interface is planned. The dynamic test declares the
+     * per-draw reference uniform, so the ordinary descriptor contract carries
+     * it. A fragment with no location-0 colour output is left unchanged.
+     */
+    String injectEntityTest(String fragment) {
+        if (fragment == null || !active()
+                || (mode != Mode.DYNAMIC_ENTITY && mode != Mode.FIXED)) return fragment;
+        String output = GlslTokenRewriter.containsIdentifier(fragment, "gl_FragData") ? "gl_FragData[0]"
+                : GlslTokenRewriter.containsIdentifier(fragment, "gl_FragColor") ? "gl_FragColor"
+                : modernOutputZero(fragment);
+        if (output == null) return fragment;
+        String reference = UniformRegistry.ENTITY_ALPHA_REFERENCE;
+        String rejection = mode == Mode.DYNAMIC_ENTITY
+                ? "if (" + reference + " > 0.0 && !(" + output + ".a > " + reference + ")) {\n"
+                + "        discard;\n    }"
+                : rejection(output, null);
+        if (rejection.isBlank()) return fragment;
+        String tested = GlslTokenRewriter.appendMainEpilogue(fragment, rejection);
+        if (mode != Mode.DYNAMIC_ENTITY) return tested;
+        String declaration = "uniform float " + reference + ";\n";
+        java.util.regex.Matcher version = VERSION_LINE.matcher(tested);
+        return version.find()
+                ? tested.substring(0, version.end()) + declaration + tested.substring(version.end())
+                : declaration + tested;
+    }
+
+    private static String modernOutputZero(String fragment) {
+        java.util.regex.Matcher matcher = MODERN_OUTPUT_ZERO.matcher(fragment);
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     private static PackAlphaTestPlan parse(String programName, String authored) {
@@ -102,7 +146,7 @@ record PackAlphaTestPlan(
 
     String appliedDeviation(String programName) {
         if (!active()) return "";
-        if (mode == Mode.DYNAMIC_TERRAIN) {
+        if (mode == Mode.DYNAMIC_TERRAIN || mode == Mode.DYNAMIC_ENTITY) {
             return "ALPHA_TEST_DYNAMIC:" + programName;
         }
         return "ALPHA_TEST_APPLIED:" + programName + ":" + function + ":" + Float.toString(reference);
@@ -110,6 +154,7 @@ record PackAlphaTestPlan(
 
     String rejection(String outputName, String hostInstance) {
         if (!active() || outputName == null || outputName.isBlank()) return "";
+        if (mode == Mode.DYNAMIC_ENTITY) return "";
         if (mode == Mode.DYNAMIC_TERRAIN) {
             return "if (" + hostInstance + ".AlphaCutout > 0.0 && "
                     + outputName + ".a < " + hostInstance + ".AlphaCutout) {\n"
