@@ -135,16 +135,7 @@ public class ChimeraMainPass implements MainPass {
 
     /** Complete host state snapshot for one pack-owned fullscreen seam. */
     private record PackRenderState(
-            boolean depthTest,
-            boolean depthMask,
-            int colorMask,
-            boolean blendEnabled,
-            int srcRgbFactor,
-            int dstRgbFactor,
-            int srcAlphaFactor,
-            int dstAlphaFactor,
-            int blendOp,
-            boolean cullEnabled,
+            HostPipelineState pipeline,
             int viewportWidth,
             int viewportHeight
     ) {}
@@ -156,46 +147,16 @@ public class ChimeraMainPass implements MainPass {
         }
         int viewportWidth = boundFramebuffer == null ? 0 : boundFramebuffer.getWidth();
         int viewportHeight = boundFramebuffer == null ? 0 : boundFramebuffer.getHeight();
-        return new PackRenderState(
-                VRenderSystem.depthTest,
-                VRenderSystem.depthMask,
-                VRenderSystem.getColorMask(),
-                PipelineState.blendInfo.enabled,
-                PipelineState.blendInfo.srcRgbFactor,
-                PipelineState.blendInfo.dstRgbFactor,
-                PipelineState.blendInfo.srcAlphaFactor,
-                PipelineState.blendInfo.dstAlphaFactor,
-                PipelineState.blendInfo.blendOp,
-                VRenderSystem.cull,
-                viewportWidth,
-                viewportHeight);
+        return new PackRenderState(HostPipelineState.capture(), viewportWidth, viewportHeight);
     }
 
     private static void preparePackFullscreenState() {
-        VRenderSystem.disableDepthTest();
-        VRenderSystem.depthMask(false);
-        VRenderSystem.colorMask(true, true, true, true);
-        VRenderSystem.disableBlend();
-        VRenderSystem.disableCull();
+        HostPipelineState.prepareFullscreen();
     }
 
     private void restorePackRenderState(PackRenderState state) {
         if (state == null) return;
-        VRenderSystem.depthTest = state.depthTest();
-        VRenderSystem.depthMask = state.depthMask();
-        VRenderSystem.colorMask((state.colorMask() & 1) != 0, (state.colorMask() & 2) != 0,
-                (state.colorMask() & 4) != 0, (state.colorMask() & 8) != 0);
-        if (state.blendEnabled()) {
-            VRenderSystem.enableBlend();
-        } else {
-            VRenderSystem.disableBlend();
-        }
-        PipelineState.blendInfo.srcRgbFactor = state.srcRgbFactor();
-        PipelineState.blendInfo.dstRgbFactor = state.dstRgbFactor();
-        PipelineState.blendInfo.srcAlphaFactor = state.srcAlphaFactor();
-        PipelineState.blendInfo.dstAlphaFactor = state.dstAlphaFactor();
-        PipelineState.blendInfo.blendOp = state.blendOp();
-        VRenderSystem.cull = state.cullEnabled();
+        state.pipeline().restore();
         if (state.viewportWidth() > 0 && state.viewportHeight() > 0) {
             Renderer.setViewport(0, 0, state.viewportWidth(), state.viewportHeight());
             Renderer.setScissor(0, 0, state.viewportWidth(), state.viewportHeight());

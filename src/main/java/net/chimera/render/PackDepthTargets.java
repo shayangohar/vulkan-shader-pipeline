@@ -121,6 +121,10 @@ public final class PackDepthTargets {
             return false;
         }
         VulkanImage previousDepthBinding = VTextureSelector.getImage(6);
+        // The copy must overwrite: under an inherited blend (a glint's
+        // SRC_COLOR/ONE) every captured depth was squared.
+        HostPipelineState previousState = HostPipelineState.capture();
+        HostPipelineState.prepareFullscreen();
         boolean renderingActive = false;
         boolean depthReadLayoutActive = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -194,6 +198,7 @@ public final class PackDepthTargets {
             renderer.setBoundFramebuffer(null);
             return false;
         } finally {
+            previousState.restore();
             ChimeraDepthViewOverride.clear();
             VTextureSelector.bindTexture(6, previousDepthBinding);
         }
