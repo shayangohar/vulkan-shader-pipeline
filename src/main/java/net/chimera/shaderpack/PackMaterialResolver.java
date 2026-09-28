@@ -2,10 +2,12 @@ package net.chimera.shaderpack;
 
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -13,27 +15,54 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Immutable resolver for block.properties block-name mappings, read through
- * the same continuation and conditional handling as shaders.properties.
- * State selectors and tags are deliberately rejected instead of being guessed.
+ * Immutable resolver for block.properties mappings, read through the same
+ * continuation and conditional handling as shaders.properties. A token is a
+ * block name, optionally followed by state selectors as Iris writes them
+ * ({@code minecraft:tall_grass:half=lower}, {@code leaves:waterlogged=false},
+ * {@code block:prop=a,b}). Tags are rejected instead of being guessed.
  */
 public final class PackMaterialResolver {
     private static final Pattern MAPPING = Pattern.compile(
             "^\\s*block\\.(-?\\d+)\\s*=\\s*(.*?)\\s*$");
     private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9_.-]+");
     private static final Pattern PATH = Pattern.compile("[a-z0-9_./-]+");
+    private static final Pattern PROPERTY = Pattern.compile("[a-z0-9_]+=[a-z0-9_,]+");
     private static final Pattern CONDITION = Pattern.compile(
             "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
 
-    private final Map<String, Integer> ids;
-    private final List<String> deviations;
+    /** One state-selector entry: the id applies when every listed property has a listed value. */
+    record Selector(int id, Map<String, Set<String>> properties) {
+        boolean matches(Function<String, String> stateValue) {
+            for (Map.Entry<String, Set<String>> property : properties.entrySet()) {
+                String value = stateValue.apply(property.getKey());
+                if (value == null || !property.getValue().contains(value)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
 
-    private PackMaterialResolver(Map<String, Integer> ids, Collection<String> deviations) {
+    private final Map<String, Integer> ids;
+    private final Map<String, List<Selector>> selectors;
+    private final List<String> deviations;
+    private final Map<BlockState, Integer> stateCache = new ConcurrentHashMap<>();
+
+    private PackMaterialResolver(
+            Map<String, Integer> ids,
+            Map<String, List<Selector>> selectors,
+            Collection<String> deviations
+    ) {
         this.ids = Collections.unmodifiableMap(new TreeMap<>(ids));
+        Map<String, List<Selector>> copy = new TreeMap<>();
+        selectors.forEach((name, list) -> copy.put(name, List.copyOf(list)));
+        this.selectors = Collections.unmodifiableMap(copy);
         this.deviations = List.copyOf(new TreeSet<>(deviations));
     }
 
@@ -63,11 +92,11 @@ public final class PackMaterialResolver {
     public static ParseResult parse(Path shadersDir, Map<String, String> macros) {
         Path file = shadersDir == null ? null : shadersDir.resolve("block.properties");
         if (file == null || !Files.isRegularFile(file)) {
-            return new ParseResult(new PackMaterialResolver(Map.of(), List.of()), false, null,
-                    List.of("BLOCK_PROPERTIES_MISSING"));
+            return new ParseResult(empty(), false, null, List.of("BLOCK_PROPERTIES_MISSING"));
         }
 
         Map<String, Integer> ids = new TreeMap<>();
+        Map<String, List<Selector>> selectors = new TreeMap<>();
         Set<String> conflicts = new TreeSet<>();
         Set<String> deviations = new TreeSet<>();
         String sourceHash;
@@ -83,40 +112,73 @@ public final class PackMaterialResolver {
                     } catch (RuntimeException failure) {
                         deviations.add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
                         ids.clear();
+                        selectors.clear();
                         break;
                     }
                     continue;
                 }
                 if (conditions.active()) {
-                    parseLine(line, ids, conflicts, deviations);
+                    parseLine(line, ids, selectors, conflicts, deviations);
                 }
             }
         } catch (IOException e) {
             deviations.add("BLOCK_PROPERTIES_READ_FAILED");
             sourceHash = null;
         }
-        return new ParseResult(new PackMaterialResolver(ids, deviations), true, sourceHash,
+        return new ParseResult(new PackMaterialResolver(ids, selectors, deviations), true, sourceHash,
                 List.copyOf(deviations));
     }
 
     public static PackMaterialResolver empty() {
-        return new PackMaterialResolver(Map.of(), List.of());
+        return new PackMaterialResolver(Map.of(), Map.of(), List.of());
     }
 
     public int resolve(BlockState state) {
         if (state == null) {
             return -1;
         }
+        return stateCache.computeIfAbsent(state, this::resolveUncached);
+    }
+
+    private int resolveUncached(BlockState state) {
         try {
-            return resolveName(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
+            String name = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+            return resolveState(name, property -> stateValue(state, property));
         } catch (RuntimeException ignored) {
             return -1;
         }
     }
 
+    private static String stateValue(BlockState state, String propertyName) {
+        Property<?> property = state.getBlock().getStateDefinition().getProperty(propertyName);
+        return property == null ? null : valueName(state, property);
+    }
+
+    private static <T extends Comparable<T>> String valueName(BlockState state, Property<T> property) {
+        return property.getName(state.getValue(property));
+    }
+
+    /** A plain-name lookup: the id of the block's unconditioned mapping. */
     public int resolveName(String name) {
         String normalized = normalizeName(name);
         return normalized == null ? -1 : ids.getOrDefault(normalized, -1);
+    }
+
+    /**
+     * The id of one block state. A matching selector is more specific than the
+     * block's plain mapping, so the first one that matches, in file order, wins.
+     */
+    public int resolveState(String name, Function<String, String> stateValue) {
+        String normalized = normalizeName(name);
+        if (normalized == null) {
+            return -1;
+        }
+        for (Selector selector : selectors.getOrDefault(normalized, List.of())) {
+            if (selector.matches(stateValue)) {
+                return selector.id();
+            }
+        }
+        return ids.getOrDefault(normalized, -1);
     }
 
     public Map<String, Integer> mappings() {
@@ -130,6 +192,7 @@ public final class PackMaterialResolver {
     private static void parseLine(
             String rawLine,
             Map<String, Integer> ids,
+            Map<String, List<Selector>> selectors,
             Set<String> conflicts,
             Set<String> deviations
     ) {
@@ -175,8 +238,8 @@ public final class PackMaterialResolver {
                 deviations.add("BLOCK_TAG_UNSUPPORTED");
                 continue;
             }
-            if (token.indexOf('=') >= 0 || token.indexOf(',') >= 0) {
-                deviations.add("BLOCK_SELECTOR_UNSUPPORTED");
+            if (token.indexOf('=') >= 0) {
+                addSelector(token, id, selectors, deviations);
                 continue;
             }
             String normalized = normalizeName(token);
@@ -194,6 +257,48 @@ public final class PackMaterialResolver {
                 deviations.add("BLOCK_MAPPING_CONFLICT");
             }
         }
+    }
+
+    /**
+     * {@code [namespace:]block:prop=value[,value...][:prop=value...]}. The name
+     * is every segment before the first property; a second name segment is the
+     * path under the first as namespace.
+     */
+    private static void addSelector(
+            String token,
+            int id,
+            Map<String, List<Selector>> selectors,
+            Set<String> deviations
+    ) {
+        String[] segments = token.split(":", -1);
+        int first = 0;
+        while (first < segments.length && segments[first].indexOf('=') < 0) {
+            first++;
+        }
+        String name = first == 1 ? segments[0]
+                : first == 2 ? segments[0] + ":" + segments[1] : null;
+        String normalized = normalizeName(name);
+        if (normalized == null) {
+            deviations.add("BLOCK_PROPERTIES_INVALID");
+            return;
+        }
+        Map<String, Set<String>> properties = new TreeMap<>();
+        for (int index = first; index < segments.length; index++) {
+            String property = segments[index];
+            if (!PROPERTY.matcher(property).matches()) {
+                deviations.add("BLOCK_PROPERTIES_INVALID");
+                return;
+            }
+            int equals = property.indexOf('=');
+            Set<String> values = new TreeSet<>();
+            for (String option : property.substring(equals + 1).split(",")) {
+                if (!option.isEmpty()) values.add(option);
+            }
+            properties.merge(property.substring(0, equals), values,
+                    (left, right) -> { left.retainAll(right); return left; });
+        }
+        selectors.computeIfAbsent(normalized, key -> new ArrayList<>())
+                .add(new Selector(id, Collections.unmodifiableMap(properties)));
     }
 
     private static String normalizeName(String name) {

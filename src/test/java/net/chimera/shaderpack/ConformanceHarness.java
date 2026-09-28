@@ -578,7 +578,8 @@ public final class ConformanceHarness {
         assertEquals(List.of("fragment", "vertex"), shadow.stages(), "m5.4 shadow stages");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
                 shadow.support(), "m5.4 shadow support");
-        assertEquals(List.of("SHADOW_VERTEX_BRIDGE"), shadow.deviations(),
+        // LIVE_UNIFORM_BRIDGE: the per-layer shadow alpha-test reference.
+        assertEquals(List.of("LIVE_UNIFORM_BRIDGE", "SHADOW_VERTEX_BRIDGE"), shadow.deviations(),
                 "m5.4 shadow deviations");
         assertEquals(List.of("lightmap", "texture"), shadow.samplers(),
                 "m5.4 shadow sampler inventory");
@@ -742,6 +743,9 @@ public final class ConformanceHarness {
                             + "block.8 = minecraft:dirt\n"
                             + "block.8 = minecraft:dirt\n"
                             + "block.9 = minecraft:oak_planks:axis=x\n"
+                            + "block.13 = minecraft:tall_grass:half=lower tall_grass:half=upper\n"
+                            + "block.14 = leaves:waterlogged=false:distance=1,2\n"
+                            + "block.15 = oak_leaves\n"
                             + "block.10 = %minecraft:logs\n"
                             + "block.40000 = bad\n"
                             + "block.11 = minecraft:stone\n"
@@ -751,8 +755,23 @@ public final class ConformanceHarness {
             assertEquals(8, result.resolver().resolveName("minecraft:dirt"), "duplicate material id");
             assertEquals(-1, result.resolver().resolveName("minecraft:oak_planks"), "selector mapping");
             assertEquals(-1, result.resolver().resolveName("minecraft:stone"), "conflicting mapping");
-            assertTrue(result.deviations().contains("BLOCK_SELECTOR_UNSUPPORTED"),
-                "selector deviation is missing");
+            // State selectors, as Iris reads them: BSL and Complementary map
+            // tall grass by half and leaves by waterlogged.
+            PackMaterialResolver resolver = result.resolver();
+            assertEquals(13, resolver.resolveState("minecraft:tall_grass",
+                    Map.of("half", "lower")::get), "namespaced selector");
+            assertEquals(13, resolver.resolveState("tall_grass",
+                    Map.of("half", "upper")::get), "unqualified selector");
+            assertEquals(-1, resolver.resolveState("minecraft:tall_grass", Map.<String, String>of()::get),
+                    "selector matched a state without the property");
+            assertEquals(14, resolver.resolveState("minecraft:leaves",
+                    Map.of("waterlogged", "false", "distance", "2")::get), "multi-property selector");
+            assertEquals(-1, resolver.resolveState("minecraft:leaves",
+                    Map.of("waterlogged", "false", "distance", "3")::get), "selector value list");
+            assertEquals(15, resolver.resolveState("minecraft:oak_leaves",
+                    Map.of("waterlogged", "true")::get), "plain mapping under a selector-free name");
+            assertEquals(-1, resolver.resolveName("minecraft:oak_planks"),
+                    "a selector became a plain mapping");
             assertTrue(result.deviations().contains("BLOCK_TAG_UNSUPPORTED"),
                     "tag deviation is missing");
             assertTrue(result.deviations().contains("BLOCK_PROPERTIES_INVALID"),
