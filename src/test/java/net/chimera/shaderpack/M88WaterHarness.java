@@ -205,6 +205,10 @@ public final class M88WaterHarness {
         verifyShadowDepthSplit(analysis, name);
         verifyRealPackBlend(water, name);
         verifyWaterMaterial(pack, analysis, name);
+        PackProgramPlan shadow = analysis.plan().program("shadow");
+        assertTrue(shadow != null && shadow.executable() && shadow.convertedFragment()
+                        .contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                name + " shadow program lost its per-layer alpha test");
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().programs(), analysis.config(),
                 analysis.plan().resources(), 2560, 1440, 8, 16384);
         assertTrue(graph.depth().depthtex1(), name + " depth graph omits the water depthtex1 read");
@@ -254,6 +258,12 @@ public final class M88WaterHarness {
                             && resolver.resolveName("minecraft:flowing_water") == expected,
                     name + " water resolves to " + resolver.resolveName("minecraft:water")
                             + ", expected " + expected);
+            // Double plants map by half through state selectors; without them
+            // tall grass had no id and did not wave.
+            int upper = name.equals("bsl") ? 10300 : 10021;
+            int tallGrass = resolver.resolveState("minecraft:tall_grass", Map.of("half", "upper")::get);
+            assertTrue(tallGrass == upper,
+                    name + " upper tall grass resolves to " + tallGrass + ", expected " + upper);
         }
     }
 

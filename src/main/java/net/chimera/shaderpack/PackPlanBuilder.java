@@ -112,8 +112,12 @@ public final class PackPlanBuilder {
         // Only a program that can execute (entity families need a vertex
         // stage) receives the host alpha test.
         if (FamilyAdapterRegistry.isEntityLike(program.name()) && vertex != null) {
-            fragment = alphaTestPlan.injectEntityTest(fragment);
+            fragment = alphaTestPlan.injectDrawTest(fragment);
             fragment = EntityOverlayColor.inject(fragment);
+        } else if (program.name().equals("shadow") && vertex != null) {
+            // Iris alpha-tests shadow terrain by layer; the shadow pass sets
+            // the reference per layer (ChimeraMainPass.renderShadowMap).
+            fragment = alphaTestPlan.injectDrawTest(fragment);
         }
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
                 fragment, vertex, stage, targetPlan, allowUnusedDeclarations,

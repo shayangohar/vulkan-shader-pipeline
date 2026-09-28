@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "11ccfc1efed0b9bc33abf9470fba50cf004edee92fa66f9508bea0827bebaf5b",
+      "reportSha256": "d9d5019dcfc6af9ae9491cd9dbf94d1d6d139214d399efca29ff681e6d4a3d19",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -29,6 +29,7 @@
         ],
         "final": [],
         "shadow": [
+          "LIVE_UNIFORM_BRIDGE",
           "SHADOW_VERTEX_BRIDGE"
         ]
       },
@@ -42,7 +43,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "a074d3638dd894c2c467874e0bdcd57dcd547371f103cad031f235ed93f5a58a",
+      "reportSha256": "63e09328753c9ed001419bfade7cb45cb80055b42b077f7d26371e712e900cdd",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -67,6 +68,7 @@
         "composite": [],
         "final": [],
         "shadow": [
+          "LIVE_UNIFORM_BRIDGE",
           "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
           "SHADOW_VERTEX_BRIDGE"
         ]

@@ -123,7 +123,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
         applyTransformRoute(projectionRoute, projection, projectionUbo);
         ChimeraEntityBridge.noteHostTransformRoutes(describeTransformSources(
                 dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
-        PackUniformProvider.updateEntityAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
+        PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
         renderer.uploadAndBindUBOs(packPipeline);
         PackUniformProvider.restoreFrameAtlasSize();

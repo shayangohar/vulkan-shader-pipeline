@@ -165,6 +165,8 @@ public class ChimeraMainPass implements MainPass {
 
     /** Diagnostic: -Dchimera.traceTransitions logs every chimera image transition. */
     private static final boolean TRACE_TRANSITIONS = ChimeraRenderer.debugFlag("chimera.traceTransitions");
+    /** Iris's AlphaTests.ONE_TENTH_ALPHA, used for solid and cutout shadow terrain. */
+    private static final float SHADOW_CUTOUT_ALPHA = 0.1F;
     private Framebuffer hdrFramebuffer;
     private RenderPass hdrRenderPass;
     private RenderPass hdrAuxRenderPass;
@@ -494,6 +496,12 @@ public class ChimeraMainPass implements MainPass {
                 VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
                 VRenderSystem.calculateMVP();
                 beginShadowSections(cameraX, cameraY, cameraZ);
+                // Iris tests solid and cutout shadow casters at alpha 0.1 and
+                // translucent ones not at all; foliage quads otherwise cast
+                // their whole square.
+                if (packShadow) {
+                    PackUniformProvider.updateDrawAlphaReference(SHADOW_CUTOUT_ALPHA);
+                }
 
                 TerrainRenderType opaqueType = TerrainRenderType.getRemapped(TerrainRenderType.SOLID);
                 WorldRenderer.getInstance().renderSectionLayer(
@@ -516,6 +524,7 @@ public class ChimeraMainPass implements MainPass {
                         Renderer.getInstance().endRenderPass(cmd);
                     }
                     this.shadowMap.captureOpaqueDepth(cmd);
+                    PackUniformProvider.updateDrawAlphaReference(0.0F);
                     WorldRenderer.getInstance().renderSectionLayer(
                             TerrainRenderType.TRANSLUCENT, cameraX, cameraY, cameraZ,
                             this.shadowMap.getLightView(), projection);

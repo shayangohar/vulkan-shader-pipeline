@@ -36,7 +36,7 @@ public final class AlphaTestConformanceHarness {
                 "entity default is not the dynamic host threshold");
         String legacy = "#version 120\nuniform sampler2D texture;\nvarying vec2 uv;\n"
                 + "void main() {\n    gl_FragData[0] = texture2D(texture, uv);\n}\n";
-        String injected = dynamic.injectEntityTest(legacy);
+        String injected = dynamic.injectDrawTest(legacy);
         check(injected.startsWith("#version 120\nuniform float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + ";\n"),
                 "entity reference uniform is not declared after the version line");
         check(injected.contains("if (" + UniformRegistry.ENTITY_ALPHA_REFERENCE + " > 0.0 && !(gl_FragData[0].a > "
@@ -47,20 +47,31 @@ public final class AlphaTestConformanceHarness {
                 + "void main() { albedo = vec4(1.0, 0.0, 0.0, 0.05); }\n";
         PackAlphaTestPlan fixed = PackAlphaTestPlan.forProgram("gbuffers_entities",
                 settings(Map.of("alphaTest.gbuffers_entities", "GREATER 0.5")));
-        String fixedSource = fixed.injectEntityTest(modern);
+        String fixedSource = fixed.injectDrawTest(modern);
         check(fixed.mode() == PackAlphaTestPlan.Mode.FIXED && fixedSource.contains("albedo.a > 0.5")
                         && !fixedSource.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
                 "pack alphaTest directive does not fix the entity test");
         compileFragment(fixedSource);
-        compileFragment(dynamic.injectEntityTest(modern).replace(
+        compileFragment(dynamic.injectDrawTest(modern).replace(
                 "uniform float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + ";",
                 "layout(binding = 0) uniform Ref { float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + "; };"));
 
         String noOutput = "#version 120\nvoid main() {}\n";
-        check(dynamic.injectEntityTest(noOutput).equals(noOutput), "output-less entity fragment was changed");
+        check(dynamic.injectDrawTest(noOutput).equals(noOutput), "output-less entity fragment was changed");
         check(PackAlphaTestPlan.forProgram("gbuffers_entities", settings(Map.of(
-                        "alphaTest.gbuffers_entities", "off"))).injectEntityTest(legacy).equals(legacy),
+                        "alphaTest.gbuffers_entities", "off"))).injectDrawTest(legacy).equals(legacy),
                 "alphaTest off still injected an entity test");
+
+        // The shadow program tests against the per-layer reference the shadow
+        // pass sets (0.1 solid/cutout, 0 translucent); alphaTest.shadow fixes it.
+        PackAlphaTestPlan shadow = PackAlphaTestPlan.forProgram("shadow", settings(Map.of()));
+        check(shadow.mode() == PackAlphaTestPlan.Mode.DYNAMIC_SHADOW && shadow.active()
+                        && shadow.injectDrawTest(legacy).contains("if (" + UniformRegistry.ENTITY_ALPHA_REFERENCE
+                        + " > 0.0 && !(gl_FragData[0].a > "),
+                "shadow default is not the per-layer reference test");
+        check(PackAlphaTestPlan.forProgram("shadow", settings(Map.of("alphaTest.shadow", "GREATER 0.5")))
+                        .injectDrawTest(legacy).contains("gl_FragData[0].a > 0.5"),
+                "alphaTest.shadow does not fix the shadow test");
     }
 
     private static void compileFragment(String source) {

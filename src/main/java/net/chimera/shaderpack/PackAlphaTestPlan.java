@@ -16,6 +16,12 @@ record PackAlphaTestPlan(
         DYNAMIC_TERRAIN,
         /** Each entity-family draw tests against its host pipeline's ALPHA_CUTOUT. */
         DYNAMIC_ENTITY,
+        /**
+         * Each shadow terrain layer tests against the reference the shadow
+         * pass sets for it: Iris's 0.1 for solid and cutout, none for
+         * translucent. Without it every foliage quad cast a square shadow.
+         */
+        DYNAMIC_SHADOW,
         FIXED
     }
 
@@ -38,11 +44,15 @@ record PackAlphaTestPlan(
         String name = programName == null ? "" : programName;
         boolean geometry = name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
         boolean entity = FamilyAdapterRegistry.isEntityLike(name);
-        if (!geometry && !entity) {
+        boolean shadow = name.equals("shadow");
+        if (!geometry && !entity && !shadow) {
             return off(false);
         }
         String key = "alphaTest." + name;
         String value = settings == null ? null : settings.propertyValues().get(key);
+        if (value == null && shadow) {
+            return new PackAlphaTestPlan(Mode.DYNAMIC_SHADOW, "DYNAMIC", 0.0F, false, List.of());
+        }
         if (value == null) {
             // Iris tests entity programs against the render type's own
             // threshold (iris_currentAlphaTest); packs rely on it to drop the
@@ -59,21 +69,21 @@ record PackAlphaTestPlan(
      * per-draw reference uniform, so the ordinary descriptor contract carries
      * it. A fragment with no location-0 colour output is left unchanged.
      */
-    String injectEntityTest(String fragment) {
+    String injectDrawTest(String fragment) {
         if (fragment == null || !active()
-                || (mode != Mode.DYNAMIC_ENTITY && mode != Mode.FIXED)) return fragment;
+                || (!perDrawReference() && mode != Mode.FIXED)) return fragment;
         String output = GlslTokenRewriter.containsIdentifier(fragment, "gl_FragData") ? "gl_FragData[0]"
                 : GlslTokenRewriter.containsIdentifier(fragment, "gl_FragColor") ? "gl_FragColor"
                 : modernOutputZero(fragment);
         if (output == null) return fragment;
         String reference = UniformRegistry.ENTITY_ALPHA_REFERENCE;
-        String rejection = mode == Mode.DYNAMIC_ENTITY
+        String rejection = perDrawReference()
                 ? "if (" + reference + " > 0.0 && !(" + output + ".a > " + reference + ")) {\n"
                 + "        discard;\n    }"
                 : rejection(output, null);
         if (rejection.isBlank()) return fragment;
         String tested = GlslTokenRewriter.appendMainEpilogue(fragment, rejection);
-        if (mode != Mode.DYNAMIC_ENTITY) return tested;
+        if (!perDrawReference()) return tested;
         String declaration = "uniform float " + reference + ";\n";
         java.util.regex.Matcher version = VERSION_LINE.matcher(tested);
         return version.find()
@@ -136,6 +146,11 @@ record PackAlphaTestPlan(
         return deviations.isEmpty();
     }
 
+    /** Entity and shadow draws test against a reference set per draw, not a host block. */
+    boolean perDrawReference() {
+        return mode == Mode.DYNAMIC_ENTITY || mode == Mode.DYNAMIC_SHADOW;
+    }
+
     boolean needsHostThreshold() {
         return mode == Mode.DYNAMIC_TERRAIN;
     }
@@ -146,7 +161,7 @@ record PackAlphaTestPlan(
 
     String appliedDeviation(String programName) {
         if (!active()) return "";
-        if (mode == Mode.DYNAMIC_TERRAIN || mode == Mode.DYNAMIC_ENTITY) {
+        if (mode == Mode.DYNAMIC_TERRAIN || perDrawReference()) {
             return "ALPHA_TEST_DYNAMIC:" + programName;
         }
         return "ALPHA_TEST_APPLIED:" + programName + ":" + function + ":" + Float.toString(reference);
@@ -154,7 +169,7 @@ record PackAlphaTestPlan(
 
     String rejection(String outputName, String hostInstance) {
         if (!active() || outputName == null || outputName.isBlank()) return "";
-        if (mode == Mode.DYNAMIC_ENTITY) return "";
+        if (perDrawReference()) return "";
         if (mode == Mode.DYNAMIC_TERRAIN) {
             return "if (" + hostInstance + ".AlphaCutout > 0.0 && "
                     + outputName + ".a < " + hostInstance + ".AlphaCutout) {\n"

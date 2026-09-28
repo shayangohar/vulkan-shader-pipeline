@@ -98,11 +98,11 @@ public final class PackUniformProvider {
     }
 
     /**
-     * Sets the alpha-test reference for the next entity-family draw. The
-     * pipeline copies its uniform buffers per draw, so only this one binding
-     * is rewritten, and only when the reference changes.
+     * Sets the alpha-test reference for the next entity-family draw or shadow
+     * terrain layer. The pipeline copies its uniform buffers per draw, so only
+     * this one binding is rewritten, and only when the reference changes.
      */
-    public static void updateEntityAlphaReference(float reference) {
+    public static void updateDrawAlphaReference(float reference) {
         if (!INSTANCE.frameState.setEntityAlphaReference(reference)) return;
         Binding binding = INSTANCE.bindings.get(
                 new UniformKey(UniformRegistry.ENTITY_ALPHA_REFERENCE, "float"));
