@@ -29,7 +29,12 @@ public final class ChimeraExtTerrainBuilder extends TerrainBuilder {
         extendedVertexBuilder.setMaterialData(materialResolver.resolve(blockState), -1);
     }
 
+    /**
+     * A fluid's material is its own block, as in Iris: water inside seagrass
+     * or a waterlogged stair is water, not the block that holds it.
+     */
     public void setFluidBlockAttributes(BlockState blockState, FluidState fluidState) {
-        extendedVertexBuilder.setMaterialData(materialResolver.resolve(blockState), 1);
+        BlockState fluidBlock = fluidState == null ? blockState : fluidState.createLegacyBlock();
+        extendedVertexBuilder.setMaterialData(materialResolver.resolve(fluidBlock), 1);
     }
 }
