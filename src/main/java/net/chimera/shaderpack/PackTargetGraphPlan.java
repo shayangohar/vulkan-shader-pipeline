@@ -112,6 +112,12 @@ public final class PackTargetGraphPlan {
                         used.add(target);
                     }
                 }
+                for (String sampler : geometrySamplerNames(program)) {
+                    Integer target = colorTarget(program, sampler, resourcePlan);
+                    if (target != null && !unavailableFormatTargets.contains(target)) {
+                        used.add(target);
+                    }
+                }
             }
         }
 
@@ -275,6 +281,20 @@ public final class PackTargetGraphPlan {
                 depth2 |= sampler.equals("depthtex2");
             }
         }
+        // A world program that reads depth needs the same snapshot a post
+        // pass would: gbuffers_water reads opaque depth as depthtex1.
+        if (programs != null) {
+            for (PackProgramPlan program : programs) {
+                if (program == null || program.geometryOutputPlan() == null || !program.executable()) {
+                    continue;
+                }
+                for (String sampler : geometrySamplerNames(program)) {
+                    depth0 |= sampler.equals("depthtex0");
+                    depth1 |= sampler.equals("depthtex1");
+                    depth2 |= sampler.equals("depthtex2");
+                }
+            }
+        }
         List<String> depthDeviations = new ArrayList<>();
         if (depth0 || depth1 || depth2) {
             depthDeviations.add("DEPTH_COPY_GRAPH_APPLIED");
@@ -326,6 +346,13 @@ public final class PackTargetGraphPlan {
         if (program.interfacePlan() == null) return List.of();
         return program.interfacePlan().effective(UniformRegistry.Stage.POST).samplers().stream()
                 .map(UniformRegistry.SamplerBinding::name).toList();
+    }
+
+    /** Samplers a world program reads, projected through its own stage table. */
+    private static List<String> geometrySamplerNames(PackProgramPlan program) {
+        if (program.interfacePlan() == null) return List.of();
+        return program.interfacePlan().effective(FamilyAdapterRegistry.stageFor(program.name()))
+                .samplers().stream().map(UniformRegistry.SamplerBinding::name).toList();
     }
 
     private static Integer colorTarget(

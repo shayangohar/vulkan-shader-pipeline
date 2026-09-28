@@ -25,7 +25,8 @@ public record PackProgramPlan(
         FamilyAdapterPlan familyAdapter,
         TerrainMaterialPlan terrainMaterial,
         GeometryOutputPlan geometryOutputPlan,
-        PackAlphaTestPlan alphaTestPlan
+        PackAlphaTestPlan alphaTestPlan,
+        PackBlendPlan blendPlan
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -44,6 +45,7 @@ public record PackProgramPlan(
         alphaTestPlan = alphaTestPlan == null
                 ? PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty())
                 : alphaTestPlan;
+        blendPlan = blendPlan == null ? PackBlendPlan.empty() : blendPlan;
     }
 
     /** Compatibility constructor for callers using the pre-M6.1 plan shape. */
@@ -63,7 +65,8 @@ public record PackProgramPlan(
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
                 FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
                 TerrainMaterialPlan.legacy(), null,
-                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()));
+                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()),
+                PackBlendPlan.empty());
     }
 
     /** Compatibility constructor for pre-M7.6 callers. */
@@ -84,7 +87,8 @@ public record PackProgramPlan(
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable,
                 FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
                 TerrainMaterialPlan.legacy(), null,
-                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()));
+                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()),
+                PackBlendPlan.empty());
     }
 
     /** The authored cloud program provably draws nothing (see AuthoredOutput). */

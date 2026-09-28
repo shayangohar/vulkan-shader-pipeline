@@ -644,7 +644,8 @@ public final class PackPipelines {
             boolean dynamicMrt = outputPlan != null && outputPlan.executable()
                     && outputPlan.requiresMrt();
             if (dynamicMrt) {
-                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments());
+                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
             }
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
@@ -657,7 +658,8 @@ public final class PackPipelines {
                 if (dynamicMrt) MrtPipelineContext.end();
             }
             if (dynamicMrt) {
-                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray());
+                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
             }
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
@@ -817,84 +819,6 @@ public final class PackPipelines {
         }
     }
 
-    /** Builds gbuffers_terrain with either the fixed vertex or the M5.2 bridge. */
-    public static PackTerrain buildTerrain(PackProgram program, String fixedVertexSource) {
-        return buildTerrainLike(program, fixedVertexSource, UniformRegistry.Stage.GEOMETRY);
-    }
-
-    /** Builds gbuffers_water on the host translucent terrain lane. */
-    public static PackTerrain buildTranslucent(PackProgram program, String fixedVertexSource) {
-        return buildTerrainLike(program, fixedVertexSource, UniformRegistry.Stage.TRANSLUCENT);
-    }
-
-    /** Shared fixed-config builder for opaque and translucent terrain families. */
-    private static PackTerrain buildTerrainLike(
-            PackProgram program,
-            String fixedVertexSource,
-            UniformRegistry.Stage stage
-    ) {
-        try {
-            String fragmentSource = program.executableFragmentSource();
-            String vertexSourceText = program.executableVertexSource();
-            boolean prepared = program.preparedFragmentSource() != null;
-            UniformRegistry.ProgramInterface interfacePlan = prepared
-                    ? UniformRegistry.planPrepared(fragmentSource, stage)
-                    : UniformRegistry.plan(fragmentSource, stage);
-            if (!interfacePlan.executable()) {
-                throw new IllegalStateException("pack terrain interface is unsupported: "
-                        + interfacePlan.deviations());
-            }
-            int[] declaredSlots = interfacePlan.samplers().stream()
-                    .mapToInt(UniformRegistry.SamplerBinding::slot)
-                    .toArray();
-            int[] slots = interleaveLightmap(declaredSlots);
-            String vertexSource = fixedVertexSource;
-            LegacyGlslConverter.TerrainVaryingLayout terrainLayout = null;
-            if (vertexSourceText != null) {
-                LegacyGlslConverter.TerrainVertexConversion vertex =
-                        LegacyGlslConverter.convertTerrainVertex(
-                                vertexSourceText, prepared ? null : program.vertexPath(), fragmentSource);
-                if (vertex == null) {
-                    throw new IllegalStateException("legacy terrain vertex bridge rejected the source");
-                }
-                vertexSource = vertex.source();
-                terrainLayout = vertex.layout();
-            }
-            String converted = LegacyGlslConverter.FragmentConversionRequest
-                    .of(fragmentSource, prepared ? null : program.fragmentPath(), true, slots)
-                    .withTerrainLayout(terrainLayout)
-                    .withInterfacePlan(interfacePlan)
-                    .convert();
-            if (converted == null) {
-                throw new IllegalStateException("legacy GLSL conversion failed");
-            }
-
-            JsonObject json = ChimeraShaderLoader.loadJson("chimera_terrain.json").deepCopy();
-            json.addProperty("fragment", "pack_" + program.name());
-            json.add("samplers", samplerArray(slots));
-
-            PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
-            Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + program.name());
-            builder.applyConfig(config);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
-            ProgramImageBindingManifest imageBindings = legacyImageBindings(config, interfacePlan);
-            GraphicsPipeline pipeline = createNative(builder, imageBindings);
-
-            // Share the host's global UBO pool so per-instance section data flows in unchanged.
-            for (var buffer : pipeline.getBuffers()) {
-                if (!(buffer instanceof PackStorageBufferDescriptor)) {
-                    buffer.setUseGlobalBuffer(true);
-                }
-            }
-
-            return new PackTerrain(pipeline, slots, converted, GeometryOutputPlan.empty(program.name()), imageBindings);
-        } catch (Exception e) {
-            logBuildFailure(program.name(), e);
-            return null;
-        }
-    }
-
     private static PackTerrain buildTerrainLikePlan(
             PackProgramPlan plan,
             String fixedVertexSource,
@@ -940,7 +864,8 @@ public final class PackPipelines {
             GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
             boolean dynamicMrt = outputPlan != null && outputPlan.requiresMrt();
             if (dynamicMrt) {
-                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments());
+                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
             } else if (coverage) {
                 MrtPipelineContext.beginGeometry(targetFormat,
                         org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT, deviceMaxColorAttachments());
@@ -952,7 +877,8 @@ public final class PackPipelines {
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GraphicsPipeline pipeline = createNative(builder, imageBindings);
             if (dynamicMrt) {
-                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray());
+                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
             } else if (coverage) {
                 MrtPipelineContext.register(pipeline, new int[] {
                         targetFormat, org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT
@@ -1166,7 +1092,7 @@ public final class PackPipelines {
             if (stage == UniformRegistry.Stage.POST) {
                 json.add("UBOs", uniformUboArray(iface, 0, "all"));
                 json.add("PushConstants", new JsonArray());
-            } else if (stage != UniformRegistry.Stage.TRANSLUCENT) {
+            } else {
                 json.getAsJsonArray("UBOs").addAll(uniformUboArray(iface, 3, "all"));
             }
             PipelineConfig parsed = PipelineConfig.fromJson("pack_" + plan.name(), json);
@@ -1234,7 +1160,6 @@ public final class PackPipelines {
             }
             if (name == null) continue;
             String key = PackResourcePlan.canonicalResource(name);
-            if (key.equals("shadowtex1")) key = "shadowtex0";
             PackResourceKind kind = key.startsWith("colortex") || PackResourcePlan.isHostTexture(key)
                     ? PackResourceKind.TARGET : key.startsWith("depthtex") ? PackResourceKind.DEPTH
                     : key.startsWith("shadowtex") ? PackResourceKind.SHADOW_DEPTH

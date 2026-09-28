@@ -355,7 +355,7 @@ public final class M87EntityRealPackHarness {
         }
     }
 
-    private static void compileStage(String source, boolean vertex, String what) {
+    static void compileStage(String source, boolean vertex, String what) {
         long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
         // Heap buffers plus the native entry point directly. The CharSequence
         // overload stack-allocates UTF-8 and overflows LWJGL's thread-local

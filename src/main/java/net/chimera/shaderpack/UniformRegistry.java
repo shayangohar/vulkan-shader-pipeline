@@ -325,10 +325,8 @@ public final class UniformRegistry {
             Map.entry("colortex3", 3),
             Map.entry("colortex8", SelectorNamespace.COLORTEX8_SLOT),
             Map.entry("shadowtex0", 5),
-            // Keep shadowtex1 separate from shadowtex0. The current renderer
-            // supplies the same truthful shadow-depth image to both names,
-            // but a shared selector slot creates a false resource conflict
-            // when a post shader declares both samplers.
+            // shadowtex1 is its own image, the casters before translucent
+            // terrain, so every stage reads it on its own selector.
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", SelectorNamespace.SHADOW_COLOR0_SLOT),
             Map.entry("shadowcolor1", SelectorNamespace.SHADOW_COLOR1_SLOT),
@@ -353,7 +351,7 @@ public final class UniformRegistry {
             Map.entry("tex", 0),
             Map.entry("lightmap", 2),
             Map.entry("shadowtex0", 5),
-            Map.entry("shadowtex1", 5),
+            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", 3),
             Map.entry("noisetex", 7)
     );
@@ -366,11 +364,21 @@ public final class UniformRegistry {
             Map.entry("noisetex", 7)
     );
 
-    /** Translucent terrain uses the host's atlas, lightmap, and shadow slots. */
+    /**
+     * Translucent terrain is terrain on the host translucent lane: the
+     * geometry slots, plus the opaque depth Iris gives gbuffers_water as
+     * depthtex1. The pack colour targets it reads come from
+     * {@link #translucentColorInputSlot}.
+     */
     public static final Map<String, Integer> TRANSLUCENT_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
+            Map.entry("tex", 0),
             Map.entry("lightmap", 2),
-            Map.entry("shadowtex0", 5)
+            Map.entry("shadowtex0", 5),
+            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
+            Map.entry("shadowcolor0", 3),
+            Map.entry("noisetex", 7),
+            Map.entry("depthtex1", 12)
     );
 
     /**
@@ -407,30 +415,6 @@ public final class UniformRegistry {
     public static final Set<Stage> MATERIAL_STAGES = Set.of(
             Stage.GEOMETRY, Stage.TRANSLUCENT, Stage.ENTITY,
             Stage.BLOCK, Stage.HAND, Stage.PARTICLE
-    );
-
-    /**
-     * The water bridge is intentionally limited to fields already present in
-     * the host terrain UBO. Lower-case names are the small accepted pack
-     * aliases; their values are rewritten to the corresponding host fields.
-     */
-    private static final Map<String, String> TRANSLUCENT_UNIFORM_FIELDS = Map.ofEntries(
-            Map.entry("fogColor", "FogColor"),
-            Map.entry("fogStart", "FogRenderDistanceStart"),
-            Map.entry("fogEnd", "FogRenderDistanceEnd"),
-            Map.entry("textureSize", "TextureSize"),
-            Map.entry("texelSize", "TexelSize"),
-            Map.entry("FogColor", "FogColor"),
-            Map.entry("FogEnvironmentalStart", "FogEnvironmentalStart"),
-            Map.entry("FogEnvironmentalEnd", "FogEnvironmentalEnd"),
-            Map.entry("FogRenderDistanceStart", "FogRenderDistanceStart"),
-            Map.entry("FogRenderDistanceEnd", "FogRenderDistanceEnd"),
-            Map.entry("FogSkyEnd", "FogSkyEnd"),
-            Map.entry("FogCloudsEnd", "FogCloudsEnd"),
-            Map.entry("AlphaCutout", "AlphaCutout"),
-            Map.entry("TextureSize", "TextureSize"),
-            Map.entry("TexelSize", "TexelSize"),
-            Map.entry("UseRgss", "UseRgss")
     );
 
     private static final Set<String> SUPPORTED_TYPES = Set.of(
@@ -614,9 +598,7 @@ public final class UniformRegistry {
                 }
                 continue;
             }
-            String fixedField = stage == Stage.TRANSLUCENT
-                    ? TRANSLUCENT_UNIFORM_FIELDS.get(name) : name;
-            UniformDescriptor spec = fixedField == null ? null : UNIFORM_SPECS.get(fixedField);
+            UniformDescriptor spec = UNIFORM_SPECS.get(name);
             if (spec == null && customDescriptors != null) {
                 spec = customDescriptors.get(name);
             }
@@ -656,9 +638,6 @@ public final class UniformRegistry {
             if (customDescriptors != null && customDescriptors.containsKey(name)) {
                 deviations.add("CUSTOM_UNIFORM_BRIDGE:" + name);
             }
-            if (stage == Stage.TRANSLUCENT) {
-                deviations.add("TRANSLUCENT_FIXED_UNIFORM_BRIDGE");
-            }
             if (spec.availability() == Availability.DEFAULTED) {
                 deviations.add("UNIFORM_DEFAULTED:" + name);
             }
@@ -682,6 +661,9 @@ public final class UniformRegistry {
             Integer slot = slots.get(sampler.getKey());
             if (stage == Stage.POST && slot == null) {
                 slot = extendedPostColorSlot(sampler.getKey());
+            }
+            if (stage == Stage.TRANSLUCENT && slot == null) {
+                slot = translucentColorInputSlot(sampler.getKey());
             }
             if (stage == Stage.POST && slot == null && sampler.getKey().equals("tex")
                     && customSamplerSlots != null) {
@@ -724,10 +706,7 @@ public final class UniformRegistry {
                 continue;
             }
             bindings.add(new SamplerBinding(sampler.getKey(), slot, sampler.getValue()));
-            String resource = (stage == Stage.GEOMETRY || stage == Stage.ENTITY || stage == Stage.BLOCK)
-                    && sampler.getKey().equals("shadowtex1")
-                    ? "shadowtex0"
-                    : stage == Stage.POST && sampler.getKey().equals("tex")
+            String resource = stage == Stage.POST && sampler.getKey().equals("tex")
                     && customSamplerSlots != null
                     && customSamplerSlots.containsKey(PACK_ATLAS_SAMPLER)
                     ? PACK_ATLAS_SAMPLER : samplerResource(sampler.getKey());
@@ -1068,6 +1047,21 @@ public final class UniformRegistry {
         return target <= PostTargetPlan.MAX_TARGET ? target + 4 : null;
     }
 
+    /**
+     * Pack colour targets a translucent program may sample. They share the
+     * post selectors (colortex4..7 at 8..11, colortex8 at its own slot), so
+     * one target keeps one selector across the pack and PackSettingsPlan
+     * already reserves them. colortex0..3 would land on the host atlas,
+     * overlay, lightmap and shadowcolor0 selectors, so they stay unmapped.
+     */
+    private static Integer translucentColorInputSlot(String name) {
+        Integer target = PackResourcePlan.targetIndex(name);
+        if (target == null || target < 4 || target > 8) {
+            return null;
+        }
+        return target == 8 ? SelectorNamespace.COLORTEX8_SLOT : target + 4;
+    }
+
     private static boolean isDeviationForName(
             Collection<String> deviations,
             String prefix,
@@ -1292,10 +1286,5 @@ public final class UniformRegistry {
         return source
                 .replaceAll("(?s)/\\*.*?\\*/", " ")
                 .replaceAll("(?m)//.*$", " ");
-    }
-
-    /** Returns the host terrain UBO field for an accepted water uniform. */
-    public static String translucentUniformField(String name) {
-        return TRANSLUCENT_UNIFORM_FIELDS.get(name);
     }
 }

@@ -368,7 +368,8 @@ public final class MaterialPlanConformanceHarness {
                         .noneMatch(value -> value.startsWith("SAMPLER_SLOT_CONFLICT")),
                 "entity shadow slot conflict: "
                         + plan.interfacePlan().effective(UniformRegistry.Stage.ENTITY).deviations());
-        // Both selectors bind the same shadow-depth image through distinct bindings.
+        // Two images as in Iris: shadowtex0 has every caster, shadowtex1 only
+        // those drawn before translucent terrain.
         PackResourceBinding depth0 = binding(shadow.plan().resources().bindings("gbuffers_entities"),
                 "shadowtex0");
         PackResourceBinding depth1 = binding(shadow.plan().resources().bindings("gbuffers_entities"),
@@ -376,7 +377,7 @@ public final class MaterialPlanConformanceHarness {
         assertTrue(depth0.slot() == 5 && depth0.resourceKey().equals("shadowtex0")
                         && depth0.kind() == PackResourceKind.SHADOW_DEPTH && depth0.available(),
                 "shadowtex0 binding");
-        assertTrue(depth1.slot() == 15 && depth1.resourceKey().equals("shadowtex0")
+        assertTrue(depth1.slot() == 15 && depth1.resourceKey().equals("shadowtex1")
                         && depth1.kind() == PackResourceKind.SHADOW_DEPTH && depth1.available(),
                 "shadowtex1 canonical binding");
         var ordinary = PackPipelines.ordinaryDescriptorContract(plan, Set.of());

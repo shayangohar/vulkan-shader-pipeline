@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "water": {
-        "reportSha256": "19429d32abb7488b3e06f5916e49c6c22587772a8c7f057a5657e1bba23d842d",
+        "reportSha256": "59d8157a88d5655bed5a27712c91de6e4b1d10616a7c67d659cc3741408bd17e",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -24,8 +24,8 @@
         "composite": [],
         "final": [],
         "gbuffers_water": [
+          "ALPHA_TEST_DYNAMIC:gbuffers_water",
           "LIVE_UNIFORM_BRIDGE",
-          "TRANSLUCENT_FIXED_UNIFORM_BRIDGE",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",
           "TRANSLUCENT_VERTEX_BRIDGE"
         ]
@@ -33,7 +33,7 @@
       "sourceHashes": {
         "composite.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
-        "gbuffers_water.fsh": "5ffe222b0593ac9cef6084cf7ddb9d0f73e490b6ccb46abe127bf56175a21e0a",
+        "gbuffers_water.fsh": "0ff745d3d93d0b56fcfca8b03fe0b97f9eba1c8978afe9ca206af8b0902c59ec",
         "gbuffers_water.vsh": "5d6e9bf8cde576ccbd50af9cabdd14eb3ae5a62f0b8a73e1aeba311f610380a3",
         "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32"
       }

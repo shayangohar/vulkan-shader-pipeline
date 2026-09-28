@@ -20,6 +20,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkImageCopy;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -43,6 +44,14 @@ public class ChimeraShadowMap {
     private java.util.List<VulkanImage> shadowColors = java.util.List.of();
     private GraphicsPipeline shadowPipeline;
     private final DepthSampleView depthSampleView = new DepthSampleView();
+    /**
+     * Iris shadowtex1: the caster depth before translucent terrain draws.
+     * The main depth attachment is shadowtex0 and holds every caster.
+     */
+    private VulkanImage opaqueDepth;
+    private final DepthSampleView opaqueDepthSampleView = new DepthSampleView();
+    /** True when opaqueDepth holds the current map's opaque casters. */
+    private boolean opaqueDepthCurrent;
     private long shadowSampler;
 
     // CPU-side buffer for the light MVP, read by the Uniforms system during upload
@@ -110,6 +119,14 @@ public class ChimeraShadowMap {
         // Receivers sample this D24S8 image; VulkanMod's view carries both aspects.
         VulkanImage depth = this.shadowFramebuffer.getDepthAttachment();
         ChimeraDepthViewOverride.registerOwned(depth, this.depthSampleView.ensure(depth));
+        this.opaqueDepth = VulkanImage.builder(this.shadowMapSize, this.shadowMapSize)
+                .setName("chimeraShadowOpaqueDepth")
+                .setFormat(depth.format)
+                .setUsage(VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
+                .setLinearFiltering(false).setClamp(true).createVulkanImage();
+        ChimeraDepthViewOverride.registerOwned(this.opaqueDepth,
+                this.opaqueDepthSampleView.ensure(this.opaqueDepth));
+        this.opaqueDepthCurrent = false;
 
         createRenderPass();
         this.shadowPipeline = ChimeraPostPipelines.createTerrainPipeline("chimera_shadow", ChimeraTerrainPipelines.getTerrainVertexFormat());
@@ -240,7 +257,45 @@ public class ChimeraShadowMap {
     /** Invalidates pack-facing matrices when the fixed host pipeline wrote the image. */
     void invalidatePackMapSnapshot() {
         this.mapSnapshotValid = false;
+        this.opaqueDepthCurrent = false;
         setHostReadableMap(true);
+    }
+
+    /**
+     * Copies the caster depth drawn so far into shadowtex1. The pack shadow
+     * pass calls this after the opaque and cutout layers and before the
+     * translucent layer, which Iris keeps out of shadowtex1. No render pass
+     * may be open; the depth attachment returns to its attachment layout.
+     */
+    void captureOpaqueDepth(VkCommandBuffer commandBuffer) {
+        VulkanImage depth = this.shadowFramebuffer.getDepthAttachment();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            copyDepth(stack, commandBuffer, depth, this.opaqueDepth);
+            depth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        }
+        this.opaqueDepthCurrent = true;
+    }
+
+    private static void copyDepth(MemoryStack stack, VkCommandBuffer commandBuffer,
+            VulkanImage source, VulkanImage destination) {
+        source.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        destination.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkImageCopy.Buffer copy = VkImageCopy.calloc(1, stack);
+        copy.srcSubresource().aspectMask(source.aspect).mipLevel(0).baseArrayLayer(0).layerCount(1);
+        copy.dstSubresource().aspectMask(destination.aspect).mipLevel(0).baseArrayLayer(0).layerCount(1);
+        copy.extent().set(source.width, source.height, 1);
+        vkCmdCopyImage(commandBuffer, source.getId(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                destination.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
+        destination.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    /**
+     * The image packs sample as shadowtex1. Without a pack caster pass the
+     * map holds no translucent casters, so shadowtex0 already is shadowtex1.
+     */
+    public VulkanImage opaqueDepth() {
+        if (this.shadowFramebuffer == null) return null;
+        return this.opaqueDepthCurrent ? this.opaqueDepth : this.shadowFramebuffer.getDepthAttachment();
     }
 
     /** Publishes the previous map's matrices expressed relative to this frame's camera. */
@@ -294,6 +349,7 @@ public class ChimeraShadowMap {
         VulkanImage shadowDepth = this.shadowFramebuffer.getDepthAttachment();
         shadowColor.setSampler(this.shadowSampler);
         shadowDepth.setSampler(this.shadowSampler);
+        this.opaqueDepth.setSampler(this.shadowSampler);
         VTextureSelector.bindTexture(3, shadowColor); // slot 3 for shadow map
         VTextureSelector.bindTexture(5, shadowDepth); // slot 5 for pack shadowtex0
     }
@@ -323,6 +379,8 @@ public class ChimeraShadowMap {
             color.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             depth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
+        // The cleared map has no translucent casters: shadowtex1 is shadowtex0.
+        this.opaqueDepthCurrent = false;
         this.needsInitialSamplingLayout = false;
     }
 
@@ -376,7 +434,14 @@ public class ChimeraShadowMap {
         if (this.shadowFramebuffer != null) {
             ChimeraDepthViewOverride.unregisterOwned(this.shadowFramebuffer.getDepthAttachment());
         }
+        if (this.opaqueDepth != null) {
+            ChimeraDepthViewOverride.unregisterOwned(this.opaqueDepth);
+        }
         this.depthSampleView.destroy();
+        this.opaqueDepthSampleView.destroy();
+        if (this.opaqueDepth != null) this.opaqueDepth.free();
+        this.opaqueDepth = null;
+        this.opaqueDepthCurrent = false;
         if (this.shadowFramebuffer != null) this.shadowFramebuffer.cleanUp(true);
         if (this.shadowRenderPass != null) this.shadowRenderPass.cleanUp();
         if (this.shadowPipeline != null) this.shadowPipeline.cleanUp();

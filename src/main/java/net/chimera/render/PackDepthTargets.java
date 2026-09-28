@@ -68,6 +68,15 @@ public final class PackDepthTargets {
         return !required(0) || convert(commandBuffer, rawDepth, 0, false);
     }
 
+    /**
+     * Captures depthtex0 as deferred passes see it: the opaque depth at the
+     * pre-translucent seam. The level-end capture replaces it for composite.
+     */
+    public boolean captureOpaqueScene(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
+        return configured && rawDepth != null && required(0)
+                && convert(commandBuffer, rawDepth, 0, true);
+    }
+
     /** Captures one seam-specific depth snapshot and restores the source layout. */
     public boolean captureOpaque(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
         return configured && rawDepth != null && required(1)

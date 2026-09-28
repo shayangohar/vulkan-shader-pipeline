@@ -840,6 +840,39 @@ tasks.register('m87MaterialMapsTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('m88WaterTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks gbuffers_water on the terrain contract, deferred-before-translucent scheduling, and the locked packs.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.M88WaterHarness'
+    jvmArgs '-ea'
+    // The same CHIMERA instance option set as m87EntityRealPackTest, so the
+    // planned water branches match runtime.
+    systemProperty 'chimera.option.MULTICOLORED_BLOCKLIGHT', '1'
+    systemProperty 'chimera.option.MCBL_DISTANCE', '128'
+    systemProperty 'chimera.option.MCBL_HALF_HEIGHT', '1'
+    systemProperty 'chimera.option.COLORED_LIGHTING', '128'
+    systemProperty 'chimera.option.WORLD_SPACE_REFLECTIONS', '1'
+    systemProperty 'chimera.option.RP_MODE', '3'
+    systemProperty 'chimera.option.ADVANCED_MATERIALS', '1'
+    systemProperty 'chimera.option.MATERIAL_FORMAT', '1'
+    systemProperty 'chimera.option.BLOCK_REFLECT_QUALITY', '3'
+    doFirst {
+        ['m88WaterComplementary': 'chimera.m88.water.complementary',
+         'm88WaterBsl': 'chimera.m88.water.bsl'].each { projectKey, systemKey ->
+            def value = project.findProperty(projectKey) ?: System.getProperty(systemKey)
+            if (value != null && !value.toString().isBlank()) {
+                def pack = file(value.toString())
+                if (!pack.isDirectory() && !pack.isFile()) {
+                    throw new GradleException("M8.8 water pack path does not exist: ${pack}")
+                }
+                systemProperty systemKey, pack.absolutePath
+            }
+        }
+    }
+}
+
 tasks.register('customUniformInventoryTest', JavaExec) {
     group = 'verification'
     description = 'Audits the pinned packs authored uniform declarations against what Chimera serves.'
@@ -898,6 +931,7 @@ tasks.named('check') {
     dependsOn tasks.named('spirvLocalInitTest')
     dependsOn tasks.named('terrainTangentTest')
     dependsOn tasks.named('customUniformInventoryTest')
+    dependsOn tasks.named('m88WaterTest')
 }
 
 tasks.named('test') {

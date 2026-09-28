@@ -868,6 +868,7 @@ public final class PackProbe {
                     || deviation.startsWith("STANDARD_RESOURCE_UNAVAILABLE:")
                     || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
                     || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
+                    || deviation.startsWith("TRANSLUCENT_TARGET_FEEDBACK:")
                     || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
                     || deviation.startsWith("PROGRAM_")

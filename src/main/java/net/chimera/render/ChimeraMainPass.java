@@ -310,6 +310,9 @@ public class ChimeraMainPass implements MainPass {
     /** Pack water program on the host translucent terrain path; null = host/chimera fallback. */
     private GraphicsPipeline packTranslucentPipeline;
     private int[] packTranslucentSlots;
+    /** The current translucent layer draw uses the fixed pipeline: pack inputs were not live. */
+    private boolean packTranslucentSuspended;
+    private boolean packTranslucentSuspendLogged;
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     private GraphicsPipeline packShadowPipeline;
     private int[] packShadowSlots;
@@ -545,6 +548,13 @@ public class ChimeraMainPass implements MainPass {
                             this.shadowMap.getLightView(), projection);
                 }
                 if (packShadow) {
+                    // shadowtex1 is the opaque and cutout casters only; the
+                    // translucent layer below reaches shadowtex0 alone, and
+                    // packs tint through shadowcolor where the two differ.
+                    if (Renderer.getInstance().getBoundRenderPass() != null) {
+                        Renderer.getInstance().endRenderPass(cmd);
+                    }
+                    this.shadowMap.captureOpaqueDepth(cmd);
                     WorldRenderer.getInstance().renderSectionLayer(
                             TerrainRenderType.TRANSLUCENT, cameraX, cameraY, cameraZ,
                             this.shadowMap.getLightView(), projection);
@@ -944,6 +954,19 @@ public class ChimeraMainPass implements MainPass {
      * render pass; the post graph reads that complete HDR image as colortex0.
      */
     public void beginPackCoverageWindow(TerrainRenderType renderType) {
+        if (renderType == TerrainRenderType.TRANSLUCENT && !this.shadowPassActive
+                && this.packTranslucentTerrain != null
+                && !packTranslucentInputsReady(this.packTranslucentTerrain)) {
+            // The fixed pipeline draws this layer; the pack program never
+            // binds a stale or missing image.
+            ChimeraTerrainPipelines.suspendTranslucentOverride(true);
+            this.packTranslucentSuspended = true;
+            if (!this.packTranslucentSuspendLogged) {
+                this.packTranslucentSuspendLogged = true;
+                LOGGER.warn("[chimera] pack gbuffers_water: inputs unavailable this frame, fixed translucent pipeline used");
+            }
+            return;
+        }
         beginPackResourceWindow(renderType);
         PackPipelines.PackTerrain terrain = switch (renderType) {
             case SOLID, CUTOUT -> this.packGeometryTerrain;
@@ -1052,6 +1075,11 @@ public class ChimeraMainPass implements MainPass {
     /** The direct-HDR terrain path has no separate coverage window to close. */
     public void endPackCoverageWindow(TerrainRenderType renderType) {
         if (this.shadowPassActive) return;
+        if (this.packTranslucentSuspended && renderType == TerrainRenderType.TRANSLUCENT) {
+            this.packTranslucentSuspended = false;
+            ChimeraTerrainPipelines.suspendTranslucentOverride(false);
+            return;
+        }
         boolean geometryWindow = PackGeometryContext.geometryActive();
         if (geometryWindow) {
             PackPipelines.PackTerrain terrain = renderType == TerrainRenderType.TRANSLUCENT
@@ -1112,6 +1140,7 @@ public class ChimeraMainPass implements MainPass {
      */
     public void bindTerrainAtlasAfterSelector(TerrainRenderType renderType) {
         if (this.shadowPassActive) return;
+        if (this.packTranslucentSuspended && renderType == TerrainRenderType.TRANSLUCENT) return;
         PackPipelines.PackTerrain terrain = renderType == TerrainRenderType.TRANSLUCENT
                 ? this.packTranslucentTerrain : this.packGeometryTerrain;
         if (terrain == null) return;
@@ -1697,6 +1726,14 @@ public class ChimeraMainPass implements MainPass {
             }
         }
         if (runEarlyPost) {
+            // Deferred passes read depthtex0 here, before translucents: the
+            // opaque depth. finishLevelSegment re-captures it for composite.
+            if (this.packFrameSchedule.earlyReadsDepthtex0()
+                    && this.packDepthTargets.isConfigured()
+                    && !this.packDepthTargets.captureOpaqueScene(
+                            commandBuffer, this.hdrFramebuffer.getDepthAttachment())) {
+                LOGGER.warn("[chimera] pack depth graph: early depthtex0 capture unavailable");
+            }
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
                 hdrColor.transitionImageLayout(stack, commandBuffer,
@@ -1704,6 +1741,11 @@ public class ChimeraMainPass implements MainPass {
                 runPackPostWindow(commandBuffer, hdrColor,
                         PackFrameSchedulePlan.PostWindow.EARLY);
                 this.packEarlyPostCompleted = true;
+                // Translucents, particles and the rest of the world compose
+                // over the deferred result, as they do over Iris' colortex0.
+                if (this.packPostChainActive) {
+                    this.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
+                }
                 hdrColor.transitionImageLayout(stack, commandBuffer,
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             }
@@ -2752,6 +2794,8 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentPipeline = null;
         this.packTranslucentSlots = null;
         this.packTranslucentTerrain = null;
+        this.packTranslucentSuspended = false;
+        this.packTranslucentSuspendLogged = false;
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
         this.packEntityPipeline = null;
@@ -3446,8 +3490,9 @@ public class ChimeraMainPass implements MainPass {
                     yield depth == null && entry.resourceKey().equals("depthtex0") && this.hdrFramebuffer != null
                             ? this.hdrFramebuffer.getDepthAttachment() : depth;
                 }
-                case SHADOW_DEPTH -> this.shadowMap.getShadowFramebuffer() == null
-                        ? null : this.shadowMap.getShadowFramebuffer().getDepthAttachment();
+                case SHADOW_DEPTH -> this.shadowMap.getShadowFramebuffer() == null ? null
+                        : entry.resourceKey().equals("shadowtex1") ? this.shadowMap.opaqueDepth()
+                        : this.shadowMap.getShadowFramebuffer().getDepthAttachment();
                 case SHADOW_COLOR -> this.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
                 case PACK_TEXTURE -> this.packResourceOwner == null ? null : this.packResourceOwner.image(entry.resourceKey());
                 case ADVANCED_IMAGE -> this.packAdvancedImageOwner == null ? null : this.packAdvancedImageOwner.image(entry.resourceKey());
@@ -3507,6 +3552,27 @@ public class ChimeraMainPass implements MainPass {
         return bindProgramImages(pipeline, this.packPostTargets.sourceImages(),
                 this.hdrFramebuffer == null ? null : this.hdrFramebuffer.getColorAttachment(),
                 DrawMaterialContext.captureLive());
+    }
+
+    /**
+     * True when every pack target and depth snapshot the water program samples
+     * holds this frame's data. A failed early window or depth capture leaves
+     * one invalid, and the manifest resolver would then reject the draw.
+     */
+    private boolean packTranslucentInputsReady(PackPipelines.PackTerrain water) {
+        ProgramImages program = this.programImages.get(water.pipeline());
+        if (program == null) return false;
+        for (ProgramImageBindingManifest.Entry entry : program.manifest().entries()) {
+            boolean ready = switch (entry.kind()) {
+                case COLOR_TARGET -> this.packPostTargets.isConfigured()
+                        && this.packPostTargets.currentTargetAvailable(
+                                PackResourcePlan.targetIndex(entry.resourceKey()));
+                case DEPTH_TARGET -> this.packDepthTargets.image(entry.resourceKey()) != null;
+                default -> true;
+            };
+            if (!ready) return false;
+        }
+        return true;
     }
 
     /** Called before opening attachments, including host geometry render passes. */

@@ -297,6 +297,27 @@ public final class PackPostTargets {
         }
     }
 
+    /**
+     * Makes the live HDR image colortex0 again after an early (deferred)
+     * window. A deferred pass writes colortex0 to a graph image, but the
+     * world keeps drawing into the HDR image, so the deferred result is
+     * copied there and the HDR image becomes the identity source. Iris has
+     * one colortex0 for the whole frame; this restores that contract.
+     */
+    public void adoptTarget0(VkCommandBuffer commandBuffer, VulkanImage hdrColor) {
+        if (!this.configured || hdrColor == null || !this.valid[0]
+                || this.sourceImages[0] == null || this.sourceImages[0] == hdrColor) {
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            copyImage(stack, commandBuffer, this.sourceImages[0], hdrColor);
+        }
+        trace("adoptTarget0 source=" + imageId(this.sourceImages[0]) + " hdr=" + imageId(hdrColor));
+        this.hdrIdentitySource = hdrColor;
+        this.sourceImages[0] = hdrColor;
+        this.valid[0] = false;
+    }
+
     public void abortGeometry(VulkanImage hdrColor) {
         this.sourceImages[0] = hdrColor == null ? this.hdrIdentitySource : hdrColor;
         this.valid[0] = false;

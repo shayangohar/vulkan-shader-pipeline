@@ -176,6 +176,18 @@ public final class PackPlanBuilder {
                 && (targetPlan == null || targetPlan.executable())
                 && (geometryOutputPlan == null || geometryOutputPlan.executable())
                 && alphaTestPlan.valid();
+        if (stage == UniformRegistry.Stage.TRANSLUCENT && geometryOutputPlan != null) {
+            // A translucent draw samples pack targets as shader-read images
+            // while its own outputs are colour attachments; one image cannot
+            // be both inside a render pass.
+            for (UniformRegistry.SamplerBinding sampler : interfacePlan.effective(stage).samplers()) {
+                Integer target = PackResourcePlan.targetIndex(sampler.name());
+                if (target != null && geometryOutputPlan.targetSlots().contains(target)) {
+                    deviations.add("TRANSLUCENT_TARGET_FEEDBACK:colortex" + target);
+                    executable = false;
+                }
+            }
+        }
         if (stage == UniformRegistry.Stage.SHADOW) {
             PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
             for (String deviation : shadowOutputs.deviations()) {
@@ -385,6 +397,7 @@ public final class PackPlanBuilder {
                         .withPackConstants(config == null ? Map.of() : config.shaderConstants())
                         .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(program.name(),
                                 interfacePlan.project("fragment", stage), config == null ? null : config.settings()))
+                        .withAlphaTestPlan(vertex != null ? alphaTestPlan : PackAlphaTestPlan.disabled())
                         .convert();
                 if (convertedFragment == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -482,24 +495,33 @@ public final class PackPlanBuilder {
             }
         }
 
-        if (program.name().equals("gbuffers_terrain") && executable && vertex != null) {
+        boolean terrainFamily = program.name().equals("gbuffers_terrain")
+                || program.name().equals("gbuffers_water");
+        if (terrainFamily && executable && vertex != null) {
             String applied = alphaTestPlan.appliedDeviation(program.name());
             if (!applied.isBlank()) deviations.add(applied);
-        } else if (program.name().equals("gbuffers_terrain")
-                && vertex == null
+        } else if (terrainFamily
+                && (vertex == null || program.name().equals("gbuffers_water"))
                 && alphaTestPlan.configured()
                 && (alphaTestPlan.active() || !alphaTestPlan.valid())) {
-            deviations.add("ALPHA_TEST_PLANNED_NOT_INSTALLED:gbuffers_terrain");
-        } else if (program.name().equals("gbuffers_water")
-                && alphaTestPlan.configured()
-                && (alphaTestPlan.active() || !alphaTestPlan.valid())) {
-            deviations.add("ALPHA_TEST_PLANNED_NOT_INSTALLED:gbuffers_water");
+            deviations.add("ALPHA_TEST_PLANNED_NOT_INSTALLED:" + program.name());
+        }
+
+        // Blend directives reach the per-attachment state of the world MRT
+        // pipelines; other programs keep the directive as a named gap.
+        PackBlendPlan blendPlan = PackBlendPlan.forProgram(program.name(),
+                config == null ? PackSettingsPlan.empty() : config.settings());
+        if (blendPlan.overridesAnything() && geometryOutputPlan == null) {
+            deviations.add("BLEND_DIRECTIVE_UNSUPPORTED:" + program.name());
+            blendPlan = PackBlendPlan.empty();
+        } else {
+            deviations.addAll(blendPlan.deviations());
         }
 
         return new PackProgramPlan(program, stages, interfacePlan, stageInterfaces,
                 varyingLocations, targetPlan, convertedFragment, convertedVertex,
                 vertexLayout, deviations, executable,
-                familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan);
+                familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan);
     }
 
     private static Map<String, Integer> postVaryingLocations(

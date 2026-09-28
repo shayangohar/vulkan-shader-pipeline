@@ -244,10 +244,10 @@ public final class PackResourcePlan {
         }
         if (canonical.startsWith("shadowtex")) {
             if (!canonical.equals("shadowtex0")) {
-                if (canonical.equals("shadowtex1")
-                        && UniformRegistry.GEOMETRY_NAME_TO_SLOT.containsKey(name)) {
+                if (canonical.equals("shadowtex1")) {
+                    // Its own image: the casters drawn before translucent terrain.
                     deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
-                    return new PackResourceBinding(program, name, "shadowtex0",
+                    return new PackResourceBinding(program, name, "shadowtex1",
                             PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
                             PackResourceStatus.HOST_ALIAS, deviations);
                 }

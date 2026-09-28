@@ -541,9 +541,7 @@ public final class LegacyGlslConverter {
             src = stripUnusedConsumedConsts(src, packConstants);
             src = KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
-            if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT) {
-                src = replaceTranslucentUniformNames(src, interfacePlan);
-            } else if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
+            if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
                     || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
                     || interfacePlan.stage() == UniformRegistry.Stage.HAND) {
                 src = removeEntityIdDeclarations(src, interfacePlan);
@@ -572,8 +570,6 @@ public final class LegacyGlslConverter {
                     || interfacePlan.stage() == UniformRegistry.Stage.HAND
                     || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE)
                     ? (interfacePlan.executableUniforms().isEmpty() ? 2 : 3)
-                    : interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
-                    ? GEOMETRY_SAMPLER_BINDING_BASE
                     : (interfacePlan.stage() == UniformRegistry.Stage.SHADOW
                     && !interfacePlan.executableUniforms().isEmpty()
                     ? GEOMETRY_SAMPLER_BINDING_BASE + 1
@@ -591,8 +587,7 @@ public final class LegacyGlslConverter {
             }
             src = expandSamplerAliases(src, samplers);
             src = convertTextureCalls(src);
-            if (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
-                    || interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT) {
+            if (terrainContract(interfacePlan.stage())) {
                 Set<String> emittedAtlasSamplers = new java.util.HashSet<>();
                 for (String name : atlasSamplers) {
                     emittedAtlasSamplers.add(name.equals("texture") ? "chimeraTexture" : name);
@@ -654,7 +649,7 @@ public final class LegacyGlslConverter {
             }
 
             String terrainHostInstance = null;
-            if (geometryStage && interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
+            if (geometryStage && terrainContract(interfacePlan.stage())
                     && geometryOutputPlan != null && alpha.active()) {
                 terrainHostInstance = alpha.needsHostThreshold()
                         ? GlslTokenRewriter.uniqueIdentifier(src, "chimeraTerrainHost") : null;
@@ -674,7 +669,7 @@ public final class LegacyGlslConverter {
                     && !interfacePlan.executableUniforms().isEmpty()) {
                 uniformBlock = generatedShadowUniformBlock(interfacePlan.executableUniforms());
                 src = qualifyShadowUniformReferences(src, interfacePlan.executableUniforms());
-            } else if (geometryStage && interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY) {
+            } else if (geometryStage && terrainContract(interfacePlan.stage())) {
                 StringBuilder geometryBlocks = new StringBuilder();
                 if (terrainHostInstance != null) {
                     geometryBlocks.append(terrainHostUniformBlock(src, terrainHostInstance));
@@ -683,9 +678,6 @@ public final class LegacyGlslConverter {
                     geometryBlocks.append(generatedGeometryUniformBlock(interfacePlan.executableUniforms()));
                 }
                 uniformBlock = geometryBlocks.toString();
-            } else if (interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
-                    && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = terrainUniformBlock();
             } else if ((interfacePlan.stage() == UniformRegistry.Stage.ENTITY
                     || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
                     || interfacePlan.stage() == UniformRegistry.Stage.HAND
@@ -1631,20 +1623,16 @@ public final class LegacyGlslConverter {
         return geometryStage ? UniformRegistry.Stage.GEOMETRY : UniformRegistry.Stage.POST;
     }
 
-    private static String replaceTranslucentUniformNames(
-            String source,
-            UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        String result = source;
-        for (UniformRegistry.UniformDeclaration uniform : interfacePlan.executableUniforms()) {
-            String fixedField = UniformRegistry.translucentUniformField(uniform.name());
-            if (fixedField == null || fixedField.equals(uniform.name())) {
-                continue;
-            }
-            result = result.replaceAll("\\b" + Pattern.quote(uniform.name()) + "\\b", fixedField);
-        }
-        return result;
+    /**
+     * gbuffers_terrain and gbuffers_water share one terrain contract: the
+     * terrain vertex inputs, the generated pack uniform block at binding 3,
+     * the host terrain block at binding 1, and the terrain alpha test. They
+     * differ only in the sampled inputs their stage table admits.
+     */
+    static boolean terrainContract(UniformRegistry.Stage stage) {
+        return stage == UniformRegistry.Stage.GEOMETRY || stage == UniformRegistry.Stage.TRANSLUCENT;
     }
+
     /** Position of the sampler's registry slot in the emitted geometry config array. */
     private static int configIndexOf(
             String name,
@@ -1673,7 +1661,9 @@ public final class LegacyGlslConverter {
                 || stage == UniformRegistry.Stage.BLOCK
                 || stage == UniformRegistry.Stage.HAND
                 || stage == UniformRegistry.Stage.PARTICLE)
-                ? UniformRegistry.ENTITY_NAME_TO_SLOT : UniformRegistry.GEOMETRY_NAME_TO_SLOT;
+                ? UniformRegistry.ENTITY_NAME_TO_SLOT
+                : stage == UniformRegistry.Stage.TRANSLUCENT
+                ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT : UniformRegistry.GEOMETRY_NAME_TO_SLOT;
         Integer slotValue = mapping.get(name);
         if (slotValue == null && interfacePlan != null) {
             slotValue = interfacePlan.samplers().stream()
@@ -1749,25 +1739,6 @@ public final class LegacyGlslConverter {
                     .append(uniform.name()).append(";\n");
         }
         return block.append("};\n").toString();
-    }
-
-    /** Exact layout of the host terrain UBO at binding 1. */
-    private static String terrainUniformBlock() {
-        return """
-                layout(binding = 1) uniform ChimeraTerrainUniforms {
-                    vec4 FogColor;
-                    float FogEnvironmentalStart;
-                    float FogEnvironmentalEnd;
-                    float FogRenderDistanceStart;
-                    float FogRenderDistanceEnd;
-                    float FogSkyEnd;
-                    float FogCloudsEnd;
-                    float AlphaCutout;
-                    ivec2 TextureSize;
-                    vec2 TexelSize;
-                    int UseRgss;
-                };
-                """;
     }
 
     /** Exact binding-1 layout, with an instance reserved for generated alpha testing. */
@@ -2919,8 +2890,6 @@ public final class LegacyGlslConverter {
         int bindingBase = shadowStage
                 ? GEOMETRY_SAMPLER_BINDING_BASE
                 + (!interfacePlan.executableUniforms().isEmpty() ? 1 : 0)
-                : interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
-                ? GEOMETRY_SAMPLER_BINDING_BASE
                 : GEOMETRY_SAMPLER_BINDING_BASE
                 + (!interfacePlan.executableUniforms().isEmpty() ? 1 : 0);
         for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {

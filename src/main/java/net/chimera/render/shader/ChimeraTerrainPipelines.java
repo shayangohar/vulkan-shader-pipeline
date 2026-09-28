@@ -42,6 +42,8 @@ public final class ChimeraTerrainPipelines {
     private static GraphicsPipeline geometryOverride;
     /** Pack water program installed only over the host translucent terrain lane; null = none. */
     private static GraphicsPipeline translucentOverride;
+    /** True for one translucent draw whose pack inputs are not live this frame. */
+    private static boolean translucentOverrideSuspended;
 
     private ChimeraTerrainPipelines() {}
 
@@ -106,7 +108,8 @@ public final class ChimeraTerrainPipelines {
 
     /** Selects the family override while preserving the fixed Chimera fallback. */
     public static GraphicsPipeline getTerrainPipeline(TerrainRenderType renderType) {
-        if (renderType == TerrainRenderType.TRANSLUCENT && translucentOverride != null) {
+        if (renderType == TerrainRenderType.TRANSLUCENT && translucentOverride != null
+                && !translucentOverrideSuspended) {
             return translucentOverride;
         }
         return renderType == TerrainRenderType.TRANSLUCENT ? fixedPipeline() : getTerrainPipeline();
@@ -143,6 +146,7 @@ public final class ChimeraTerrainPipelines {
     /** Installs/clears the pack water override without affecting opaque terrain. */
     public static void setTranslucentOverride(GraphicsPipeline pipeline) {
         translucentOverride = pipeline;
+        translucentOverrideSuspended = false;
         ChimeraMod.LOGGER.info("[chimera] translucent override: {}",
                 pipeline != null ? "installed" : "cleared");
         if (!initialized) {
@@ -151,6 +155,15 @@ public final class ChimeraTerrainPipelines {
         if (extendedMode) {
             PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         }
+    }
+
+    /**
+     * Routes one translucent layer draw to the fixed Chimera pipeline while
+     * the pack water program's sampled inputs are unavailable. The main pass
+     * sets it at the layer's head and clears it at its return.
+     */
+    public static void suspendTranslucentOverride(boolean suspended) {
+        translucentOverrideSuspended = suspended;
     }
 
     public static boolean isExtendedMode() {

@@ -463,26 +463,21 @@ public final class ConformanceHarness {
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
                 waterProgram.fragmentSource(), UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(interfacePlan.executable(), "m5.5 water interface is not executable");
+        // M8.8: water plans on the terrain contract, so its uniforms are the
+        // live Iris catalog (atlasSize, fogStart), not host UBO field aliases.
         assertEquals(List.of(
+                        new UniformRegistry.UniformDeclaration("atlasSize", "ivec2"),
                         new UniformRegistry.UniformDeclaration("fogColor", "vec4"),
                         new UniformRegistry.UniformDeclaration("fogEnd", "float"),
-                        new UniformRegistry.UniformDeclaration("fogStart", "float"),
-                        new UniformRegistry.UniformDeclaration("texelSize", "vec2"),
-                        new UniformRegistry.UniformDeclaration("textureSize", "ivec2")),
+                        new UniformRegistry.UniformDeclaration("fogStart", "float")),
                 interfacePlan.uniforms(), "m5.5 water uniform ordering");
         assertEquals(List.of(
                         new UniformRegistry.SamplerBinding("texture", 0),
                         new UniformRegistry.SamplerBinding("lightmap", 2),
                         new UniformRegistry.SamplerBinding("shadowtex0", 5)),
                 interfacePlan.samplers(), "m5.5 water sampler bindings");
-        assertTrue(interfacePlan.deviations().contains("TRANSLUCENT_FIXED_UNIFORM_BRIDGE"),
-                "m5.5 fixed fog bridge deviation is missing");
-        assertEquals("FogRenderDistanceStart",
-                UniformRegistry.translucentUniformField("fogStart"),
-                "m5.5 fogStart alias");
-        assertEquals("TextureSize",
-                UniformRegistry.translucentUniformField("textureSize"),
-                "m5.5 textureSize alias");
+        assertTrue(interfacePlan.deviations().contains("LIVE_UNIFORM_BRIDGE"),
+                "m5.5 water live uniform bridge deviation is missing");
 
         LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertTerrainVertex(
                 waterProgram.vertexSource(), waterProgram.vertexPath(), waterProgram.fragmentSource());
@@ -494,17 +489,15 @@ public final class ConformanceHarness {
                 .withInterfacePlan(interfacePlan)
                 .convert();
         assertTrue(convertedFragment != null, "m5.5 water fragment conversion failed");
-        assertTrue(convertedFragment.contains("layout(binding = 1) uniform ChimeraTerrainUniforms"),
-                "m5.5 terrain UBO is missing");
-        assertTrue(convertedFragment.contains("FogRenderDistanceStart"),
-                "m5.5 fogStart alias was not rewritten");
+        assertTrue(convertedFragment.contains("layout(binding = 3) uniform ChimeraTerrainPackUniforms"),
+                "m5.5 terrain pack uniform block is missing");
         assertTrue(!convertedFragment.contains("uniform float fogStart"),
                 "m5.5 fogStart declaration was not removed");
-        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
+        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D chimeraTexture"),
                 "m5.5 water atlas binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
+        assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D lightmap"),
                 "m5.5 water lightmap binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D shadowtex0"),
+        assertTrue(convertedFragment.contains("layout(binding = 6) uniform sampler2D shadowtex0"),
                 "m5.5 water shadow binding is missing");
         assertTrue(convertedFragment.contains("layout(location = " + vertex.layout().location("renderType")
                         + ") in float renderType"),

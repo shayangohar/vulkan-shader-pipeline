@@ -54,12 +54,13 @@ public final class PackFrameSchedulePlan {
     private final boolean depthtex0;
     private final boolean depthtex1;
     private final boolean depthtex2;
+    private final boolean earlyDepthtex0;
     private final boolean handBeforeEarlyPost;
     private final boolean particlesBeforeLatePost;
     private final List<String> deviations;
 
     private PackFrameSchedulePlan(List<PostStage> postStages, boolean depthtex0,
-                                  boolean depthtex1, boolean depthtex2,
+                                  boolean depthtex1, boolean depthtex2, boolean earlyDepthtex0,
                                   boolean handBeforeEarlyPost, boolean particlesBeforeLatePost,
                                   List<String> deviations) {
         this.phases = List.copyOf(ORDER);
@@ -67,6 +68,7 @@ public final class PackFrameSchedulePlan {
         this.depthtex0 = depthtex0;
         this.depthtex1 = depthtex1;
         this.depthtex2 = depthtex2;
+        this.earlyDepthtex0 = earlyDepthtex0;
         this.handBeforeEarlyPost = handBeforeEarlyPost;
         this.particlesBeforeLatePost = particlesBeforeLatePost;
         this.deviations = deviations == null ? List.of()
@@ -75,13 +77,14 @@ public final class PackFrameSchedulePlan {
     }
 
     public static PackFrameSchedulePlan empty() {
-        return new PackFrameSchedulePlan(List.of(), false, false, false, false, true, List.of());
+        return new PackFrameSchedulePlan(List.of(), false, false, false, false, false, true, List.of());
     }
 
     public static PackFrameSchedulePlan build(List<PackProgramPlan> programs,
                                               PackTargetGraphPlan graph) {
         List<PostStage> stages = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
+        boolean[] earlyDepth0 = {false};
         boolean depth0 = graph != null && graph.depth().depthtex0();
         boolean depth1 = graph != null && graph.depth().depthtex1();
         boolean depth2 = graph != null && graph.depth().depthtex2();
@@ -95,19 +98,27 @@ public final class PackFrameSchedulePlan {
                             PostTargetPlan.programComparator()))
                     .forEach(program -> {
                         PostTargetPlan target = program.targetPlan();
-                        boolean requiresLateDepth = program.interfacePlan() != null
-                                && program.interfacePlan().effective(UniformRegistry.Stage.POST)
+                        List<String> samplers = program.interfacePlan() == null ? List.of()
+                                : program.interfacePlan().effective(UniformRegistry.Stage.POST)
                                 .samplers().stream()
-                                .map(UniformRegistry.SamplerBinding::name)
-                                .anyMatch(name -> name.equals("depthtex0")
-                                        || name.equals("depthtex2"));
+                                .map(UniformRegistry.SamplerBinding::name).toList();
+                        boolean deferred = program.name().startsWith("deferred");
+                        // Iris runs deferred passes between opaque and
+                        // translucent geometry, where depthtex0 is the opaque
+                        // depth. Only the pre-hand snapshot has no seam there.
+                        boolean requiresLateDepth = deferred
+                                ? samplers.contains("depthtex2")
+                                : samplers.contains("depthtex0") || samplers.contains("depthtex2");
                         PostWindow window = target.isFinal()
                                 ? PostWindow.FINAL
-                                : program.name().startsWith("deferred")
-                                && !requiresLateDepth
+                                : deferred && !requiresLateDepth
                                 ? PostWindow.EARLY : PostWindow.LATE;
                         if (requiresLateDepth && !target.isFinal()) {
                             deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
+                        }
+                        if (window == PostWindow.EARLY && samplers.contains("depthtex0")) {
+                            earlyDepth0[0] = true;
+                            deviations.add("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:" + program.name());
                         }
                         TargetStep step = graph == null ? null : graph.step(program.name());
                         List<Integer> inputs = step == null ? List.of() : step.readTargets();
@@ -132,7 +143,7 @@ public final class PackFrameSchedulePlan {
             deviations.add("SCHEDULE_LATE_POST_AFTER_WORLD");
         }
         deviations.add("HAND_PHASE_HOST_BOUNDARY");
-        return new PackFrameSchedulePlan(stages, depth0, depth1, depth2,
+        return new PackFrameSchedulePlan(stages, depth0, depth1, depth2, earlyDepth0[0],
                 false, true, deviations);
     }
 
@@ -141,6 +152,8 @@ public final class PackFrameSchedulePlan {
     public boolean requiresDepthtex0() { return depthtex0; }
     public boolean requiresDepthtex1() { return depthtex1; }
     public boolean requiresDepthtex2() { return depthtex2; }
+    /** An early (deferred) pass reads depthtex0, the opaque depth at that seam. */
+    public boolean earlyReadsDepthtex0() { return earlyDepthtex0; }
     public boolean handBeforeEarlyPost() { return handBeforeEarlyPost; }
     public boolean particlesBeforeLatePost() { return particlesBeforeLatePost; }
     public List<String> deviations() { return deviations; }
@@ -174,6 +187,7 @@ public final class PackFrameSchedulePlan {
     public String snapshot() {
         return "phases=" + phases + ";posts=" + postStages
                 + ";depth=" + List.of(depthtex0, depthtex1, depthtex2)
+                + ";earlyDepth0=" + earlyDepthtex0
                 + ";handBeforeEarly=" + handBeforeEarlyPost
                 + ";particlesBeforeLate=" + particlesBeforeLatePost
                 + ";deviations=" + deviations;

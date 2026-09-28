@@ -1,6 +1,7 @@
 package net.chimera.mixin;
 
 import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.shaderpack.PackBlendPlan;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.PipelineState;
 import org.lwjgl.system.MemoryStack;
@@ -16,10 +17,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.nio.IntBuffer;
 
 import static org.lwjgl.system.MemoryStack.stackGet;
+import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
 
 /**
  * Extends only Chimera's dynamic post pipeline variants to the number of
- * declared color attachments. Normal VulkanMod pipelines keep their original
+ * declared color attachments, with the pack's per-attachment blend
+ * directives. Normal VulkanMod pipelines keep their original
  * single-attachment behavior because the context is inactive for them.
  */
 @Mixin(value = GraphicsPipeline.class, remap = false)
@@ -84,20 +87,46 @@ public abstract class GraphicsPipelineMrtMixin {
     private VkPipelineColorBlendAttachmentState.Buffer chimera$copyBlendState(
             VkPipelineColorBlendAttachmentState.Buffer attachments
     ) {
-        if (MrtPipelineContext.colorFormats() == null || attachments.capacity() < 2) {
+        if (MrtPipelineContext.colorFormats() == null) {
             return attachments;
         }
-        VkPipelineColorBlendAttachmentState source = attachments.get(0);
-        for (int i = 1; i < attachments.capacity(); i++) {
+        PackBlendPlan.Mode[] blends = MrtPipelineContext.attachmentBlends();
+        if (attachments.capacity() < 2 && blends == null) {
+            return attachments;
+        }
+        // Every attachment starts from the host draw's blend (the vanilla
+        // render type's, as in Iris), then takes the pack's blend.<program>
+        // or blend.<program>.<buffer> mode where one is declared.
+        VkPipelineColorBlendAttachmentState host = attachments.get(0);
+        int writeMask = host.colorWriteMask();
+        boolean enabled = host.blendEnable();
+        int srcColor = host.srcColorBlendFactor();
+        int dstColor = host.dstColorBlendFactor();
+        int colorOp = host.colorBlendOp();
+        int srcAlpha = host.srcAlphaBlendFactor();
+        int dstAlpha = host.dstAlphaBlendFactor();
+        int alphaOp = host.alphaBlendOp();
+        for (int i = 0; i < attachments.capacity(); i++) {
             VkPipelineColorBlendAttachmentState target = attachments.get(i);
-            target.colorWriteMask(source.colorWriteMask());
-            target.blendEnable(source.blendEnable());
-            target.srcColorBlendFactor(source.srcColorBlendFactor());
-            target.dstColorBlendFactor(source.dstColorBlendFactor());
-            target.colorBlendOp(source.colorBlendOp());
-            target.srcAlphaBlendFactor(source.srcAlphaBlendFactor());
-            target.dstAlphaBlendFactor(source.dstAlphaBlendFactor());
-            target.alphaBlendOp(source.alphaBlendOp());
+            PackBlendPlan.Mode mode = blends == null || i >= blends.length ? null : blends[i];
+            target.colorWriteMask(writeMask);
+            if (mode == null) {
+                target.blendEnable(enabled);
+                target.srcColorBlendFactor(srcColor);
+                target.dstColorBlendFactor(dstColor);
+                target.colorBlendOp(colorOp);
+                target.srcAlphaBlendFactor(srcAlpha);
+                target.dstAlphaBlendFactor(dstAlpha);
+                target.alphaBlendOp(alphaOp);
+            } else {
+                target.blendEnable(mode.enabled());
+                target.srcColorBlendFactor(mode.srcColor());
+                target.dstColorBlendFactor(mode.dstColor());
+                target.colorBlendOp(VK_BLEND_OP_ADD);
+                target.srcAlphaBlendFactor(mode.srcAlpha());
+                target.dstAlphaBlendFactor(mode.dstAlpha());
+                target.alphaBlendOp(VK_BLEND_OP_ADD);
+            }
         }
         return attachments;
     }
