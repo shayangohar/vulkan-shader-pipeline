@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -196,11 +197,12 @@ public final class PackResourcePlan {
                         declaration.source(), resolvedSlot, filter, wrap,
                         PackResourceStatus.GAME_RESOURCE, deviations);
             }
-            if (resolvePath(shadersDir, declaration.source()) != null) {
+            Path packFile = resolvePath(shadersDir, declaration.source());
+            if (packFile != null) {
                 deviations.add("PACK_TEXTURE_APPLIED:" + key);
                 return new PackResourceBinding(program, name, key, kind,
-                        declaration.source(), resolvedSlot, filter, wrap,
-                        PackResourceStatus.PACK_FILE, deviations);
+                        declaration.source(), resolvedSlot, mcmetaFilter(packFile, filter),
+                        mcmetaWrap(packFile, wrap), PackResourceStatus.PACK_FILE, deviations);
             }
             deviations.add(isUnsafePath(declaration.source())
                     ? "PACK_TEXTURE_PATH_UNSAFE:" + key
@@ -269,12 +271,12 @@ public final class PackResourcePlan {
         }
         if (canonical.equals("noisetex")) {
             String source = "tex/noise.png";
-            boolean exists = resolvePath(shadersDir, source) != null;
-            if (exists) {
+            Path packFile = resolvePath(shadersDir, source);
+            if (packFile != null) {
                 deviations.add("PACK_TEXTURE_APPLIED:noisetex");
                 return new PackResourceBinding(program, name, "noisetex",
-                        PackResourceKind.NOISE, source, 7, "linear", "repeat",
-                        PackResourceStatus.PACK_FILE, deviations);
+                        PackResourceKind.NOISE, source, 7, mcmetaFilter(packFile, "linear"),
+                        mcmetaWrap(packFile, "repeat"), PackResourceStatus.PACK_FILE, deviations);
             }
             deviations.add(isUnsafePath(source)
                     ? "PACK_TEXTURE_PATH_UNSAFE:noisetex"
@@ -449,6 +451,36 @@ public final class PackResourcePlan {
         Path path = root.resolve(normalized).normalize();
         if (!path.startsWith(root) || !Files.isRegularFile(path)) return null;
         return path;
+    }
+
+    /**
+     * A pack texture's sampling, as Iris reads it: {@code <file>.mcmeta}'s
+     * {@code texture.blur} selects linear filtering and {@code texture.clamp}
+     * clamp-to-edge. Without the file, or without a key, the default stands.
+     */
+    static String mcmetaFilter(Path file, String fallback) {
+        Boolean blur = mcmetaFlag(file, "blur");
+        return blur == null ? fallback : blur ? "linear" : "nearest";
+    }
+
+    static String mcmetaWrap(Path file, String fallback) {
+        Boolean clamp = mcmetaFlag(file, "clamp");
+        return clamp == null ? fallback : clamp ? "clamp" : "repeat";
+    }
+
+    private static Boolean mcmetaFlag(Path file, String key) {
+        Path meta = file == null ? null : file.resolveSibling(file.getFileName() + ".mcmeta");
+        if (meta == null || !Files.isRegularFile(meta)) return null;
+        try {
+            JsonObject root = com.google.gson.JsonParser.parseString(
+                    Files.readString(meta, StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject texture = root.has("texture") && root.get("texture").isJsonObject()
+                    ? root.getAsJsonObject("texture") : null;
+            return texture != null && texture.has(key) && texture.get(key).isJsonPrimitive()
+                    ? texture.get(key).getAsBoolean() : null;
+        } catch (IOException | RuntimeException malformed) {
+            return null;
+        }
     }
 
     private static boolean isUnsafePath(String source) {

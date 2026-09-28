@@ -61,7 +61,8 @@ public final class PackResourceOwner implements AutoCloseable {
             throws IOException {
         Path path = PackResourcePlan.resolvePath(shadersDir, binding.source());
         if (path == null) return null;
-        return PackNoiseTexture.load(path, "chimera_pack_" + binding.resourceKey());
+        return PackNoiseTexture.load(path, "chimera_pack_" + binding.resourceKey(),
+                binding.filter(), binding.wrap());
     }
 
     private static PackNoiseTexture loadGameResource(PackResourceBinding binding) throws IOException {
@@ -77,7 +78,8 @@ public final class PackResourceOwner implements AutoCloseable {
         Optional<Resource> resource = client.getResourceManager().getResource(location);
         if (resource.isEmpty()) return null;
         try (InputStream input = resource.get().open()) {
-            return PackNoiseTexture.load(input, "chimera_pack_" + binding.resourceKey());
+            return PackNoiseTexture.load(input, "chimera_pack_" + binding.resourceKey(),
+                    binding.filter(), binding.wrap());
         }
     }
 

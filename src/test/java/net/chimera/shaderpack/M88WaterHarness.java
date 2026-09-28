@@ -56,6 +56,7 @@ public final class M88WaterHarness {
         verifyWorldDepthGraph();
         verifyBlendDirectives();
         verifyOptionFile();
+        verifyTextureMcmeta();
         String complementary = System.getProperty("chimera.m88.water.complementary");
         String bsl = System.getProperty("chimera.m88.water.bsl");
         if (complementary != null && !complementary.isBlank()) {
@@ -217,6 +218,25 @@ public final class M88WaterHarness {
                 + water.geometryOutputPlan().targetSlots() + " manifest=" + entries.size()
                 + " early=" + schedule.stages(PackFrameSchedulePlan.PostWindow.EARLY).stream()
                 .map(PackFrameSchedulePlan.PostStage::name).toList());
+    }
+
+    /**
+     * Pack textures sample as their .mcmeta says (BSL's noise.png: blur=true).
+     * BSL differences neighbouring noise texels for water normals, so nearest
+     * sampling made the surface blocky.
+     */
+    private static void verifyTextureMcmeta() throws Exception {
+        Path dir = java.nio.file.Files.createTempDirectory("m88-mcmeta");
+        Path noise = dir.resolve("noise.png");
+        java.nio.file.Files.writeString(noise, "");
+        assertTrue(PackResourcePlan.mcmetaFilter(noise, "nearest").equals("nearest")
+                        && PackResourcePlan.mcmetaWrap(noise, "repeat").equals("repeat"),
+                "a texture without .mcmeta lost its default sampling");
+        java.nio.file.Files.writeString(dir.resolve("noise.png.mcmeta"),
+                "{\"texture\": {\"blur\": true, \"clamp\": true}}");
+        assertTrue(PackResourcePlan.mcmetaFilter(noise, "nearest").equals("linear")
+                        && PackResourcePlan.mcmetaWrap(noise, "repeat").equals("clamp"),
+                ".mcmeta blur/clamp were not applied");
     }
 
     /**

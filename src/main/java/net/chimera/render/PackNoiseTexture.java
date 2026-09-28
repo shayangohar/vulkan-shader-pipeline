@@ -5,7 +5,15 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.vulkanmod.render.engine.VkGpuTexture;
 import net.vulkanmod.render.engine.VkTextureView;
+import net.vulkanmod.vulkan.texture.SamplerInfo;
+import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+
+import static org.lwjgl.vulkan.VK10.VK_FILTER_LINEAR;
+import static org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST;
+import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_REPEAT;
+import static org.lwjgl.vulkan.VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -30,19 +38,16 @@ public final class PackNoiseTexture implements AutoCloseable {
         this.image = image;
     }
 
-    public static PackNoiseTexture load(Path path) throws IOException {
+    /** Loads with the binding's planned sampling ("linear"/"nearest", "repeat"/"clamp"). */
+    public static PackNoiseTexture load(Path path, String name, String filter, String wrap)
+            throws IOException {
         try (InputStream input = Files.newInputStream(path)) {
-            return load(input, "chimera_pack_noise");
+            return load(input, name, filter, wrap);
         }
     }
 
-    public static PackNoiseTexture load(Path path, String name) throws IOException {
-        try (InputStream input = Files.newInputStream(path)) {
-            return load(input, name);
-        }
-    }
-
-    public static PackNoiseTexture load(InputStream input, String name) throws IOException {
+    public static PackNoiseTexture load(InputStream input, String name, String filter, String wrap)
+            throws IOException {
         if (input == null) {
             throw new IOException("texture input is missing");
         }
@@ -73,6 +78,15 @@ public final class PackNoiseTexture implements AutoCloseable {
             if (image == null) {
                 throw new IOException("noise texture has no Vulkan image");
             }
+            // DynamicTexture samples nearest/repeat. A pack's water normals
+            // difference neighbouring noise texels, so nearest made them blocky.
+            boolean linear = !"nearest".equals(filter);
+            int vkFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+            image.setSampler(SamplerManager.getSampler(SamplerInfo.builder()
+                    .setAddressMode("clamp".equals(wrap)
+                            ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT)
+                    .setFiltering(vkFilter, vkFilter, VK_SAMPLER_MIPMAP_MODE_NEAREST)
+                    .createSamplerInfo()));
             return new PackNoiseTexture(texture, image);
         } catch (RuntimeException | IOException e) {
             texture.close();
