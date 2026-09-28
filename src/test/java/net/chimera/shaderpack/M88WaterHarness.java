@@ -55,6 +55,7 @@ public final class M88WaterHarness {
         verifyDeferredSchedule();
         verifyWorldDepthGraph();
         verifyBlendDirectives();
+        verifyOptionFile();
         String complementary = System.getProperty("chimera.m88.water.complementary");
         String bsl = System.getProperty("chimera.m88.water.bsl");
         if (complementary != null && !complementary.isBlank()) {
@@ -215,6 +216,71 @@ public final class M88WaterHarness {
                 + water.geometryOutputPlan().targetSlots() + " manifest=" + entries.size()
                 + " early=" + schedule.stages(PackFrameSchedulePlan.PostWindow.EARLY).stream()
                 .map(PackFrameSchedulePlan.PostStage::name).toList());
+    }
+
+    /**
+     * Iris keeps a pack's options in <pack>.txt beside the zip; Chimera reads
+     * the same file so both renderers run one option set. JVM
+     * chimera.option.* properties win over the file.
+     */
+    private static void verifyOptionFile() throws Exception {
+        Path dir = java.nio.file.Files.createTempDirectory("m88-options");
+        Path pack = dir.resolve("Example_r1.zip");
+        String previous = System.getProperty("chimera.option.WATER_STYLE");
+        try {
+            java.nio.file.Files.writeString(pack, "");
+            assertTrue(PackOptionSources.optionFile(pack) == null
+                            && PackOptionSources.fileValues(pack).isEmpty(),
+                    "a pack without an option file produced options");
+            java.nio.file.Files.writeString(dir.resolve("Example_r1.zip.txt"),
+                    "#Iris options\nWATER_STYLE=2\nRP_MODE=3\nSHADOW_QUALITY=1\n");
+            assertTrue(PackOptionSources.fileValues(pack).equals(
+                            Map.of("WATER_STYLE", "2", "RP_MODE", "3", "SHADOW_QUALITY", "1")),
+                    "option file values: " + PackOptionSources.fileValues(pack));
+            System.setProperty("chimera.option.WATER_STYLE", "3");
+            Map<String, String> merged = PackOptionSources.overrides(pack);
+            assertTrue("3".equals(merged.get("WATER_STYLE")) && "3".equals(merged.get("RP_MODE")),
+                    "JVM options must override the option file: " + merged);
+            verifyToggleOptions();
+        } finally {
+            if (previous == null) System.clearProperty("chimera.option.WATER_STYLE");
+            else System.setProperty("chimera.option.WATER_STYLE", previous);
+            try (var paths = java.nio.file.Files.walk(dir)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            }
+        }
+    }
+
+    /**
+     * Iris writes toggle options as true/false. false must leave the macro
+     * undefined even though the pack source defines it; true must define a
+     * toggle the source leaves commented out.
+     */
+    private static void verifyToggleOptions() {
+        String source = """
+                #version 120
+                #define SOURCE_ON
+                //#define SOURCE_OFF
+                #ifdef SOURCE_ON
+                int sourceOn;
+                #endif
+                #ifdef SOURCE_OFF
+                int sourceOff;
+                #endif
+                void main() {}
+                """;
+        PackProgram program = new PackProgram("composite", source, null);
+        PackSettingsPlan settings = PackSettingsPlan.parse(List.of(program), null,
+                Map.of("SOURCE_ON", "false", "SOURCE_OFF", "true"));
+        assertTrue(!settings.preprocessorDefines().containsKey("SOURCE_ON")
+                        && "1".equals(settings.preprocessorDefines().get("SOURCE_OFF")),
+                "toggle defines: " + settings.preprocessorDefines());
+        ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(null, null, source,
+                PackEngineDefines.forPack(settings.preprocessorDefines()),
+                PackEngineDefines.lockedNames(settings.overriddenNames(), false, false));
+        assertTrue(prepared.source() != null && !prepared.source().contains("sourceOn")
+                        && prepared.source().contains("sourceOff"),
+                "toggle options did not follow Iris true/false: " + prepared.source());
     }
 
     /**

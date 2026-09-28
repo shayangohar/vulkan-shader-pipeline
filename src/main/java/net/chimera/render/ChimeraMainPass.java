@@ -2627,6 +2627,9 @@ public class ChimeraMainPass implements MainPass {
                 ? this.packSource : PackSource.loadResult(dir, this.currentDimension);
         this.packSource = result;
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
+        Path optionFile = net.chimera.shaderpack.PackOptionSources.optionFile(dir);
+        LOGGER.info("[chimera] pack options: file={}, applied={}", optionFile == null ? "none" : optionFile,
+                net.chimera.shaderpack.PackOptionSources.overrides(dir));
         this.conformanceReport = analysis.report();
         this.packPrograms = result.programs();
         this.packConfig = analysis.config() != null

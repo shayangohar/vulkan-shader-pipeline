@@ -79,7 +79,8 @@ public final class PackProbe {
     public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
         String packName = logicalPackName(packPath);
         Path shadersDir = loaded.shadersDir();
-        PackSettingsPlan settingsPlan = PackSettingsPlan.parse(loaded.rawProgramsAllVariants(), shadersDir);
+        PackSettingsPlan settingsPlan = PackSettingsPlan.parse(loaded.rawProgramsAllVariants(), shadersDir,
+                PackOptionSources.overrides(packPath));
         loaded.prepare(
                 PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
                 PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false, false));

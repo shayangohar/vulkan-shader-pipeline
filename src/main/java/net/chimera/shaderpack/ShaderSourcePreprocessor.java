@@ -111,6 +111,7 @@ public final class ShaderSourcePreprocessor {
         private final StringBuilder output = new StringBuilder();
         private final PackConditionals.State conditionState;
         private final Map<String, String> lockedMacros;
+        private final Set<String> lockedUndefined = new java.util.TreeSet<>();
         private final Set<Path> includeStack = new HashSet<>();
         private final Set<String> deviations = new TreeSet<>();
         private final Set<String> dependencies = new TreeSet<>();
@@ -134,6 +135,10 @@ public final class ShaderSourcePreprocessor {
                         String value = initialMacros == null ? null : initialMacros.get(name);
                         if (value != null && !value.isBlank()) {
                             this.lockedMacros.put(name, value.trim());
+                        } else {
+                            // A locked name without a value is an option
+                            // switched off: the source may not define it.
+                            this.lockedUndefined.add(name);
                         }
                     }
                 }
@@ -280,6 +285,9 @@ public final class ShaderSourcePreprocessor {
             String definition = value == null || value.isBlank() ? "1" : normalize(value);
             if (lockedMacros.containsKey(name)) {
                 emitLockedDefinitions();
+                return;
+            }
+            if (lockedUndefined.contains(name)) {
                 return;
             }
             emitDefinition(name, argument, definition);

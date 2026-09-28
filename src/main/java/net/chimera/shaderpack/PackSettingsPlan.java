@@ -59,7 +59,6 @@ record PackSettingsPlan(
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");
     private static final Set<String> SUPPORTED_FEATURES = Set.of(
             "LEGACY_GLSL", "COMPOSITE", "GBUFFERS", "SHADOWS", "WATER", "ENTITIES");
-    private static final String OPTION_OVERRIDE_PREFIX = "chimera.option.";
     private static final Pattern SAFE_OVERRIDE_VALUE = Pattern.compile(
             "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?[fF]?|true|false",
             Pattern.CASE_INSENSITIVE);
@@ -172,12 +171,24 @@ record PackSettingsPlan(
         Map<String, String> helperDefaults = new TreeMap<>();
         collectHelperDefaults(shadersDir, helperOptions, helperDefaults, deviations);
         Map<String, String> overrides = normalizeOverrides(explicitOverrides, deviations);
-        defaults.putAll(overrides);
+        // Iris writes toggle options as true/false. On is the plain define
+        // (Chimera's "1", as for an active source define); off means the
+        // macro is undefined, so it leaves the defaults and is locked out of
+        // the source below (overriddenNames without a value).
+        Set<String> disabled = new TreeSet<>();
+        for (Map.Entry<String, String> override : overrides.entrySet()) {
+            if (override.getValue().equalsIgnoreCase("true")) override.setValue("1");
+            else if (override.getValue().equalsIgnoreCase("false")) disabled.add(override.getKey());
+        }
         for (Map.Entry<String, String> override : overrides.entrySet()) {
             options.put(override.getKey(), new Option(override.getKey(), "chimera.option",
                     override.getValue(), List.of(), "chimera.option"));
             deviations.add("PACK_OPTION_OVERRIDE:" + override.getKey());
         }
+        overrides.keySet().removeAll(disabled);
+        defaults.putAll(overrides);
+        defaults.keySet().removeAll(disabled);
+        helperDefaults.keySet().removeAll(disabled);
 
         Map<String, Profile> profiles = new TreeMap<>();
         Map<String, String> properties = new TreeMap<>();
@@ -271,13 +282,7 @@ record PackSettingsPlan(
     }
 
     private static Map<String, String> systemOptionOverrides() {
-        Map<String, String> result = new TreeMap<>();
-        for (String property : System.getProperties().stringPropertyNames()) {
-            if (!property.startsWith(OPTION_OVERRIDE_PREFIX)) continue;
-            String name = property.substring(OPTION_OVERRIDE_PREFIX.length());
-            result.put(name, System.getProperty(property, ""));
-        }
-        return result;
+        return PackOptionSources.systemOverrides();
     }
 
     /** Active defaults seed the shared shader preprocessor. */
