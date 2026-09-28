@@ -2657,7 +2657,8 @@ public class ChimeraMainPass implements MainPass {
                 .anyMatch(program -> program.samplers().contains("depthtex0")
                         || program.samplers().contains("depthtex1")
                         || program.samplers().contains("depthtex2"));
-        PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir());
+        PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir(),
+                net.chimera.shaderpack.PackEngineDefines.forPack(this.packPlan.settingsPreprocessorDefines()));
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
         this.packHdrFormat = this.packConfig.colortexFormats().getOrDefault(0, 97);
         this.packResourceOwner = PackResourceOwner.load(this.packPlan.resources(), result.shadersDir());

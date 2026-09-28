@@ -139,7 +139,8 @@ public final class PackProbe {
         Path blockProperties = shadersDir.resolve("block.properties");
         if (Files.isRegularFile(blockProperties)) {
             readMetadata(blockProperties, "block.properties", metadataHashes, globalDeviations);
-            globalDeviations.addAll(PackMaterialResolver.parse(shadersDir).deviations());
+            globalDeviations.addAll(PackMaterialResolver.parse(shadersDir,
+                    PackEngineDefines.forPack(settingsPlan.preprocessorDefines())).deviations());
         } else {
             Inventory terrain = inventories.get("gbuffers_terrain");
             if (terrain != null && terrain.stages.contains("vertex")) {

@@ -4,7 +4,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
@@ -18,14 +17,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Immutable resolver for the plain block.properties subset used by M5.2.
- * Selectors and tags are deliberately rejected instead of being guessed.
+ * Immutable resolver for block.properties block-name mappings, read through
+ * the same continuation and conditional handling as shaders.properties.
+ * State selectors and tags are deliberately rejected instead of being guessed.
  */
 public final class PackMaterialResolver {
     private static final Pattern MAPPING = Pattern.compile(
             "^\\s*block\\.(-?\\d+)\\s*=\\s*(.*?)\\s*$");
     private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9_.-]+");
     private static final Pattern PATH = Pattern.compile("[a-z0-9_./-]+");
+    private static final Pattern CONDITION = Pattern.compile(
+            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
 
     private final Map<String, Integer> ids;
     private final List<String> deviations;
@@ -48,6 +50,17 @@ public final class PackMaterialResolver {
     }
 
     public static ParseResult parse(Path shadersDir) {
+        return parse(shadersDir, PackEngineDefines.standard());
+    }
+
+    /**
+     * Reads block.properties as Iris does: backslash continuations join into one
+     * logical line, and {@code #if}/{@code #ifdef} branches are evaluated against
+     * the engine's standard macros plus the pack's own defines. BSL puts every
+     * id's block list on a continuation line and gates whole tables on
+     * {@code MC_VERSION}.
+     */
+    public static ParseResult parse(Path shadersDir, Map<String, String> macros) {
         Path file = shadersDir == null ? null : shadersDir.resolve("block.properties");
         if (file == null || !Files.isRegularFile(file)) {
             return new ParseResult(new PackMaterialResolver(Map.of(), List.of()), false, null,
@@ -61,9 +74,22 @@ public final class PackMaterialResolver {
         try {
             byte[] bytes = Files.readAllBytes(file);
             sourceHash = ConformanceReport.textSha256(bytes);
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            for (String line : lines) {
-                parseLine(line, ids, conflicts, deviations);
+            PackConditionals.State conditions = new PackConditionals.State(macros);
+            for (String line : PackSettingsPlan.logicalLines(file)) {
+                Matcher directive = CONDITION.matcher(line);
+                if (directive.matches()) {
+                    try {
+                        conditions.apply(directive.group(1), directive.group(2).trim());
+                    } catch (RuntimeException failure) {
+                        deviations.add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
+                        ids.clear();
+                        break;
+                    }
+                    continue;
+                }
+                if (conditions.active()) {
+                    parseLine(line, ids, conflicts, deviations);
+                }
             }
         } catch (IOException e) {
             deviations.add("BLOCK_PROPERTIES_READ_FAILED");

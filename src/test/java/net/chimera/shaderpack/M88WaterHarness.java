@@ -203,6 +203,7 @@ public final class M88WaterHarness {
                 name + " gbuffers_water manifest samples no pack colour target: " + entries);
         verifyShadowDepthSplit(analysis, name);
         verifyRealPackBlend(water, name);
+        verifyWaterMaterial(pack, analysis, name);
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().programs(), analysis.config(),
                 analysis.plan().resources(), 2560, 1440, 8, 16384);
         assertTrue(graph.depth().depthtex1(), name + " depth graph omits the water depthtex1 read");
@@ -216,6 +217,24 @@ public final class M88WaterHarness {
                 + water.geometryOutputPlan().targetSlots() + " manifest=" + entries.size()
                 + " early=" + schedule.stages(PackFrameSchedulePlan.PostWindow.EARLY).stream()
                 .map(PackFrameSchedulePlan.PostStage::name).toList());
+    }
+
+    /**
+     * Water shading keys off the block id. BSL writes each id's block list on a
+     * backslash continuation line inside {@code #if MC_VERSION} tables, so the
+     * reader must join lines and evaluate the branches with the standard
+     * macros, or water resolves to -1 and renders as a plain translucent.
+     */
+    private static void verifyWaterMaterial(String pack, PackProbe.Analysis analysis, String name) {
+        int expected = name.equals("bsl") ? 20000 : 32000;
+        try (PackSource.LoadResult loaded = PackSource.loadResult(Path.of(pack))) {
+            PackMaterialResolver resolver = PackMaterialResolver.parse(loaded.shadersDir(),
+                    PackEngineDefines.forPack(analysis.settings().preprocessorDefines())).resolver();
+            assertTrue(resolver.resolveName("minecraft:water") == expected
+                            && resolver.resolveName("minecraft:flowing_water") == expected,
+                    name + " water resolves to " + resolver.resolveName("minecraft:water")
+                            + ", expected " + expected);
+        }
     }
 
     /**

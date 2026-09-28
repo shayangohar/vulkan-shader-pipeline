@@ -226,6 +226,8 @@ record PackSettingsPlan(
         if (defaults != null) result.putAll(defaults);
         if (helperDefaults != null) result.putAll(helperDefaults);
         if (overrides != null) result.putAll(overrides);
+        // Iris preprocesses shaders.properties with its standard environment.
+        result.putAll(PackEngineDefines.standard());
         return result;
     }
 
@@ -654,7 +656,7 @@ record PackSettingsPlan(
      * expression too long for a line: BSL's {@code isCold} is four of them. Directives are read
      * through here too, so a conditioned block keeps its shape either way.
      */
-    private static List<String> logicalLines(Path propertyFile) throws IOException {
+    static List<String> logicalLines(Path propertyFile) throws IOException {
         List<String> lines = new ArrayList<>();
         StringBuilder pending = new StringBuilder();
         for (String line : Files.readAllLines(propertyFile, StandardCharsets.UTF_8)) {
