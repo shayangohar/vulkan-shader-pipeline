@@ -33,16 +33,22 @@ import java.util.regex.Pattern;
 public final class PackConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
 
-    /** const int colortexNFormat = TOKEN; (value 0-9 for colortex0-9). */
-    private static final Pattern COLORTEX_FMT_CONST =
-            Pattern.compile("(?m)^\\s*const\\s+int\\s+colortex(\\d+)Format\\s*=\\s*(\\w+)\\s*;\\s*(?://.*)?$");
+    /**
+     * A colour target in a declaration name: colortexN or one of the legacy
+     * aliases Iris accepts the same way (gaux2Format is colortex5Format).
+     */
+    private static final String TARGET_NAME = "(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])";
+    /** const int <target>Format = TOKEN; */
+    private static final Pattern COLORTEX_FMT_CONST = Pattern.compile(
+            "(?m)^\\s*const\\s+int\\s+" + TARGET_NAME + "Format\\s*=\\s*(\\w+)\\s*;\\s*(?://.*)?$");
     private static final Pattern COLORTEX_CLEAR_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+bool\\s+colortex(\\d+)Clear\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
+            "(?m)^\\s*const\\s+bool\\s+" + TARGET_NAME + "Clear\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern COLORTEX_CLEAR_COLOR_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+vec4\\s+colortex(\\d+)ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
+            "(?m)^\\s*const\\s+vec4\\s+" + TARGET_NAME
+                    + "ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
     private static final Pattern COLORTEX_MIPMAP_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+bool\\s+colortex(\\d+)MipmapEnabled\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
+            "(?m)^\\s*const\\s+bool\\s+" + TARGET_NAME + "MipmapEnabled\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
@@ -57,24 +63,35 @@ public final class PackConfig {
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_LINE = Pattern.compile("^\\s*([A-Za-z0-9_.-]+)\\s*=\\s*([^#\\r\\n]+?)\\s*$");
-    /** shaders.properties key shape: colortexNFormat. */
-    private static final Pattern COLORTEX_PROPERTY_KEY = Pattern.compile("^colortex(\\d+)Format$");
+    /** shaders.properties key shape: <target>Format. */
+    private static final Pattern COLORTEX_PROPERTY_KEY = Pattern.compile("^" + TARGET_NAME + "Format$");
     private static final Pattern TARGET_SIZE_PROPERTY_KEY =
-            Pattern.compile("^size\\.buffer\\.colortex(\\d+)$");
+            Pattern.compile("^size\\.buffer\\." + TARGET_NAME + "$");
     private static final Pattern TARGET_CLEAR_PROPERTY_KEY =
-            Pattern.compile("^colortex(\\d+)Clear$");
+            Pattern.compile("^" + TARGET_NAME + "Clear$");
     private static final Pattern TARGET_CLEAR_COLOR_PROPERTY_KEY =
-            Pattern.compile("^colortex(\\d+)ClearColor$");
+            Pattern.compile("^" + TARGET_NAME + "ClearColor$");
     private static final Pattern TARGET_MIPMAP_PROPERTY_KEY =
-            Pattern.compile("^colortex(\\d+)MipmapEnabled$");
+            Pattern.compile("^" + TARGET_NAME + "MipmapEnabled$");
     private static final Pattern TARGET_FLIP_PROPERTY_KEY =
             Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
-    /** OptiFine format token -> VK format code (verified: 37/97/109 match the pins). */
-    public static final Map<String, Integer> FMT_TO_VK = Map.of(
-            "RGBA8", 37,
-            "RGBA16F", 97,
-            "RGBA32F", 109
+    /**
+     * Iris format token -> exact VkFormat. Every entry is a format Vulkan
+     * requires every device to support as a sampled colour attachment, so
+     * the target keeps the precision and channel count the pack declared.
+     */
+    public static final Map<String, Integer> FMT_TO_VK = Map.ofEntries(
+            Map.entry("R8", 9),          // VK_FORMAT_R8_UNORM
+            Map.entry("RG8", 16),        // VK_FORMAT_R8G8_UNORM
+            Map.entry("RGBA8", 37),      // VK_FORMAT_R8G8B8A8_UNORM
+            Map.entry("RGB10_A2", 64),   // VK_FORMAT_A2B10G10R10_UNORM_PACK32 (GL_RGB10_A2 bit order)
+            Map.entry("R16F", 76),       // VK_FORMAT_R16_SFLOAT
+            Map.entry("RG16F", 83),      // VK_FORMAT_R16G16_SFLOAT
+            Map.entry("RGBA16F", 97),    // VK_FORMAT_R16G16B16A16_SFLOAT
+            Map.entry("R32F", 100),      // VK_FORMAT_R32_SFLOAT
+            Map.entry("RG32F", 103),     // VK_FORMAT_R32G32_SFLOAT
+            Map.entry("RGBA32F", 109)    // VK_FORMAT_R32G32B32A32_SFLOAT
     );
     /** Common real-pack RGB formats approximated by the supported RGBA images. */
     private static final Map<String, Integer> APPROXIMATE_FMT_TO_VK = Map.of(
@@ -238,17 +255,11 @@ public final class PackConfig {
             }
             Matcher fmt = COLORTEX_FMT_CONST.matcher(src);
             while (fmt.find()) {
-                int slot;
-                try {
-                    slot = Integer.parseInt(fmt.group(1));
-                } catch (NumberFormatException e) {
+                int slot = parseTargetIndex(fmt.group(1), deviations);
+                if (slot < 0) {
                     continue;
                 }
                 String token = fmt.group(2);
-                if (slot > PostTargetPlan.MAX_TARGET) {
-                    deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + slot);
-                    continue;
-                }
                 Integer code = FMT_TO_VK.get(token);
                 if (code == null) {
                     code = APPROXIMATE_FMT_TO_VK.get(token);
@@ -289,15 +300,8 @@ public final class PackConfig {
                     String value = m.group(2).trim();
                     Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
                     if (colortexKey.find()) {
-                        int slot;
-                        try {
-                            slot = Integer.parseInt(colortexKey.group(1));
-                        } catch (NumberFormatException e) {
-                            LOGGER.warn("[chimera] pack properties: {} is not a valid colortex slot, skipped", key);
-                            continue;
-                        }
-                        if (slot > PostTargetPlan.MAX_TARGET) {
-                            deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + slot);
+                        int slot = parseTargetIndex(colortexKey.group(1), deviations);
+                        if (slot < 0) {
                             continue;
                         }
                         Integer code = FMT_TO_VK.get(value);
@@ -477,18 +481,20 @@ public final class PackConfig {
         }
     }
 
+    /** Resolves colortexN, a legacy alias, or a bare index; -1 with a deviation when unsupported. */
     private static int parseTargetIndex(String value, List<String> deviations) {
-        try {
-            int slot = Integer.parseInt(value);
-            if (slot < 0 || slot > PostTargetPlan.MAX_TARGET) {
-                deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + slot);
-                return -1;
-            }
-            return slot;
-        } catch (NumberFormatException e) {
+        Integer slot = value != null && value.matches("\\d+")
+                ? Integer.valueOf(Integer.parseInt(value))
+                : PackResourcePlan.targetIndex(value);
+        if (slot == null) {
             deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + value);
             return -1;
         }
+        if (slot < 0 || slot > PostTargetPlan.MAX_TARGET) {
+            deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + slot);
+            return -1;
+        }
+        return slot;
     }
 
     private static void updateTargetSettings(

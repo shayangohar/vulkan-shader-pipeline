@@ -369,8 +369,9 @@ record PackSettingsPlan(
         if (liveSamplers != null) {
             for (String sampler : liveSamplers) {
                 Integer target = PackResourcePlan.targetIndex(sampler);
-                if (target != null && target >= 4 && target <= 7) {
-                    reserved.add(target + 4);
+                if (target != null && target <= PostTargetPlan.MAX_TARGET) {
+                    int slot = SelectorNamespace.colorTargetSlot(target);
+                    if (slot >= 0) reserved.add(slot);
                 }
             }
         }

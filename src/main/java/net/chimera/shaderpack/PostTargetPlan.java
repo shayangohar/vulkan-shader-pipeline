@@ -16,8 +16,8 @@ import java.util.regex.Pattern;
  * and the runtime post chain.
  */
 public final class PostTargetPlan {
-    /** Highest logical colortex index supported by the measured target bridge. */
-    public static final int MAX_TARGET = 8;
+    /** Highest logical colortex index: Iris exposes colortex0 through colortex15. */
+    public static final int MAX_TARGET = 15;
     public static final int DEFAULT_FORMAT = 97;
 
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(

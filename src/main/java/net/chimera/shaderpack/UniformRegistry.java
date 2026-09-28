@@ -1029,37 +1029,32 @@ public final class UniformRegistry {
     }
 
     /**
-     * Keep VulkanMod's reserved slots intact while exposing four additional
-     * logical post targets through selector slots 8 through 11.
+     * Post passes sample every pack colour target on its one selector
+     * ({@link SelectorNamespace#colorTargetSlot}), so aliases such as gcolor
+     * and gaux1 resolve to the same slot as their colortex names.
      */
     private static Integer extendedPostColorSlot(String name) {
         Integer target = PackResourcePlan.targetIndex(name);
-        if (target == null) {
+        if (target == null || target > PostTargetPlan.MAX_TARGET) {
             return null;
         }
-        // The first four aliases use the host selector slots. The extended
-        // logical targets continue at slots 8 through 11. This keeps aliases
-        // such as gcolor and gaux1 equivalent to their colortex names while
-        // preserving the existing M5.3 slots for colortex0..3.
-        if (target >= 0 && target <= 3) {
-            return target;
-        }
-        return target <= PostTargetPlan.MAX_TARGET ? target + 4 : null;
+        int slot = SelectorNamespace.colorTargetSlot(target);
+        return slot < 0 ? null : slot;
     }
 
     /**
-     * Pack colour targets a translucent program may sample. They share the
-     * post selectors (colortex4..7 at 8..11, colortex8 at its own slot), so
-     * one target keeps one selector across the pack and PackSettingsPlan
-     * already reserves them. colortex0..3 would land on the host atlas,
-     * overlay, lightmap and shadowcolor0 selectors, so they stay unmapped.
+     * Pack colour targets a translucent program may sample, on the same
+     * selectors post uses, so one target keeps one selector across the pack
+     * and PackSettingsPlan already reserves them. colortex0..3 would land on
+     * the host atlas, overlay, lightmap and shadowcolor0 selectors, so they
+     * stay unmapped.
      */
     private static Integer translucentColorInputSlot(String name) {
         Integer target = PackResourcePlan.targetIndex(name);
-        if (target == null || target < 4 || target > 8) {
+        if (target == null || target < 4 || target > PostTargetPlan.MAX_TARGET) {
             return null;
         }
-        return target == 8 ? SelectorNamespace.COLORTEX8_SLOT : target + 4;
+        return SelectorNamespace.colorTargetSlot(target);
     }
 
     private static boolean isDeviationForName(

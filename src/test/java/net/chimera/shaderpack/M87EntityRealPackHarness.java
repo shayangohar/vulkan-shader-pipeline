@@ -32,7 +32,7 @@ public final class M87EntityRealPackHarness {
                 new Expectation("complementary", "gbuffers_block", List.of(0, 3, 6, 4),
                         UniformRegistry.Stage.BLOCK)));
         verifyPack(bsl, List.of(
-                new Expectation("bsl", "gbuffers_entities", List.of(0, 1, 3, 6, 7),
+                new Expectation("bsl", "gbuffers_entities", List.of(0, 3, 6, 7),
                         UniformRegistry.Stage.ENTITY),
                 new Expectation("bsl", "gbuffers_block", List.of(0, 3, 6, 7),
                         UniformRegistry.Stage.BLOCK)));

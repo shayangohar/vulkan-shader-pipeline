@@ -19,13 +19,29 @@ public final class SelectorNamespace {
     public static final int NORMALS_SLOT = 25;
     /** Slot 26 carries the resource-pack specular map for material-capable stages. */
     public static final int SPECULAR_SLOT = 26;
-    public static final int LAST_RESERVED = SPECULAR_SLOT;
+    /** Slots 27 through 33 carry colortex9..colortex15, the rest of Iris's sixteen colour targets. */
+    public static final int HIGH_COLORTEX_FIRST_SLOT = 27;
+    public static final int LAST_RESERVED = HIGH_COLORTEX_FIRST_SLOT + 6;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
     /** Unreserved selector slots available to pack-owned sampled resources. */
     public static final List<Integer> PACK_SELECTOR_SLOTS = List.of(
             8, 9, 10, 11, 16, 17, 18, 19, 20, 21);
 
     private SelectorNamespace() {}
+
+    /**
+     * The one selector a pack colour target is sampled through, in every
+     * stage that may read it: colortex0..3 keep the host post slots,
+     * colortex4..7 sit at 8..11, colortex8 at its own slot, and colortex9..15
+     * after the reserved range. Returns -1 outside colortex0..15.
+     */
+    public static int colorTargetSlot(int target) {
+        if (target >= 0 && target <= 3) return target;
+        if (target >= 4 && target <= 7) return target + 4;
+        if (target == 8) return COLORTEX8_SLOT;
+        if (target >= 9 && target <= 15) return HIGH_COLORTEX_FIRST_SLOT + target - 9;
+        return -1;
+    }
 
     public static boolean isAddressable(int slot) {
         return slot >= 0 && slot <= LAST_RESERVED;

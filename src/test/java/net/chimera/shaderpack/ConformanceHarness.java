@@ -406,9 +406,9 @@ public final class ConformanceHarness {
                 "m5.6 target conflict deviation is missing");
 
         PostTargetPlan unsupported = PostTargetPlan.parse(
-                "composite", "/* RENDERTARGETS: 0,9 */").plan();
+                "composite", "/* RENDERTARGETS: 0,16 */").plan();
         assertTrue(!unsupported.executable(), "m5.6 unsupported target was accepted");
-        assertTrue(unsupported.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:9"),
+        assertTrue(unsupported.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
                 "m5.6 unsupported target deviation is missing");
 
         PostTargetPlan finalMrt = PostTargetPlan.parse(
@@ -423,7 +423,7 @@ public final class ConformanceHarness {
         ConformanceReport.ProgramReport composite = report.program("composite");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                 composite.support(), "m5.6 unsupported target support");
-        assertTrue(composite.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:9"),
+        assertTrue(composite.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
                 "m5.6 unsupported target deviation is missing");
         assertTrue(!report.shouldAttempt("composite"),
                 "m5.6 unsupported target must not execute");

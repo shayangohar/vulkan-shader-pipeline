@@ -145,7 +145,7 @@ public final class PackTargetGraphPlan {
                 height = Math.min(height, safeDimension);
             }
             int format = formats.getOrDefault(target, PostTargetPlan.DEFAULT_FORMAT);
-            if (!PackConfig.FMT_TO_VK.containsValue(format) && format != 37 && format != 97 && format != 109) {
+            if (!isSupportedFormat(format)) {
                 deviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
                 format = PostTargetPlan.DEFAULT_FORMAT;
             }
@@ -338,8 +338,7 @@ public final class PackTargetGraphPlan {
     }
 
     private static boolean isSupportedFormat(int format) {
-        return PackConfig.FMT_TO_VK.containsValue(format)
-                || format == 37 || format == 97 || format == 109;
+        return PackConfig.FMT_TO_VK.containsValue(format);
     }
 
     private static List<String> samplerNames(PackProgramPlan program) {

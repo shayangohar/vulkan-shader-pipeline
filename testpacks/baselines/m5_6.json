@@ -27,7 +27,7 @@
       }
     },
     "unsupported_targets": {
-      "reportSha256": "bde9322bfce7edd76b41e002fd57e3d71c21298a721dadd0ab9d8b4d45703d06",
+      "reportSha256": "48badee8eeda679bbaa8cc6f6b24e9357d912a1a319a8a4e5d7155f2608cd6b8",
       "expectedPassInventory": ["composite", "final"],
       "expectedStages": {
         "composite": ["fragment"],
@@ -35,11 +35,11 @@
       },
       "expectedDeviations": {
         "global": [],
-        "composite": ["POST_TARGET_INDEX_UNSUPPORTED:9"],
+        "composite": ["POST_TARGET_INDEX_UNSUPPORTED:16"],
         "final": []
       },
       "sourceHashes": {
-        "composite.fsh": "f34b16f6df39f42c00f75318c1937036b2d4ce4082e115601f2a260bd07e0368",
+        "composite.fsh": "e3ea62033a664b4ebd1108497ffd7286afb83ff90e1bbbaa4613f94217587a67",
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32"
       }

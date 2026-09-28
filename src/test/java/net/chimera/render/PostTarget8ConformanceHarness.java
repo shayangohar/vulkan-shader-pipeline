@@ -92,10 +92,32 @@ public final class PostTarget8ConformanceHarness {
         assertTrue(supported.executable() && supported.targetSlots().equals(List.of(0, 8)),
                 "logical target 8 was rejected");
         PostTargetPlan rejected = PostTargetPlan.parse(
-                "composite", "/* RENDERTARGETS: 0,9 */").plan();
+                "composite", "/* RENDERTARGETS: 0,16 */").plan();
         assertTrue(!rejected.executable()
-                        && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:9"),
-                "logical target 9 was not rejected");
+                        && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
+                "logical target 16 was not rejected");
+        PostTargetPlan high = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 9,13,15 */").plan();
+        assertTrue(high.executable() && high.targetSlots().equals(List.of(9, 13, 15)),
+                "Iris targets colortex9..15 were rejected: " + high.deviations());
+        // Every Iris colour target owns one addressable selector, distinct from
+        // every other target and from the fixed depth, shadow and material slots.
+        java.util.Set<Integer> reserved = java.util.Set.of(5, 6, 7, 12, 13,
+                net.chimera.shaderpack.SelectorNamespace.COVERAGE_SLOT,
+                net.chimera.shaderpack.SelectorNamespace.SHADOW_TEX1_SLOT,
+                net.chimera.shaderpack.SelectorNamespace.SHADOW_COLOR0_SLOT,
+                net.chimera.shaderpack.SelectorNamespace.SHADOW_COLOR1_SLOT,
+                net.chimera.shaderpack.SelectorNamespace.NORMALS_SLOT,
+                net.chimera.shaderpack.SelectorNamespace.SPECULAR_SLOT);
+        java.util.Set<Integer> seen = new java.util.HashSet<>();
+        for (int target = 0; target <= PostTargetPlan.MAX_TARGET; target++) {
+            int slot = net.chimera.shaderpack.SelectorNamespace.colorTargetSlot(target);
+            assertTrue(net.chimera.shaderpack.SelectorNamespace.isAddressable(slot)
+                            && !reserved.contains(slot) && seen.add(slot),
+                    "colortex" + target + " selector " + slot + " is shared or unaddressable");
+        }
+        assertEquals(-1, net.chimera.shaderpack.SelectorNamespace.colorTargetSlot(16),
+                "colortex16 gained a selector");
 
         MrtPipelineContext.begin(new int[8], 8);
         MrtPipelineContext.end();
@@ -139,7 +161,7 @@ public final class PostTarget8ConformanceHarness {
             TargetStep step = graph.step("composite1");
             assertTrue(step != null && step.executable() && step.readTargets().contains(8)
                             && step.outputTargets().equals(List.of(0, 5)),
-                    "Post-target-8 " + label + " composite1 graph step is incorrect");
+                    "Post-target-8 " + label + " composite1 graph step is incorrect: " + step);
             assertTrue(composite1.interfacePlan().effective(UniformRegistry.Stage.POST).samplers()
                             .stream().anyMatch(value -> value.name().equals("colortex8")
                                     && value.slot() == 22),
@@ -148,11 +170,33 @@ public final class PostTarget8ConformanceHarness {
                             && analysis.report().program("composite1").support()
                             != ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                     "Post-target-8 " + label + " composite1 remains a static identity fallback");
+            verifyHighTargets(label, analysis, graph, step);
             System.out.println("[chimera] Post-target-8 " + label + " composite1: PASS");
         } finally {
             restoreProperty("chimera.option.COLORED_LIGHTING", previousLighting);
             restoreProperty("chimera.option.WORLD_SPACE_REFLECTIONS", previousReflections);
         }
+    }
+
+    /**
+     * Complementary r5.9 blends volumetric light with an entity linear depth
+     * in colortex13 (declared R8): translucent entities write it and
+     * composite1 reads it. Iris exposes colortex0..15, so both must run, on
+     * an exact R8 target. Packs that do not use colortex13 skip the check.
+     */
+    private static void verifyHighTargets(String label, PackProbe.Analysis analysis,
+            PackTargetGraphPlan graph, TargetStep composite1) {
+        if (!composite1.readTargets().contains(13)) return;
+        var target = graph.target(13);
+        assertTrue(target != null && target.format() == 9,
+                "Post-target-8 " + label + " colortex13 is not an exact R8 target: " + target);
+        PackProgramPlan translucent = analysis.plan().program("gbuffers_entities_translucent");
+        assertTrue(translucent != null && translucent.executable()
+                        && translucent.geometryOutputPlan().targetSlots().contains(13),
+                "Post-target-8 " + label + " translucent entities do not write colortex13: "
+                        + (translucent == null ? "missing" : translucent.deviations()));
+        System.out.println("[chimera] Post-target-8 " + label + " colortex13: R8, written by "
+                + "gbuffers_entities_translucent " + translucent.geometryOutputPlan().targetSlots());
     }
 
     private static void verifyBaseline(Path path, PackProbe.Analysis analysis) throws Exception {

@@ -106,8 +106,8 @@ public final class M74ConformanceHarness {
                     "#version 120\nuniform sampler2D colortex8;\n"
                             + "void main() { gl_FragColor = texture2D(colortex8, vec2(0.5)); }\n");
             Files.writeString(shaders.resolve("composite9.fsh"),
-                    "#version 120\nuniform sampler2D colortex9;\n"
-                            + "void main() { gl_FragColor = texture2D(colortex9, vec2(0.5)); }\n");
+                    "#version 120\nuniform sampler2D colortex16;\n"
+                            + "void main() { gl_FragColor = texture2D(colortex16, vec2(0.5)); }\n");
             Files.writeString(shaders.resolve("final.vsh"),
                     "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
             Files.writeString(shaders.resolve("final.fsh"),
@@ -127,7 +127,7 @@ public final class M74ConformanceHarness {
                     "colortex8 consumer was rejected");
             TargetStep rejected = graph.step("composite9");
             assertTrue(rejected != null && !rejected.executable()
-                            && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:9"),
+                            && rejected.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
                     "unsupported sampler target must reject its consumer by name: steps="
                             + graph.steps() + ", programs=" + analysis.plan().programs());
             assertTrue(graph.step("final").executable() && graph.target(0) != null,
