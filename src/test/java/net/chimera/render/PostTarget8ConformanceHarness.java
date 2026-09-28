@@ -118,6 +118,11 @@ public final class PostTarget8ConformanceHarness {
         }
         assertEquals(-1, net.chimera.shaderpack.SelectorNamespace.colorTargetSlot(16),
                 "colortex16 gained a selector");
+        // Post targets are built through VulkanMod's image builder, which
+        // throws for any format it cannot size (BSL's RGB10_A2 gaux2 did).
+        net.chimera.shaderpack.PackConfig.FMT_TO_VK.forEach((token, format) ->
+                assertTrue(net.chimera.shaderpack.PackConfig.formatBytes(format) > 0,
+                        "exact target format " + token + " has no texel size"));
 
         MrtPipelineContext.begin(new int[8], 8);
         MrtPipelineContext.end();

@@ -43,7 +43,39 @@ public final class TerrainTangentCodecHarness {
                 "zero code does not reproduce the reference tangent");
         require((TerrainTangentCodec.encode(normal, rotated) & 0x00FFFFFF) == (normal & 0x00FFFFFF),
                 "encoding changed the normal bytes");
+        checkFluidNormal();
         System.out.println("[chimera] terrain tangent codec: PASS");
+    }
+
+    /**
+     * VulkanMod's fluid renderer passes packed normal 0. The builder must
+     * store the quad's face normal, as Iris does, or the pack normalizes a
+     * zero vector and water lighting and reflections turn NaN.
+     */
+    private static void checkFluidNormal() {
+        net.chimera.shaderpack.TerrainMaterialPlan plan = new net.chimera.shaderpack.TerrainMaterialPlan(
+                true, true, true, true, false, java.util.List.of());
+        ChimeraExtVertexBuilder builder = new ChimeraExtVertexBuilder(plan);
+        int stride = plan.stride();
+        long base = org.lwjgl.system.MemoryUtil.nmemCalloc(4, stride);
+        try {
+            // Water top face, Minecraft corner order (counter-clockwise from above).
+            float[][] corners = {{0, 0.875f, 0}, {0, 0.875f, 1}, {1, 0.875f, 1}, {1, 0.875f, 0}};
+            for (int index = 0; index < 4; index++) {
+                float[] c = corners[index];
+                builder.vertex(base + (long) index * stride, c[0], c[1], c[2], 0xFFFFFFFF,
+                        index >= 2 ? 1 : 0, index == 1 || index == 2 ? 1 : 0, 0x00F000F0, 0);
+            }
+            for (int index = 0; index < 4; index++) {
+                int word = org.lwjgl.system.MemoryUtil.memGetInt(base + (long) index * stride + 32);
+                require(Math.abs(ChimeraEntityVertexData.unpack(word, 1) - 1.0f) < 0.01f
+                                && Math.abs(ChimeraEntityVertexData.unpack(word, 0)) < 0.01f
+                                && Math.abs(ChimeraEntityVertexData.unpack(word, 2)) < 0.01f,
+                        "fluid vertex " + index + " kept a missing normal: " + Integer.toHexString(word));
+            }
+        } finally {
+            org.lwjgl.system.MemoryUtil.nmemFree(base);
+        }
     }
 
     private static void checkQuad(String face, float nx, float ny, float nz, float[] c,

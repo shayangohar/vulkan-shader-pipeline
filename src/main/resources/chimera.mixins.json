@@ -26,6 +26,7 @@
     "ChimeraDeviceAccessor",
     "ChimeraDeviceFeaturesMixin",
     "ChimeraImageDescriptorMixin",
+    "ChimeraImageFormatSizeMixin",
     "ChimeraDescriptorSetsMixin",
     "ChimeraEntityRenderDispatcherMixin",
     "ChimeraBlockEntityRenderDispatcherMixin",

@@ -14,6 +14,7 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     private final long[] polygonPointers = new long[4];
     private final float[] polygonValues = new float[20];
     private final int[] polygonNormals = new int[4];
+    private final float[] faceNormal = new float[3];
     private int polygonVertices;
     private long lastPointer;
 
@@ -93,6 +94,21 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         }
         midU = clamp01(midU * 0.25F);
         midV = clamp01(midV * 0.25F);
+        // VulkanMod's fluid renderer emits packed normal 0. Iris derives the
+        // face normal from the quad's diagonals, so do the same whenever the
+        // host supplied none; otherwise the pack normalizes a zero vector.
+        if ((polygonNormals[0] & 0x00FFFFFF) == 0 && ChimeraEntityVertexData.faceNormal(faceNormal,
+                polygonValues[0], polygonValues[1], polygonValues[2],
+                polygonValues[5], polygonValues[6], polygonValues[7],
+                polygonValues[10], polygonValues[11], polygonValues[12],
+                polygonValues[15], polygonValues[16], polygonValues[17])) {
+            int packed = ChimeraEntityVertexData.pack(faceNormal[0], faceNormal[1], faceNormal[2], 0.0F);
+            for (int index = 0; index < 4; index++) {
+                if ((polygonNormals[index] & 0x00FFFFFF) == 0) {
+                    polygonNormals[index] = packed;
+                }
+            }
+        }
         // Iris's at_tangent: the texture U direction of the quad's first
         // triangle, with the V handedness in w.
         int firstNormal = polygonNormals[0];

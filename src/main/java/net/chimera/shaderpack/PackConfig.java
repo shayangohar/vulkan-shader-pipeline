@@ -111,6 +111,22 @@ public final class PackConfig {
 
     private PackConfig() {}
 
+    /**
+     * Bytes per texel of a colour-target format in {@link #FMT_TO_VK}, or 0
+     * when the format is not one of them. VulkanMod's image builder only
+     * sizes its own formats, so pack targets take their size from here.
+     */
+    public static int formatBytes(int vkFormat) {
+        return switch (vkFormat) {
+            case 9 -> 1;
+            case 16, 76 -> 2;
+            case 37, 64, 83, 100 -> 4;
+            case 97, 103 -> 8;
+            case 109 -> 16;
+            default -> 0;
+        };
+    }
+
     public static final int DEFAULT_SHADOW_MAP_RESOLUTION = 2048;
     public static final float DEFAULT_SHADOW_DISTANCE = 128.0F;
     private static final int MIN_SHADOW_MAP_RESOLUTION = 128;
