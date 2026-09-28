@@ -82,6 +82,10 @@ public final class M63ConformanceHarness {
                 "M6.3 solid world entity lane was not supported");
         assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ENTITY_TRANSLUCENT),
                 "M6.3 living translucent world entity lane was not supported");
+        assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL)
+                        && RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL.getVertexFormat()
+                        == RenderPipelines.ENTITY_TRANSLUCENT.getVertexFormat(),
+                "M6.3 flat item lane is not the translucent entity contract");
     }
 
     private static void verifyEntityMath() {

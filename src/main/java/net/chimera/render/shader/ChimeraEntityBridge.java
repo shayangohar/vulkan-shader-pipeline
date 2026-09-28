@@ -89,7 +89,10 @@ public final class ChimeraEntityBridge {
             RenderPipelines.ENTITY_SMOOTH_CUTOUT,
             RenderPipelines.ENTITY_NO_OUTLINE,
             RenderPipelines.ENTITY_TRANSLUCENT,
-            RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE
+            RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE,
+            // Flat held and dropped items. Drawn by the host they wrote no
+            // gbuffer data, and deferred lighting erased them to a ghost.
+            RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
     );
     private ChimeraEntityBridge() {}
 
@@ -545,7 +548,8 @@ public final class ChimeraEntityBridge {
     /** Selects the most specific installed entity lane for one host render type. */
     public static Family familyForRenderType(Family base, RenderType renderType) {
         if (base == Family.ENTITY && renderType != null) {
-            if (renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT) {
+            if (renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT
+                    || renderType.pipeline() == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) {
                 return translucentEntityPipeline != null
                         ? Family.ENTITY_TRANSLUCENT : Family.HOST_FALLBACK;
             }
