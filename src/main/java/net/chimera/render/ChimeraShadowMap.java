@@ -35,8 +35,11 @@ import static org.lwjgl.vulkan.VK10.*;
  * Updated each frame from the celestial angle.
  */
 public class ChimeraShadowMap {
-    private static final float SHADOW_NEAR = 0.1F;
-    private static final float SHADOW_FAR = 512.0F;
+    // Iris 1.10 ShadowMatrices: the light view is a pure rotation about the
+    // camera and the ortho depth range is fixed. Packs tune their shadow
+    // depth bias to these units, so a different range detaches shadows.
+    static final float SHADOW_NEAR = -100.05F;
+    static final float SHADOW_FAR = 156.0F;
 
     private Framebuffer shadowFramebuffer;
     private RenderPass shadowRenderPass;
@@ -83,7 +86,6 @@ public class ChimeraShadowMap {
 
     private int shadowMapSize = PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION;
     private float shadowDistance = PackConfig.DEFAULT_SHADOW_DISTANCE;
-    private float shadowDistanceRenderMultiplier = 1.0F;
 
     private boolean initialized;
     /** True only until the newly created images receive their first read layout. */
@@ -102,7 +104,6 @@ public class ChimeraShadowMap {
 
         this.shadowMapSize = settings.resolution();
         this.shadowDistance = settings.distance();
-        this.shadowDistanceRenderMultiplier = settings.distanceRenderMultiplier();
         // The celestial frame derives the light direction from the pack's sun path, so the shadow
         // matrix follows the same numbers the pack reads instead of repeating the trigonometry.
         PackUniformProvider.installSunPath(settings.sunPathRotation(), settings.sunPathOffset());
@@ -167,21 +168,17 @@ public class ChimeraShadowMap {
         this.lightDir.set(light).normalize();
 
         // DrawBuffers already subtracts the render camera from terrain
-        // positions, so the light view must use the same relative origin.
-        this.lightView.identity();
-        this.lightView.lookAt(
-                this.lightDir.x * this.shadowDistance,
-                this.lightDir.y * this.shadowDistance,
-                this.lightDir.z * this.shadowDistance,
+        // positions, so the light view is a rotation about that origin, as
+        // Iris's is; the ortho depth range reaches toward the sun instead.
+        this.lightView.setLookAt(
                 0.0F, 0.0F, 0.0F,
+                -this.lightDir.x, -this.lightDir.y, -this.lightDir.z,
                 0.0F, 1.0F, 0.0F
         );
 
-        // Ortho projection covering the shadow distance
-        float effectiveDistance = this.shadowDistance * this.shadowDistanceRenderMultiplier;
-        float halfExtent = effectiveDistance * 0.5F;
-        createLightProjection(this.hostLightProjection, halfExtent, effectiveDistance, true);
-        createLightProjection(this.packLightProjection, halfExtent, effectiveDistance, false);
+        // Iris's halfPlaneLength is the pack's shadowDistance itself.
+        createLightProjection(this.hostLightProjection, this.shadowDistance, true);
+        createLightProjection(this.packLightProjection, this.shadowDistance, false);
 
         // Combined MVP
         this.lightMVP.set(this.hostLightProjection).mul(this.lightView);
@@ -215,11 +212,11 @@ public class ChimeraShadowMap {
     }
 
     static void createLightProjection(
-            Matrix4f destination, float halfExtent, float effectiveDistance, boolean zZeroToOne) {
+            Matrix4f destination, float halfExtent, boolean zZeroToOne) {
         destination.identity().ortho(
                 -halfExtent, halfExtent,
                 -halfExtent, halfExtent,
-                SHADOW_NEAR, Math.max(SHADOW_FAR, effectiveDistance * 4.0F),
+                SHADOW_NEAR, SHADOW_FAR,
                 zZeroToOne);
     }
 

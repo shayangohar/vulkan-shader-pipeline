@@ -17,12 +17,17 @@ public final class ShadowMapMatrixHarness {
     }
 
     private static void verifyProjectionRanges() {
-        float near = 0.1f;
-        float far = 512.0f;
+        float near = ChimeraShadowMap.SHADOW_NEAR;
+        float far = ChimeraShadowMap.SHADOW_FAR;
         Matrix4f legacy = new Matrix4f();
         Matrix4f host = new Matrix4f();
-        ChimeraShadowMap.createLightProjection(legacy, 128.0f, 128.0f, false);
-        ChimeraShadowMap.createLightProjection(host, 128.0f, 128.0f, true);
+        ChimeraShadowMap.createLightProjection(legacy, 256.0f, false);
+        ChimeraShadowMap.createLightProjection(host, 256.0f, true);
+        // Iris 1.10.7 shadowProjection for shadowDistance 256, read from a
+        // RenderDoc capture of BSL: 1/256 across, -2/256.05 and -0.218512 in depth.
+        assertNear(1.0f / 256.0f, legacy.m00(), "Iris shadow half extent is shadowDistance");
+        assertNear(-0.00781097f, legacy.m22(), "Iris shadow depth scale");
+        assertNear(-0.21851201f, legacy.m32(), "Iris shadow depth offset");
         assertNear(-1.0f, legacy.transformPosition(new Vector3f(0.0f, 0.0f, -near)).z,
                 "legacy projection near plane");
         assertNear(1.0f, legacy.transformPosition(new Vector3f(0.0f, 0.0f, -far)).z,
@@ -45,6 +50,11 @@ public final class ShadowMapMatrixHarness {
         Vector3f point = new Vector3f(7.25f, -3.5f, 19.0f);
         Vector3f reconstructed = inverseRoundTrip.transformPosition(new Vector3f(point));
         assertVectorNear(point, reconstructed, "inverse shadow V/P cancellation");
+        // Like Iris's shadowModelView: no translation, and view z is the
+        // distance toward the sun, so casters above a receiver are nearer.
+        assertVectorNear(new Vector3f(), view.getTranslation(new Vector3f()), "light view translation");
+        assertVectorNear(new Vector3f(0.0f, 0.0f, 1.0f), view.transformDirection(new Vector3f(light)),
+                "light view depth axis");
     }
 
     private static void verifyCameraOriginCompensation() {
