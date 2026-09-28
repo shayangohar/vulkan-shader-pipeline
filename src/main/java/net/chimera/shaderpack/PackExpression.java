@@ -8,9 +8,10 @@ import java.util.TreeSet;
 /**
  * The pack-authored expression language behind {@code shaders.properties} custom values.
  *
- * <p>Scoped to what the pinned packs write and no wider: scalar arithmetic and comparisons,
- * vector components such as {@code eyeBrightness.y}, the named biome constants, {@code if},
- * {@code in}, {@code smooth}, and the math those expressions reach for. An unknown function, a
+ * <p>Scalar arithmetic and comparisons, vector components such as {@code eyeBrightness.y}, the
+ * named biome constants, and OptiFine's documented custom-uniform functions: the math set
+ * ({@code sin} through {@code fmod}), {@code if} with any number of condition/value pairs,
+ * {@code between}, {@code equals}, {@code in} and {@code smooth}. An unknown function, a
  * wrong arity, an unresolved symbol or a cycle is a declaration diagnostic, never a silent zero
  * handed to a running program.
  *
@@ -250,8 +251,17 @@ public final class PackExpression {
         @Override
         public double evaluate(Context context) {
             if (this.function == Function.IF) {
-                return (this.arguments.get(0).evaluate(context) != 0.0
-                        ? this.arguments.get(1) : this.arguments.get(2)).evaluate(context);
+                // if(c1, v1, c2, v2, ..., else): the first true condition's value.
+                int last = this.arguments.size() - 1;
+                for (int index = 0; index < last; index += 2) {
+                    if (this.arguments.get(index).evaluate(context) != 0.0) {
+                        return this.arguments.get(index + 1).evaluate(context);
+                    }
+                }
+                return this.arguments.get(last).evaluate(context);
+            }
+            if (this.function == Function.RANDOM) {
+                return java.util.concurrent.ThreadLocalRandom.current().nextDouble();
             }
             if (this.function == Function.IN) {
                 double needle = this.arguments.get(0).evaluate(context);
@@ -273,7 +283,33 @@ public final class PackExpression {
             return switch (this.function) {
                 case ABS -> Math.abs(first);
                 case SIN -> Math.sin(first);
+                case COS -> Math.cos(first);
+                case ASIN -> Math.asin(first);
+                case ACOS -> Math.acos(first);
+                case TAN -> Math.tan(first);
+                case ATAN -> this.arguments.size() == 2
+                        ? Math.atan2(first, this.arguments.get(1).evaluate(context))
+                        : Math.atan(first);
+                case TORAD -> Math.toRadians(first);
+                case TODEG -> Math.toDegrees(first);
+                case FLOOR -> Math.floor(first);
+                case CEIL -> Math.ceil(first);
+                case FRAC -> first - Math.floor(first);
+                case ROUND -> (double) Math.round(first);
+                case SIGNUM -> Math.signum(first);
+                case EXP -> Math.exp(first);
+                case LOG -> Math.log(first);
+                case POW -> Math.pow(first, this.arguments.get(1).evaluate(context));
                 case SQRT -> Math.sqrt(first);
+                case FMOD -> {
+                    // OptiFine's fmod is a floor modulo: the result takes the divisor's sign.
+                    double divisor = this.arguments.get(1).evaluate(context);
+                    yield divisor == 0.0 ? 0.0 : first - divisor * Math.floor(first / divisor);
+                }
+                case BETWEEN -> first >= this.arguments.get(1).evaluate(context)
+                        && first <= this.arguments.get(2).evaluate(context) ? 1.0 : 0.0;
+                case EQUALS -> Math.abs(first - this.arguments.get(1).evaluate(context))
+                        <= this.arguments.get(2).evaluate(context) ? 1.0 : 0.0;
                 case MAX -> {
                     double result = first;
                     for (int index = 1; index < this.arguments.size(); index++) {
@@ -339,11 +375,30 @@ public final class PackExpression {
     private enum Function {
         ABS(1, 1),
         SIN(1, 1),
+        COS(1, 1),
+        ASIN(1, 1),
+        ACOS(1, 1),
+        TAN(1, 1),
+        ATAN(1, 2),
+        TORAD(1, 1),
+        TODEG(1, 1),
+        FLOOR(1, 1),
+        CEIL(1, 1),
+        FRAC(1, 1),
+        ROUND(1, 1),
+        SIGNUM(1, 1),
+        EXP(1, 1),
+        LOG(1, 1),
+        POW(2, 2),
         SQRT(1, 1),
+        FMOD(2, 2),
+        RANDOM(0, 0),
         MAX(2, Integer.MAX_VALUE),
         MIN(2, Integer.MAX_VALUE),
         CLAMP(3, 3),
-        IF(3, 3),
+        BETWEEN(3, 3),
+        EQUALS(3, 3),
+        IF(3, Integer.MAX_VALUE),
         IN(2, Integer.MAX_VALUE),
         SMOOTH(3, 4);
 
@@ -536,7 +591,8 @@ public final class PackExpression {
                 } while (take(","));
             }
             require(")");
-            if (arguments.size() < function.minimum || arguments.size() > function.maximum) {
+            if (arguments.size() < function.minimum || arguments.size() > function.maximum
+                    || (function == Function.IF && arguments.size() % 2 == 0)) {
                 throw new Unsupported("CUSTOM_EXPRESSION_ARITY", name);
             }
             int slot = -1;

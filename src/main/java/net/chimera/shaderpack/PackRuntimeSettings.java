@@ -423,10 +423,12 @@ public final class PackRuntimeSettings {
         boolean valid = value != null && !rejected.contains(name);
         if (valid) {
             for (String dependency : value.program().dependencies()) {
+                // A dependency refused at parse time is still declared, so the host must not
+                // answer for it: its dependents are refused too, never evaluated against a zero.
                 ParsedValue dependencyValue = parsed.get(dependency);
-                if (dependencyValue != null
+                if (rejected.contains(dependency) || (dependencyValue != null
                         && !resolve(dependency, parsed, rejected, visiting, resolved, order,
-                        deviations)) {
+                        deviations))) {
                     rejected.add(name);
                     deviations.add("CUSTOM_VALUE_DEPENDENCY_INVALID:" + name);
                     valid = false;
