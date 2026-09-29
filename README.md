@@ -122,9 +122,9 @@ For headless runtime verification, run `powershell -NoProfile -ExecutionPolicy B
 
 M6.6 adds client-only commands. The `-Dchimera.pack` JVM property remains the startup default. Runtime commands do not need a Minecraft restart.
 
-Use `/chimera pack list` to list direct shaderpacks-directory children. Use `/chimera pack load <name-or-path>` to queue a directory or ZIP. Names resolve in the instance `minecraft/shaderpacks` directory; explicit local paths may be absolute or relative to the game directory. Use `/chimera pack reload` to rebuild the active selection, `/chimera pack off` to select Chimera identity rendering, and `/chimera pack status` to inspect the active and pending selections.
+Use `/chimera pack list` to list direct shaderpacks-directory children. Use `/chimera pack load <name-or-path>` to queue a directory or ZIP. Names resolve in the instance `minecraft/shaderpacks` directory; explicit local paths may be absolute or relative to the game directory. Use `/chimera pack reload` to rebuild the active selection, `/chimera pack off` to return to vanilla rendering, and `/chimera pack status` to inspect the active and pending selections.
 
-Pack changes apply at the next safe command-buffer boundary. Chimera waits for Vulkan idle before replacing pack resources, so a short frame pause is expected. F8 remains the master Chimera enable state. A failed replacement restores the previous pack when possible; the host renderer is used only if restoration also fails.
+Pack changes apply at the next safe command-buffer boundary. Chimera waits for Vulkan idle before replacing pack resources, so a short frame pause is expected. With no pack loaded, Chimera leaves the frame to VulkanMod's vanilla renderer, as Iris does with shaders off. A failed replacement restores the previous pack when possible; the host renderer is used only if restoration also fails.
 
 ## License
 

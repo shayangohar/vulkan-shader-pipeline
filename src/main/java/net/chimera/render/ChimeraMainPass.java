@@ -757,7 +757,7 @@ public class ChimeraMainPass implements MainPass {
 
     private static String packLabel(Path path) {
         if (path == null) {
-            return "identity";
+            return "none (vanilla)";
         }
         Path name = path.getFileName();
         return name == null ? path.toString() : name.toString();
@@ -2589,7 +2589,7 @@ public class ChimeraMainPass implements MainPass {
         }
         Path dir = this.packPath;
         if (dir == null) {
-            LOGGER.info("[chimera] pack disabled (identity selection)");
+            LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             PackUniformProvider.installRuntimeSettings(null);

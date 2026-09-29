@@ -29,8 +29,12 @@ public final class ChimeraRenderer {
     private static boolean screenOpen;
     /** Keeps a normal Chimera install request alive across a safe rebuild. */
     private static boolean resumeAfterVariant;
-    /** F8-controlled master state; pack commands must not change it. */
+    /**
+     * False after a failed pack rebuild left the host renderer in charge, so
+     * that pack is not retried every frame. The next pack command clears it.
+     */
     private static boolean chimeraEnabled = true;
+    private static boolean noPackLogged;
     private static MainPass hostPass;
     private static ChimeraMainPass chimeraPass;
 
@@ -77,35 +81,6 @@ public final class ChimeraRenderer {
         install();
     }
 
-    public static void toggle() {
-        if (screenMode) {
-            // F8 while a screen is open: leave screen mode via full toggle-off.
-            chimeraEnabled = false;
-            if (installed) {
-                uninstall();
-            } else {
-                screenMode = false;
-                resumeAfterVariant = false;
-            }
-            return;
-        }
-
-        if (!installed && resumeAfterVariant) {
-            chimeraEnabled = false;
-            resumeAfterVariant = false;
-            ChimeraMod.LOGGER.info("F8 disabled pending Chimera resume");
-            return;
-        }
-
-        if (installed) {
-            chimeraEnabled = false;
-            uninstall();
-        } else {
-            chimeraEnabled = true;
-            install();
-        }
-    }
-
     public static boolean isReady() {
         return ready;
     }
@@ -118,16 +93,22 @@ public final class ChimeraRenderer {
         if (!ready || chimeraPass == null) {
             return PackRequestResult.NOT_READY;
         }
-        return chimeraPass.queuePackChange(path, false)
-                ? PackRequestResult.QUEUED : PackRequestResult.ALREADY_ACTIVE;
+        if (!chimeraPass.queuePackChange(path, false)) {
+            return PackRequestResult.ALREADY_ACTIVE;
+        }
+        chimeraEnabled = true;
+        return PackRequestResult.QUEUED;
     }
 
     public static PackRequestResult reloadPack() {
         if (!ready || chimeraPass == null) {
             return PackRequestResult.NOT_READY;
         }
-        return chimeraPass.queuePackReload()
-                ? PackRequestResult.QUEUED : PackRequestResult.ALREADY_ACTIVE;
+        if (!chimeraPass.queuePackReload()) {
+            return PackRequestResult.ALREADY_ACTIVE;
+        }
+        chimeraEnabled = true;
+        return PackRequestResult.QUEUED;
     }
 
     public static PackRequestResult disablePack() {
@@ -138,8 +119,7 @@ public final class ChimeraRenderer {
         if (!ready || chimeraPass == null) {
             return "Chimera pack: renderer not ready";
         }
-        return chimeraPass.packStatus() + ", F8=" + (chimeraEnabled ? "enabled" : "disabled")
-                + ", renderer=" + (installed ? "chimera" : "host");
+        return chimeraPass.packStatus() + ", renderer=" + (installed ? "chimera" : "vanilla");
     }
 
     /** Applies pending pack work before VulkanMod begins a new main command buffer. */
@@ -243,16 +223,18 @@ public final class ChimeraRenderer {
         if (!chimeraPass.packLoaded()) {
             // No shader pack: the frame stays vanilla, as it does in Iris.
             // Chimera's own terrain shading and shadow map are not applied.
-            ChimeraMod.LOGGER.info("No shader pack loaded - host renderer stays in charge");
+            if (!noPackLogged) {
+                noPackLogged = true;
+                ChimeraMod.LOGGER.info("No shader pack loaded - vanilla rendering");
+            }
             resumeAfterVariant = false;
             return false;
         }
 
         if (!chimeraPass.prepareForInstall()) {
-            // A toggle can arrive while the current command buffer is still
-            // recording. Keep the request alive so the pre-command-buffer
-            // hook retries it at the next safe boundary instead of leaving
-            // the host renderer installed until another manual toggle.
+            // An install can be requested while the current command buffer is
+            // still recording. Keep the request alive so the pre-command-buffer
+            // hook retries it at the next safe boundary.
             resumeAfterVariant = true;
             ChimeraMod.LOGGER.warn("Chimera install deferred; host main pass remains active");
             return false;
@@ -262,30 +244,9 @@ public final class ChimeraRenderer {
         ChimeraEntityBridge.setEnabled(!chimeraPass.packRuntimeRejected() && ChimeraEntityBridge.isInstalled());
         ChimeraSkyBridge.setEnabled(!chimeraPass.packRuntimeRejected() && ChimeraSkyBridge.isInstalled());
         installed = true;
-        ChimeraMod.LOGGER.info("chimera ACTIVE - HDR frame + terrain/entity pipelines (F8 to toggle back)");
+        noPackLogged = false;
+        ChimeraMod.LOGGER.info("Chimera renderer active for the loaded shader pack");
         return true;
-    }
-
-    private static void uninstall() {
-        if (!installed) {
-            return;
-        }
-
-        Renderer.getInstance().endRenderPass();
-        Renderer.getInstance().setMainPass(hostPass);
-        ChimeraTerrainPipelines.disable();
-        ChimeraEntityBridge.setEnabled(false);
-        ChimeraSkyBridge.setEnabled(false);
-        // Our post segments leave depth/cull/blend/topology state disabled;
-        // restore the neutral state the host frame flow expects.
-        VRenderSystem.enableDepthTest();
-        VRenderSystem.depthMask(true);
-        VRenderSystem.enableCull();
-        VRenderSystem.enableBlend();
-        VRenderSystem.colorMask(true, true, true, true);
-        installed = false;
-        resumeAfterVariant = false;
-        ChimeraMod.LOGGER.info("Reverted to host main pass + host terrain shaders");
     }
 
     // ------------------------------------------------------------------

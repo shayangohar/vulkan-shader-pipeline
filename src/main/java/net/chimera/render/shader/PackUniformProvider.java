@@ -195,7 +195,7 @@ public final class PackUniformProvider {
         long now = System.nanoTime();
         float deltaSeconds = lastFrameNanos == 0L
                 ? 0.0f
-                : Math.min(Math.max(PackFrameState.quantizedFrameSecondsForTest(
+                : Math.min(Math.max(PackFrameState.frameSeconds(
                 now - lastFrameNanos), 0.0f), 0.25f);
         long elapsedNanos = lastFrameNanos == 0L ? 0L : now - lastFrameNanos;
         lastFrameNanos = now;

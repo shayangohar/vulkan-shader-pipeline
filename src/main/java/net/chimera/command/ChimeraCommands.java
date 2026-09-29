@@ -75,7 +75,15 @@ public final class ChimeraCommands {
 
     private static int turnPackOff(CommandContext<FabricClientCommandSource> context) {
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.disablePack();
-        return reportRequest(context, result, "identity pack");
+        switch (result) {
+            case QUEUED -> context.getSource().sendFeedback(Component.literal(
+                    "Chimera shader pack off queued; vanilla rendering resumes at the next safe frame boundary."));
+            case ALREADY_ACTIVE -> context.getSource().sendFeedback(Component.literal(
+                    "No Chimera shader pack is loaded; rendering is already vanilla."));
+            case NOT_READY -> context.getSource().sendError(Component.literal(
+                    "Chimera is not ready; no pack change was queued."));
+        }
+        return result == ChimeraRenderer.PackRequestResult.NOT_READY ? -1 : 0;
     }
 
     private static int packStatus(CommandContext<FabricClientCommandSource> context) {

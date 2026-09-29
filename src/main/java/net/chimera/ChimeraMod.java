@@ -21,7 +21,6 @@ public class ChimeraMod implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOGGER.info("Chimera {} initializing - shaderpack pipeline for VulkanMod", VERSION);
-        LOGGER.info("Press F8 in-game to toggle the chimera main pass");
         ChimeraCommands.register();
         ResourceLoader.get(PackType.CLIENT_RESOURCES).registerReloader(
                 ChimeraMaterialReloadListener.ID, ChimeraMaterialReloadListener.live());

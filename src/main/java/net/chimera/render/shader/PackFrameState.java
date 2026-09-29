@@ -378,8 +378,13 @@ final class PackFrameState {
         return (int) Math.floorDiv(dayTime, 24000L);
     }
 
-    static float quantizedFrameSecondsForTest(long elapsedNanos) {
-        return (float) (Math.max(elapsedNanos, 0L) / 1_000_000L) / 1000.0f;
+    /**
+     * The exact frame interval in seconds. Iris truncates it to whole
+     * milliseconds; at the several hundred frames per second Chimera runs,
+     * that dropped 15-45% of real time and stepped pack animation unevenly.
+     */
+    static float frameSeconds(long elapsedNanos) {
+        return (float) (Math.max(elapsedNanos, 0L) / 1.0e9);
     }
 
     static double cameraShift(double value, double previous) {
