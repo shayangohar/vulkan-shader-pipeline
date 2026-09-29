@@ -13,6 +13,29 @@ import net.chimera.ChimeraMod;
  */
 final class PackFrameClockLog {
     static final boolean ENABLED = Boolean.getBoolean("chimera.frameClockLog");
+    /**
+     * Diagnostic ({@code -Dchimera.fixedFrameTime=<seconds>}): advances the
+     * pack clock by a fixed step per frame. A RenderDoc capture stalls the
+     * game, so sequential captures otherwise step the clock by the 0.25 s
+     * clamp; a live-sized step makes them show consecutive live frames.
+     */
+    static final float FIXED_STEP_SECONDS = fixedStep();
+
+    private static float fixedStep() {
+        String value = System.getProperty("chimera.fixedFrameTime");
+        if (value == null) return 0.0f;
+        try {
+            float step = Float.parseFloat(value.trim());
+            if (Float.isFinite(step) && step > 0.0f && step <= 0.25f) {
+                ChimeraMod.LOGGER.warn("[chimera] diagnostic: pack clock advances a fixed {} s per frame", step);
+                return step;
+            }
+        } catch (NumberFormatException ignored) {
+            // Reported below.
+        }
+        ChimeraMod.LOGGER.warn("[chimera] ignoring chimera.fixedFrameTime={} (expected 0 < seconds <= 0.25)", value);
+        return 0.0f;
+    }
     private static final long REPORT_INTERVAL_NANOS = 2_000_000_000L;
     private static final long HITCH_NANOS = 50_000_000L;
 

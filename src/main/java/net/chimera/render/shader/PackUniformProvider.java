@@ -197,6 +197,9 @@ public final class PackUniformProvider {
                 ? 0.0f
                 : Math.min(Math.max(PackFrameState.frameSeconds(
                 now - lastFrameNanos), 0.0f), 0.25f);
+        if (PackFrameClockLog.FIXED_STEP_SECONDS > 0.0f && lastFrameNanos != 0L) {
+            deltaSeconds = PackFrameClockLog.FIXED_STEP_SECONDS;
+        }
         long elapsedNanos = lastFrameNanos == 0L ? 0L : now - lastFrameNanos;
         lastFrameNanos = now;
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
