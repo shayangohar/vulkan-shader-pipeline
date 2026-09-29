@@ -69,8 +69,8 @@ public final class M73ConformanceHarness {
                 "M7.3 Nether/End time semantics");
         assertEquals(3, PackFrameState.irisWorldDayForTest(72000L),
                 "M7.3 world day semantics");
-        assertEquals(0.00725f, PackFrameState.frameSeconds(7_250_000L),
-                "M7.3 frame time keeps sub-millisecond precision");
+        assertEquals(0.007f, PackFrameState.quantizedFrameSecondsForTest(7_250_000L),
+                "M7.3 frame time millisecond quantization");
         assertEquals(0.0f, PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.0f),
                 "M7.3 zero-delta smoothing hold");
         assertTrue(PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.1f) > 0.0f,

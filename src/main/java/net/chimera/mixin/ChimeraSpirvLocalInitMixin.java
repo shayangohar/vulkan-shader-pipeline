@@ -1,7 +1,7 @@
 package net.chimera.mixin;
 
 import net.chimera.shaderpack.SpirvLocalInitializer;
-import net.chimera.shaderpack.SpirvNoContraction;
+import net.chimera.shaderpack.SpirvTrigPrecision;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -13,7 +13,9 @@ import java.nio.ByteBuffer;
 /**
  * Pack modules compiled by VulkanMod get zero initializers on their
  * uninitialized locals, matching the GL drivers the packs target
- * (SpirvLocalInitializer). Host shaders compile outside the pack scope and
+ * (SpirvLocalInitializer), and the arithmetic feeding their trigonometric
+ * calls is evaluated as written (SpirvTrigPrecision), as the GL compiler
+ * does. Host shaders compile outside the pack scope and
  * keep their bytes. The returned SPIRV keeps shaderc's handle; its
  * transformed bytes are a GC-owned direct buffer, read once at module
  * creation.
@@ -26,9 +28,7 @@ public abstract class ChimeraSpirvLocalInitMixin {
         if (!SpirvLocalInitializer.packCompileActive()) return;
         SPIRVUtils.SPIRV compiled = callback.getReturnValue();
         ByteBuffer initialized = SpirvLocalInitializer.apply(compiled.bytecode());
-        if (SpirvNoContraction.ENABLED) {
-            initialized = SpirvNoContraction.apply(initialized);
-        }
+        initialized = SpirvTrigPrecision.apply(initialized);
         if (initialized != compiled.bytecode()) {
             callback.setReturnValue(new SPIRVUtils.SPIRV(((ChimeraSpirvAccessor) (Object) compiled).chimera$handle(),
                     initialized));
