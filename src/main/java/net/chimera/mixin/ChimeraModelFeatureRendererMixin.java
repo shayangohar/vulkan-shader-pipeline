@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraEntityStorage;
 import net.chimera.render.shader.ChimeraEntitySubmission;
+import net.chimera.render.ChimeraFamilyDraw;
 import net.chimera.render.ChimeraRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.OutlineBufferSource;
@@ -116,62 +117,12 @@ public abstract class ChimeraModelFeatureRendererMixin {
         if (submits.isEmpty()) {
             return;
         }
-        net.chimera.render.ChimeraMainPass mainPass = net.chimera.render.ChimeraRenderer.getMainPass();
         for (Map.Entry<RenderType, List<SubmitNodeStorage.ModelSubmit>> entry : submits.entrySet()) {
-            RenderType renderType = entry.getKey();
-            ChimeraEntityBridge.Family selected =
-                    ChimeraEntityBridge.familyForRenderType(family, renderType);
-            ChimeraEntityBridge.noteFamilyBatch(selected, 1);
-            if (!ChimeraEntityBridge.beginDraw(selected)) {
-                chimera$renderBatch(hostBufferSource, outlineBufferSource,
-                        Map.of(renderType, entry.getValue()), crumblingBufferSource);
-                continue;
-            }
-            // The pipeline follows the selected family, not the base family:
-            // translucent and glowing draws need their own MRT windows.
-            net.chimera.shaderpack.PackPipelines.PackEntity selectedPipeline = mainPass == null
-                    ? null : mainPass.familyPipeline(selected);
-            boolean windowOpen = false;
-            boolean admitted = false;
-            try {
-                // The upload widens the host vertex format for as long as the
-                // draw is active, so every admission check runs before the
-                // batch is emitted. A family window that cannot open, or a
-                // batch whose pipeline or buffer is unavailable, keeps the
-                // host format and the host draw from the outset: a widened mesh
-                // can never be handed back to the host pipeline.
-                if (selectedPipeline != null && selectedPipeline.requiresDynamicAttachments()) {
-                    windowOpen = mainPass != null
-                            && mainPass.beginPackFamilyWindow(selectedPipeline);
-                    if (!windowOpen) {
-                        ChimeraEntityBridge.endDraw();
-                        chimera$renderBatch(hostBufferSource, outlineBufferSource,
-                                Map.of(renderType, entry.getValue()), crumblingBufferSource);
-                        continue;
-                    }
-                }
-                MultiBufferSource.BufferSource entityBufferSource =
-                        ChimeraEntityBridge.entityBufferSource();
-                if (entityBufferSource == null) {
-                    ChimeraEntityBridge.endDraw();
-                    chimera$renderBatch(hostBufferSource, outlineBufferSource,
-                            Map.of(renderType, entry.getValue()), crumblingBufferSource);
-                    continue;
-                }
-                admitted = true;
-                chimera$renderBatch(entityBufferSource, outlineBufferSource,
-                        Map.of(renderType, entry.getValue()), crumblingBufferSource);
-                ChimeraEntityBridge.endEntityBatch(renderType);
-            } finally {
-                if (windowOpen) {
-                    mainPass.endPackFamilyWindow(selectedPipeline);
-                }
-                if (ChimeraEntityBridge.isDrawActive()) {
-                    ChimeraEntityBridge.endDraw();
-                }
-                if (!admitted) {
-                    ChimeraEntityBridge.noteFamilyHostFallback(selected, renderType);
-                }
+            Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> batch =
+                    Map.of(entry.getKey(), entry.getValue());
+            if (!ChimeraFamilyDraw.emit(family, entry.getKey(), source ->
+                    chimera$renderBatch(source, outlineBufferSource, batch, crumblingBufferSource))) {
+                chimera$renderBatch(hostBufferSource, outlineBufferSource, batch, crumblingBufferSource);
             }
         }
     }
