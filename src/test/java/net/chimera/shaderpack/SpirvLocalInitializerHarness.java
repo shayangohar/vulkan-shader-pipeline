@@ -50,6 +50,46 @@ public final class SpirvLocalInitializerHarness {
         int[] clean = words(compile(noLocals));
         require(SpirvLocalInitializer.apply(clean) == clean, "a module without function variables changed");
         System.out.println("[chimera] pack SPIR-V local initialization: PASS");
+        verifyNoContraction();
+    }
+
+    /** BSL's value-noise hash: every float result must carry NoContraction, ahead of the types. */
+    private static void verifyNoContraction() {
+        String source = """
+                #version 460
+                layout(location = 0) in vec2 p;
+                layout(location = 0) out vec4 color;
+                float hash(vec2 q) { return fract(sin(dot(q, vec2(12.9898, 4.1414))) * 43758.5453); }
+                void main() {
+                    vec2 flr = floor(p);
+                    color = vec4(hash(flr) + hash(flr + vec2(1.0, 0.0)) - 0.5, 0.0, 0.0, 1.0);
+                }
+                """;
+        int[] original = words(compile(source));
+        int[] decorated = SpirvNoContraction.apply(original);
+        require(decorated != original, "float arithmetic was left contractible");
+        java.util.Set<Integer> arithmetic = new java.util.HashSet<>();
+        java.util.Set<Integer> noContraction = new java.util.HashSet<>();
+        int firstType = -1;
+        int at = 5;
+        for (; at < decorated.length; at += decorated[at] >>> 16) {
+            int opcode = decorated[at] & 0xFFFF;
+            int count = decorated[at] >>> 16;
+            require(count > 0, "malformed instruction at word " + at);
+            if (firstType < 0 && opcode >= 19 && opcode <= 39) firstType = at;
+            if (opcode == 71 && decorated[at + 2] == 42) {
+                require(firstType < 0, "NoContraction decoration follows a type declaration");
+                noContraction.add(decorated[at + 1]);
+            }
+            if (java.util.Set.of(127, 129, 131, 133, 136, 140, 141, 142, 143, 144, 145, 146, 148).contains(opcode)) {
+                arithmetic.add(decorated[at + 2]);
+            }
+        }
+        require(at == decorated.length, "instruction stream does not end at the module end");
+        require(!arithmetic.isEmpty(), "fixture has no float arithmetic");
+        require(noContraction.equals(arithmetic), "decorated ids differ from float arithmetic results");
+        require(decorated[3] == original[3], "the id bound must not change");
+        System.out.println("[chimera] pack SPIR-V NoContraction: PASS");
     }
 
     private static void verifyInitializers(int[] words) {

@@ -1,6 +1,7 @@
 package net.chimera.mixin;
 
 import net.chimera.shaderpack.SpirvLocalInitializer;
+import net.chimera.shaderpack.SpirvNoContraction;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -25,6 +26,9 @@ public abstract class ChimeraSpirvLocalInitMixin {
         if (!SpirvLocalInitializer.packCompileActive()) return;
         SPIRVUtils.SPIRV compiled = callback.getReturnValue();
         ByteBuffer initialized = SpirvLocalInitializer.apply(compiled.bytecode());
+        if (SpirvNoContraction.ENABLED) {
+            initialized = SpirvNoContraction.apply(initialized);
+        }
         if (initialized != compiled.bytecode()) {
             callback.setReturnValue(new SPIRVUtils.SPIRV(((ChimeraSpirvAccessor) (Object) compiled).chimera$handle(),
                     initialized));
