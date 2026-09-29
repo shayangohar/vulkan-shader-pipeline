@@ -163,7 +163,10 @@ public final class ChimeraRenderer {
             return;
         }
         boolean liveLevel = Minecraft.getInstance().level != null;
-        if (chimeraEnabled && (resumeAfterVariant || (screenMode && liveLevel)) && !installed) {
+        // A first pack load from the host renderer installs too: with no
+        // pack loaded Chimera never took the frame.
+        boolean packArrived = !screenMode && chimeraPass.packLoaded();
+        if (chimeraEnabled && (resumeAfterVariant || packArrived || (screenMode && liveLevel)) && !installed) {
             if (install()) {
                 resumeAfterVariant = false;
                 screenMode = false;
@@ -236,6 +239,13 @@ public final class ChimeraRenderer {
     private static boolean install() {
         if (!ready || installed) {
             return installed;
+        }
+        if (!chimeraPass.packLoaded()) {
+            // No shader pack: the frame stays vanilla, as it does in Iris.
+            // Chimera's own terrain shading and shadow map are not applied.
+            ChimeraMod.LOGGER.info("No shader pack loaded - host renderer stays in charge");
+            resumeAfterVariant = false;
+            return false;
         }
 
         if (!chimeraPass.prepareForInstall()) {
