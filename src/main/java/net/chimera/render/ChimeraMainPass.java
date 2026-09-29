@@ -2436,20 +2436,23 @@ public class ChimeraMainPass implements MainPass {
     }
 
     private void createRenderPasses() {
+        // World depth is always stored: the world pass is suspended mid-frame
+        // (shadow segment, family windows) and resumed with a depth load. A
+        // DONT_CARE store let every later layer test against discarded depth.
         RenderPass.Builder b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, hdrDepthStoreOp());
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         this.hdrRenderPass = b.build();
 
         b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, hdrDepthStoreOp());
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxRenderPass = b.build();
 
         b = RenderPass.builder(this.hdrFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, hdrDepthStoreOp());
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxClearDepthRenderPass = b.build();
         // The world keeps GL row order for pack screen-space math (KNOW-414).
@@ -4023,12 +4026,6 @@ public class ChimeraMainPass implements MainPass {
         this.presentPipeline = null;
         this.compositePipeline = null;
         this.sceneSeedPipeline = null;
-    }
-
-    private int hdrDepthStoreOp() {
-        return this.packNeedsHdrDepth
-                ? VK_ATTACHMENT_STORE_OP_STORE
-                : VK_ATTACHMENT_STORE_OP_DONT_CARE;
     }
 
     /**

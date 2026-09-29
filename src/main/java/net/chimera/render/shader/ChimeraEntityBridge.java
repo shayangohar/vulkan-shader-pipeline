@@ -94,6 +94,8 @@ public final class ChimeraEntityBridge {
             // gbuffer data, and deferred lighting erased them to a ghost.
             RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
     );
+    /** The fixed discard threshold of core/rendertype_item_entity_translucent_cull. */
+    private static final float ITEM_ALPHA_CUTOUT = 0.1F;
     private ChimeraEntityBridge() {}
 
     public static void install(PackPipelines.PackEntity entity,
@@ -529,8 +531,14 @@ public final class ChimeraEntityBridge {
      * The host pipeline's own discard threshold (its ALPHA_CUTOUT define), or
      * 0 for a pipeline that never discards. The pack entity program tests
      * against it per draw, as Iris does with iris_currentAlphaTest.
+     *
+     * <p>The item pipeline declares no define: its core shader discards below
+     * a fixed 0.1, and Iris tests held items against 0.1 too. Without it the
+     * transparent texels of a flat item wrote depth and gbuffer data across
+     * the whole quad, and its glint lit that box.</p>
      */
     public static float alphaReference(RenderPipeline pipeline) {
+        if (pipeline == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) return ITEM_ALPHA_CUTOUT;
         String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
         if (cutout == null) return 0.0F;
         try {

@@ -35,6 +35,7 @@ public final class PackUniformProvider {
     private final PackFrameState frameState = new PackFrameState();
     private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
     private long lastFrameNanos;
+    private final PackFrameClockLog frameClockLog = new PackFrameClockLog();
     private boolean catalogLogged;
 
     private PackUniformProvider() {}
@@ -196,8 +197,12 @@ public final class PackUniformProvider {
                 ? 0.0f
                 : Math.min(Math.max(PackFrameState.quantizedFrameSecondsForTest(
                 now - lastFrameNanos), 0.0f), 0.25f);
+        long elapsedNanos = lastFrameNanos == 0L ? 0L : now - lastFrameNanos;
         lastFrameNanos = now;
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
+        if (PackFrameClockLog.ENABLED && elapsedNanos > 0L) {
+            frameClockLog.record(now, elapsedNanos, deltaSeconds, frameState.frameTimeCounter());
+        }
         logDerivedValueFailures();
         refreshBindings();
     }

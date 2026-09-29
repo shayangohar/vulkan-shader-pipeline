@@ -149,6 +149,10 @@ final class PackFrameState {
         return true;
     }
 
+    float frameTimeCounter() {
+        return frameTimeCounter;
+    }
+
     void resetSession() {
         this.lastLevel = null;
         this.session.reset();
