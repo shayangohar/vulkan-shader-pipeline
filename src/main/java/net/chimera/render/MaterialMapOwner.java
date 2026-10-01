@@ -440,8 +440,10 @@ public final class MaterialMapOwner implements AutoCloseable {
     }
 
     /**
-     * Writes every animated slot that changed since the last pump: each mip
-     * level, including its replicated padding, at the slot's own origin.
+     * Writes every animated slot that changed since the last pump: each
+     * animated mip level ({@link MaterialAnimation#animatedLevels()}, Iris's
+     * Sodium-limited redraw), including its replicated padding, at the
+     * slot's own origin.
      * Runs at the pump, where no render pass is open. A failed write warns
      * and leaves that slot showing its last good frame.
      */
@@ -467,7 +469,7 @@ public final class MaterialMapOwner implements AutoCloseable {
 
     private static void writeSlot(CompanionSet set, AnimatedSlot slot, int atlasWidth, int atlasHeight) {
         MaterialAnimation animation = slot.animation;
-        for (int level = 0; level < animation.levels(); level++) {
+        for (int level = 0; level < animation.animatedLevels(); level++) {
             int pad = slot.sprite.padX() >> level;
             int width = MaterialMapPixels.levelSize(animation.width(), level);
             int height = MaterialMapPixels.levelSize(animation.height(), level);

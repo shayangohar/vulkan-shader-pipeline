@@ -16,6 +16,16 @@ import java.util.List;
  * all four channels by {@code subFrame / time} truncated to thousandths,
  * each mip level from that frame's own level ({@code animate_sprite} and
  * {@code animate_sprite_interpolate}). Pure CPU state: no GPU, no natives.</p>
+ *
+ * <p>Iris parity: Iris ships with Sodium, whose default "animate only visible
+ * textures" (0.8.7 {@code SpriteContentsTickerMixin}) clears a sprite's active
+ * flag after its first {@code drawToAtlas}. Vanilla draws once per mip level,
+ * so once the schedule has reached its last entry, Iris redraws only mip 0
+ * and the smaller levels keep the last frame drawn before that. Packs are
+ * tuned against that look (distant water normals hold still), so
+ * {@link #animatedLevels()} reproduces it. Sodium also skips mip 0 for
+ * sprites off screen; a map off screen cannot be seen, so that part is not
+ * mirrored.</p>
  */
 final class MaterialAnimation {
     /** One schedule entry: which frame of the strip to show, and for how many ticks. */
@@ -29,6 +39,8 @@ final class MaterialAnimation {
     private final int height;
     private int frame;
     private int subFrame;
+    /** Sodium's {@code hasUploadedAllOnce}: the schedule has reached its last entry. */
+    private boolean shownLastEntry;
 
     MaterialAnimation(List<Frame> frames, boolean interpolate, int[][][] frameLevels, int width, int height) {
         if (frames.size() < 2) {
@@ -61,6 +73,7 @@ final class MaterialAnimation {
             subFrame = 0;
             changed = previous != frames.get(frame).index();
         }
+        if (frame == frames.size() - 1) shownLastEntry = true;
         return changed || (interpolate && currentIndex() != nextIndex());
     }
 
@@ -91,6 +104,14 @@ final class MaterialAnimation {
 
     int levels() {
         return frameLevels[0].length;
+    }
+
+    /**
+     * Mip levels a redraw writes: every level until the schedule first
+     * reaches its last entry, then only level 0 (see the class note).
+     */
+    int animatedLevels() {
+        return shownLastEntry ? 1 : levels();
     }
 
     int width() {

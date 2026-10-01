@@ -1025,18 +1025,22 @@ public final class M87MaterialMapsHarness {
             int brick = n0[16 * 32 + 16];
 
             // Shown frame after each tick: 0 holds 2, then 2 holds 3, then 1 holds 1.
+            // Tick 5 first reaches the last entry: from then on only mip 0 is
+            // redrawn (Iris + Sodium), so mip 1 keeps frame 2.
             int[] expected = {0, 2, 2, 2, 1, 0, 0, 2};
+            int lastEntryTick = 4;
             int writes = 0;
             for (int tick = 0; tick < expected.length; tick++) {
                 owner.tickAtlas("minecraft:animated");
                 owner.pumpPendingBuilds(lookup, M87MaterialMapsHarness::decodeImageIO);
                 boolean changed = tick == 0 ? false : expected[tick] != expected[tick - 1];
-                if (changed) writes += 3;
+                if (changed) writes += tick < lastEntryTick ? 3 : 1;
                 assertEquals(writes, normals.writes.size(), "tick " + (tick + 1) + " redraw count");
                 int shown = frames[expected[tick]];
+                int smaller = frames[expected[Math.min(tick, lastEntryTick - 1)]];
                 assertEquals(shown, normals.levels.get(0).pixels()[32 + 1], "tick " + (tick + 1) + " frame");
                 assertEquals(shown, normals.levels.get(0).pixels()[0], "tick " + (tick + 1) + " padding");
-                assertEquals(shown, normals.levels.get(1).pixels()[0], "tick " + (tick + 1) + " mip 1");
+                assertEquals(smaller, normals.levels.get(1).pixels()[0], "tick " + (tick + 1) + " mip 1");
             }
             assertTrue(owner.companionFor(base, "normals").image() == bound,
                     "animation changed the descriptor identity");
@@ -1092,7 +1096,8 @@ public final class M87MaterialMapsHarness {
                 assertEquals(pack(value[0], value[1], value[2], value[3]),
                         specular.levels.get(0).pixels()[8], "interpolated padding tick " + (tick + 1));
             }
-            assertEquals(shown.length * 3, specular.writes.size(), "interpolation redraws every tick");
+            // Every tick redraws; tick 4 reaches the last entry, after which only mip 0 is written.
+            assertEquals(3 * 3 + (shown.length - 3), specular.writes.size(), "interpolation redraws every tick");
         } finally {
             owner.close();
         }
