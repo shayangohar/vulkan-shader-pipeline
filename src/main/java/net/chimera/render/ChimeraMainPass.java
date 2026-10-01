@@ -2333,7 +2333,7 @@ public class ChimeraMainPass implements MainPass {
             }
             int maxAttachments = deviceMaxColorAttachments();
             this.packTargetGraph = PackTargetGraphPlan.build(
-                    this.packPlan.programs(), this.packConfig, this.packPlan.resources(), width, height,
+                    this.packPlan.activePrograms(), this.packConfig, this.packPlan.resources(), width, height,
                     maxAttachments, deviceMaxImageDimension());
             this.packCoveragePlan = PackCoveragePlan.from(
                     this.packTargetGraph, this.packPlan, width, height);
@@ -2355,7 +2355,7 @@ public class ChimeraMainPass implements MainPass {
                         this.packCoveragePlan.deviations());
             }
             this.packFrameSchedule = PackFrameSchedulePlan.build(
-                    this.packPlan.programs(), this.packTargetGraph);
+                    this.packPlan.activePrograms(), this.packTargetGraph);
             this.packNeedsHdrDepth = this.packTargetGraph.depth().any();
             this.packDepthTargets.configure(width, height, this.packTargetGraph.depth());
             this.packTargetResourcesReady = this.packPostTargets.configure(this.packTargetGraph);
@@ -3639,6 +3639,8 @@ public class ChimeraMainPass implements MainPass {
         }
         List<PackProgram> postPrograms = this.packPrograms.stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
+                // A pass the pack switches off is not in the chain at all, as in Iris.
+                .filter(program -> this.packPlan == null || !this.packPlan.isProgramDisabled(program.name()))
                 .sorted(Comparator.comparing(PackProgram::name, PostTargetPlan.programComparator()))
                 .toList();
         String previousName = null;

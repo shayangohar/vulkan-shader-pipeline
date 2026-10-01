@@ -150,6 +150,15 @@ public record PackPlan(
         return value != null && !value.enabled();
     }
 
+    /**
+     * The programs that take part in the frame. Iris removes a program the pack switches off
+     * ({@code program.<name>.enabled}) from the pipeline entirely, so it neither runs nor counts
+     * as a producer; the schedule and target graph are built from these, never from a gap.
+     */
+    public List<PackProgramPlan> activePrograms() {
+        return programs().stream().filter(program -> !isProgramDisabled(program.name())).toList();
+    }
+
     public boolean isProgramAlias(String name) {
         PackProgramResolution value = resolution.resolution(name);
         return value != null && !value.requestedProgram().equals(value.selectedProgram());
