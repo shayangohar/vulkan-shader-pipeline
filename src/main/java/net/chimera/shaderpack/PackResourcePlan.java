@@ -161,13 +161,16 @@ public final class PackResourcePlan {
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
 
-        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name);
+        String samplerType = sampler.glslType();
+        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name, samplerType);
         String textureStage = textureStage(program);
         if (declaration == null && textureStage != null) {
-            declaration = textureDeclaration(declarations, textureStage, name);
+            declaration = textureDeclaration(declarations, textureStage, name, samplerType);
         }
-        if (declaration == null) declaration = textureDeclaration(declarations, "*", name);
-        if (declaration == null) declaration = declarations.get("customTexture." + name);
+        if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
+        if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
+            declaration = declarations.get("customTexture." + name);
+        }
         if (declaration == null && name.equals("tex") && stageFor(program) == UniformRegistry.Stage.POST) {
             declaration = declarations.get("customTexture.textureAtlas");
         }
@@ -177,6 +180,14 @@ public final class PackResourcePlan {
         // Pack declarations take precedence over canonical aliases. This is
         // important for a stage that deliberately replaces a logical target
         // with a sampled pack texture.
+        if (declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE) {
+            // Planned and matched by type, but no raw upload path serves it yet: the program
+            // must not sample something else in its place.
+            deviations.add("PACK_RAW_TEXTURE_UNSUPPORTED:" + declaration.key());
+            return new PackResourceBinding(program, name, declaration.key(),
+                    PackResourceKind.RAW_TEXTURE, declaration.source(), slot, "linear", "repeat",
+                    PackResourceStatus.UNSUPPORTED, deviations);
+        }
         if (declaration != null) {
             boolean game = isNamespacedSource(declaration.source());
             String key = name.equals("noisetex") ? "noisetex" : declaration.key();
@@ -212,8 +223,8 @@ public final class PackResourcePlan {
                     PackResourceStatus.UNAVAILABLE, deviations);
         }
 
-        if (name.equals("tex") || isHostTexture(name)) {
-            String hostResource = name.equals("tex") ? "texture" : name;
+        if (name.equals("tex") || name.equals("gtexture") || isHostTexture(name)) {
+            String hostResource = name.equals("tex") || name.equals("gtexture") ? "texture" : name;
             // The overlay is Chimera's own declaration, not a pack alias.
             if (!name.equals(OVERLAY_SAMPLER)) {
                 deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + hostResource);
@@ -339,7 +350,7 @@ public final class PackResourcePlan {
 
     public static String canonicalResource(String sampler) {
         if (sampler == null) return "";
-        if (sampler.equals("tex")) return "texture";
+        if (sampler.equals("tex") || sampler.equals("gtexture")) return "texture";
         if (sampler.equals("gcolor")) return "colortex0";
         if (sampler.equals("gdepth")) return "colortex1";
         if (sampler.equals("gnormal")) return "colortex2";
@@ -364,18 +375,41 @@ public final class PackResourcePlan {
      * same target: Iris overrides colortex7 and gaux4 together.
      */
     private static PackResourceDeclaration textureDeclaration(
-            Map<String, PackResourceDeclaration> declarations, String scope, String name) {
+            Map<String, PackResourceDeclaration> declarations, String scope, String name,
+            String samplerType) {
         String prefix = "texture." + scope + ".";
         PackResourceDeclaration exact = declarations.get(prefix + name);
-        if (exact != null) return exact;
+        if (exact != null && appliesTo(exact, samplerType)) return exact;
         String canonical = canonicalResource(name);
         for (PackResourceDeclaration declaration : declarations.values()) {
             if (declaration.key().startsWith(prefix)
-                    && canonicalResource(declaration.sampler()).equals(canonical)) {
+                    && canonicalResource(declaration.sampler()).equals(canonical)
+                    && appliesTo(declaration, samplerType)) {
                 return declaration;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a declaration replaces a sampler of this GLSL type. Iris patches a raw texture
+     * only into a sampler of its own dimensionality, so `sampler2D colortex0` stays the render
+     * target while `sampler3D colortex0` takes the declared volume; a PNG is always 2D.
+     */
+    static boolean appliesTo(PackResourceDeclaration declaration, String samplerType) {
+        if (declaration == null || declaration.kind() != PackResourceKind.RAW_TEXTURE) {
+            return declaration != null;
+        }
+        String[] parts = declaration.source().trim().split("\\s+");
+        String dimension = switch (parts[1].toUpperCase(java.util.Locale.ROOT)) {
+            case "TEXTURE_1D" -> "1D";
+            case "TEXTURE_2D", "TEXTURE_RECTANGLE" -> "2D";
+            case "TEXTURE_3D" -> "3D";
+            default -> "";
+        };
+        String type = samplerType == null ? "" : samplerType.replaceFirst("^[iu]", "");
+        return !dimension.isEmpty() && (type.equals("sampler" + dimension)
+                || (dimension.equals("2D") && type.equals("sampler2DRect")));
     }
 
     /**

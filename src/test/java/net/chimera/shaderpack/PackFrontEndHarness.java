@@ -17,7 +17,79 @@ public final class PackFrontEndHarness {
         verifyTypedExpressions();
         verifyVectorCustomValues();
         verifyIrisBiomeConstants();
+        verifyInterfaceTypes();
+        verifyRawTextureTypeMatch();
+        verifyProgramSwitches();
+        verifyBoolAndAtlasNames();
         System.out.println("[chimera] pack front-end generality: PASS");
+    }
+
+    /** Any GLSL interface type, packed by the locations it occupies (GLSL 4.60 section 4.4.1). */
+    private static void verifyInterfaceTypes() {
+        String vertex = String.join("\n",
+                "#version 400",
+                "struct Fog { vec3 color; float density; mat2x3 extinction; };",
+                "flat out uint mask;",
+                "flat out mat3 tbn;",
+                "flat out vec3 sky_sh[9];",
+                "flat out Fog fog;",
+                "out vec2 uv, light;",
+                "void main() {}");
+        GlslInterfaceScanner.StageInterface stage = GlslInterfaceScanner.scan(vertex, true);
+        check(stage.deviations().isEmpty(), "interface types rejected: " + stage.deviations());
+        // Name order: fog(1+1+2=4) light(1) mask(1) sky_sh(9) tbn(3) uv(1).
+        check(stage.locations().equals(Map.of("fog", 0, "light", 4, "mask", 5, "sky_sh", 6,
+                "tbn", 15, "uv", 18)), "packed locations " + stage.locations());
+        check(stage.output("sky_sh").typeWithArray().equals("vec3[9]"), "array type");
+        String rewritten = GlslInterfaceScanner.rewrite(vertex, true, declaration ->
+                "layout(location = " + stage.locations().get(declaration.name()) + ") "
+                        + (declaration.qualifier() == null ? "" : declaration.qualifier() + " ")
+                        + "out " + declaration.type() + " " + declaration.declarator() + ";\n");
+        check(rewritten.contains("layout(location = 6) flat out vec3 sky_sh[9];")
+                        && rewritten.contains("layout(location = 4) out vec2 light;")
+                        && rewritten.contains("layout(location = 18) out vec2 uv;")
+                        && rewritten.contains("struct Fog {"),
+                "rewrite did not give each name its location:\n" + rewritten);
+        String bad = "#version 400\nflat out Unknown thing;\nvoid main() {}";
+        check(GlslInterfaceScanner.scan(bad, true).deviations()
+                        .contains("PROGRAM_VARYING_TYPE_UNSUPPORTED:Unknown"),
+                "an undefined struct type must be named");
+    }
+
+    /** Iris patches a raw texture only into a sampler of the same dimensionality. */
+    private static void verifyRawTextureTypeMatch() {
+        PackResourceDeclaration volume = new PackResourceDeclaration("texture.composite.colortex0",
+                "composite", "colortex0", "image/noise.dat TEXTURE_3D R8 64 64 64 RED UNSIGNED_BYTE",
+                PackResourceKind.RAW_TEXTURE);
+        check(PackResourcePlan.appliesTo(volume, "sampler3D"), "a 3D volume serves sampler3D");
+        check(!PackResourcePlan.appliesTo(volume, "sampler2D"),
+                "a 3D volume must leave sampler2D colortex0 as the render target");
+        PackResourceDeclaration png = new PackResourceDeclaration("texture.composite.colortex13",
+                "composite", "colortex13", "image/galaxy.png", PackResourceKind.PACK_TEXTURE);
+        check(PackResourcePlan.appliesTo(png, "sampler2D"), "a PNG declaration applies as before");
+    }
+
+    /** program.<folder>/<name>.enabled with a declared-but-off toggle disables, as in Iris. */
+    private static void verifyProgramSwitches() {
+        PackSettingsPlan settings = new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(),
+                Map.of("world0/composite2", false, "composite3", false), java.util.Set.of(),
+                java.util.Set.of(), java.util.Set.of(), List.of(), "default");
+        check(!settings.enabled("world0", "composite2"), "folder-scoped switch ignored");
+        check(settings.enabled("world-1", "composite2"), "another folder's switch applied");
+        check(!settings.enabled("world0", "composite3"), "bare switch must still apply");
+    }
+
+    /** uniform.bool reads through `uniform bool`, and gtexture is Iris's atlas name. */
+    private static void verifyBoolAndAtlasNames() {
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "bool", "cycle", "worldTime > 10")),
+                Map.of(), List.of());
+        check(settings.customDescriptors().get("cycle").accepts("bool")
+                && settings.customDescriptors().get("cycle").accepts("int"), "bool custom types");
+        check(UniformRegistry.GEOMETRY_NAME_TO_SLOT.get("gtexture") == 0
+                        && UniformRegistry.ENTITY_NAME_TO_SLOT.get("gtexture") == 0
+                        && PackResourcePlan.canonicalResource("gtexture").equals("texture"),
+                "gtexture must alias the albedo atlas");
     }
 
     /** GLSL 3.3 section 3.1: backslash-newline splices lines before directives are read. */

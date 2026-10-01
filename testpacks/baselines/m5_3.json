@@ -30,9 +30,9 @@
       }
     },
     "unsupported_uniform": {
-      "reportSha256": "e23d015eeb9fb191b3926f459be366d5e908e6f80ce3130baa27655a9876b44b",
+      "reportSha256": "778aece82f5e7c2aae0c6d781a27bf17618e1b3f67bc52daf4a857e2297b9be7",
       "sourceHashes": {
-        "composite.fsh": "c296ddec1644fb1be63888a1af0bf45a23c6459dc4dc4b6f3b7a944be6bffe38",
+        "composite.fsh": "398fcc335a0ed8520929824c9696fa04202a2573500a634ad1f0f7c5635e6b38",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
         "gbuffers_terrain.fsh": "ca84e05ffaae89c5e1d72fd847c0b3530342c115f9bc5613a6a6d241a1cf283b",
         "shaders.json": "7acba5a997d27ac05442eb70105260b9795ac424717cd28596e06833c6daed58"

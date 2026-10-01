@@ -258,7 +258,7 @@ public final class PackUniformProvider {
 
     private static int bufferSize(String type) {
         return switch (type) {
-            case "float", "int" -> 4;
+            case "float", "int", "bool" -> 4;
             case "vec2", "ivec2" -> 8;
             case "vec3", "ivec3" -> 16;
             case "vec4", "ivec4" -> 16;

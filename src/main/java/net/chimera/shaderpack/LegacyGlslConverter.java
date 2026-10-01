@@ -387,29 +387,29 @@ public final class LegacyGlslConverter {
             for (GlslInterfaceScanner.Declaration input : vertexInterface.inputs()) {
                 throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + input.name());
             }
+            // Matched outputs keep the fragment's locations; unread outputs follow them, each
+            // taking as many locations as its type occupies.
             Map<String, Integer> locations = new TreeMap<>(match.locations());
-            int nextLocation = locations.values().stream().mapToInt(Integer::intValue).max().orElse(-1) + 1;
+            int nextLocation = 0;
             for (GlslInterfaceScanner.Declaration output : vertexInterface.outputs()) {
-                if (!locations.containsKey(output.name())) locations.put(output.name(), nextLocation++);
+                Integer location = locations.get(output.name());
+                if (location != null) nextLocation = Math.max(nextLocation, location + output.slots());
             }
-            converted = expandModernVaryingLists(VERSION_LINE.matcher(converted).replaceAll(""));
-            Matcher varying = MODERN_TERRAIN_DECL.matcher(converted);
-            StringBuilder rewritten = new StringBuilder();
-            int last = 0;
-            while (varying.find()) {
-                String name = varying.group(4);
-                Integer location = locations.get(name);
-                if (varying.group(2).equals("in") || location == null) {
-                    throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + name);
+            for (GlslInterfaceScanner.Declaration output : vertexInterface.outputs()) {
+                if (!locations.containsKey(output.name())) {
+                    locations.put(output.name(), nextLocation);
+                    nextLocation += output.slots();
                 }
-                rewritten.append(converted, last, varying.start());
-                rewritten.append("layout(location = ").append(location).append(") ");
-                if (varying.group(1) != null) rewritten.append(varying.group(1)).append(' ');
-                rewritten.append("out ").append(varying.group(3)).append(' ').append(name).append(';');
-                last = varying.end();
             }
-            rewritten.append(converted, last, converted.length());
-            converted = UniformRegistry.removeUniformDeclarations(rewritten.toString(), interfacePlan);
+            converted = GlslInterfaceScanner.rewrite(VERSION_LINE.matcher(converted).replaceAll(""), true,
+                    declaration -> {
+                        Integer location = locations.get(declaration.name());
+                        if (declaration.input() || location == null) {
+                            throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + declaration.name());
+                        }
+                        return interfaceDeclaration(location, declaration, "out");
+                    });
+            converted = UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
             converted = KNOWN_LEGACY_EXTENSIONS.matcher(converted).replaceAll("");
             converted = removePackMetadataConstants(converted);
             converted = stripUnusedConsumedConsts(converted, packConstants);
@@ -1895,32 +1895,33 @@ public final class LegacyGlslConverter {
         return converted.toString();
     }
 
+    /** Gives each read fragment input the location its paired vertex output writes. */
     private static String convertPostVaryings(String source, PostVaryingLayout layout) {
-        List<PostVaryingDeclaration> declarations = postVaryingDeclarations(source);
-        StringBuilder converted = new StringBuilder();
-        int last = 0;
-        for (PostVaryingDeclaration declaration : declarations) {
-            converted.append(source, last, declaration.start());
-            for (String name : declaration.names()) {
-                if (!containsIdentifier(source.substring(0, declaration.start())
-                        + source.substring(declaration.end()), name)) {
-                    continue;
-                }
-                Integer location = layout.locations().get(name);
-                String type = layout.types().get(name);
-                if (location == null || type == null || !type.equals(declaration.type())) {
-                    throw new IllegalArgumentException("post varying is not matched: " + name);
-                }
-                converted.append("layout(location = ").append(location).append(") ");
-                if (declaration.qualifier() != null) {
-                    converted.append(declaration.qualifier()).append(' ');
-                }
-                converted.append("in ").append(type).append(' ').append(name).append(';');
+        return GlslInterfaceScanner.rewrite(source, false, declaration -> {
+            if (!declaration.input()) {
+                return null;
             }
-            last = declaration.end();
+            if (!declaration.referenced()) {
+                return "";
+            }
+            Integer location = layout.locations().get(declaration.name());
+            String type = layout.types().get(declaration.name());
+            if (location == null || !declaration.typeWithArray().equals(type)) {
+                throw new IllegalArgumentException("post varying is not matched: " + declaration.name());
+            }
+            return interfaceDeclaration(location, declaration, "in");
+        });
+    }
+
+    /** {@code layout(location = N) [interpolation] in|out type name[size];} for one name. */
+    private static String interfaceDeclaration(int location, GlslInterfaceScanner.Declaration declaration,
+                                               String direction) {
+        StringBuilder result = new StringBuilder("layout(location = ").append(location).append(") ");
+        if (declaration.qualifier() != null) {
+            result.append(declaration.qualifier()).append(' ');
         }
-        converted.append(source, last, source.length());
-        return converted.toString();
+        return result.append(direction).append(' ').append(declaration.type()).append(' ')
+                .append(declaration.declarator()).append(";\n").toString();
     }
 
     private static List<PostVaryingDeclaration> postVaryingDeclarations(String source) {

@@ -41,7 +41,13 @@ public final class PackReportTool {
         Map<String, TreeSet<String>> byReason = new TreeMap<>();
         int fallback = 0;
         List<String> lines = new ArrayList<>();
+        List<String> disabled = analysis.resolution().disabledPrograms();
         for (ConformanceReport.ProgramReport program : report.programs()) {
+            if (disabled.contains(program.name())) {
+                // The pack switches it off for the selected options, as Iris does: not a fallback.
+                lines.add(String.format("  %-34s %-26s", program.name(), "DISABLED_BY_PACK"));
+                continue;
+            }
             boolean falls = program.support() == ConformanceReport.SupportStatus.IDENTITY_FALLBACK
                     || program.support() == ConformanceReport.SupportStatus.UNSUPPORTED;
             if (falls) fallback++;
@@ -55,7 +61,8 @@ public final class PackReportTool {
             lines.add(String.format("  %-34s %-26s %s", program.name(), program.support(),
                     verbose ? program.deviations() : blocking));
         }
-        System.out.printf("== %s: programs=%d fallback=%d%n", pack.getFileName(), report.programs().size(), fallback);
+        System.out.printf("== %s: programs=%d disabled=%d fallback=%d%n", pack.getFileName(),
+                report.programs().size(), disabled.size(), fallback);
         lines.forEach(System.out::println);
         System.out.println("  -- custom value diagnostics");
         analysis.settings().runtimeSettings().deviations().stream()

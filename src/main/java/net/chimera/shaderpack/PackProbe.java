@@ -864,6 +864,7 @@ public final class PackProbe {
                     || deviation.startsWith("SAMPLER_NOT_MAPPED:")
                     || deviation.startsWith("SAMPLER_SLOT_CONFLICT:")
                     || deviation.startsWith("PACK_TEXTURE_MISSING:")
+                    || deviation.startsWith("PACK_RAW_TEXTURE_UNSUPPORTED:")
                     || deviation.startsWith("PACK_TEXTURE_PATH_UNSAFE:")
                     || deviation.startsWith("PACK_TEXTURE_LOAD_FAILED:")
                     || deviation.startsWith("PACK_RESOURCE_SLOT_LIMIT:")

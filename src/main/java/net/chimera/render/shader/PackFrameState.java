@@ -250,7 +250,7 @@ final class PackFrameState {
             int width = runtimeSettings.widthOf(descriptor.name());
             for (int lane = 0; lane < Math.max(width, 1); lane++) {
                 float value = index < 0 ? 0.0f : session.values()[index + lane];
-                if (type.startsWith("i")) {
+                if (type.startsWith("i") || type.equals("bool")) {
                     target.putInt(lane * 4, (int) value);
                 } else {
                     target.putFloat(lane * 4, value);

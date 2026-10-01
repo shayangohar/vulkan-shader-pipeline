@@ -552,7 +552,7 @@ public final class PackPlanBuilder {
         Map<String, String> result = new TreeMap<>();
         for (GlslInterfaceScanner.Declaration declaration : fragment.inputs()) {
             if (declaration.referenced()) {
-                result.put(declaration.name(), declaration.type());
+                result.put(declaration.name(), declaration.typeWithArray());
             }
         }
         return result;

@@ -349,6 +349,8 @@ public final class UniformRegistry {
     public static final Map<String, Integer> GEOMETRY_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("tex", 0),
+            // Iris core-profile name for the albedo atlas.
+            Map.entry("gtexture", 0),
             Map.entry("lightmap", 2),
             Map.entry("shadowtex0", 5),
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
@@ -360,6 +362,8 @@ public final class UniformRegistry {
     public static final Map<String, Integer> SHADOW_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("tex", 0),
+            // Iris core-profile name for the albedo atlas.
+            Map.entry("gtexture", 0),
             Map.entry("lightmap", 2),
             Map.entry("noisetex", 7)
     );
@@ -373,6 +377,8 @@ public final class UniformRegistry {
     public static final Map<String, Integer> TRANSLUCENT_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("tex", 0),
+            // Iris core-profile name for the albedo atlas.
+            Map.entry("gtexture", 0),
             Map.entry("lightmap", 2),
             Map.entry("shadowtex0", 5),
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
@@ -390,6 +396,8 @@ public final class UniformRegistry {
             Map.entry(PackResourcePlan.OVERLAY_SAMPLER, 1),
             Map.entry("lightmap", 2),
             Map.entry("tex", 0),
+            // Iris core-profile name for the albedo atlas.
+            Map.entry("gtexture", 0),
             Map.entry("shadowtex0", 5),
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", SelectorNamespace.SHADOW_COLOR0_SLOT),
@@ -418,7 +426,7 @@ public final class UniformRegistry {
     );
 
     private static final Set<String> SUPPORTED_TYPES = Set.of(
-            "float", "int", "vec2", "vec3", "vec4",
+            "float", "int", "bool", "vec2", "vec3", "vec4",
             "ivec2", "ivec3", "ivec4", "mat4");
 
     /** The only catalog used by declaration planning and the runtime provider. */
@@ -926,7 +934,7 @@ public final class UniformRegistry {
         return switch (glslType) {
             case "mat4" -> "matrix4x4";
             case "float", "vec2", "vec3", "vec4" -> "float";
-            case "int", "ivec2", "ivec3", "ivec4" -> "int";
+            case "int", "bool", "ivec2", "ivec3", "ivec4" -> "int";
             default -> throw new IllegalArgumentException("unsupported pack uniform type: " + glslType);
         };
     }
@@ -935,7 +943,7 @@ public final class UniformRegistry {
     public static int pipelineCount(String glslType) {
         return switch (glslType) {
             case "mat4" -> 16;
-            case "float", "int" -> 1;
+            case "float", "int", "bool" -> 1;
             case "vec2", "ivec2" -> 2;
             case "vec3", "ivec3" -> 3;
             case "vec4", "ivec4" -> 4;

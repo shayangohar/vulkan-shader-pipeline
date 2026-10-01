@@ -85,7 +85,7 @@ record PackResolutionPlan(
                     break;
                 }
             }
-            boolean enabled = actualSettings.enabled(requested);
+            boolean enabled = actualSettings.enabled(folder, requested);
             List<String> programDeviations = new ArrayList<>();
             if (!enabled) {
                 disabled.add(requested);

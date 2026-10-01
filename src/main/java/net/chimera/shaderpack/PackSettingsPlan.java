@@ -199,9 +199,17 @@ record PackSettingsPlan(
         Map<String, PackResourceDeclaration> resourceDeclarations = new TreeMap<>();
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
+            Set<String> toggleOptions = new TreeSet<>();
+            for (Option option : options.values()) {
+                if (option.type().equals("define")) toggleOptions.add(option.name());
+            }
+            for (Option option : helperOptions.values()) {
+                if (option.type().equals("define")) toggleOptions.add(option.name());
+            }
+            toggleOptions.addAll(disabled);
             parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations,
-                    mergedConditionMacros(defaults, helperDefaults, overrides));
+                    mergedConditionMacros(defaults, helperDefaults, overrides), toggleOptions);
         }
         Set<String> unsupportedRequired = new TreeSet<>();
         for (String feature : required) {
@@ -312,6 +320,20 @@ record PackSettingsPlan(
 
     boolean enabled(String name) {
         return programEnabled.getOrDefault(name, true);
+    }
+
+    /**
+     * Iris reads {@code program.<folder>/<name>.enabled} for the selected dimension folder
+     * (Photon writes {@code program.world0/composite2.enabled = DOF}) ahead of the bare name.
+     */
+    boolean enabled(String folder, String name) {
+        if (folder != null && !folder.isBlank()) {
+            Boolean scoped = programEnabled.get(folder + "/" + name);
+            if (scoped != null) {
+                return scoped;
+            }
+        }
+        return enabled(name);
     }
 
     String snapshotJson() {
@@ -520,7 +542,8 @@ record PackSettingsPlan(
             List<PackRuntimeSettings.Declaration> customValues,
             Map<String, PackResourceDeclaration> resourceDeclarations,
             List<String> deviations,
-            Map<String, String> initialMacros
+            Map<String, String> initialMacros,
+            Set<String> toggleOptions
     ) {
         PackConditionals.State conditions = new PackConditionals.State(
                 stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
@@ -594,8 +617,15 @@ record PackSettingsPlan(
                 Matcher enabled = PROGRAM_ENABLED.matcher(line);
                 if (enabled.matches()) {
                     try {
+                        // Iris evaluates the switch against the pack's option values: a toggle
+                        // the pack declares but leaves off (`//#define DOF`) is false. Only a
+                        // name that is no option at all keeps the program enabled.
+                        Map<String, String> switches = new java.util.HashMap<>(conditions.macros());
+                        for (String toggle : toggleOptions) {
+                            switches.putIfAbsent(toggle, "0");
+                        }
                         programEnabled.put(enabled.group(1), PackConditionals.evaluate(
-                                enabled.group(2).trim(), conditions.macros(), true));
+                                enabled.group(2).trim(), switches, true));
                     } catch (RuntimeException failure) {
                         programEnabled.put(enabled.group(1), true);
                         deviations.add("PROGRAM_ENABLE_EXPRESSION_UNSUPPORTED:" + enabled.group(1));
@@ -688,10 +718,13 @@ record PackSettingsPlan(
     }
 
     private static PackResourceDeclaration resourceDeclaration(String key, String value) {
+        // Iris: a value with more than one word is a raw texture (file, type, format, size).
+        PackResourceKind textureKind = value.trim().split("\\s+").length > 1
+                ? PackResourceKind.RAW_TEXTURE : PackResourceKind.PACK_TEXTURE;
         if (key.startsWith("customTexture.")) {
             String sampler = key.substring("customTexture.".length()).trim();
             return sampler.isBlank() ? null
-                    : new PackResourceDeclaration(key, "*", sampler, value, PackResourceKind.PACK_TEXTURE);
+                    : new PackResourceDeclaration(key, "*", sampler, value, textureKind);
         }
         if (key.equals("texture.noise")) {
             return new PackResourceDeclaration(key, "*", "noisetex", value, PackResourceKind.NOISE);
@@ -699,8 +732,11 @@ record PackSettingsPlan(
         if (key.startsWith("texture.")) {
             String[] parts = key.split("\\.", 3);
             if (parts.length == 3 && !parts[1].isBlank() && !parts[2].isBlank()) {
-                return new PackResourceDeclaration(key, parts[1], parts[2], value,
-                        PackResourceKind.PACK_TEXTURE);
+                // Iris keeps only the sampler name: `texture.deferred.colortex6.1` declares a
+                // second texture for colortex6, told apart from the first by its type.
+                String sampler = parts[2].split("\\.")[0];
+                return sampler.isBlank() ? null
+                        : new PackResourceDeclaration(key, parts[1], sampler, value, textureKind);
             }
         }
         return null;

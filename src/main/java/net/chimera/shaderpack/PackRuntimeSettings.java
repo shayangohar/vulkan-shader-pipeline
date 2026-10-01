@@ -61,9 +61,8 @@ public final class PackRuntimeSettings {
             widthMap.put(value.name(), value.width());
             slot += value.width();
             if (value.exposed()) {
-                String glslType = value.type().equals("bool") ? "int" : value.type();
                 descriptors.put(value.name(), new UniformRegistry.UniformDescriptor(
-                        value.name(), List.of(glslType), UniformRegistry.Availability.LIVE,
+                        value.name(), glslTypes(value.type()), UniformRegistry.Availability.LIVE,
                         "custom:" + value.name(), UniformRegistry.DefaultPolicy.ZERO));
             }
         }
@@ -190,7 +189,7 @@ public final class PackRuntimeSettings {
             Declaration declaration = byName.get(name);
             if (declaration != null && declaration.exposed()) {
                 rejectedDescriptors.put(name, new UniformRegistry.UniformDescriptor(
-                        name, List.of(declaration.type().equals("bool") ? "int" : declaration.type()),
+                        name, glslTypes(declaration.type()),
                         UniformRegistry.Availability.REJECTED, "rejected:" + name,
                         UniformRegistry.DefaultPolicy.ZERO));
             }
@@ -221,6 +220,14 @@ public final class PackRuntimeSettings {
             }
         }
         return null;
+    }
+
+    /**
+     * GLSL declarations a value may be read through. Iris serves {@code uniform.bool} to a
+     * {@code bool} or an {@code int} declaration alike; both are one 32-bit integer in the block.
+     */
+    private static List<String> glslTypes(String type) {
+        return type.equals("bool") ? List.of("int", "bool") : List.of(type);
     }
 
     /** Components a declared type holds, or 0 for a type the language does not serve. */

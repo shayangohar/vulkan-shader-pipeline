@@ -1,7 +1,7 @@
 #version 120e
 uniform sampler2D colortex0;
 uniform sampler2D unknownTexture;
-uniform bool unsupportedToggle;
+uniform dvec2 unsupportedToggle;
 varying vec2 texcoord;
 
 void main() {
