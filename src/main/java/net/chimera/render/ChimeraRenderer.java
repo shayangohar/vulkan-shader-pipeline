@@ -72,6 +72,7 @@ public final class ChimeraRenderer {
         hostPass = current;
         chimeraPass = new ChimeraMainPass();
         hostColorView = hostPass.getColorAttachmentView();
+        renderer.addOnResizeCallback(ChimeraRenderer::refreshIdleHostPass);
         ready = true;
 
         ChimeraTerrainPipelines.init();
@@ -79,6 +80,21 @@ public final class ChimeraRenderer {
         ChimeraMod.LOGGER.info("Captured host main pass: {}", hostPass.getClass().getName());
         chimeraEnabled = true;
         install();
+    }
+
+    /**
+     * VulkanMod's resize calls {@code onResize} only on the current main pass. While Chimera
+     * owns the frame, the host pass would keep its old swapchain-sized depth texture, and
+     * after {@code /chimera pack off} vanilla's hand depth clear compares against that stale
+     * image, skips the clear, and the hand clips into the world. Refresh it with the swapchain.
+     */
+    private static void refreshIdleHostPass() {
+        if (hostPass != null && Renderer.getInstance().getMainPass() != hostPass) {
+            hostPass.onResize();
+        }
+        if (hostPass != null) {
+            hostColorView = hostPass.getColorAttachmentView();
+        }
     }
 
     public static boolean isReady() {

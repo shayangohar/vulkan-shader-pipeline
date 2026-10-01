@@ -420,7 +420,12 @@ public class ChimeraMainPass implements MainPass {
         this.packPath = initialPackPath;
         this.levelPhase = true;
         createResources();
-        Renderer.getInstance().addOnResizeCallback(this::onResize);
+        // VulkanMod already resizes the current main pass; this covers the
+        // frames where the host owns it, so Chimera's targets follow the
+        // swapchain without being rebuilt twice.
+        Renderer.getInstance().addOnResizeCallback(() -> {
+            if (Renderer.getInstance().getMainPass() != this) onResize();
+        });
     }
 
     private static Path startupPackPath() {
