@@ -102,6 +102,7 @@ final class PackFrameState {
     private float wetness;
     private float eyeAltitude;
     private int biomeId;
+    private int biomeCategory;
     private int biomePrecipitation;
     private float viewWidth;
     private float viewHeight;
@@ -246,11 +247,14 @@ final class PackFrameState {
     void write(UniformRegistry.UniformDescriptor descriptor, String type, MappedBuffer target) {
         if (descriptor.sourceKey().startsWith("custom:")) {
             int index = runtimeSettings.indexOf(descriptor.name());
-            float value = index < 0 ? 0.0f : session.values()[index];
-            if (type.startsWith("i")) {
-                target.putInt(0, (int) value);
-            } else {
-                target.putFloat(0, value);
+            int width = runtimeSettings.widthOf(descriptor.name());
+            for (int lane = 0; lane < Math.max(width, 1); lane++) {
+                float value = index < 0 ? 0.0f : session.values()[index + lane];
+                if (type.startsWith("i")) {
+                    target.putInt(lane * 4, (int) value);
+                } else {
+                    target.putFloat(lane * 4, value);
+                }
             }
             return;
         }
@@ -348,6 +352,7 @@ final class PackFrameState {
             case "bedrockLevel" -> target.putInt(0, bedrockLevel);
             case "eyeAltitude" -> target.putFloat(0, eyeAltitude);
             case "biome" -> target.putInt(0, biomeId);
+            case "biome_category" -> target.putInt(0, biomeCategory);
             case "biome_precipitation" -> target.putInt(0, biomePrecipitation);
             case "AlphaCutout" -> target.putFloat(0, alphaCutout);
             case UniformRegistry.ENTITY_ALPHA_REFERENCE -> target.putFloat(0, entityAlphaReference);
@@ -580,7 +585,9 @@ final class PackFrameState {
         cloudHeight = level.dimension() == net.minecraft.world.level.Level.OVERWORLD
                 ? 192.0f : 0.0f;
         BlockPos biomePos = BlockPos.containing(cameraOrigin.rawX, cameraOrigin.rawY, cameraOrigin.rawZ);
-        var biome = level.getBiome(biomePos).value();
+        var biomeHolder = level.getBiome(biomePos);
+        var biome = biomeHolder.value();
+        biomeCategory = BiomeIds.category(biomeHolder).ordinal();
         biomeTemperature = biome.getBaseTemperature();
         rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
         eyeAltitude = (float) cameraOrigin.y;
@@ -736,9 +743,26 @@ final class PackFrameState {
             case "shadowLightPosition" -> componentOf(shadowLightPosition, component);
             case "upPosition" -> componentOf(upPosition, component);
             case "skyColor" -> componentOf(skyColor, component);
+            // Defaulted: no bolt, as the uniform itself serves.
+            case "lightningBoltPosition" -> 0.0;
+            case "gbufferModelView" -> elementOf(modelView, component);
+            case "gbufferModelViewInverse" -> elementOf(modelViewInverse, component);
+            case "gbufferPreviousModelView" -> elementOf(previousModelView, component);
+            case "gbufferProjection" -> elementOf(projection, component);
+            case "gbufferProjectionInverse" -> elementOf(projectionInverse, component);
+            case "gbufferPreviousProjection" -> elementOf(previousProjection, component);
+            case "shadowModelView" -> elementOf(shadowModelView, component);
+            case "shadowModelViewInverse" -> elementOf(shadowModelViewInverse, component);
+            case "shadowProjection" -> elementOf(shadowProjection, component);
+            case "shadowProjectionInverse" -> elementOf(shadowProjectionInverse, component);
             // Unreachable: the plan rejects a component of a name with no component source.
             default -> Double.NaN;
         };
+    }
+
+    /** One element of a matrix, numbered column-major as GLSL and Iris's accessors read it. */
+    private static double elementOf(Matrix4f matrix, int component) {
+        return component < 16 ? matrix.get(component / 4, component % 4) : Double.NaN;
     }
 
     private static double componentOf(int[] values, int component) {
@@ -795,6 +819,7 @@ final class PackFrameState {
             case "isElytraFlying" -> isElytraFlying;
             case "eyeAltitude" -> eyeAltitude;
             case "biome" -> biomeId;
+            case "biome_category" -> biomeCategory;
             case "biome_precipitation" -> biomePrecipitation;
             case "eyeBrightness" -> eyeBrightness[0];
             default -> 0.0;
@@ -927,6 +952,7 @@ final class PackFrameState {
         rainfall = 0.0f;
         eyeAltitude = 0.0f;
         biomeId = 0;
+        biomeCategory = 0;
         biomePrecipitation = 0;
         sunPosition.set(0.0f, 1.0f, 0.0f);
         moonPosition.set(0.0f, -1.0f, 0.0f);

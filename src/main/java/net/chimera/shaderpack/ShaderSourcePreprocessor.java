@@ -158,8 +158,22 @@ public final class ShaderSourcePreprocessor {
             }
             try {
                 String[] lines = source.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+                StringBuilder logical = new StringBuilder();
                 for (String line : lines) {
+                    // GLSL 3.3 section 3.1: a backslash right before a newline
+                    // splices the two lines before any directive is parsed.
+                    if (line.endsWith("\\")) {
+                        logical.append(line, 0, line.length() - 1);
+                        continue;
+                    }
+                    if (!logical.isEmpty()) {
+                        line = logical.append(line).toString();
+                        logical.setLength(0);
+                    }
                     processLine(line, sourceFile, depth);
+                }
+                if (!logical.isEmpty()) {
+                    processLine(logical.toString(), sourceFile, depth);
                 }
             } finally {
                 if (normalized != null) {

@@ -31,7 +31,10 @@ public final class PackRuntimeSettings {
     private final float wetnessFallHalfLife;
     private final float eyeBrightnessHalfLife;
     private final List<Value> values;
+    /** Each value's first storage slot; a vector holds one slot per component. */
     private final Map<String, Integer> indices;
+    private final Map<String, Integer> widths;
+    private final int slotCount;
     private final Map<String, UniformRegistry.UniformDescriptor> customDescriptors;
     private final Set<String> rejected;
     private final List<String> deviations;
@@ -50,10 +53,13 @@ public final class PackRuntimeSettings {
         this.eyeBrightnessHalfLife = eyeBrightnessHalfLife;
         this.values = List.copyOf(values);
         Map<String, Integer> indexMap = new TreeMap<>();
+        Map<String, Integer> widthMap = new TreeMap<>();
         Map<String, UniformRegistry.UniformDescriptor> descriptors = new TreeMap<>();
-        for (int index = 0; index < this.values.size(); index++) {
-            Value value = this.values.get(index);
-            indexMap.put(value.name(), index);
+        int slot = 0;
+        for (Value value : this.values) {
+            indexMap.put(value.name(), slot);
+            widthMap.put(value.name(), value.width());
+            slot += value.width();
             if (value.exposed()) {
                 String glslType = value.type().equals("bool") ? "int" : value.type();
                 descriptors.put(value.name(), new UniformRegistry.UniformDescriptor(
@@ -65,6 +71,8 @@ public final class PackRuntimeSettings {
             descriptors.putAll(rejectedDescriptors);
         }
         this.indices = Collections.unmodifiableMap(indexMap);
+        this.widths = Collections.unmodifiableMap(widthMap);
+        this.slotCount = slot;
         this.customDescriptors = Collections.unmodifiableMap(descriptors);
         this.rejected = rejected == null ? Set.of() : Set.copyOf(rejected);
         this.deviations = deviations == null
@@ -115,8 +123,13 @@ public final class PackRuntimeSettings {
 
         Map<String, ParsedValue> parsed = new TreeMap<>();
         Set<String> rejected = new TreeSet<>();
+        // A declared value types every reference to it; anything else is the host's input.
+        PackExpression.Widths widths = name -> {
+            Declaration declared = byName.get(name);
+            return declared != null ? width(declared.type()) : UniformRegistry.expressionWidth(name);
+        };
         for (Declaration declaration : byName.values()) {
-            if (!isScalarType(declaration.type())) {
+            if (width(declaration.type()) == 0) {
                 result.add("CUSTOM_VALUE_TYPE_UNSUPPORTED:" + declaration.name());
                 rejected.add(declaration.name());
                 continue;
@@ -128,10 +141,16 @@ public final class PackRuntimeSettings {
             }
             PackExpression.Program program;
             try {
-                program = PackExpression.parse(declaration.expression(), constants);
+                program = PackExpression.parse(declaration.expression(), constants, widths);
             } catch (PackExpression.Unsupported failure) {
                 result.add(failure.code() + ":" + declaration.name()
                         + (failure.detail().isBlank() ? "" : ":" + failure.detail()));
+                rejected.add(declaration.name());
+                continue;
+            }
+            if (program.width() != width(declaration.type())) {
+                result.add("CUSTOM_EXPRESSION_TYPE:" + declaration.name() + ":" + declaration.type()
+                        + " given width " + program.width());
                 rejected.add(declaration.name());
                 continue;
             }
@@ -141,9 +160,9 @@ public final class PackRuntimeSettings {
                 rejected.add(declaration.name());
                 continue;
             }
-            String mismatch = mismatchedReference(program);
-            if (mismatch != null) {
-                result.add("CUSTOM_EXPRESSION_COMPONENT:" + declaration.name() + ":" + mismatch);
+            String unreadable = unreadable(program, byName.keySet());
+            if (unreadable != null) {
+                result.add("CUSTOM_EXPRESSION_COMPONENT:" + declaration.name() + ":" + unreadable);
                 rejected.add(declaration.name());
                 continue;
             }
@@ -162,7 +181,8 @@ public final class PackRuntimeSettings {
             if (!rejected.contains(name)) {
                 ParsedValue value = parsed.get(name);
                 values.add(new Value(value.declaration().name(), value.declaration().type(),
-                        value.declaration().exposed(), value.program()));
+                        value.declaration().exposed(), value.program(),
+                        width(value.declaration().type())));
             }
         }
         Map<String, UniformRegistry.UniformDescriptor> rejectedDescriptors = new TreeMap<>();
@@ -190,25 +210,28 @@ public final class PackRuntimeSettings {
     }
 
     /**
-     * A reference that asks a scalar for a component, or a vector for one it does not have.
-     * The host answers those, so the declaration cannot mean what it says.
+     * A host vector or matrix the expression reads whose components the host does not serve to
+     * expressions. The declaration cannot mean what it says, so it is refused, not zeroed.
      */
-    private static String mismatchedReference(PackExpression.Program program) {
-        for (String reference : program.componentReferences()) {
-            String name = reference.substring(0, reference.indexOf('.'));
-            UniformRegistry.UniformDescriptor descriptor = UniformRegistry.descriptor(name);
-            if (descriptor == null) {
-                continue;
-            }
-            if (!UniformRegistry.supportsComponent(descriptor, componentOf(reference))) {
-                return reference;
+    private static String unreadable(PackExpression.Program program, Set<String> declared) {
+        for (String dependency : program.dependencies()) {
+            if (!declared.contains(dependency) && UniformRegistry.expressionWidth(dependency) > 1
+                    && !UniformRegistry.expressionComponentsServed(dependency)) {
+                return dependency;
             }
         }
         return null;
     }
 
-    private static int componentOf(String reference) {
-        return "xyzw".indexOf(Character.toLowerCase(reference.charAt(reference.indexOf('.') + 1)));
+    /** Components a declared type holds, or 0 for a type the language does not serve. */
+    private static int width(String type) {
+        return switch (type) {
+            case "float", "int", "bool" -> 1;
+            case "vec2" -> 2;
+            case "vec3" -> 3;
+            case "vec4" -> 4;
+            default -> 0;
+        };
     }
 
     public float wetnessRiseHalfLife() {
@@ -240,6 +263,7 @@ public final class PackRuntimeSettings {
         return values.size();
     }
 
+    /** The first storage slot of a value; a vector's components follow it in order. */
     public int indexOf(String name) {
         return indices.getOrDefault(name, -1);
     }
@@ -253,17 +277,17 @@ public final class PackRuntimeSettings {
         private final Map<String, String> failures = new TreeMap<>();
         private int frames;
 
-        private Session(List<Value> values) {
+        private Session(List<Value> values, int slots) {
             this.states = new PackExpression.State[values.size()];
             for (int index = 0; index < values.size(); index++) {
                 this.states[index] = values.get(index).program().newState();
             }
-            this.scratch = new double[values.size()];
-            this.output = new float[values.size()];
-            this.lastFinite = new double[values.size()];
+            this.scratch = new double[slots];
+            this.output = new float[slots];
+            this.lastFinite = new double[slots];
         }
 
-        /** The frame's evaluated values, in dependency order. */
+        /** The frame's evaluated values, one slot per component, in dependency order. */
         public float[] values() {
             return this.output;
         }
@@ -291,7 +315,7 @@ public final class PackRuntimeSettings {
     }
 
     public Session newSession() {
-        return new Session(values);
+        return new Session(values, slotCount);
     }
 
     /**
@@ -304,42 +328,39 @@ public final class PackRuntimeSettings {
             return;
         }
         session.frames++;
+        PackExpression.Inputs inputs = this.lookup(engine, session.scratch);
         for (int index = 0; index < values.size(); index++) {
             Value value = values.get(index);
-            PackExpression.Inputs inputs = this.lookup(engine, session.scratch);
-            double result = value.program().evaluate(inputs, session.states[index], frameDelta);
-            if (!Double.isFinite(result)) {
-                // Diagnosis over substitution: name the declaration, its expression and the
-                // inputs that produced it, and hold the last finite result rather than inventing
-                // a number. A silent zero here is what DOC-400 item 4 objects to.
-                session.failures.putIfAbsent(value.name(),
-                        "expression=" + value.program().source()
-                                + " frame=" + session.frames
-                                + " frameDelta=" + frameDelta
-                                + " inputs=" + context(value, inputs));
-                result = session.lastFinite[index];
-            } else {
-                session.lastFinite[index] = result;
+            int base = indices.get(value.name());
+            for (int lane = 0; lane < value.width(); lane++) {
+                double result = value.program().evaluate(inputs, session.states[index], frameDelta, lane);
+                int slot = base + lane;
+                if (!Double.isFinite(result)) {
+                    // Diagnosis over substitution: name the declaration, its expression and the
+                    // inputs that produced it, and hold the last finite result rather than
+                    // inventing a number. A silent zero here is what DOC-400 item 4 objects to.
+                    session.failures.putIfAbsent(value.name(),
+                            "expression=" + value.program().source()
+                                    + " lane=" + lane
+                                    + " frame=" + session.frames
+                                    + " frameDelta=" + frameDelta
+                                    + " inputs=" + context(value, inputs));
+                    result = session.lastFinite[slot];
+                } else {
+                    session.lastFinite[slot] = result;
+                }
+                session.scratch[slot] = result;
+                session.output[slot] = value.type().equals("int") || value.type().equals("bool")
+                        ? (float) ((int) result) : (float) result;
             }
-            session.scratch[index] = result;
-            session.output[index] = value.type().equals("int") || value.type().equals("bool")
-                    ? (float) ((int) result) : (float) result;
         }
     }
 
-    /** The engine inputs one expression read, as the values the failure saw them. */
+    /** The scalar inputs one expression read, as the values the failure saw them. */
     private static String context(Value value, PackExpression.Inputs inputs) {
         TreeMap<String, Double> named = new TreeMap<>();
         for (String name : value.program().dependencies()) {
             named.put(name, inputs.value(name, -1));
-        }
-        for (String reference : value.program().componentReferences()) {
-            int dot = reference.indexOf('.');
-            String name = reference.substring(0, dot);
-            if (named.containsKey(name)) {
-                continue;
-            }
-            named.put(reference, inputs.value(name, "xyzw".indexOf(reference.charAt(dot + 1))));
         }
         return named.toString();
     }
@@ -348,8 +369,17 @@ public final class PackRuntimeSettings {
     private PackExpression.Inputs lookup(PackExpression.Inputs engine, double[] scratch) {
         return (name, component) -> {
             Integer index = indices.get(name);
-            return index == null ? engine.value(name, component) : scratch[index];
+            if (index == null) {
+                return engine.value(name, component);
+            }
+            int width = widths.get(name);
+            return component < 0 ? scratch[index] : component < width ? scratch[index + component] : Double.NaN;
         };
+    }
+
+    /** Components a served value holds: 1 for a scalar, 2 to 4 for a vector, 0 when absent. */
+    public int widthOf(String name) {
+        return widths.getOrDefault(name, 0);
     }
 
     static Declaration declaration(boolean exposed, String type, String name, String expression) {
@@ -370,11 +400,8 @@ public final class PackRuntimeSettings {
 
     private record ParsedValue(Declaration declaration, PackExpression.Program program) {}
 
-    private record Value(String name, String type, boolean exposed, PackExpression.Program program) {}
-
-    private static boolean isScalarType(String type) {
-        return type.equals("float") || type.equals("int") || type.equals("bool");
-    }
+    private record Value(String name, String type, boolean exposed, PackExpression.Program program,
+                         int width) {}
 
     private static float numeric(
             Map<String, String> defaults,

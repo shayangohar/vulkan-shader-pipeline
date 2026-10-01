@@ -791,41 +791,46 @@ public final class UniformRegistry {
     }
 
     /**
-     * The engine inputs with a per-component source, so {@code eyeBrightness.y} resolves to
+     * The engine vectors and matrices the host serves to custom-value expressions component by
+     * component, so {@code eyeBrightness.y} or {@code gbufferModelViewInverse.2.1} resolves to
      * something the host actually reads. A component of any other name is a declaration error
-     * rather than a zero.
+     * rather than a zero. {@code lightningBoltPosition} is defaulted, so its components are the
+     * default's.
      */
     private static final Set<String> COMPONENT_INPUTS = Set.of(
-            "eyeBrightness", "eyeBrightnessSmooth",
+            "eyeBrightness", "eyeBrightnessSmooth", "atlasSize",
             "cameraPosition", "previousCameraPosition",
             "cameraPositionFract", "previousCameraPositionFract",
             "cameraPositionInt", "previousCameraPositionInt",
             "eyePosition", "relativeEyePosition", "playerLookVector",
-            "sunPosition", "moonPosition", "shadowLightPosition", "upPosition", "skyColor");
+            "sunPosition", "moonPosition", "shadowLightPosition", "upPosition", "skyColor",
+            "lightningBoltPosition",
+            "gbufferModelView", "gbufferModelViewInverse", "gbufferPreviousModelView",
+            "gbufferProjection", "gbufferProjectionInverse", "gbufferPreviousProjection",
+            "shadowModelView", "shadowModelViewInverse", "shadowProjection", "shadowProjectionInverse");
 
-    /** Whether a component of the uniform's own vector type exists, for {@code name.x}. */
-    public static boolean supportsComponent(UniformDescriptor descriptor, int component) {
-        if (descriptor == null || component < 0) {
-            return true;
+    /**
+     * How a custom-value expression types an engine input: 1 for a scalar, 2 to 4 for a vector,
+     * {@link PackExpression#MATRIX_WIDTH} for a {@code mat4}, 0 when the name is not an input.
+     */
+    public static int expressionWidth(String name) {
+        UniformDescriptor descriptor = descriptor(name);
+        if (descriptor == null || descriptor.acceptedTypes().isEmpty()) {
+            return 0;
         }
-        if (!COMPONENT_INPUTS.contains(descriptor.name())) {
-            return false;
-        }
-        for (String type : descriptor.acceptedTypes()) {
-            if (componentCount(type) > component) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static int componentCount(String glslType) {
-        return switch (glslType) {
+        return switch (descriptor.acceptedTypes().get(0)) {
             case "vec2", "ivec2" -> 2;
             case "vec3", "ivec3" -> 3;
             case "vec4", "ivec4" -> 4;
+            case "mat4" -> PackExpression.MATRIX_WIDTH;
+            case "float", "int", "bool" -> 1;
             default -> 0;
         };
+    }
+
+    /** Whether the host answers each component of a vector or matrix input to expressions. */
+    public static boolean expressionComponentsServed(String name) {
+        return COMPONENT_INPUTS.contains(name);
     }
 
     private static boolean isReferenced(String source, String name) {
@@ -1120,6 +1125,7 @@ public final class UniformRegistry {
         addLive(specs, "playerLookVector", "vec3");
         addLive(specs, "relativeEyePosition", "vec3");
         addLive(specs, "biome", "int");
+        addLive(specs, "biome_category", "int");
         addLive(specs, "biome_precipitation", "int");
         addLive(specs, "dimension", "int");
         addLive(specs, "heightLimit", "int");

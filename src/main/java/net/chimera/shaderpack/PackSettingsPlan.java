@@ -53,7 +53,7 @@ record PackSettingsPlan(
     private static final Pattern FEATURES = Pattern.compile(
             "^iris\\.features\\.(required|optional)\\s*=\\s*(.*)$");
     private static final Pattern CUSTOM_VALUE = Pattern.compile(
-            "^\\s*(uniform|variable)\\.(float|int|bool)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
+            "^\\s*(uniform|variable)\\.(float|int|bool|vec2|vec3|vec4)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
     private static final Pattern CONDITION = Pattern.compile(
             "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");

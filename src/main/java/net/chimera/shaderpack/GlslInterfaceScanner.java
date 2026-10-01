@@ -78,6 +78,12 @@ public final class GlslInterfaceScanner {
         int braceDepth = 0;
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
+            if (token.symbol("#") && atLineStart(tokens, index)) {
+                // A directive is not a declaration: `#define attribute in` must not read the
+                // next line's `const` as a varying type.
+                index = endOfLine(tokens, index);
+                continue;
+            }
             if (token.symbol("{")) {
                 braceDepth++;
                 continue;
@@ -235,6 +241,30 @@ public final class GlslInterfaceScanner {
             }
         }
         return false;
+    }
+
+    private static boolean atLineStart(List<GlslLexer.Token> tokens, int index) {
+        for (int previous = index - 1; previous >= 0; previous--) {
+            GlslLexer.Token token = tokens.get(previous);
+            if (token.kind() != GlslLexer.Kind.TRIVIA) {
+                return false;
+            }
+            if (token.text().indexOf('\n') >= 0) {
+                return true;
+            }
+        }
+        return true;
+    }
+
+    /** The last token of the directive line starting at {@code index}. */
+    private static int endOfLine(List<GlslLexer.Token> tokens, int index) {
+        for (int next = index + 1; next < tokens.size(); next++) {
+            GlslLexer.Token token = tokens.get(next);
+            if (token.kind() == GlslLexer.Kind.TRIVIA && token.text().indexOf('\n') >= 0) {
+                return next;
+            }
+        }
+        return tokens.size() - 1;
     }
 
     private static boolean isInterpolation(String value) {

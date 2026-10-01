@@ -56,6 +56,16 @@ tasks.register('conformanceTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('packReport', JavaExec) {
+    group = 'help'
+    description = 'Prints the offline plan report and ranked blocking reasons for -PpackReportPacks=<pack>[;<pack>...].'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.PackReportTool'
+    systemProperty 'chimera.packReport.packs', project.findProperty('packReportPacks') ?: ''
+    systemProperty 'chimera.packReport.verbose', project.findProperty('packReportVerbose') ?: 'false'
+}
+
 tasks.register('m62ConformanceTest', JavaExec) {
     group = 'verification'
     description = 'Runs deterministic M6.2 uniform catalog and frame-state checks.'
@@ -574,6 +584,15 @@ tasks.register('authoredOutputTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('packFrontEndTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks the pack front end reads Iris/GLSL formats in full (continuations, typed custom values).'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.PackFrontEndHarness'
+    jvmArgs '-ea'
+}
+
 tasks.register('spirvLocalInitTest', JavaExec) {
     group = 'verification'
     description = 'Checks that pack SPIR-V gives undefined locals the zero GL drivers use.'
@@ -929,6 +948,7 @@ tasks.named('check') {
     dependsOn tasks.named('m87VulkanBarrierTest')
     dependsOn tasks.named('authoredOutputTest')
     dependsOn tasks.named('spirvLocalInitTest')
+    dependsOn tasks.named('packFrontEndTest')
     dependsOn tasks.named('terrainTangentTest')
     dependsOn tasks.named('customUniformInventoryTest')
     dependsOn tasks.named('m88WaterTest')
