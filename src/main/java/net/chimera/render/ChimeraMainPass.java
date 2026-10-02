@@ -203,6 +203,8 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackPost packFinalPost;
     private PackPostExecution packFinalExecution;
     private final PackPostTargets packPostTargets = new PackPostTargets();
+    /** Debug NaN detector over pack targets; idle unless enabled. */
+    private final PackNanTripwire nanTripwire = new PackNanTripwire();
     private final PackDepthTargets packDepthTargets = new PackDepthTargets();
     /** Session-owned scene-seed coverage state. */
     private final PackCoverageOwner packCoverageOwner = new PackCoverageOwner();
@@ -820,6 +822,7 @@ public class ChimeraMainPass implements MainPass {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
             this.packPostTargets.beginFrame(commandBuffer, hdrColor);
             this.packPostFrameStarted = true;
+            this.nanTripwire.beginFrame(commandBuffer, this.packPath == null ? "?" : String.valueOf(this.packPath.getFileName()));
             if (packCoverageRuntimeEnabled() && this.packPostChainActive) {
                 this.packPostTargets.prepareGeometryTarget(commandBuffer);
                 this.packCoverageOwner.beginFrame(commandBuffer);
@@ -1271,6 +1274,40 @@ public class ChimeraMainPass implements MainPass {
         }
     }
 
+    /**
+     * Debug: scans every committed colortex, its history side, and the float depth copies, so
+     * the first dirty check after a clean one names where a NaN entered. Also snapshots the
+     * frame's uniforms once.
+     */
+    private void sweepNanTripwire(VkCommandBuffer commandBuffer, String when) {
+        if (!PackNanTripwire.enabled()) return;
+        this.nanTripwire.checkUniforms();
+        for (int target = 0; target <= PackTargetGraphPlan.MAX_TARGET; target++) {
+            VulkanImage active = this.packPostTargets.activeTarget(target);
+            this.nanTripwire.check(commandBuffer, when + ": colortex" + target, active);
+            VulkanImage history = this.packPostTargets.previousTarget(target);
+            if (history != null && history != active) {
+                this.nanTripwire.check(commandBuffer, when + ": colortex" + target + " history", history);
+            }
+        }
+        if (this.packDepthTargets.isConfigured()) {
+            for (String name : List.of("depthtex0", "depthtex1", "depthtex2")) {
+                if (this.packDepthTargets.currentAvailable(name)) {
+                    this.nanTripwire.check(commandBuffer, when + ": " + name, this.packDepthTargets.image(name));
+                }
+            }
+        }
+    }
+
+    /** Debug: scans what one post stage just wrote. */
+    private void checkNanTripwireOutputs(VkCommandBuffer commandBuffer, PackPostExecution stage) {
+        if (!PackNanTripwire.enabled()) return;
+        for (int target : stage.outputTargets()) {
+            this.nanTripwire.check(commandBuffer, stage.name() + " -> colortex" + target,
+                    this.packPostTargets.activeTarget(target));
+        }
+    }
+
     /** Runs one scheduled non-final post window through the pack target graph. */
     private void runPackPostWindow(
             VkCommandBuffer commandBuffer,
@@ -1287,6 +1324,7 @@ public class ChimeraMainPass implements MainPass {
             }
             this.packPostTargets.requireFrameStarted();
             preparePackFullscreenState();
+            boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
                 PackFrameSchedulePlan.PostStage scheduled = this.packFrameSchedule.postStage(stage.name());
                 if (stage.finalStage() || scheduled == null || scheduled.window() != window) {
@@ -1308,6 +1346,10 @@ public class ChimeraMainPass implements MainPass {
                             unavailablePostInputs(post));
                     continue;
                 }
+                if (!tripwireSwept) {
+                    tripwireSwept = true;
+                    sweepNanTripwire(commandBuffer, "before " + window);
+                }
                 ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
                 boolean attempted = false;
                 try {
@@ -1318,6 +1360,7 @@ public class ChimeraMainPass implements MainPass {
                     this.packPostTargets.prepare(post, commandBuffer);
                     drawFullscreen(commandBuffer, post.pipeline());
                     this.packPostTargets.finish(commandBuffer);
+                    checkNanTripwireOutputs(commandBuffer, stage);
                 } catch (RuntimeException stageFailure) {
                     if (attempted) {
                         this.packPostTargets.abort(commandBuffer);
@@ -1448,6 +1491,7 @@ public class ChimeraMainPass implements MainPass {
             // into a GL-ordered image; the flipped resolve below moves that
             // image into the host-ordered output.
             Renderer.getInstance().endRenderPass(commandBuffer);
+            sweepNanTripwire(commandBuffer, "before final");
             Renderer.getInstance().beginRenderPass(this.packFinalRenderPass, this.packFinalFramebuffer);
             PackRenderState finalState = capturePackRenderState();
             ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
@@ -1472,6 +1516,7 @@ public class ChimeraMainPass implements MainPass {
                 finalColor.transitionImageLayout(stack, commandBuffer,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
+            this.nanTripwire.check(commandBuffer, "final", finalColor);
             resolveWorldToOutput(commandBuffer, finalColor);
             this.packFinalApplied = true;
         } catch (RuntimeException failure) {
@@ -1893,6 +1938,7 @@ public class ChimeraMainPass implements MainPass {
         // previous valid companions instead of destroying them.
         if (this.materialMapOwner != null) this.materialMapOwner.close();
         this.materialMapOwner = null;
+        this.nanTripwire.close();
         cleanUpFramebuffersAndPasses();
         cleanUpPipelines();
         if (this.packSource != null) this.packSource.close();

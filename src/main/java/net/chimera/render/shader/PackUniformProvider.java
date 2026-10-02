@@ -86,6 +86,30 @@ public final class PackUniformProvider {
         return INSTANCE.frameState.sunLightVector();
     }
 
+    /**
+     * Debug: every bound float uniform whose current value holds NaN or infinity, as
+     * {@code name[component]=value}, sorted. These are the exact values the pack programs read.
+     */
+    public static java.util.List<String> nonFiniteUniforms() {
+        java.util.List<String> result = new java.util.ArrayList<>();
+        for (Binding binding : INSTANCE.bindings.values()) {
+            if (!"float".equals(UniformRegistry.pipelineType(binding.type))
+                    && !"mat4".equals(binding.type)) {
+                continue;
+            }
+            int count = UniformRegistry.pipelineCount(binding.type);
+            for (int i = 0; i < count; i++) {
+                float value = binding.buffer.getFloat(i * 4);
+                if (!Float.isFinite(value)) {
+                    result.add(binding.descriptor.name() + "[" + i + "]=" + value);
+                    break;
+                }
+            }
+        }
+        java.util.Collections.sort(result);
+        return result;
+    }
+
     /** The shadow caster rotation derived with the celestial uniforms this frame. */
     public static Matrix4f currentShadowLightRotation() {
         return INSTANCE.frameState.shadowLightRotation();

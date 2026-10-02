@@ -6,6 +6,7 @@ import net.chimera.config.ShaderpackDirectory;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.PackNanTripwire;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -38,7 +39,16 @@ public final class ChimeraCommands {
                                 .then(ClientCommandManager.literal("off")
                                         .executes(ChimeraCommands::turnPackOff))
                                 .then(ClientCommandManager.literal("status")
-                                        .executes(ChimeraCommands::packStatus)))));
+                                        .executes(ChimeraCommands::packStatus)))
+                        .then(ClientCommandManager.literal("debug")
+                                .then(ClientCommandManager.literal("nan")
+                                        .then(ClientCommandManager.literal("on")
+                                                .executes(context -> setNanTripwire(context, true)))
+                                        .then(ClientCommandManager.literal("off")
+                                                .executes(context -> setNanTripwire(context, false)))
+                                        .then(ClientCommandManager.literal("test")
+                                                .executes(ChimeraCommands::nanTripwireSelfTest))
+                                        .executes(ChimeraCommands::nanTripwireStatus)))));
     }
 
     private static int listPacks(CommandContext<FabricClientCommandSource> context) {
@@ -116,6 +126,30 @@ public final class ChimeraCommands {
     private static int packStatus(CommandContext<FabricClientCommandSource> context) {
         context.getSource().sendFeedback(Component.literal(ChimeraRenderer.packStatus()));
         return 0;
+    }
+
+    private static int setNanTripwire(CommandContext<FabricClientCommandSource> context, boolean on) {
+        PackNanTripwire.setEnabled(on);
+        context.getSource().sendFeedback(Component.literal(on
+                ? "NaN tripwire on: pack targets are scanned after every pass; the first NaN is logged"
+                        + " and, under RenderDoc, the next frame is captured."
+                : "NaN tripwire off."));
+        return on ? 1 : 0;
+    }
+
+    private static int nanTripwireSelfTest(CommandContext<FabricClientCommandSource> context) {
+        PackNanTripwire.requestSelfTest();
+        context.getSource().sendFeedback(Component.literal(
+                "NaN tripwire self-test queued: the next pack frame scans an image cleared to NaN."
+                        + " Expect a report in chat and latest.log, and a RenderDoc capture if attached."));
+        return 1;
+    }
+
+    private static int nanTripwireStatus(CommandContext<FabricClientCommandSource> context) {
+        context.getSource().sendFeedback(Component.literal(
+                "NaN tripwire is " + (PackNanTripwire.enabled() ? "on" : "off")
+                        + ". Use /chimera debug nan on|off|test."));
+        return PackNanTripwire.enabled() ? 1 : 0;
     }
 
     private static int reportRequest(
