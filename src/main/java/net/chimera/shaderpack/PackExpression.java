@@ -125,15 +125,20 @@ public final class PackExpression {
 
         /** Folds one frame's values through, writing the scalar result. */
         public double evaluate(Inputs inputs, State state, float frameDelta) {
-            return evaluate(inputs, state, frameDelta, 0);
+            return this.root.evaluate(new Context(inputs, state, frameDelta, null), 0);
         }
 
         /**
-         * Folds one frame through one component of the result. A caller evaluates every lane of
-         * a vector once per frame, and each lane's {@code smooth} sites advance once.
+         * Folds one frame through every component of the result into {@code out}. A scalar part
+         * of a vector expression is evaluated once for all components, so a {@code smooth} in it
+         * advances once per frame and a {@code random} is one value, as Iris evaluates them.
          */
-        public double evaluate(Inputs inputs, State state, float frameDelta, int lane) {
-            return this.root.evaluate(new Context(inputs, state, frameDelta), lane);
+        public void evaluate(Inputs inputs, State state, float frameDelta, double[] out, int offset) {
+            Context context = new Context(inputs, state, frameDelta,
+                    this.root.width() > 1 ? new java.util.IdentityHashMap<>() : null);
+            for (int lane = 0; lane < this.root.width(); lane++) {
+                out[offset + lane] = this.root.evaluate(context, lane);
+            }
         }
     }
 
@@ -174,7 +179,24 @@ public final class PackExpression {
         }
     }
 
-    private record Context(Inputs inputs, State state, float frameDelta) {}
+    /**
+     * One frame's evaluation. {@code scalars} memoizes scalar nodes while a vector is evaluated
+     * lane by lane, so each is computed once per frame; it is null for a scalar result.
+     */
+    private record Context(Inputs inputs, State state, float frameDelta,
+                           java.util.IdentityHashMap<Node, Double> scalars) {
+        double scalar(Node node) {
+            if (this.scalars == null) {
+                return node.evaluate(this, 0);
+            }
+            Double cached = this.scalars.get(node);
+            if (cached == null) {
+                cached = node.evaluate(this, 0);
+                this.scalars.put(node, cached);
+            }
+            return cached;
+        }
+    }
 
     private interface Node {
         int width();
@@ -185,9 +207,9 @@ public final class PackExpression {
         void collect(Set<String> dependencies);
     }
 
-    /** One lane of an operand: a scalar answers every lane with its only value. */
+    /** One lane of an operand: a scalar answers every lane with its one value for the frame. */
     private static double lane(Node node, Context context, int lane) {
-        return node.evaluate(context, node.width() == 1 ? 0 : lane);
+        return node.width() == 1 ? context.scalar(node) : node.evaluate(context, lane);
     }
 
     private record Literal(double value) implements Node {
@@ -242,7 +264,7 @@ public final class PackExpression {
         @Override
         public double evaluate(Context context, int lane) {
             if (this.parts.size() == 1 && this.parts.get(0).width() == 1) {
-                return this.parts.get(0).evaluate(context, 0);
+                return context.scalar(this.parts.get(0));
             }
             int remaining = lane;
             for (Node part : this.parts) {
@@ -287,7 +309,7 @@ public final class PackExpression {
 
         @Override
         public double evaluate(Context context, int lane) {
-            return this.value.evaluate(context, 0) == 0.0 ? 1.0 : 0.0;
+            return context.scalar(this.value) == 0.0 ? 1.0 : 0.0;
         }
 
         @Override
@@ -330,7 +352,7 @@ public final class PackExpression {
     private record Choose(Node condition, Node whenTrue, Node whenFalse, int width) implements Node {
         @Override
         public double evaluate(Context context, int lane) {
-            return lane(this.condition.evaluate(context, 0) != 0.0 ? this.whenTrue : this.whenFalse,
+            return lane(context.scalar(this.condition) != 0.0 ? this.whenTrue : this.whenFalse,
                     context, lane);
         }
 
@@ -354,7 +376,7 @@ public final class PackExpression {
                 // if(c1, v1, c2, v2, ..., else): the first true condition's value.
                 int last = this.arguments.size() - 1;
                 for (int index = 0; index < last; index += 2) {
-                    if (this.arguments.get(index).evaluate(context, 0) != 0.0) {
+                    if (context.scalar(this.arguments.get(index)) != 0.0) {
                         return lane(this.arguments.get(index + 1), context, lane);
                     }
                 }
@@ -364,9 +386,9 @@ public final class PackExpression {
                 return java.util.concurrent.ThreadLocalRandom.current().nextDouble();
             }
             if (this.function == Function.IN) {
-                double needle = this.arguments.get(0).evaluate(context, 0);
+                double needle = context.scalar(this.arguments.get(0));
                 for (int index = 1; index < this.arguments.size(); index++) {
-                    if (this.arguments.get(index).evaluate(context, 0) == needle) {
+                    if (context.scalar(this.arguments.get(index)) == needle) {
                         return 1.0;
                     }
                 }
@@ -375,8 +397,8 @@ public final class PackExpression {
             if (this.function == Function.SMOOTH) {
                 int first = this.arguments.size() - 3;
                 double value = lane(this.arguments.get(first), context, lane);
-                float rise = (float) this.arguments.get(first + 1).evaluate(context, 0);
-                float fall = (float) this.arguments.get(first + 2).evaluate(context, 0);
+                float rise = (float) context.scalar(this.arguments.get(first + 1));
+                float fall = (float) context.scalar(this.arguments.get(first + 2));
                 return smooth(context, this.smoothSlot + lane, value, rise, fall);
             }
             double first = lane(this.arguments.get(0), context, lane);
@@ -406,10 +428,10 @@ public final class PackExpression {
                     double divisor = lane(this.arguments.get(1), context, lane);
                     yield divisor == 0.0 ? 0.0 : first - divisor * Math.floor(first / divisor);
                 }
-                case BETWEEN -> first >= this.arguments.get(1).evaluate(context, 0)
-                        && first <= this.arguments.get(2).evaluate(context, 0) ? 1.0 : 0.0;
-                case EQUALS -> Math.abs(first - this.arguments.get(1).evaluate(context, 0))
-                        <= this.arguments.get(2).evaluate(context, 0) ? 1.0 : 0.0;
+                case BETWEEN -> first >= context.scalar(this.arguments.get(1))
+                        && first <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
+                case EQUALS -> Math.abs(first - context.scalar(this.arguments.get(1)))
+                        <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
                 case MAX -> {
                     double result = first;
                     for (int index = 1; index < this.arguments.size(); index++) {

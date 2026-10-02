@@ -147,9 +147,25 @@ public final class PackFrontEndHarness {
                 BiomeIds.constants(), widths);
         check(vector.width() == 3, "vec3 width " + vector.width());
         double[] expected = {2.0, 22.0, 18.0};
+        double[] lanes = new double[3];
+        vector.evaluate(inputs, vector.newState(), 0.0f, lanes, 0);
         for (int lane = 0; lane < 3; lane++) {
-            double value = vector.evaluate(inputs, vector.newState(), 0.0f, lane);
-            check(value == expected[lane], "vec3 lane " + lane + " gave " + value);
+            check(lanes[lane] == expected[lane], "vec3 lane " + lane + " gave " + lanes[lane]);
+        }
+        // A scalar inside a vector is one value per frame: its smooth advances once, as in Iris.
+        PackExpression.Program smoothed = PackExpression.parse("smooth(k, 10, 10) * vec3(1.0, 2.0, 3.0)",
+                BiomeIds.constants(), widths);
+        PackExpression.State state = smoothed.newState();
+        PackExpression.Program reference = PackExpression.parse("smooth(k, 10, 10)", BiomeIds.constants(), widths);
+        PackExpression.State referenceState = reference.newState();
+        double[] values = new double[3];
+        for (int frame = 0; frame < 5; frame++) {
+            double k = frame == 0 ? 0.0 : 8.0;
+            PackExpression.Inputs step = (name, component) -> name.equals("k") ? k : inputs.value(name, component);
+            smoothed.evaluate(step, state, 0.05f, values, 0);
+            double once = reference.evaluate(step, referenceState, 0.05f);
+            check(Math.abs(values[0] - once) < 1e-9 && Math.abs(values[2] - 3.0 * once) < 1e-9,
+                    "a scalar smooth in a vector advanced more than once per frame: " + values[0] + " vs " + once);
         }
         PackExpression.Program accessors = PackExpression.parse("skyColor.r + skyColor.s + skyColor.0",
                 BiomeIds.constants(), widths);

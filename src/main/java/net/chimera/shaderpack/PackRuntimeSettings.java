@@ -281,6 +281,8 @@ public final class PackRuntimeSettings {
         private final double[] scratch;
         private final float[] output;
         private final double[] lastFinite;
+        /** One value's components for the frame, before the finite check stores them. */
+        private final double[] lanes = new double[4];
         private final Map<String, String> failures = new TreeMap<>();
         private int frames;
 
@@ -339,8 +341,9 @@ public final class PackRuntimeSettings {
         for (int index = 0; index < values.size(); index++) {
             Value value = values.get(index);
             int base = indices.get(value.name());
+            value.program().evaluate(inputs, session.states[index], frameDelta, session.lanes, 0);
             for (int lane = 0; lane < value.width(); lane++) {
-                double result = value.program().evaluate(inputs, session.states[index], frameDelta, lane);
+                double result = session.lanes[lane];
                 int slot = base + lane;
                 if (!Double.isFinite(result)) {
                     // Diagnosis over substitution: name the declaration, its expression and the

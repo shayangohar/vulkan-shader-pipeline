@@ -148,6 +148,13 @@ public final class ShaderPackScreen extends Screen {
         this.minecraft.setScreen(this.parent);
     }
 
+    /** Any way off the screen (disconnect, another screen) stops watching the folder. */
+    @Override
+    public void removed() {
+        if (this.packList != null) this.packList.close();
+        super.removed();
+    }
+
     private void dropChangesAndClose() {
         this.dropChanges = true;
         onClose();
