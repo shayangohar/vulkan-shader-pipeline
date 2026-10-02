@@ -428,17 +428,37 @@ public class ChimeraMainPass implements MainPass {
         });
     }
 
+    /**
+     * The pack to load at startup: {@code -Dchimera.pack} when given (an explicit override for
+     * testing), otherwise the selection saved in {@code config/chimera.properties}.
+     */
     private static Path startupPackPath() {
         String value = System.getProperty("chimera.pack");
-        if (value == null || value.isBlank()) {
+        if (value != null && !value.isBlank()) {
+            try {
+                return Path.of(value.trim());
+            } catch (RuntimeException failure) {
+                LOGGER.warn("[chimera] startup pack path is invalid: {}", value);
+                return null;
+            }
+        }
+        net.chimera.config.ChimeraConfig config = net.chimera.config.ChimeraConfig.get();
+        if (!config.shadersEnabled() || config.shaderPack().isEmpty()) {
             return null;
         }
-        try {
-            return Path.of(value.trim());
-        } catch (RuntimeException failure) {
-            LOGGER.warn("[chimera] startup pack path is invalid: {}", value);
-            return null;
+        String name = config.shaderPack().get();
+        Path pack = net.chimera.config.ShaderpackDirectory.resolve(
+                net.chimera.config.ShaderpackDirectory.root(), name).orElse(null);
+        if (pack == null) {
+            LOGGER.warn("[chimera] saved shader pack is no longer in the shaderpacks folder: {}", name);
         }
+        return pack;
+    }
+
+    /** The pack the frame will run once pending changes apply; null when none. */
+    Path selectedPackPath() {
+        PendingPackChange pending = this.packChangeQueue.pending();
+        return pending != null ? pending.path() : this.packPath;
     }
 
     /**

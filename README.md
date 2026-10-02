@@ -120,7 +120,9 @@ For headless runtime verification, run `powershell -NoProfile -ExecutionPolicy B
 
 ## Runtime pack switching
 
-M6.6 adds client-only commands. The `-Dchimera.pack` JVM property remains the startup default. Runtime commands do not need a Minecraft restart.
+Press **O** (or use the **Shader Packs...** button in VulkanMod's video options, the vanilla Video Settings screen, or Mod Menu) to open the shader pack selector, modelled on Iris's: pick a pack, toggle shaders, then Apply or Done. The selection is saved in `config/chimera.properties` (`shaderPack`, `enableShaders`) and restored at startup; the `-Dchimera.pack` JVM property overrides it for testing. A pack is a `.zip` or a folder containing `shaders/`, as in Iris.
+
+M6.6 also adds client-only commands, which share that saved selection. Runtime changes do not need a Minecraft restart.
 
 Use `/chimera pack list` to list direct shaderpacks-directory children. Use `/chimera pack load <name-or-path>` to queue a directory or ZIP. Names resolve in the instance `minecraft/shaderpacks` directory; explicit local paths may be absolute or relative to the game directory. Use `/chimera pack reload` to rebuild the active selection, `/chimera pack off` to return to vanilla rendering, and `/chimera pack status` to inspect the active and pending selections.
 

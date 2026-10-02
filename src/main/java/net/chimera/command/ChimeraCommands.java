@@ -1,5 +1,8 @@
 package net.chimera.command;
 
+import net.chimera.config.ChimeraConfig;
+import net.chimera.config.ShaderpackDirectory;
+
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.chimera.render.ChimeraRenderer;
@@ -65,6 +68,9 @@ public final class ChimeraCommands {
             return -1;
         }
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.requestPack(resolution.path());
+        if (result != ChimeraRenderer.PackRequestResult.NOT_READY) {
+            rememberSelection(resolution.path(), true);
+        }
         return reportRequest(context, result, "pack " + resolution.path().getFileName());
     }
 
@@ -75,6 +81,10 @@ public final class ChimeraCommands {
 
     private static int turnPackOff(CommandContext<FabricClientCommandSource> context) {
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.disablePack();
+        if (result != ChimeraRenderer.PackRequestResult.NOT_READY) {
+            ChimeraConfig config = ChimeraConfig.get();
+            config.setSelection(config.shaderPack().orElse(null), false);
+        }
         switch (result) {
             case QUEUED -> context.getSource().sendFeedback(Component.literal(
                     "Chimera shader pack off queued; vanilla rendering resumes at the next safe frame boundary."));
@@ -84,6 +94,23 @@ public final class ChimeraCommands {
                     "Chimera is not ready; no pack change was queued."));
         }
         return result == ChimeraRenderer.PackRequestResult.NOT_READY ? -1 : 0;
+    }
+
+    /**
+     * Saves a pack loaded from the shaderpacks folder as the selection, as the selector screen
+     * does. A pack loaded by an explicit path outside that folder cannot be named in the config,
+     * so the saved selection is left as it was.
+     */
+    private static void rememberSelection(Path pack, boolean enabled) {
+        Path root = shaderpacksRoot();
+        try {
+            Path parent = pack.toRealPath().getParent();
+            if (parent != null && Files.isDirectory(root) && parent.equals(root.toRealPath())) {
+                ChimeraConfig.get().setSelection(pack.getFileName().toString(), enabled);
+            }
+        } catch (IOException failure) {
+            // Not in the shaderpacks folder: nothing to remember.
+        }
     }
 
     private static int packStatus(CommandContext<FabricClientCommandSource> context) {
@@ -108,7 +135,7 @@ public final class ChimeraCommands {
     }
 
     static Path shaderpacksRoot(Path gameDirectory) {
-        return gameDirectory.resolve("shaderpacks").normalize();
+        return ShaderpackDirectory.root(gameDirectory);
     }
 
     private static Path shaderpacksRoot() {
@@ -120,16 +147,7 @@ public final class ChimeraCommands {
     }
 
     static List<String> listPackNames(Path root) throws IOException {
-        if (!Files.isDirectory(root)) {
-            return List.of();
-        }
-        try (var entries = Files.list(root)) {
-            return entries
-                    .filter(ChimeraCommands::isPackPath)
-                    .map(path -> path.getFileName().toString())
-                    .sorted(String.CASE_INSENSITIVE_ORDER)
-                    .toList();
-        }
+        return ShaderpackDirectory.list(root);
     }
 
     static Resolution resolvePackPath(Path shaderpacksRoot, Path gameDirectory, String raw) {
@@ -199,9 +217,7 @@ public final class ChimeraCommands {
     }
 
     private static boolean isPackPath(Path path) {
-        return Files.isDirectory(path)
-                || (Files.isRegularFile(path)
-                && path.getFileName().toString().toLowerCase().endsWith(".zip"));
+        return ShaderpackDirectory.isValidPack(path);
     }
 
     private static String stripQuotes(String raw) {

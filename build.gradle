@@ -29,6 +29,9 @@ dependencies {
     // Host renderer (LGPL) - linked as a library, chimera stays MIT
     modImplementation "maven.modrinth:vulkanmod:${project.vulkanmod_version}"
 
+    // Optional: Mod Menu's config button opens the shader pack selector
+    modCompileOnly "maven.modrinth:modmenu:17.0.1-beta.1"
+
     // Vulkan bindings: bundled by VulkanMod at runtime; compile-only here
     compileOnly "org.lwjgl:lwjgl-vulkan:3.3.3"
     compileOnly "org.lwjgl:lwjgl-vma:3.3.3"
@@ -584,6 +587,15 @@ tasks.register('authoredOutputTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('selectorConfigTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks the shader selector config round trip and Iris pack-folder rules.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.config.SelectorConfigHarness'
+    jvmArgs '-ea'
+}
+
 tasks.register('packFrontEndTest', JavaExec) {
     group = 'verification'
     description = 'Checks the pack front end reads Iris/GLSL formats in full (continuations, typed custom values).'
@@ -949,6 +961,7 @@ tasks.named('check') {
     dependsOn tasks.named('authoredOutputTest')
     dependsOn tasks.named('spirvLocalInitTest')
     dependsOn tasks.named('packFrontEndTest')
+    dependsOn tasks.named('selectorConfigTest')
     dependsOn tasks.named('terrainTangentTest')
     dependsOn tasks.named('customUniformInventoryTest')
     dependsOn tasks.named('m88WaterTest')

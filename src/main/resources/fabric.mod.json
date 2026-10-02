@@ -12,6 +12,9 @@
   "entrypoints": {
     "client": [
       "net.chimera.ChimeraMod"
+    ],
+    "modmenu": [
+      "net.chimera.gui.ChimeraModMenu"
     ]
   },
   "mixins": [
@@ -22,5 +25,8 @@
     "minecraft": "~1.21.11",
     "java": ">=21",
     "vulkanmod": ">=0.6.8"
+  },
+  "suggests": {
+    "modmenu": "*"
   }
 }

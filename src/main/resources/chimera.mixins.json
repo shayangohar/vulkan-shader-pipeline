@@ -7,6 +7,8 @@
   "client": [
     "RendererInitMixin",
     "SwapChainMixin",
+    "ChimeraVOptionScreenMixin",
+    "ChimeraVideoSettingsScreenMixin",
     "GameRendererDepthMixin",
     "ChimeraLevelRendererMixin",
     "ChimeraMinecraftMixin",

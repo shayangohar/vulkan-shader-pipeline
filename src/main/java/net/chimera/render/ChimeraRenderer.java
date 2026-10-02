@@ -131,6 +131,11 @@ public final class ChimeraRenderer {
         return requestPack(null);
     }
 
+    /** The pack rendering now or about to (a queued change wins); null for vanilla. */
+    public static Path selectedPackPath() {
+        return ready && chimeraPass != null ? chimeraPass.selectedPackPath() : null;
+    }
+
     public static String packStatus() {
         if (!ready || chimeraPass == null) {
             return "Chimera pack: renderer not ready";
