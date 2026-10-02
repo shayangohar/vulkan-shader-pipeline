@@ -93,6 +93,20 @@ final class CelestialSnapshot {
         dest.set(VECTOR.x, VECTOR.y, VECTOR.z).normalize();
     }
 
+    /**
+     * The shadow caster's rotation, built as Iris's {@code ShadowMatrices.createBaselineModelViewMatrix}
+     * builds it: a quarter turn about X, the sky angle about Z, then the sun path about X. Its view
+     * Z axis is {@link #lightVector}, and it stays defined with the light straight overhead, where a
+     * look-at with a fixed up vector has no basis. Iris's sky angle is the raw angle in turns.
+     */
+    static void shadowRotation(float sunPathRotation, float offsetDegrees, float angleDegrees,
+                               Matrix4f dest) {
+        dest.identity()
+                .rotateX((float) Math.toRadians(90.0F))
+                .rotateZ((float) Math.toRadians(-(angleDegrees + offsetDegrees)))
+                .rotateX((float) Math.toRadians(sunPathRotation));
+    }
+
     /** The host's packed sky colour, as the format hands it to a pack: components over 255. */
     static void skyColor(int packed, Vector3f dest) {
         dest.set(((packed >> 16) & 0xFF) / 255.0F,

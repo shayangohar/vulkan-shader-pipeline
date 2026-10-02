@@ -204,6 +204,12 @@ public final class M73ConformanceHarness {
                 assertVectorNear(state.sunLightVector().x, state.sunLightVector().y,
                         state.sunLightVector().z, carried,
                         "M7.3 pack light position left the shadow light at raw " + time[0]);
+                // The caster rotation (Iris's construction) looks along the same light. Raw 0 with
+                // a straight path is the sun overhead, where a fixed-up look-at had no basis.
+                org.joml.Vector3f depthAxis = state.shadowLightRotation()
+                        .transformDirection(new org.joml.Vector3f(state.sunLightVector()));
+                assertVectorNear(0.0f, 0.0f, 1.0f, depthAxis,
+                        "M7.3 shadow caster rotation left the shadow light at raw " + time[0]);
             }
         }
     }

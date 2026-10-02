@@ -61,6 +61,8 @@ final class PackFrameState {
     private final Vector3f upPosition = new Vector3f(0.0f, 1.0f, 0.0f);
     private final Vector3f skyColor = new Vector3f(0.0f, 0.0f, 0.0f);
     private final Vector3f sunLightVector = new Vector3f(0.0f, 1.0f, 0.0f);
+    /** The shadow caster rotation for the same light, as Iris builds it; its Z is sunLightVector. */
+    private final Matrix4f shadowLightRotation = new Matrix4f().rotateX((float) Math.toRadians(90.0));
     private final float[] fogColor = new float[4];
     private final float[] shaderColor = new float[4];
     private final float[] lightDirection0 = new float[3];
@@ -242,6 +244,10 @@ final class PackFrameState {
     /** World-space light direction the shadow matrix looks along, derived with the uniforms. */
     Vector3f sunLightVector() {
         return sunLightVector;
+    }
+
+    Matrix4f shadowLightRotation() {
+        return shadowLightRotation;
     }
 
     void write(UniformRegistry.UniformDescriptor descriptor, String type, MappedBuffer target) {
@@ -654,6 +660,8 @@ final class PackFrameState {
         CelestialSnapshot.upPosition(modelView, upPosition);
         CelestialSnapshot.lightVector(sunPathRotation, sunPathOffset,
                 lightAngleDegrees, sunLightVector);
+        CelestialSnapshot.shadowRotation(sunPathRotation, sunPathOffset,
+                lightAngleDegrees, shadowLightRotation);
         CelestialSnapshot.skyColor(skyColorPacked, skyColor);
     }
 
@@ -960,6 +968,7 @@ final class PackFrameState {
         upPosition.set(0.0f, 1.0f, 0.0f);
         skyColor.set(0.0f, 0.0f, 0.0f);
         sunLightVector.set(0.0f, 1.0f, 0.0f);
+        shadowLightRotation.identity().rotateX((float) Math.toRadians(90.0));
     }
 
     private void resetTemporalState() {

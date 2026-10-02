@@ -830,7 +830,8 @@ public class ChimeraMainPass implements MainPass {
         // Compute the light once before any terrain draw. The shadow pass at
         // the opaque-layer tail reuses this exact state.
         if (this.shadowMap.isInitialized()) {
-            this.shadowMap.updateLight(PackUniformProvider.currentSunLightVector());
+            this.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
+                    cameraX, cameraY, cameraZ);
             this.shadowFrameReady = prepareShadowForSampling(cameraX, cameraY, cameraZ);
             if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
                 this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);

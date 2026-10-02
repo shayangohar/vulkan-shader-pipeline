@@ -86,6 +86,11 @@ public final class PackUniformProvider {
         return INSTANCE.frameState.sunLightVector();
     }
 
+    /** The shadow caster rotation derived with the celestial uniforms this frame. */
+    public static Matrix4f currentShadowLightRotation() {
+        return INSTANCE.frameState.shadowLightRotation();
+    }
+
     /** Installs the pack's sun path for the celestial frame and the shadow matrix. */
     public static void installSunPath(float rotationDegrees, float offsetDegrees) {
         INSTANCE.frameState.installSunPath(rotationDegrees, offsetDegrees);
