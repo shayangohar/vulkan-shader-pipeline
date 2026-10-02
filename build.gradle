@@ -811,6 +811,30 @@ tasks.register('materialPlanConformance', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('packCompileTest', JavaExec) {
+    group = 'verification'
+    description = 'Compiles every program the locked packs install, with the runtime preparation and VulkanMod shaderc target.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.PackCompileCheck'
+    jvmArgs '-ea'
+    doFirst {
+        // The same locked BSL and Complementary zips the entity gate reads.
+        def packs = ['m87EntityComplementary', 'm87EntityBsl'].collect { key ->
+            def value = project.findProperty(key) ?: System.getProperty('chimera.' + key)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing locked pack path. Set -P${key}.")
+            }
+            def pack = file(value.toString())
+            if (!pack.isFile() && !pack.isDirectory()) {
+                throw new GradleException("Pack compile path does not exist: ${pack}")
+            }
+            pack.absolutePath
+        }
+        systemProperty 'chimera.packCompile.packs', packs.join(File.pathSeparator)
+    }
+}
+
 tasks.register('m87EntityRealPackTest', JavaExec) {
     group = 'verification'
     description = 'Checks locked-pack entity/block executability, exact target routes, and converted shader compilation.'
@@ -966,6 +990,7 @@ tasks.named('check') {
     dependsOn tasks.named('m87PostBypassTest')
     dependsOn tasks.named('m87EntityTransformBindingTest')
     dependsOn tasks.named('m87EntityRealPackTest')
+    dependsOn tasks.named('packCompileTest')
     dependsOn tasks.named('m87ShadowMatrixTest')
     dependsOn tasks.named('m87VulkanBarrierTest')
     dependsOn tasks.named('authoredOutputTest')

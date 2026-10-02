@@ -72,5 +72,13 @@ public final class PackReportTool {
         byReason.entrySet().stream()
                 .sorted((a, b) -> b.getValue().size() - a.getValue().size())
                 .forEach(entry -> System.out.printf("  %3d %s%n", entry.getValue().size(), entry.getKey()));
+        compileExecutablePrograms(pack, analysis);
+    }
+
+    private static void compileExecutablePrograms(Path pack, PackProbe.Analysis analysis) {
+        PackCompileCheck.Result result = PackCompileCheck.run(pack, analysis);
+        System.out.printf("  -- shader compile: %d programs compile, %d failures%n",
+                result.compiled(), result.failures().size());
+        result.failures().forEach(failure -> System.out.println("  COMPILE_FAILED " + failure));
     }
 }
