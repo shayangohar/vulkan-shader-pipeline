@@ -28,6 +28,7 @@ import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkImageCopy;
 import org.lwjgl.vulkan.VkImageSubresourceLayers;
 import org.lwjgl.vulkan.VkImageSubresourceRange;
+import org.lwjgl.vulkan.VkFormatProperties;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
@@ -38,6 +39,14 @@ import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
+import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties;
+import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -91,6 +100,11 @@ public final class PackPostTargets {
             return false;
         }
         this.graph = graph;
+        // RGBA16's sampled/attachment features are not mandatory on every device.
+        // Reject unsupported storage rather than silently substituting floating point.
+        if (graph.targets().stream().anyMatch(target -> target.format() == VK_FORMAT_R16G16B16A16_UNORM)) {
+            verifyNormalizedRgba16Support();
+        }
         Arrays.fill(this.used, false);
         Arrays.fill(this.valid, false);
         Arrays.fill(this.doubled, false);
@@ -146,6 +160,28 @@ public final class PackPostTargets {
                 + " target1=" + imageId(this.images[1][0])
                 + " sides=" + this.sideCounts[0] + " doubled=" + this.doubled[0]);
         return true;
+    }
+
+    /** Check the optional exact normalized format before allocating any target images. */
+    private static void verifyNormalizedRgba16Support() {
+        if (DeviceManager.physicalDevice == null) {
+            throw new IllegalStateException("Vulkan physical device is unavailable for RGBA16 targets");
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkFormatProperties properties = VkFormatProperties.calloc(stack);
+            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice,
+                    VK_FORMAT_R16G16B16A16_UNORM, properties);
+            int required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
+                    | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
+                    | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT
+                    | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
+                    | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+            if ((properties.optimalTilingFeatures() & required) != required) {
+                throw new IllegalArgumentException("RGBA16 target format lacks sampled/linear/attachment/blend/transfer support"
+                        + " (required=0x" + Integer.toHexString(required)
+                        + ", supported=0x" + Integer.toHexString(properties.optimalTilingFeatures()) + ")");
+            }
+        }
     }
 
     /** Compatibility entry point retained for earlier callers. */

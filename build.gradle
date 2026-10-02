@@ -623,6 +623,16 @@ tasks.register('terrainTangentTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('nanTripwireTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks NaN tripwire scan coverage and shader; -PnanTripwireGpu=true also runs headless Vulkan.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.PackNanTripwireHarness'
+    jvmArgs '-ea', '-Dorg.lwjgl.system.stackSize=256'
+    systemProperty 'chimera.nanTripwire.gpu', (project.findProperty('nanTripwireGpu') ?: 'false').toString()
+}
+
 tasks.register('m84ConformanceTest', JavaExec) {
     group = 'verification'
     description = 'Runs deterministic M8.4 common world-family adapter and fallback checks.'
@@ -963,6 +973,7 @@ tasks.named('check') {
     dependsOn tasks.named('packFrontEndTest')
     dependsOn tasks.named('selectorConfigTest')
     dependsOn tasks.named('terrainTangentTest')
+    dependsOn tasks.named('nanTripwireTest')
     dependsOn tasks.named('customUniformInventoryTest')
     dependsOn tasks.named('m88WaterTest')
 }

@@ -1203,6 +1203,8 @@ public class ChimeraMainPass implements MainPass {
         }
         Renderer.getInstance().endRenderPass(commandBuffer);
 
+        this.nanTripwire.finishFrame(commandBuffer);
+
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage outputColor = this.compositeFramebuffer.getColorAttachment();
             trace("presentRead", "outputColor", outputColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -1491,7 +1493,8 @@ public class ChimeraMainPass implements MainPass {
             // into a GL-ordered image; the flipped resolve below moves that
             // image into the host-ordered output.
             Renderer.getInstance().endRenderPass(commandBuffer);
-            sweepNanTripwire(commandBuffer, "before final");
+            // No pack target is written between the last post output check and final.
+            // Re-reading every target/history/depth here adds cost but no new evidence.
             Renderer.getInstance().beginRenderPass(this.packFinalRenderPass, this.packFinalFramebuffer);
             PackRenderState finalState = capturePackRenderState();
             ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
@@ -2356,6 +2359,9 @@ public class ChimeraMainPass implements MainPass {
 
     @Override
     public void onResize() {
+        // Renderer idles the device before resize and may change its frames-in-flight
+        // count. Recreate the diagnostic ring at this same safe boundary.
+        this.nanTripwire.close();
         createResources();
     }
 

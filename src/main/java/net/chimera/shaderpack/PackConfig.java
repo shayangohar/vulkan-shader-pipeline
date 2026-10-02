@@ -77,9 +77,8 @@ public final class PackConfig {
             Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
     /**
-     * Iris format token -> exact VkFormat. Every entry is a format Vulkan
-     * requires every device to support as a sampled colour attachment, so
-     * the target keeps the precision and channel count the pack declared.
+     * Iris format token -> exact VkFormat. Keep normalized and floating-point
+     * storage distinct; target allocation checks device support when required.
      */
     public static final Map<String, Integer> FMT_TO_VK = Map.ofEntries(
             Map.entry("R8", 9),          // VK_FORMAT_R8_UNORM
@@ -88,6 +87,7 @@ public final class PackConfig {
             Map.entry("RGB10_A2", 64),   // VK_FORMAT_A2B10G10R10_UNORM_PACK32 (GL_RGB10_A2 bit order)
             Map.entry("R16F", 76),       // VK_FORMAT_R16_SFLOAT
             Map.entry("RG16F", 83),      // VK_FORMAT_R16G16_SFLOAT
+            Map.entry("RGBA16", 91),     // VK_FORMAT_R16G16B16A16_UNORM (not RGBA16F)
             Map.entry("RGBA16F", 97),    // VK_FORMAT_R16G16B16A16_SFLOAT
             Map.entry("R32F", 100),      // VK_FORMAT_R32_SFLOAT
             Map.entry("RG32F", 103),     // VK_FORMAT_R32G32_SFLOAT
@@ -99,7 +99,6 @@ public final class PackConfig {
             "RGB8_SNORM", 97,
             "RGBA8_SNORM", 97,
             "RGB16F", 97,
-            "RGBA16", 97,
             "R11F_G11F_B10F", 97
     );
     private static final Map<Integer, String> VK_TO_NAME;
@@ -121,7 +120,7 @@ public final class PackConfig {
             case 9 -> 1;
             case 16, 76 -> 2;
             case 37, 64, 83, 100 -> 4;
-            case 97, 103 -> 8;
+            case 91, 97, 103 -> 8;
             case 109 -> 16;
             default -> 0;
         };
