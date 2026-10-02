@@ -264,6 +264,10 @@ public final class GlslTokenRewriter {
      */
     static String rewriteShadowCalls(String source, Map<String, String> samplerTypes) {
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
+        // A program may define a function under one of these names (Solas's own
+        // texture2DShadow); its calls and its definition are the program's, not legacy lookups.
+        Set<String> userDefined = userDefinedFunctions(tokens,
+                Set.of("shadow2D", "shadow2DLod", "texture2DShadow"));
         // Work from the innermost calls outward. This keeps nested legacy
         // lookups valid when the outer coordinate expression is rendered.
         for (int index = tokens.size() - 1; index >= 0; index--) {
@@ -271,7 +275,8 @@ public final class GlslTokenRewriter {
             if (token.kind() != GlslLexer.Kind.IDENTIFIER
                     || (!token.text().equals("shadow2D")
                     && !token.text().equals("shadow2DLod")
-                    && !token.text().equals("texture2DShadow"))) {
+                    && !token.text().equals("texture2DShadow"))
+                    || userDefined.contains(token.text())) {
                 continue;
             }
             int open = GlslLexer.nextSignificant(tokens, index);
@@ -428,6 +433,32 @@ public final class GlslTokenRewriter {
         }
         ranges.add(new int[] {argumentStart, end});
         return ranges;
+    }
+
+    /**
+     * The names among {@code candidates} the source defines or declares as functions: a return
+     * type, the name, a parameter list, then a body or a semicolon.
+     */
+    static Set<String> userDefinedFunctions(List<GlslLexer.Token> tokens, Set<String> candidates) {
+        Set<String> defined = new java.util.HashSet<>();
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() != GlslLexer.Kind.IDENTIFIER || !candidates.contains(token.text())) {
+                continue;
+            }
+            int type = GlslLexer.previousSignificant(tokens, index);
+            int open = GlslLexer.nextSignificant(tokens, index);
+            if (type < 0 || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER
+                    || open < 0 || !tokens.get(open).symbol("(")) {
+                continue;
+            }
+            int close = GlslLexer.matching(tokens, open, "(", ")");
+            int after = close < 0 ? -1 : GlslLexer.nextSignificant(tokens, close);
+            if (after >= 0 && (tokens.get(after).symbol("{") || tokens.get(after).symbol(";"))) {
+                defined.add(token.text());
+            }
+        }
+        return defined;
     }
 
     private static String singleIdentifier(List<GlslLexer.Token> tokens, int[] range) {

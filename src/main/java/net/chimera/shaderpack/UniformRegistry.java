@@ -606,11 +606,12 @@ public final class UniformRegistry {
                 }
                 continue;
             }
-            UniformDescriptor spec = UNIFORM_SPECS.get(name);
-            if (spec == null && customDescriptors != null) {
-                spec = customDescriptors.get(name);
-            }
             UniformDescriptor custom = customDescriptors == null ? null : customDescriptors.get(name);
+            // A pack value of a VulkanMod host name is the pack's own, as under Iris.
+            UniformDescriptor spec = HOST_ONLY.contains(name) && custom != null ? custom : UNIFORM_SPECS.get(name);
+            if (spec == null) {
+                spec = custom;
+            }
             if (custom != null && custom.availability() == Availability.REJECTED) {
                 // The pack wrote this declaration and Chimera could not honour it. A program that
                 // reads the name must not run with a substitute value, so it fails closed here.
@@ -628,6 +629,12 @@ public final class UniformRegistry {
                     deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + name);
                 }
                 continue;
+            }
+            if (spec == null) {
+                spec = unsetDescriptor(name, type);
+                if (spec != null) {
+                    deviations.add("UNIFORM_UNSET_ZERO:" + name);
+                }
             }
             if (spec == null) {
                 if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
@@ -660,13 +667,17 @@ public final class UniformRegistry {
             case PARTICLE -> ENTITY_NAME_TO_SLOT;
             case SKY, CLOUD -> GEOMETRY_NAME_TO_SLOT;
         };
+        boolean waterShadow = samplerNames.containsKey("watershadow");
         List<SamplerBinding> bindings = new ArrayList<>();
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
             if (allowUnusedDeclarations && isSamplerUnused(stripped, sampler.getKey())) {
                 deviations.add("SAMPLER_DECLARATION_UNUSED:" + sampler.getKey());
                 continue;
             }
-            Integer slot = slots.get(sampler.getKey());
+            // Iris gives the legacy shadow names a per-program meaning; look them up by it.
+            String lookup = PackResourcePlan.isProgramShadowAlias(sampler.getKey())
+                    ? PackResourcePlan.programResource(sampler.getKey(), waterShadow) : sampler.getKey();
+            Integer slot = slots.get(lookup);
             if (stage == Stage.POST && slot == null) {
                 slot = extendedPostColorSlot(sampler.getKey());
             }
@@ -717,7 +728,7 @@ public final class UniformRegistry {
             String resource = stage == Stage.POST && sampler.getKey().equals("tex")
                     && customSamplerSlots != null
                     && customSamplerSlots.containsKey(PACK_ATLAS_SAMPLER)
-                    ? PACK_ATLAS_SAMPLER : samplerResource(sampler.getKey());
+                    ? PACK_ATLAS_SAMPLER : samplerResource(lookup);
             String previousResource = samplerResources.putIfAbsent(slot, resource);
             if (previousResource != null && !previousResource.equals(resource)) {
                 deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
@@ -779,23 +790,68 @@ public final class UniformRegistry {
             String glslType,
             Map<String, UniformDescriptor> customDescriptors
     ) {
-        UniformDescriptor spec = descriptor(name, glslType);
+        UniformDescriptor custom = customDescriptors == null ? null : customDescriptors.get(name);
+        UniformDescriptor spec = HOST_ONLY.contains(name) && custom != null ? null : descriptor(name, glslType);
         if (spec != null) {
             return spec;
         }
-        spec = customDescriptors == null ? null : customDescriptors.get(name);
-        if (spec == null) {
-            return null;
+        if (custom != null) {
+            return custom.availability() == Availability.REJECTED || !custom.accepts(glslType) ? null : custom;
         }
-        return spec.availability() == Availability.REJECTED || !spec.accepts(glslType) ? null : spec;
+        return unsetDescriptor(name, glslType);
     }
 
     /**
      * The names the host answers for. A pack may not author a declaration under one of these: it
-     * would replace a value the host is responsible for. Every other name is the pack's own.
+     * would replace a value the host is responsible for. Every other name is the pack's own,
+     * including VulkanMod's host names, which Iris does not have.
      */
     public static boolean isEngineInput(String name) {
-        return name != null && UNIFORM_SPECS.containsKey(name);
+        return name != null && UNIFORM_SPECS.containsKey(name) && !HOST_ONLY.contains(name);
+    }
+
+    /**
+     * VulkanMod's own uniform names, which the catalog carries for Chimera's host-shaped programs.
+     * Iris has none of them, so a pack that authors one (Bliss's {@code texelSize}) gets its own
+     * value, as it would under Iris.
+     */
+    private static final Set<String> HOST_ONLY = Set.of(
+            "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd",
+            "FogEnvironmentalStart", "FogEnvironmentalEnd", "FogRenderDistanceStart",
+            "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE,
+            "ScreenSize", "TextureSize", "TexelSize", "Light0_Direction", "Light1_Direction",
+            "ColorModulator", "ModelOffset", "ChunkOffset", "UseRgss", "CurrentTime", "EndPortalLayers",
+            "screenSize", "textureSize", "texelSize");
+
+    /**
+     * Names Iris 1.21.11 serves that Chimera does not yet: per-draw state, values that need Iris's
+     * ID maps or fog-mode plumbing, and the matrices Iris's core-profile transformers inject. A
+     * program reading one must not run on a zero Iris would never give it.
+     */
+    private static final Set<String> IRIS_UNSERVED = Set.of(
+            "alphaTestRef", "blendFunc", "gtextureId", "gtextureSize", "textureReloadCount",
+            "vehicleId", "currentSelectedBlockId", "currentSelectedBlockPos",
+            "heldBlockLightColor", "heldBlockLightColor2", "fogDensity", "fogMode", "fogShape",
+            "cloudTime", "constantMood",
+            "modelViewMatrix", "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse",
+            "normalMatrix", "textureMatrix", "chunkOffset");
+
+    /** Whether Iris itself gives this name a value: the catalog, the unserved list, Iris internals. */
+    static boolean irisServes(String name) {
+        return UNIFORM_SPECS.containsKey(name) && !HOST_ONLY.contains(name)
+                || IRIS_UNSERVED.contains(name) || name.startsWith("iris_") || name.startsWith("u_");
+    }
+
+    /**
+     * A declared uniform Iris does not provide is left unset, so GL reads it as zero, and the
+     * program still runs (Solas's {@code vxRenderDistance}, a Voxy value). Chimera serves the
+     * same zero. Iris names Chimera lacks are not covered: those stay unsupported.
+     */
+    static UniformDescriptor unsetDescriptor(String name, String glslType) {
+        if (name == null || irisServes(name) || !SUPPORTED_TYPES.contains(glslType)) {
+            return null;
+        }
+        return new UniformDescriptor(name, List.of(glslType), Availability.DEFAULTED, name, DefaultPolicy.ZERO);
     }
 
     /**
@@ -815,7 +871,10 @@ public final class UniformRegistry {
             "lightningBoltPosition",
             "gbufferModelView", "gbufferModelViewInverse", "gbufferPreviousModelView",
             "gbufferProjection", "gbufferProjectionInverse", "gbufferPreviousProjection",
-            "shadowModelView", "shadowModelViewInverse", "shadowProjection", "shadowProjectionInverse");
+            "shadowModelView", "shadowModelViewInverse", "shadowProjection", "shadowProjectionInverse",
+            "dhProjection", "dhProjectionInverse", "dhPreviousProjection",
+            "vehicleLookVector", "relativeVehiclePosition", "playerBodyVector",
+            "currentDate", "currentTime", "currentYearTime");
 
     /**
      * How a custom-value expression types an engine input: 1 for a scalar, 2 to 4 for a vector,
@@ -1119,6 +1178,7 @@ public final class UniformRegistry {
         addLive(specs, "darknessLightFactor", "float");
         addLive(specs, "isElytraFlying", "int");
         addDefault(specs, "endFlashIntensity", "float");
+        addDefault(specs, "previousEndFlashIntensity", "float");
         addDefault(specs, "endFlashPosition", "vec3");
         addLive(specs, "frameTime", "float");
         addLive(specs, "nightVision", "float");
@@ -1139,8 +1199,9 @@ public final class UniformRegistry {
         addLive(specs, "heightLimit", "int");
         addLive(specs, "logicalHeightLimit", "int");
         addLive(specs, "seaLevel", "int");
-        addLive(specs, "hasCeiling", "int");
-        addLive(specs, "hasSkylight", "int");
+        // Iris serves these through uniform1b; packs declare them bool or int.
+        addLive(specs, "hasCeiling", List.of("int", "bool"), "hasCeiling");
+        addLive(specs, "hasSkylight", List.of("int", "bool"), "hasSkylight");
         addLive(specs, "ambientLight", "float");
         addLive(specs, "temperature", "float");
         addLive(specs, "rainfall", "float");
@@ -1166,6 +1227,8 @@ public final class UniformRegistry {
         // stage. Iris normally supplies this value from its render scheduler;
         // Chimera uses the solid-terrain value as an explicit adapter default.
         addDefault(specs, "renderStage", "int");
+
+        addIrisPlayerState(specs);
 
         addLive(specs, "MVP", "mat4");
         addLive(specs, "ModelViewMat", "mat4");
@@ -1201,6 +1264,36 @@ public final class UniformRegistry {
         addLive(specs, "textureSize", "ivec2");
         addLive(specs, "texelSize", "vec2");
         return Map.copyOf(specs);
+    }
+
+    /**
+     * Iris's player, HUD, vehicle, clock and Distant Horizons uniforms (see IrisPlayerState).
+     * Booleans take bool or int, as Iris's uniform1b serves either.
+     */
+    private static void addIrisPlayerState(Map<String, UniformDescriptor> specs) {
+        for (String flag : List.of("hideGUI", "isRightHanded", "feetInWater", "inSwimmingAnimation",
+                "isRiding", "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog")) {
+            addLive(specs, flag, List.of("bool", "int"), flag);
+        }
+        for (String value : List.of("currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger",
+                "maxPlayerHunger", "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir",
+                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "chunkFadeTimeInv",
+                "dhNearPlane", "dhFarPlane")) {
+            addLive(specs, value, "float");
+        }
+        for (String value : List.of("textureFilteringMode", "anisotropicFiltering", "currentColorSpace",
+                "dhRenderDistance")) {
+            addLive(specs, value, "int");
+        }
+        for (String vector : List.of("vehicleLookVector", "relativeVehiclePosition", "playerBodyVector")) {
+            addLive(specs, vector, "vec3");
+        }
+        addLive(specs, "currentDate", "ivec3");
+        addLive(specs, "currentTime", "ivec3");
+        addLive(specs, "currentYearTime", "ivec2");
+        addLive(specs, "dhProjection", "mat4");
+        addLive(specs, "dhProjectionInverse", "mat4");
+        addLive(specs, "dhPreviousProjection", "mat4");
     }
 
     private static void addLive(Map<String, UniformDescriptor> specs, String name, String type) {

@@ -113,9 +113,10 @@ public final class PackResourcePlan {
             List<UniformRegistry.SamplerBinding> samplers = programPlan.interfacePlan()
                     .effective(stage).samplers();
             List<PackResourceBinding> programBindings = new ArrayList<>();
+            boolean waterShadow = declaresWaterShadow(samplers);
             for (UniformRegistry.SamplerBinding sampler : samplers) {
-                PackResourceBinding binding = resolve(programPlan.name(), sampler, declarations, shadersDir,
-                        settings == null ? Map.of() : settings.propertyValues());
+                PackResourceBinding binding = resolve(programPlan.name(), sampler, waterShadow, declarations,
+                        shadersDir, settings == null ? Map.of() : settings.propertyValues());
                 programBindings.add(binding);
                 deviations.addAll(binding.deviations());
             }
@@ -138,8 +139,8 @@ public final class PackResourcePlan {
         java.util.Set<String> names = new TreeSet<>();
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
             if (!sampler.glslType().equals("sampler2D")) continue;
-            PackResourceBinding binding = resolve(program, sampler, resources.resourceDeclarations(),
-                    null, resources.propertyValues());
+            PackResourceBinding binding = resolve(program, sampler, declaresWaterShadow(iface.samplers()),
+                    resources.resourceDeclarations(), null, resources.propertyValues());
             boolean albedo = sampler.slot() == 0
                     && binding.kind() == PackResourceKind.TARGET
                     && binding.status() == PackResourceStatus.HOST_ALIAS
@@ -152,12 +153,13 @@ public final class PackResourcePlan {
     private static PackResourceBinding resolve(
             String program,
             UniformRegistry.SamplerBinding sampler,
+            boolean waterShadow,
             Map<String, PackResourceDeclaration> declarations,
             Path shadersDir,
             Map<String, String> propertyValues
     ) {
         String name = sampler.name();
-        String canonical = canonicalResource(name);
+        String canonical = programResource(name, waterShadow);
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
 
@@ -311,6 +313,13 @@ public final class PackResourcePlan {
                 PackResourceStatus.UNSUPPORTED, deviations);
     }
 
+    private static boolean declaresWaterShadow(List<UniformRegistry.SamplerBinding> samplers) {
+        for (UniformRegistry.SamplerBinding sampler : samplers) {
+            if (sampler.name().equals("watershadow")) return true;
+        }
+        return false;
+    }
+
     public List<PackResourceBinding> bindings(String program) {
         return byProgram.getOrDefault(program, List.of());
     }
@@ -363,6 +372,27 @@ public final class PackResourcePlan {
         if (sampler.matches("shadowtex[0-1]")) return sampler;
         if (sampler.matches("shadowcolor[0-1]")) return sampler;
         return sampler.equals("noisetex") ? "noisetex" : sampler;
+    }
+
+    /**
+     * Iris's per-program shadow aliases ({@code IrisSamplers.addShadowSamplers}): {@code shadow}
+     * is shadowtex0, unless the same program declares {@code watershadow}, which then takes
+     * shadowtex0 and leaves {@code shadow} the opaque casters, shadowtex1. {@code shadowcolor} is
+     * shadowcolor0. Every other name has one meaning everywhere: {@link #canonicalResource}.
+     */
+    public static String programResource(String sampler, boolean declaresWaterShadow) {
+        if (sampler == null) return "";
+        return switch (sampler) {
+            case "watershadow" -> "shadowtex0";
+            case "shadow" -> declaresWaterShadow ? "shadowtex1" : "shadowtex0";
+            case "shadowcolor" -> "shadowcolor0";
+            default -> canonicalResource(sampler);
+        };
+    }
+
+    /** The legacy shadow sampler names whose meaning {@link #programResource} decides. */
+    public static boolean isProgramShadowAlias(String sampler) {
+        return "shadow".equals(sampler) || "watershadow".equals(sampler) || "shadowcolor".equals(sampler);
     }
 
     public static Integer targetIndex(String sampler) {

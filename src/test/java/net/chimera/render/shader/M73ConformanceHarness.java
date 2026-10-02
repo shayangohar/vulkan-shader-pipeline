@@ -379,6 +379,19 @@ public final class M73ConformanceHarness {
                 "M7.3 previous pack projection must be the first frame, not the current one");
         assertMatrixNear(secondPackProjection, state.projectionForTest(),
                 "M7.3 current pack projection must be converted once");
+        // DHCompat without Distant Horizons serves the gbuffer projection and its derivations.
+        for (String[] pair : new String[][] {{"dhProjection", "gbufferProjection"},
+                {"dhProjectionInverse", "gbufferProjectionInverse"},
+                {"dhPreviousProjection", "gbufferPreviousProjection"}}) {
+            MappedBuffer dh = new MappedBuffer(64);
+            MappedBuffer gbuffer = new MappedBuffer(64);
+            state.write(UniformRegistry.descriptor(pair[0], "mat4"), "mat4", dh);
+            state.write(UniformRegistry.descriptor(pair[1], "mat4"), "mat4", gbuffer);
+            for (int i = 0; i < 16; i++) {
+                assertNear(gbuffer.getFloat(i * 4), dh.getFloat(i * 4), 0.0f,
+                        "M7.3 " + pair[0] + " must equal " + pair[1] + " without Distant Horizons");
+            }
+        }
 
         state.rotateViewForTest(secondModel, secondProjection);
         assertMatrixNear(secondModel, state.previousModelViewForTest(),

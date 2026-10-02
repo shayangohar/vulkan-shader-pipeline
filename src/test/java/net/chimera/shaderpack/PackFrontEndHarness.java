@@ -21,6 +21,8 @@ public final class PackFrontEndHarness {
         verifyRawTextureTypeMatch();
         verifyProgramSwitches();
         verifyBoolAndAtlasNames();
+        verifyIrisNames();
+        verifyUserDefinedShadowLookup();
         System.out.println("[chimera] pack front-end generality: PASS");
     }
 
@@ -228,6 +230,93 @@ public final class PackFrontEndHarness {
             return;
         }
         throw new AssertionError("accepted: " + source);
+    }
+
+    /**
+     * Step 3a: the names Iris gives a program. Its player, HUD, clock and DH uniforms; its legacy
+     * shadow sampler aliases; gl_Fog.color; a pack's own value of a VulkanMod-only name; and the
+     * zero Iris leaves in a uniform it does not provide.
+     */
+    private static void verifyIrisNames() {
+        UniformRegistry.ProgramInterface served = UniformRegistry.plan(String.join("\n",
+                "uniform float currentPlayerHealth;", "uniform bool hideGUI;", "uniform int isRightHanded;",
+                "uniform mat4 dhProjection;", "uniform float dhFarPlane;", "uniform int dhRenderDistance;",
+                "uniform ivec3 currentDate;", "uniform vec3 playerBodyVector;",
+                "void main() { gl_FragColor = vec4(currentPlayerHealth + float(hideGUI) + float(isRightHanded)",
+                "    + dhProjection[0][0] + dhFarPlane + float(dhRenderDistance + currentDate.x) + playerBodyVector.x); }"),
+                UniformRegistry.Stage.POST);
+        check(served.executable(), "Iris player/DH uniforms must plan: " + served.deviations());
+        check(served.deviations().stream().noneMatch(d -> d.startsWith("UNIFORM_UNSET_ZERO")),
+                "served names must not fall back to zero: " + served.deviations());
+
+        UniformRegistry.ProgramInterface unset = UniformRegistry.plan(
+                "uniform float vxRenderDistance; void main() { gl_FragColor = vec4(vxRenderDistance); }",
+                UniformRegistry.Stage.POST);
+        check(unset.executable() && unset.deviations().contains("UNIFORM_UNSET_ZERO:vxRenderDistance"),
+                "a name Iris does not serve runs on zero: " + unset.deviations());
+        check(UniformRegistry.resolve("vxRenderDistance", "float", Map.of()) != null,
+                "the runtime serves the same zero");
+        check(UniformRegistry.resolve("fogDensity", "float", Map.of()) == null,
+                "an unserved Iris name gets no substitute at runtime");
+
+        // Bliss authors texelSize; Iris has no such builtin, so the pack's value stands.
+        PackRuntimeSettings texel = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "vec2", "texelSize",
+                        "vec2(1.0 / viewWidth, 1.0 / viewHeight)")), Map.of(), List.of());
+        check(texel.rejected().isEmpty(), "texelSize is the pack's own: " + texel.deviations());
+        UniformRegistry.UniformDescriptor resolved =
+                UniformRegistry.resolve("texelSize", "vec2", texel.customDescriptors());
+        check(resolved != null && resolved.sourceKey().startsWith("custom:"),
+                "the pack's texelSize wins over the host name");
+        check(UniformRegistry.isEngineInput("gbufferProjection") && !UniformRegistry.isEngineInput("texelSize"),
+                "Iris names stay engine inputs; VulkanMod names do not");
+
+        // IrisSamplers.addShadowSamplers: shadow is shadowtex0 unless watershadow is declared.
+        check(PackResourcePlan.programResource("shadow", false).equals("shadowtex0")
+                && PackResourcePlan.programResource("shadow", true).equals("shadowtex1")
+                && PackResourcePlan.programResource("watershadow", true).equals("shadowtex0")
+                && PackResourcePlan.programResource("shadowcolor", false).equals("shadowcolor0"),
+                "shadow alias table");
+        UniformRegistry.ProgramInterface water = UniformRegistry.plan(
+                "uniform sampler2DShadow shadow; void main() { gl_FragColor = vec4(shadow2D(shadow, vec3(0.0)).r); }",
+                UniformRegistry.Stage.TRANSLUCENT);
+        check(water.executable() && slotOf(water, "shadow") == 5, "water reads shadow as shadowtex0: "
+                + water.deviations());
+        UniformRegistry.ProgramInterface both = UniformRegistry.plan(String.join("\n",
+                "uniform sampler2D shadow;", "uniform sampler2D watershadow;",
+                "void main() { gl_FragColor = texture2D(shadow, vec2(0.0)) + texture2D(watershadow, vec2(0.0)); }"),
+                UniformRegistry.Stage.POST);
+        check(both.executable() && slotOf(both, "shadow") == SelectorNamespace.SHADOW_TEX1_SLOT
+                        && slotOf(both, "watershadow") == 5,
+                "with watershadow, shadow is the opaque casters: " + both.deviations());
+
+        // CommonTransformer: gl_Fog.color is iris_FogColor, the fog RGBA.
+        LegacyShaderNormalizer.Result undeclared = LegacyShaderNormalizer.normalize(
+                "#version 120\nvoid main() { gl_FragColor = gl_Fog.color; }");
+        check(undeclared.successful() && undeclared.source().contains("uniform vec4 fogColor;")
+                && undeclared.source().contains("gl_FragColor = fogColor;"), "gl_Fog.color:\n" + undeclared.source());
+        LegacyShaderNormalizer.Result vec3 = LegacyShaderNormalizer.normalize(
+                "#version 120\nuniform vec3 fogColor;\nvoid main() { gl_FragColor = gl_Fog.color; }");
+        check(vec3.successful() && vec3.source().contains("vec4(fogColor, 1.0)")
+                && !vec3.source().contains("uniform vec4 fogColor"), "vec3 fogColor kept:\n" + vec3.source());
+    }
+
+    /** A function the program defines under a legacy lookup's name is the program's own (Solas). */
+    private static void verifyUserDefinedShadowLookup() {
+        String source = String.join("\n",
+                "uniform sampler2D shadowtex0;",
+                "float texture2DShadow(sampler2D shadowtex, vec3 p) { return texture2D(shadowtex, p.xy).r; }",
+                "void main() { gl_FragColor = vec4(texture2DShadow(shadowtex0, vec3(0.0))); }");
+        String rewritten = GlslTokenRewriter.rewriteShadowCalls(source, Map.of("shadowtex0", "sampler2D"));
+        check(rewritten.equals(source), "a user-defined texture2DShadow was rewritten:\n" + rewritten);
+        String legacy = "uniform sampler2DShadow shadow;\nvoid main() { gl_FragColor = shadow2D(shadow, vec3(0.0)); }";
+        check(GlslTokenRewriter.rewriteShadowCalls(legacy, Map.of("shadow", "sampler2DShadow"))
+                .contains("vec4(texture(shadow, vec3(0.0)))"), "the built-in shadow2D is still rewritten");
+    }
+
+    private static int slotOf(UniformRegistry.ProgramInterface plan, String sampler) {
+        return plan.samplers().stream().filter(binding -> binding.name().equals(sampler))
+                .mapToInt(UniformRegistry.SamplerBinding::slot).findFirst().orElse(-1);
     }
 
     private static void check(boolean condition, String message) {

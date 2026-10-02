@@ -2,8 +2,8 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -31,7 +31,7 @@ final class LegacyShaderNormalizer {
         }
         try {
             List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-            Set<String> required = new TreeSet<>();
+            Map<String, String> required = new TreeMap<>();
             for (int index = 0; index < tokens.size(); index++) {
                 GlslLexer.Token token = tokens.get(index);
                 if (!token.identifier("gl_Fog")) {
@@ -46,17 +46,26 @@ final class LegacyShaderNormalizer {
                 String fieldName = tokens.get(field).text();
                 String replacement = switch (fieldName) {
                     case "start" -> {
-                        required.add("fogStart");
+                        required.put("fogStart", "float");
                         yield "fogStart";
                     }
                     case "end" -> {
-                        required.add("fogEnd");
+                        required.put("fogEnd", "float");
                         yield "fogEnd";
                     }
                     case "scale" -> {
-                        required.add("fogStart");
-                        required.add("fogEnd");
+                        required.put("fogStart", "float");
+                        required.put("fogEnd", "float");
                         yield "(1.0 / (fogEnd - fogStart))";
+                    }
+                    // Iris's iris_FogParameters.color is the fog RGBA, iris_FogColor. Chimera's fogColor is
+                    // the same value; a pack that already declares it vec3 keeps its declaration.
+                    case "color" -> {
+                        String declared = declaredUniformType(tokens, "fogColor");
+                        if (declared == null) {
+                            required.put("fogColor", "vec4");
+                        }
+                        yield "vec3".equals(declared) ? "vec4(fogColor, 1.0)" : "fogColor";
                     }
                     default -> null;
                 };
@@ -71,9 +80,9 @@ final class LegacyShaderNormalizer {
             String normalized = GlslLexer.render(tokens);
             List<String> missing = new ArrayList<>();
             List<GlslLexer.Token> normalizedTokens = GlslLexer.lex(normalized);
-            for (String uniform : required) {
-                if (!hasUniformDeclaration(normalizedTokens, uniform)) {
-                    missing.add("uniform float " + uniform + ";");
+            for (Map.Entry<String, String> uniform : required.entrySet()) {
+                if (declaredUniformType(normalizedTokens, uniform.getKey()) == null) {
+                    missing.add("uniform " + uniform.getValue() + " " + uniform.getKey() + ";");
                 }
             }
             if (!missing.isEmpty()) {
@@ -89,7 +98,8 @@ final class LegacyShaderNormalizer {
         return new Result(null, List.of("LEGACY_FOG_FIELD_UNSUPPORTED:" + field), false);
     }
 
-    private static boolean hasUniformDeclaration(List<GlslLexer.Token> tokens, String name) {
+    /** The declared type of a uniform, or null when the source does not declare it. */
+    private static String declaredUniformType(List<GlslLexer.Token> tokens, String name) {
         for (int index = 0; index < tokens.size(); index++) {
             if (!tokens.get(index).identifier("uniform")) {
                 continue;
@@ -112,14 +122,14 @@ final class LegacyShaderNormalizer {
                     continue;
                 }
                 if (expectName && token.identifier(name)) {
-                    return true;
+                    return tokens.get(type).text();
                 }
                 if (expectName && token.kind() == GlslLexer.Kind.IDENTIFIER) {
                     expectName = false;
                 }
             }
         }
-        return false;
+        return null;
     }
 
     private static String insertDeclarations(String source, String declarations) {

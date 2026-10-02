@@ -264,11 +264,20 @@ public final class ConformanceHarness {
         assertTrue(struct.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:PackValues"),
                 "m5.3 uniform block deviation is missing");
 
+        // Iris leaves a uniform it does not provide unset, so GL reads zero and the program runs.
         UniformRegistry.ProgramInterface unknown = UniformRegistry.plan(
-                "uniform float arbitraryValue;", UniformRegistry.Stage.POST);
-        assertTrue(!unknown.executable(), "m5.3 unknown uniform was accepted");
-        assertTrue(unknown.deviations().contains("UNIFORM_NAME_UNSUPPORTED:arbitraryValue"),
-                "m5.3 unknown uniform deviation is missing");
+                "uniform float arbitraryValue; void main() { gl_FragColor = vec4(arbitraryValue); }",
+                UniformRegistry.Stage.POST);
+        assertTrue(unknown.executable(), "m5.3 a name Iris does not serve must run on zero");
+        assertTrue(unknown.deviations().contains("UNIFORM_UNSET_ZERO:arbitraryValue"),
+                "m5.3 unset uniform deviation is missing");
+        // An Iris name Chimera does not serve yet must not run on a zero Iris would never give.
+        UniformRegistry.ProgramInterface unserved = UniformRegistry.plan(
+                "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
+                UniformRegistry.Stage.POST);
+        assertTrue(!unserved.executable(), "m5.3 unserved Iris uniform was accepted");
+        assertTrue(unserved.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
+                "m5.3 unserved Iris uniform deviation is missing");
 
         UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
                 "uniform float wetness; uniform int wetness;", UniformRegistry.Stage.POST);
@@ -523,9 +532,10 @@ public final class ConformanceHarness {
                 "m5.5 unknown water sampler deviation is missing");
 
         UniformRegistry.ProgramInterface unknownUniform = UniformRegistry.plan(
-                "uniform float waterLevel;", UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!unknownUniform.executable(), "m5.5 unknown water uniform was accepted");
-        assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:waterLevel"),
+                "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
+                UniformRegistry.Stage.TRANSLUCENT);
+        assertTrue(!unknownUniform.executable(), "m5.5 unserved Iris water uniform was accepted");
+        assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
                 "m5.5 unknown water uniform deviation is missing");
     }
 

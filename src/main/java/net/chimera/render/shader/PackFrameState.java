@@ -61,6 +61,7 @@ final class PackFrameState {
     private final Vector3f upPosition = new Vector3f(0.0f, 1.0f, 0.0f);
     private final Vector3f skyColor = new Vector3f(0.0f, 0.0f, 0.0f);
     private final Vector3f sunLightVector = new Vector3f(0.0f, 1.0f, 0.0f);
+    private final IrisPlayerState irisPlayer = new IrisPlayerState();
     /** The shadow caster rotation for the same light, as Iris builds it; its Z is sunLightVector. */
     private final Matrix4f shadowLightRotation = new Matrix4f().rotateX((float) Math.toRadians(90.0));
     private final float[] fogColor = new float[4];
@@ -178,6 +179,7 @@ final class PackFrameState {
 
         if (camera == null || minecraft == null) {
             clearCameraState();
+            irisPlayer.clear();
             clearWorldState();
             evaluateCustomValues();
             return;
@@ -185,6 +187,7 @@ final class PackFrameState {
 
         var position = camera.position();
         advanceCamera(position.x, position.y, position.z, viewportChanged);
+        irisPlayer.capture(minecraft, partialTick, position.x, position.y, position.z, frameTime);
 
         Entity cameraEntity = minecraft.getCameraEntity();
         if (cameraEntity == null) {
@@ -264,6 +267,10 @@ final class PackFrameState {
             }
             return;
         }
+        if (IrisPlayerState.NAMES.contains(descriptor.sourceKey())) {
+            irisPlayer.write(descriptor.sourceKey(), type, target);
+            return;
+        }
         switch (descriptor.sourceKey()) {
             case "cameraPosition" -> writeVec3(target, cameraOrigin.x, cameraOrigin.y, cameraOrigin.z);
             case "previousCameraPosition" -> writeVec3(target,
@@ -319,6 +326,10 @@ final class PackFrameState {
             case "gbufferPreviousModelView" -> writeMatrix(target, previousModelView);
             case "gbufferPreviousProjection" -> writeMatrix(target, previousProjection);
             case "gbufferProjection" -> writeMatrix(target, projection);
+            // DHCompat without Distant Horizons: the gbuffer projection and its derivations.
+            case "dhProjection" -> writeMatrix(target, projection);
+            case "dhProjectionInverse" -> writeMatrix(target, projectionInverse);
+            case "dhPreviousProjection" -> writeMatrix(target, previousProjection);
             case "ProjMat" -> writeMatrix(target, rasterProjection);
             case "gbufferProjectionInverse" -> writeMatrix(target, projectionInverse);
             case "MVP" -> writeMatrix(target, mvp);
@@ -728,6 +739,9 @@ final class PackFrameState {
      * author one.
      */
     private double engineValue(String name, int component) {
+        if (IrisPlayerState.NAMES.contains(name)) {
+            return irisPlayer.value(name, component);
+        }
         if (component < 0) {
             return scalarValue(name);
         }
@@ -758,6 +772,9 @@ final class PackFrameState {
             case "gbufferPreviousModelView" -> elementOf(previousModelView, component);
             case "gbufferProjection" -> elementOf(projection, component);
             case "gbufferProjectionInverse" -> elementOf(projectionInverse, component);
+            case "dhProjection" -> elementOf(projection, component);
+            case "dhProjectionInverse" -> elementOf(projectionInverse, component);
+            case "dhPreviousProjection" -> elementOf(previousProjection, component);
             case "gbufferPreviousProjection" -> elementOf(previousProjection, component);
             case "shadowModelView" -> elementOf(shadowModelView, component);
             case "shadowModelViewInverse" -> elementOf(shadowModelViewInverse, component);

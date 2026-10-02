@@ -709,6 +709,9 @@ public final class LegacyGlslConverter {
             }
             return src;
         } catch (Exception e) {
+            // The planner reports POST_CONVERTER_UNSUPPORTED; the cause belongs in the log.
+            org.slf4j.LoggerFactory.getLogger("chimera").warn(
+                    "[chimera] fragment conversion failed: {}", e.toString());
             return null;
         }
     }
@@ -1821,6 +1824,11 @@ public final class LegacyGlslConverter {
                 String qualifier = modern.group(1);
                 String type = modern.group(2);
                 String name = modern.group(3);
+                if (unproducedAndUnread(src, modern, name, terrainLayout)) {
+                    modernOut.append(src, modernLast, modern.start());
+                    modernLast = modern.end();
+                    continue;
+                }
                 int location = terrainLayout == null
                         ? GEOMETRY_VARYING_LOCATIONS.getOrDefault(name, -1)
                         : terrainLayout.location(name);
@@ -1844,6 +1852,11 @@ public final class LegacyGlslConverter {
         while (matcher.find()) {
             String type = matcher.group(1);
             String name = matcher.group(2);
+            if (unproducedAndUnread(src, matcher, name, terrainLayout)) {
+                out.append(src, last, matcher.start());
+                last = matcher.end();
+                continue;
+            }
             int location;
             if (geometryStage && terrainLayout != null) {
                 location = terrainLayout.location(name);
@@ -1995,6 +2008,20 @@ public final class LegacyGlslConverter {
         return deviations.stream().distinct().sorted().toList();
     }
 
+    /**
+     * A fragment input the vertex stage does not write and the fragment never reads (Bliss's
+     * Flashing outside the program that sets it). GL links such a declaration as dead, so Iris
+     * accepts it; it is dropped. One that is read stays an error, as it is a link error in GL.
+     */
+    private static boolean unproducedAndUnread(String source, Matcher declaration, String name,
+                                               TerrainVaryingLayout layout) {
+        if (layout == null || layout.locations().containsKey(name)) {
+            return false;
+        }
+        return !containsIdentifier(source.substring(0, declaration.start())
+                + source.substring(declaration.end()), name);
+    }
+
     private static boolean containsIdentifier(String source, String name) {
         return GlslTokenRewriter.containsIdentifier(source, name);
     }
@@ -2122,15 +2149,17 @@ public final class LegacyGlslConverter {
         while (matcher.find()) {
             String type = matcher.group(3);
             String name = matcher.group(4);
-            if (!layout.types().containsKey(name) || !layout.types().get(name).equals(type)) {
-                throw new IllegalArgumentException("entity varying is not in the shared layout: " + name);
-            }
+            // An unread declaration is dropped before the layout is consulted: GL links it as
+            // dead whether or not the other stage declares it.
             String withoutDeclaration = source.substring(0, matcher.start())
                     + source.substring(matcher.end());
             if (!containsIdentifier(withoutDeclaration, name)) {
                 out.append(source, last, matcher.start());
                 last = matcher.end();
                 continue;
+            }
+            if (!layout.types().containsKey(name) || !layout.types().get(name).equals(type)) {
+                throw new IllegalArgumentException("entity varying is not in the shared layout: " + name);
             }
             out.append(source, last, matcher.start());
             String qualifier = layout.qualifier(name);

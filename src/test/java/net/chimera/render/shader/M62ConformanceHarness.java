@@ -124,7 +124,7 @@ public final class M62ConformanceHarness {
         ConformanceReport.ProgramReport unsupported = report.program("composite1");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK, unsupported.support(),
                 "M6.2 unsupported uniform fallback");
-        assertTrue(unsupported.deviations().contains("UNIFORM_NAME_UNSUPPORTED:unsupportedCatalogUniform"),
+        assertTrue(unsupported.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
                 "M6.2 unsupported uniform deviation");
         assertTrue(report.shouldAttempt("composite"), "M6.2 supported program was rejected");
         assertTrue(!report.shouldAttempt("composite1"), "M6.2 unsupported program was accepted");
