@@ -424,14 +424,21 @@ public final class PackPostTargets {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (int target : step.mipmapTargets()) {
                 VulkanImage image = this.sourceImages[target];
-                if (image == null) continue;
-                if (image.mipLevels < 2) image = adoptIdentitySource(stack, commandBuffer, target, image);
+                VulkanImage graphImage = imageFor(target, this.activeSide[target]);
+                // A minimized window sizes targets 1x1: their whole chain is level 0.
+                if (!needsMipChain(image == null || graphImage == null ? 0 : graphImage.mipLevels)) continue;
+                if (image == this.hdrIdentitySource) image = adoptIdentitySource(stack, commandBuffer, target, image);
                 buildMipChain(stack, commandBuffer, image);
                 image.setSampler(SamplerManager.getSampler(true, true, image.mipLevels - 1));
                 this.mipSampling.add(image);
             }
         }
         trace("mipmaps program=" + programName + " targets=" + step.mipmapTargets());
+    }
+
+    /** A chain of one level has nothing to generate; nothing written has nothing to mip. */
+    static boolean needsMipChain(int levels) {
+        return levels > 1;
     }
 
     /** Iris resets every target's filter after each deferred, composite and final renderer. */
@@ -453,8 +460,8 @@ public final class PackPostTargets {
     private VulkanImage adoptIdentitySource(MemoryStack stack, VkCommandBuffer commandBuffer,
                                             int target, VulkanImage source) {
         VulkanImage graphImage = imageFor(target, this.activeSide[target]);
-        if (target != 0 || source != this.hdrIdentitySource || graphImage == null || graphImage.mipLevels < 2) {
-            throw new IllegalStateException("mipmapped target " + target + " has no mip chain");
+        if (target != 0 || graphImage == null) {
+            throw new IllegalStateException("identity source stands in for colortex" + target);
         }
         copyImage(stack, commandBuffer, source, graphImage);
         this.sourceImages[target] = graphImage;

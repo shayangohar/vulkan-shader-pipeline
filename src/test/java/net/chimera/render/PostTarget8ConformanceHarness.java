@@ -199,6 +199,18 @@ public final class PostTarget8ConformanceHarness {
                 "Post-target-8 BSL colortex0 needs a full 2560x1440 chain: " + graph.target(0));
         assertTrue(graph.deviations().stream().noneMatch(value -> value.contains("MIPMAP")),
                 "Post-target-8 BSL must not report a mipmap fallback");
+        // A minimized window rebuilds targets at 1x1 (ChimeraMainPass.createResources).
+        // Their chain is level 0 alone, which must be skipped, never rejected.
+        PackTargetGraphPlan minimized = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
+                1, 1, 8, 16384);
+        TargetStep minimizedBloom = minimized.step("composite4");
+        assertTrue(minimizedBloom != null && minimizedBloom.executable()
+                        && minimizedBloom.mipmapTargets().contains(0)
+                        && minimized.target(0).mipLevels() == 1
+                        && !PackPostTargets.needsMipChain(minimized.target(0).mipLevels())
+                        && PackPostTargets.needsMipChain(graph.target(0).mipLevels()),
+                "Post-target-8 BSL minimized window must skip the one-level chain: " + minimized.target(0));
         System.out.println("[chimera] Post-target-8 BSL mipmaps: " + graph.steps().stream()
                 .filter(step -> !step.mipmapTargets().isEmpty())
                 .map(step -> step.programName() + step.mipmapTargets()).toList());
