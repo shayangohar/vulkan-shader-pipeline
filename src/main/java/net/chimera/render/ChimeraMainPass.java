@@ -1325,6 +1325,8 @@ public class ChimeraMainPass implements MainPass {
                 throw new IllegalStateException("PACK_TARGET_FRAME_NOT_STARTED:post window " + window);
             }
             this.packPostTargets.requireFrameStarted();
+            // Each Iris composite renderer starts with every target base-level sampled.
+            this.packPostTargets.resetMipmapSampling();
             preparePackFullscreenState();
             boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
@@ -1355,6 +1357,7 @@ public class ChimeraMainPass implements MainPass {
                 ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
                 boolean attempted = false;
                 try {
+                    this.packPostTargets.generateMipmaps(commandBuffer, post.name());
                     prepareProgramImages(post.pipeline());
                     previous = bindProgramImages(post.pipeline(), this.packPostTargets.sourceImages(), hdrColor,
                             DrawMaterialContext.captureLive());
@@ -1495,6 +1498,8 @@ public class ChimeraMainPass implements MainPass {
             Renderer.getInstance().endRenderPass(commandBuffer);
             // No pack target is written between the last post output check and final.
             // Re-reading every target/history/depth here adds cost but no new evidence.
+            this.packPostTargets.resetMipmapSampling();
+            this.packPostTargets.generateMipmaps(commandBuffer, this.packFinalPost.name());
             Renderer.getInstance().beginRenderPass(this.packFinalRenderPass, this.packFinalFramebuffer);
             PackRenderState finalState = capturePackRenderState();
             ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
@@ -1569,8 +1574,7 @@ public class ChimeraMainPass implements MainPass {
 
     private static String graphRejectionCode(String name, TargetStep step) {
         for (String deviation : step.deviations()) {
-            if (deviation.startsWith("POST_TARGET_MIPMAP_UNSUPPORTED:")
-                    || deviation.startsWith("POST_TARGET_ATTACHMENT_LIMIT:")
+            if (deviation.startsWith("POST_TARGET_ATTACHMENT_LIMIT:")
                     || deviation.startsWith("POST_TARGET_SIZE_CONFLICT:")
                     || deviation.startsWith("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:")
                     || deviation.startsWith("POST_TARGET_FEEDBACK_UNSUPPORTED:")
@@ -2621,7 +2625,7 @@ public class ChimeraMainPass implements MainPass {
             MrtPipelineContext.begin(new int[] {target.format}, deviceLimit);
             VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
             attachments.get(0).sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
-                    .imageView(target.getImageView())
+                    .imageView(PackPostTargets.attachmentView(target))
                     .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
                     .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD)
                     .storeOp(VK_ATTACHMENT_STORE_OP_STORE);

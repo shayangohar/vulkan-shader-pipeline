@@ -154,6 +154,7 @@ public final class PostTarget8ConformanceHarness {
                 assertTrue(composite1 == null || !analysis.report().deviations().contains(
                                 "POST_TARGET_INDEX_UNSUPPORTED:8"),
                         "Post-target-8 BSL gained an unexpected target-8 rejection");
+                verifyBslMipmaps(analysis);
                 return;
             }
             assertTrue(composite1 != null && composite1.executable()
@@ -181,6 +182,26 @@ public final class PostTarget8ConformanceHarness {
             restoreProperty("chimera.option.COLORED_LIGHTING", previousLighting);
             restoreProperty("chimera.option.WORLD_SPACE_REFLECTIONS", previousReflections);
         }
+    }
+
+    /**
+     * BSL's bloom (composite4) reads colortex0 through its mips; without them
+     * it point-samples sun sparkles on water and flashes (TASK-478).
+     */
+    private static void verifyBslMipmaps(PackProbe.Analysis analysis) {
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
+                2560, 1440, 8, 16384);
+        TargetStep bloom = graph.step("composite4");
+        assertTrue(bloom != null && bloom.executable() && bloom.mipmapTargets().contains(0),
+                "Post-target-8 BSL composite4 must regenerate colortex0 mips: " + bloom);
+        assertTrue(graph.target(0) != null && graph.target(0).mipLevels() == 12,
+                "Post-target-8 BSL colortex0 needs a full 2560x1440 chain: " + graph.target(0));
+        assertTrue(graph.deviations().stream().noneMatch(value -> value.contains("MIPMAP")),
+                "Post-target-8 BSL must not report a mipmap fallback");
+        System.out.println("[chimera] Post-target-8 BSL mipmaps: " + graph.steps().stream()
+                .filter(step -> !step.mipmapTargets().isEmpty())
+                .map(step -> step.programName() + step.mipmapTargets()).toList());
     }
 
     /**

@@ -633,6 +633,16 @@ tasks.register('nanTripwireTest', JavaExec) {
     systemProperty 'chimera.nanTripwire.gpu', (project.findProperty('nanTripwireGpu') ?: 'false').toString()
 }
 
+tasks.register('mipChainTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks colortex mip chain sizing; -PmipChainGpu=true also runs the blit chain on headless Vulkan.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.PackMipChainHarness'
+    jvmArgs '-ea', '-Dorg.lwjgl.system.stackSize=256'
+    systemProperty 'chimera.mipChain.gpu', (project.findProperty('mipChainGpu') ?: 'false').toString()
+}
+
 tasks.register('m84ConformanceTest', JavaExec) {
     group = 'verification'
     description = 'Runs deterministic M8.4 common world-family adapter and fallback checks.'
@@ -999,6 +1009,7 @@ tasks.named('check') {
     dependsOn tasks.named('selectorConfigTest')
     dependsOn tasks.named('terrainTangentTest')
     dependsOn tasks.named('nanTripwireTest')
+    dependsOn tasks.named('mipChainTest')
     dependsOn tasks.named('customUniformInventoryTest')
     dependsOn tasks.named('m88WaterTest')
 }

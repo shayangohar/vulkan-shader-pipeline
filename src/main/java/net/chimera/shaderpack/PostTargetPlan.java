@@ -30,12 +30,16 @@ public final class PostTargetPlan {
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern MODERN_OUTPUT = Pattern.compile(
             "(?m)^\\s*out\\s+vec4\\s+[A-Za-z_]\\w*\\s*;");
+    private static final Pattern MIPMAP_DIRECTIVE = Pattern.compile(
+            "(?m)^\\s*const\\s+bool\\s+(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])"
+                    + "MipmapEnabled\\s*=\\s*(true|false)\\s*;");
 
     private final String programName;
     private final List<Integer> targetSlots;
     private final List<Integer> outputLocations;
     private final List<Integer> outputFormats;
     private final int[] outputFormatsArray;
+    private final List<Integer> mipmappedTargets;
     private final List<String> deviations;
 
     private PostTargetPlan(
@@ -43,6 +47,7 @@ public final class PostTargetPlan {
             List<Integer> targetSlots,
             List<Integer> outputLocations,
             List<Integer> outputFormats,
+            List<Integer> mipmappedTargets,
             List<String> deviations
     ) {
         this.programName = programName;
@@ -50,6 +55,7 @@ public final class PostTargetPlan {
         this.outputLocations = List.copyOf(outputLocations);
         this.outputFormats = List.copyOf(outputFormats);
         this.outputFormatsArray = outputFormats.stream().mapToInt(Integer::intValue).toArray();
+        this.mipmappedTargets = List.copyOf(mipmappedTargets);
         this.deviations = deviations.stream().distinct().sorted().toList();
     }
 
@@ -124,8 +130,28 @@ public final class PostTargetPlan {
                 .map(slot -> safeFormats.getOrDefault(slot, DEFAULT_FORMAT))
                 .toList();
         PostTargetPlan plan = new PostTargetPlan(
-                programName, targetSlots, outputLocations, outputFormats, deviations);
+                programName, targetSlots, outputLocations, outputFormats,
+                parseMipmappedTargets(text), deviations);
         return new ParseResult(plan, plan.deviations());
+    }
+
+    /**
+     * Iris ProgramDirectives: this program's fragment const directives, in
+     * source order, so a later {@code false} removes an earlier {@code true}.
+     */
+    private static List<Integer> parseMipmappedTargets(String source) {
+        Set<Integer> targets = new TreeSet<>();
+        Matcher directive = MIPMAP_DIRECTIVE.matcher(source);
+        while (directive.find()) {
+            Integer target = PackResourcePlan.targetIndex(directive.group(1));
+            if (target == null || target < 0 || target > MAX_TARGET) continue;
+            if (Boolean.parseBoolean(directive.group(2))) {
+                targets.add(target);
+            } else {
+                targets.remove(target);
+            }
+        }
+        return List.copyOf(targets);
     }
 
     public static ParseResult parse(String programName, String source) {
@@ -278,6 +304,11 @@ public final class PostTargetPlan {
     /** Internal render-thread view. Callers must not modify the returned array. */
     public int[] outputFormatsArray() {
         return outputFormatsArray;
+    }
+
+    /** Targets whose mip chain Iris regenerates before this program runs. */
+    public List<Integer> mipmappedTargets() {
+        return mipmappedTargets;
     }
 
     public List<String> deviations() {

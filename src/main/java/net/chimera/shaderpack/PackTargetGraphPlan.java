@@ -150,13 +150,11 @@ public final class PackTargetGraphPlan {
                 format = PostTargetPlan.DEFAULT_FORMAT;
             }
             preliminary.put(target, new TargetSpec(target, format, width, height,
-                    setting.clear(), setting.clearColorCopy(), !setting.clear(), false,
+                    setting.clear(), setting.clearColorCopy(), !setting.clear(), false, false,
                     setting.deviations()));
             deviations.addAll(setting.deviations());
-            if (setting.mipmapped()) {
-                deviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:" + target);
-            }
         }
+        Set<Integer> mipmappedTargets = new TreeSet<>();
 
         for (PackProgramPlan program : sortedPrograms) {
             PostTargetPlan post = program.targetPlan();
@@ -193,14 +191,12 @@ public final class PackTargetGraphPlan {
                     stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
                     executable = false;
                 }
-                PackConfig.TargetSettings setting = settings.get(target);
-                if (setting != null && setting.mipmapped()) {
-                    // The resource owner currently has one mip level. Keep the
-                    // pass valid with an explicit base-level sampling fallback.
-                    stepDeviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:" + target);
-                    stepDeviations.add("POST_TARGET_MIPMAP_BASE_LEVEL_FALLBACK:" + target);
-                }
             }
+            // Iris generates mips for every directive whose target exists,
+            // read by this program or not; an unallocated target has nothing to mip.
+            List<Integer> mipmapTargets = post.mipmappedTargets().stream()
+                    .filter(preliminary::containsKey).toList();
+            if (executable) mipmappedTargets.addAll(mipmapTargets);
             if (outputs.size() > Math.min(LOGICAL_ATTACHMENT_LIMIT, Math.max(1, deviceMaxColorAttachments))) {
                 stepDeviations.add("POST_TARGET_ATTACHMENT_LIMIT:" + program.name());
                 executable = false;
@@ -246,7 +242,7 @@ public final class PackTargetGraphPlan {
             for (int target : reads) readSides.put(target, 0);
             for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
             steps.add(new TargetStep(post.programName(), reads, writes,
-                    post.outputFormats(), readSides, writeSides, stepWidth, stepHeight,
+                    post.outputFormats(), readSides, writeSides, mipmapTargets, stepWidth, stepHeight,
                     post.isFinal(), executable, stepDeviations));
             deviations.addAll(stepDeviations);
         }
@@ -266,7 +262,8 @@ public final class PackTargetGraphPlan {
             boolean persistent = source.index() != 0 && source.persistent();
             finalTargets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
                     source.clear(), source.clearColorCopy(), persistent,
-                    doubleTargets.getOrDefault(source.index(), false), source.deviations()));
+                    doubleTargets.getOrDefault(source.index(), false),
+                    mipmappedTargets.contains(source.index()), source.deviations()));
         }
         boolean depth0 = false;
         boolean depth1 = false;
@@ -504,13 +501,16 @@ public final class PackTargetGraphPlan {
                     .append(target.clear()).append(':').append(target.persistent()).append(':')
                     .append(target.doubled()).append(':');
             for (float value : target.clearColor()) result.append(value).append(',');
+            if (target.mipmapped()) result.append(":mips=").append(target.mipLevels());
             result.append(';');
         }
         result.append("steps=");
         for (TargetStep step : steps) {
             result.append(step.programName()).append(':').append(step.readTargets()).append("->")
                     .append(step.outputTargets()).append(':').append(step.width()).append('x')
-                    .append(step.height()).append(':').append(step.executable()).append(';');
+                    .append(step.height()).append(':').append(step.executable());
+            if (!step.mipmapTargets().isEmpty()) result.append(":mipmap=").append(step.mipmapTargets());
+            result.append(';');
         }
         result.append("depth=").append(depth.names()).append(':').append(depth.format())
                 .append(";deviations=").append(deviations);

@@ -1,8 +1,11 @@
 package net.chimera.render;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.render.shader.MrtPipelineContext;
@@ -19,13 +22,16 @@ import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
+import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkClearColorValue;
+import org.lwjgl.vulkan.VkImageBlit;
 import org.lwjgl.vulkan.VkImageCopy;
+import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkImageSubresourceLayers;
 import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkFormatProperties;
@@ -37,9 +43,15 @@ import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_A
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
+import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
+import static org.lwjgl.vulkan.VK10.VK_FILTER_LINEAR;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_DST_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
@@ -56,8 +68,13 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED;
+import static org.lwjgl.vulkan.VK10.vkCmdBlitImage;
 import static org.lwjgl.vulkan.VK10.vkCmdClearColorImage;
 import static org.lwjgl.vulkan.VK10.vkCmdCopyImage;
+import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
 import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
 
 /**
@@ -88,6 +105,8 @@ public final class PackPostTargets {
     private boolean configured;
     private boolean rendering;
     private final PackTemporalState temporal = new PackTemporalState();
+    /** Images whose sampler reads their generated mip chain until the window ends. */
+    private final Set<VulkanImage> mipSampling = Collections.newSetFromMap(new IdentityHashMap<>());
     private TargetStep currentStep;
     private PostTargetPlan currentPlan;
 
@@ -105,6 +124,8 @@ public final class PackPostTargets {
         if (graph.targets().stream().anyMatch(target -> target.format() == VK_FORMAT_R16G16B16A16_UNORM)) {
             verifyNormalizedRgba16Support();
         }
+        graph.targets().stream().filter(TargetSpec::mipmapped).map(TargetSpec::format)
+                .distinct().forEach(PackPostTargets::verifyMipmapSupport);
         Arrays.fill(this.used, false);
         Arrays.fill(this.valid, false);
         Arrays.fill(this.doubled, false);
@@ -120,34 +141,12 @@ public final class PackPostTargets {
             this.used[index] = true;
             this.doubled[index] = target.doubled();
             this.sideCounts[index] = target.doubled() ? (target.requiresHistory() ? 3 : 2) : 1;
-            int usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                    | VK_IMAGE_USAGE_SAMPLED_BIT
-                    | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                    | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-            this.images[0][index] = VulkanImage.builder(target.width(), target.height())
-                    .setName("chimeraPackColortex" + index + "Side0")
-                    .setFormat(target.format())
-                    .setUsage(usage)
-                    .setLinearFiltering(true)
-                    .setClamp(true)
-                    .createVulkanImage();
+            this.images[0][index] = createTargetImage(target, "Side0");
             if (this.doubled[index]) {
-                this.images[1][index] = VulkanImage.builder(target.width(), target.height())
-                        .setName("chimeraPackColortex" + index + "Side1")
-                        .setFormat(target.format())
-                        .setUsage(usage)
-                        .setLinearFiltering(true)
-                        .setClamp(true)
-                        .createVulkanImage();
+                this.images[1][index] = createTargetImage(target, "Side1");
             }
             if (this.sideCounts[index] == 3) {
-                this.images[2][index] = VulkanImage.builder(target.width(), target.height())
-                        .setName("chimeraPackColortex" + index + "History")
-                        .setFormat(target.format())
-                        .setUsage(usage)
-                        .setLinearFiltering(true)
-                        .setClamp(true)
-                        .createVulkanImage();
+                this.images[2][index] = createTargetImage(target, "History");
             }
         }
         if (this.images[0][0] == null) {
@@ -160,6 +159,39 @@ public final class PackPostTargets {
                 + " target1=" + imageId(this.images[1][0])
                 + " sides=" + this.sideCounts[0] + " doubled=" + this.doubled[0]);
         return true;
+    }
+
+    private static VulkanImage createTargetImage(TargetSpec target, String side) {
+        VulkanImage image = VulkanImage.builder(target.width(), target.height())
+                .setName("chimeraPackColortex" + target.index() + side)
+                .setFormat(target.format())
+                .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                .setMipLevels(target.mipLevels())
+                .setLinearFiltering(true)
+                .setClamp(true)
+                .createVulkanImage();
+        // Iris samples the base level until a program's pass generates the chain.
+        if (image.mipLevels > 1) image.setSampler(baseLevelSampler());
+        return image;
+    }
+
+    /** The mip chain is built by linear blits; reject a format that cannot be blitted that way. */
+    private static void verifyMipmapSupport(int format) {
+        if (DeviceManager.physicalDevice == null) {
+            throw new IllegalStateException("Vulkan physical device is unavailable for mipmapped targets");
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkFormatProperties properties = VkFormatProperties.calloc(stack);
+            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice, format, properties);
+            int required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT
+                    | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+            if ((properties.optimalTilingFeatures() & required) != required) {
+                throw new IllegalArgumentException("mipmapped target format " + format
+                        + " lacks linear blit support (required=0x" + Integer.toHexString(required)
+                        + ", supported=0x" + Integer.toHexString(properties.optimalTilingFeatures()) + ")");
+            }
+        }
     }
 
     /** Check the optional exact normalized format before allocating any target images. */
@@ -225,6 +257,7 @@ public final class PackPostTargets {
         }
         this.hdrIdentitySource = hdrColor;
         this.temporal.beginFrame(hdrColor != null);
+        resetMipmapSampling();
         Arrays.fill(this.pendingImages, null);
         Arrays.fill(this.sourceImages, null);
         this.valid[0] = false;
@@ -379,6 +412,113 @@ public final class PackPostTargets {
         }
     }
 
+    /**
+     * Iris CompositeRenderer.setupMipmapping: before a program that declares
+     * colortexNMipmapEnabled, rebuild the chain of the image the program
+     * reads and sample that image through its mips until
+     * {@link #resetMipmapSampling()}. Call before the program's images are bound.
+     */
+    public void generateMipmaps(VkCommandBuffer commandBuffer, String programName) {
+        TargetStep step = this.graph == null ? null : this.graph.step(programName);
+        if (!this.configured || step == null || step.mipmapTargets().isEmpty()) return;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            for (int target : step.mipmapTargets()) {
+                VulkanImage image = this.sourceImages[target];
+                if (image == null) continue;
+                if (image.mipLevels < 2) image = adoptIdentitySource(stack, commandBuffer, target, image);
+                buildMipChain(stack, commandBuffer, image);
+                image.setSampler(SamplerManager.getSampler(true, true, image.mipLevels - 1));
+                this.mipSampling.add(image);
+            }
+        }
+        trace("mipmaps program=" + programName + " targets=" + step.mipmapTargets());
+    }
+
+    /** Iris resets every target's filter after each deferred, composite and final renderer. */
+    public void resetMipmapSampling() {
+        for (VulkanImage image : this.mipSampling) image.setSampler(baseLevelSampler());
+        this.mipSampling.clear();
+    }
+
+    /** Pack targets render to level 0 only: an attachment view has exactly one level. */
+    public static long attachmentView(VulkanImage image) {
+        return image.mipLevels > 1 ? image.getLevelImageView(0) : image.getImageView();
+    }
+
+    /**
+     * The live HDR image stands in for colortex0 but has no mip chain. Move
+     * the logical colortex0 into its graph image, as {@link #adoptTarget0}
+     * moves it back after an early window.
+     */
+    private VulkanImage adoptIdentitySource(MemoryStack stack, VkCommandBuffer commandBuffer,
+                                            int target, VulkanImage source) {
+        VulkanImage graphImage = imageFor(target, this.activeSide[target]);
+        if (target != 0 || source != this.hdrIdentitySource || graphImage == null || graphImage.mipLevels < 2) {
+            throw new IllegalStateException("mipmapped target " + target + " has no mip chain");
+        }
+        copyImage(stack, commandBuffer, source, graphImage);
+        this.sourceImages[target] = graphImage;
+        this.valid[target] = true;
+        return graphImage;
+    }
+
+    private static void buildMipChain(MemoryStack stack, VkCommandBuffer commandBuffer, VulkanImage image) {
+        // One tracked layout covers the chain; TRANSFER_DST keeps level 0's contents.
+        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        recordMipChain(stack, commandBuffer, image.getId(), image.width, image.height, image.mipLevels);
+        image.setCurrentLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    /**
+     * glGenerateMipmap: each level is a linear downsample of the one above.
+     * Every level enters in TRANSFER_DST and leaves in SHADER_READ_ONLY.
+     */
+    static void recordMipChain(MemoryStack stack, VkCommandBuffer commandBuffer,
+                               long image, int width, int height, int levels) {
+        for (int level = 1; level < levels; level++) {
+            levelBarrier(stack, commandBuffer, image, level - 1, 1,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            int nextWidth = Math.max(1, width / 2);
+            int nextHeight = Math.max(1, height / 2);
+            VkImageBlit.Buffer blit = VkImageBlit.calloc(1, stack);
+            blit.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1).layerCount(1);
+            blit.srcOffsets(1).set(width, height, 1);
+            blit.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level).layerCount(1);
+            blit.dstOffsets(1).set(nextWidth, nextHeight, 1);
+            vkCmdBlitImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit, VK_FILTER_LINEAR);
+            width = nextWidth;
+            height = nextHeight;
+        }
+        int last = levels - 1;
+        if (last > 0) {
+            levelBarrier(stack, commandBuffer, image, 0, last,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        }
+        levelBarrier(stack, commandBuffer, image, last, 1,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    }
+
+    private static void levelBarrier(MemoryStack stack, VkCommandBuffer commandBuffer, long image,
+                                     int baseLevel, int levelCount, int oldLayout, int newLayout,
+                                     int sourceAccess, int destinationAccess, int destinationStage) {
+        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack)
+                .sType$Default().oldLayout(oldLayout).newLayout(newLayout)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image).srcAccessMask(sourceAccess).dstAccessMask(destinationAccess);
+        barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                .baseMipLevel(baseLevel).levelCount(levelCount).layerCount(1);
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, destinationStage,
+                0, null, null, barrier);
+    }
+
+    private static long baseLevelSampler() {
+        return SamplerManager.getSampler(true, true, 0);
+    }
+
     /** Begins dynamic rendering for the graph step represented by this post. */
     public void prepare(PackPipelines.PackPost post, VkCommandBuffer commandBuffer) {
         if (!this.configured || this.graph == null || this.rendering) {
@@ -429,7 +569,7 @@ public final class PackPostTargets {
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 VkRenderingAttachmentInfo attachment = attachments.get(i);
                 attachment.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR);
-                attachment.imageView(destination.getImageView());
+                attachment.imageView(attachmentView(destination));
                 attachment.imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 attachment.loadOp(VK_ATTACHMENT_LOAD_OP_LOAD);
                 attachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE);
@@ -620,6 +760,7 @@ public final class PackPostTargets {
                 }
             }
         }
+        this.mipSampling.clear();
         Arrays.fill(this.sourceImages, null);
         Arrays.fill(this.pendingImages, null);
         Arrays.fill(this.used, false);

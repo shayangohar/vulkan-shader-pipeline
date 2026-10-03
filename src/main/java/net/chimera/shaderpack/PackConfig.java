@@ -47,9 +47,6 @@ public final class PackConfig {
     private static final Pattern COLORTEX_CLEAR_COLOR_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+vec4\\s+" + TARGET_NAME
                     + "ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
-    private static final Pattern COLORTEX_MIPMAP_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+bool\\s+" + TARGET_NAME + "MipmapEnabled\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
-            Pattern.CASE_INSENSITIVE);
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
                     + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|shadowIntervalSize|sunPathRotation|sunPathOffset)"
@@ -71,8 +68,6 @@ public final class PackConfig {
             Pattern.compile("^" + TARGET_NAME + "Clear$");
     private static final Pattern TARGET_CLEAR_COLOR_PROPERTY_KEY =
             Pattern.compile("^" + TARGET_NAME + "ClearColor$");
-    private static final Pattern TARGET_MIPMAP_PROPERTY_KEY =
-            Pattern.compile("^" + TARGET_NAME + "MipmapEnabled$");
     private static final Pattern TARGET_FLIP_PROPERTY_KEY =
             Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
@@ -179,7 +174,6 @@ public final class PackConfig {
             String sizeExpression,
             boolean clear,
             float[] clearColor,
-            boolean mipmapped,
             List<String> deviations
     ) {
         public TargetSettings {
@@ -194,7 +188,7 @@ public final class PackConfig {
 
         public static TargetSettings defaults() {
             return new TargetSettings("", true,
-                    new float[] {0.0F, 0.0F, 0.0F, 0.0F}, false, List.of());
+                    new float[] {0.0F, 0.0F, 0.0F, 0.0F}, List.of());
         }
 
         public float[] clearColorCopy() {
@@ -345,20 +339,17 @@ public final class PackConfig {
                         Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
                         Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
                         Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
-                        Matcher mipmapKey = TARGET_MIPMAP_PROPERTY_KEY.matcher(key);
                         Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
                         if (sizeKey.matches()) {
                             int slot = parseTargetIndex(sizeKey.group(1), deviations);
                             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                                updateTargetSettings(targetSettings, slot, value, null, null,
-                                        null, null);
+                                updateTargetSettings(targetSettings, slot, value, null, null, null);
                             }
                         } else if (clearKey.matches()) {
                             int slot = parseTargetIndex(clearKey.group(1), deviations);
                             Boolean clear = parseBoolean(value);
                             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
-                                updateTargetSettings(targetSettings, slot, null, clear, null,
-                                        null, null);
+                                updateTargetSettings(targetSettings, slot, null, clear, null, null);
                             } else if (clear != null) {
                                 deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
                             }
@@ -366,19 +357,9 @@ public final class PackConfig {
                             int slot = parseTargetIndex(clearColorKey.group(1), deviations);
                             float[] color = parseColor(value);
                             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
-                                updateTargetSettings(targetSettings, slot, null, null, color,
-                                        null, null);
+                                updateTargetSettings(targetSettings, slot, null, null, color, null);
                             } else {
                                 deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-                            }
-                        } else if (mipmapKey.matches()) {
-                            int slot = parseTargetIndex(mipmapKey.group(1), deviations);
-                            Boolean mipmapped = parseBoolean(value);
-                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && mipmapped != null) {
-                                updateTargetSettings(targetSettings, slot, null, null, null,
-                                        mipmapped, null);
-                            } else {
-                                deviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:colortex" + slot);
                             }
                         } else if (flipKey.matches()) {
                             int slot = parseTargetIndex(flipKey.group(2), deviations);
@@ -480,7 +461,7 @@ public final class PackConfig {
             int slot = parseTargetIndex(clear.group(1), deviations);
             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
                 updateTargetSettings(values, slot, null,
-                        Boolean.parseBoolean(clear.group(2)), null, null, null);
+                        Boolean.parseBoolean(clear.group(2)), null, null);
             }
         }
         Matcher color = COLORTEX_CLEAR_COLOR_CONST.matcher(text);
@@ -488,17 +469,9 @@ public final class PackConfig {
             int slot = parseTargetIndex(color.group(1), deviations);
             float[] parsed = parseColor(color.group(2));
             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && parsed != null) {
-                updateTargetSettings(values, slot, null, null, parsed, null, null);
+                updateTargetSettings(values, slot, null, null, parsed, null);
             } else {
                 deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-            }
-        }
-        Matcher mipmap = COLORTEX_MIPMAP_CONST.matcher(text);
-        while (mipmap.find()) {
-            int slot = parseTargetIndex(mipmap.group(1), deviations);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                updateTargetSettings(values, slot, null, null, null,
-                        Boolean.parseBoolean(mipmap.group(2)), null);
             }
         }
     }
@@ -525,7 +498,6 @@ public final class PackConfig {
             String size,
             Boolean clear,
             float[] clearColor,
-            Boolean mipmapped,
             List<String> deviations
     ) {
         TargetSettings previous = values.getOrDefault(slot, TargetSettings.defaults());
@@ -533,7 +505,6 @@ public final class PackConfig {
                 size == null ? previous.sizeExpression() : size,
                 clear == null ? previous.clear() : clear,
                 clearColor == null ? previous.clearColorCopy() : clearColor,
-                mipmapped == null ? previous.mipmapped() : mipmapped,
                 deviations == null ? previous.deviations() : deviations));
     }
 

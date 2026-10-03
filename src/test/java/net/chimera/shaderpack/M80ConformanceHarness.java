@@ -269,23 +269,64 @@ public final class M80ConformanceHarness {
         assertTrue(unrelated != null && unrelated.executable(),
                 "M8.0 unsupported target format rejected an unrelated stage");
 
+        verifyMipmapDirectives(root);
+    }
+
+    /** Iris ProgramDirectives: per program, in source order, legacy names included. */
+    private static void verifyMipmapDirectives(Path root) {
+        PostTargetPlan directives = PostTargetPlan.parse("composite", """
+                const bool colortex0MipmapEnabled = true;
+                const bool gaux2MipmapEnabled = true;
+                const bool colortex3MipmapEnabled = true;
+                const bool colortex3MipmapEnabled = false;
+                const bool colortex16MipmapEnabled = true;
+                // const bool colortex7MipmapEnabled = true;
+                /* RENDERTARGETS: 0 */
+                """).plan();
+        assertTrue(directives.mipmappedTargets().equals(java.util.List.of(0, 5)),
+                "M8.0 mipmap directives: " + directives.mipmappedTargets());
+
         PackProbe.Analysis targetGraph = PackProbe.analyze(root.resolve("m7_4/target_graph"));
-        PackConfig.PackConfigData targetConfig = targetGraph.config();
-        Map<Integer, PackConfig.TargetSettings> settings = new TreeMap<>(targetConfig.targetSettings());
-        PackConfig.TargetSettings target = settings.getOrDefault(1, PackConfig.TargetSettings.defaults());
-        settings.put(1, new PackConfig.TargetSettings(target.sizeExpression(), target.clear(),
-                target.clearColor(), true, target.deviations()));
-        PackConfig.PackConfigData mipmapped = new PackConfig.PackConfigData(
-                targetConfig.colortexFormats(), targetConfig.drawBufferCount(), targetConfig.shadowSettings(),
-                targetConfig.shaderConstants(), targetConfig.deviations(), targetConfig.settings(),
-                settings, targetConfig.flips(), targetConfig.preFlips());
+        String source = readFixture(
+                root.resolve("m7_4/target_graph/shaders/composite1.fsh"));
+        PostTargetPlan mipmapped = PostTargetPlan.parse("composite1", source.replaceFirst("\n",
+                "\nconst bool colortex0MipmapEnabled = true;\nconst bool colortex9MipmapEnabled = true;\n"),
+                targetGraph.config().colortexFormats()).plan();
+        java.util.List<PackProgramPlan> programs = targetGraph.plan().programs().stream()
+                .map(plan -> plan.name().equals("composite1") ? withTargetPlan(plan, mipmapped) : plan)
+                .toList();
         PackTargetGraphPlan mipGraph = PackTargetGraphPlan.build(
-                targetGraph.plan().programs(), mipmapped, targetGraph.plan().resources(),
-                1920, 1080, 8, 16384);
+                programs, targetGraph.config(), targetGraph.plan().resources(), 1920, 1080, 8, 16384);
         TargetStep mipStep = mipGraph.step("composite1");
         assertTrue(mipStep != null && mipStep.executable()
-                        && mipStep.deviations().contains("POST_TARGET_MIPMAP_BASE_LEVEL_FALLBACK:1"),
-                "M8.0 mipmap request did not keep a safe base-level pass");
+                        && mipStep.mipmapTargets().equals(java.util.List.of(0)),
+                "M8.0 mipmap step must regenerate allocated colortex0 only: " + mipStep);
+        TargetSpec scene = mipGraph.targets().stream().filter(spec -> spec.index() == 0).findFirst().orElseThrow();
+        assertTrue(scene.mipmapped() && scene.mipLevels() == 11,
+                "M8.0 mipmapped colortex0 needs a full 1920x1080 chain");
+        assertTrue(mipGraph.targets().stream().noneMatch(spec -> spec.index() != 0 && spec.mipmapped()),
+                "M8.0 only directed targets carry a mip chain");
+        assertTrue(mipGraph.deviations().stream().noneMatch(value -> value.contains("MIPMAP")),
+                "M8.0 mipmapping must not report a fallback");
+        assertTrue(!mipGraph.fingerprint().equals(PackTargetGraphPlan.build(targetGraph.plan().programs(),
+                        targetGraph.config(), targetGraph.plan().resources(), 1920, 1080, 8, 16384).fingerprint()),
+                "M8.0 mip schedule must change the graph fingerprint");
+    }
+
+    private static PackProgramPlan withTargetPlan(PackProgramPlan plan, PostTargetPlan targetPlan) {
+        return new PackProgramPlan(plan.program(), plan.stages(), plan.interfacePlan(),
+                plan.stageInterfaces(), plan.varyingLocations(), targetPlan, plan.convertedFragment(),
+                plan.convertedVertex(), plan.vertexLayout(), plan.deviations(), plan.executable(),
+                plan.familyAdapter(), plan.terrainMaterial(), plan.geometryOutputPlan(),
+                plan.alphaTestPlan(), plan.blendPlan());
+    }
+
+    private static String readFixture(Path path) {
+        try {
+            return java.nio.file.Files.readString(path);
+        } catch (java.io.IOException failure) {
+            throw new java.io.UncheckedIOException(failure);
+        }
     }
 
     private static PackProgramPlan require(PackPlan plan, String name) {
