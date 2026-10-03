@@ -30,7 +30,7 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "4512cb0dad1dbd24eb7ca6c4f75235bfced98e22e012e80974e71c91e2698944",
+      "reportSha256": "7c8992457d6fdf4c3d0a06927cfaf9c7e28867eb04b86c58270472b3385792e3",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "b975c6b21bc0196e572bbd83b8e826520805d60286f22dfe92e49e03825ed15d",
         "gbuffers_terrain.vsh": "20d0a103fef28c0d9624ae1d372e9847f9aaafc0eb5570eb7447507e86288055"
@@ -41,6 +41,7 @@
       ],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
+        "GEOMETRY_OUTPUT_INDEX_UNMAPPED:1",
         "MODERN_GLSL_UNSUPPORTED",
         "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"
       ]

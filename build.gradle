@@ -841,6 +841,15 @@ tasks.register('packCompileTest', JavaExec) {
             }
             pack.absolutePath
         }
+        // Optional broadening packs: -PpackCompileExtra=<pack>;<pack>
+        def extra = (project.findProperty('packCompileExtra') ?: '').toString()
+        extra.split(';').findAll { !it.isBlank() }.each { value ->
+            def pack = file(value.trim())
+            if (!pack.isFile() && !pack.isDirectory()) {
+                throw new GradleException("Pack compile path does not exist: ${pack}")
+            }
+            packs << pack.absolutePath
+        }
         systemProperty 'chimera.packCompile.packs', packs.join(File.pathSeparator)
     }
 }

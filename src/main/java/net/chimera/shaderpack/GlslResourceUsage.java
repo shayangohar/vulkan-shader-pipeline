@@ -23,6 +23,8 @@ final class GlslResourceUsage {
     private static final Pattern FUNCTION_MACRO = Pattern.compile(
             "(?m)^[\\t ]*#[\\t ]*define[\\t ]+([A-Za-z_]\\w*)"
                     + "[\\t ]*\\([^\\r\\n)]*\\)[\\t ]*([^\\r\\n]*)$");
+    private static final Pattern OBJECT_MACRO = Pattern.compile(
+            "(?m)^[\\t ]*#[\\t ]*define[\\t ]+([A-Za-z_]\\w*)(?![\\w(])(?![\\t ]*\\()[\\t ]*([^\\r\\n]*)$");
     private static final Set<String> FUNCTION_KEYWORDS = Set.of(
             "if", "for", "while", "switch", "catch", "sizeof");
     private static final Set<String> VALUE_TYPES = Set.of(
@@ -161,10 +163,10 @@ final class GlslResourceUsage {
                         if (next >= 0 && tokens.get(next).symbol("(")
                                 && !FUNCTION_KEYWORDS.contains(name)) {
                             pending.addAll(functionsByName.getOrDefault(name, List.of()));
-                            if (macroCalls.containsKey(name)) {
-                                addMacroDependencies(name, macroCalls, functionsByName,
-                                        pending, new HashSet<>());
-                            }
+                        }
+                        if (macroCalls.containsKey(name)) {
+                            addMacroDependencies(name, macroCalls, functionsByName,
+                                    pending, new HashSet<>());
                         }
                     }
                 }
@@ -305,24 +307,46 @@ final class GlslResourceUsage {
             if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
                     || FUNCTION_KEYWORDS.contains(token.text())) continue;
             int next = GlslLexer.nextSignificant(tokens, index);
-            if (next >= 0 && tokens.get(next).symbol("(")) {
+            boolean call = next >= 0 && tokens.get(next).symbol("(");
+            if (call) {
                 pending.addAll(functionsByName.getOrDefault(token.text(), List.of()));
-                if (macroCalls.containsKey(token.text())) {
-                    addMacroDependencies(token.text(), macroCalls, functionsByName,
-                            pending, new HashSet<>());
-                }
+            }
+            // An object-like macro is used by any reference outside its own #define line.
+            if (macroCalls.containsKey(token.text()) && (call || !onDirectiveLine(tokens, index))) {
+                addMacroDependencies(token.text(), macroCalls, functionsByName,
+                        pending, new HashSet<>());
             }
         }
     }
 
+    private static boolean onDirectiveLine(List<GlslLexer.Token> tokens, int index) {
+        GlslLexer.Token first = tokens.get(index);
+        for (int cursor = index - 1; cursor >= 0; cursor--) {
+            GlslLexer.Token token = tokens.get(cursor);
+            if (token.kind() == GlslLexer.Kind.TRIVIA && token.text().contains("\n")) break;
+            if (token.significant()) first = token;
+        }
+        return first.symbol("#");
+    }
+
     /**
-     * Collects only function-like macros. Object-like defines do not create
-     * callable dependencies. The replacement text is tokenized so names in
-     * comments and string literals cannot keep an unrelated GLSL function
-     * alive.
+     * The functions each macro can call once expanded. A function-like
+     * macro calls what its body calls. An object-like macro can name a
+     * function its use then calls ({@code #define tonemap tonemap_lottes},
+     * then {@code tonemap(x)}), so every identifier in its body counts. The
+     * replacement text is tokenized so names in comments and string literals
+     * cannot keep an unrelated GLSL function alive.
      */
     private static Map<String, List<String>> collectFunctionMacros(String source) {
         Map<String, List<String>> result = new HashMap<>();
+        Matcher objectLike = OBJECT_MACRO.matcher(source == null ? "" : source);
+        while (objectLike.find()) {
+            Set<String> named = new TreeSet<>();
+            for (GlslLexer.Token token : GlslLexer.lex(objectLike.group(2))) {
+                if (token.kind() == GlslLexer.Kind.IDENTIFIER) named.add(token.text());
+            }
+            result.put(objectLike.group(1), List.copyOf(named));
+        }
         Matcher matcher = FUNCTION_MACRO.matcher(source == null ? "" : source);
         while (matcher.find()) {
             Set<String> called = new TreeSet<>();

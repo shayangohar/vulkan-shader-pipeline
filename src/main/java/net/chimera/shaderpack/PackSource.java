@@ -578,12 +578,12 @@ public final class PackSource {
             ShaderSourcePreprocessor.Result fragment = normalizePreparedSource(
                     ShaderSourcePreprocessor.prepare(
                     shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros,
-                    lockedMacros));
+                    lockedMacros), false);
             ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
                     ? new ShaderSourcePreprocessor.Result(null, List.of())
                     : normalizePreparedSource(ShaderSourcePreprocessor.prepare(
                     shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros,
-                    lockedMacros));
+                    lockedMacros), true);
             List<String> prepDeviations = new ArrayList<>();
             prepDeviations.addAll(fragment.deviations());
             prepDeviations.addAll(vertex.deviations());
@@ -606,12 +606,13 @@ public final class PackSource {
     }
 
     private static ShaderSourcePreprocessor.Result normalizePreparedSource(
-            ShaderSourcePreprocessor.Result prepared
+            ShaderSourcePreprocessor.Result prepared,
+            boolean vertexStage
     ) {
         if (prepared == null || !prepared.successful()) {
             return prepared;
         }
-        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(prepared.source());
+        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(prepared.source(), vertexStage);
         List<String> deviations = new ArrayList<>(prepared.deviations());
         deviations.addAll(normalized.deviations());
         return new ShaderSourcePreprocessor.Result(

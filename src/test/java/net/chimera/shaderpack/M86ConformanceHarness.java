@@ -204,7 +204,7 @@ public final class M86ConformanceHarness {
                 + " color = mix(color, vec4(fogColor * 5.0, 0.0), fog);\n}\n"
                 + "void main() { vec4 color = vec4(1.0);"
                 + " DoLavaFog(color, 4.0); gl_FragColor = color; }\n";
-        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(source);
+        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(source, false);
         assertTrue(normalized.successful(), "DoLavaFog normalization failed");
         UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(
                 normalized.source(), PostTargetPlan.parse("composite", source).plan());
@@ -215,7 +215,7 @@ public final class M86ConformanceHarness {
 
         // Division exposes a missing outer pair of parentheses; multiplication alone does not.
         LegacyShaderNormalizer.Result division = LegacyShaderNormalizer.normalize(
-                "float probe = 6.0 / gl_Fog.scale;");
+                "float probe = 6.0 / gl_Fog.scale;", false);
         assertTrue(division.successful(), "Fog scale division normalization failed");
         String expression = division.source().substring(division.source().indexOf("=") + 1,
                 division.source().lastIndexOf(';')).trim();

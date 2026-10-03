@@ -645,14 +645,17 @@ public final class PackAdvancedResourcePlan {
                                     stageMask(stageEntry.getKey())));
                     graphicsProducedImages.add(spec.name());
                 }
-                // A GLSL compiler still resolves declarations in helper
-                // functions that are not reachable from main().  Inject a
-                // descriptor for every referenced, pack-declared image
-                // sampler so those helpers compile.  Runtime eligibility
+                // Vulkan GLSL needs a binding for every opaque declaration,
+                // even one in an unreachable helper or one never referenced
+                // (Solas declares voxelSampler in terrain but only the shadow
+                // pass writes voxel_img).  Give every declared or referenced
+                // pack image sampler a descriptor.  Runtime eligibility
                 // remains based on liveSamplers() in usesAdvancedResource;
                 // this does not create a fake alias or make an unrelated
                 // sampler a dependency.
-                for (String sampler : usage.referencedSamplers()) {
+                Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
+                imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(stage.source()));
+                for (String sampler : imageSamplers) {
                     ImageSpec spec = images.values().stream()
                             .filter(value -> value.sampler().equals(sampler))
                             .findFirst().orElse(null);

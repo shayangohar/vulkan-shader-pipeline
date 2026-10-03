@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,8 +29,46 @@ public final class PostTargetPlan {
             "(?i)\\b(?:DRAWBUFFERS|RENDERTARGETS)\\b");
     private static final Pattern FRAG_DATA = Pattern.compile(
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
+    /** {@code [layout(...)] out T name;}, the layout possibly spanning lines. */
     private static final Pattern MODERN_OUTPUT = Pattern.compile(
-            "(?m)^\\s*out\\s+vec4\\s+[A-Za-z_]\\w*\\s*;");
+            "(?m)^[ \\t]*(?:layout\\s*\\(([^;{}()]*)\\)\\s*)?out\\s+(float|vec[234])\\s+([A-Za-z_]\\w*)\\s*;");
+    private static final Pattern LOCATION = Pattern.compile("\\blocation\\s*=\\s*(\\d+)");
+
+    /** One modern fragment output: its declaration's source range, type, name and location. */
+    public record ModernOutput(int start, int end, String type, String name, int location) {}
+
+    /**
+     * Modern fragment outputs as GL links them for Iris: an explicit
+     * {@code layout(location = N)} is kept, and each unlocated output takes
+     * the lowest location still free, in declaration order.
+     */
+    public static List<ModernOutput> modernOutputs(String source) {
+        Matcher matcher = MODERN_OUTPUT.matcher(source == null ? "" : source);
+        List<MatchResult> matches = new ArrayList<>();
+        Set<Integer> explicit = new HashSet<>();
+        while (matcher.find()) {
+            matches.add(matcher.toMatchResult());
+            Integer location = explicitLocation(matcher.group(1));
+            if (location != null) explicit.add(location);
+        }
+        List<ModernOutput> outputs = new ArrayList<>();
+        int next = 0;
+        for (MatchResult match : matches) {
+            Integer location = explicitLocation(match.group(1));
+            if (location == null) {
+                while (explicit.contains(next)) next++;
+                location = next++;
+            }
+            outputs.add(new ModernOutput(match.start(), match.end(), match.group(2), match.group(3), location));
+        }
+        return List.copyOf(outputs);
+    }
+
+    private static Integer explicitLocation(String layout) {
+        if (layout == null) return null;
+        Matcher location = LOCATION.matcher(layout);
+        return location.find() ? Integer.parseInt(location.group(1)) : null;
+    }
     private static final Pattern MIPMAP_DIRECTIVE = Pattern.compile(
             "(?m)^\\s*const\\s+bool\\s+(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])"
                     + "MipmapEnabled\\s*=\\s*(true|false)\\s*;");
@@ -39,6 +78,7 @@ public final class PostTargetPlan {
     private final List<Integer> outputLocations;
     private final List<Integer> outputFormats;
     private final int[] outputFormatsArray;
+    private final Map<Integer, String> outputTypes;
     private final List<Integer> mipmappedTargets;
     private final List<String> deviations;
 
@@ -47,6 +87,7 @@ public final class PostTargetPlan {
             List<Integer> targetSlots,
             List<Integer> outputLocations,
             List<Integer> outputFormats,
+            Map<Integer, String> outputTypes,
             List<Integer> mipmappedTargets,
             List<String> deviations
     ) {
@@ -55,6 +96,7 @@ public final class PostTargetPlan {
         this.outputLocations = List.copyOf(outputLocations);
         this.outputFormats = List.copyOf(outputFormats);
         this.outputFormatsArray = outputFormats.stream().mapToInt(Integer::intValue).toArray();
+        this.outputTypes = Map.copyOf(outputTypes);
         this.mipmappedTargets = List.copyOf(mipmappedTargets);
         this.deviations = deviations.stream().distinct().sorted().toList();
     }
@@ -105,10 +147,12 @@ public final class PostTargetPlan {
         if (text.matches("(?s).*\\bgl_FragColor\\b.*")) {
             outputSet.add(0);
         }
-        Matcher modernOutput = MODERN_OUTPUT.matcher(text);
-        int modernLocation = 0;
-        while (modernOutput.find()) {
-            outputSet.add(modernLocation++);
+        Map<Integer, String> outputTypes = new java.util.TreeMap<>();
+        for (ModernOutput output : modernOutputs(text)) {
+            if (outputTypes.put(output.location(), output.type()) != null) {
+                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+            }
+            outputSet.add(output.location());
         }
 
         for (int target : targetSlots) {
@@ -131,7 +175,7 @@ public final class PostTargetPlan {
                 .toList();
         PostTargetPlan plan = new PostTargetPlan(
                 programName, targetSlots, outputLocations, outputFormats,
-                parseMipmappedTargets(text), deviations);
+                outputTypes, parseMipmappedTargets(text), deviations);
         return new ParseResult(plan, plan.deviations());
     }
 
@@ -304,6 +348,11 @@ public final class PostTargetPlan {
     /** Internal render-thread view. Callers must not modify the returned array. */
     public int[] outputFormatsArray() {
         return outputFormatsArray;
+    }
+
+    /** The declared GLSL type of an output location: a modern output's own type, else vec4. */
+    public String outputType(int outputLocation) {
+        return outputTypes.getOrDefault(outputLocation, "vec4");
     }
 
     /** Targets whose mip chain Iris regenerates before this program runs. */

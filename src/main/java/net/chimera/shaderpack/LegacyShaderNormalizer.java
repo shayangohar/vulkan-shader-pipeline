@@ -9,10 +9,15 @@ import java.util.regex.Pattern;
 
 /**
  * Small token-safe normalization pass shared by planning and conversion.
- * It contains only source-agnostic legacy aliases that have an authoritative
- * Chimera uniform source.
+ * It contains only legacy built-ins that Iris rewrites the same way in every
+ * program: gl_Fog fields to Chimera's fog uniforms, and gl_FogFragCoord to
+ * an ordinary varying. It also gives every uniform its own declaration, so
+ * per-name rewriters never meet a declarator list, and expands macros that
+ * alias a sampler, so planning sees every sampler a program uses.
  */
 final class LegacyShaderNormalizer {
+    /** Iris's name for the legacy built-in fog distance varying. */
+    static final String FOG_FRAG_COORD = "iris_FogFragCoord";
     private static final Pattern VERSION_LINE = Pattern.compile(
             "(?im)^([ \\t]*#version[^\\r\\n]*(?:\\r?\\n|$))");
 
@@ -25,15 +30,22 @@ final class LegacyShaderNormalizer {
 
     private LegacyShaderNormalizer() {}
 
-    static Result normalize(String source) {
+    static Result normalize(String source, boolean vertexStage) {
         if (source == null) {
             return new Result(null, List.of(), false);
         }
         try {
-            List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
+            List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(GlslTokenRewriter.expandSamplerAliases(
+                    GlslTokenRewriter.splitUniformDeclarators(source))));
             Map<String, String> required = new TreeMap<>();
+            boolean fogFragCoord = false;
             for (int index = 0; index < tokens.size(); index++) {
                 GlslLexer.Token token = tokens.get(index);
+                if (token.identifier("gl_FogFragCoord")) {
+                    tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, FOG_FRAG_COORD));
+                    fogFragCoord = true;
+                    continue;
+                }
                 if (!token.identifier("gl_Fog")) {
                     continue;
                 }
@@ -85,12 +97,20 @@ final class LegacyShaderNormalizer {
                     missing.add("uniform " + uniform.getValue() + " " + uniform.getKey() + ";");
                 }
             }
+            if (fogFragCoord) {
+                // Iris CommonTransformer: an ordinary varying, zeroed first in the vertex stage.
+                missing.add("varying float " + FOG_FRAG_COORD + ";");
+                if (vertexStage) {
+                    normalized = GlslTokenRewriter.prependMainPrologue(normalized, FOG_FRAG_COORD + " = 0.0;");
+                }
+            }
             if (!missing.isEmpty()) {
                 normalized = insertDeclarations(normalized, String.join("\n", missing) + "\n");
             }
             return new Result(normalized, List.of(), true);
         } catch (RuntimeException failure) {
-            return unsupported("unknown");
+            String reason = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+            return new Result(null, List.of("SOURCE_NORMALIZATION_FAILED:" + reason), false);
         }
     }
 

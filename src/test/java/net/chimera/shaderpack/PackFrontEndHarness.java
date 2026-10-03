@@ -318,13 +318,140 @@ public final class PackFrontEndHarness {
 
         // CommonTransformer: gl_Fog.color is iris_FogColor, the fog RGBA.
         LegacyShaderNormalizer.Result undeclared = LegacyShaderNormalizer.normalize(
-                "#version 120\nvoid main() { gl_FragColor = gl_Fog.color; }");
+                "#version 120\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
         check(undeclared.successful() && undeclared.source().contains("uniform vec4 fogColor;")
                 && undeclared.source().contains("gl_FragColor = fogColor;"), "gl_Fog.color:\n" + undeclared.source());
         LegacyShaderNormalizer.Result vec3 = LegacyShaderNormalizer.normalize(
-                "#version 120\nuniform vec3 fogColor;\nvoid main() { gl_FragColor = gl_Fog.color; }");
+                "#version 120\nuniform vec3 fogColor;\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
         check(vec3.successful() && vec3.source().contains("vec4(fogColor, 1.0)")
                 && !vec3.source().contains("uniform vec4 fogColor"), "vec3 fogColor kept:\n" + vec3.source());
+
+        // CommonTransformer: gl_FogFragCoord is the varying iris_FogFragCoord, zeroed first in the vertex stage.
+        LegacyShaderNormalizer.Result fogVertex = LegacyShaderNormalizer.normalize(
+                "#version 120\nvoid main() {\n    gl_FogFragCoord = 4.0;\n}\n", true);
+        check(fogVertex.successful() && fogVertex.source().contains("varying float iris_FogFragCoord;")
+                        && fogVertex.source().indexOf("iris_FogFragCoord = 0.0;")
+                        < fogVertex.source().indexOf("iris_FogFragCoord = 4.0;")
+                        && !fogVertex.source().contains("gl_FogFragCoord"),
+                "gl_FogFragCoord vertex:\n" + fogVertex.source());
+        LegacyShaderNormalizer.Result fogFragment = LegacyShaderNormalizer.normalize(
+                "#version 120\nvoid main() { gl_FragColor = vec4(gl_FogFragCoord); }", false);
+        check(fogFragment.successful() && fogFragment.source().contains("varying float iris_FogFragCoord;")
+                        && fogFragment.source().contains("vec4(iris_FogFragCoord)")
+                        && !fogFragment.source().contains("= 0.0;"),
+                "gl_FogFragCoord fragment:\n" + fogFragment.source());
+        check(LegacyShaderNormalizer.normalize(fogVertex.source(), true).source().equals(fogVertex.source()),
+                "gl_FogFragCoord normalization must be idempotent");
+
+        // Solas declares samplers in lists; every per-name rewriter needs one declaration per name.
+        String lists = GlslTokenRewriter.splitUniformDeclarators("""
+                #version 330
+                #define LIST uniform float a, b;
+                layout(binding = 3) uniform sampler3D floodfillSampler, floodfillSamplerCopy;
+                uniform highp sampler2D depthtex0, depthtex1; // two depth snapshots
+                uniform vec3 tint = vec3(1.0, 0.5, 0.25), shade[2];
+                uniform Block { float x, y; } blocked;
+                void main() { float c = 1.0, d = 2.0; }
+                """);
+        check(lists.contains("layout(binding = 3) uniform sampler3D floodfillSampler;\n"
+                        + "layout(binding = 3) uniform sampler3D floodfillSamplerCopy;")
+                        && lists.contains("uniform highp sampler2D depthtex0;\nuniform highp sampler2D depthtex1;")
+                        && lists.contains("uniform vec3 tint = vec3(1.0, 0.5, 0.25);\nuniform vec3 shade[2];")
+                        && lists.contains("#define LIST uniform float a, b;")
+                        && lists.contains("{ float x, y; }")
+                        && lists.contains("float c = 1.0, d = 2.0;"),
+                "uniform declarator lists:\n" + lists);
+
+        // Solas comments "a corresponding uniform in shaders.properties" right above its declarations.
+        String commented = """
+                //Every biome has a corresponding uniform in the shaders.properties file
+                uniform float frameTimeCounter;
+                /* uniform float inBlockComment; */
+                void main() { gl_FragColor = vec4(frameTimeCounter); }
+                """;
+        String stripped = UniformRegistry.removeUniformDeclarations(commented,
+                UniformRegistry.plan(commented, UniformRegistry.Stage.POST));
+        check(!stripped.contains("uniform float frameTimeCounter;")
+                        && stripped.contains("corresponding uniform in the shaders.properties file")
+                        && stripped.contains("/* uniform float inBlockComment; */"),
+                "a comment must not start a uniform declaration:\n" + stripped);
+
+        // Photon: constants stay const (array sizes and later consts need them); only a
+        // global const that really depends on a uniform, a plain global or a function loses it.
+        String relaxed = GlslTokenRewriter.relaxNonConstantGlobals("""
+                uniform float frameTime;
+                float plain = 2.0;
+                const int char_width = 5;
+                const ivec2 char_size = ivec2(char_width, 6);
+                const float pi = acos(-1.0), tau = 2.0 * pi;
+                const vec3 weights = vec3(0.2, 0.7, 0.1).zyx;
+                const float[2] pair = float[2](pi, tau);
+                const float animated = frameTime * 2.0;
+                const float derived = animated + 1.0;
+                const float fromPlain = plain;
+                float helper() { return 1.0; }
+                const float called = helper();
+                float samples[char_width];
+                float shade(const float x) { const float y = x * 2.0; return y; }
+                """);
+        check(relaxed.contains("const int char_width = 5;")
+                        && relaxed.contains("const ivec2 char_size")
+                        && relaxed.contains("const float pi = acos(-1.0), tau")
+                        && relaxed.contains("const vec3 weights")
+                        && relaxed.contains("const float[2] pair")
+                        && !relaxed.contains("const float animated")
+                        && !relaxed.contains("const float derived")
+                        && !relaxed.contains("const float fromPlain")
+                        && !relaxed.contains("const float called")
+                        && relaxed.contains("float shade(const float x) { const float y"),
+                "non-constant global const relaxation:\n" + relaxed);
+
+        // Photon reaches samplers through macros; only those aliases expand, and only while defined.
+        String aliased = GlslTokenRewriter.expandSamplerAliases("""
+                uniform sampler2D colortex0;
+                uniform sampler2D colortex5;
+                #define rec709_to_working_color rec709_to_rec2020
+                #define SRC_SAMPLER colortex5
+                #define LUT SRC_SAMPLER
+                #define SAMPLE(uv) texture(SRC_SAMPLER, uv)
+                vec4 a = texture(SRC_SAMPLER, vec2(0.0)) + texture(LUT, vec2(0.0)) + SAMPLE(vec2(1.0));
+                #undef SRC_SAMPLER
+                #define SRC_SAMPLER colortex0
+                vec4 b = texture(SRC_SAMPLER, vec2(0.0));
+                vec3 c = rec709_to_working_color[0];
+                """);
+        check(!aliased.contains("SRC_SAMPLER") && !aliased.contains("#define LUT")
+                        && aliased.contains("vec4 a = texture(colortex5, vec2(0.0)) + texture(colortex5, vec2(0.0))")
+                        && aliased.contains("#define SAMPLE(uv) texture(colortex5, uv)")
+                        && aliased.contains("vec4 b = texture(colortex0, vec2(0.0));")
+                        && aliased.contains("#define rec709_to_working_color rec709_to_rec2020")
+                        && aliased.contains("vec3 c = rec709_to_working_color[0];"),
+                "sampler alias expansion:\n" + aliased);
+
+        // Photon calls tonemap_lottes only as tonemap(x) through an object-like alias.
+        String reachable = """
+                #define tonemap tonemap_lottes
+                vec3 tonemap_lottes(vec3 rgb) { return rgb; }
+                vec3 unused_operator(vec3 rgb) { return rgb * 2.0; }
+                void main() { gl_FragColor = vec4(tonemap(vec3(1.0)), 1.0); }
+                """;
+        String pruned = GlslTokenRewriter.removeUnreachableFunctions(reachable,
+                GlslResourceUsage.analyze(reachable));
+        check(pruned.contains("vec3 tonemap_lottes(vec3 rgb)") && !pruned.contains("unused_operator"),
+                "object-like macro call reachability:\n" + pruned);
+
+        // Photon: explicit (even multi-line) output locations hold; unlocated ones take the next free one.
+        String outputs = "/* RENDERTARGETS: 6,14,3 */\nlayout(\n    location = 1\n) out vec4 b;\n"
+                + "out vec2 a;\nlayout(location = 0) out vec3 c;\nvoid main() {}\n";
+        List<PostTargetPlan.ModernOutput> modern = PostTargetPlan.modernOutputs(outputs);
+        PostTargetPlan routed = PostTargetPlan.parse("composite", outputs).plan();
+        check(modern.size() == 3
+                        && modern.get(0).name().equals("b") && modern.get(0).location() == 1
+                        && modern.get(1).name().equals("a") && modern.get(1).location() == 2
+                        && modern.get(2).name().equals("c") && modern.get(2).location() == 0
+                        && routed.outputLocations().equals(List.of(0, 1, 2))
+                        && routed.outputType(0).equals("vec3") && routed.outputType(2).equals("vec2"),
+                "modern output locations: " + modern + " plan " + routed.outputLocations());
     }
 
     /** A function the program defines under a legacy lookup's name is the program's own (Solas). */

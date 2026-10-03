@@ -931,7 +931,7 @@ public final class UniformRegistry {
     }
 
     private static String removeUniformDeclaration(String source, String name) {
-        Matcher matcher = UNIFORM_DECLARATION.matcher(source);
+        Matcher matcher = UNIFORM_DECLARATION.matcher(maskComments(source));
         StringBuilder result = new StringBuilder();
         int last = 0;
         while (matcher.find()) {
@@ -1023,7 +1023,7 @@ public final class UniformRegistry {
                 unusedSamplers.add(deviation.substring("SAMPLER_DECLARATION_UNUSED:".length()));
             }
         }
-        Matcher matcher = UNIFORM_DECLARATION.matcher(result);
+        Matcher matcher = UNIFORM_DECLARATION.matcher(maskComments(result));
         StringBuilder out = new StringBuilder();
         int last = 0;
         boolean changed = false;
@@ -1382,6 +1382,26 @@ public final class UniformRegistry {
             }
             return true;
         }).toList();
+    }
+
+    /**
+     * Blanks comment text but keeps every offset, so a declaration match on the
+     * result can edit the original source. A comment such as "a corresponding
+     * uniform in shaders.properties" must never start a declaration match.
+     */
+    private static String maskComments(String source) {
+        StringBuilder masked = new StringBuilder(source.length());
+        for (GlslLexer.Token token : GlslLexer.lex(source)) {
+            String text = token.text();
+            if (token.kind() == GlslLexer.Kind.TRIVIA && (text.startsWith("//") || text.startsWith("/*"))) {
+                for (int index = 0; index < text.length(); index++) {
+                    masked.append(text.charAt(index) == '\n' ? '\n' : ' ');
+                }
+            } else {
+                masked.append(text);
+            }
+        }
+        return masked.toString();
     }
 
     private static String stripComments(String source) {

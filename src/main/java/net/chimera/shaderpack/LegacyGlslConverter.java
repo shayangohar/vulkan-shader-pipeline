@@ -113,10 +113,12 @@ public final class LegacyGlslConverter {
     private static final Pattern MODERN_LAYOUT_DECL = Pattern.compile(
             "(?m)^([ \\t]*)layout\\s*\\([^;{}\\r\\n]*\\)\\s*((?:(?:flat|noperspective|smooth|centroid|sample)\\s+)?)"
                     + "(in|out|varying)\\b");
+    /** Post inputs get Chimera's varying locations; outputs keep theirs for PostTargetPlan.modernOutputs. */
+    private static final Pattern MODERN_INPUT_LAYOUT_DECL = Pattern.compile(
+            "(?m)^([ \\t]*)layout\\s*\\([^;{}()]*\\)\\s*((?:(?:flat|noperspective|smooth|centroid|sample)\\s+)?)"
+                    + "(in|varying)\\b");
     private static final Pattern PRECISION_DECL = Pattern.compile(
             "(?m)^\\s*precision\\s+(?:lowp|mediump|highp)\\s+(?:float|int)\\s*;\\s*$\\r?\\n?");
-    private static final Pattern GLOBAL_NONCONST = Pattern.compile(
-            "(?m)\\bconst\\s+((?:float|int|bool|vec[234]|mat[234]))\\s+([A-Za-z_]\\w*)\\s*=");
 
     /** Geometry fragments receive the fixed chimera terrain vertex's outputs by name. */
     private static final Map<String, Integer> GEOMETRY_VARYING_LOCATIONS = Map.of(
@@ -158,10 +160,10 @@ public final class LegacyGlslConverter {
         String result = VERSION_LINE.matcher(source).replaceAll("");
         result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
         result = PRECISION_DECL.matcher(result).replaceAll("");
-        result = MODERN_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
+        result = MODERN_INPUT_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
         result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(
                 "lowp", "", "mediump", "", "highp", ""));
-        return GLOBAL_NONCONST.matcher(result).replaceAll("$1 $2 =");
+        return GlslTokenRewriter.relaxNonConstantGlobals(result);
     }
 
     static boolean supportsModernPost(String source) {
@@ -374,7 +376,7 @@ public final class LegacyGlslConverter {
                     || !interfacePlan.executable()) {
                 throw new IllegalArgumentException("POST_VERTEX_INTERFACE_UNSUPPORTED");
             }
-            String converted = prepareSource(source, null);
+            String converted = prepareSource(source, null, true);
             validatePostVersion(converted);
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(converted);
             if (!usage.successful()) {
@@ -414,7 +416,6 @@ public final class LegacyGlslConverter {
             converted = removePackMetadataConstants(converted);
             converted = stripUnusedConsumedConsts(converted, packConstants);
             converted = injectPackConstants(converted, packConstants);
-            converted = expandSamplerAliases(converted, interfacePlan.samplers());
             converted = convertTextureCalls(converted);
             int samplerBase = interfacePlan.executableUniforms().isEmpty() ? 0 : 1;
             Map<String, String> samplerTypes = new TreeMap<>();
@@ -513,7 +514,7 @@ public final class LegacyGlslConverter {
             if (src == null) {
                 throw new IllegalArgumentException("pack fragment source is missing");
             }
-            src = prepareSource(src, sourceFile);
+            src = prepareSource(src, sourceFile, false);
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(src);
             if (!usage.successful()) {
                 throw new IllegalArgumentException(usage.deviations().toString());
@@ -585,7 +586,6 @@ public final class LegacyGlslConverter {
                 // the function into a variable call.
                 src = GlslTokenRewriter.renameSamplerIdentifier(src, "texture", "chimeraTexture");
             }
-            src = expandSamplerAliases(src, samplers);
             src = convertTextureCalls(src);
             if (terrainContract(interfacePlan.stage())) {
                 Set<String> emittedAtlasSamplers = new java.util.HashSet<>();
@@ -745,32 +745,33 @@ public final class LegacyGlslConverter {
         if (targetPlan == null) {
             return source;
         }
-        Matcher matcher = Pattern.compile("(?m)^\\s*out\\s+vec4\\s+([A-Za-z_]\\w*)\\s*;\\s*$")
-                .matcher(source);
-        List<String> names = new ArrayList<>();
-        while (matcher.find()) {
-            names.add(matcher.group(1));
-        }
-        if (names.isEmpty()) {
+        List<PostTargetPlan.ModernOutput> outputs = PostTargetPlan.modernOutputs(source);
+        if (outputs.isEmpty()) {
             return source;
         }
-        List<Integer> locations = targetPlan.outputLocations();
-        if (names.size() > locations.size()) {
-            throw new IllegalArgumentException("modern fragment outputs exceed target route");
-        }
+        StringBuilder result = new StringBuilder();
         Map<String, String> replacements = new TreeMap<>();
-        for (int index = 0; index < names.size(); index++) {
-            replacements.put(names.get(index), "chimeraFragColor" + locations.get(index));
+        int last = 0;
+        for (PostTargetPlan.ModernOutput output : outputs) {
+            if (!targetPlan.outputLocations().contains(output.location())) {
+                throw new IllegalArgumentException("modern fragment output exceeds target route: " + output.name());
+            }
+            replacements.put(output.name(), "chimeraFragColor" + output.location());
+            // The generated declaration replaces this one; keep its line breaks.
+            result.append(source, last, output.start())
+                    .append(source.substring(output.start(), output.end()).replaceAll("[^\\r\\n]", ""));
+            last = output.end();
         }
-        String result = matcher.replaceAll("");
-        return GlslTokenRewriter.replaceIdentifiers(result, replacements);
+        result.append(source.substring(last));
+        return GlslTokenRewriter.replaceIdentifiers(result.toString(), replacements);
     }
 
     private static String postOutputDeclarations(PostTargetPlan targetPlan) {
         StringBuilder declarations = new StringBuilder();
         for (int location : targetPlan.outputLocations()) {
-            declarations.append("layout(location = ").append(location)
-                    .append(") out vec4 chimeraFragColor").append(location).append(";\n");
+            declarations.append("layout(location = ").append(location).append(") out ")
+                    .append(targetPlan.outputType(location))
+                    .append(" chimeraFragColor").append(location).append(";\n");
         }
         return declarations.toString();
     }
@@ -869,8 +870,8 @@ public final class LegacyGlslConverter {
         try {
             boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
             String vertex = shadowStage
-                    ? normalizeShadowTerrain(prepareSource(source, sourceFile))
-                    : normalizeModernTerrain(prepareSource(source, sourceFile));
+                    ? normalizeShadowTerrain(prepareSource(source, sourceFile, true))
+                    : normalizeModernTerrain(prepareSource(source, sourceFile, true));
             String fragment = fragmentSource == null ? "" : fragmentSource;
             if (shadowStage && hasShadowTerrainVersion(fragment)) {
                 fragment = normalizeShadowTerrain(fragment);
@@ -1167,7 +1168,7 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
-            String src = prepareSource(source, sourceFile);
+            String src = prepareSource(source, sourceFile, true);
             src = expandModernVaryingLists(src);
             src = pruneUnreachableVertexFunctions(src);
             String stripped = stripComments(src);
@@ -1378,7 +1379,7 @@ public final class LegacyGlslConverter {
             GeometryOutputPlan geometryOutputPlan
     ) {
         try {
-            String prepared = prepareSource(source, sourceFile);
+            String prepared = prepareSource(source, sourceFile, false);
             return FragmentConversionRequest.of(prepared, null, true, samplerSlots)
                     .withTerrainLayout(particleLayout)
                     .withInterfacePlan(interfacePlan)
@@ -1410,7 +1411,7 @@ public final class LegacyGlslConverter {
             GeometryOutputPlan geometryOutputPlan
     ) {
         try {
-            String prepared = prepareSource(source, sourceFile);
+            String prepared = prepareSource(source, sourceFile, false);
             validateEntityFragmentVersion(prepared);
             return FragmentConversionRequest.of(prepared, null, true, samplerSlots)
                     .withTerrainLayout(entityLayout)
@@ -1439,7 +1440,7 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         try {
-            String src = prepareSource(source, sourceFile);
+            String src = prepareSource(source, sourceFile, true);
             String stripped = stripComments(src);
             if (!TERRAIN_VERSION.matcher(src).find()
                     || stripped.matches("(?s).*#version\\s+(?!120(?:e)?\\b)\\d+.*")) {
@@ -1775,7 +1776,7 @@ public final class LegacyGlslConverter {
     }
 
     /** Compatibility adapter for callers that still pass raw source and a path. */
-    private static String prepareSource(String source, Path sourceFile) {
+    private static String prepareSource(String source, Path sourceFile, boolean vertexStage) {
         String preparedSource = source;
         if (sourceFile != null) {
             Path root = sourceFile.getParent();
@@ -1788,7 +1789,7 @@ public final class LegacyGlslConverter {
             }
             preparedSource = prepared.source();
         }
-        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(preparedSource);
+        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(preparedSource, vertexStage);
         if (!normalized.successful()) {
             throw new IllegalArgumentException(normalized.deviations().toString());
         }
@@ -2675,7 +2676,7 @@ public final class LegacyGlslConverter {
         // Keep the normalized source self-describing for the shared program
         // plan. The converter also accepts this prepared 460 form, so the
         // authored version is removed exactly once and never duplicated.
-        return "#version 460\n" + GLOBAL_NONCONST.matcher(result).replaceAll("$1 $2 =");
+        return "#version 460\n" + GlslTokenRewriter.relaxNonConstantGlobals(result);
     }
 
     private static boolean hasShadowTerrainVersion(String source) {
@@ -2721,7 +2722,7 @@ public final class LegacyGlslConverter {
         result = MODERN_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
         result = GlslTokenRewriter.replaceIdentifiers(result,
                 Map.of("lowp", "", "mediump", "", "highp", ""));
-        return "#version 460\n" + GLOBAL_NONCONST.matcher(result).replaceAll("$1 $2 =");
+        return "#version 460\n" + GlslTokenRewriter.relaxNonConstantGlobals(result);
     }
 
     private static Map<String, String> modernTerrainVaryings(
@@ -3490,29 +3491,6 @@ public final class LegacyGlslConverter {
                         + "([A-Za-z_]\\w*)\\s*,\\s*vec3\\s+([A-Za-z_]\\w*)\\s*\\)\\s*"
                         + "\\{\\s*return\\s+shadow2D\\s*\\(\\s*\\1\\s*,\\s*\\2\\s*\\)"
                         + "\\s*\\.x\\s*;\\s*\\}", "");
-    }
-
-    private static String expandSamplerAliases(
-            String source,
-            List<UniformRegistry.SamplerBinding> samplers
-    ) {
-        if (source == null || samplers == null || samplers.isEmpty()) return source;
-        Set<String> samplerNames = samplers.stream()
-                .map(UniformRegistry.SamplerBinding::name).collect(java.util.stream.Collectors.toSet());
-        Matcher matcher = Pattern.compile(
-                "(?m)^\\s*#define\\s+([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)"
-                        + "\\s*(?://[^\\r\\n]*)?\\s*$")
-                .matcher(source);
-        Map<String, String> aliases = new TreeMap<>();
-        while (matcher.find()) {
-            if (!matcher.group(1).equals(matcher.group(2))
-                    && samplerNames.contains(matcher.group(2))) {
-                aliases.put(matcher.group(1), matcher.group(2));
-            }
-        }
-        if (aliases.isEmpty()) return source;
-        String result = matcher.replaceAll("");
-        return GlslTokenRewriter.replaceIdentifiers(result, aliases);
     }
 
     private static String rewriteSamplerDeclaration(String source, String name, int binding) {

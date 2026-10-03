@@ -883,6 +883,7 @@ public final class PackProbe {
                     || deviation.startsWith("POST_VARYING_UNSUPPORTED:")
                     || deviation.startsWith("ALPHA_TEST_MALFORMED:")
                     || deviation.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:")
+                    || deviation.startsWith("SOURCE_NORMALIZATION_FAILED:")
                     || isBlockingPreprocessorDeviation(deviation)) {
                 return true;
             }

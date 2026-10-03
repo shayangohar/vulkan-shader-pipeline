@@ -24,7 +24,9 @@ final class PackCompileCheck {
         int compiled = 0;
         List<String> failures = new ArrayList<>();
         for (PackProgramPlan program : analysis.plan().activePrograms()) {
-            if (!program.executable() || program.convertedFragment() == null || program.interfacePlan() == null) {
+            // Exactly the programs the runtime would build: shouldAttempt, not executable() alone.
+            if (!analysis.plan().shouldAttempt(program.name()) || program.convertedFragment() == null
+                    || program.interfacePlan() == null) {
                 continue;
             }
             UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(program.name());
