@@ -166,9 +166,7 @@ final class PackFrameState {
 
     void begin(Minecraft minecraft, Camera camera, float partialTick,
                Matrix4f capturedModelView, Matrix4f capturedProjection, float deltaSeconds) {
-        this.frameTime = clamp(deltaSeconds, 0.0f, 0.25f);
-        this.frameTimeCounter = wrapped(this.frameTimeCounter + this.frameTime,
-                FRAME_TIME_COUNTER_WRAP);
+        advanceFrameTime(deltaSeconds);
         this.frameCounter = (this.frameCounter + 1) % FRAME_COUNTER_WRAP;
 
         boolean viewportChanged = captureWindow(minecraft);
@@ -385,7 +383,13 @@ final class PackFrameState {
         return Math.floorMod(value, FRAME_COUNTER_WRAP);
     }
     static float wrapFrameTimeCounter(float value) {
-        return wrapped(value, FRAME_TIME_COUNTER_WRAP);
+        return value >= FRAME_TIME_COUNTER_WRAP ? 0.0f : value;
+    }
+
+    void advanceFrameTime(float deltaSeconds) {
+        // Iris exposes the whole elapsed frame, including stalls, and resets at one hour.
+        this.frameTime = Math.max(deltaSeconds, 0.0f);
+        this.frameTimeCounter = wrapFrameTimeCounter(this.frameTimeCounter + this.frameTime);
     }
 
     static int irisWorldTimeForTest(long dayTime, boolean fixedTime, boolean netherOrEnd) {
@@ -1071,10 +1075,6 @@ final class PackFrameState {
         for (int i = 0; i < values.length; i++) {
             target.putInt(i * 4, values[i]);
         }
-    }
-
-    private static float wrapped(float value, float limit) {
-        return value >= limit ? value % limit : value;
     }
 
     private static void invertOrIdentity(Matrix4f source, Matrix4f destination) {

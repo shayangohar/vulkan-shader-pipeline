@@ -32,6 +32,7 @@ public final class M62ConformanceHarness {
 
         verifyCatalog();
         verifyFrameMath();
+        verifyFrameClock();
         verifyStableBuffers();
         verifyFixture(fixture, baselinePath);
         System.out.println("[chimera] M6.2 canonical uniform catalog conformance: PASS");
@@ -70,8 +71,8 @@ public final class M62ConformanceHarness {
     private static void verifyFrameMath() {
         assertEquals(0, PackFrameState.wrapFrameCounter(PackFrameState.FRAME_COUNTER_WRAP),
                 "M6.2 frame counter wrap");
-        assertEquals(0.5f, PackFrameState.wrapFrameTimeCounter(
-                PackFrameState.FRAME_TIME_COUNTER_WRAP + 0.5f), "M6.2 time counter wrap");
+        assertEquals(0.0f, PackFrameState.wrapFrameTimeCounter(
+                PackFrameState.FRAME_TIME_COUNTER_WRAP + 0.5f), "M6.2 Iris time counter reset");
         assertEquals(-30000.0, PackFrameState.cameraShift(30001.0, 0.0),
                 "M6.2 camera origin shift");
         assertEquals(0.0, PackFrameState.cameraShift(100.0, 0.0),
@@ -86,6 +87,53 @@ public final class M62ConformanceHarness {
         PackFrameState.invertOrIdentityForTest(singular, inverse);
         assertEquals(1.0f, inverse.m00(), "M6.2 singular matrix fallback");
         assertEquals(1.0f, inverse.m33(), "M6.2 singular matrix identity fallback");
+    }
+
+    private static void verifyFrameClock() {
+        PackFrameState state = new PackFrameState();
+        MappedBuffer buffer = new MappedBuffer(4);
+        state.advanceFrameTime(0.0f);
+        assertFrameFloat(state, buffer, "frameTime", 0.0f, "first frame duration");
+        assertFrameFloat(state, buffer, "frameTimeCounter", 0.0f, "first frame counter");
+
+        float stalledFrame = PackFrameState.quantizedFrameSecondsForTest(640_750_000L);
+        state.advanceFrameTime(stalledFrame);
+        assertFrameFloat(state, buffer, "frameTime", 0.640f, "uncapped stall duration");
+        assertFrameFloat(state, buffer, "frameTimeCounter", 0.640f, "uncapped stall counter");
+        float shortFrame = PackFrameState.quantizedFrameSecondsForTest(16_900_000L);
+        state.advanceFrameTime(shortFrame);
+        assertFrameFloat(state, buffer, "frameTime", 0.016f, "short frame quantization");
+        assertFrameFloat(state, buffer, "frameTimeCounter", stalledFrame + shortFrame,
+                "short frame accumulation");
+        state.advanceFrameTime(PackFrameState.quantizedFrameSecondsForTest(-1L));
+        assertFrameFloat(state, buffer, "frameTime", 0.0f, "negative elapsed duration");
+        assertFrameFloat(state, buffer, "frameTimeCounter", stalledFrame + shortFrame,
+                "negative elapsed counter hold");
+
+        state.advanceFrameTime(3600.5f);
+        assertFrameFloat(state, buffer, "frameTime", 3600.5f, "long stall duration");
+        assertFrameFloat(state, buffer, "frameTimeCounter", 0.0f, "hour crossing reset");
+        state.advanceFrameTime(shortFrame);
+        assertFrameFloat(state, buffer, "frameTimeCounter", shortFrame, "post-hour accumulation");
+        state.resetSession();
+        assertFrameFloat(state, buffer, "frameTime", 0.0f, "session duration reset");
+        assertFrameFloat(state, buffer, "frameTimeCounter", 0.0f, "session counter reset");
+        state.advanceFrameTime(0.0f);
+        assertFrameFloat(state, buffer, "frameTimeCounter", 0.0f, "new session first frame");
+
+        // Closed-form smoothing uses elapsed time too; a long frame needs no integrator cap.
+        float oneStep = PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, stalledFrame);
+        float twoSteps = PackFrameState.smooth(
+                PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.320f),
+                1.0f, 600.0f, 200.0f, 0.320f);
+        assertTrue(Math.abs(oneStep - twoSteps) < 1.0e-6f,
+                "M6.2 elapsed-time smoothing consistency");
+    }
+
+    private static void assertFrameFloat(PackFrameState state, MappedBuffer buffer,
+                                         String name, float expected, String message) {
+        state.write(UniformRegistry.descriptor(name), "float", buffer);
+        assertEquals(expected, buffer.getFloat(0), "M6.2 " + message);
     }
 
     private static void verifyStableBuffers() {

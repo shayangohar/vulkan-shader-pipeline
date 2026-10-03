@@ -55,7 +55,8 @@ public final class PackDepthTargets {
                     .setName("chimeraPackDepthTex" + index)
                     .setFormat(this.plan.format())
                     .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
-                    .setLinearFiltering(true)
+                    // Iris depthtex0/1/2 are point samples, not interpolated surface depths.
+                    .setLinearFiltering(false)
                     .setClamp(true)
                     .createVulkanImage();
         }

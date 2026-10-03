@@ -54,6 +54,7 @@ public final class M88WaterHarness {
         verifyTargetFeedback();
         verifyDeferredSchedule();
         verifyWorldDepthGraph();
+        verifyDepthSamplingContract();
         verifyBlendDirectives();
         verifyOptionFile();
         verifyTextureMcmeta();
@@ -66,6 +67,16 @@ public final class M88WaterHarness {
             verifyRealPack(bsl, "bsl");
         }
         System.out.println("[chimera] m8.8 water conformance: PASS");
+    }
+
+    /** Structural check for the shared Vulkan builder; runtime captures verify its sampler. */
+    private static void verifyDepthSamplingContract() throws java.io.IOException {
+        String source = java.nio.file.Files.readString(Path.of(
+                "src/main/java/net/chimera/render/PackDepthTargets.java"));
+        assertTrue(source.contains(".setLinearFiltering(false)")
+                        && !source.contains(".setLinearFiltering(true)")
+                        && source.contains(".setClamp(true)"),
+                "depthtex0/1/2 snapshots must use Iris nearest/clamp sampling");
     }
 
     /** The water stage serves the terrain uniforms and its translucent inputs. */
