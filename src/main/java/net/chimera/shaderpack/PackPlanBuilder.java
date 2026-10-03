@@ -180,14 +180,14 @@ public final class PackPlanBuilder {
                 && (targetPlan == null || targetPlan.executable())
                 && (geometryOutputPlan == null || geometryOutputPlan.executable())
                 && alphaTestPlan.valid();
-        if (stage == UniformRegistry.Stage.TRANSLUCENT && geometryOutputPlan != null) {
-            // A translucent draw samples pack targets as shader-read images
-            // while its own outputs are colour attachments; one image cannot
-            // be both inside a render pass.
+        if (geometryOutputPlan != null) {
+            // A world draw samples pack targets as shader-read images while its
+            // own outputs are colour attachments; one image cannot be both
+            // inside a render pass.
             for (UniformRegistry.SamplerBinding sampler : interfacePlan.effective(stage).samplers()) {
                 Integer target = PackResourcePlan.targetIndex(sampler.name());
                 if (target != null && geometryOutputPlan.targetSlots().contains(target)) {
-                    deviations.add("TRANSLUCENT_TARGET_FEEDBACK:colortex" + target);
+                    deviations.add("GBUFFER_TARGET_FEEDBACK:colortex" + target);
                     executable = false;
                 }
             }

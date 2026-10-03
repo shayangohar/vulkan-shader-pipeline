@@ -2232,16 +2232,29 @@ public final class LegacyGlslConverter {
         return output.toString();
     }
 
-    private static String removeEntityAttributes(String source) {
+    static String removeEntityAttributes(String source) {
         // The trailing class eats spaces and tabs but never newlines: an
         // eager \s* would swallow the next line's indentation and hide the
         // following declaration from the ^ anchor, silently keeping every
         // second consecutive attribute.
         Matcher matcher = Pattern.compile(
-                "(?m)^\\s*(?:attribute|in)\\s+(?:float|vec2|vec4)\\s+"
-                        + "(?:mc_Entity|mc_midTexCoord|at_tangent|Tangent)[ \\t]*;[ \\t]*")
+                "(?m)^\\s*(?:attribute|in)\\s+(float|vec2|vec4)\\s+"
+                        + "(mc_Entity|mc_midTexCoord|at_tangent|Tangent)[ \\t]*;[ \\t]*")
                 .matcher(source == null ? "" : source);
-        return matcher.replaceAll("");
+        StringBuilder output = new StringBuilder();
+        while (matcher.find()) {
+            // Iris's entity vertex format has no mc_Entity (only iris_Entity),
+            // so GL reads the unbound attribute's default (0, 0, 0, 1).
+            String replacement = !matcher.group(2).equals("mc_Entity") ? ""
+                    : "\nconst " + matcher.group(1) + " mc_Entity = " + switch (matcher.group(1)) {
+                        case "float" -> "0.0";
+                        case "vec2" -> "vec2(0.0)";
+                        default -> "vec4(0.0, 0.0, 0.0, 1.0)";
+                    } + ";";
+            matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(output);
+        return output.toString();
     }
 
     /**

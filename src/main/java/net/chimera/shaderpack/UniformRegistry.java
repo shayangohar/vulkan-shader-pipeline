@@ -372,7 +372,7 @@ public final class UniformRegistry {
      * Translucent terrain is terrain on the host translucent lane: the
      * geometry slots, plus the opaque depth Iris gives gbuffers_water as
      * depthtex1. The pack colour targets it reads come from
-     * {@link #translucentColorInputSlot}.
+     * {@link #gbufferColorInputSlot}.
      */
     public static final Map<String, Integer> TRANSLUCENT_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
@@ -588,6 +588,17 @@ public final class UniformRegistry {
                 deviations.add("UNIFORM_IMPLICIT_DECLARATION:" + descriptor.name());
             }
         }
+        // The terrain bridge serves the legacy matrix built-ins from
+        // gbufferModelView (LegacyGlslConverter.modernTerrainInputReplacements);
+        // a pack that only writes gl_ModelViewMatrix never declares it.
+        if ((stage == Stage.GEOMETRY || stage == Stage.TRANSLUCENT)
+                && usesLegacyModelView(stripped)
+                && !declarations.containsKey("gbufferModelView")
+                && !isLocallyDeclared(stripped, "gbufferModelView")) {
+            declarations.put("gbufferModelView", new UniformDeclaration("gbufferModelView", "mat4"));
+            implicitDeclarations.add("gbufferModelView");
+            deviations.add("UNIFORM_IMPLICIT_DECLARATION:gbufferModelView");
+        }
 
         for (UniformDeclaration declaration : declarations.values()) {
             String name = declaration.name();
@@ -681,8 +692,8 @@ public final class UniformRegistry {
             if (stage == Stage.POST && slot == null) {
                 slot = extendedPostColorSlot(sampler.getKey());
             }
-            if (stage == Stage.TRANSLUCENT && slot == null) {
-                slot = translucentColorInputSlot(sampler.getKey());
+            if (stage != Stage.POST && stage != Stage.SHADOW && slot == null) {
+                slot = gbufferColorInputSlot(sampler.getKey());
             }
             if (stage == Stage.POST && slot == null && sampler.getKey().equals("tex")
                     && customSamplerSlots != null) {
@@ -910,6 +921,9 @@ public final class UniformRegistry {
         if (isReferenced(source, name)) {
             return true;
         }
+        if ((stage == Stage.GEOMETRY || stage == Stage.TRANSLUCENT) && name.equals("gbufferModelView")) {
+            return usesLegacyModelView(source);
+        }
         if (stage != Stage.SHADOW) {
             return false;
         }
@@ -919,6 +933,11 @@ public final class UniformRegistry {
             case "shadowProjection" -> containsIdentifier(source, "gl_ProjectionMatrix");
             default -> false;
         };
+    }
+
+    private static boolean usesLegacyModelView(String source) {
+        return containsIdentifier(source, "gl_ModelViewMatrix") || containsIdentifier(source, "gl_NormalMatrix")
+                || containsIdentifier(source, "gl_ProjectionMatrix");
     }
 
     private static boolean containsIdentifier(String source, String name) {
@@ -1115,13 +1134,14 @@ public final class UniformRegistry {
     }
 
     /**
-     * Pack colour targets a translucent program may sample, on the same
-     * selectors post uses, so one target keeps one selector across the pack
-     * and PackSettingsPlan already reserves them. colortex0..3 would land on
+     * Pack colour targets a world program may sample (Iris binds them in every
+     * gbuffers stage), on the same selectors post uses, so one target keeps
+     * one selector across the pack and PackSettingsPlan already reserves
+     * them. colortex0..3 would land on
      * the host atlas, overlay, lightmap and shadowcolor0 selectors, so they
      * stay unmapped.
      */
-    private static Integer translucentColorInputSlot(String name) {
+    private static Integer gbufferColorInputSlot(String name) {
         Integer target = PackResourcePlan.targetIndex(name);
         if (target == null || target < 4 || target > PostTargetPlan.MAX_TARGET) {
             return null;

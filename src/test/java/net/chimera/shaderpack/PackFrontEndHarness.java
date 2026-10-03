@@ -452,6 +452,40 @@ public final class PackFrontEndHarness {
                         && routed.outputLocations().equals(List.of(0, 1, 2))
                         && routed.outputType(0).equals("vec3") && routed.outputType(2).equals("vec2"),
                 "modern output locations: " + modern + " plan " + routed.outputLocations());
+
+        // MakeUp: world programs read pack colour targets (gaux4 = colortex7) as Iris binds them;
+        // colortex0..3 stay off the host atlas/overlay/lightmap/shadowcolor selectors.
+        String worldReader = """
+                uniform sampler2D gaux4;
+                uniform sampler2D colortex2;
+                void main() { gl_FragColor = texture2D(gaux4, vec2(0.5)) + texture2D(colortex2, vec2(0.5)); }
+                """;
+        for (UniformRegistry.Stage world : List.of(UniformRegistry.Stage.GEOMETRY, UniformRegistry.Stage.ENTITY,
+                UniformRegistry.Stage.BLOCK)) {
+            UniformRegistry.ProgramInterface reader = UniformRegistry.plan(worldReader, world);
+            check(slotOf(reader, "gaux4") == SelectorNamespace.colorTargetSlot(7)
+                            && reader.samplers().stream().noneMatch(value -> value.name().equals("colortex2")),
+                    world + " colour target reads: " + reader.samplers() + " " + reader.deviations());
+        }
+
+        // The terrain bridge rewrites gl_ModelViewMatrix to gbufferModelView; the plan must serve it.
+        UniformRegistry.ProgramInterface legacyMatrix = UniformRegistry.plan(
+                "void main() { gl_Position = gl_ModelViewMatrix * gl_Vertex; }", UniformRegistry.Stage.GEOMETRY);
+        check(legacyMatrix.uniforms().stream().anyMatch(value -> value.name().equals("gbufferModelView")),
+                "implicit gbufferModelView: " + legacyMatrix.uniforms());
+
+        // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
+        String entity = LegacyGlslConverter.removeEntityAttributes(
+                "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
+        check(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
+                        && !entity.contains("mc_midTexCoord"),
+                "entity mc_Entity default:\n" + entity);
+
+        // A persistent target a world program reads needs a defined first frame even with no post reader.
+        TargetSpec fog = new TargetSpec(7, 97, 16, 16, false, null, true, false, false, List.of());
+        check(PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), java.util.Set.of(7))
+                        && !PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), java.util.Set.of()),
+                "persistent world-read target seeding");
     }
 
     /** A function the program defines under a legacy lookup's name is the program's own (Solas). */

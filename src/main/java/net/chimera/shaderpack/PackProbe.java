@@ -421,8 +421,9 @@ public final class PackProbe {
         if (programPlan != null && programPlan.targetPlan() != null) {
             targetResult = new PostTargetPlan.ParseResult(
                     programPlan.targetPlan(), programPlan.targetPlan().deviations());
-        } else if (programPlan != null && programPlan.geometryOutputPlan() != null
-                && programPlan.geometryOutputPlan().requiresMrt()) {
+        } else if (programPlan != null && programPlan.geometryOutputPlan() != null) {
+            // The plan routes the prepared source, whose #if already chose one
+            // DRAWBUFFERS directive; an authored scan would count every branch.
             targetResult = new PostTargetPlan.ParseResult(
                     programPlan.geometryOutputPlan().targetPlan(),
                     programPlan.geometryOutputPlan().deviations());
@@ -871,7 +872,7 @@ public final class PackProbe {
                     || deviation.startsWith("STANDARD_RESOURCE_UNAVAILABLE:")
                     || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
                     || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
-                    || deviation.startsWith("TRANSLUCENT_TARGET_FEEDBACK:")
+                    || deviation.startsWith("GBUFFER_TARGET_FEEDBACK:")
                     || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
                     || deviation.startsWith("PROGRAM_")

@@ -133,7 +133,7 @@ public final class M88WaterHarness {
                 """;
         PackProgramPlan plan = PackPlanBuilder.build(new PackProgram("gbuffers_water", fragment, null,
                 terrainVertex(), null), null);
-        assertTrue(!plan.executable() && plan.deviations().contains("TRANSLUCENT_TARGET_FEEDBACK:colortex5"),
+        assertTrue(!plan.executable() && plan.deviations().contains("GBUFFER_TARGET_FEEDBACK:colortex5"),
                 "water sampling its own output target was admitted: " + plan.deviations());
         PackProgramPlan ok = PackPlanBuilder.build(new PackProgram("gbuffers_water", WATER_FRAGMENT, null,
                 terrainVertex(), null), null);
