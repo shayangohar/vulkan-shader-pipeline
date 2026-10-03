@@ -199,6 +199,7 @@ public final class GlslTokenRewriter {
                 case "texture2D", "texture3D" -> "texture";
                 case "texture2DProj" -> "textureProj";
                 case "texture2DGradARB" -> "textureGrad";
+                case "texelFetch2D", "texelFetch3D" -> "texelFetch";
                 default -> null;
             };
             if (token.kind() != GlslLexer.Kind.IDENTIFIER || replacement == null) {
@@ -212,6 +213,31 @@ public final class GlslTokenRewriter {
                 throw new IllegalArgumentException("unbalanced texture call");
             }
             tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, replacement));
+        }
+        return GlslLexer.render(tokens);
+    }
+
+    /** Vulkan GLSL reserves 'sampler'; legacy GL permits it as a function parameter name. */
+    static String renameReservedSamplerParameters(String source) {
+        if (source == null || !source.contains("sampler")) return source;
+        var usage = GlslResourceUsage.analyze(source);
+        if (!usage.successful()) return source;
+        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
+        Set<String> names = new java.util.HashSet<>();
+        for (var token : tokens) if (token.kind() == GlslLexer.Kind.IDENTIFIER) names.add(token.text());
+        String replacement = "chimeraSamplerParameter";
+        while (names.contains(replacement)) replacement += "_";
+        List<GlslResourceUsage.FunctionDefinition> functions = new ArrayList<>(usage.reachableFunctions());
+        functions.addAll(usage.unreachableFunctions());
+        for (var function : functions) {
+            boolean reservedParameter = false;
+            for (int i = function.definitionStart(); i < function.bodyStart(); i++) {
+                if (tokens.get(i).identifier("sampler")) reservedParameter = true;
+            }
+            if (!reservedParameter) continue;
+            for (int i = function.definitionStart(); i <= function.definitionEnd(); i++) {
+                if (tokens.get(i).identifier("sampler")) tokens.set(i, identifier(replacement));
+            }
         }
         return GlslLexer.render(tokens);
     }

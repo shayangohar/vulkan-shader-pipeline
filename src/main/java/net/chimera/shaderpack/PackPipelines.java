@@ -43,8 +43,8 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
  * PipelineConfig JSON parsed by PipelineConfig.fromJson (sampler names and
  * order define the descriptor bindings, sequentially after any UBO blocks),
  * vertex stage = a chimera fixed source or the narrow terrain bridge, fragment stage = the converted
- * legacy GLSL. Any failure (parse, conversion, shaderc, supplier) returns
- * null and the caller falls back to the identity pipeline.
+ * legacy GLSL. Shader compilation failures return null for per-program
+ * fallback; typed descriptor/preparation/native failures abort the install.
  *
  * <p>Post build (buildPost): fullscreen triangle vertex, one optional generated
  * fragment UBO at binding 0, and samplers after it. No-uniform programs keep
@@ -184,7 +184,12 @@ public final class PackPipelines {
         }
     }
 
-    private static void logBuildFailure(String program, Exception failure) {
+    /** All build families share the same fallback boundary. Contract defects remain fatal. */
+    static void handleBuildFailure(String program, Exception failure) {
+        if (failure instanceof PreparationFailure typed
+                && !(typed.phase.equals("shader-compilation") && typed.reason.equals("SHADER_COMPILATION_FAILED"))) {
+            throw typed;
+        }
         String phase = failure instanceof PreparationFailure typed ? typed.phase : "source-projection";
         String reason = failure instanceof PreparationFailure typed ? typed.reason
                 : failure.getMessage() == null || failure.getMessage().isBlank()
@@ -365,7 +370,7 @@ public final class PackPipelines {
             return new PackSky(pipeline, slots, vertexSource, fragmentSource,
                     vertexFormat, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(pipelineName, e);
+            handleBuildFailure(pipelineName, e);
             return null;
         }
     }
@@ -404,10 +409,8 @@ public final class PackPipelines {
             GraphicsPipeline pipeline = createNative(builder, prepared.imageBindings());
             return new PackPost(plan.name(), pipeline, slots, samplerNames,
                     colorInputTargets(samplerNames), fragmentSource, plan.targetPlan(), prepared.imageBindings());
-        } catch (PreparationFailure failure) {
-            throw failure;
         } catch (Exception e) {
-            logBuildFailure(plan.name(), e);
+            handleBuildFailure(plan.name(), e);
             return null;
         }
     }
@@ -529,12 +532,9 @@ public final class PackPipelines {
                 }
             }
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
-        } catch (PreparationFailure failure) {
-            MrtPipelineContext.end();
-            throw failure;
         } catch (Exception e) {
             MrtPipelineContext.end();
-            logBuildFailure(plan.name(), e);
+            handleBuildFailure(plan.name(), e);
             return null;
         }
     }
@@ -669,7 +669,7 @@ public final class PackPipelines {
             return new PackEntity(pipeline, slots, vertexSource, fragmentSource,
                     outputPlan, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(pipelineName, e);
+            handleBuildFailure(pipelineName, e);
             return null;
         }
     }
@@ -742,7 +742,7 @@ public final class PackPipelines {
             }
             return new PackParticle(pipeline, slots, vertexSource, fragmentSource, imageBindings);
         } catch (Exception e) {
-            LOGGER.warn("[chimera] pack {}: planned particle build failed: {}", plan.name(), e.getMessage());
+            handleBuildFailure(plan.name(), e);
             return null;
         }
     }
@@ -814,7 +814,7 @@ public final class PackPipelines {
             return new PackPost(program.name(), pipeline, slots, samplerNames,
                     requiredColorInputs, converted, targetPlan, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(program.name(), e);
+            handleBuildFailure(program.name(), e);
             return null;
         }
     }
@@ -893,7 +893,7 @@ public final class PackPipelines {
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             MrtPipelineContext.end();
-            logBuildFailure(plan.name(), e);
+            handleBuildFailure(plan.name(), e);
             return null;
         }
     }
@@ -991,7 +991,7 @@ public final class PackPipelines {
             }
             return new PackShadow(pipeline, slots, converted, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(program.name(), e);
+            handleBuildFailure(program.name(), e);
             return null;
         }
     }
@@ -1191,9 +1191,7 @@ public final class PackPipelines {
         if (stage == UniformRegistry.Stage.POST) return declared;
         if (stage == UniformRegistry.Stage.SHADOW) return shadowSamplerSlots(declared);
         if (stage == UniformRegistry.Stage.GEOMETRY
-                || stage == UniformRegistry.Stage.TRANSLUCENT
-                || stage == UniformRegistry.Stage.SKY
-                || stage == UniformRegistry.Stage.CLOUD) {
+                || stage == UniformRegistry.Stage.TRANSLUCENT) {
             return interleaveLightmap(declared);
         }
         return entitySamplerSlots(declared);

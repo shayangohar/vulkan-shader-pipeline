@@ -23,7 +23,33 @@ public final class PackFrontEndHarness {
         verifyBoolAndAtlasNames();
         verifyIrisNames();
         verifyUserDefinedShadowLookup();
+        verifyLegacyTexelFetch();
+        verifyReservedSamplerParameter();
+        verifyCompileFallbackBoundary();
+        verifySkySamplerContract();
         System.out.println("[chimera] pack front-end generality: PASS");
+    }
+
+    /** Sky/cloud draws must not require the terrain bridge's implicit atlas and lightmap. */
+    private static void verifySkySamplerContract() {
+        for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_clouds")) {
+            for (boolean textured : List.of(false, true)) {
+                String fragment = "#version 120\n" + (textured
+                        ? "uniform sampler2D texture; void main() { gl_FragColor = texture2D(texture, vec2(0.5)); }"
+                        : "void main() { gl_FragColor = vec4(1.0); }");
+                PackProgramPlan plan = PackPlanBuilder.build(new PackProgram(name, fragment, null,
+                        "#version 120\nvoid main() { gl_Position = ftransform(); }", null), null);
+                check(plan.executable(), name + " fixture rejected: " + plan.deviations());
+                var ordinary = PackPipelines.ordinaryDescriptorContract(plan, java.util.Set.of());
+                var manifest = ProgramImageBindingManifest.from(null, ordinary);
+                check(manifest.entries().size() == (textured ? 1 : 0),
+                        name + " injected host textures: " + manifest.entries());
+                check(manifest.entries().stream().allMatch(entry -> entry.slot() == 0
+                                && entry.resourceKey().equals("texture")),
+                        name + " lost the declared atlas or requires an undeclared lightmap");
+                manifest.verify(ordinary.descriptors());
+            }
+        }
     }
 
     /** Any GLSL interface type, packed by the locations it occupies (GLSL 4.60 section 4.4.1). */
@@ -312,6 +338,46 @@ public final class PackFrontEndHarness {
         String legacy = "uniform sampler2DShadow shadow;\nvoid main() { gl_FragColor = shadow2D(shadow, vec3(0.0)); }";
         check(GlslTokenRewriter.rewriteShadowCalls(legacy, Map.of("shadow", "sampler2DShadow"))
                 .contains("vec4(texture(shadow, vec3(0.0)))"), "the built-in shadow2D is still rewritten");
+    }
+
+    private static void verifyLegacyTexelFetch() {
+        String source = "#version 450\nlayout(binding=0) uniform sampler2D image2;\n"
+                + "layout(binding=1) uniform sampler3D image3;\nlayout(location=0) out vec4 color;\n"
+                + "// texelFetch2D stays in this comment\n"
+                + "void main() { color = texelFetch2D(image2, ivec2(0), 0)"
+                + " + texelFetch3D(image3, ivec3(0), 0); }\n";
+        String converted = GlslTokenRewriter.rewriteTextureCalls(source);
+        check(converted.contains("// texelFetch2D stays in this comment")
+                && !converted.contains("texelFetch2D(image2")
+                && !converted.contains("texelFetch3D(image3"), "EXT texelFetch call rewrite");
+        check(PackCompileCheck.compile(converted, false) == null, "converted texelFetch calls compile");
+    }
+
+    private static void verifyReservedSamplerParameter() {
+        String source = "#version 450\nlayout(binding=0) uniform sampler2D image;\n"
+                + "layout(location=0) out vec4 color;\n"
+                + "// sampler remains in comments\n"
+                + "vec4 sampleImage(sampler2D sampler, vec2 uv) { float chimeraSamplerParameter = 0.0;"
+                + " return texture(sampler, uv) + chimeraSamplerParameter; }\n"
+                + "void main() { color = sampleImage(image, vec2(0.5)); }\n";
+        String converted = GlslTokenRewriter.renameReservedSamplerParameters(source);
+        check(converted.contains("sampler2D chimeraSamplerParameter_")
+                && converted.contains("// sampler remains in comments"), "scoped collision-safe sampler rename");
+        check(PackCompileCheck.compile(converted, false) == null, "renamed sampler parameter compiles");
+    }
+
+    private static void verifyCompileFallbackBoundary() {
+        PackPipelines.handleBuildFailure("expected-test-fallback",
+                new PackPipelines.PreparationFailure("shader-compilation", "SHADER_COMPILATION_FAILED"));
+        for (String phase : List.of("descriptor-contract", "resource-rewrite", "native-create")) {
+            var expected = new PackPipelines.PreparationFailure(phase, "EXPECTED_CONTRACT_FAILURE");
+            try {
+                PackPipelines.handleBuildFailure("expected-test-fatal", expected);
+                throw new AssertionError("contract failure swallowed: " + phase);
+            } catch (PackPipelines.PreparationFailure actual) {
+                check(actual == expected, "original contract error must propagate");
+            }
+        }
     }
 
     private static int slotOf(UniformRegistry.ProgramInterface plan, String sampler) {

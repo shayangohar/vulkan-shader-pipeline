@@ -3480,7 +3480,7 @@ public final class LegacyGlslConverter {
             """;
 
     private static String convertTextureCalls(String src) {
-        return GlslTokenRewriter.rewriteTextureCalls(src);
+        return GlslTokenRewriter.rewriteTextureCalls(GlslTokenRewriter.renameReservedSamplerParameters(src));
     }
 
     private static String removeLegacyShadowSamplerHelper(String source) {

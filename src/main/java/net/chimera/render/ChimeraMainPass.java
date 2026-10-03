@@ -2210,6 +2210,7 @@ public class ChimeraMainPass implements MainPass {
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
                 LOGGER.info("[chimera] pack change rolled back: {}", packLabel(previousPath));
+                reportPackChangeFailure(request.path(), rebuildFailure, "Previous pack restored.");
                 return true;
             } catch (RuntimeException restoreFailure) {
                 LOGGER.warn("[chimera] pack rollback failed; host seams remain active: {}",
@@ -2218,8 +2219,23 @@ public class ChimeraMainPass implements MainPass {
                 this.loggedPendingPackDimension = null;
                 markPackVariantFallback();
                 ChimeraRenderer.fallbackToHostRenderer();
+                reportPackChangeFailure(request.path(), rebuildFailure, "Vanilla rendering restored; rollback failed.");
                 return false;
             }
+        }
+    }
+
+    private static void reportPackChangeFailure(Path requested, RuntimeException failure, String recovery) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.gui != null) {
+            String reason = failure.getMessage();
+            if (reason == null || reason.isBlank()) reason = failure.getClass().getSimpleName();
+            // Full exception details stay in latest.log, not a multi-line shader dump in chat.
+            reason = reason.lines().findFirst().orElse("unknown error");
+            if (reason.length() > 160) reason = reason.substring(0, 160) + "…";
+            minecraft.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+                    "[Chimera] Failed to load " + packLabel(requested) + ": " + reason
+                            + ". " + recovery + " See latest.log."));
         }
     }
 
