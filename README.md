@@ -1,131 +1,82 @@
 # Chimera
 
-Shaderpack pipeline for VulkanMod - the goal is to run Iris/OptiFine-class community shaderpacks natively on Vulkan, and eventually on Minecraft's own Vulkan renderer.
+**Iris and OptiFine shader packs for [VulkanMod](https://modrinth.com/mod/vulkanmod).**
 
-**Status: M6.6 complete. M7.0 real-pack parity baseline complete. M7.1 resolution slice complete. M7.2 shared translation core complete. M7.3 uniform and world-state semantics complete. M7.4 target and depth graph implementation complete. M7.5 sampled resource bridge implementation complete. M7.6 core family adapter implementation complete. M7.7 temporal frame schedule complete. M7.8 qualification deferred pending Sodium + Iris reference evidence and follow-up compatibility work. M8.0 measured modern post translation implemented. M8.1 modern terrain and water material bridge implemented; real-pack runtime qualification pending. M8.2 scene seed and coverage protection implemented; runtime qualification pending. M8.3 modern terrain and cutout shadow bridge implemented; entity and colored shadow work remains deferred. M8.4 common world-family adapters implemented; runtime qualification pending. M8.5a real-pack terrain and G-buffer bridge implemented. M8.5b adds bounded sky and cloud adapter contracts with explicit host-state fallback for unsupported variants.**
+VulkanMod replaces Minecraft's OpenGL renderer with Vulkan, but it can't run shader packs. Chimera adds that support. It reads ordinary Iris/OptiFine shader packs, translates their GLSL for Vulkan when the pack loads, and runs them inside VulkanMod's renderer. You don't need to edit or convert anything.
 
-M4 is confirmed against the checked-in `testpacks/simplex` fixture. The loader discovers pack programs from disk, converts legacy fragment GLSL, compiles the converted stages through runtime shaderc, and drives `gbuffers_terrain`, `composite`, and `final` without source edits.
-
-M4 was a narrow loader wedge, not general Iris compatibility. M5.6 added a bounded four-target post chain with real target routing and ping-pong resources. M5.7 added directory and ZIP loading for real packs, standard dimension variants, root-relative includes, a narrow GLSL 130 post path, explicit common RGB format approximations, deterministic fingerprints, lifecycle evidence, and performance measurements. M6.1 shares one prepared-source, program-plan, interface, and token-translation path between conformance and runtime pipeline construction. M6.2 adds one canonical live uniform catalog and one reusable frame snapshot for pack UBOs, including camera history, matrices, weather, player, lighting, and shadow values. M6.3 adds an isolated legacy gbuffers_entities adapter with an append-only entity format, basic entity IDs, and guarded host-state draw dispatch. M6.4 extends post targets beyond the original four-target bridge and validates MRT against device limits. M7.4 replaces global post-bank assumptions with an immutable target graph, per-target validity and side ownership, relative or absolute sizes, clear and persistent policies, flip directives, device-aware MRT, and converted depthtex0/1/2 snapshots. M7.5 adds session-owned sampled pack resources and truthful standard aliases. M7.6 adds table-driven block, hand, and particle family adapters while keeping sky, cloud, weather, glowing, and other unsupported lanes on explicit host fallback. M8.4 adds separate translucent entity, glowing entity, water-hand, translucent-particle, and weather lanes with host-state inheritance. Damaged-block/crumbling remains host fallback because its host format is not the extended entity format. Unsupported layouts remain explicit fallback. It is still not a general Iris transformer.
+> **Status: early development.** Chimera runs some popular packs today, but it doesn't run every pack, and some effects still draw vanilla. Expect rough edges.
 
 ## Requirements
 
-- Minecraft 1.21.11 (Fabric)
-- [VulkanMod](https://modrinth.com/mod/vulkanmod) 0.6.8+1.21.11 or newer
-- Fabric API
+- Minecraft **1.21.11** with [Fabric Loader](https://fabricmc.net/) 0.18 or newer
+- [Fabric API](https://modrinth.com/mod/fabric-api)
+- [VulkanMod](https://modrinth.com/mod/vulkanmod) **0.6.8** or newer
+- Java 21
 
-## Building
+## Installation
 
-Requires Java 21. Build output stays in `build/libs/`. Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools\stage-chimera.ps1` after each build to replace the Chimera jar in the CHIMERA Prism instance and verify `LATEST-SHA256.txt`.
+1. Install Fabric, Fabric API and VulkanMod.
+2. Drop the Chimera jar into your `mods` folder.
+3. Put shader packs (`.zip` files or folders) into `.minecraft/shaderpacks`, the same place Iris uses.
+4. Launch the game and press **O** to open the shader pack menu.
 
-## Roadmap
+## Using shader packs
 
-| Milestone | Scope |
+Press **O**, or click **Shader Packs...** in the video settings, to open the pack menu. It works like Iris's: pick a pack, turn shaders on or off, then click **Apply**. Chimera remembers your choice between launches. You can switch packs without restarting the game; the screen pauses briefly while the new pack loads.
+
+If you prefer commands:
+
+| Command | What it does |
 |---|---|
-| M1 | Project bootstrap and main-pass takeover |
-| M2 | Terrain through Chimera-compiled SPIR-V pipelines |
-| M3 | Shadow pass, HDR frame, and composite/final machinery |
-| M4 | Shaderpack loader core: declarations to pipelines |
-| M5.1 | Iris compatibility contract and fixture harness: define the supported subset and locked regression scenes |
-| M5.2 | Terrain and material slice: `gbuffers_terrain`, `mc_Entity`, texture/lightmap inputs, and material attributes |
-| M5.3 | Uniform and resource slice: live OptiFine/Iris uniforms, samplers, depth inputs, defaults, and bindings |
-| M5.4 | Lighting and shadow slice: shadow programs, `shadowtex`/`depthtex`, shadow settings, and lighting uniforms |
-| M5.5 | Translucency family slice: legacy gbuffers_water on the host translucent terrain lane |
-| M5.6 | Post and frame-graph slice: deferred/composite/final, `RENDERTARGETS`/`DRAWBUFFERS`, ping-pong, and supported MRT |
-| M5.7 | Multi-pack evidence slice: Complementary plus a second Iris/OptiFine pack, lifecycle checks, performance, and deviations |
-| M6.1 | Shared source and program translation core: immutable prepared sources, cross-stage plans, bounded preprocessing, and token-based legacy translation |
-| M6.2 | Canonical live uniform catalog: one typed catalog, one frame snapshot, stable buffers, camera history, and standard runtime values |
-| M6.3 | Entity geometry adapter: legacy gbuffers_entities, append-only entity format, basic entity IDs, and guarded world-entity dispatch |
-| M6.4 | Device-aware post targets and pack resources: sparse target allocation, ping-pong preservation, dynamic post MRT, and explicit limit fallback |
-| M6.5 | Real-pack parity qualification: Complementary, BSL, reference comparisons, lifecycle coverage, and measured performance evidence |
-| M6.6 | Command-driven runtime pack switching with safe GPU-idle replacement and rollback |
-| M7 | Core Iris visual parity: program resolution, translation, uniforms, targets, resources, family adapters, frame sequencing, and qualification |
-| M7.0 | Lock the real-pack parity gap: static eligibility, runtime installation, execution evidence, and visual claims |
-| M7.1 | Resolve dimensions, standard program families, settings, options, feature flags, and explicit fallback aliases |
-| M7.2 | Expand the bounded shared GLSL translator for real-pack declarations, built-ins, texture operations, outputs, interfaces, and safe fallback |
-| M7.3 | Complete the canonical live uniform catalog, Iris world-state semantics, smoothing, and bounded scalar pack values |
-| M7.4 | Authoritative render-target and depth graph: sizes, formats, clear and flip policies, per-target ownership, device-aware MRT, and depth snapshots |
-| M7.5 | Pack texture and resource bridge: sampled pack PNGs, standard aliases, safe ownership, and per-program resource fallback |
-| M7.6 | Core family adapters: gbuffers_block, gbuffers_hand, gbuffers_particles, shared host-state seams, and explicit unsupported-family fallback |
-| M7.7 | Complete frame schedule and temporal state: early deferred, world depth seams, late composite, final-before-GUI, and bounded previous-target validity |
-| M7.8 | Qualify core visual parity against exact Complementary and BSL packs using separate static, runtime, RenderDoc, visual, and performance evidence |
-| M8.0 | Bounded modern post translation for measured Complementary and BSL GLSL syntax |
-| M8.1 | Modern terrain and water material bridge with pack-session append-only vertex formats and explicit fallback |
-| M8.2 | Scene seed and coverage protection for pack geometry plus guarded geometry MRT |
-| M8.3 | Modern terrain and cutout shadow caster bridge, pack shadow settings, and truthful shadowtex0 depth |
-| M8.4 | Common world-family adapters: translucent entities, glowing entities, water hand, translucent particles, weather, and safe fallback boundaries |
-| M8.5a | Real-pack terrain and G-buffer execution: paired terrain interfaces, material inputs, geometry MRT, and explicit fallback |
-| M8.5b | Sky and cloud execution with bounded host-aware adapters and explicit fallback |
+| `/chimera pack list` | List the packs in your shaderpacks folder |
+| `/chimera pack load <name>` | Load a pack |
+| `/chimera pack reload` | Reload the current pack |
+| `/chimera pack off` | Turn shaders off |
+| `/chimera pack status` | Show the active pack |
 
-M5 is a sequence of pack-visible vertical slices. Each slice must carry a real Iris/OptiFine-format fixture or pack from source loading through runtime output, preserve the Simplex regression control, and document unsupported features explicitly. Complementary is a reference pack for breadth, not a source of hardcoded special cases.
+### Pack options
 
-The normal `conformanceTest` checks the checked-in M5.1 through M5.7 fixtures. `m62ConformanceTest` checks the local M6.2 uniform catalog fixture and frame-state invariants. `m63ConformanceTest` checks the M6.3 entity geometry format, mapping, translation, and fallback fixture. `m64ConformanceTest` checks device-aware target allocation and MRT limits. `m75ConformanceTest` checks sampled resources. `m76ConformanceTest` checks the shared core family registry, block and hand adapters, the particle adapter, and unsupported-family fallback. `m84ConformanceTest` checks the M8.4 common world-family adapters and damaged-block fallback. M6.1 uses its strict task for the checked-in program-plan fixture plus explicit real-pack paths. M5.7 uses the strict external-pack task and requires explicit paths and versions:
+Chimera doesn't have an in-game options screen yet, so packs use their default settings. You can override any pack option with a JVM argument:
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File tools\m57-conformance.ps1 -ComplementaryPath <pack-or-relative-name> -IndependentPath <pack-or-relative-name> -ComplementaryVersion <version> -IndependentVersion <version>`
+```
+-Dchimera.option.<OPTION_NAME>=<value>
+```
 
-M6.5 uses the exact Complementary Reimagined r5.8.1 and BSL v10.1.3 packs. It compares deterministic static reports with user-provided Chimera and Sodium + Iris reference evidence. It does not add compatibility behavior and does not claim universal visual or performance parity. Run it explicitly with Prism Java 21:
+For example, `-Dchimera.option.COLORED_LIGHTING=128` turns on Complementary's colored lighting.
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File tools\m65-conformance.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion r5.8.1 -BslVersion v10.1.3`
+## Compatibility
 
-M6.5 capture and performance files stay outside the committed source tree. A runtime-installed program must be proven by the Minecraft log and RenderDoc evidence; static eligibility alone is not an installation claim. Use identical scene state and camera for Chimera and Sodium + Iris references, and report performance as three fixed-window medians with RenderDoc structural counts.
+| Pack | Status |
+|---|---|
+| Complementary Reimagined | Works. Some effects are missing; see the list below. |
+| BSL | Works. Some effects are missing; see the list below. |
+| Bliss | Loads, but many of its programs still fall back to vanilla. |
+| MakeUp UltraFast | Not working yet; fixes are in progress. |
+| Solas, Photon | Load, but render vanilla. |
 
-M7.0 keeps the same exact Complementary Reimagined r5.8.1 and BSL v10.1.3 pack fingerprints and adds a capability matrix. Static eligibility, runtime installation, RenderDoc execution, and visual parity are separate states. Run the strict baseline check with the saved evidence paths:
+Not supported yet:
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File tools\m70-parity-baseline.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion r5.8.1 -BslVersion v10.1.3 -ComplementaryLogPath <log-path> -BslLogPath <log-path> -ComplementaryCapturePath <capture-path> -BslCapturePath <capture-path>`
+- Some programs still draw vanilla: the held hand, the sky, rain and snow.
+- A pack that leaves out an optional program doesn't fall back to a related program the way it does in Iris.
+- Distant Horizons programs.
+- Compute shaders other than `shadowcomp`.
+- Geometry and tessellation shaders.
+- An in-game screen for pack settings.
 
-The M7.0 check requires one installed program and one fallback program for each pack, verifies the M6.5 source and report baseline, and checks ZIP and directory loading. It records RenderDoc execution as review-required until the capture structure is confirmed. It does not claim visual parity or performance parity. Use `-EmitBaseline` only when intentionally replacing `testpacks\baselines\m7_0.json` after reviewing the generated evidence.
+When Chimera can't run part of a pack, it draws that part the vanilla way instead of crashing or showing garbage. If a whole pack can't run safely, Chimera falls back to the vanilla renderer.
 
-M7.1 adds one load-time resolution plan. It selects a dimension source, applies defaults from `shaders.properties` and authored shader options, records profiles and feature flags, evaluates program enable expressions, and records standard-family fallback aliases. Alias records are not routed through an incompatible adapter. Run the checked-in fixture with Prism Java 21:
+## Building from source
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File tools\m71-conformance.ps1 -ComplementaryPath <pack-or-relative-name> -BslPath <pack-or-relative-name> -ComplementaryVersion <version> -BslVersion <version>`
+You need JDK 21.
 
-The M7.1 wrapper requires explicit real-pack paths and versions when strict external checks are requested. The ordinary `m71ConformanceTest` task runs the local resolution fixture and does not require external packs. Resolution fingerprints are evidence of deterministic pack interpretation; they do not claim that an aliased family is installed or that the pack has visual parity.
+```bash
+./gradlew build
+```
 
-M7.2 extends the existing load-time token translator. Run `m72ConformanceTest` for legacy declaration, nested texture, shadow lookup, output, interface, and fail-closed fallback checks. It remains source-agnostic and does not add modern GLSL, new renderer families, or resource semantics outside the existing bridge.
+The mod jar is written to `build/libs/`.
 
-M7.3 extends the same one-frame snapshot used by pack UBO suppliers. Run `m73ConformanceTest` for Iris-style time, camera, matrix, dimension, weather, fog, fluid, lighting, smoothing, and bounded scalar-value checks. Values without an authoritative source remain explicit defaults or fallback. `centerDepthSmooth` and previous depth or render-target history remain deferred to the temporal-resource work.
-
-M7.4 runs `m74ConformanceTest` for the authoritative target and depth graph. The fixture checks target formats, relative sizes, clear and persistent state, output routes, flips, logical validity, device-aware MRT limits, reversed-Z depth conversion, and failure fallback. Runtime resources are recreated only at existing GPU-idle boundaries. Run it with Prism Java 21 before staging:
-
-`$env:JAVA_HOME = '<Prism Java 21 directory>'; .\gradlew.bat m74ConformanceTest --no-daemon`
-
-M7.4 supports logical `colortex0` through `colortex7` and uses the device color-attachment limit up to the isolated eight-target bridge. `depthtex0`, `depthtex1`, and `depthtex2` use distinct pack bindings 6, 12, and 13. M7.7 adds the schedule that decides when those depth snapshots are captured and when post stages execute.
-
-M7.5 runs `m75ConformanceTest` for deterministic sampled-resource plans. The fixture checks stage-specific and global texture precedence, safe PNG loading, noise and custom textures, standard target/depth/shadow aliases, stable selector slots 14 through 21, and per-program fallback for unavailable resources. Pack-owned sampled resources are loaded once per pack session and released at the existing GPU-idle cleanup boundary. M8.6a adds a bounded custom 3D image and `shadowcomp` storage-image bridge; general storage buffers, arbitrary compute, and unsupported writable resources remain explicit fallback.
-
-M7.6 runs `m76ConformanceTest` for the table-driven family adapter registry and local legacy fixtures. `gbuffers_entities`, `gbuffers_block`, and `gbuffers_hand` use the append-only extended entity format and guarded host-state draw seam. `gbuffers_particles` uses the host particle format and a separate guarded draw window. Sky, cloud, weather, glowing, outlines, and other unimplemented lanes remain explicit host fallback. The slice does not change terrain, water, shadow, post targets, frame timing, or lifecycle ownership.
-
-M8.4 runs `m84ConformanceTest` for the next world-family lanes. Translucent and glowing entity programs reuse the extended entity format and select the host entity render state. `gbuffers_hand_water` uses the hand adapter when the camera is in water and records that selection limit. Translucent particles select the host opaque or translucent particle state, and weather uses a dedicated `WeatherEffectRenderer` draw window. The host crumbling format is not treated as an entity format, so `gbuffers_damagedblock` stays explicit identity fallback until a matching adapter exists. Run the harness with Prism Java 21 before staging. Runtime qualification must prove family-specific pipeline selection, host state inheritance, preserved host fallback, and no state leakage across F8, reload, and dimension transitions.
-
-M7.7 runs `m77ConformanceTest` for the immutable frame schedule and temporal validity state. Deferred stages run at the early post seam, composite stages run after world rendering, depthtex1 is captured before translucent terrain, depthtex2 is captured before hand submission, and final runs after hand and before GUI. `PackPostTargets` and `PackDepthTargets` remain the resource owners; the schedule only orders their existing seams. Unavailable targets and failed stages remain identity fallback, and previous-target validity is reset at pack and level boundaries.
-
-M7.8 is a qualification gate, not a renderer expansion. It checks exact Complementary Reimagined r5.8.1 and BSL v10.1.3 packs through static plan eligibility, runtime installation, RenderDoc execution, and optional Sodium + Iris reference evidence. The qualification is currently deferred because the Sodium + Iris instance does not yet provide a compatible reference capture path. Run the strict check with `tools\m78-qualification.ps1`, providing the two pack paths, versions, Chimera logs, and Chimera captures. Add `-RequireReference` only when matching Sodium + Iris captures are available. The harness never claims visual parity from static eligibility alone, and performance comparison remains deferred to `TASK-172`.
-
-M8.0 extends the shared load-time translator for the measured modern post syntax used by Complementary Reimagined r5.8.1 and BSL v10.1.3. Run `m80ConformanceTest` for the original modern post fixture and earlier baselines. GLSL 330 and 400 support is bounded to the existing post adapter; unsupported families, resources, and syntax remain explicit identity fallback.
-
-M8.1 extends the same shared plan to a bounded modern `gbuffers_terrain` and `gbuffers_water` material contract. It keeps the legacy 24-byte terrain path unchanged and selects a pack-session 36-byte or 40-byte append-only format for modern material inputs. The bridge supplies block identity, midpoint UV, midpoint block data, lightmap data, and a truthful normal/tangent fallback; `separateAo` is carried explicitly while host color ownership remains visible as a deviation. MRT, modern shadow stages, writable resources, and unsupported material declarations remain identity fallback. Run `m81ConformanceTest` before staging. Runtime qualification must prove the terrain and water pipeline, vertex stride, descriptor bindings, and safe fallback in Minecraft and RenderDoc.
-
-M8.2 adds a session-owned `R32_SFLOAT` coverage image and a guarded two-attachment terrain path. Pack opaque terrain writes its color and coverage, then a generated scene-seed pass copies host HDR pixels only where pack geometry did not write. This prevents host geometry from repainting pack geometry when the later post chain starts. Water and other families remain on their existing host/HDR seams until their adapters can provide the same coverage contract. Run `m82ConformanceTest` before staging and verify the coverage attachment and scene-seed pass in RenderDoc.
-
-M8.3 extends the shared translator and shadow plan for the measured modern shadow subset. Terrain and cutout terrain use the pack shadow pipeline, `shadowDistance`, `shadowDistanceRenderMul`, `sunPathRotation`, and `sunPathOffset` affect the authoritative light matrices, and pack `shadowtex0` samples the engine shadow depth attachment with a comparison sampler for `sampler2DShadow` lookups. The converted shadow vertex runs the authored entry point unchanged and then maps its final clip output from the OpenGL range into the Vulkan window depth the pack receivers expect. Entity and block-entity shadow casters, colored shadows, translucent shadow copies, and end-of-frame shadow scheduling remain explicit fallback or later work. Run `m83ConformanceTest` before staging and verify the pack shadow pipeline and the sampled shadow depth resource in RenderDoc.
-
-M8.5a extends the shared plan to paired real-pack terrain programs. It supports the measured modern terrain vertex and fragment interface, append-only material inputs, geometry `DRAWBUFFERS` or `RENDERTARGETS` routes, and device-safe terrain MRT without changing the legacy 24-byte path. Common real-pack format approximations are explicit deviations. Run `m85ConformanceTest` with Prism Java 21. To qualify the two local reference packs, pass `-Pm85Complementary <path>` and `-Pm85Bsl <path>`; the task requires both terrain programs to be conversion-eligible. Runtime proof still requires Minecraft logs and RenderDoc captures. M8.5b adds `m85bConformanceTest` for the legacy sky and cloud contracts; unsupported host variants remain explicit fallback.
-
-M8.6a adds the first bounded advanced-resource bridge. `m86ConformanceTest` checks deterministic Iris custom-image declarations, true 3D storage-image allocation plans, shared preprocessing of included `shadowcomp.csh`, bounded workgroup validation, and explicit storage-buffer fallback. The runtime bridge supports only validated 3D images and the exact `shadowcomp` image load/store contract. It is session-owned, synchronized at the shadow seam, and cleaned up at the existing GPU-idle boundary. General SSBOs, arbitrary compute programs, writable image formats outside the supported table, and unsupported image dependencies remain identity fallback. Real-pack advanced settings are opt-in and generic: pass `-Dchimera.option.NAME=value` to the Minecraft Java process. For example, use `-Dchimera.option.COLORED_LIGHTING=128` for Complementary, or `-Dchimera.option.MULTICOLORED_BLOCKLIGHT=1 -Dchimera.option.MCBL_DISTANCE=128 -Dchimera.option.MCBL_HALF_HEIGHT=1` for BSL. The override is reported and applies before source preparation; authored defaults remain unchanged when it is absent. Use a small 128 setting for the first verification run.
-Persistent advanced images and post targets that are read before their first write are zero-seeded once when allocated. Later frames preserve their contents when `clear=false`; `clear=true` still clears every frame.
-
-M8.6b adds the bounded storage-buffer bridge. `m86bConformanceTest` checks active `bufferObject.N` declarations, std430 block resolution, collision-free dynamic storage descriptors, exact ranges, one-time zero initialization, and the shadow-write to later-graphics-read barrier. The positive real-pack setting is Complementary with `-Dchimera.option.COLORED_LIGHTING=128 -Dchimera.option.WORLD_SPACE_REFLECTIONS=1`; BSL remains the M8.6a regression case. Relative buffer declarations, buffer arrays, arbitrary storage schedules, `WORLD_SPACE_PLAYER_REF`, and unrelated unsupported blocks remain explicit fallback. A storage buffer is never replaced by a UBO, a dummy allocation, or a stale host descriptor.
-
-For headless runtime verification, run `powershell -NoProfile -ExecutionPolicy Bypass -File tools\\launch-chimera-world.ps1`. The script uses Prism Launcher world Quick Play, waits for `Chimera Dev` to be active, and prints the Minecraft PID for RenderDoc injection. It does not edit the instance configuration.
-
-## Runtime pack switching
-
-M6.6 adds client-only commands. The `-Dchimera.pack` JVM property remains the startup default. Runtime commands do not need a Minecraft restart.
-
-Use `/chimera pack list` to list direct shaderpacks-directory children. Use `/chimera pack load <name-or-path>` to queue a directory or ZIP. Names resolve in the instance `minecraft/shaderpacks` directory; explicit local paths may be absolute or relative to the game directory. Use `/chimera pack reload` to rebuild the active selection, `/chimera pack off` to return to vanilla rendering, and `/chimera pack status` to inspect the active and pending selections.
-
-Pack changes apply at the next safe command-buffer boundary. Chimera waits for Vulkan idle before replacing pack resources, so a short frame pause is expected. With no pack loaded, Chimera leaves the frame to VulkanMod's vanilla renderer, as Iris does with shaders off. A failed replacement restores the previous pack when possible; the host renderer is used only if restoration also fails.
+Bug reports are welcome. Please include your `latest.log`, the pack name and version, and a screenshot. A [RenderDoc](https://renderdoc.org/) capture helps a lot with rendering bugs.
 
 ## License
 
-[MIT](LICENSE). Links against VulkanMod (LGPL-3.0) as an unmodified library.
+[MIT](LICENSE). Chimera uses VulkanMod (LGPL-3.0) as an unmodified dependency.
