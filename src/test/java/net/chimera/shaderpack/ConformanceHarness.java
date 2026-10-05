@@ -96,6 +96,7 @@ public final class ConformanceHarness {
                 "horizon rim must close");
         assertTrue(net.chimera.render.ChimeraHorizonRenderer.vertices(8)[3] == 128, "horizon must track render distance");
         verifyHorizonSubmission();
+        verifyEndPortalHooks();
 
         Path root = Files.createTempDirectory("chimera-rain-contract-");
         Path shaders = Files.createDirectory(root.resolve("shaders"));
@@ -356,6 +357,38 @@ public final class ConformanceHarness {
             }
         }
         assertEquals(1, nonIndexed, "horizon must submit one non-indexed fan");
+    }
+
+    /**
+     * The end portal follows Iris: an entitySolid cube emitted from the native submit lambda,
+     * routed as block-entity custom geometry. Pin the native seams those hooks rely on.
+     */
+    private static void verifyEndPortalHooks() throws IOException {
+        var portal = nativeClass("net/minecraft/client/renderer/blockentity/AbstractEndPortalRenderer");
+        assertTrue(portal.methods.stream().anyMatch(method -> method.name.equals("method_73539")
+                        && method.desc.equals("(Lnet/minecraft/client/renderer/blockentity/state/EndPortalRenderState;"
+                        + "Lcom/mojang/blaze3d/vertex/PoseStack$Pose;Lcom/mojang/blaze3d/vertex/VertexConsumer;)V")),
+                "end portal geometry lambda changed");
+        var submit = portal.methods.stream().filter(method -> method.name.equals("submit")
+                && method.desc.startsWith("(Lnet/minecraft/client/renderer/blockentity/state/EndPortalRenderState;"))
+                .findFirst().orElseThrow();
+        boolean custom = false;
+        for (var instruction : submit.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                    && call.name.equals("submitCustomGeometry")) custom = true;
+        }
+        assertTrue(custom, "end portal must submit custom geometry for the block-entity custom batch");
+        for (String renderer : List.of("net/minecraft/client/renderer/blockentity/AbstractEndPortalRenderer",
+                "net/minecraft/client/renderer/blockentity/TheEndGatewayRenderer")) {
+            assertTrue(nativeClass(renderer).methods.stream().anyMatch(method -> method.name.equals("renderType")
+                            && method.desc.equals("()Lnet/minecraft/client/renderer/rendertype/RenderType;")),
+                    renderer + " renderType seam changed");
+        }
+        assertTrue(nativeClass("net/minecraft/client/renderer/feature/CustomFeatureRenderer$Storage").methods.stream()
+                        .anyMatch(method -> method.name.equals("add") && method.desc.equals(
+                                "(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/rendertype/RenderType;"
+                                        + "Lnet/minecraft/client/renderer/SubmitNodeCollector$CustomGeometryRenderer;)V")),
+                "custom geometry storage seam changed");
     }
 
     private static org.objectweb.asm.tree.ClassNode nativeClass(String name) throws IOException {

@@ -123,6 +123,9 @@ public final class PackUniformProvider {
 
     public static float currentSunPathRotation() { return INSTANCE.frameState.sunPathRotation(); }
 
+    /** Iris SystemTimeUniforms.TIMER: the pack clock, which keeps running while paused. */
+    public static float currentFrameTimeCounter() { return INSTANCE.frameState.frameTimeCounter(); }
+
     /** Camera-relative world view, without a native celestial pose or model translation. */
     public static Matrix4f currentSkyModelView() { return INSTANCE.frameState.modelView(); }
 

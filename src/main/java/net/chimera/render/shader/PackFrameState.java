@@ -244,6 +244,7 @@ final class PackFrameState {
     }
 
     float sunPathRotation() { return sunPathRotation; }
+    float frameTimeCounter() { return frameTimeCounter; }
 
     /** World-space light direction the shadow matrix looks along, derived with the uniforms. */
     Vector3f sunLightVector() {
