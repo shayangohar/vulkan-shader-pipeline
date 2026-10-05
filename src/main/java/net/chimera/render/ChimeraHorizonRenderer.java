@@ -20,12 +20,14 @@ import java.util.OptionalInt;
 public final class ChimeraHorizonRenderer implements AutoCloseable {
     private GpuBuffer buffer;
     private int radius = -1;
-    private int indexCount;
+
+    /** Apex plus a closed eight-segment rim, drawn as one fan. */
+    public static final int VERTEX_COUNT = 10;
 
     /** Same radius, winding and fan topology as Iris HorizonRenderer. */
     public static float[] vertices(int renderDistance) {
         int radius = Math.min(renderDistance * 16, 256);
-        float[] vertices = new float[30];
+        float[] vertices = new float[VERTEX_COUNT * 3];
         vertices[1] = -16;
         for (int i = 0; i <= 8; i++) {
             double angle = -i * Math.PI / 4;
@@ -48,13 +50,10 @@ public final class ChimeraHorizonRenderer implements AutoCloseable {
             for (int i = 0; i < vertices.length; i += 3) builder.addVertex(vertices[i], vertices[i + 1], vertices[i + 2]);
             try (var mesh = builder.buildOrThrow()) {
                 buffer = RenderSystem.getDevice().createBuffer(() -> "Chimera horizon", GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, mesh.vertexBuffer());
-                indexCount = mesh.drawState().indexCount();
             }
             Tesselator.getInstance().clear();
             radius = nextRadius;
         }
-        var indices = RenderSystem.getSequentialBuffer(VertexFormat.Mode.TRIANGLE_FAN);
-        var indexBuffer = indices.getBuffer(indexCount);
         var fog = VRenderSystem.getShaderFogColor();
         // Alpha one is part of Iris's contract; zero breaks sky reflections in some packs.
         var transform = RenderSystem.getDynamicUniforms().writeTransform(PackUniformProvider.currentSkyModelView(),
@@ -66,9 +65,11 @@ public final class ChimeraHorizonRenderer implements AutoCloseable {
             pass.setUniform("DynamicTransforms", transform);
             pass.setPipeline(RenderPipelines.SKY);
             pass.setVertexBuffer(0, buffer);
-            pass.setIndexBuffer(indexBuffer, indices.type());
-            // Existing sky draw hook owns authored targets, formats, blending and commit.
-            pass.drawIndexed(0, 0, indexCount, 1);
+            // Non-indexed on purpose: VulkanMod draws fans as triangle lists and expands them only
+            // through its own auto-index buffer (10 vertices -> 24 indices). Iris's indexed GL fan
+            // call would hand Vulkan 10 list indices, i.e. 3 triangles. The sky draw hook owns
+            // authored targets, formats, blending and commit.
+            pass.draw(0, VERTEX_COUNT);
         }
     }
 

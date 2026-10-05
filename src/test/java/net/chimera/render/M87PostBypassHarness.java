@@ -7,11 +7,11 @@ import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 
 /**
- * Mask-critical bypass regression fixture (DOC-348 repair 3): an
- * intentionally missing mask-critical family blocks the post chain while
- * the pack composite stays installed. The world resolve must then present
- * through the host identity pipeline, which never requests pack auxiliary
- * samplers, and the report must carry the post stages as fallback.
+ * Post bypass regression fixture (DOC-348 repair 3): when pack post cannot
+ * run, presentation goes through the host identity pipeline, which never
+ * requests pack auxiliary samplers. A missing mask-critical family now makes
+ * the whole frame host-rendered (DOC-497 B), so the report carries every
+ * program as fallback, not just post.
  */
 public final class M87PostBypassHarness {
     private M87PostBypassHarness() {}
@@ -82,8 +82,9 @@ public final class M87PostBypassHarness {
             assertTrue(transaction.containsSlot(0), "identity resolve missed HDR slot 0");
         }
 
-        // The report carries blocked post stages as fallback while installed
-        // non-post programs keep their disposition.
+        // A missing mask-critical family makes the whole frame host-rendered
+        // (DOC-497 B): installed geometry must not keep writing targets that
+        // nothing presents, so every program is carried as fallback.
         ConformanceReport report = new ConformanceReport("bypass-fixture", false, List.of(),
                 Map.of(), List.of(), List.of());
         report.addProgram(new ConformanceReport.ProgramReport("composite", "post", "glsl",
@@ -98,22 +99,14 @@ public final class M87PostBypassHarness {
                 List.of("vertex", "fragment"), Map.of(), List.of("texture"),
                 List.of(), List.of(0), ConformanceReport.SupportStatus.SUPPORTED,
                 ConformanceReport.RuntimeDisposition.INSTALLED, List.of()));
-        report.addDeviation("POST_CHAIN_FAMILY_INCOMPLETE:gbuffers_block");
-        report.markRuntime("composite", ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                "POST_CHAIN_FAMILY_INCOMPLETE");
-        report.markRuntime("final", ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                "POST_CHAIN_FAMILY_INCOMPLETE");
-        assertTrue(report.deviations().contains("POST_CHAIN_FAMILY_INCOMPLETE:gbuffers_block"),
-                "bypass deviation missing: " + report.deviations());
-        assertTrue(report.program("composite").runtime()
-                        == ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK
-                        && report.program("final").runtime()
-                        == ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                "blocked post stages not carried as fallback");
-        assertTrue(report.program("gbuffers_terrain").runtime()
-                        == ConformanceReport.RuntimeDisposition.INSTALLED
-                        && report.program("gbuffers_terrain").deviations().isEmpty(),
-                "bypass tainted an installed non-post program");
+        report.markFrameFallback("PACK_FRAME_UNSUPPORTED:gbuffers_block", "PACK_FRAME_UNSUPPORTED");
+        assertTrue(report.deviations().contains("PACK_FRAME_UNSUPPORTED:gbuffers_block"),
+                "frame fallback deviation missing: " + report.deviations());
+        for (String name : List.of("composite", "final", "gbuffers_terrain")) {
+            assertTrue(report.program(name).runtime() == ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK
+                            && report.program(name).deviations().contains("PACK_FRAME_UNSUPPORTED"),
+                    "half-installed frame left " + name + " active");
+        }
         System.out.println("[chimera] m8.7 post bypass conformance: PASS");
     }
 

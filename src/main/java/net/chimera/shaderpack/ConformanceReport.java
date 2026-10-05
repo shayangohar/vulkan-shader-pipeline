@@ -181,6 +181,20 @@ public final class ConformanceReport {
         }
     }
 
+    /**
+     * The whole pack frame runs on the host: every program that was installed
+     * or still pending is recorded as fallback for one session-level reason.
+     */
+    public void markFrameFallback(String deviation, String reason) {
+        addDeviation(deviation);
+        for (ProgramReport program : List.copyOf(programs.values())) {
+            if (program.runtime() == RuntimeDisposition.NOT_ATTEMPTED
+                    || program.runtime() == RuntimeDisposition.INSTALLED) {
+                markRuntime(program.name(), RuntimeDisposition.IDENTITY_FALLBACK, reason);
+            }
+        }
+    }
+
     /** Concise startup summary that does not change the stable JSON schema. */
     public String runtimeSummary() {
         int installed = 0;

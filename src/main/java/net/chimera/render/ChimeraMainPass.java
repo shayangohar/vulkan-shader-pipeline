@@ -220,11 +220,12 @@ public class ChimeraMainPass implements MainPass {
     /** Set only when the target graph itself cannot be configured. */
     private boolean packPostChainRejected;
     /**
-     * Set when the mask-critical family contract fails at install. Target
-     * reconfiguration (resize) honors it instead of recomputing post
-     * activity from targets alone; only a fresh install clears it.
+     * Mask-critical families this pack session could not install, or null.
+     * While set, the session loads as if no pack were selected, so resizes and
+     * screen resets cannot rebuild a half-installed frame. A pack change,
+     * reload or dimension variant clears it and re-evaluates.
      */
-    private boolean postChainFamilyBlocked;
+    private String packFrameUnsupported;
     /** True after the current frame has opened the target executor state. */
     private boolean packPostFrameStarted;
     private boolean packEarlyPostCompleted;
@@ -779,6 +780,9 @@ public class ChimeraMainPass implements MainPass {
         String pending = pendingRequest == null
                 ? (hasPendingPackVariant() ? "dimension " + this.pendingPackDimension : "none")
                 : packLabel(pendingRequest.path());
+        if (this.packFrameUnsupported != null) {
+            active += " (unsupported: " + this.packFrameUnsupported + ")";
+        }
         return "Chimera pack: active=" + active
                 + ", dimension=" + this.currentDimension
                 + ", pending=" + pending;
@@ -2181,7 +2185,6 @@ public class ChimeraMainPass implements MainPass {
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
         this.packCloudsDrawNothing = false;
-        this.postChainFamilyBlocked = false;
         this.shadowCutoutDispositionLogged = false;
         this.shadowFrameReady = false;
         this.shadowTransitionFallbackLogged = false;
@@ -2303,6 +2306,7 @@ public class ChimeraMainPass implements MainPass {
 
     /** Clears all pack-owned objects and closes the current source after the idle wait. */
     private void preparePackSessionReplacement(boolean waitForIdle) {
+        this.packFrameUnsupported = null;
         clearPackOverrides();
         this.levelPhase = false;
         this.pendingDepthClear = false;
@@ -2369,6 +2373,7 @@ public class ChimeraMainPass implements MainPass {
             this.shadowPending = false;
             waitForImmediateDestruction("dimension variant " + requested);
             cleanUpPackVariant();
+            this.packFrameUnsupported = null;
             this.packSource.selectDimension(requested);
             createResources();
             this.pendingPackDimension = null;
@@ -2423,15 +2428,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.conformanceReport == null) {
             return;
         }
-        this.conformanceReport.addDeviation("PACK_VARIANT_REBUILD_FAILED");
-        for (ConformanceReport.ProgramReport program : this.conformanceReport.programs()) {
-            if (program.runtime() == ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED
-                    || program.runtime() == ConformanceReport.RuntimeDisposition.INSTALLED) {
-                this.conformanceReport.markRuntime(program.name(),
-                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "PACK_VARIANT_REBUILD_FAILED");
-            }
-        }
+        this.conformanceReport.markFrameFallback("PACK_VARIANT_REBUILD_FAILED", "PACK_VARIANT_REBUILD_FAILED");
         LOGGER.info("[chimera] conformance {}", this.conformanceReport.toJson());
     }
 
@@ -2516,8 +2513,7 @@ public class ChimeraMainPass implements MainPass {
             this.packDepthTargets.configure(width, height, this.packTargetGraph.depth());
             this.packTargetResourcesReady = this.packPostTargets.configure(this.packTargetGraph);
             this.packPostChainActive = this.packTargetResourcesReady
-                    && !this.packTargetGraph.steps().isEmpty()
-                    && !this.postChainFamilyBlocked;
+                    && !this.packTargetGraph.steps().isEmpty();
             if (this.packPostChainActive) {
                 LOGGER.info("[chimera] pack frame schedule: phases={}, prepare={}, early={}, late={}, final={}, depth={}, deviations={}",
                         this.packFrameSchedule.phases(),
@@ -2747,8 +2743,8 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
         Path dir = this.packPath;
-        if (dir == null) {
-            LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
+        if (dir == null || this.packFrameUnsupported != null) {
+            if (dir == null) LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             PackUniformProvider.installRuntimeSettings(null);
@@ -2949,7 +2945,6 @@ public class ChimeraMainPass implements MainPass {
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
         this.packCloudsDrawNothing = false;
-        this.postChainFamilyBlocked = false;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = true;
 
@@ -3487,7 +3482,9 @@ public class ChimeraMainPass implements MainPass {
                 this.packBlockPipeline == null ? "none"
                         :                 this.packBlockPipeline.outputPlan() == null
                         ? List.of(0) : this.packBlockPipeline.outputPlan().targetSlots());
-        enforceMaskCriticalFamilyContract();
+        if (!enforceMaskCriticalFamilyContract()) {
+            return;
+        }
         ChimeraSkyBridge.install(this.packSkyBasicPipeline, this.packSkyTexturedPipeline,
                 this.packCloudPipeline, this.packCloudsDrawNothing);
         this.packPostStages.sort(Comparator.comparing(
@@ -3542,41 +3539,39 @@ public class ChimeraMainPass implements MainPass {
                 }
             };
     /**
-     * Mask-critical family contract (DOC-338 repair 4). Entity and block
-     * draws cover world pixels the pack temporal pass classifies by
-     * auxiliary material metadata. When either authored family stays
-     * host-fallback, its pixels would carry stale metadata under pack
-     * post, so the post chain is rejected loudly instead of running a
-     * mixed frame. Terrain and installed families keep rendering and
-     * presentation falls back to the identity path. Loud by design: mixed
-     * frames ghost, silent fallbacks lie.
+     * Mask-critical family contract (DOC-338 repair 4, DOC-497 B). Entity and
+     * block draws cover world pixels the pack's post passes classify by
+     * material metadata, and pack geometry writes authored targets only post
+     * presents. A frame missing either family therefore has no coherent pack
+     * form: post over host entities ghosts, and pack geometry without post is
+     * invisible. The whole session falls back to the host frame, as if no pack
+     * were selected, and says why. Returns false when the session was released.
      */
-    private void enforceMaskCriticalFamilyContract() {
+    private boolean enforceMaskCriticalFamilyContract() {
         List<String> missing = maskCriticalFamilyFallback();
         if (missing.isEmpty()) {
             LOGGER.info("[chimera] family bridge: mask-critical contract holds "
                     + "(entity and block installed or not authored)");
-            return;
+            return true;
         }
-        this.postChainFamilyBlocked = true;
-        this.packPostChainActive = false;
+        this.packFrameUnsupported = String.join(", ", missing);
         if (this.conformanceReport != null) {
-            this.conformanceReport.addDeviation(
-                    "POST_CHAIN_FAMILY_INCOMPLETE:" + String.join(",", missing));
-            for (PackPipelines.PackPost post : this.packPostStages) {
-                this.conformanceReport.markRuntime(post.name(),
-                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "POST_CHAIN_FAMILY_INCOMPLETE");
-            }
-            if (this.packFinalPost != null) {
-                this.conformanceReport.markRuntime(this.packFinalPost.name(),
-                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "POST_CHAIN_FAMILY_INCOMPLETE");
-            }
+            this.conformanceReport.markFrameFallback(
+                    "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing), "PACK_FRAME_UNSUPPORTED");
+            LOGGER.info("[chimera] conformance {}", this.conformanceReport.toJson());
+            logConformanceSummary();
         }
-        LOGGER.warn("[chimera] pack post chain rejected: mask-critical families fallback ({}); "
-                        + "terrain renders, presentation uses the identity path",
-                String.join(",", missing));
+        LOGGER.warn("[chimera] pack frame unsupported: {} could not install; vanilla rendering for {}",
+                this.packFrameUnsupported, packLabel(this.packPath));
+        // Nothing built this session has been submitted yet, so release it directly.
+        cleanUpPackVariant();
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.gui != null) {
+            minecraft.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+                    "[Chimera] " + packLabel(this.packPath) + " is not supported yet ("
+                            + this.packFrameUnsupported + " could not load). Rendering vanilla. See latest.log."));
+        }
+        return false;
     }
 
     /**

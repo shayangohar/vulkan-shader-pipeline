@@ -95,6 +95,7 @@ public final class ConformanceHarness {
         assertTrue(Math.abs(cone[3] - cone[27]) < 0.001 && Math.abs(cone[5] - cone[29]) < 0.001,
                 "horizon rim must close");
         assertTrue(net.chimera.render.ChimeraHorizonRenderer.vertices(8)[3] == 128, "horizon must track render distance");
+        verifyHorizonSubmission();
 
         Path root = Files.createTempDirectory("chimera-rain-contract-");
         Path shaders = Files.createDirectory(root.resolve("shaders"));
@@ -329,6 +330,32 @@ public final class ConformanceHarness {
             }
         }
         assertTrue(handScope && attachments, "immediate hand draw must own the authored attachment window");
+    }
+
+    /**
+     * VulkanMod draws fans as triangle lists. An explicit index buffer is passed through unchanged,
+     * so the 10-vertex horizon must be submitted non-indexed to get the native 24-index expansion.
+     */
+    private static void verifyHorizonSubmission() throws IOException {
+        int vertices = net.chimera.render.ChimeraHorizonRenderer.VERTEX_COUNT;
+        assertEquals(com.mojang.blaze3d.vertex.VertexFormat.Mode.TRIANGLE_FAN,
+                net.minecraft.client.renderer.RenderPipelines.SKY.getVertexFormatMode(),
+                "horizon relies on the SKY pipeline's fan auto-index path");
+        assertEquals(24, net.vulkanmod.vulkan.memory.buffer.index.AutoIndexBuffer.getIndexCount(
+                        net.vulkanmod.vulkan.memory.buffer.index.AutoIndexBuffer.DrawType.TRIANGLE_FAN, vertices),
+                "horizon fan must expand to eight triangles");
+        var draw = nativeClass("net/chimera/render/ChimeraHorizonRenderer").methods.stream()
+                .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
+        int nonIndexed = 0;
+        for (var instruction : draw.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                    && call.owner.equals("com/mojang/blaze3d/systems/RenderPass")) {
+                assertTrue(!call.name.equals("drawIndexed") && !call.name.equals("setIndexBuffer"),
+                        "indexed horizon submission bypasses VulkanMod's fan expansion");
+                if (call.name.equals("draw")) nonIndexed++;
+            }
+        }
+        assertEquals(1, nonIndexed, "horizon must submit one non-indexed fan");
     }
 
     private static org.objectweb.asm.tree.ClassNode nativeClass(String name) throws IOException {
