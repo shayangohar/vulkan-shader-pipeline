@@ -1,7 +1,6 @@
 package net.chimera.render.shader;
 
 import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.ChimeraMod;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.chimera.shaderpack.PackPipelines;
@@ -13,8 +12,8 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
  * only the host pipelines whose topology and depth contract are known.
  */
 public final class ChimeraSkyBridge {
-    private static PackPipelines.PackSky skyBasic;
-    private static PackPipelines.PackSky skyTextured;
+    private static PackPipelines.PackSkyFamily skyBasic;
+    private static PackPipelines.PackSkyFamily skyTextured;
     private static PackPipelines.PackSky clouds;
     private static boolean cloudsDrawNothing;
     private static PackPipelines.PackSky active;
@@ -23,8 +22,8 @@ public final class ChimeraSkyBridge {
 
     private ChimeraSkyBridge() {}
 
-    public static void install(PackPipelines.PackSky basic,
-                               PackPipelines.PackSky textured,
+    public static void install(PackPipelines.PackSkyFamily basic,
+                               PackPipelines.PackSkyFamily textured,
                                PackPipelines.PackSky cloud,
                                boolean authoredCloudsDrawNothing) {
         skyBasic = basic;
@@ -71,16 +70,24 @@ public final class ChimeraSkyBridge {
         if (!enabled || host == null) {
             return false;
         }
-        PackPipelines.PackSky selected = pipelineFor(host);
-        if (selected == null) {
-            return false;
-        }
-        active = selected;
-        return true;
+        active = pipelineFor(host);
+        return active != null;
     }
 
     public static GraphicsPipeline pipeline() {
         return active == null ? null : active.pipeline();
+    }
+
+    public static boolean hasBasicSky() {
+        return enabled && skyBasic != null;
+    }
+
+    public static net.chimera.shaderpack.GeometryOutputPlan outputPlan() {
+        return active == null ? null : active.outputPlan();
+    }
+
+    public static boolean isCloudPipeline(net.vulkanmod.vulkan.shader.Pipeline pipeline) {
+        return enabled && clouds != null && pipeline == clouds.pipeline();
     }
 
     /** Replaces VulkanMod's direct cloud pipeline bind while preserving its draw state. */
@@ -100,9 +107,11 @@ public final class ChimeraSkyBridge {
 
     private static PackPipelines.PackSky pipelineFor(RenderPipeline host) {
         if (host == RenderPipelines.SKY || host == RenderPipelines.SUNRISE_SUNSET
-                || host == RenderPipelines.END_SKY || host == RenderPipelines.CELESTIAL
                 || host == RenderPipelines.STARS) {
-            return matchingSkyPipeline(host.getVertexFormat());
+            return skyBasic == null ? null : skyBasic.forFormat(host.getVertexFormat());
+        }
+        if (host == RenderPipelines.END_SKY || host == RenderPipelines.CELESTIAL) {
+            return skyTextured == null ? null : skyTextured.forFormat(host.getVertexFormat());
         }
         if (host == RenderPipelines.CLOUDS || host == RenderPipelines.FLAT_CLOUDS) {
             return clouds != null && clouds.vertexFormat() == host.getVertexFormat()
@@ -111,13 +120,4 @@ public final class ChimeraSkyBridge {
         return null;
     }
 
-    private static PackPipelines.PackSky matchingSkyPipeline(VertexFormat format) {
-        if (skyBasic != null && skyBasic.vertexFormat() == format) {
-            return skyBasic;
-        }
-        if (skyTextured != null && skyTextured.vertexFormat() == format) {
-            return skyTextured;
-        }
-        return null;
-    }
 }

@@ -55,7 +55,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
         if (!ChimeraEntityBridge.shouldUsePackPipeline(hostPipeline)) {
             return;
         }
-        boolean perDrawTransforms = ChimeraEntityBridge.requiresExtendedVertexFormat();
+        boolean perDrawTransforms = ChimeraEntityBridge.requiresHostTransforms();
         if (!renderPass.hasDepthTexture()) {
             // A guarded family inherits the host depth state, and a depthless
             // pass can be a screen, inventory, or other overlay draw that
@@ -125,8 +125,22 @@ public abstract class ChimeraVkCommandEncoderMixin {
                 dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
-        renderer.uploadAndBindUBOs(packPipeline);
-        PackUniformProvider.restoreFrameAtlasSize();
+        var previousPhase = PackUniformProvider.setRenderingPhase(switch (ChimeraEntityBridge.activeFamily()) {
+            case ENTITY, ENTITY_TRANSLUCENT, GLOWING -> net.chimera.shaderpack.PackRenderingPhase.ENTITIES;
+            case BLOCK -> net.chimera.shaderpack.PackRenderingPhase.BLOCK_ENTITIES;
+            case DAMAGED_BLOCK -> net.chimera.shaderpack.PackRenderingPhase.DESTROY;
+            case HAND -> net.chimera.shaderpack.PackRenderingPhase.HAND_SOLID;
+            case HAND_WATER -> net.chimera.shaderpack.PackRenderingPhase.HAND_TRANSLUCENT;
+            case PARTICLE, PARTICLE_TRANSLUCENT -> net.chimera.shaderpack.PackRenderingPhase.PARTICLES;
+            case WEATHER -> net.chimera.shaderpack.PackRenderingPhase.RAIN_SNOW;
+            case HOST_FALLBACK -> net.chimera.shaderpack.PackRenderingPhase.NONE;
+        });
+        try {
+            renderer.uploadAndBindUBOs(packPipeline);
+        } finally {
+            PackUniformProvider.setRenderingPhase(previousPhase);
+            PackUniformProvider.restoreFrameAtlasSize();
+        }
         callback.setReturnValue(true);
     }
 

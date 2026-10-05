@@ -78,6 +78,7 @@ public final class PackUniformProvider {
     /** Captures the matrices supplied to LevelRenderer.renderLevel as well as game state. */
     public static void beginFrame(Camera camera, float partialTick,
                                   Matrix4f modelView, Matrix4f projection) {
+        setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase.NONE);
         INSTANCE.updateFrame(camera, partialTick, modelView, projection);
     }
 
@@ -120,6 +121,11 @@ public final class PackUniformProvider {
         INSTANCE.frameState.installSunPath(rotationDegrees, offsetDegrees);
     }
 
+    public static float currentSunPathRotation() { return INSTANCE.frameState.sunPathRotation(); }
+
+    /** Camera-relative world view, without a native celestial pose or model translation. */
+    public static Matrix4f currentSkyModelView() { return INSTANCE.frameState.modelView(); }
+
     /** Publishes the exact shadow state used by the shadow render. */
     public static void updateShadowState(Matrix4f modelView, Matrix4f projection) {
         INSTANCE.frameState.updateShadow(modelView, projection);
@@ -138,6 +144,16 @@ public final class PackUniformProvider {
         if (binding != null) {
             INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
         }
+    }
+
+    /** Returns the enclosing phase for an exception-safe draw-scope restore. */
+    public static net.chimera.shaderpack.PackRenderingPhase setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase phase) {
+        var previous = INSTANCE.frameState.setRenderingPhase(phase);
+        Binding binding = INSTANCE.bindings.get(new UniformKey("renderStage", "int"));
+        if (binding != null && previous != phase) {
+            INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+        return previous;
     }
 
     /**
@@ -181,6 +197,7 @@ public final class PackUniformProvider {
 
     /** Drops frame history when the pack session is destroyed or reloaded. */
     public static void resetSession() {
+        setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase.NONE);
         INSTANCE.lastFrameNanos = 0L;
         INSTANCE.runtimeSettings = PackRuntimeSettings.empty();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);

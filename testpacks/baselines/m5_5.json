@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "water": {
-        "reportSha256": "59d8157a88d5655bed5a27712c91de6e4b1d10616a7c67d659cc3741408bd17e",
+      "reportSha256": "59d8157a88d5655bed5a27712c91de6e4b1d10616a7c67d659cc3741408bd17e",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -39,7 +39,7 @@
       }
     },
     "unsupported_water": {
-      "reportSha256": "59523d1de2641002b41ab79014bd72d72912117efc6bf59f4d6ce06b987524cf",
+      "reportSha256": "4f8528857c400b14fa93e220e0acf421a8bd55e637b69307507853de9e415822",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -55,6 +55,12 @@
         "gbuffers_entities": [
           "fragment"
         ],
+        "gbuffers_entities_glowing": [
+          "fragment"
+        ],
+        "gbuffers_entities_translucent": [
+          "fragment"
+        ],
         "gbuffers_water": [
           "fragment",
           "vertex"
@@ -66,6 +72,13 @@
         "final": [],
         "gbuffers_entities": [
           "ENTITY_VERTEX_BRIDGE_UNSUPPORTED"
+        ],
+        "gbuffers_entities_glowing": [
+          "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities"
+        ],
+        "gbuffers_entities_translucent": [
+          "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
         ],
         "gbuffers_water": [
           "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",

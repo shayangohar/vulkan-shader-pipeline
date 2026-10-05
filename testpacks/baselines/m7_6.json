@@ -3,7 +3,7 @@
   "fixture": "m7_6/families",
   "fixtures": {
     "families": {
-      "reportSha256": "1daaeaba245eeb0c678de7fddb44cc4b7ff3f2741dfe3e246217de3f156f742d",
+      "reportSha256": "a548a72d9e31319f3cc7a4e6d6dcd972ad7e78bc4e08646babe9425cf02f5e40",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "80d96b5eab7d4baeee89f8f0a4d9a268fa79bfd7466b21ea0b608bed6f4219da",
@@ -20,11 +20,17 @@
         "final",
         "gbuffers_block",
         "gbuffers_entities",
+        "gbuffers_entities_glowing",
+        "gbuffers_entities_translucent",
         "gbuffers_hand",
-        "gbuffers_particles"
+        "gbuffers_hand_water",
+        "gbuffers_particles",
+        "gbuffers_particles_translucent"
       ],
       "expectedFallbackPrograms": [],
-      "expectedUnsupportedPrograms": ["gbuffers_skybasic"],
+      "expectedUnsupportedPrograms": [
+        "gbuffers_skybasic"
+      ],
       "expectedDeviations": [
         "BLOCK_ENTITY_ID_DEFAULTED",
         "BLOCK_VERTEX_BRIDGE",
@@ -35,12 +41,19 @@
         "ENTITY_VERTEX_BRIDGE",
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",
+        "FIXED_VERTEX_SUBSTITUTION",
         "HAND_ITEM_ID_DEFAULTED",
         "HAND_STATE_FIXED_TO_HOST",
+        "HAND_TRANSLUCENT_ITEM_PHASE",
         "HAND_VERTEX_BRIDGE",
         "LIVE_UNIFORM_BRIDGE",
         "PARTICLE_STATE_FIXED_TO_HOST",
-        "PARTICLE_VERTEX_BRIDGE"
+        "PARTICLE_TRANSLUCENT_INSTALLED",
+        "PARTICLE_VERTEX_BRIDGE",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_hand_water->gbuffers_hand",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_particles_translucent->gbuffers_particles"
       ]
     },
     "unsupported_families": {
@@ -50,9 +63,14 @@
         "gbuffers_entities_glowing.fsh": "bd44f22583d6ee38de1696d56ee08cbaa8e68b0ffbf96b8086c232fa50ceb81d",
         "gbuffers_skybasic.fsh": "0b7ea4cdbcd8ff77b292490bb1bc62b1a6b63c039c9d656b44185bdfe9e6c7e6"
       },
-      "expectedExecutablePrograms": ["final"],
+      "expectedExecutablePrograms": [
+        "final"
+      ],
       "expectedFallbackPrograms": [],
-      "expectedUnsupportedPrograms": ["gbuffers_entities_glowing", "gbuffers_skybasic"]
+      "expectedUnsupportedPrograms": [
+        "gbuffers_entities_glowing",
+        "gbuffers_skybasic"
+      ]
     }
   }
 }

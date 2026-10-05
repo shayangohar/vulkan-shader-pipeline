@@ -7,6 +7,7 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.ChimeraMainPass;
+import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.ChimeraTextureBindingState;
 import net.minecraft.client.Camera;
@@ -40,6 +41,12 @@ public abstract class ChimeraLevelRendererMixin {
 
     @Unique
     private boolean chimera$particleDrawActive;
+
+    @Inject(method = "method_62214", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;endBatch()V", ordinal = 1), require = 1)
+    private void chimera$solidHandBeforeDeferred(CallbackInfo callback) {
+        ChimeraHandRenderer.drawSolid();
+    }
 
     @Inject(method = "method_62214",
             at = @At(value = "INVOKE",
@@ -97,6 +104,7 @@ public abstract class ChimeraLevelRendererMixin {
                                         Vector4f vector4f,
                                         boolean bl2,
                                         CallbackInfo ci) {
+        ChimeraHandRenderer.beginFrame();
         if (ChimeraRenderer.beginLevelSegments()) {
             ChimeraEntityBridge.beginWorldSubmissionWindow();
             PackUniformProvider.beginFrame(camera,
@@ -114,6 +122,7 @@ public abstract class ChimeraLevelRendererMixin {
         if (ChimeraRenderer.segmentsActive()) {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
+                ChimeraHandRenderer.drawTranslucent();
                 pass.finishLevelSegment();
             }
             ChimeraEntityBridge.endWorldSubmissionWindow();

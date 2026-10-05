@@ -146,7 +146,7 @@ public final class M71ConformanceHarness {
         PackProgramResolution water = resolution.resolution("gbuffers_water");
         assertTrue(water != null && water.selectedProgram().equals("gbuffers_terrain"),
                 "water did not resolve through its standard parent");
-        assertTrue(!water.executable(), "incompatible fallback alias became executable");
+        assertTrue(water.executable(), "water's supported requested adapter did not resolve its parent");
         PackProgramResolution exactNumbered = resolution.resolution("composite1");
         assertTrue(exactNumbered != null && exactNumbered.executable(),
                 "numbered post pass incorrectly received a fallback rule");

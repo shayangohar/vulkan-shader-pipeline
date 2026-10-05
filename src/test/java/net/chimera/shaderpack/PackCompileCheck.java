@@ -24,7 +24,12 @@ final class PackCompileCheck {
         int compiled = 0;
         List<String> failures = new ArrayList<>();
         for (PackProgramPlan program : analysis.plan().activePrograms()) {
-            // Exactly the programs the runtime would build: shouldAttempt, not executable() alone.
+            // Runtime also gates on the report. Compiling alone cannot prove admission.
+            if (analysis.plan().shouldAttempt(program.name())
+                    && !analysis.report().shouldAttempt(program.name())) {
+                failures.add(program.name() + " report/plan admission disagreement: "
+                        + analysis.report().program(program.name()).deviations());
+            }
             if (!analysis.plan().shouldAttempt(program.name()) || program.convertedFragment() == null
                     || program.interfacePlan() == null) {
                 continue;
@@ -44,6 +49,26 @@ final class PackCompileCheck {
             }
             String vertexError = program.convertedVertex() == null ? null : compile(prepared.vertex(), true);
             String fragmentError = compile(prepared.fragment(), false);
+            if (FamilyAdapterRegistry.isHandFamily(program.name())) {
+                for (var host : net.chimera.render.vertex.ChimeraVertexFormats.handFormats().keySet()) {
+                    String variant = LegacyGlslConverter.handVertexForFormat(program.convertedVertex(), host);
+                    String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                    if (error != null) {
+                        failures.add(program.name() + " hand input variant: " + error);
+                        vertexError = error;
+                    }
+                }
+            }
+            if (FamilyAdapterRegistry.isSkyFamily(program.name())) {
+                for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
+                    String variant = LegacyGlslConverter.skyVertexForContract(program.convertedVertex(), contract);
+                    String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                    if (error != null) {
+                        failures.add(program.name() + " sky input variant " + contract + ": " + error);
+                        vertexError = error;
+                    }
+                }
+            }
             if (vertexError != null) failures.add(program.name() + " vertex: " + vertexError
                     + " [" + dump(pack, program.name() + ".vsh", prepared.vertex()) + "]");
             if (fragmentError != null) failures.add(program.name() + " fragment: " + fragmentError

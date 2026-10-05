@@ -3,13 +3,18 @@
   "fixture": "m6_3/entities",
   "fixtures": {
     "entities": {
-      "reportSha256": "dd29d4f50d24e4453997f4392a04fe864cc6ccfd42d8e0a6677f52d75a5ca1b0",
+      "reportSha256": "1f615c7799b400545098fd7ae513d29b3c306df5dbd42ca5a5693b437b74f98c",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "1d9fc1ec14a079ee287fabc03344c028032138b1383189c3cff26c06c0c458f5",
         "gbuffers_entities.vsh": "6bd8aeabd852284db23ebed90b54266be43b7124b62fcab4136c17232d3202cf"
       },
-      "expectedExecutablePrograms": ["final", "gbuffers_entities"],
+      "expectedExecutablePrograms": [
+        "final",
+        "gbuffers_entities",
+        "gbuffers_entities_glowing",
+        "gbuffers_entities_translucent"
+      ],
       "expectedFallbackPrograms": [],
       "expectedDeviations": [
         "ENTITY_BATCH_ORIGIN_SPLIT",
@@ -18,23 +23,36 @@
         "ENTITY_STATE_FIXED_TO_HOST",
         "ENTITY_VERTEX_BRIDGE",
         "ENTITY_VERTEX_FORMAT_EXTENDED",
-        "LIVE_UNIFORM_BRIDGE"
+        "FAMILY_ADAPTER_INSTALLED",
+        "FIXED_VERTEX_SUBSTITUTION",
+        "LIVE_UNIFORM_BRIDGE",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
       ]
     },
     "unsupported_entities": {
-      "reportSha256": "feef9b1772ba025e4f7ddeff81429d86fdf7ea253a27b4d16120a8db1ca9d7b9",
+      "reportSha256": "647813a21c54f8e7b80e5042916902fca209cf58a3fcd18aba9a2a0999fa167f",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "f66ceb456c20495e724ea97e83a138a48fb5fd80668857f4b7d0c108179576a4",
         "gbuffers_entities.vsh": "72b56f13b96cdf65069a1a4a61700fed837c73acb4cd1dc15122db44e741869f"
       },
-      "expectedExecutablePrograms": ["final"],
-      "expectedFallbackPrograms": ["gbuffers_entities"],
+      "expectedExecutablePrograms": [
+        "final"
+      ],
+      "expectedFallbackPrograms": [
+        "gbuffers_entities",
+        "gbuffers_entities_glowing",
+        "gbuffers_entities_translucent"
+      ],
       "expectedDeviations": [
         "ENTITY_ID_DEFAULTED",
         "ENTITY_SAMPLER_UNSUPPORTED:unknownEntityTexture",
         "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
-        "LIVE_UNIFORM_BRIDGE"
+        "FIXED_VERTEX_SUBSTITUTION",
+        "LIVE_UNIFORM_BRIDGE",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
       ]
     }
   }

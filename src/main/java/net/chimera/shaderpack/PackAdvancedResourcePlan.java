@@ -56,6 +56,8 @@ public final class PackAdvancedResourcePlan {
                     + "buffer\\s+([A-Za-z_]\\w*)\\s*\\{");
     private static final Pattern STORAGE_BINDING = Pattern.compile(
             "(?i)\\bbinding\\s*=\\s*(\\d+)");
+    private static final Pattern IMAGE_TYPE = Pattern.compile(
+            "[iu]?image(?:1D|2D|3D|Cube|2DRect|1DArray|2DArray|CubeArray|Buffer|2DMS|2DMSArray)");
 
     public enum Status { SUPPORTED, UNSUPPORTED, UNAVAILABLE }
 
@@ -1341,6 +1343,13 @@ public final class PackAdvancedResourcePlan {
 
     static boolean containsStorageBlock(String source) {
         return GlslStorageBufferParser.hasBlock(source);
+    }
+
+    /** Inventory real opaque types and storage blocks, not image-prefixed identifiers. */
+    static boolean containsAdvancedDeclarations(String source) {
+        return containsStorageBlock(source) || GlslLexer.lex(source).stream().anyMatch(token ->
+                token.kind() == GlslLexer.Kind.IDENTIFIER
+                        && IMAGE_TYPE.matcher(token.text()).matches());
     }
 
     public ProgramBindingLayout bindingLayout(String program) {

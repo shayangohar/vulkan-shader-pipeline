@@ -179,11 +179,20 @@ public final class M86ConformanceHarness {
                 "M8.6 hand mixin still owns pack final");
         assertTrue(!depth.contains("finishPackFinalAfterHand"),
                 "M8.6 depth mixin still owns pack final");
-        assertTrue(main.contains("HAND_SCHEDULE_FALLBACK"),
-                "M8.6 hand fallback is not explicit");
-        assertTrue(!main.contains("this.packHandPipeline = hand;")
-                        && !main.contains("this.packHandWaterPipeline = hand;"),
-                "M8.6 late hand adapter is still installed");
+        String schedule = Files.readString(sourcePath("src/main/java/net/chimera/render/ChimeraHandRenderer.java"));
+        String level = Files.readString(sourcePath("src/main/java/net/chimera/mixin/ChimeraLevelRendererMixin.java"));
+        assertTrue(schedule.contains("!pass.hasPackHandSchedule()")
+                        && depth.contains("if (!ChimeraHandRenderer.diverted()) renderer.renderHandsWithItems"),
+                "hand fallback must remain vanilla unless both pack phases are installed");
+        assertTrue(level.contains("ordinal = 1") && level.contains("ChimeraHandRenderer.drawSolid();"),
+                "opaque pack hand must run before deferred");
+        assertTrue(level.indexOf("ChimeraHandRenderer.drawTranslucent();")
+                        < level.indexOf("pass.finishLevelSegment();"),
+                "translucent pack hand must run before pack final");
+        assertTrue(schedule.indexOf("dispatcher.renderAllFeatures();")
+                        < schedule.indexOf("ChimeraEntityBridge.endDraw();")
+                        && schedule.indexOf("buffers.endBatch();") < schedule.indexOf("ChimeraEntityBridge.endDraw();"),
+                "hand submission, emission and flush must share the family scope");
 
         int resolve = main.indexOf("resolvePackWorldToOutput(commandBuffer, hdrColor);");
         int finalCall = main.indexOf("finishPackFinalBeforeHand();", resolve);

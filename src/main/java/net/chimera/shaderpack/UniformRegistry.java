@@ -1243,10 +1243,7 @@ public final class UniformRegistry {
         addLive(specs, "gbufferProjectionInverse", "mat4");
         addLive(specs, "shadowModelViewInverse", "mat4");
         addLive(specs, "shadowProjectionInverse", "mat4");
-        // The shadow adapter renders the terrain caster lane as one fixed
-        // stage. Iris normally supplies this value from its render scheduler;
-        // Chimera uses the solid-terrain value as an explicit adapter default.
-        addDefault(specs, "renderStage", "int");
+        addLive(specs, "renderStage", "int");
 
         addIrisPlayerState(specs);
 

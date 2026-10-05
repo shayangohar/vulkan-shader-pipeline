@@ -119,16 +119,40 @@ public final class ChimeraVertexFormats {
     }
 
     private static VertexFormat extendedParticleFormat() {
+        return appendMaterialInputs(DefaultVertexFormat.PARTICLE);
+    }
+
+    private static final VertexFormat EXTENDED_HAND_MAP = appendMaterialInputs(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+    private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(DefaultVertexFormat.POSITION_TEX_COLOR);
+    private static final java.util.Map<VertexFormat, VertexFormat> HAND_FORMATS = java.util.Map.of(
+            DefaultVertexFormat.NEW_ENTITY, EXTENDED_ENTITY,
+            DefaultVertexFormat.PARTICLE, EXTENDED_PARTICLE,
+            DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, EXTENDED_HAND_MAP,
+            DefaultVertexFormat.POSITION_TEX_COLOR, EXTENDED_HAND_MAP_BACKGROUND);
+
+    /** Native hand models, item quads, map text and map background keep distinct prefixes. */
+    public static java.util.Map<VertexFormat, VertexFormat> handFormats() {
+        return HAND_FORMATS;
+    }
+
+    public static VertexFormat handHostFormat(VertexFormat format) {
+        for (var entry : handFormats().entrySet()) {
+            if (format == entry.getKey() || format == entry.getValue()) return entry.getKey();
+        }
+        return null;
+    }
+
+    private static VertexFormat appendMaterialInputs(VertexFormat host) {
         VertexFormat.Builder builder = VertexFormat.builder();
-        java.util.List<VertexFormatElement> elements = DefaultVertexFormat.PARTICLE.getElements();
-        java.util.List<String> names = DefaultVertexFormat.PARTICLE.getElementAttributeNames();
+        java.util.List<VertexFormatElement> elements = host.getElements();
+        java.util.List<String> names = host.getElementAttributeNames();
         int hostElementBytes = 0;
         for (int index = 0; index < elements.size(); index++) {
             builder.add(names.get(index), elements.get(index));
             hostElementBytes += elements.get(index).byteSize();
         }
-        if (DefaultVertexFormat.PARTICLE.getVertexSize() > hostElementBytes) {
-            builder.padding(DefaultVertexFormat.PARTICLE.getVertexSize() - hostElementBytes);
+        if (host.getVertexSize() > hostElementBytes) {
+            builder.padding(host.getVertexSize() - hostElementBytes);
         }
         builder.add("EntityIds", ENTITY_IDS);
         builder.padding(6);

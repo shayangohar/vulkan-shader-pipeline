@@ -4,6 +4,10 @@ import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.vertex.TerrainRenderType;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.PackRenderingPhase;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -30,6 +34,27 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(value = WorldRenderer.class, remap = false)
 public abstract class WorldRendererMixin {
+
+    @WrapMethod(method = "renderSectionLayer")
+    private void chimera$terrainPhase(TerrainRenderType type, double x, double y, double z,
+                                     Matrix4f view, Matrix4f projection, Operation<Void> original) {
+        if (!ChimeraRenderer.segmentsActive()) {
+            original.call(type, x, y, z, view, projection);
+            return;
+        }
+        var phase = switch (type) {
+            case SOLID -> PackRenderingPhase.TERRAIN_SOLID;
+            case CUTOUT -> PackRenderingPhase.TERRAIN_CUTOUT;
+            case TRANSLUCENT -> PackRenderingPhase.TERRAIN_TRANSLUCENT;
+            case TRIPWIRE -> PackRenderingPhase.TRIPWIRE;
+        };
+        var previous = PackUniformProvider.setRenderingPhase(phase);
+        try {
+            original.call(type, x, y, z, view, projection);
+        } finally {
+            PackUniformProvider.setRenderingPhase(previous);
+        }
+    }
 
     @Inject(method = "renderSectionLayer", at = @At("RETURN"))
     private void chimera$renderShadowAfterSolid(TerrainRenderType renderType, double camX, double camY,

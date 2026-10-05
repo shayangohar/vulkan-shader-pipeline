@@ -28,6 +28,13 @@ public final class ConformanceHarness {
     private ConformanceHarness() {}
 
     public static void main(String[] args) throws IOException {
+        verifyLegacyHostVertexSemantics();
+        verifyHandInputsAndProjection();
+        verifyHandNativeHooks();
+        verifyWeatherAndSky();
+        verifyRainContracts();
+        verifyRequestedFamilyFallbackAndCrumbling();
+        verifyParticleFallbackAndTargets();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -48,7 +55,793 @@ public final class ConformanceHarness {
         verifyM56PostChain(fixtureRoot.resolve("m5_6/post_chain"), fixtureRoot.resolve("baselines/m5_6.json"));
         verifyM56Unsupported(fixtureRoot.resolve("m5_6/unsupported_targets"),
                 fixtureRoot.resolve("baselines/m5_6.json"));
+        verifyAdvancedResourceInventory();
+        verifyNonzeroGeometryAndPrepare();
         System.out.println("[chimera] M5.1 through M5.7 conformance harness: PASS");
+    }
+
+    private static void verifyRainContracts() throws IOException {
+        for (int target : List.of(10, 12, 15)) {
+            String source = "/* RENDERTARGETS:" + target + " */\nvoid main(){gl_FragData[0]=vec4(1);}";
+            var post = PostTargetPlan.parse("composite", source).plan();
+            var geometry = GeometryOutputPlan.parse("gbuffers_weather", source, Map.of());
+            assertTrue(post.executable() && geometry.executable(), "two-digit target rejected");
+            assertEquals(List.of(target), post.targetSlots(), "integer target split into digits");
+            assertEquals(post.targetSlots(), geometry.targetSlots(), "geometry target grammar drift");
+            assertEquals(List.of(0), geometry.outputLocations(), "rain must have one output");
+            String canonical = "/* RENDERTARGETS:" + target + ",1 */\n" + source;
+            assertEquals(List.of(target), GeometryOutputPlan.parse("gbuffers_weather", canonical, Map.of()).targetSlots(),
+                    "geometry normalization lost singleton target");
+        }
+        assertEquals(List.of(1, 2), PostTargetPlan.parse("composite", "/* DRAWBUFFERS:12 */").plan().targetSlots(),
+                "legacy digit grammar changed");
+        assertEquals(List.of(1, 2), PostTargetPlan.parse("composite", "/* RENDERTARGETS:1,2 */").plan().targetSlots(),
+                "integer list grammar changed");
+        for (String malformed : List.of("12,", "12,12", "12,nope", "2147483648")) {
+            String source = "/* RENDERTARGETS:12,1 */\n/* RENDERTARGETS:" + malformed + " */";
+            assertTrue(!GeometryOutputPlan.parse("gbuffers_weather", source, Map.of()).executable(),
+                    "normalization concealed malformed target: " + malformed);
+        }
+
+        float[] cone = net.chimera.render.ChimeraHorizonRenderer.vertices(32);
+        assertEquals(30, cone.length, "Iris fan must have ten POSITION vertices");
+        assertTrue(cone[0] == 0 && cone[1] == -16 && cone[2] == 0, "horizon apex must be below camera");
+        for (int i = 1; i < 10; i++) {
+            float x = cone[i * 3], z = cone[i * 3 + 2];
+            assertTrue(cone[i * 3 + 1] == 16 && Math.abs(Math.hypot(x, z) - 256) < 0.001,
+                    "Iris horizon radius/height changed");
+        }
+        assertTrue(cone[8] < 0, "horizon must use inward Iris winding");
+        assertTrue(Math.abs(cone[3] - cone[27]) < 0.001 && Math.abs(cone[5] - cone[29]) < 0.001,
+                "horizon rim must close");
+        assertTrue(net.chimera.render.ChimeraHorizonRenderer.vertices(8)[3] == 128, "horizon must track render distance");
+
+        Path root = Files.createTempDirectory("chimera-rain-contract-");
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        try {
+            String vertex = "#version 130\nflat out vec4 tint;\nout vec2 uv;\n"
+                    + "void main(){ tint=gl_Color; uv=gl_MultiTexCoord0.xy; gl_Position=ftransform(); }";
+            String fragment = "#version 130\nflat in vec4 tint;\nin vec2 uv;\n"
+                    + "void main(){gl_FragData[0]=tint+vec4(uv,0,0);}";
+            for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured")) {
+                Files.writeString(shaders.resolve(name + ".vsh"), vertex);
+                Files.writeString(shaders.resolve(name + ".fsh"), fragment);
+            }
+            Files.writeString(shaders.resolve("gbuffers_weather.vsh"), vertex);
+            Files.writeString(shaders.resolve("gbuffers_weather.fsh"), "/* RENDERTARGETS:12 */\n" + fragment);
+            Files.writeString(shaders.resolve("shaders.properties"), "blend.gbuffers_weather.colortex12=off\n");
+            var analysis = PackProbe.analyze(root);
+            for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_weather")) {
+                var plan = analysis.plan().program(name);
+                assertTrue(analysis.plan().shouldAttempt(name), name + " plan rejected: " + plan.deviations());
+                assertTrue(analysis.report().shouldAttempt(name), name + " report rejected: " + analysis.report().program(name).deviations());
+                assertTrue(PackCompileCheck.compile(plan.convertedVertex(), true) == null, name + " vertex compile");
+                assertTrue(PackCompileCheck.compile(plan.convertedFragment(), false) == null, name + " fragment compile");
+                assertTrue(plan.convertedFragment().matches("(?s).*\\b(?:flat\\s+in|in\\s+flat)\\s+vec4\\b.*"),
+                        name + " flat interpolation lost");
+            }
+            var weather = analysis.plan().program("gbuffers_weather");
+            assertEquals(List.of(12), weather.geometryOutputPlan().targetSlots(), "rain data route");
+            assertEquals(PackBlendPlan.Mode.OFF, weather.blendPlan().attachments(List.of(12))[0], "rain data blend override");
+            Files.writeString(shaders.resolve("gbuffers_skybasic.fsh"), "#version 130\n"
+                    + "uniform samplerCube unsupportedCube; void main(){gl_FragColor=texture(unsupportedCube,vec3(1));}");
+            assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"), "sky admission bypassed resource validation");
+        } finally {
+            try (var files = Files.walk(root)) {
+                for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(file);
+            }
+        }
+        System.out.println("[chimera] rain target grammar, sky admission and Iris horizon geometry: PASS");
+    }
+
+    private static void verifyLegacyHostVertexSemantics() {
+        String vertex = """
+                #version 120
+                varying vec2 uv;
+                varying vec2 light1;
+                varying vec2 light2;
+                void main() {
+                    mat4 mvp = gl_ModelViewProjectionMatrix;
+                    mat4 textureMatrix = gl_TextureMatrix[0];
+                    mat4 lightMatrix = gl_TextureMatrix[1];
+                    mat4 lightAliasMatrix = gl_TextureMatrix[2];
+                    uv = (textureMatrix * gl_MultiTexCoord0).xy;
+                    light1 = (lightMatrix * gl_MultiTexCoord1).xy;
+                    light2 = (lightAliasMatrix * gl_MultiTexCoord2).xy;
+                    vec4 direct = gl_ModelViewProjectionMatrix * gl_Vertex;
+                    vec4 typed = mvp * gl_Vertex;
+                    vec4 helper = ftransform();
+                    gl_Position = direct + (typed - direct) + (helper - direct);
+                }
+                """;
+        String fragment = "#version 120\nvarying vec2 uv;\nvarying vec2 light1;\n"
+                + "varying vec2 light2;\nvoid main() { gl_FragColor = vec4(uv + light1 + light2, 0, 1); }\n";
+        for (String family : List.of("entity", "block", "crumbling", "hand", "particle")) {
+            var conversion = switch (family) {
+                case "block" -> LegacyGlslConverter.convertBlockVertexChecked(
+                        vertex, null, fragment, Map.of(), false, List.of());
+                case "crumbling" -> LegacyGlslConverter.convertCrumblingVertexChecked(
+                        vertex, null, fragment, Map.of(), false, List.of());
+                case "hand" -> LegacyGlslConverter.convertHandVertexChecked(
+                        vertex, null, fragment, Map.of(), false, List.of());
+                case "particle" -> LegacyGlslConverter.convertParticleVertex(
+                        vertex, null, fragment, Map.of(), false);
+                default -> LegacyGlslConverter.convertEntityVertexChecked(
+                        vertex, null, fragment, Map.of(), false, List.of());
+            };
+            assertTrue(conversion != null, family + " typed legacy matrices rejected");
+            String source = conversion.source();
+            String compileError = PackCompileCheck.compile(source, true);
+            assertTrue(compileError == null, family + " typed legacy matrices: " + compileError);
+            String projectionName = family.equals("hand") ? "chimeraHandProjection()" : "ProjMat";
+            assertTrue(source.contains("mat4 mvp = (" + projectionName + " * ModelViewMat);")
+                            && source.contains("vec4 direct = (" + projectionName + " * ModelViewMat) * chimeraEntityVertexValue();")
+                            && source.contains("vec4 typed = mvp * chimeraEntityVertexValue();")
+                            && source.contains("vec4 helper = chimeraEntityFtransform();")
+                            && source.contains("return " + projectionName + " * ModelViewMat * chimeraEntityVertexValue();"),
+                    family + " explicit MVP and ftransform disagree");
+            boolean offset = family.equals("block") || family.equals("crumbling");
+            assertTrue(source.contains(offset ? "return vec4(Position + ModelOffset, 1.0);"
+                            : "return vec4(Position, 1.0);"), family + " host position offset");
+            assertTrue(source.contains("mat4 textureMatrix = TextureMat;")
+                            && source.contains("light1 = (lightMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
+                            && source.contains("light2 = (lightAliasMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
+                            && !source.contains("vec2(UV2) / 256.0"),
+                    family + " texture/lightmap contract");
+            var matrix = java.util.regex.Pattern.compile("mat4 lightMatrix = mat4\\(([^)]+)\\);")
+                    .matcher(source);
+            assertTrue(matrix.find(), family + " missing Iris light matrix");
+            String[] coefficients = matrix.group(1).split(",");
+            float[] values = new float[coefficients.length];
+            for (int i = 0; i < values.length; i++) values[i] = Float.parseFloat(coefficients[i].trim());
+            assertEquals(16, values.length, family + " light matrix dimensions");
+            var actual = new org.joml.Matrix4f().set(values)
+                    .transform(new org.joml.Vector4f(80, 240, 0, 1));
+            assertTrue(Math.abs(actual.x - 0.34375F) < 1.0e-7F
+                            && Math.abs(actual.y - 0.96875F) < 1.0e-7F
+                            && actual.z == 0.03125F && actual.w == 1.0F,
+                    family + " raw UV2=(80,240) must receive scale and half-texel offset once: " + actual);
+            assertTrue(source.contains("mat4 lightAliasMatrix = mat4(" + matrix.group(1) + ");"),
+                    family + " light texture matrix aliases differ");
+        }
+        String overlayFragment = EntityOverlayColor.inject("#version 120\n"
+                + "uniform vec4 entityColor;\nvoid main() { gl_FragColor = entityColor; }\n");
+        String overlayVertex = LegacyGlslConverter.convertEntityVertexChecked(vertex, null,
+                overlayFragment, Map.of(), false, List.of()).source();
+        assertTrue(overlayVertex.contains(EntityOverlayColor.UV_VARYING + " = UV1;"),
+                "lightmap repair must not replace the entity overlay attribute");
+        assertTrue(LegacyGlslConverter.convertHandVertex(vertex.replace("void main() {",
+                        "void main() { vec3 available = gl_Normal;"), null, fragment, Map.of()) != null,
+                "hand arm must serve its actual NEW_ENTITY normal");
+        // Nontrivial position and transforms distinguish a matrix product from the old vec4 product.
+        var position = new org.joml.Vector4f(-3.5F, -1.5F, 0.7F, 1);
+        var modelView = new org.joml.Matrix4f().translate(1, 2, -6).rotateY(0.4F);
+        var projection = new org.joml.Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128);
+        var sequential = projection.transform(modelView.transform(new org.joml.Vector4f(position)));
+        var matrixProduct = new org.joml.Matrix4f(projection).mul(modelView)
+                .transform(new org.joml.Vector4f(position));
+        assertTrue(sequential.distance(matrixProduct) < 1.0e-5F
+                        && new org.joml.Vector4f(sequential).mul(position).distance(matrixProduct) > 1,
+                "projection fixture must expose component-wise vertex multiplication");
+        System.out.println("[chimera] legacy host vertex semantics: PASS");
+    }
+
+    private static void verifyHandInputsAndProjection() {
+        String vertex = """
+                #version 120
+                attribute vec4 at_tangent;
+                attribute vec4 mc_midTexCoord;
+                varying vec2 uv;
+                varying vec3 normal;
+                void main() {
+                    mat4 mvp = gl_ModelViewProjectionMatrix;
+                    uv = (gl_TextureMatrix[0] * mc_midTexCoord).xy;
+                    normal = gl_NormalMatrix * gl_Normal + at_tangent.xyz * 0.001;
+                    gl_Position = mvp * gl_Vertex;
+                    if (gl_Color.a == 0.0) return;
+                }
+                """;
+        String fragment = "#version 120\nvarying vec2 uv;\nvarying vec3 normal;\n"
+                + "void main() { gl_FragColor = vec4(uv, normal.z, 1); }\n";
+        var hand = LegacyGlslConverter.convertHandVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        for (var entry : net.chimera.render.vertex.ChimeraVertexFormats.handFormats().entrySet()) {
+            var host = entry.getKey();
+            var extended = entry.getValue();
+            assertEquals(host, net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(extended), "hand variant host lookup");
+            assertEquals(host.getVertexSize() + 20, extended.getVertexSize(), "hand prefix plus20byte material inputs");
+            for (int i = 0; i < host.getElements().size(); i++) {
+                assertEquals(host.getOffset(host.getElements().get(i)), extended.getOffset(host.getElements().get(i)), "hand native attribute offset");
+            }
+            String source = LegacyGlslConverter.handVertexForFormat(hand.source(), host);
+            assertTrue(PackCompileCheck.compile(source, true) == null, "hand layout fails compilation: " + host);
+            assertTrue(source.contains("void chimeraHandMain()")
+                            && source.contains("void main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
+                    "authored hand returns must still reach exactly one Vulkan clip conversion");
+            if (host != com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY) {
+                assertTrue(source.contains("const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+                                && source.contains("const ivec2 UV1 = ivec2(0);"), "Iris missing normal/overlay defaults");
+            }
+        }
+        var raster = new org.joml.Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, true);
+        var snapshot = new org.joml.Matrix4f(raster);
+        var drawn = net.chimera.render.ChimeraHandRenderer.projection(raster);
+        var iris = new org.joml.Matrix4f().scale(1, 1, net.chimera.render.ChimeraHandRenderer.DEPTH)
+                .mul(new org.joml.Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, false));
+        for (float z : new float[]{-0.05F, -0.5F, -1.0F, -128F}) {
+            var point = new org.joml.Vector4f(0.02F, -0.03F, z, 1);
+            var actual = drawn.transform(new org.joml.Vector4f(point));
+            var expected = iris.transform(new org.joml.Vector4f(point));
+            float depth = actual.z / actual.w;
+            assertTrue(Math.abs(depth - (0.5F * (expected.z / expected.w + 1))) < 1.0e-6F,
+                    "hand Vulkan depth must equal Iris window depth at z=" + z);
+            assertTrue(depth >= 0.43749F && depth <= 0.56251F, "hand depth squeeze range");
+            assertTrue(Math.abs(actual.x - expected.x) < 1.0e-6F && Math.abs(actual.y - expected.y) < 1.0e-6F, "hand projection must not change screen placement");
+        }
+        assertEquals(snapshot, raster, "hand projection must not mutate world matrices");
+        System.out.println("[chimera] hand input variants and Iris clip depth: PASS");
+    }
+
+    private static void verifyHandNativeHooks() throws IOException {
+        var level = nativeClass("net/minecraft/client/renderer/LevelRenderer");
+        var opaque = level.methods.stream().filter(method -> method.name.equals("method_62214")).findFirst().orElseThrow();
+        int flushes = 0;
+        boolean translucentAfterSolidHand = false;
+        for (var instruction : opaque.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                if (call.owner.equals("net/minecraft/client/renderer/MultiBufferSource$BufferSource")
+                        && call.name.equals("endBatch") && call.desc.equals("()V")) flushes++;
+                if (call.name.equals("renderGroup") && flushes >= 2) translucentAfterSolidHand = true;
+            }
+        }
+        assertTrue(flushes >= 2 && translucentAfterSolidHand, "opaque hand seam must precede terrain translucency");
+        var game = nativeClass("net/minecraft/client/renderer/GameRenderer");
+        var late = game.methods.stream().filter(method -> method.name.equals("renderItemInHand")).findFirst().orElseThrow();
+        int calls = 0;
+        for (var instruction : late.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                    && call.name.equals("renderHandsWithItems")
+                    && call.desc.equals("(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/player/LocalPlayer;I)V")) calls++;
+        }
+        assertEquals(1, calls, "native late-hand redirect must have exactly one target");
+        assertTrue(nativeClass("net/minecraft/client/renderer/ItemInHandRenderer").methods.stream().anyMatch(method ->
+                        method.name.equals("renderArmWithItem")
+                                && method.desc.equals("(Lnet/minecraft/client/player/AbstractClientPlayer;FFLnet/minecraft/world/InteractionHand;FLnet/minecraft/world/item/ItemStack;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V")),
+                "hand partition hook must match the native arm submission API");
+        // Check the installed renderer's overwrite, not just vanilla bytecode.
+        var immediate = nativeClass("net/vulkanmod/mixin/render/RenderTypeM").methods.stream()
+                .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
+        boolean directDrawer = false;
+        for (var instruction : immediate.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                assertTrue(!call.name.equals("drawIndexed"), "re-audit native immediate attachment ownership");
+                if (call.owner.equals("net/vulkanmod/vulkan/Drawer") && call.name.equals("draw")) directDrawer = true;
+            }
+        }
+        assertTrue(directDrawer, "expected VulkanMod immediate Drawer.draw path");
+        var owner = nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
+                .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
+        boolean handScope = false;
+        boolean attachments = false;
+        for (var instruction : owner.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                if (call.owner.equals("net/chimera/render/ChimeraHandRenderer") && call.name.equals("active")) handScope = true;
+                if (call.name.equals("beginPackFamilyWindow")) attachments = true;
+            }
+        }
+        assertTrue(handScope && attachments, "immediate hand draw must own the authored attachment window");
+    }
+
+    private static org.objectweb.asm.tree.ClassNode nativeClass(String name) throws IOException {
+        try (var input = ConformanceHarness.class.getClassLoader().getResourceAsStream(name + ".class")) {
+            if (input == null) throw new IOException("missing native class " + name);
+            var result = new org.objectweb.asm.tree.ClassNode();
+            new org.objectweb.asm.ClassReader(input).accept(result, 0);
+            return result;
+        }
+    }
+
+    private static void verifyWeatherAndSky() throws IOException {
+        String vertex = """
+                #version 130
+                varying vec4 skyColor;
+                varying vec2 uv;
+                uniform mat4 gbufferModelViewInverse;
+                uniform float frameTimeCounter;
+                uniform bool hasSkylight;
+                uniform int renderStage;
+                void main() {
+                    uv = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                    skyColor = gl_Color * (hasSkylight && renderStage != MC_RENDER_STAGE_STARS ? 1.0 : 0.5);
+                    mat4 mvp = gl_ModelViewProjectionMatrix;
+                    vec4 pos = mvp * gl_Vertex;
+                    pos.xy += gbufferModelViewInverse[0].xy * frameTimeCounter * 0.001;
+                    gl_Position = pos;
+                    if (!hasSkylight) return;
+                }
+                """;
+        String fragment = "#version 130\n/* DRAWBUFFERS:14 */\nvarying vec4 skyColor;\nvarying vec2 uv;\n"
+                + "void main() { gl_FragData[0] = skyColor; gl_FragData[1] = vec4(uv, 0, 1); }\n";
+        vertex = ShaderSourcePreprocessor.prepare(null, null, vertex,
+                PackEngineDefines.standard(), PackEngineDefines.standard().keySet()).source();
+        var plan = PackPlanBuilder.build(new PackProgram("gbuffers_skytextured", fragment, null, vertex, null), null);
+        assertTrue(plan.executable(), "live sky uniforms/legacy matrices rejected: " + plan.deviations());
+        assertEquals(List.of(1, 4), plan.geometryOutputPlan().targetSlots(), "sky authored outputs lost");
+        var variants = new java.util.LinkedHashMap<com.mojang.blaze3d.vertex.VertexFormat, PackPipelines.PackSky>();
+        for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
+            String source = LegacyGlslConverter.skyVertexForContract(plan.convertedVertex(), contract);
+            assertTrue(PackCompileCheck.compile(source, true) == null, "sky native variant failed: " + contract);
+            assertTrue(source.contains("mat4 mvp = (chimeraSkyProjection() * ModelViewMat);")
+                            && source.contains("(Color * ColorModulator)")
+                            && source.contains("gbufferModelViewInverse[0]")
+                            && source.contains("mat4 gbufferModelViewInverse;")
+                            && source.contains("bool hasSkylight;")
+                            && !source.contains("in uvec4 EntityIds")
+                            && source.contains("void main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
+                    "sky live inputs, world matrices or early-return clip conversion changed");
+            var format = PackPipelines.skyVertexFormat(contract);
+            var nativeBuilder = new net.vulkanmod.vulkan.shader.Pipeline.Builder(format, "test_sky");
+            nativeBuilder.setUniformSupplierGetter(info -> () -> null);
+            PackPipelines.ordinaryDescriptorContract(plan, java.util.Set.of()).apply(nativeBuilder);
+            var stageInfo = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
+                    .filter(field -> field.getName().equals("renderStage")).findFirst().orElseThrow().getInfo();
+            var supplier = net.chimera.render.shader.PackUniformProvider.shared().supplier(stageInfo);
+            var previousPhase = net.chimera.render.shader.PackUniformProvider.setRenderingPhase(PackRenderingPhase.SUN);
+            assertEquals(4, supplier.get().getInt(0), "sun stage UBO value");
+            var enclosing = net.chimera.render.shader.PackUniformProvider.setRenderingPhase(PackRenderingPhase.MOON);
+            assertEquals(5, supplier.get().getInt(0), "moon stage UBO value");
+            net.chimera.render.shader.PackUniformProvider.setRenderingPhase(enclosing);
+            assertEquals(4, supplier.get().getInt(0), "nested stage restore");
+            net.chimera.render.shader.PackUniformProvider.setRenderingPhase(previousPhase);
+            variants.put(format, new PackPipelines.PackSky(null, new int[0], source, plan.convertedFragment(),
+                    format, plan.geometryOutputPlan(), new ProgramImageBindingManifest(List.of())));
+        }
+        String fragmentError = PackCompileCheck.compile(plan.convertedFragment(), false);
+        assertTrue(fragmentError == null, "sky MRT fragment failed: " + fragmentError);
+        var basic = new PackPipelines.PackSkyFamily(variants);
+        var textured = new PackPipelines.PackSkyFamily(variants.entrySet().stream().collect(java.util.stream.Collectors.toMap(
+                java.util.Map.Entry::getKey, entry -> new PackPipelines.PackSky(null, new int[0], "", "", entry.getKey(),
+                        GeometryOutputPlan.empty("textured"), new ProgramImageBindingManifest(List.of())))));
+        net.chimera.render.shader.ChimeraSkyBridge.install(basic, textured, null, true);
+        net.chimera.render.shader.ChimeraSkyBridge.setEnabled(true);
+        try {
+            for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.SKY,
+                    net.minecraft.client.renderer.RenderPipelines.SUNRISE_SUNSET,
+                    net.minecraft.client.renderer.RenderPipelines.STARS)) {
+                assertTrue(net.chimera.render.shader.ChimeraSkyBridge.shouldUsePackPipeline(host), "missing basic sky shape");
+                assertEquals(plan.geometryOutputPlan(), net.chimera.render.shader.ChimeraSkyBridge.outputPlan(), "wrong sky family");
+            }
+            for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.CELESTIAL,
+                    net.minecraft.client.renderer.RenderPipelines.END_SKY)) {
+                assertTrue(net.chimera.render.shader.ChimeraSkyBridge.shouldUsePackPipeline(host), "missing textured sky shape");
+                assertEquals("textured", net.chimera.render.shader.ChimeraSkyBridge.outputPlan().programName(), "wrong textured family");
+            }
+            assertTrue(net.chimera.render.shader.ChimeraSkyBridge.skipHostClouds(), "authored empty clouds changed");
+            assertTrue(!net.chimera.render.shader.ChimeraSkyBridge.shouldUsePackPipeline(net.minecraft.client.renderer.RenderPipelines.GUI)
+                            && !net.chimera.render.shader.ChimeraSkyBridge.isDrawActive(), "sky selection leaked to GUI");
+        } finally {
+            net.chimera.render.shader.ChimeraSkyBridge.disable();
+        }
+        var level = nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
+                .filter(method -> method.name.equals("method_62216")).findFirst().orElseThrow();
+        boolean submitted = false;
+        boolean delayedFlush = false;
+        for (var instruction : level.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                if (call.owner.endsWith("/WeatherEffectRenderer") && call.name.equals("render")) submitted = true;
+                if (submitted && call.name.equals("endBatch")) delayedFlush = true;
+            }
+        }
+        assertTrue(delayedFlush, "re-audit native weather flush timing");
+        assertEquals("6", PackEngineDefines.standard().get("MC_RENDER_STAGE_STARS"), "Iris star macro ABI");
+        assertEquals("21", PackEngineDefines.standard().get("MC_RENDER_STAGE_RAIN_SNOW"), "Iris weather macro ABI");
+        assertEquals("8", PackEngineDefines.standard().get("MC_RENDER_STAGE_TERRAIN_SOLID"), "Iris terrain macro ABI");
+        var skyClass = nativeClass("net/minecraft/client/renderer/SkyRenderer");
+        for (String signature : List.of("renderSkyDisc(I)V", "renderDarkDisc()V",
+                "renderSun(FLcom/mojang/blaze3d/vertex/PoseStack;)V",
+                "renderMoon(Lnet/minecraft/world/level/MoonPhase;FLcom/mojang/blaze3d/vertex/PoseStack;)V",
+                "renderStars(FLcom/mojang/blaze3d/vertex/PoseStack;)V",
+                "renderSunriseAndSunset(Lcom/mojang/blaze3d/vertex/PoseStack;FI)V", "renderEndSky()V",
+                "renderEndFlash(Lcom/mojang/blaze3d/vertex/PoseStack;FFF)V")) {
+            assertTrue(skyClass.methods.stream().anyMatch(method -> (method.name + method.desc).equals(signature)),
+                    "sky phase hook no longer matches native method: " + signature);
+        }
+        var celestial = skyClass.methods.stream().filter(method -> method.name.equals("renderSunMoonAndStars")
+                && method.desc.equals("(Lcom/mojang/blaze3d/vertex/PoseStack;FFFLnet/minecraft/world/level/MoonPhase;FF)V"))
+                .findFirst().orElseThrow();
+        boolean rotationSeam = false;
+        for (var instruction : celestial.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                    && call.owner.equals("com/mojang/blaze3d/vertex/PoseStack")
+                    && call.name.equals("mulPose") && call.desc.equals("(Lorg/joml/Quaternionfc;)V")) {
+                rotationSeam = true;
+                break;
+            }
+        }
+        assertTrue(rotationSeam, "re-audit the Iris celestial sun-path rotation seam");
+        float previousRotation = net.chimera.render.shader.PackUniformProvider.currentSunPathRotation();
+        try {
+            net.chimera.render.shader.PackUniformProvider.installSunPath(17.5F, 0.0F);
+            assertTrue(net.chimera.render.shader.PackUniformProvider.currentSunPathRotation() == 17.5F,
+                    "native celestial geometry must use the pack sun-path rotation");
+        } finally {
+            net.chimera.render.shader.PackUniformProvider.installSunPath(previousRotation, 0.0F);
+        }
+        var immediate = nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
+                .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
+        boolean weather = false;
+        for (var instruction : immediate.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call && call.name.equals("beginWeatherDraw")) weather = true;
+        }
+        assertTrue(weather, "weather must own its actual immediate draw");
+        var indexed = nativeClass("net/chimera/mixin/ChimeraVkRenderPassMixin");
+        for (String name : List.of("chimera$familyAttachments", "chimera$skyAttachments")) {
+            var method = indexed.methods.stream().filter(candidate -> candidate.name.equals(name)).findFirst().orElseThrow();
+            boolean targets = false;
+            for (var instruction : method.instructions) {
+                if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call && call.name.equals("beginPackFamilyWindow")) targets = true;
+            }
+            assertTrue(targets, "both native sky draw APIs must own attachments");
+        }
+        System.out.println("[chimera] weather draw ownership and sky native variants: PASS");
+    }
+
+    private static void verifyRequestedFamilyFallbackAndCrumbling() throws IOException {
+        var host = net.minecraft.client.renderer.RenderPipelines.CRUMBLING;
+        assertEquals(com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK, host.getVertexFormat(),
+                "crumbling host format changed");
+        assertTrue(!host.isWriteDepth() && host.getBlendFunction().isPresent()
+                        && host.getDepthBiasConstant() == -10.0F && host.getDepthBiasScaleFactor() == -1.0F,
+                "crumbling host overlay state changed: depthWrite=" + host.isWriteDepth()
+                        + ", blend=" + host.getBlendFunction() + ", constant=" + host.getDepthBiasConstant()
+                        + ", slope=" + host.getDepthBiasScaleFactor());
+        Path root = Files.createTempDirectory("chimera-family-fallback-");
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        List<String> names = List.of("gbuffers_entities", "gbuffers_entities_translucent",
+                "gbuffers_textured_lit", "gbuffers_damagedblock", "final");
+        String vertex = "#version 120\nvarying vec2 uv;\nvoid main() {"
+                + " uv = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;"
+                + " gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex; }\n";
+        String fragment = "#version 120\n/* DRAWBUFFERS:1 */\nvarying vec2 uv;"
+                + " uniform bool hasSkylight; uniform sampler2D tex; void main() {"
+                + " gl_FragColor = texture2D(tex, uv) * (hasSkylight ? 1.0 : 0.5); }\n";
+        Path properties = shaders.resolve("shaders.properties");
+        try {
+            for (String name : names) {
+                Files.writeString(shaders.resolve(name + ".vsh"), vertex);
+                Files.writeString(shaders.resolve(name + ".fsh"), fragment);
+            }
+            String directives = "program.gbuffers_entities_translucent.enabled=false\n"
+                    + "program.final.enabled=false\nblend.gbuffers_entities.colortex1=off\n"
+                    + "alphaTest.gbuffers_entities=GREATER 0.2\n";
+            Files.writeString(properties, directives);
+            PackProbe.Analysis analysis = PackProbe.analyze(root);
+            PackProgramPlan handWater = analysis.plan().program("gbuffers_hand_water");
+            assertEquals("gbuffers_textured_lit", analysis.resolution()
+                    .resolution("gbuffers_hand_water").selectedProgram(), "missing hand inherited source");
+            assertTrue(analysis.plan().shouldAttempt("gbuffers_hand")
+                            && analysis.plan().shouldAttempt("gbuffers_hand_water"),
+                    "inherited hand phases must be executable");
+            assertEquals(FamilyAdapterPlan.Family.HAND_WATER, handWater.familyAdapter().family(),
+                    "hand alias must retain the requested translucent hand adapter");
+            assertEquals(List.of(1), handWater.geometryOutputPlan().targetSlots(), "hand alias lost source outputs");
+            for (String name : List.of("gbuffers_hand", "gbuffers_hand_water")) {
+                var handPlan = analysis.plan().program(name);
+                assertTrue(handPlan.convertedFragment().contains("bool hasSkylight;"), "GLSL bool semantics changed");
+                var ordinary = PackPipelines.ordinaryDescriptorContract(handPlan, java.util.Set.of());
+                var nativeBuilder = new net.vulkanmod.vulkan.shader.Pipeline.Builder(
+                        net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
+                nativeBuilder.setUniformSupplierGetter(info -> () -> null);
+                ordinary.apply(nativeBuilder); // Regression used to throw "not admitted type: bool".
+                var boolField = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
+                        .filter(field -> field.getName().equals("hasSkylight")).findFirst().orElseThrow();
+                assertEquals("int", boolField.getInfo().type, "native std140 bool storage");
+                assertEquals(1, boolField.getSize(), "native std140 bool word count");
+            }
+            PackProgramPlan trans = analysis.plan().program("gbuffers_entities_translucent");
+            assertEquals("gbuffers_entities", analysis.resolution()
+                    .resolution(trans.name()).selectedProgram(), "disabled child must use enabled parent");
+            assertTrue(analysis.report().shouldAttempt(trans.name()) && analysis.plan().shouldAttempt(trans.name()),
+                    "requested translucent adapter was not admitted: " + trans.deviations()
+                            + "/" + analysis.report().program(trans.name()).deviations());
+            assertEquals(FamilyAdapterPlan.Family.ENTITY_TRANSLUCENT, trans.familyAdapter().family(),
+                    "alias borrowed the opaque family");
+            assertEquals(List.of(1), trans.geometryOutputPlan().targetSlots(), "alias lost source outputs");
+            assertEquals(PackBlendPlan.Mode.OFF, trans.blendPlan().buffers().get(1), "alias lost source blend");
+            assertTrue(trans.alphaTestPlan().reference() == 0.2F, "alias lost source alpha directive");
+            assertTrue(!analysis.plan().activePrograms().stream().anyMatch(p -> p.name().equals("final")),
+                    "disabled post program became a fallback producer");
+            PackProgramPlan damage = analysis.plan().program("gbuffers_damagedblock");
+            assertTrue(analysis.report().shouldAttempt(damage.name()) && damage.executable(),
+                    "host BLOCK crumbling adapter not admitted: " + damage.deviations());
+            assertEquals(FamilyAdapterPlan.VertexContract.HOST_BLOCK, damage.familyAdapter().vertexContract(),
+                    "crumbling reused entity format");
+            assertTrue(damage.convertedVertex().contains("layout(location = 3) in ivec2 UV2;")
+                            && damage.convertedVertex().contains("layout(location = 4) in vec3 Normal;")
+                            && damage.convertedVertex().contains("TextureMat * vec4(UV0")
+                            && !damage.convertedVertex().contains("in uvec4 EntityIds"),
+                    "crumbling host attribute/texture-matrix contract changed");
+            Files.writeString(properties, directives + "program.gbuffers_entities.enabled=false\n");
+            analysis = PackProbe.analyze(root);
+            assertEquals("gbuffers_textured_lit", analysis.resolution()
+                    .resolution("gbuffers_entities_translucent").selectedProgram(),
+                    "fallback stopped at disabled parent");
+            assertTrue(analysis.plan().shouldAttempt("gbuffers_entities_translucent"),
+                    "second ancestor did not execute through requested family");
+            Files.delete(shaders.resolve("gbuffers_entities_translucent.fsh"));
+            Files.delete(shaders.resolve("gbuffers_entities_translucent.vsh"));
+            Files.writeString(properties, "");
+            analysis = PackProbe.analyze(root);
+            assertTrue(analysis.report().shouldAttempt("gbuffers_entities_translucent"),
+                    "missing child did not materialize its parent source");
+        } finally {
+            Files.deleteIfExists(properties);
+            for (String name : names) {
+                Files.deleteIfExists(shaders.resolve(name + ".fsh"));
+                Files.deleteIfExists(shaders.resolve(name + ".vsh"));
+            }
+            Files.deleteIfExists(shaders);
+            Files.deleteIfExists(root);
+        }
+    }
+
+    private static void verifyParticleFallbackAndTargets() throws IOException {
+        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.OPAQUE_PARTICLE,
+                net.minecraft.client.renderer.RenderPipelines.TRANSLUCENT_PARTICLE,
+                net.minecraft.client.renderer.RenderPipelines.WEATHER_DEPTH_WRITE,
+                net.minecraft.client.renderer.RenderPipelines.WEATHER_NO_DEPTH_WRITE)) {
+            assertEquals(0.1F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+                    "particle/weather fixed core cutout must not depend on an absent ALPHA_CUTOUT define");
+        }
+        Path root = Files.createTempDirectory("chimera-particle-contract-");
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Path vertex = shaders.resolve("gbuffers_textured.vsh");
+        Path fragment = shaders.resolve("gbuffers_textured.fsh");
+        Path properties = shaders.resolve("shaders.properties");
+        String source = """
+                #version 120
+                attribute vec4 mc_Entity;
+                uniform float frameTimeCounter;
+                varying vec2 uv;
+                varying vec4 tint;
+                varying vec2 light;
+                varying vec3 normal;
+                varying float time;
+                void main() {
+                    mat4 mvp = gl_ModelViewProjectionMatrix;
+                    uv = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                    light = (gl_TextureMatrix[1] * gl_MultiTexCoord1).xy;
+                    normal = gl_NormalMatrix * gl_Normal;
+                    tint = gl_Color;
+                    time = frameTimeCounter + mc_Entity.x;
+                    gl_Position = mvp * gl_Vertex;
+                }
+                """;
+        try {
+            Files.writeString(vertex, source);
+            Files.writeString(fragment, """
+                    #version 120
+                    /* DRAWBUFFERS:1 */
+                    uniform sampler2D tex;
+                    uniform float frameTimeCounter;
+                    varying vec2 uv;
+                    varying vec4 tint;
+                    varying vec2 light;
+                    varying vec3 normal;
+                    varying float time;
+                    void main() {
+                        gl_FragData[0] = texture2D(tex, uv) * tint
+                            + vec4(light, normal.z + time - frameTimeCounter, 0.0) * 0.001;
+                    }
+                    """);
+            Files.writeString(properties, "blend.gbuffers_textured.colortex1=off\n");
+            var analysis = PackProbe.analyze(root);
+            for (String name : List.of("gbuffers_particles", "gbuffers_particles_translucent")) {
+                var plan = analysis.plan().program(name);
+                assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(name),
+                        name + " parent-source particle adapter rejected: "
+                                + (plan == null ? "missing" : plan.deviations()));
+                assertEquals("gbuffers_textured", analysis.resolution().resolution(name).selectedProgram(),
+                        name + " selected source");
+                assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE, plan.familyAdapter().vertexContract(),
+                        name + " must retain native particle format");
+                var output = plan.geometryOutputPlan();
+                assertEquals(List.of(1), output.targetSlots(), name + " authored target");
+                var runtime = new PackPipelines.PackParticle(null, new int[0], plan.convertedVertex(),
+                        plan.convertedFragment(), output, new ProgramImageBindingManifest(List.of()));
+                assertTrue(runtime.requiresDynamicAttachments(), name + " singleton target1 lost its draw window");
+                assertEquals(PackBlendPlan.Mode.OFF, plan.blendPlan().buffers().get(1),
+                        name + " lost selected-source blend directive");
+                String converted = plan.convertedVertex();
+                assertTrue(converted.contains("layout(location = 1) in vec2 UV0;")
+                                && converted.contains("layout(location = 2) in vec4 Color;")
+                                && converted.contains("layout(location = 3) in ivec2 UV2;")
+                                && !converted.contains("in uvec4 EntityIds")
+                                && !converted.contains("in vec3 Normal")
+                                && converted.contains("const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+                                && converted.contains("tint = (Color * ColorModulator);")
+                                && converted.contains("transpose(inverse(mat3(ModelViewMat)))"),
+                        name + " Iris host-particle input semantics");
+                assertTrue(plan.alphaTestPlan().perDrawReference()
+                                && plan.convertedFragment().contains("discard;"),
+                        name + " lost native/pack alpha cutout");
+            }
+            var compiled = PackCompileCheck.run(root, analysis);
+            assertTrue(compiled.failures().isEmpty(), "particle alias compilation: " + compiled.failures());
+            var uniforms = analysis.plan().program("gbuffers_particles").interfacePlan()
+                    .effective(UniformRegistry.Stage.PARTICLE).executableUniforms();
+            assertTrue(LegacyGlslConverter.convertParticleVertex(source.replace("void main() {",
+                            "attribute vec2 mc_midTexCoord;\nvoid main() {\nuv = mc_midTexCoord;"),
+                            null, "", Map.of()) == null,
+                    "particle material attributes must not be fabricated");
+            try {
+                LegacyGlslConverter.convertParticleVertexChecked(source.replace("frameTimeCounter", "unknownTime"),
+                        null, Files.readString(fragment), Map.of(), false, uniforms);
+                throw new AssertionError("referenced unknown particle uniform was admitted");
+            } catch (IllegalArgumentException expected) {
+                assertTrue(expected.getMessage().contains("unknownTime"), "particle rejection lost concrete symbol");
+            }
+            assertTrue(LegacyGlslConverter.convertTerrainVertex(source, null, "") == null,
+                    "particle repair weakened terrain admission");
+        } finally {
+            Files.deleteIfExists(properties);
+            Files.deleteIfExists(fragment);
+            Files.deleteIfExists(vertex);
+            Files.deleteIfExists(shaders);
+            Files.deleteIfExists(root);
+        }
+    }
+
+    private static void verifyAdvancedResourceInventory() throws IOException {
+        String harmless = "// uniform image2D ignored; buffer Ignored { float x; };\n"
+                + "uniform sampler2D colortex0;\n"
+                + "vec4 sampleImage(sampler2D image, vec2 coords) {\n"
+                + " float imageFoo = 0.0, imageSize = 0.0, bufferColor = 0.0;\n"
+                + " return texture2D(image, coords) + imageFoo + imageSize + bufferColor; }\n"
+                + "void main() { gl_FragColor = sampleImage(colortex0, vec2(0.5)); }\n";
+        assertTrue(!PackAdvancedResourcePlan.containsAdvancedDeclarations(harmless),
+                "sampler parameter named image or commented declarations became advanced resources");
+        for (String prefix : List.of("", "i", "u")) {
+            for (String shape : List.of("1D", "2D", "3D", "Cube", "2DRect", "1DArray",
+                    "2DArray", "CubeArray", "Buffer", "2DMS", "2DMSArray")) {
+                assertTrue(PackAdvancedResourcePlan.containsAdvancedDeclarations(
+                                "uniform " + prefix + "image" + shape + " resource;"),
+                        "real image type missed: " + prefix + "image" + shape);
+            }
+        }
+        String storage = "layout(std430, binding=0) readonly buffer Data { float x; };\n";
+        assertTrue(PackAdvancedResourcePlan.containsAdvancedDeclarations(storage),
+                "storage buffer declaration missed");
+        Path root = Files.createTempDirectory("chimera-resource-inventory-");
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Path vertex = shaders.resolve("composite1.vsh");
+        Path fragment = shaders.resolve("composite1.fsh");
+        try {
+            Files.writeString(vertex, "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+            Files.writeString(fragment, "#version 120\n" + harmless);
+            ConformanceReport report = probe(root);
+            assertTrue(report.shouldAttempt("composite1"),
+                    "MakeUp-style sampler helper must remain executable: "
+                            + report.program("composite1").deviations());
+            for (String declaration : List.of("uniform image2D resource;\n", storage)) {
+                Files.writeString(fragment, "#version 430\n" + declaration
+                        + "void main() { gl_FragColor = vec4(1.0); }\n");
+                report = probe(root);
+                assertTrue(report.program("composite1").deviations()
+                                .contains("ADVANCED_RESOURCE_UNSUPPORTED"),
+                        "unplanned real advanced resource was not flagged: " + declaration);
+                assertTrue(!report.shouldAttempt("composite1"),
+                        "unplanned real advanced resource was admitted");
+            }
+        } finally {
+            Files.deleteIfExists(fragment);
+            Files.deleteIfExists(vertex);
+            Files.deleteIfExists(shaders);
+            Files.deleteIfExists(root);
+        }
+    }
+
+    private static void verifyNonzeroGeometryAndPrepare() throws IOException {
+        ProgramImageBindingManifest manifest = new ProgramImageBindingManifest(List.of());
+        for (String targets : List.of("0", "1", "01", "14")) {
+            int count = targets.length();
+            String source = "/* DRAWBUFFERS:" + targets + " */\nvoid main() {"
+                    + " gl_FragData[0] = vec4(1.0);"
+                    + (count > 1 ? " gl_FragData[1] = vec4(1.0);" : "") + " }";
+            GeometryOutputPlan route = GeometryOutputPlan.parse("gbuffers_terrain", source,
+                    Map.of(0, 97, 1, 9, 4, 76));
+            boolean custom = !targets.equals("0");
+            assertTrue(route.executable() && route.requiresDynamicAttachments() == custom,
+                    "geometry attachment route " + targets);
+            assertTrue(route.requiresMrt() == (count > 1), "MRT count changed for " + targets);
+            assertTrue(new PackPipelines.PackTerrain(null, new int[0], "", route, manifest)
+                            .requiresDynamicAttachments() == custom,
+                    "terrain route disagrees with geometry plan " + targets);
+            assertTrue(new PackPipelines.PackEntity(null, new int[0], "", "", route, manifest)
+                            .requiresDynamicAttachments() == custom,
+                    "entity route disagrees with geometry plan " + targets);
+            PackBlendPlan blends = new PackBlendPlan(null, Map.of(1, PackBlendPlan.Mode.OFF), List.of());
+            net.chimera.render.shader.MrtPipelineContext.begin(route.outputFormatsArray(), 8,
+                    blends.attachments(route.targetSlots()));
+            try {
+                assertEquals(count, net.chimera.render.shader.MrtPipelineContext.attachmentCount(0),
+                        "native attachment count " + targets);
+                for (int location = 0; location < count; location++) {
+                    int target = targets.charAt(location) - '0';
+                    assertEquals(target, route.targetForOutput(location), "logical output mapping");
+                    assertEquals(Map.of(0, 97, 1, 9, 4, 76).get(target),
+                            net.chimera.render.shader.MrtPipelineContext.colorFormats()[location],
+                            "native format mapping");
+                    assertTrue(java.util.Objects.equals(target == 1 ? PackBlendPlan.Mode.OFF : null,
+                            net.chimera.render.shader.MrtPipelineContext.attachmentBlends()[location]),
+                            "logical blend mapping");
+                }
+            } finally {
+                net.chimera.render.shader.MrtPipelineContext.end();
+            }
+        }
+
+        Path root = Files.createTempDirectory("chimera-prepare-routing-");
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        List<String> names = List.of("prepare", "prepare2", "prepare10", "gbuffers_terrain", "deferred", "final");
+        try {
+            for (String name : names) {
+                Files.writeString(shaders.resolve(name + ".vsh"),
+                        "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+                String fragment = switch (name) {
+                    case "prepare" -> "/* DRAWBUFFERS:17 */\nvoid main() {"
+                            + " gl_FragData[0] = vec4(0.25); gl_FragData[1] = vec4(0.5); }";
+                    case "prepare2", "prepare10" -> "/* DRAWBUFFERS:7 */\nuniform sampler2D colortex7;"
+                            + " void main() { gl_FragColor = texture2D(colortex7, vec2(0.5)); }";
+                    case "gbuffers_terrain" -> "/* DRAWBUFFERS:1 */\nuniform sampler2D gaux4;"
+                            + " void main() { gl_FragColor = texture2D(gaux4, vec2(0.5)); }";
+                    case "deferred" -> "/* DRAWBUFFERS:1 */\nuniform sampler2D colortex1;"
+                            + " void main() { gl_FragColor = texture2D(colortex1, vec2(0.5)); }";
+                    default -> "const bool colortex1Clear = false;\nconst bool colortex7Clear = false;\n"
+                            + " uniform sampler2D colortex1;"
+                            + " void main() { gl_FragColor = texture2D(colortex1, vec2(0.5)); }";
+                };
+                Files.writeString(shaders.resolve(name + ".fsh"), "#version 120\n" + fragment);
+            }
+            PackProbe.Analysis analysis = PackProbe.analyze(root);
+            for (String name : names) {
+                assertTrue(analysis.plan().shouldAttempt(name) && analysis.report().shouldAttempt(name),
+                        "prepare fixture runtime eligibility " + name + ": "
+                                + analysis.plan().program(name).deviations() + "/"
+                                + analysis.report().program(name).deviations());
+            }
+            PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().activePrograms(),
+                    analysis.config(), analysis.plan().resources(), 32, 32, 8, 16384);
+            PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(analysis.plan().activePrograms(), graph);
+            assertEquals(List.of("prepare", "prepare2", "prepare10"),
+                    schedule.stages(PackFrameSchedulePlan.PostWindow.PREPARE).stream()
+                            .map(PackFrameSchedulePlan.PostStage::name).toList(), "prepare numeric order");
+            assertTrue(schedule.phaseIndex(PackFrameSchedulePlan.Phase.SHADOW)
+                            < schedule.phaseIndex(PackFrameSchedulePlan.Phase.PREPARE)
+                            && schedule.phaseIndex(PackFrameSchedulePlan.Phase.PREPARE)
+                            < schedule.phaseIndex(PackFrameSchedulePlan.Phase.OPAQUE), "prepare world seam");
+            assertEquals(List.of("deferred"), schedule.stages(PackFrameSchedulePlan.PostWindow.EARLY)
+                    .stream().map(PackFrameSchedulePlan.PostStage::name).toList(), "prepare leaked into deferred");
+            assertEquals(List.of(1, 7), graph.step("prepare").outputTargets(), "prepare target allocation");
+            assertTrue(graph.target(1).persistent() && graph.target(7).persistent()
+                            && !graph.target(1).clear() && !graph.target(7).clear(),
+                    "prepare changed authored clear policy");
+            assertTrue(graph.geometryReads().contains(7), "terrain did not consume prepare fog target");
+            Files.writeString(shaders.resolve("shaders.properties"), "program.prepare2.enabled=false\n");
+            analysis = PackProbe.analyze(root);
+            graph = PackTargetGraphPlan.build(analysis.plan().activePrograms(), analysis.config(),
+                    analysis.plan().resources(), 32, 32, 8, 16384);
+            schedule = PackFrameSchedulePlan.build(analysis.plan().activePrograms(), graph);
+            assertTrue(graph.step("prepare2") == null && schedule.postStage("prepare2") == null,
+                    "pack-disabled prepare remained a producer");
+        } finally {
+            Files.deleteIfExists(shaders.resolve("shaders.properties"));
+            for (String name : names) {
+                Files.deleteIfExists(shaders.resolve(name + ".vsh"));
+                Files.deleteIfExists(shaders.resolve(name + ".fsh"));
+            }
+            Files.deleteIfExists(shaders);
+            Files.deleteIfExists(root);
+        }
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {

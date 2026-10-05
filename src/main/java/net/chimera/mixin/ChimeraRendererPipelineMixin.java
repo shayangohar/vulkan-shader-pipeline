@@ -10,6 +10,20 @@ import org.spongepowered.asm.mixin.injection.ModifyVariable;
 /** Routes VulkanMod's direct CloudRenderer pipeline bind through Chimera. */
 @Mixin(value = Renderer.class, remap = false)
 public abstract class ChimeraRendererPipelineMixin {
+    @com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod(method = "uploadAndBindUBOs")
+    private void chimera$cloudPhase(net.vulkanmod.vulkan.shader.Pipeline pipeline,
+                                   com.llamalad7.mixinextras.injector.wrapoperation.Operation<Void> original) {
+        if (!ChimeraSkyBridge.isCloudPipeline(pipeline)) {
+            original.call(pipeline);
+            return;
+        }
+        var previous = net.chimera.render.shader.PackUniformProvider.setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase.CLOUDS);
+        try {
+            original.call(pipeline);
+        } finally {
+            net.chimera.render.shader.PackUniformProvider.setRenderingPhase(previous);
+        }
+    }
     @ModifyVariable(method = "bindGraphicsPipeline", at = @At("HEAD"), argsOnly = true, require = 1)
     private GraphicsPipeline chimera$replaceCloudPipeline(GraphicsPipeline host) {
         return ChimeraSkyBridge.replaceCloudPipeline(host);

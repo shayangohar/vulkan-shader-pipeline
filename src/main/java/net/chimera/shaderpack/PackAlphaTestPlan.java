@@ -41,14 +41,19 @@ record PackAlphaTestPlan(
     }
 
     static PackAlphaTestPlan forProgram(String programName, PackSettingsPlan settings) {
+        return forProgram(programName, programName, settings);
+    }
+
+    static PackAlphaTestPlan forProgram(String programName, String sourceProgram, PackSettingsPlan settings) {
         String name = programName == null ? "" : programName;
         boolean geometry = name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
-        boolean entity = FamilyAdapterRegistry.isEntityLike(name);
+        boolean entity = FamilyAdapterRegistry.isEntityLike(name)
+                || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name);
         boolean shadow = name.equals("shadow");
         if (!geometry && !entity && !shadow) {
             return off(false);
         }
-        String key = "alphaTest." + name;
+        String key = "alphaTest." + sourceProgram;
         String value = settings == null ? null : settings.propertyValues().get(key);
         if (value == null && shadow) {
             return new PackAlphaTestPlan(Mode.DYNAMIC_SHADOW, "DYNAMIC", 0.0F, false, List.of());

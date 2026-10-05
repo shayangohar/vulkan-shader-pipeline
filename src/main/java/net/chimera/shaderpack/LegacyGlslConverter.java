@@ -1044,7 +1044,7 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                ENTITY_VERTEX_PREAMBLE, false, allowStorageBuffers, List.of());
+                ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, List.of());
     }
 
     /**
@@ -1061,7 +1061,7 @@ public final class LegacyGlslConverter {
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                ENTITY_VERTEX_PREAMBLE, false, allowStorageBuffers, fragmentUniforms);
+                ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
     }
 
     /** Converts the block-entity variant, which uses the host ModelOffset field. */
@@ -1083,7 +1083,7 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                BLOCK_VERTEX_PREAMBLE, false, allowStorageBuffers, List.of());
+                BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, List.of());
     }
 
     /** Block vertex conversion that reports the first concrete failure. */
@@ -1096,10 +1096,10 @@ public final class LegacyGlslConverter {
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                BLOCK_VERTEX_PREAMBLE, false, allowStorageBuffers, fragmentUniforms);
+                BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
     }
 
-    /** Converts the first-person hand contract onto EXTENDED_PARTICLE. */
+    /** Hand models use the real entity inputs; held items/maps get layout variants at build time. */
     public static TerrainVertexConversion convertHandVertex(
             String source,
             Path sourceFile,
@@ -1118,7 +1118,7 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                HAND_VERTEX_PREAMBLE, true, allowStorageBuffers, List.of());
+                HAND_VERTEX_PREAMBLE, allowStorageBuffers, List.of());
     }
 
     /** Hand vertex conversion that reports the first concrete failure. */
@@ -1131,7 +1131,22 @@ public final class LegacyGlslConverter {
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                HAND_VERTEX_PREAMBLE, true, allowStorageBuffers, fragmentUniforms);
+                HAND_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
+    }
+
+    /** Host damage meshes keep BLOCK, including its lightmap and normal offsets. */
+    public static TerrainVertexConversion convertCrumblingVertexChecked(
+            String source, Path sourceFile, String fragmentSource,
+            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
+        String liveInputs = stripComments(removeEntityAttributes(pruneUnreachableVertexFunctions(
+                prepareSource(source, sourceFile, true))));
+        if (containsIdentifier(liveInputs, "mc_midTexCoord") || containsIdentifier(liveInputs, "at_tangent")) {
+            throw new IllegalArgumentException("crumbling BLOCK has no material mid-coordinate or tangent attribute");
+        }
+        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
+                CRUMBLING_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
     }
 
     private static TerrainVertexConversion convertEntityVertex(
@@ -1140,13 +1155,12 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations,
             String vertexPreamble,
-            boolean particleInputs,
             boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
         try {
             return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                    vertexPreamble, particleInputs, allowStorageBuffers, fragmentUniforms);
+                    vertexPreamble, allowStorageBuffers, fragmentUniforms);
         } catch (Exception e) {
             return null;
         }
@@ -1164,7 +1178,6 @@ public final class LegacyGlslConverter {
             String fragmentSource,
             Map<String, Integer> sharedLocations,
             String vertexPreamble,
-            boolean particleInputs,
             boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
@@ -1187,7 +1200,6 @@ public final class LegacyGlslConverter {
             String beforeFeatures = removeEntityIdDeclarations(stripped);
             rejectEntityVertexFeatures(
                     stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
-                    particleInputs,
                     allowStorageBuffers);
 
             Map<String, String> vertexTypes = parseEntityVaryings(stripped, true);
@@ -1247,25 +1259,20 @@ public final class LegacyGlslConverter {
             // opaque uniforms require layout(binding) even when unread.
             // Referenced samplers already failed loudly in rejection.
             converted = stripUnreferencedSamplerDeclarations(converted);
-            Map<String, String> inputs = particleInputs
-                    ? Map.ofEntries(
+            // Legacy MVP is a mat4; substituting vec4 ftransform() silently
+            // turns authored MVP * gl_Vertex into component-wise multiplication.
+            Map<String, String> inputs = Map.ofEntries(
                     Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
-                    Map.entry("gl_Color", "Color"),
+                    Map.entry("gl_Color", vertexPreamble == PARTICLE_VERTEX_PREAMBLE || isSkyPreamble(vertexPreamble)
+                            ? "(Color * ColorModulator)" : "Color"),
                     Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
-                    Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2) / 256.0, 0.0, 1.0)"),
-                    Map.entry("mc_midTexCoord", midTexCoordValue(stripped)),
-                    Map.entry("at_tangent", "Tangent"),
-                    Map.entry("entityId", entityIdExpression(layout)))
-                    : Map.ofEntries(
-                    Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
-                    Map.entry("gl_Color", "Color"),
-                    Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
-                    Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV1), 0.0, 1.0)"),
+                    Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2), 0.0, 1.0)"),
                     Map.entry("gl_MultiTexCoord2", "vec4(vec2(UV2), 0.0, 1.0)"),
                     Map.entry("gl_Normal", "Normal.xyz"),
-                    Map.entry("gl_NormalMatrix", "mat3(ModelViewMat)"),
+                    Map.entry("gl_NormalMatrix", vertexPreamble == PARTICLE_VERTEX_PREAMBLE || isSkyPreamble(vertexPreamble)
+                            ? "transpose(inverse(mat3(ModelViewMat)))" : "mat3(ModelViewMat)"),
                     Map.entry("gl_ModelViewMatrix", "ModelViewMat"),
-                    Map.entry("gl_ModelViewProjectionMatrix", "chimeraEntityFtransform()"),
+                    Map.entry("gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)"),
                     Map.entry("gl_ProjectionMatrix", "ProjMat"),
                     Map.entry("gbufferModelView", "ModelViewMat"),
                     Map.entry("gbufferModelViewInverse", "chimeraEntityInverseModelView()"),
@@ -1277,8 +1284,32 @@ public final class LegacyGlslConverter {
             // ProjMat and gl_ProjectionMatrix belong to the host raster path.
             // Iris gbufferProjection uniforms stay in the shared pack UBO so
             // they use the legacy clip-depth convention instead.
+            if (vertexPreamble == HAND_VERTEX_PREAMBLE) {
+                inputs = new java.util.HashMap<>(inputs);
+                inputs.put("gl_ProjectionMatrix", "chimeraHandProjection()");
+                inputs.put("gl_ModelViewProjectionMatrix", "(chimeraHandProjection() * ModelViewMat)");
+                inputs.remove("gbufferModelView");
+                inputs.remove("gbufferModelViewInverse");
+            }
+            if (isSkyPreamble(vertexPreamble)) {
+                inputs = new java.util.HashMap<>(inputs);
+                inputs.put("gl_ProjectionMatrix", "chimeraSkyProjection()");
+                inputs.put("gl_ModelViewProjectionMatrix", "(chimeraSkyProjection() * ModelViewMat)");
+                // Celestial host transforms rotate the sun/moon mesh. Pack world
+                // matrices must remain the frame's world matrices, as in Iris.
+                inputs.remove("gbufferModelView");
+                inputs.remove("gbufferModelViewInverse");
+            }
             converted = GlslTokenRewriter.replaceIdentifiers(converted, inputs);
-            converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*[01]\\s*\\]", "mat4(1.0)");
+            converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]",
+                    "TextureMat");
+            // Iris VanillaTransformer/VanillaCoreTransformer: raw UV2 for both
+            // light-coordinate aliases, normalized once by the legacy matrix.
+            converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*[12]\\s*\\]",
+                    "mat4(0.00390625, 0.0, 0.0, 0.0, "
+                            + "0.0, 0.00390625, 0.0, 0.0, "
+                            + "0.0, 0.0, 0.00390625, 0.0, "
+                            + "0.03125, 0.03125, 0.03125, 1.0)");
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraEntityFtransform()");
             if (entityIdType != null) {
@@ -1302,6 +1333,14 @@ public final class LegacyGlslConverter {
                         + ") flat out ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
             }
             String cameraBlock = entityCameraUniformBlock(converted, fragmentUniforms);
+            if (vertexPreamble == HAND_VERTEX_PREAMBLE) {
+                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraHandMain()");
+                converted += "\nvoid main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+            }
+            if (isSkyPreamble(vertexPreamble)) {
+                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraSkyMain()");
+                converted += "\nvoid main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+            }
             return new TerrainVertexConversion("#version 460\n" + vertexPreamble
                     + chimeraVaryings + cameraBlock + converted,
                     layout);
@@ -1353,8 +1392,28 @@ public final class LegacyGlslConverter {
             Map<String, Integer> sharedLocations,
             boolean allowStorageBuffers
     ) {
-        return convertLegacyVertex(source, sourceFile, fragmentSource,
-                PARTICLE_VERTEX_PREAMBLE, allowStorageBuffers);
+        try {
+            return convertParticleVertexChecked(source, sourceFile, fragmentSource,
+                    sharedLocations, allowStorageBuffers, List.of());
+        } catch (RuntimeException unsupported) {
+            return null;
+        }
+    }
+
+    /** HOST_PARTICLE shares legacy semantics, not the terrain converter's input restrictions. */
+    public static TerrainVertexConversion convertParticleVertexChecked(
+            String source, Path sourceFile, String fragmentSource,
+            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
+        String liveInputs = stripComments(removeEntityAttributes(pruneUnreachableVertexFunctions(
+                prepareSource(source, sourceFile, true))));
+        if (containsIdentifier(liveInputs, "mc_midTexCoord") || containsIdentifier(liveInputs, "at_tangent")
+                || containsIdentifier(liveInputs, "Tangent")) {
+            throw new IllegalArgumentException("particle format has no material mid-coordinate or tangent attribute");
+        }
+        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
+                PARTICLE_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
     }
 
     /** Converts a particle fragment with the shared host sampler and varying rules. */
@@ -1525,14 +1584,37 @@ public final class LegacyGlslConverter {
             String source, Path sourceFile, String fragmentSource,
             FamilyAdapterPlan.VertexContract contract
     ) {
-        return convertLegacyVertex(source, sourceFile, fragmentSource,
-                switch (contract) {
-                    case SKY_POSITION -> SKY_POSITION_VERTEX_PREAMBLE;
-                    case SKY_POSITION_COLOR -> SKY_POSITION_COLOR_VERTEX_PREAMBLE;
-                    case SKY_POSITION_UV -> SKY_POSITION_UV_VERTEX_PREAMBLE;
-                    case SKY_POSITION_COLOR_UV -> SKY_POSITION_COLOR_UV_PREAMBLE;
-                    default -> throw new IllegalArgumentException("unsupported sky vertex contract");
-                });
+        return convertSkyVertex(source, sourceFile, fragmentSource, contract, Map.of(), false, List.of());
+    }
+
+    public static TerrainVertexConversion convertSkyVertex(
+            String source, Path sourceFile, String fragmentSource,
+            FamilyAdapterPlan.VertexContract contract, Map<String, Integer> locations,
+            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
+    ) {
+        try {
+            String live = stripComments(removeEntityAttributes(pruneUnreachableVertexFunctions(
+                    prepareSource(source, sourceFile, true))));
+            if (containsIdentifier(live, "mc_midTexCoord") || containsIdentifier(live, "at_tangent")
+                    || containsIdentifier(live, "Tangent")) {
+                throw new IllegalArgumentException("sky format has no material mid-coordinate or tangent attribute");
+            }
+            return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, locations,
+                    skyPreamble(contract), allowStorageBuffers, uniforms);
+        } catch (RuntimeException failure) {
+            return null;
+        }
+    }
+
+    /** One authored sky program runs against each real native sky mesh layout. */
+    public static String skyVertexForContract(String converted, FamilyAdapterPlan.VertexContract contract) {
+        for (var source : SKY_CONTRACTS) {
+            String preamble = skyPreamble(source);
+            if (converted != null && converted.contains(preamble)) {
+                return converted.replace(preamble, skyPreamble(contract));
+            }
+        }
+        throw new IllegalArgumentException("sky program lacks its native input contract");
     }
 
     /** Converts the generated cloud vertex contract. */
@@ -1544,11 +1626,13 @@ public final class LegacyGlslConverter {
 
     public static String convertSkyFragment(
             String source, Path sourceFile, int[] samplerSlots,
-            TerrainVaryingLayout layout, UniformRegistry.ProgramInterface interfacePlan
+            TerrainVaryingLayout layout, UniformRegistry.ProgramInterface interfacePlan,
+            GeometryOutputPlan outputPlan
     ) {
         return FragmentConversionRequest.of(source, sourceFile, true, samplerSlots)
                 .withTerrainLayout(layout)
                 .withInterfacePlan(interfacePlan)
+                .withGeometryOutputPlan(outputPlan)
                 .convert();
     }
 
@@ -2546,7 +2630,7 @@ public final class LegacyGlslConverter {
     }
 
     private static void rejectEntityVertexFeatures(
-            String source, boolean particleInputs, boolean allowStorageBuffers
+            String source, boolean allowStorageBuffers
     ) {
         // Served and dead uniform declarations are stripped before this
         // check, so a remaining value-type uniform names a referenced
@@ -2630,9 +2714,6 @@ public final class LegacyGlslConverter {
         if (ENTITY_VARYING_DECL.matcher(source).replaceAll(" ")
                 .matches("(?s).*\\b(?:layout|flat|noperspective)\\b.*")) {
             throw new IllegalArgumentException("entity vertex layout is fixed by Chimera");
-        }
-        if (particleInputs && source.matches("(?s).*\\b(?:gl_Normal|gl_MultiTexCoord2)\\b.*")) {
-            throw new IllegalArgumentException("hand vertex input is not present in the particle format");
         }
     }
 
@@ -3246,22 +3327,21 @@ public final class LegacyGlslConverter {
 
     /**
      * Iris injects these scheduler constants before a shadow shader runs.
-     * The bounded adapter has one fixed terrain-caster lane, so it exposes a
-     * deterministic solid value and keeps the other names available to
-     * guarded pack code without pretending to schedule their separate lanes.
+     * Production sources receive these from PackEngineDefines before
+     * preprocessing. Direct converter fixtures still use the canonical ABI.
      */
     private static final String SHADOW_RENDER_STAGE_DEFINES = """
             #ifndef MC_RENDER_STAGE_TERRAIN_SOLID
-            #define MC_RENDER_STAGE_TERRAIN_SOLID 0
+            #define MC_RENDER_STAGE_TERRAIN_SOLID 8
             #endif
             #ifndef MC_RENDER_STAGE_TERRAIN_TRANSLUCENT
-            #define MC_RENDER_STAGE_TERRAIN_TRANSLUCENT 1
+            #define MC_RENDER_STAGE_TERRAIN_TRANSLUCENT 17
             #endif
             #ifndef MC_RENDER_STAGE_TERRAIN_CUTOUT
-            #define MC_RENDER_STAGE_TERRAIN_CUTOUT 2
+            #define MC_RENDER_STAGE_TERRAIN_CUTOUT 10
             #endif
             #ifndef MC_RENDER_STAGE_TERRAIN_CUTOUT_MIPPED
-            #define MC_RENDER_STAGE_TERRAIN_CUTOUT_MIPPED 3
+            #define MC_RENDER_STAGE_TERRAIN_CUTOUT_MIPPED 9
             #endif
             """;
 
@@ -3331,149 +3411,105 @@ public final class LegacyGlslConverter {
     private static final String BLOCK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
             .replace("return vec4(Position, 1.0);", "return vec4(Position + ModelOffset, 1.0);");
 
-    /** First-person hand inputs use the host particle layout, not NEW_ENTITY. */
-    private static final String HAND_VERTEX_PREAMBLE = """
-            layout(binding = 0) uniform DynamicTransforms {
-                mat4 ModelViewMat;
-                vec4 ColorModulator;
-                vec3 ModelOffset;
-                mat4 TextureMat;
-            };
+    private static final String CRUMBLING_VERTEX_PREAMBLE = BLOCK_VERTEX_PREAMBLE
+            .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
+            .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
+            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
-            layout(binding = 1) uniform Projection {
-                mat4 ProjMat;
-            };
+    private static final String HAND_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("vec4 chimeraEntityVertexValue()", """
+                    mat4 chimeraHandProjection() {
+                        mat4 legacy = ProjMat;
+                        legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
+                        legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
+                        legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
+                        legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
+                        return legacy;
+                    }
+                    vec4 chimeraEntityVertexValue()""")
+            .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
 
-            layout(location = 0) in vec3 Position;
-            layout(location = 1) in vec2 UV0;
-            layout(location = 2) in vec4 Color;
-            layout(location = 3) in ivec2 UV2;
-            layout(location = 4) in uvec4 EntityIds;
-            layout(location = 5) in vec2 MidTexCoord;
-            layout(location = 6) in vec4 Tangent;
+    /** Same immutable hand program, adapted only to the host inputs of this draw. */
+    public static String handVertexForFormat(String converted, com.mojang.blaze3d.vertex.VertexFormat host) {
+        if (host == com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY) return converted;
+        if (converted == null || !converted.contains(HAND_VERTEX_PREAMBLE)) {
+            throw new IllegalArgumentException("hand program lacks the entity input contract");
+        }
+        if (!net.chimera.render.vertex.ChimeraVertexFormats.handFormats().containsKey(host)) {
+            throw new IllegalArgumentException("unsupported hand host format");
+        }
+        // Input locations follow the native prefix. Iris VanillaTransformer
+        // supplies +Z for formats without a normal, zero for a missing lightmap.
+        String preamble = HAND_VERTEX_PREAMBLE;
+        var names = host.getElementAttributeNames();
+        String[] types = {"vec3", "vec4", "vec2", "ivec2", "ivec2", "vec3"};
+        String[] attributes = {"Position", "Color", "UV0", "UV1", "UV2", "Normal"};
+        String[] defaults = {null, "vec4(1.0)", null, "ivec2(0)", "ivec2(0)", "vec3(0.0, 0.0, 1.0)"};
+        for (int i = 0; i < attributes.length; i++) {
+            int location = names.indexOf(attributes[i]);
+            String declaration = location < 0
+                    ? "const " + types[i] + " " + attributes[i] + " = " + defaults[i] + ";"
+                    : "layout(location = " + location + ") in " + types[i] + " " + attributes[i] + ";";
+            preamble = preamble.replace("layout(location = " + i + ") in " + types[i] + " " + attributes[i] + ";", declaration);
+        }
+        preamble = preamble.replace("layout(location = 6) in uvec4 EntityIds;",
+                        "layout(location = " + names.size() + ") in uvec4 EntityIds;")
+                .replace("layout(location = 7) in vec2 MidTexCoord;",
+                        "layout(location = " + (names.size() + 1) + ") in vec2 MidTexCoord;")
+                .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                        "layout(location = " + (names.size() + 2) + ") in vec4 ChimeraPackedTangent;");
+        return converted.replace(HAND_VERTEX_PREAMBLE, preamble);
+    }
 
-            vec4 chimeraEntityVertexValue() {
-                return vec4(Position, 1.0);
-            }
+    /** Iris VanillaTransformer supplies +Z for a host format without a normal. */
+    private static final String PARTICLE_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
+            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
-            vec4 chimeraEntityFtransform() {
-                return ProjMat * ModelViewMat * chimeraEntityVertexValue();
-            }
+    public static final List<FamilyAdapterPlan.VertexContract> SKY_CONTRACTS = List.of(
+            FamilyAdapterPlan.VertexContract.SKY_POSITION,
+            FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR,
+            FamilyAdapterPlan.VertexContract.SKY_POSITION_UV,
+            FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV);
 
-            """;
+    private static boolean isSkyPreamble(String preamble) {
+        return preamble.contains("mat4 chimeraSkyProjection()");
+    }
 
-    /** Host particle transform blocks and DefaultVertexFormat.PARTICLE inputs. */
-    private static final String PARTICLE_VERTEX_PREAMBLE = """
-            layout(binding = 0) uniform DynamicTransforms {
-                mat4 ModelViewMat;
-                vec4 ColorModulator;
-                vec3 ModelOffset;
-                mat4 TextureMat;
-            };
-
-            layout(binding = 1) uniform Projection {
-                mat4 ProjMat;
-            };
-
-            layout(location = 0) in vec3 Position;
-            layout(location = 1) in vec2 UV0;
-            layout(location = 2) in vec4 Color;
-            layout(location = 3) in ivec2 UV2;
-
-            vec4 chimeraVertexValue() {
-                return vec4(Position, 1.0);
-            }
-
-            vec4 chimeraColorValue() {
-                return Color;
-            }
-
-            vec4 chimeraTexCoord0Value() {
-                return vec4(UV0, 0.0, 1.0);
-            }
-
-            vec4 chimeraTexCoord1Value() {
-                return vec4(vec2(UV2) / 256.0, 0.0, 1.0);
-            }
-
-            vec4 chimeraFtransform() {
-                return ProjMat * ModelViewMat * chimeraVertexValue();
-            }
-
-            """;
-
-    /** Sky disc and stars: the host provides only position. */
-    private static final String SKY_POSITION_VERTEX_PREAMBLE = """
-            layout(binding = 0) uniform DynamicTransforms {
-                mat4 ModelViewMat;
-                vec4 ColorModulator;
-                vec3 ModelOffset;
-                mat4 TextureMat;
-            };
-
-            layout(binding = 1) uniform Projection { mat4 ProjMat; };
-            layout(location = 0) in vec3 Position;
-            vec4 chimeraVertexValue() { return vec4(Position, 1.0); }
-            vec4 chimeraColorValue() { return vec4(1.0); }
-            vec4 chimeraTexCoord0Value() { return vec4(0.0); }
-            vec4 chimeraTexCoord1Value() { return vec4(0.0); }
-            vec4 chimeraFtransform() { return ProjMat * ModelViewMat * chimeraVertexValue(); }
-            """;
-
-    /** Sunrise and sunset: the host adds a per-vertex color. */
-    private static final String SKY_POSITION_COLOR_VERTEX_PREAMBLE = """
-            layout(binding = 0) uniform DynamicTransforms {
-                mat4 ModelViewMat;
-                vec4 ColorModulator;
-                vec3 ModelOffset;
-                mat4 TextureMat;
-            };
-            layout(binding = 1) uniform Projection { mat4 ProjMat; };
-            layout(location = 0) in vec3 Position;
-            layout(location = 1) in vec4 Color;
-            vec4 chimeraVertexValue() { return vec4(Position, 1.0); }
-            vec4 chimeraColorValue() { return Color; }
-            vec4 chimeraTexCoord0Value() { return vec4(0.0); }
-            vec4 chimeraTexCoord1Value() { return vec4(0.0); }
-            vec4 chimeraFtransform() { return ProjMat * ModelViewMat * chimeraVertexValue(); }
-            """;
-
-    /** Celestial elements: the host provides position and atlas UV. */
-    private static final String SKY_POSITION_UV_VERTEX_PREAMBLE = """
-            layout(binding = 0) uniform DynamicTransforms {
-                mat4 ModelViewMat;
-                vec4 ColorModulator;
-                vec3 ModelOffset;
-                mat4 TextureMat;
-            };
-            layout(binding = 1) uniform Projection { mat4 ProjMat; };
-            layout(location = 0) in vec3 Position;
-            layout(location = 1) in vec2 UV0;
-            vec4 chimeraVertexValue() { return vec4(Position, 1.0); }
-            vec4 chimeraColorValue() { return vec4(1.0); }
-            vec4 chimeraTexCoord0Value() { return vec4(UV0, 0.0, 1.0); }
-            vec4 chimeraTexCoord1Value() { return vec4(0.0); }
-            vec4 chimeraFtransform() { return ProjMat * ModelViewMat * chimeraVertexValue(); }
-            """;
-
-    /** End sky: the host provides position, atlas UV, and per-vertex color. */
-    private static final String SKY_POSITION_COLOR_UV_PREAMBLE = """
-            layout(binding = 0) uniform DynamicTransforms {
-                mat4 ModelViewMat;
-                vec4 ColorModulator;
-                vec3 ModelOffset;
-                mat4 TextureMat;
-            };
-            layout(binding = 1) uniform Projection { mat4 ProjMat; };
-            layout(location = 0) in vec3 Position;
-            layout(location = 1) in vec2 UV0;
-            layout(location = 2) in vec4 Color;
-            vec4 chimeraVertexValue() { return vec4(Position, 1.0); }
-            vec4 chimeraColorValue() { return Color; }
-            vec4 chimeraTexCoord0Value() { return vec4(UV0, 0.0, 1.0); }
-            vec4 chimeraTexCoord1Value() { return vec4(0.0); }
-            vec4 chimeraFtransform() { return ProjMat * ModelViewMat * chimeraVertexValue(); }
-            """;
+    private static String skyPreamble(FamilyAdapterPlan.VertexContract contract) {
+        var host = switch (contract) {
+            case SKY_POSITION -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION;
+            case SKY_POSITION_COLOR -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR;
+            case SKY_POSITION_UV -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX;
+            case SKY_POSITION_COLOR_UV -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX_COLOR;
+            default -> throw new IllegalArgumentException("unsupported sky vertex contract");
+        };
+        // Reuse the native transform and legacy clip-depth machinery. Sky has
+        // no material attributes; Iris defaults missing colour/UV/light/normal.
+        String preamble = HAND_VERTEX_PREAMBLE.replace("chimeraHandProjection", "chimeraSkyProjection");
+        String[] types = {"vec4", "vec2", "ivec2", "ivec2", "vec3", "uvec4", "vec2", "vec4"};
+        String[] names = {"Color", "UV0", "UV1", "UV2", "Normal", "EntityIds", "MidTexCoord", "ChimeraPackedTangent"};
+        String[] defaults = {"vec4(1.0)", "vec2(0.0)", "ivec2(0)", "ivec2(0)",
+                "vec3(0.0, 0.0, 1.0)", "uvec4(0)", "vec2(0.0)", "vec4(0.0, 0.0, 0.0, 1.0)"};
+        for (int i = 0; i < names.length; i++) {
+            int location = host.getElementAttributeNames().indexOf(names[i]);
+            String declaration = location < 0 ? "const " + types[i] + " " + names[i] + " = " + defaults[i] + ";"
+                    : "layout(location = " + location + ") in " + types[i] + " " + names[i] + ";";
+            preamble = preamble.replace("layout(location = " + (i + 1) + ") in " + types[i] + " " + names[i] + ";", declaration);
+        }
+        return preamble;
+    }
 
     /** Host VulkanMod clouds are ordinary position/color geometry. */
     private static final String CLOUD_VERTEX_PREAMBLE = """

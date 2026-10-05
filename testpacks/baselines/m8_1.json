@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "3336d13ab7734fe781d47b13b672fe48d1de3ca6b50ece48195d5ac71528edf5",
+      "reportSha256": "0bb85285ef5ee9670793778bdb3a57f8413de7a90daf0070c24e1afaf5d5e9d0",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -14,14 +14,24 @@
         "gbuffers_terrain",
         "gbuffers_water"
       ],
-      "expectedFallbackPrograms": [],
+      "expectedFallbackPrograms": [
+        "gbuffers_block",
+        "gbuffers_damagedblock"
+      ],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
         "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
         "ALPHA_TEST_DYNAMIC:gbuffers_water",
+        "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+        "BLOCK_VERTEX_CONVERSION_FAILED:crumbling BLOCK has no material mid-coordinate or tangent attribute",
+        "BLOCK_VERTEX_CONVERSION_FAILED:entity vertex requires #version 120, 120e, or 130",
+        "FIXED_VERTEX_SUBSTITUTION",
         "MODERN_GLSL_TRANSLATED",
+        "MODERN_GLSL_UNSUPPORTED",
         "MODERN_TERRAIN_VERTEX_BRIDGE",
         "MODERN_WATER_VERTEX_BRIDGE",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
         "SEPARATE_AO_ATTRIBUTE",
         "SEPARATE_AO_HOST_COLOR_FALLBACK",
         "TERRAIN_NORMAL_AUTHORITATIVE",
@@ -30,23 +40,40 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "01f8a4076b5d90168e47c05d13cd60a14ddd5f14f040424e917d9709f2d07351",
+      "reportSha256": "8c9b072108286e714d8e43cd7ac1100cc0672564d9e6f1f528bc83421dfea2d5",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "b975c6b21bc0196e572bbd83b8e826520805d60286f22dfe92e49e03825ed15d",
         "gbuffers_terrain.vsh": "20d0a103fef28c0d9624ae1d372e9847f9aaafc0eb5570eb7447507e86288055"
       },
       "expectedExecutablePrograms": [],
       "expectedFallbackPrograms": [
-        "gbuffers_terrain"
+        "gbuffers_block",
+        "gbuffers_damagedblock",
+        "gbuffers_terrain",
+        "gbuffers_water"
       ],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
+        "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+        "FIXED_VERTEX_SUBSTITUTION",
         "GEOMETRY_OUTPUT_INDEX_UNMAPPED:1",
+        "LIVE_UNIFORM_BRIDGE",
         "MODERN_GLSL_UNSUPPORTED",
-        "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
+        "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",
+        "TRANSLUCENT_STATE_FIXED_TO_HOST",
+        "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED"
       ]
     }
   },
-  "modernFamilies": ["gbuffers_terrain", "gbuffers_water"],
-  "supportedStrides": [36, 40]
+  "modernFamilies": [
+    "gbuffers_terrain",
+    "gbuffers_water"
+  ],
+  "supportedStrides": [
+    36,
+    40
+  ]
 }

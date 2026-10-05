@@ -115,8 +115,16 @@ public final class PackResourcePlan {
             List<PackResourceBinding> programBindings = new ArrayList<>();
             boolean waterShadow = declaresWaterShadow(samplers);
             for (UniformRegistry.SamplerBinding sampler : samplers) {
-                PackResourceBinding binding = resolve(programPlan.name(), sampler, waterShadow, declarations,
+                PackProgramResolution resolved = plan.resolution().resolution(programPlan.name());
+                String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
+                        ? programPlan.name() : resolved.selectedProgram();
+                PackResourceBinding binding = resolve(sourceProgram, sampler, waterShadow, declarations,
                         shadersDir, settings == null ? Map.of() : settings.propertyValues());
+                if (!sourceProgram.equals(programPlan.name())) {
+                    binding = new PackResourceBinding(programPlan.name(), binding.sampler(), binding.resourceKey(),
+                            binding.kind(), binding.source(), binding.slot(), binding.filter(), binding.wrap(),
+                            binding.status(), binding.deviations());
+                }
                 programBindings.add(binding);
                 deviations.addAll(binding.deviations());
             }

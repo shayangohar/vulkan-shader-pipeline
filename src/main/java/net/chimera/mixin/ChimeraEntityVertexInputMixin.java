@@ -37,7 +37,7 @@ public abstract class ChimeraEntityVertexInputMixin {
     @Inject(method = "<init>", at = @At("RETURN"), require = 1)
     private void chimera$describeEntityFormat(VertexFormat format, CallbackInfo callback) {
         if (format != ChimeraVertexFormats.EXTENDED_ENTITY
-                && format != ChimeraVertexFormats.EXTENDED_PARTICLE) {
+                && !ChimeraVertexFormats.handFormats().containsValue(format)) {
             return;
         }
 
@@ -59,14 +59,21 @@ public abstract class ChimeraEntityVertexInputMixin {
             describe(7, VK_FORMAT_R32G32_SFLOAT, 44);
             describe(8, VK_FORMAT_R8G8B8A8_SNORM, 52);
         } else {
-            this.attributeDescriptions = VkVertexInputAttributeDescription.calloc(7);
-            describe(0, VK_FORMAT_R32G32B32_SFLOAT, 0);
-            describe(1, VK_FORMAT_R32G32_SFLOAT, 12);
-            describe(2, VK_FORMAT_R8G8B8A8_UNORM, 20);
-            describe(3, VK_FORMAT_R16G16_SINT, 24);
-            describe(4, VK_FORMAT_R16G16B16A16_UINT, 28);
-            describe(5, VK_FORMAT_R32G32_SFLOAT, 36);
-            describe(6, VK_FORMAT_R8G8B8A8_SNORM, 44);
+            var names = format.getElementAttributeNames();
+            var elements = format.getElements();
+            this.attributeDescriptions = VkVertexInputAttributeDescription.calloc(elements.size());
+            for (int i = 0; i < names.size(); i++) {
+                int nativeFormat = switch (names.get(i)) {
+                    case "Position" -> VK_FORMAT_R32G32B32_SFLOAT;
+                    case "Color" -> VK_FORMAT_R8G8B8A8_UNORM;
+                    case "UV0", "MidTexCoord" -> VK_FORMAT_R32G32_SFLOAT;
+                    case "UV2" -> VK_FORMAT_R16G16_SINT;
+                    case "EntityIds" -> VK_FORMAT_R16G16B16A16_UINT;
+                    case "Tangent" -> VK_FORMAT_R8G8B8A8_SNORM;
+                    default -> throw new IllegalArgumentException("unsupported hand attribute " + names.get(i));
+                };
+                describe(i, nativeFormat, format.getOffset(elements.get(i)));
+            }
         }
     }
 

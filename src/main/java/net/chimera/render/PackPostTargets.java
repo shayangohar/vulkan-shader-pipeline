@@ -317,7 +317,7 @@ public final class PackPostTargets {
         return image;
     }
 
-    /** Starts a geometry window whose first attachment is the live HDR image. */
+    /** Starts a geometry window for the declared targets, not necessarily including HDR. */
     public void beginGeometry(VkCommandBuffer commandBuffer, VulkanImage hdrColor,
                               List<Integer> outputTargets) {
         requireFrameStarted();

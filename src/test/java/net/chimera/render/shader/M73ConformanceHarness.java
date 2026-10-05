@@ -359,7 +359,7 @@ public final class M73ConformanceHarness {
         org.joml.Matrix4f secondPackProjection = legacyProjection(secondProjection);
         PackFrameState state = new PackFrameState();
         state.rotateViewForTest(firstModel, firstProjection);
-        assertMatrixNear(firstModel, state.modelViewForTest(), "M7.3 first-frame model view");
+        assertMatrixNear(firstModel, state.modelView(), "M7.3 first-frame model view");
         assertMatrixNear(firstProjection, state.rasterProjectionForTest(),
                 "M7.3 host raster projection must remain unchanged");
         assertMatrixNear(firstPackProjection, state.projectionForTest(),
@@ -372,7 +372,7 @@ public final class M73ConformanceHarness {
                 "M7.3 host MVP must use the unconverted raster projection");
 
         state.rotateViewForTest(secondModel, secondProjection);
-        assertMatrixNear(secondModel, state.modelViewForTest(), "M7.3 second-frame model view");
+        assertMatrixNear(secondModel, state.modelView(), "M7.3 second-frame model view");
         assertMatrixNear(firstModel, state.previousModelViewForTest(),
                 "M7.3 previous model view must be the first frame, not the current one");
         assertMatrixNear(firstPackProjection, state.previousProjectionForTest(),

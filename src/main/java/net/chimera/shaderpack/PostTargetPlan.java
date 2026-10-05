@@ -121,7 +121,7 @@ public final class PostTargetPlan {
 
         Matcher comment = TARGET_COMMENT.matcher(text);
         while (comment.find()) {
-            List<Integer> parsed = parseCommentTargets(comment.group(2), deviations);
+            List<Integer> parsed = parseCommentTargets(comment.group(1), comment.group(2), deviations);
             if (parsed.isEmpty()) {
                 deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
             } else {
@@ -203,7 +203,7 @@ public final class PostTargetPlan {
     }
 
     public static boolean isPostProgramName(String name) {
-        return name != null && name.matches("(?:deferred|composite)\\d*|final");
+        return name != null && name.matches("(?:prepare|deferred|composite)\\d*|final");
     }
 
     public static Comparator<String> programComparator() {
@@ -213,6 +213,9 @@ public final class PostTargetPlan {
     }
 
     private static int familyRank(String name) {
+        if (name.startsWith("prepare")) {
+            return -1;
+        }
         if (name.startsWith("deferred")) {
             return 0;
         }
@@ -223,7 +226,9 @@ public final class PostTargetPlan {
     }
 
     private static int numericSuffix(String name) {
-        int index = name.startsWith("deferred")
+        int index = name.startsWith("prepare")
+                ? "prepare".length()
+                : name.startsWith("deferred")
                 ? "deferred".length()
                 : name.startsWith("composite") ? "composite".length() : name.length();
         if (index == name.length()) {
@@ -291,17 +296,22 @@ public final class PostTargetPlan {
         return result;
     }
 
-    private static List<Integer> parseCommentTargets(String body, List<String> deviations) {
+    /** DRAWBUFFERS contains digits; RENDERTARGETS contains comma-separated integers. */
+    static List<Integer> parseCommentTargets(String kind, String body, List<String> deviations) {
         String trimmed = body.trim();
         if (trimmed.isEmpty() || !trimmed.matches("[0-9,\\s]+")) {
             deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
             return List.of();
         }
         List<Integer> result = new ArrayList<>();
-        if (trimmed.indexOf(',') < 0) {
+        if (kind.equalsIgnoreCase("DRAWBUFFERS")) {
+            if (trimmed.indexOf(',') >= 0) {
+                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+                return List.of();
+            }
             return parseDigits(trimmed.replaceAll("\\s+", ""), deviations);
         }
-        for (String token : trimmed.split(",")) {
+        for (String token : trimmed.split(",", -1)) {
             String value = token.trim();
             if (!value.matches("\\d+")) {
                 deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");

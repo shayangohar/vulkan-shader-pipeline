@@ -53,10 +53,10 @@ public abstract class ChimeraBufferBuilderMixin {
             CallbackInfo callback
     ) {
         if (format != ChimeraVertexFormats.EXTENDED_ENTITY
-                && format != ChimeraVertexFormats.EXTENDED_PARTICLE) {
+                && !ChimeraVertexFormats.handFormats().containsValue(format)) {
             return;
         }
-        chimera$particleLayout = format == ChimeraVertexFormats.EXTENDED_PARTICLE;
+        chimera$particleLayout = !format.getElementAttributeNames().contains("Normal");
         chimera$ids = offsetOf(format, "EntityIds");
         chimera$mid = offsetOf(format, "MidTexCoord");
         chimera$tangent = offsetOf(format, "Tangent");

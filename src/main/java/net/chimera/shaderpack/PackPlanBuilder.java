@@ -44,7 +44,8 @@ public final class PackPlanBuilder {
     ) {
         List<PackProgramPlan> plans = new ArrayList<>();
         if (programs != null) {
-            for (PackProgram program : programs) {
+            for (PackProgram program : (resolution == null ? PackResolutionPlan.empty() : resolution)
+                    .executablePrograms(programs)) {
                 plans.add(build(program, config, resolution, advancedResources));
             }
         }
@@ -107,13 +108,19 @@ public final class PackPlanBuilder {
                 ? GeometryOutputPlan.parse(program.name(), fragment,
                 config == null ? Map.of() : config.colortexFormats())
                 : null;
+        PackProgramResolution sourceResolution = resolution == null ? null : resolution.resolution(program.name());
+        String directiveProgram = sourceResolution == null || sourceResolution.selectedProgram().isBlank()
+                ? program.name() : sourceResolution.selectedProgram();
         PackAlphaTestPlan alphaTestPlan = PackAlphaTestPlan.forProgram(
-                program.name(), config == null ? PackSettingsPlan.empty() : config.settings());
+                program.name(), directiveProgram, config == null ? PackSettingsPlan.empty() : config.settings());
         // Only a program that can execute (entity families need a vertex
         // stage) receives the host alpha test.
-        if (FamilyAdapterRegistry.isEntityLike(program.name()) && vertex != null) {
+        if ((FamilyAdapterRegistry.isEntityLike(program.name())
+                || FamilyAdapterRegistry.isParticleLike(program.name())
+                || FamilyAdapterRegistry.isWeatherFamily(program.name())) && vertex != null) {
             fragment = alphaTestPlan.injectDrawTest(fragment);
-            fragment = EntityOverlayColor.inject(fragment);
+            if (FamilyAdapterRegistry.isEntityLike(program.name())
+                    && !program.name().equals("gbuffers_damagedblock")) fragment = EntityOverlayColor.inject(fragment);
         } else if (program.name().equals("shadow") && vertex != null) {
             // Iris alpha-tests shadow terrain by layer; the shadow pass sets
             // the reference per layer (ChimeraMainPass.renderShadowMap).
@@ -256,7 +263,8 @@ public final class PackPlanBuilder {
                 LegacyGlslConverter.TerrainVertexConversion conversion =
                         LegacyGlslConverter.convertSkyVertex(vertex,
                                 preparedSnapshot ? null : program.vertexPath(), fragment,
-                                skyContract);
+                                skyContract, stageMatch.locations(), allowStorageBuffers,
+                                interfacePlan.project("fragment", stage).executableUniforms());
                 if (conversion == null) {
                     deviations.add("SKY_VERTEX_BRIDGE_UNSUPPORTED");
                     executable = false;
@@ -315,7 +323,11 @@ public final class PackPlanBuilder {
                 try {
                     java.util.List<UniformRegistry.UniformDeclaration> fragmentUniforms =
                             interfacePlan.project("fragment", stage).executableUniforms();
-                    conversion = FamilyAdapterRegistry.isBlockFamily(program.name())
+                    conversion = program.name().equals("gbuffers_damagedblock")
+                            ? LegacyGlslConverter.convertCrumblingVertexChecked(
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms)
+                            : FamilyAdapterRegistry.isBlockFamily(program.name())
                             ? LegacyGlslConverter.convertBlockVertexChecked(
                             vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
                             stageMatch.locations(), allowStorageBuffers, fragmentUniforms)
@@ -430,7 +442,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.convertSkyFragment(
                         fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
-                        vertexLayout, interfacePlan.project("fragment", stage));
+                        vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan);
                 if (convertedFragment == null) {
                     deviations.add(FamilyAdapterRegistry.isCloudFamily(program.name())
                             ? "CLOUD_FRAGMENT_BRIDGE_UNSUPPORTED"
@@ -441,9 +453,10 @@ public final class PackPlanBuilder {
                     || FamilyAdapterRegistry.isWeatherFamily(program.name()))) {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
                 LegacyGlslConverter.TerrainVertexConversion conversion =
-                        LegacyGlslConverter.convertParticleVertex(
+                        LegacyGlslConverter.convertParticleVertexChecked(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                                stageMatch.locations(), allowStorageBuffers);
+                                stageMatch.locations(), allowStorageBuffers,
+                                interfacePlan.effective(stage).executableUniforms());
                 if (conversion == null) {
                     deviations.add(FamilyAdapterRegistry.isWeatherFamily(program.name())
                             ? "WEATHER_VERTEX_BRIDGE_UNSUPPORTED"
@@ -513,7 +526,7 @@ public final class PackPlanBuilder {
 
         // Blend directives reach the per-attachment state of the world MRT
         // pipelines; other programs keep the directive as a named gap.
-        PackBlendPlan blendPlan = PackBlendPlan.forProgram(program.name(),
+        PackBlendPlan blendPlan = PackBlendPlan.forProgram(directiveProgram,
                 config == null ? PackSettingsPlan.empty() : config.settings());
         if (blendPlan.overridesAnything() && geometryOutputPlan == null) {
             deviations.add("BLEND_DIRECTIVE_UNSUPPORTED:" + program.name());
@@ -578,6 +591,7 @@ public final class PackPlanBuilder {
         return FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name)
                 || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isSkyFamily(name)
                 || name.equals("gbuffers_terrain")
                 || name.equals("gbuffers_water");
     }

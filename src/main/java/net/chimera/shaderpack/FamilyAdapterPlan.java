@@ -38,6 +38,7 @@ public record FamilyAdapterPlan(
         EXTENDED_ENTITY,
         EXTENDED_PARTICLE,
         HOST_PARTICLE,
+        HOST_BLOCK,
         SKY_POSITION,
         SKY_POSITION_COLOR,
         SKY_POSITION_UV,

@@ -120,6 +120,7 @@ final class PackFrameState {
     private float alphaCutout;
     // Per draw: the host entity pipeline's ALPHA_CUTOUT, 0 where it has none.
     private float entityAlphaReference;
+    private net.chimera.shaderpack.PackRenderingPhase renderingPhase = net.chimera.shaderpack.PackRenderingPhase.NONE;
     private int currentTime;
     private int bedrockLevel;
     private float screenSizeWidth;
@@ -241,6 +242,8 @@ final class PackFrameState {
         this.sunPathRotation = rotationDegrees;
         this.sunPathOffset = offsetDegrees;
     }
+
+    float sunPathRotation() { return sunPathRotation; }
 
     /** World-space light direction the shadow matrix looks along, derived with the uniforms. */
     Vector3f sunLightVector() {
@@ -371,6 +374,7 @@ final class PackFrameState {
             case "biome_precipitation" -> target.putInt(0, biomePrecipitation);
             case "AlphaCutout" -> target.putFloat(0, alphaCutout);
             case UniformRegistry.ENTITY_ALPHA_REFERENCE -> target.putFloat(0, entityAlphaReference);
+            case "renderStage" -> target.putInt(0, renderingPhase.ordinal());
             case "ColorModulator" -> writeFloatArray(target, shaderColor, 4);
             case "Light0_Direction" -> writeVec3(target, lightDirection0);
             case "Light1_Direction" -> writeVec3(target, lightDirection1);
@@ -496,7 +500,7 @@ final class PackFrameState {
         updateViewMatrices();
     }
 
-    Matrix4f modelViewForTest() {
+    Matrix4f modelView() {
         return new Matrix4f(modelView);
     }
 
@@ -730,6 +734,12 @@ final class PackFrameState {
         return true;
     }
 
+    net.chimera.shaderpack.PackRenderingPhase setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase phase) {
+        var previous = renderingPhase;
+        renderingPhase = java.util.Objects.requireNonNull(phase);
+        return previous;
+    }
+
     void clearShadowState() {
         shadowModelView.identity();
         shadowProjection.identity();
@@ -815,6 +825,7 @@ final class PackFrameState {
             case "frameTime" -> frameTime;
             case "frameTimeCounter" -> frameTimeCounter;
             case "frameCounter" -> frameCounter;
+            case "renderStage" -> renderingPhase.ordinal();
             case "worldTime" -> worldTime;
             case "worldDay" -> worldDay;
             case "moonPhase" -> moonPhase;

@@ -78,18 +78,19 @@ record PackResolutionPlan(
             PackProgram chosen = null;
             for (int index = 0; index < chain.size(); index++) {
                 PackProgram candidate = shipped.get(chain.get(index));
-                if (candidate != null) {
+                if (candidate != null && actualSettings.enabled(folder, chain.get(index))) {
                     selected = chain.get(index);
                     depth = index;
                     chosen = candidate;
                     break;
                 }
             }
-            boolean enabled = actualSettings.enabled(folder, requested);
+            boolean authoredEnabled = actualSettings.enabled(folder, requested);
+            boolean enabled = authoredEnabled || (chosen != null && requested.startsWith("gbuffers_"));
             List<String> programDeviations = new ArrayList<>();
-            if (!enabled) {
+            if (!authoredEnabled) {
                 disabled.add(requested);
-                programDeviations.add("PROGRAM_DISABLED:" + requested);
+                if (!enabled) programDeviations.add("PROGRAM_DISABLED:" + requested);
             }
             if (chosen == null) {
                 missing.add(requested);
@@ -98,14 +99,13 @@ record PackResolutionPlan(
                 continue;
             }
             boolean exact = depth == 0 && requested.equals(selected);
-            boolean executable = exact && enabled && supportsCurrentAdapter(requested);
+            boolean executable = enabled && supportsCurrentAdapter(requested);
             if (!exact) {
                 String alias = requested + "->" + selected;
                 aliases.add(alias);
                 programDeviations.add("PROGRAM_ALIAS_RECORDED:" + alias);
-                programDeviations.add("PROGRAM_ALIAS_RUNTIME_FALLBACK:" + requested);
+                if (!executable) programDeviations.add("PROGRAM_ALIAS_RUNTIME_FALLBACK:" + requested);
                 deviations.add("PROGRAM_ALIAS_RECORDED:" + alias);
-                executable = false;
             }
             answers.put(requested, new PackProgramResolution(requested, selected,
                     relative(chosen.sourceRoot(), chosen.fragmentPath()), depth, enabled,
@@ -122,6 +122,23 @@ record PackResolutionPlan(
     boolean shouldAttempt(String name) {
         PackProgramResolution resolution = resolutions.get(name);
         return resolution == null || resolution.executable();
+    }
+
+    /** Materialize selected prepared sources under the requested adapter's name. */
+    List<PackProgram> executablePrograms(List<PackProgram> programs) {
+        Map<String, PackProgram> result = new TreeMap<>();
+        if (programs != null) programs.forEach(program -> result.put(program.name(), program));
+        Map<String, PackProgram> shipped = new TreeMap<>(result);
+        for (PackProgramResolution resolved : resolutions.values()) {
+            if (!resolved.executable() || resolved.requestedProgram().equals(resolved.selectedProgram())) continue;
+            PackProgram source = shipped.get(resolved.selectedProgram());
+            if (source == null) continue;
+            result.put(resolved.requestedProgram(), new PackProgram(resolved.requestedProgram(),
+                    source.fragmentSource(), source.fragmentPath(), source.vertexSource(), source.vertexPath(),
+                    source.sourceRoot(), source.preparedFragmentSource(), source.preparedVertexSource(),
+                    source.preparationDeviations(), source.variantFolder(), source.preparedSources()));
+        }
+        return List.copyOf(result.values());
     }
 
     String snapshotJson() {

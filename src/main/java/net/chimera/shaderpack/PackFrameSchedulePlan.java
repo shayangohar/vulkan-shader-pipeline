@@ -16,6 +16,7 @@ import java.util.Objects;
 public final class PackFrameSchedulePlan {
     public enum Phase {
         SHADOW,
+        PREPARE,
         OPAQUE,
         DEPTH_TEX1,
         HAND,
@@ -31,6 +32,7 @@ public final class PackFrameSchedulePlan {
     }
 
     public enum PostWindow {
+        PREPARE,
         EARLY,
         LATE,
         FINAL
@@ -63,8 +65,9 @@ public final class PackFrameSchedulePlan {
                                   boolean depthtex1, boolean depthtex2, boolean earlyDepthtex0,
                                   boolean handBeforeEarlyPost, boolean particlesBeforeLatePost,
                                   List<String> deviations) {
-        this.phases = List.copyOf(ORDER);
         this.postStages = postStages == null ? List.of() : List.copyOf(postStages);
+        this.phases = this.postStages.stream().anyMatch(stage -> stage.window() == PostWindow.PREPARE)
+                ? ORDER : ORDER.stream().filter(phase -> phase != Phase.PREPARE).toList();
         this.depthtex0 = depthtex0;
         this.depthtex1 = depthtex1;
         this.depthtex2 = depthtex2;
@@ -103,14 +106,16 @@ public final class PackFrameSchedulePlan {
                                 .samplers().stream()
                                 .map(UniformRegistry.SamplerBinding::name).toList();
                         boolean deferred = program.name().startsWith("deferred");
+                        boolean prepare = program.name().startsWith("prepare");
                         // Iris runs deferred passes between opaque and
                         // translucent geometry, where depthtex0 is the opaque
                         // depth. Only the pre-hand snapshot has no seam there.
-                        boolean requiresLateDepth = deferred
+                        boolean requiresLateDepth = !prepare && (deferred
                                 ? samplers.contains("depthtex2")
-                                : samplers.contains("depthtex0") || samplers.contains("depthtex2");
+                                : samplers.contains("depthtex0") || samplers.contains("depthtex2"));
                         PostWindow window = target.isFinal()
                                 ? PostWindow.FINAL
+                                : prepare ? PostWindow.PREPARE
                                 : deferred && !requiresLateDepth
                                 ? PostWindow.EARLY : PostWindow.LATE;
                         if (requiresLateDepth && !target.isFinal()) {
@@ -136,6 +141,9 @@ public final class PackFrameSchedulePlan {
         if (depth1) deviations.add("SCHEDULE_DEPTH_TEX1_BEFORE_TRANSLUCENT");
         if (depth2) deviations.add("SCHEDULE_DEPTH_TEX2_BEFORE_HAND");
         if (depth0) deviations.add("SCHEDULE_DEPTH_TEX0_BEFORE_COMPOSITE");
+        if (stages.stream().anyMatch(stage -> stage.window() == PostWindow.PREPARE)) {
+            deviations.add("SCHEDULE_PREPARE_BEFORE_WORLD");
+        }
         if (stages.stream().anyMatch(stage -> stage.window() == PostWindow.EARLY)) {
             deviations.add("SCHEDULE_EARLY_POST_BEFORE_TRANSLUCENT");
         }

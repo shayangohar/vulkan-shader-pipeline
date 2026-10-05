@@ -70,7 +70,7 @@ public final class M84ConformanceHarness {
         assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
                 FamilyAdapterRegistry.forProgram("gbuffers_entities_translucent").vertexContract(),
                 "M8.4 translucent entity contract");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_PARTICLE,
+        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
                 FamilyAdapterRegistry.forProgram("gbuffers_hand_water").vertexContract(),
                 "M8.4 water hand contract");
         assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE,
@@ -125,12 +125,10 @@ public final class M84ConformanceHarness {
 
         ConformanceReport.ProgramReport damaged = first.report().program("gbuffers_damagedblock");
         assertTrue(damaged != null, "M8.4 damaged-block program was not inventoried");
-        assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK, damaged.support(),
-                "M8.4 damaged-block support status");
-        assertTrue(damaged.deviations().contains("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED"),
-                "M8.4 damaged-block host fallback was not named");
-        assertTrue(!first.report().shouldAttempt("gbuffers_damagedblock"),
-                "M8.4 damaged-block lane remained eligible");
+        assertTrue(damaged.deviations().contains("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED"),
+                "M8.4 damaged-block host adapter was not named");
+        assertTrue(first.report().shouldAttempt("gbuffers_damagedblock"),
+                "M8.4 damaged-block BLOCK adapter was not eligible");
 
         ConformanceReport.ProgramReport sky = first.report().program("gbuffers_skybasic");
         assertTrue(sky != null, "M8.4 unsupported sky was not inventoried");
@@ -146,7 +144,7 @@ public final class M84ConformanceHarness {
         PackProbe.Analysis analysis = PackProbe.analyze(fixture);
         assertTrue(analysis.report().shouldAttempt("final"),
                 "M8.4 unrelated final pass was rejected");
-        for (String name : List.of("gbuffers_entities", "gbuffers_damagedblock")) {
+        for (String name : List.of("gbuffers_entities")) {
             ConformanceReport.ProgramReport program = analysis.report().program(name);
             assertTrue(program != null, "M8.4 fallback family was not inventoried: " + name);
             assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK, program.support(),
@@ -155,6 +153,8 @@ public final class M84ConformanceHarness {
                     "M8.4 fallback family remained eligible: " + name);
         }
         ConformanceReport.ProgramReport sky = analysis.report().program("gbuffers_skybasic");
+        assertTrue(analysis.report().shouldAttempt("gbuffers_damagedblock"),
+                "unused entity attributes must not reject the host BLOCK damage shader");
         assertTrue(sky != null, "M8.4 unsupported sky was not inventoried");
         assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED, sky.support(),
                 "M8.4 unsupported sky status");

@@ -43,6 +43,8 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline damagedBlockPipeline;
     private static GraphicsPipeline handPipeline;
     private static GraphicsPipeline handWaterPipeline;
+    private static PackPipelines.PackHand handVariants;
+    private static PackPipelines.PackHand handWaterVariants;
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
     private static GraphicsPipeline weatherPipeline;
@@ -94,8 +96,8 @@ public final class ChimeraEntityBridge {
             // gbuffer data, and deferred lighting erased them to a ghost.
             RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
     );
-    /** The fixed discard threshold of core/rendertype_item_entity_translucent_cull. */
-    private static final float ITEM_ALPHA_CUTOUT = 0.1F;
+    /** Fixed core particle/weather, item and crumbling discard threshold. */
+    private static final float FIXED_ALPHA_CUTOUT = 0.1F;
     private ChimeraEntityBridge() {}
 
     public static void install(PackPipelines.PackEntity entity,
@@ -106,7 +108,7 @@ public final class ChimeraEntityBridge {
     public static void install(
             PackPipelines.PackEntity entity,
             PackPipelines.PackEntity block,
-            PackPipelines.PackEntity hand,
+            PackPipelines.PackHand hand,
             PackPipelines.PackParticle particle,
             PackEntityIdResolver nextResolver
     ) {
@@ -119,8 +121,8 @@ public final class ChimeraEntityBridge {
             PackPipelines.PackEntity glowingEntity,
             PackPipelines.PackEntity block,
             PackPipelines.PackEntity damagedBlock,
-            PackPipelines.PackEntity hand,
-            PackPipelines.PackEntity handWater,
+            PackPipelines.PackHand hand,
+            PackPipelines.PackHand handWater,
             PackPipelines.PackParticle particle,
             PackPipelines.PackParticle translucentParticle,
             PackPipelines.PackParticle weather,
@@ -132,8 +134,10 @@ public final class ChimeraEntityBridge {
         glowingEntityPipeline = glowingEntity == null ? null : glowingEntity.pipeline();
         blockPipeline = block == null ? null : block.pipeline();
         damagedBlockPipeline = damagedBlock == null ? null : damagedBlock.pipeline();
-        handPipeline = hand == null ? null : hand.pipeline();
-        handWaterPipeline = handWater == null ? null : handWater.pipeline();
+        handVariants = hand;
+        handWaterVariants = handWater;
+        handPipeline = hand == null ? null : hand.primary().pipeline();
+        handWaterPipeline = handWater == null ? null : handWater.primary().pipeline();
         particlePipeline = particle == null ? null : particle.pipeline();
         translucentParticlePipeline = translucentParticle == null ? null : translucentParticle.pipeline();
         weatherPipeline = weather == null ? null : weather.pipeline();
@@ -215,6 +219,8 @@ public final class ChimeraEntityBridge {
         damagedBlockPipeline = null;
         handPipeline = null;
         handWaterPipeline = null;
+        handVariants = null;
+        handWaterVariants = null;
         particlePipeline = null;
         translucentParticlePipeline = null;
         weatherPipeline = null;
@@ -239,6 +245,10 @@ public final class ChimeraEntityBridge {
 
     public static GraphicsPipeline pipeline() {
         return activePipeline;
+    }
+
+    public static Family activeFamily() {
+        return activeFamily;
     }
 
     public static void beginEntity(String name) {
@@ -345,11 +355,9 @@ public final class ChimeraEntityBridge {
         currentEntityId = 0;
     }
 
-    /** Opens a guarded hand draw without replacing the host hand buffer source. */
-    public static boolean beginHandDraw() {
-        Family family = handWaterPipeline != null && isCameraInWater()
-                ? Family.HAND_WATER : Family.HAND;
-        return beginSimpleDraw(family);
+    /** Iris selects the hand family by the scheduled half, not camera immersion. */
+    public static boolean beginHandDraw(boolean translucent) {
+        return beginSimpleDraw(translucent ? Family.HAND_WATER : Family.HAND);
     }
 
     /** Opens a guarded particle draw on the host particle format. */
@@ -377,12 +385,22 @@ public final class ChimeraEntityBridge {
         return isDrawActive(Family.WEATHER);
     }
 
+    public static boolean beginCrumblingDraw() {
+        return beginSimpleDraw(Family.DAMAGED_BLOCK);
+    }
+
     private static boolean beginSimpleDraw(Family family) {
         if (!enabled || drawActive) {
             return false;
         }
         GraphicsPipeline selected = pipelineFor(family);
         if (selected == null) {
+            return false;
+        }
+        if (family == Family.DAMAGED_BLOCK && !EntityTransformBinding.canServeHostTransforms(true,
+                selected.getUBO(UniformRegistry.DYNAMIC_TRANSFORMS_UBO) != null,
+                selected.getUBO(UniformRegistry.PROJECTION_UBO) != null)) {
+            noteTransformContractMissing(family, selected);
             return false;
         }
         requestedFamily = family;
@@ -528,8 +546,8 @@ public final class ChimeraEntityBridge {
 
     /** Compatibility query retained for the M6.3 conformance surface. */
     /**
-     * The host pipeline's own discard threshold (its ALPHA_CUTOUT define), or
-     * 0 for a pipeline that never discards. The pack entity program tests
+     * The host pipeline's discard threshold (fixed core value or ALPHA_CUTOUT
+     * define), or 0 for a pipeline that never discards. The pack program tests
      * against it per draw, as Iris does with iris_currentAlphaTest.
      *
      * <p>The item pipeline declares no define: its core shader discards below
@@ -538,7 +556,12 @@ public final class ChimeraEntityBridge {
      * the whole quad, and its glint lit that box.</p>
      */
     public static float alphaReference(RenderPipeline pipeline) {
-        if (pipeline == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) return ITEM_ALPHA_CUTOUT;
+        if (pipeline == RenderPipelines.CRUMBLING
+                || pipeline == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
+                || pipeline == RenderPipelines.OPAQUE_PARTICLE
+                || pipeline == RenderPipelines.TRANSLUCENT_PARTICLE
+                || pipeline == RenderPipelines.WEATHER_DEPTH_WRITE
+                || pipeline == RenderPipelines.WEATHER_NO_DEPTH_WRITE) return FIXED_ALPHA_CUTOUT;
         String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
         if (cutout == null) return 0.0F;
         try {
@@ -576,17 +599,26 @@ public final class ChimeraEntityBridge {
      * replace one of those unrelated host formats.
      */
     public static boolean shouldUsePackPipeline(RenderPipeline pipeline) {
-        if (!isDrawActive() || pipeline == null) {
+        // Re-select within the scope even after a preceding draw used host fallback.
+        if (!enabled || !drawActive || pipeline == null) {
             return false;
         }
         selectParticleFamily(pipeline);
+        if (requestedFamily == Family.HAND || requestedFamily == Family.HAND_WATER) {
+            var variants = requestedFamily == Family.HAND ? handVariants : handWaterVariants;
+            var selected = variants == null ? null : variants.forFormat(pipeline.getVertexFormat());
+            activeFamily = selected == null ? Family.HOST_FALLBACK : requestedFamily;
+            activePipeline = selected == null ? null : selected.pipeline();
+        }
+        if (activePipeline == null) return false;
         VertexFormat format = pipeline.getVertexFormat();
         return switch (activeFamily) {
-            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK, DAMAGED_BLOCK ->
+            case DAMAGED_BLOCK -> pipeline == RenderPipelines.CRUMBLING
+                    && format == DefaultVertexFormat.BLOCK;
+            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK ->
                     format == DefaultVertexFormat.NEW_ENTITY
                     || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY;
-            case HAND, HAND_WATER -> format == DefaultVertexFormat.PARTICLE
-                    || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_PARTICLE;
+            case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(format) != null;
             case PARTICLE, PARTICLE_TRANSLUCENT, WEATHER -> format == DefaultVertexFormat.PARTICLE;
             case HOST_FALLBACK -> false;
         };
@@ -603,26 +635,34 @@ public final class ChimeraEntityBridge {
         return isDrawActive() && widensVertexFormat(activeFamily);
     }
 
+    /** Crumbling keeps BLOCK but still needs the host draw's matrix slices. */
+    public static boolean requiresHostTransforms() {
+        return isDrawActive() && (widensVertexFormat(activeFamily) || activeFamily == Family.DAMAGED_BLOCK);
+    }
+
     /** Families that append pack inputs to the host format instead of drawing it directly. */
     private static boolean widensVertexFormat(Family family) {
         return switch (family) {
-            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK, DAMAGED_BLOCK, HAND, HAND_WATER -> true;
-            case PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, HOST_FALLBACK -> false;
+            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK, HAND, HAND_WATER -> true;
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, HOST_FALLBACK -> false;
         };
     }
 
     /** Returns the append-only format for the active family when its host format matches. */
     public static VertexFormat extendedFormat(VertexFormat format) {
+        if (enabled && drawActive && (requestedFamily == Family.HAND || requestedFamily == Family.HAND_WATER)
+                && format != null) {
+            return net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
+        }
         if (!isDrawActive() || format == null) {
             return format;
         }
         return switch (activeFamily) {
-            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK, DAMAGED_BLOCK ->
+            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK ->
                     format == DefaultVertexFormat.NEW_ENTITY
                     ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY : format;
-            case HAND, HAND_WATER -> format == DefaultVertexFormat.PARTICLE
-                    ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_PARTICLE : format;
-            case PARTICLE, PARTICLE_TRANSLUCENT, WEATHER -> format;
+            case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER -> format;
             case HOST_FALLBACK -> format;
         };
     }
@@ -850,15 +890,6 @@ public final class ChimeraEntityBridge {
             // and ordering are part of each family contract.
             activeFamily = Family.HOST_FALLBACK;
             activePipeline = null;
-        }
-    }
-
-    private static boolean isCameraInWater() {
-        try {
-            return net.minecraft.client.Minecraft.getInstance().gameRenderer.getMainCamera()
-                    .getFluidInCamera() == net.minecraft.world.level.material.FogType.WATER;
-        } catch (RuntimeException ignored) {
-            return false;
         }
     }
 

@@ -150,6 +150,11 @@ public record PackPlan(
         return value != null && !value.enabled();
     }
 
+    /** Iris's sky directive controls the extra horizon coverage. */
+    public boolean skyEnabled() {
+        return !"false".equalsIgnoreCase(settings.propertyValues().get("sky"));
+    }
+
     /**
      * The programs that take part in the frame. Iris removes a program the pack switches off
      * ({@code program.<name>.enabled}) from the pipeline entirely, so it neither runs nor counts

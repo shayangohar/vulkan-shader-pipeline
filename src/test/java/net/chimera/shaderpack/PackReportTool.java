@@ -43,7 +43,7 @@ public final class PackReportTool {
         List<String> lines = new ArrayList<>();
         List<String> disabled = analysis.resolution().disabledPrograms();
         for (ConformanceReport.ProgramReport program : report.programs()) {
-            if (disabled.contains(program.name())) {
+            if (analysis.plan().isProgramDisabled(program.name())) {
                 // The pack switches it off for the selected options, as Iris does: not a fallback.
                 lines.add(String.format("  %-34s %-26s", program.name(), "DISABLED_BY_PACK"));
                 continue;
