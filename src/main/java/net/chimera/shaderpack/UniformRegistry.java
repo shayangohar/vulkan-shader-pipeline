@@ -1427,8 +1427,6 @@ public final class UniformRegistry {
     }
 
     private static String stripComments(String source) {
-        return source
-                .replaceAll("(?s)/\\*.*?\\*/", " ")
-                .replaceAll("(?m)//.*$", " ");
+        return GlslLexer.stripComments(source);
     }
 }

@@ -41,9 +41,6 @@ public final class LegacyGlslConverter {
                     + "(varying|in)\\s+([A-Za-z_]\\w*)\\s+([^;]+);");
     private static final Pattern TERRAIN_VARYING_DECL =
             Pattern.compile("(?m)\\bvarying\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
-    private static final Pattern ENTITY_VARYING_DECL = Pattern.compile(
-            "(?m)^\\s*(?:(flat|noperspective)\\s+)?(varying|in|out)\\s+"
-                    + "(float|vec2|vec3|vec4)\\s+(\\w+)\\s*;");
     /**
      * Legacy built-ins with token mappings in the entity vertex inputs
      * table. Every other gl_ builtin fails closed with its own name.
@@ -465,7 +462,7 @@ public final class LegacyGlslConverter {
                 }
             }
             String uniforms = interfacePlan.executableUniforms().isEmpty() ? ""
-                    : generatedUniformBlock(interfacePlan.executableUniforms());
+                    : generatedUniformBlock(interfacePlan.executableUniforms(), converted);
             return new PostVertexConversion("#version 460\n" + uniforms + FULLSCREEN_VERTEX_INPUTS + converted,
                     List.of("POST_VERTEX_AUTHORED_TRANSLATED"));
         } catch (RuntimeException failure) {
@@ -702,7 +699,7 @@ public final class LegacyGlslConverter {
                     && !interfacePlan.executableUniforms().isEmpty()) {
                 uniformBlock = entityUniformBlock(interfacePlan.executableUniforms());
             } else if (!geometryStage && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = generatedUniformBlock(interfacePlan.executableUniforms());
+                uniformBlock = generatedUniformBlock(interfacePlan.executableUniforms(), src);
             } else {
                 uniformBlock = "";
             }
@@ -912,8 +909,11 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
             }
 
-            Map<String, String> vertexTypes = modernTerrainVaryings(vertex, true, true);
-            Map<String, String> fragmentTypes = modernTerrainVaryings(fragment, false, true);
+            // The shared typed scanner keeps integral, matrix and array varyings (Photon:
+            // flat uint material_mask, flat mat3 tbn) and their location widths.
+            EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(vertex, true);
+            Map<String, String> vertexTypes = vertexVaryings.types();
+            Map<String, String> fragmentTypes = parseEntityVaryingDeclarations(fragment, false).types();
             for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
                 if (!entry.getValue().equals(vertexTypes.get(entry.getKey()))) {
                     throw new IllegalArgumentException("modern terrain varying mismatch: " + entry.getKey());
@@ -922,9 +922,10 @@ public final class LegacyGlslConverter {
             Map<String, Integer> locations = new TreeMap<>();
             int location = 0;
             for (String name : vertexTypes.keySet().stream().sorted().toList()) {
-                locations.put(name, location++);
+                locations.put(name, location);
+                location += vertexVaryings.slots().get(name);
             }
-            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations);
+            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations, vertexVaryings.qualifiers());
 
             // The prepared source keeps one version directive so the shared
             // plan can inspect it. The generated bridge owns the final
@@ -1219,14 +1220,14 @@ public final class LegacyGlslConverter {
                     stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
                     allowStorageBuffers);
 
-            Map<String, String> vertexTypes = parseEntityVaryings(stripped, true);
+            EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
+            Map<String, String> vertexTypes = new TreeMap<>(vertexVaryings.types());
             String expandedFragment = expandModernVaryingLists(
                     fragmentSource == null ? "" : stripComments(fragmentSource));
-            Map<String, String> fragmentTypes = parseEntityVaryings(expandedFragment, false);
-            Map<String, String> vertexQualifiers =
-                    parseEntityVaryingDeclarations(stripped, true).qualifiers();
-            Map<String, String> fragmentQualifiers =
-                    parseEntityVaryingDeclarations(expandedFragment, false).qualifiers();
+            EntityVaryingDeclarations fragmentVaryings = parseEntityVaryingDeclarations(expandedFragment, false);
+            Map<String, String> fragmentTypes = fragmentVaryings.types();
+            Map<String, String> vertexQualifiers = vertexVaryings.qualifiers();
+            Map<String, String> fragmentQualifiers = fragmentVaryings.qualifiers();
             for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
                 String vertexType = vertexTypes.get(entry.getKey());
                 if (!entry.getValue().equals(vertexType)) {
@@ -1244,11 +1245,16 @@ public final class LegacyGlslConverter {
             if (sharedLocations != null) {
                 locations.putAll(sharedLocations);
             }
-            int location = locations.values().stream().mapToInt(Integer::intValue)
-                    .max().orElse(-1) + 1;
+            // Each varying takes as many locations as its type occupies (a mat3 takes three).
+            int location = 0;
+            for (Map.Entry<String, Integer> shared : locations.entrySet()) {
+                location = Math.max(location,
+                        shared.getValue() + vertexVaryings.slots().getOrDefault(shared.getKey(), 1));
+            }
             for (String name : vertexTypes.keySet().stream().sorted().toList()) {
                 if (!locations.containsKey(name)) {
-                    locations.put(name, location++);
+                    locations.put(name, location);
+                    location += vertexVaryings.slots().get(name);
                 }
             }
             for (Map.Entry<String, String> id : entityIdTypes.entrySet()) {
@@ -1261,8 +1267,7 @@ public final class LegacyGlslConverter {
                 locations.put(EntityOverlayColor.UV_VARYING, location++);
                 vertexTypes.put(EntityOverlayColor.UV_VARYING, "ivec2");
             }
-            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations,
-                    parseEntityVaryingDeclarations(stripped, true).qualifiers());
+            TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations, vertexQualifiers);
 
             String converted = VERSION_LINE.matcher(src).replaceAll("");
             converted = removeEntityIdDeclarations(converted);
@@ -1801,13 +1806,54 @@ public final class LegacyGlslConverter {
         return src.substring(0, newline + 1) + line + src.substring(newline + 1);
     }
 
-    private static String generatedUniformBlock(List<UniformRegistry.UniformDeclaration> uniforms) {
+    /**
+     * One block layout shared by both stages. A stage that declares its own file-scope global of
+     * a member's name (Bliss deferred.vsh: {@code vec3 sunVec = ...} beside the fragment's
+     * {@code uniform vec3 sunVec}) keeps the slot under a reserved name, so its global wins in
+     * that stage as it does under Iris, where each stage owns its uniforms.
+     */
+    private static String generatedUniformBlock(List<UniformRegistry.UniformDeclaration> uniforms,
+                                                String stageSource) {
+        Set<String> globals = fileScopeGlobals(stageSource);
         StringBuilder block = new StringBuilder("layout(binding = 0) uniform ChimeraPackUniforms {\n");
         for (UniformRegistry.UniformDeclaration uniform : uniforms) {
-            block.append("    ").append(uniform.glslType()).append(' ')
-                    .append(uniform.name()).append(";\n");
+            String name = globals.contains(uniform.name()) ? "chimera_shadowed_" + uniform.name() : uniform.name();
+            block.append("    ").append(uniform.glslType()).append(' ').append(name).append(";\n");
         }
         return block.append("};\n").toString();
+    }
+
+    /** Names a stage declares at file scope as plain (non-uniform, non-interface) variables. */
+    private static Set<String> fileScopeGlobals(String source) {
+        Set<String> names = new java.util.HashSet<>();
+        List<GlslLexer.Token> tokens = GlslLexer.lex(stripComments(source));
+        int depth = 0;
+        int statementStart = 0;
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.symbol("{") || token.symbol("(")) depth++;
+            else if (token.symbol("}") || token.symbol(")")) depth = Math.max(0, depth - 1);
+            if (depth != 0) continue;
+            if (token.symbol(";") || token.symbol("}") || token.symbol("#")) {
+                statementStart = index + 1;
+                continue;
+            }
+            // `type name =|;|[` opening a file-scope statement without uniform/in/out/varying/attribute.
+            int next = GlslLexer.nextSignificant(tokens, index);
+            if (token.kind() != GlslLexer.Kind.IDENTIFIER || next < 0
+                    || !(tokens.get(next).symbol("=") || tokens.get(next).symbol(";") || tokens.get(next).symbol("["))) {
+                continue;
+            }
+            int type = GlslLexer.previousSignificant(tokens, index);
+            if (type < statementStart || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) continue;
+            boolean qualified = false;
+            for (int prior = statementStart; prior < type; prior++) {
+                String text = tokens.get(prior).text();
+                if (Set.of("uniform", "in", "out", "varying", "attribute", "buffer", "shared").contains(text)) qualified = true;
+            }
+            if (!qualified) names.add(token.text());
+        }
+        return names;
     }
 
     private static String generatedShadowUniformBlock(
@@ -2249,36 +2295,24 @@ public final class LegacyGlslConverter {
         if (layout == null) {
             throw new IllegalArgumentException("entity varying layout is missing");
         }
-        Matcher matcher = ENTITY_VARYING_DECL.matcher(source);
-        StringBuilder out = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            String type = matcher.group(3);
-            String name = matcher.group(4);
+        return GlslInterfaceScanner.rewrite(source, vertexStage, declaration -> {
+            if (vertexStage ? !declaration.output() : !declaration.input()) {
+                return null;
+            }
             // An unread declaration is dropped before the layout is consulted: GL links it as
             // dead whether or not the other stage declares it.
-            String withoutDeclaration = source.substring(0, matcher.start())
-                    + source.substring(matcher.end());
-            if (!containsIdentifier(withoutDeclaration, name)) {
-                out.append(source, last, matcher.start());
-                last = matcher.end();
-                continue;
+            if (!declaration.referenced()) {
+                return "";
             }
-            if (!layout.types().containsKey(name) || !layout.types().get(name).equals(type)) {
+            String name = declaration.name();
+            if (!declaration.typeWithArray().equals(layout.types().get(name))) {
                 throw new IllegalArgumentException("entity varying is not in the shared layout: " + name);
             }
-            out.append(source, last, matcher.start());
             String qualifier = layout.qualifier(name);
-            out.append("layout(location = ").append(layout.location(name)).append(") ")
-                    .append(direction).append(' ');
-            if (!qualifier.isEmpty()) {
-                out.append(qualifier).append(' ');
-            }
-            out.append(type).append(' ').append(name).append(';');
-            last = matcher.end();
-        }
-        out.append(source, last, source.length());
-        return out.toString();
+            return "layout(location = " + layout.location(name) + ") " + direction + " "
+                    + (qualifier.isEmpty() ? "" : qualifier + " ")
+                    + declaration.type() + " " + declaration.declarator() + ";";
+        });
     }
 
     /**
@@ -2473,7 +2507,8 @@ public final class LegacyGlslConverter {
     private static String stripUnreferencedSamplerDeclarations(String source) {
         if (source == null || source.isBlank()) return source;
         Matcher matcher = Pattern.compile(
-                "(?m)^\\s*uniform\\s+(?:[iu]?sampler\\w*|u?i?image\\w*)\\s+([^;]+);\\s*$")
+                // A trailing line comment (Bliss: `uniform sampler2D noisetex;//depth`) still ends it.
+                "(?m)^\\s*uniform\\s+(?:[iu]?sampler\\w*|u?i?image\\w*)\\s+([^;]+);[ \\t]*(?://[^\\n]*)?$")
                 .matcher(source);
         StringBuffer output = new StringBuffer();
         while (matcher.find()) {
@@ -2599,44 +2634,32 @@ public final class LegacyGlslConverter {
         return result;
     }
 
-    private static Map<String, String> parseEntityVaryings(String source, boolean vertexStage) {
-        return parseEntityVaryingDeclarations(source, vertexStage).types();
-    }
-
-    /** Varying types plus their authored interpolation qualifiers (flat/noperspective or empty). */
-    private record EntityVaryingDeclarations(Map<String, String> types, Map<String, String> qualifiers) {}
+    /**
+     * Varying types (with any array suffix), their authored interpolation qualifiers (or empty),
+     * and the locations each occupies, from the shared typed interface scanner: integral, matrix,
+     * array and struct varyings keep their GLSL meaning and width.
+     */
+    private record EntityVaryingDeclarations(Map<String, String> types, Map<String, String> qualifiers,
+                                             Map<String, Integer> slots) {}
 
     private static EntityVaryingDeclarations parseEntityVaryingDeclarations(
             String source, boolean vertexStage) {
         Map<String, String> result = new TreeMap<>();
         Map<String, String> qualifiers = new TreeMap<>();
-        Matcher matcher = ENTITY_VARYING_DECL.matcher(source == null ? "" : source);
-        while (matcher.find()) {
-            String qualifier = matcher.group(2);
-            boolean applies = vertexStage
-                    ? qualifier.equals("varying") || qualifier.equals("out")
-                    : qualifier.equals("varying") || qualifier.equals("in");
-            if (!applies) {
-                continue;
-            }
-            String type = matcher.group(3);
-            String name = matcher.group(4);
-            String interpolation = matcher.group(1) == null ? "" : matcher.group(1);
-            if (!vertexStage && !containsIdentifier(
-                    source.substring(0, matcher.start()) + source.substring(matcher.end()), name)) {
-                continue;
-            }
-            String previous = result.putIfAbsent(name, type);
-            if (previous != null && !previous.equals(type)) {
-                throw new IllegalArgumentException("entity varying declared with two types: " + name);
-            }
-            String previousQualifier = qualifiers.putIfAbsent(name, interpolation);
-            if (previousQualifier != null && !previousQualifier.equals(interpolation)) {
-                throw new IllegalArgumentException(
-                        "entity varying declared with two interpolation qualifiers: " + name);
-            }
+        Map<String, Integer> slots = new TreeMap<>();
+        GlslInterfaceScanner.StageInterface stage = GlslInterfaceScanner.scan(source == null ? "" : source, vertexStage);
+        if (!stage.deviations().isEmpty()) {
+            throw new IllegalArgumentException("entity varying declarations unsupported: " + stage.deviations());
         }
-        return new EntityVaryingDeclarations(result, qualifiers);
+        for (GlslInterfaceScanner.Declaration declaration : vertexStage ? stage.outputs() : stage.inputs()) {
+            if (!vertexStage && !declaration.referenced()) {
+                continue;
+            }
+            result.put(declaration.name(), declaration.typeWithArray());
+            qualifiers.put(declaration.name(), declaration.qualifier() == null ? "" : declaration.qualifier());
+            slots.put(declaration.name(), declaration.slots());
+        }
+        return new EntityVaryingDeclarations(result, qualifiers, slots);
     }
 
     private static String terrainEntityType(String source) {
@@ -2758,26 +2781,38 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("unsupported entity attribute: " + name);
             }
         }
-        if (source.matches("(?s).*\\b(attribute|in)\\b.*")
-                && !source.matches("(?s).*\\b(attribute|in)\\s+(?:float|vec2|vec4)\\s+"
-                + "(?:entityId|blockEntityId|mc_midTexCoord|at_tangent|mc_Entity)\\s*;.*")) {
+        // File-scope interfaces come from the shared scanner, so parameter qualifiers
+        // (`const in float depth`) and integral or matrix varyings are not misread.
+        String withoutInterfaces;
+        try {
+            for (GlslInterfaceScanner.Declaration input : GlslInterfaceScanner.scan(source, true).inputs()) {
+                if (!ENTITY_ATTRIBUTE_NAMES.contains(input.name())) {
+                    throw new IllegalArgumentException("unsupported entity attribute: " + input.name());
+                }
+            }
+            withoutInterfaces = GlslInterfaceScanner.rewrite(source, true, declaration -> "");
+        } catch (IllegalArgumentException failure) {
+            throw new IllegalArgumentException("entity vertex interface: " + failure.getMessage());
+        }
+        if (withoutInterfaces.matches("(?s).*\\battribute\\b.*")
+                && !withoutInterfaces.matches("(?s).*\\battribute\\s+(?:int|float|vec2|vec4)\\s+"
+                + "(?:entityId|blockEntityId|mc_midTexCoord|at_tangent|Tangent|mc_Entity)\\s*;.*")) {
             throw new IllegalArgumentException("unsupported entity attribute declaration");
         }
-        // Simple version 130 is accepted, and flat/noperspective survive
-        // on recognized varying declarations via the shared layout.
-        // Pack-authored explicit layouts would conflict with the generated
-        // locations, and interpolation qualifiers anywhere else have no
-        // adapter path.
-        if (ENTITY_VARYING_DECL.matcher(source).replaceAll(" ")
-                .matches("(?s).*\\b(?:layout|flat|noperspective)\\b.*")) {
+        // Interpolation survives on scanned varyings via the shared layout. Pack-authored
+        // explicit layouts would conflict with the generated locations, and interpolation
+        // qualifiers anywhere else have no adapter path.
+        if (withoutInterfaces.matches("(?s).*\\b(?:layout|flat|noperspective)\\b.*")) {
             throw new IllegalArgumentException("entity vertex layout is fixed by Chimera");
         }
     }
 
+    /** Host inputs the entity vertex bridge serves (see the attribute check above). */
+    private static final Set<String> ENTITY_ATTRIBUTE_NAMES = Set.of(
+            "entityId", "blockEntityId", "mc_midTexCoord", "at_tangent", "Tangent", "mc_Entity");
+
     private static String stripComments(String source) {
-        return source == null ? "" : source
-                .replaceAll("(?s)/\\*.*?\\*/", " ")
-                .replaceAll("(?m)//.*$", " ");
+        return GlslLexer.stripComments(source);
     }
 
     private static boolean hasModernTerrainVersion(String source) {
@@ -2876,38 +2911,6 @@ public final class LegacyGlslConverter {
         return "#version 460\n" + GlslTokenRewriter.relaxNonConstantGlobals(result);
     }
 
-    private static Map<String, String> modernTerrainVaryings(
-            String source, boolean vertexStage, boolean allowInteger) {
-        Map<String, String> result = new TreeMap<>();
-        Matcher matcher = MODERN_TERRAIN_DECL.matcher(source == null ? "" : source);
-        while (matcher.find()) {
-            String qualifier = matcher.group(2);
-            boolean applies = vertexStage
-                    ? qualifier.equals("out") || qualifier.equals("varying")
-                    : qualifier.equals("in") || qualifier.equals("varying");
-            if (!applies) {
-                continue;
-            }
-            String type = matcher.group(3);
-            String name = matcher.group(4);
-            if (!(type.equals("float") || type.equals("vec2")
-                    || type.equals("vec3") || type.equals("vec4")
-                    || (allowInteger && type.equals("int")))) {
-                throw new IllegalArgumentException("unsupported modern terrain varying: " + name);
-            }
-            String withoutDeclaration = source.substring(0, matcher.start())
-                    + source.substring(matcher.end());
-            if (!vertexStage && !containsIdentifier(withoutDeclaration, name)) {
-                continue;
-            }
-            String previous = result.putIfAbsent(name, type);
-            if (previous != null && !previous.equals(type)) {
-                throw new IllegalArgumentException("modern terrain varying has two types: " + name);
-            }
-        }
-        return result;
-    }
-
     private static String removeModernTerrainInputs(
             String source,
             TerrainVaryingLayout layout
@@ -2931,7 +2934,12 @@ public final class LegacyGlslConverter {
                     throw new IllegalArgumentException("modern terrain output is not in the shared layout: " + name);
                 }
                 result.append("layout(location = ").append(layout.location(name)).append(") ");
-                if (type.equals("int") || type.startsWith("ivec")
+                // Keep the authored interpolation so both stages agree (flat mat3 tbn);
+                // integers are always flat.
+                String interpolation = layout.qualifier(name);
+                if (!interpolation.isEmpty()) {
+                    result.append(interpolation).append(' ');
+                } else if (type.equals("int") || type.startsWith("ivec")
                         || type.equals("uint") || type.startsWith("uvec")) {
                     result.append("flat ");
                 }

@@ -215,6 +215,7 @@ public final class GlslInterfaceScanner {
         List<Statement> statements = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
         int braceDepth = 0;
+        int parenDepth = 0;
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
             if (token.symbol("#") && atLineStart(tokens, index)) {
@@ -231,14 +232,17 @@ public final class GlslInterfaceScanner {
                 braceDepth = Math.max(0, braceDepth - 1);
                 continue;
             }
-            if (braceDepth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER) {
+            if (braceDepth == 0 && token.symbol("(")) {
+                parenDepth++;
                 continue;
             }
-            int priorToken = GlslLexer.previousSignificant(tokens, index);
-            if (priorToken >= 0 && (tokens.get(priorToken).symbol("(")
-                    || tokens.get(priorToken).symbol(","))) {
-                // An `in` qualifier inside a function parameter list is not
-                // a program interface declaration.
+            if (braceDepth == 0 && token.symbol(")")) {
+                parenDepth = Math.max(0, parenDepth - 1);
+                continue;
+            }
+            // Parameter lists are not program interfaces, whatever qualifiers precede `in`
+            // (Bliss: float linearizeDepthFast(const in float depth, ...)).
+            if (braceDepth != 0 || parenDepth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER) {
                 continue;
             }
             int qualifierIndex = index;

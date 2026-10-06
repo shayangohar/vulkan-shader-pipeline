@@ -82,6 +82,37 @@ public final class PackFrontEndHarness {
         check(GlslInterfaceScanner.scan(bad, true).deviations()
                         .contains("PROGRAM_VARYING_TYPE_UNSUPPORTED:Unknown"),
                 "an undefined struct type must be named");
+        // Bliss composite.fsh: `//*` opens a line comment, not a block that hides live code.
+        check(GlslLexer.stripComments("a = z;//*z*m;\nb = viewWidth;/* x */c;\n// tail */")
+                        .equals("a = z; \nb = viewWidth; c;\n "),
+                "comments must be stripped in source order: "
+                        + GlslLexer.stripComments("a = z;//*z*m;\nb = viewWidth;/* x */c;\n// tail */"));
+        // Bliss deferred.vsh defines tanh under #version 120, where GLSL has none.
+        String ownTanh = LegacyShaderNormalizer.normalize(
+                "#version 120\nfloat tanh(float x) { return x; }\nvoid main() { float y = tanh(1.0); }", true).source();
+        check(ownTanh.contains("float chimera_tanh(float x)") && ownTanh.contains("y = chimera_tanh(1.0)"),
+                "a pre-1.30 pack function named like a later built-in must be renamed: " + ownTanh);
+        String builtinTanh = LegacyShaderNormalizer.normalize(
+                "#version 130\nvoid main() { float y = tanh(1.0); }", true).source();
+        check(builtinTanh.contains("y = tanh(1.0)"), "a 1.30 tanh call is the built-in: " + builtinTanh);
+        // Bliss composite.fsh: before GLSL 4.20 a trailing backslash does not continue a comment.
+        String continued = LegacyShaderNormalizer.normalize(
+                "#version 120\nvoid main() {\n\t/// --- STUFF --- \\\\\r\n\tint count = 1;\n}", false).source();
+        check(!continued.contains("\\") && continued.contains("int count = 1;"),
+                "a pre-4.20 comment must end at its line: " + continued);
+        // Bliss deferred.fsh: parameter qualifiers are not stage interfaces (KNOW-498).
+        String parameters = String.join("\n",
+                "#version 400",
+                "in vec2 texcoord;",
+                "float linearizeDepthFast(const in float depth, const in float near, const in float far) {",
+                "    return (near * far) / (depth * (near - far) + far);",
+                "}",
+                "void blend(inout vec3 color, in highp vec3 other, out float weight) { weight = 1.0; }",
+                "void main() {}");
+        GlslInterfaceScanner.StageInterface fragment = GlslInterfaceScanner.scan(parameters, false);
+        check(fragment.deviations().isEmpty(), "parameter qualifiers read as interfaces: " + fragment.deviations());
+        check(fragment.inputs().size() == 1 && fragment.input("texcoord") != null && fragment.outputs().isEmpty(),
+                "only the file-scope input is an interface: " + fragment.inputs() + " " + fragment.outputs());
     }
 
     /** Iris patches a raw texture only into a sampler of the same dimensionality. */

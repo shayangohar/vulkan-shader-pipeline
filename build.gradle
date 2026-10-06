@@ -851,6 +851,11 @@ tasks.register('packCompileTest', JavaExec) {
             packs << pack.absolutePath
         }
         systemProperty 'chimera.packCompile.packs', packs.join(File.pathSeparator)
+        // Programs each pack's plan rejects; -PpackAdmissionUpdate=true rewrites it after review.
+        systemProperty 'chimera.packCompile.admissionBaseline',
+                file('testpacks/baselines/pack_admission.json').absolutePath
+        systemProperty 'chimera.packCompile.updateAdmission',
+                (project.findProperty('packAdmissionUpdate') ?: 'false').toString()
     }
 }
 

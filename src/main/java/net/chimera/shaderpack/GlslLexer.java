@@ -125,6 +125,34 @@ final class GlslLexer {
         return List.copyOf(tokens);
     }
 
+    /**
+     * Replaces each comment with one space, scanning left to right so whichever comment starts
+     * first wins. Removing block comments before line comments misreads Bliss's
+     * {@code x = viewPos.z;//*viewPos.z*...} as a block that swallows kilobytes of live code.
+     * An unterminated block comment runs to the end, as GLSL treats it.
+     */
+    static String stripComments(String source) {
+        if (source == null) return "";
+        StringBuilder result = new StringBuilder(source.length());
+        int index = 0;
+        while (index < source.length()) {
+            char current = source.charAt(index);
+            if (current == '/' && index + 1 < source.length() && source.charAt(index + 1) == '/') {
+                int end = source.indexOf('\n', index);
+                index = end < 0 ? source.length() : end;
+                result.append(' ');
+            } else if (current == '/' && index + 1 < source.length() && source.charAt(index + 1) == '*') {
+                int end = source.indexOf("*/", index + 2);
+                index = end < 0 ? source.length() : end + 2;
+                result.append(' ');
+            } else {
+                result.append(current);
+                index++;
+            }
+        }
+        return result.toString();
+    }
+
     static String render(List<Token> tokens) {
         StringBuilder result = new StringBuilder();
         for (Token token : tokens) {

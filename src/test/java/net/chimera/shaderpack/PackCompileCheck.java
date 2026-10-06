@@ -104,7 +104,10 @@ final class PackCompileCheck {
             }
             String message = result == 0 ? "no result"
                     : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result);
-            return message == null ? "unknown" : message.strip().lines().findFirst().orElse("unknown");
+            if (message == null) return "unknown";
+            // Warnings precede errors in shaderc's report; name the first error.
+            return message.strip().lines().filter(line -> line.contains("error")).findFirst()
+                    .orElse(message.strip().lines().findFirst().orElse("unknown"));
         } finally {
             if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
             org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_release(options);
@@ -128,26 +131,85 @@ final class PackCompileCheck {
         }
     }
 
+    /** Programs of the selected dimension the plan will not attempt, sorted. */
+    static java.util.SortedSet<String> rejectedPrograms(PackProbe.Analysis analysis) {
+        java.util.SortedSet<String> rejected = new java.util.TreeSet<>();
+        if (analysis.plan() == null) return rejected;
+        for (PackProgramPlan program : analysis.plan().activePrograms()) {
+            if (!analysis.plan().shouldAttempt(program.name())) rejected.add(program.name());
+        }
+        return rejected;
+    }
+
+    /** The report deviations that say why a program was rejected, for gate messages. */
+    private static List<String> rejectionReasons(PackProbe.Analysis analysis, String program) {
+        var report = analysis.report().program(program);
+        if (report == null) return List.of();
+        return report.deviations().stream().filter(deviation -> deviation.contains("UNSUPPORTED")
+                || deviation.startsWith("PLAN_INELIGIBLE") || deviation.contains("FAILED")
+                || deviation.contains("MALFORMED")).toList();
+    }
+
     /**
-     * Gate: every program the named packs install must compile. Packs come from
-     * {@code -Dchimera.packCompile.packs} (path-separator list).
+     * Gate: every program the named packs install must compile, and the set each pack's plan
+     * rejects must match the recorded admission baseline. Compiling only admitted programs cannot
+     * see a program the plan newly rejects (MakeUp 9.5g terrain fell back in game while every
+     * admitted program compiled). Packs come from {@code -Dchimera.packCompile.packs}
+     * (path-separator list); {@code -Dchimera.packCompile.admissionBaseline} names the baseline,
+     * and {@code -Dchimera.packCompile.updateAdmission=true} rewrites it.
      */
-    public static void main(String[] args) {
+    public static void main(String[] args) throws java.io.IOException {
         String packs = System.getProperty("chimera.packCompile.packs", "");
         if (packs.isBlank()) {
             throw new AssertionError("chimera.packCompile.packs is not set");
         }
+        Path baselinePath = Path.of(System.getProperty("chimera.packCompile.admissionBaseline",
+                "testpacks/baselines/pack_admission.json"));
+        boolean update = Boolean.getBoolean("chimera.packCompile.updateAdmission");
+        com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
+        java.lang.reflect.Type baselineType =
+                new com.google.gson.reflect.TypeToken<java.util.TreeMap<String, java.util.TreeSet<String>>>() {}.getType();
+        java.util.TreeMap<String, java.util.TreeSet<String>> baseline = java.nio.file.Files.isRegularFile(baselinePath)
+                ? gson.fromJson(java.nio.file.Files.readString(baselinePath), baselineType)
+                : new java.util.TreeMap<>();
         List<String> failures = new ArrayList<>();
         for (String entry : packs.split(java.io.File.pathSeparator)) {
             Path pack = Path.of(entry.trim());
-            Result result = run(pack, PackProbe.analyze(pack));
-            System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures%n",
-                    pack.getFileName(), result.compiled(), result.failures().size());
-            if (result.compiled() == 0) failures.add(pack.getFileName() + ": no program compiled");
-            result.failures().forEach(failure -> failures.add(pack.getFileName() + " " + failure));
+            String key = pack.getFileName().toString();
+            PackProbe.Analysis analysis = PackProbe.analyze(pack);
+            Result result = run(pack, analysis);
+            java.util.SortedSet<String> rejected = rejectedPrograms(analysis);
+            System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected%n",
+                    key, result.compiled(), result.failures().size(), rejected.size());
+            if (result.compiled() == 0) failures.add(key + ": no program compiled");
+            result.failures().forEach(failure -> failures.add(key + " " + failure));
+            if (update) {
+                baseline.put(key, new java.util.TreeSet<>(rejected));
+                continue;
+            }
+            java.util.Set<String> expected = baseline.get(key);
+            if (expected == null) {
+                failures.add(key + ": no admission baseline; rejected=" + rejected
+                        + " (run with -PpackAdmissionUpdate=true after reviewing)");
+                continue;
+            }
+            for (String program : rejected) {
+                if (!expected.contains(program)) {
+                    failures.add(key + " " + program + " newly rejected: " + rejectionReasons(analysis, program));
+                }
+            }
+            for (String program : expected) {
+                if (!rejected.contains(program)) {
+                    failures.add(key + " " + program + " is now admitted; record it with -PpackAdmissionUpdate=true");
+                }
+            }
+        }
+        if (update) {
+            java.nio.file.Files.writeString(baselinePath, gson.toJson(baseline) + System.lineSeparator());
+            System.out.println("[chimera] pack admission baseline written: " + baselinePath);
         }
         if (!failures.isEmpty()) {
-            throw new AssertionError("installed programs do not compile:\n  " + String.join("\n  ", failures));
+            throw new AssertionError("pack compile gate failed:\n  " + String.join("\n  ", failures));
         }
         System.out.println("[chimera] pack compile gate: PASS");
     }

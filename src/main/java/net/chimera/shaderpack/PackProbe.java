@@ -1175,8 +1175,7 @@ public final class PackProbe {
     }
 
     private static String stripComments(String source) {
-        return source.replaceAll("(?s)/\\*.*?\\*/", " ")
-                .replaceAll("(?m)//.*$", " ");
+        return GlslLexer.stripComments(source);
     }
 
     private static List<String> sorted(Collection<String> values) {
