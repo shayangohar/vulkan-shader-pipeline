@@ -204,6 +204,29 @@ public final class M63ConformanceHarness {
                 "M6.3 blockEntityId was not bridged to the fragment");
         assertTrue(!convertedFragment.contains("chimeraEntityId)"),
                 "M6.3 fragment must not reference an id it never declared");
+
+        // Terrain has no iris_Entity: the same shared vertex source reads the unbound 0.
+        String terrain = """
+                #version 120
+                attribute vec2 mc_Entity;
+                attribute int blockEntityId;
+                varying float portal;
+                void main() {
+                    portal = (blockEntityId == 10091 || mc_Entity.x == 10091.0) ? 1.0 : 0.0;
+                    gl_Position = ftransform();
+                }
+                """;
+        String terrainFragment = """
+                #version 120
+                varying float portal;
+                void main() { gl_FragColor = vec4(portal); }
+                """;
+        LegacyGlslConverter.TerrainVertexConversion convertedTerrain =
+                LegacyGlslConverter.convertTerrainVertex(terrain, null, terrainFragment);
+        assertTrue(convertedTerrain != null, "M6.3 terrain rejected an unbound blockEntityId attribute");
+        assertTrue(convertedTerrain.source().contains("const int blockEntityId = 0;")
+                        && !convertedTerrain.source().contains("EntityIds"),
+                "M6.3 terrain blockEntityId must read GL's unbound default, not entity data");
     }
 
     private static void verifyEntityIdResolver(Path shaders) throws IOException {

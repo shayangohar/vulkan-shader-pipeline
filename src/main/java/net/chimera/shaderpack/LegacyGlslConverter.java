@@ -883,8 +883,8 @@ public final class LegacyGlslConverter {
         try {
             boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
             String vertex = shadowStage
-                    ? normalizeShadowTerrain(prepareSource(source, sourceFile, true))
-                    : normalizeModernTerrain(prepareSource(source, sourceFile, true));
+                    ? normalizeShadowTerrain(defaultUnboundIdentityAttributes(prepareSource(source, sourceFile, true)))
+                    : normalizeModernTerrain(defaultUnboundIdentityAttributes(prepareSource(source, sourceFile, true)));
             String fragment = fragmentSource == null ? "" : fragmentSource;
             if (shadowStage && hasShadowTerrainVersion(fragment)) {
                 fragment = normalizeShadowTerrain(fragment);
@@ -1520,7 +1520,7 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         try {
-            String src = prepareSource(source, sourceFile, true);
+            String src = defaultUnboundIdentityAttributes(prepareSource(source, sourceFile, true));
             String stripped = stripComments(src);
             if (!TERRAIN_VERSION.matcher(src).find()
                     || stripped.matches("(?s).*#version\\s+(?!120(?:e)?\\b)\\d+.*")) {
@@ -2332,6 +2332,26 @@ public final class LegacyGlslConverter {
                     : matcher.group(1) + " " + matcher.group(2) + " "
                     + String.join(", ", remaining) + ";";
             matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(output);
+        return output.toString();
+    }
+
+    /**
+     * Terrain-format programs carry no iris_Entity, and Iris applies EntityPatcher only
+     * to vanilla-format programs, so an entityId/blockEntityId attribute there stays
+     * unbound and GL reads 0 (MakeUp 9.5g declares attribute int blockEntityId in its
+     * shared block vertex). Serve that value instead of rejecting the program.
+     */
+    static String defaultUnboundIdentityAttributes(String source) {
+        Matcher matcher = Pattern.compile(
+                "(?m)^[ \\t]*(?:attribute|in)[ \\t]+(int|float)[ \\t]+(entityId|blockEntityId)[ \\t]*;")
+                .matcher(source == null ? "" : source);
+        StringBuilder output = new StringBuilder();
+        while (matcher.find()) {
+            String zero = matcher.group(1).equals("int") ? "0" : "0.0";
+            matcher.appendReplacement(output, Matcher.quoteReplacement(
+                    "const " + matcher.group(1) + " " + matcher.group(2) + " = " + zero + ";"));
         }
         matcher.appendTail(output);
         return output.toString();
