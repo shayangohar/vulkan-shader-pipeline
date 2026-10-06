@@ -165,7 +165,7 @@ public final class PackDepthTargets {
             Renderer.setViewport(0, 0, images[index].width, images[index].height, stack);
             renderer.bindGraphicsPipeline(this.conversionPipeline);
             renderer.uploadAndBindUBOs(this.conversionPipeline);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            vkCmdDraw(commandBuffer, ChimeraPostPipelines.FULLSCREEN_VERTICES, 1, 0, 0);
             vkCmdEndRenderingKHR(commandBuffer);
             renderingActive = false;
             images[index].transitionImageLayout(stack, commandBuffer,

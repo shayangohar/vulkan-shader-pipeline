@@ -478,8 +478,10 @@ public final class LegacyGlslConverter {
     }
 
     private static final String FULLSCREEN_VERTEX_INPUTS = """
+            const vec2 CHIMERA_QUAD[6] = vec2[](vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(1.0, 0.0),
+                                                vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0));
             vec2 chimeraFullscreenUv() {
-                return vec2(float((gl_VertexIndex << 1) & 2), 1.0 - float(gl_VertexIndex & 2));
+                return CHIMERA_QUAD[gl_VertexIndex];
             }
             mat4 chimeraFullscreenProjection() {
                 return mat4(2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0,

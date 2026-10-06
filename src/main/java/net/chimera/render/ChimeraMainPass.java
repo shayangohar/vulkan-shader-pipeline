@@ -1314,7 +1314,7 @@ public class ChimeraMainPass implements MainPass {
         Renderer renderer = Renderer.getInstance();
         renderer.bindGraphicsPipeline(pipeline);
         renderer.uploadAndBindUBOs(pipeline);
-        VK10.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+        VK10.vkCmdDraw(commandBuffer, ChimeraPostPipelines.FULLSCREEN_VERTICES, 1, 0, 0);
         ProgramImages program = this.programImages.get(pipeline);
         if (program != null && this.packStorageBufferOwner != null) {
             this.packStorageBufferOwner.recordDraw(program.name(), VK_SHADER_STAGE_FRAGMENT_BIT);
