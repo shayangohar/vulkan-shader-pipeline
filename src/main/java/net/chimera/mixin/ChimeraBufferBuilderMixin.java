@@ -88,7 +88,8 @@ public abstract class ChimeraBufferBuilderMixin {
         long pointer = callback.getReturnValueJ();
         MemoryUtil.memPutShort(pointer + chimera$ids,
                 (short) ChimeraEntityBridge.currentEntityId());
-        MemoryUtil.memPutShort(pointer + chimera$ids + 2L, (short) 0);
+        MemoryUtil.memPutShort(pointer + chimera$ids + 2L,
+                (short) ChimeraEntityBridge.currentBlockEntityId());
         MemoryUtil.memPutShort(pointer + chimera$ids + 4L, (short) 0);
         MemoryUtil.memPutShort(pointer + chimera$ids + 6L, (short) 0);
         MemoryUtil.memPutFloat(pointer + chimera$mid, 0.0f);

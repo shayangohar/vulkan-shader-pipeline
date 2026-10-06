@@ -10,6 +10,9 @@ public interface ChimeraEntitySubmission {
 
     int chimera$entityId();
 
+    /** The enclosing block entity's block.properties id (Iris blockEntityId), 0 outside one. */
+    int chimera$blockEntityId();
+
     default int chimera$family() {
         return chimera$isWorldEntity() ? FAMILY_ENTITY : FAMILY_NONE;
     }

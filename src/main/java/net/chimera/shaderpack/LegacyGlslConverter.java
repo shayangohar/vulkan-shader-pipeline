@@ -76,8 +76,21 @@ public final class LegacyGlslConverter {
             "(?im)^\\s*#version\\s+(?:120e?|130)(?:\\s+.*)?$");
     private static final Pattern ENTITY_ID_DECLARATION = Pattern.compile(
             "(?m)\\b(uniform|attribute|in)\\s+(int|float)\\s+"
-                    + "([^;{}]*\\bentityId\\b[^;{}]*);\\s*");
+                    + "([^;{}]*\\b(?:entityId|blockEntityId)\\b[^;{}]*);\\s*");
+    /**
+     * Iris EntityPatcher identities: each name reads one component of the
+     * per-vertex EntityIds input (Iris iris_Entity), passed flat to fragments.
+     */
+    private static final List<String> ENTITY_ID_NAMES = List.of("entityId", "blockEntityId");
     private static final String ENTITY_ID_VARYING = "chimeraEntityId";
+
+    private static String entityIdVarying(String name) {
+        return name.equals("entityId") ? ENTITY_ID_VARYING : "chimeraBlockEntityId";
+    }
+
+    private static String entityIdComponent(String name) {
+        return name.equals("entityId") ? "x" : "y";
+    }
     private static final Pattern POST_DRAWBUFFERS_DEFINE = Pattern.compile(
             "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
@@ -1193,7 +1206,11 @@ public final class LegacyGlslConverter {
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
                 throw new IllegalArgumentException("entity vertex requires main and gl_Position");
             }
-            String entityIdType = entityIdentifierType(stripped, fragmentSource);
+            Map<String, String> entityIdTypes = new java.util.LinkedHashMap<>();
+            for (String name : ENTITY_ID_NAMES) {
+                String type = entityIdentifierType(name, stripped, fragmentSource);
+                if (type != null) entityIdTypes.put(name, type);
+            }
             // Catalog uniforms, legacy matrix built-ins, and stage-level
             // flat/layout qualifiers in real entity sources are translated
             // below; reject only what no adapter path can serve.
@@ -1234,9 +1251,9 @@ public final class LegacyGlslConverter {
                     locations.put(name, location++);
                 }
             }
-            if (entityIdType != null) {
-                locations.put(ENTITY_ID_VARYING, location++);
-                vertexTypes.put(ENTITY_ID_VARYING, entityIdType);
+            for (Map.Entry<String, String> id : entityIdTypes.entrySet()) {
+                locations.put(entityIdVarying(id.getKey()), location++);
+                vertexTypes.put(entityIdVarying(id.getKey()), id.getValue());
             }
             boolean overlayUv = containsIdentifier(stripComments(fragmentSource == null ? "" : fragmentSource),
                     EntityOverlayColor.UV_VARYING);
@@ -1280,7 +1297,8 @@ public final class LegacyGlslConverter {
                     Map.entry("at_tangent", "chimeraEntityTangentValue()"),
                     Map.entry("Tangent", "chimeraEntityTangentValue()"),
                     Map.entry("isElytraFlying", "(chimeraIsElytraFlying != 0)"),
-                    Map.entry("entityId", entityIdExpression(layout)));
+                    Map.entry("entityId", entityIdExpression(layout, "entityId")),
+                    Map.entry("blockEntityId", entityIdExpression(layout, "blockEntityId")));
             // ProjMat and gl_ProjectionMatrix belong to the host raster path.
             // Iris gbufferProjection uniforms stay in the shared pack UBO so
             // they use the legacy clip-depth convention instead.
@@ -1312,8 +1330,9 @@ public final class LegacyGlslConverter {
                             + "0.03125, 0.03125, 0.03125, 1.0)");
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraEntityFtransform()");
-            if (entityIdType != null) {
-                converted = injectMainPrologue(converted, ENTITY_ID_VARYING + " = EntityIds.x;");
+            for (String name : entityIdTypes.keySet()) {
+                converted = injectMainPrologue(converted,
+                        entityIdVarying(name) + " = EntityIds." + entityIdComponent(name) + ";");
             }
             if (overlayUv) {
                 converted = injectMainPrologue(converted, EntityOverlayColor.UV_VARYING + " = UV1;");
@@ -1325,9 +1344,11 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("entity declaration was not consumed: "
                         + line.substring(0, Math.min(80, line.length())));
             }
-            String chimeraVaryings = entityIdType == null ? ""
-                    : "layout(location = " + layout.location(ENTITY_ID_VARYING)
-                    + ") flat out uint " + ENTITY_ID_VARYING + ";\n";
+            String chimeraVaryings = "";
+            for (String name : entityIdTypes.keySet()) {
+                chimeraVaryings += "layout(location = " + layout.location(entityIdVarying(name))
+                        + ") flat out uint " + entityIdVarying(name) + ";\n";
+            }
             if (overlayUv) {
                 chimeraVaryings += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
                         + ") flat out ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
@@ -2302,7 +2323,7 @@ public final class LegacyGlslConverter {
                 String name = equals < 0 ? value : value.substring(0, equals).trim();
                 boolean executable = interfacePlan != null && interfacePlan.executableUniforms().stream()
                         .anyMatch(uniform -> uniform.name().equals(name));
-                if (!name.equals("entityId") && !executable) {
+                if (!ENTITY_ID_NAMES.contains(name) && !executable) {
                     remaining.add(value);
                 }
             }
@@ -2452,19 +2473,28 @@ public final class LegacyGlslConverter {
         return output.toString();
     }
 
-    private static String entityIdentifierType(String vertexSource, String fragmentSource) {
+    private static String entityIdentifierType(String name, String vertexSource, String fragmentSource) {
         String vertex = vertexSource == null ? "" : vertexSource;
         String fragment = fragmentSource == null ? "" : stripComments(fragmentSource);
-        Matcher declaration = ENTITY_ID_DECLARATION.matcher(vertex);
-        if (declaration.find()) {
-            return declaration.group(2);
-        }
-        declaration = ENTITY_ID_DECLARATION.matcher(fragment);
-        if (declaration.find()) {
-            return declaration.group(2);
-        }
-        if (containsIdentifier(vertex, "entityId") || containsIdentifier(fragment, "entityId")) {
+        String declared = declaredEntityIdType(vertex, name);
+        if (declared == null) declared = declaredEntityIdType(fragment, name);
+        if (declared != null) return declared;
+        if (containsIdentifier(vertex, name) || containsIdentifier(fragment, name)) {
             return "int";
+        }
+        return null;
+    }
+
+    private static String declaredEntityIdType(String source, String name) {
+        Matcher declaration = ENTITY_ID_DECLARATION.matcher(source);
+        while (declaration.find()) {
+            for (String declarator : declaration.group(3).split(",")) {
+                String value = declarator.trim();
+                int equals = value.indexOf('=');
+                if ((equals < 0 ? value : value.substring(0, equals).trim()).equals(name)) {
+                    return declaration.group(2);
+                }
+            }
         }
         return null;
     }
@@ -2480,32 +2510,39 @@ public final class LegacyGlslConverter {
         return vec4 ? "vec4(MidTexCoord, 0.0, 1.0)" : "MidTexCoord";
     }
 
-    private static String entityIdExpression(TerrainVaryingLayout layout) {
-        if (layout != null && layout.locations().containsKey(ENTITY_ID_VARYING)) {
-            return "float".equals(layout.types().get(ENTITY_ID_VARYING))
-                    ? "float(" + ENTITY_ID_VARYING + ")"
-                    : "int(" + ENTITY_ID_VARYING + ")";
+    private static String entityIdExpression(TerrainVaryingLayout layout, String name) {
+        String varying = entityIdVarying(name);
+        if (layout != null && layout.locations().containsKey(varying)) {
+            return "float".equals(layout.types().get(varying))
+                    ? "float(" + varying + ")"
+                    : "int(" + varying + ")";
         }
-        return "float(EntityIds.x)";
+        return "float(EntityIds." + entityIdComponent(name) + ")";
     }
 
     private static String replaceEntityIdReferences(
             String source,
             TerrainVaryingLayout layout
     ) {
-        if (layout == null || !layout.locations().containsKey(ENTITY_ID_VARYING)) {
-            return source;
+        if (layout == null) return source;
+        Map<String, String> replacements = new java.util.HashMap<>();
+        for (String name : ENTITY_ID_NAMES) {
+            if (layout.locations().containsKey(entityIdVarying(name))) {
+                replacements.put(name, entityIdExpression(layout, name));
+            }
         }
-        return GlslTokenRewriter.replaceIdentifiers(source,
-                Map.of("entityId", entityIdExpression(layout)));
+        return replacements.isEmpty() ? source : GlslTokenRewriter.replaceIdentifiers(source, replacements);
     }
 
     private static String chimeraFragmentVaryings(TerrainVaryingLayout layout) {
         if (layout == null) return "";
         String declarations = "";
-        if (layout.locations().containsKey(ENTITY_ID_VARYING)) {
-            declarations += "layout(location = " + layout.location(ENTITY_ID_VARYING)
-                    + ") flat in uint " + ENTITY_ID_VARYING + ";\n";
+        for (String name : ENTITY_ID_NAMES) {
+            String varying = entityIdVarying(name);
+            if (layout.locations().containsKey(varying)) {
+                declarations += "layout(location = " + layout.location(varying)
+                        + ") flat in uint " + varying + ";\n";
+            }
         }
         if (layout.locations().containsKey(EntityOverlayColor.UV_VARYING)) {
             declarations += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
@@ -2688,7 +2725,7 @@ public final class LegacyGlslConverter {
         while (attributes.find()) {
             String type = attributes.group(2);
             String name = attributes.group(3);
-            boolean supported = (name.equals("entityId")
+            boolean supported = (ENTITY_ID_NAMES.contains(name)
                     && (type.equals("float") || type.equals("int")))
                     || (name.equals("mc_midTexCoord") && (type.equals("vec2") || type.equals("vec4")))
                     || (name.equals("at_tangent") && type.equals("vec4"))
@@ -2703,7 +2740,7 @@ public final class LegacyGlslConverter {
         }
         if (source.matches("(?s).*\\b(attribute|in)\\b.*")
                 && !source.matches("(?s).*\\b(attribute|in)\\s+(?:float|vec2|vec4)\\s+"
-                + "(?:entityId|mc_midTexCoord|at_tangent|mc_Entity)\\s*;.*")) {
+                + "(?:entityId|blockEntityId|mc_midTexCoord|at_tangent|mc_Entity)\\s*;.*")) {
             throw new IllegalArgumentException("unsupported entity attribute declaration");
         }
         // Simple version 130 is accepted, and flat/noperspective survive

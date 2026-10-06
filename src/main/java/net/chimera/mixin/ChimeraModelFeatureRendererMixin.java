@@ -38,7 +38,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
                 && (Object) submit instanceof ChimeraEntitySubmission entity
                 && entity.chimera$isWorldEntity()) {
             ChimeraEntityBridge.noteModelDraw(renderType);
-            ChimeraEntityBridge.beginModelEntity(entity.chimera$entityId());
+            ChimeraEntityBridge.beginModelEntity(entity.chimera$entityId(), entity.chimera$blockEntityId());
         }
     }
 

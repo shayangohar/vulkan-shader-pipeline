@@ -46,7 +46,7 @@ public abstract class ChimeraCustomFeatureRendererMixin {
     private static void chimera$emit(VertexConsumer consumer, List<ChimeraCustomGeometryStorage.BlockSubmit> submits,
                                      boolean pack) {
         for (var submit : submits) {
-            if (pack) ChimeraEntityBridge.beginModelEntity(submit.entityId());
+            if (pack) ChimeraEntityBridge.beginModelEntity(submit.entityId(), submit.blockEntityId());
             try {
                 submit.renderer().render(submit.pose(), consumer);
             } finally {

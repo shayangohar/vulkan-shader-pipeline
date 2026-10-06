@@ -33,6 +33,7 @@ public final class M63ConformanceHarness {
         verifyWorldPipelineContract();
         verifyEntityMath();
         verifyEntityIdUniformBridge();
+        verifyBlockEntityIdBridge();
         verifyEntityIdResolver(fixture.resolve("shaders"));
         verifySupportedFixture(fixture, baseline, "entities");
         verifyUnsupportedFixture(unsupported, baseline);
@@ -155,6 +156,54 @@ public final class M63ConformanceHarness {
                 "M6.3 entityId vertex data was not initialized");
         assertTrue(convertedFragment.contains("flat in uint chimeraEntityId"),
                 "M6.3 entityId vertex data was not bridged to the fragment");
+    }
+
+    /**
+     * Iris EntityPatcher: blockEntityId reads iris_Entity.y whether declared as an
+     * attribute (MakeUp 9.5g solid_blocks_vertex) or a uniform, beside entityId on .x.
+     */
+    private static void verifyBlockEntityIdBridge() {
+        String vertex = """
+                #version 120
+                #define ENTITY_PORTAL 10091.0
+                attribute int blockEntityId;
+                uniform int entityId;
+                varying float portal;
+                void main() {
+                    portal = (blockEntityId == ENTITY_PORTAL || entityId == 7) ? 1.0 : 0.0;
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = """
+                #version 120
+                uniform int blockEntityId;
+                varying float portal;
+                void main() {
+                    gl_FragColor = vec4(portal, float(blockEntityId), 0.0, 1.0);
+                }
+                """;
+        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+                fragment, vertex, UniformRegistry.Stage.BLOCK, null, false);
+        assertTrue(plan.executable(), "M6.3 blockEntityId was not treated as vertex data");
+        LegacyGlslConverter.TerrainVertexConversion convertedVertex =
+                LegacyGlslConverter.convertEntityVertex(vertex, null, fragment, Map.of("portal", 0));
+        assertTrue(convertedVertex != null, "M6.3 blockEntityId vertex bridge rejected the source");
+        String convertedFragment = LegacyGlslConverter.convertEntityFragment(
+                fragment, null, new int[0], convertedVertex.layout(),
+                plan.effective(UniformRegistry.Stage.BLOCK));
+        assertTrue(convertedFragment != null, "M6.3 blockEntityId fragment bridge rejected the source");
+        String converted = convertedVertex.source();
+        assertTrue(!converted.contains("attribute int blockEntityId") && !converted.contains("uniform int entityId")
+                        && !convertedFragment.contains("uniform int blockEntityId"),
+                "M6.3 entity identity declarations remained");
+        assertTrue(converted.contains("chimeraBlockEntityId = EntityIds.y")
+                        && converted.contains("chimeraEntityId = EntityIds.x"),
+                "M6.3 block entity and entity ids must read EntityIds.y and .x");
+        assertTrue(convertedFragment.contains("flat in uint chimeraBlockEntityId")
+                        && convertedFragment.contains("int(chimeraBlockEntityId)"),
+                "M6.3 blockEntityId was not bridged to the fragment");
+        assertTrue(!convertedFragment.contains("chimeraEntityId)"),
+                "M6.3 fragment must not reference an id it never declared");
     }
 
     private static void verifyEntityIdResolver(Path shaders) throws IOException {

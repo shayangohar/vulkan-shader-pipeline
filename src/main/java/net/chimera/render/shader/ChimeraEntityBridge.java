@@ -60,8 +60,12 @@ public final class ChimeraEntityBridge {
     private static final int[] previousSubmissionFamilies = new int[8];
     private static int modelIdDepth;
     private static final int[] previousModelEntityIds = new int[8];
+    private static final int[] previousBlockEntityIds = new int[8];
+    private static final int[] previousModelBlockEntityIds = new int[8];
     private static boolean drawActive;
     private static int currentEntityId;
+    /** Iris CapturedRenderingState current block entity: EntityIds.y, read as blockEntityId. */
+    private static int currentBlockEntityId;
     private static boolean worldSubmissionWindow;
     private static boolean textureSnapshot;
     private static boolean entityBufferUnavailable;
@@ -257,11 +261,13 @@ public final class ChimeraEntityBridge {
         }
         if (submittingDepth < previousEntityIds.length) {
             previousEntityIds[submittingDepth] = currentEntityId;
+            previousBlockEntityIds[submittingDepth] = currentBlockEntityId;
             previousSubmissionFamilies[submittingDepth] = submissionFamily;
         }
         submittingDepth++;
         entitySubmissionDepth++;
         currentEntityId = resolver.resolveName(name);
+        currentBlockEntityId = 0;
         submissionFamily = ChimeraEntitySubmission.FAMILY_ENTITY;
         if (!submissionTraceLogged) {
             submissionTraceLogged = true;
@@ -277,18 +283,24 @@ public final class ChimeraEntityBridge {
         }
     }
 
-    /** Marks a delayed block-entity model submission for the block adapter. */
-    public static void beginBlockEntity() {
+    /**
+     * Marks a delayed block-entity submission for the block adapter. Like Iris
+     * MixinBlockEntityRenderDispatcher, the block state's block.properties id
+     * becomes blockEntityId for everything the block entity submits.
+     */
+    public static void beginBlockEntity(int blockEntityId) {
         if (!enabled || blockPipeline == null) {
             return;
         }
         if (submittingDepth < previousEntityIds.length) {
             previousEntityIds[submittingDepth] = currentEntityId;
+            previousBlockEntityIds[submittingDepth] = currentBlockEntityId;
             previousSubmissionFamilies[submittingDepth] = submissionFamily;
         }
         submittingDepth++;
         blockSubmissionDepth++;
         currentEntityId = 0;
+        currentBlockEntityId = blockEntityId;
         submissionFamily = ChimeraEntitySubmission.FAMILY_BLOCK;
     }
 
@@ -419,15 +431,17 @@ public final class ChimeraEntityBridge {
     }
 
     /** Saves the submission identity while one delayed model emits vertices. */
-    public static void beginModelEntity(int entityId) {
+    public static void beginModelEntity(int entityId, int blockEntityId) {
         if (!enabled) {
             return;
         }
         if (modelIdDepth < previousModelEntityIds.length) {
             previousModelEntityIds[modelIdDepth] = currentEntityId;
+            previousModelBlockEntityIds[modelIdDepth] = currentBlockEntityId;
         }
         modelIdDepth++;
         currentEntityId = entityId;
+        currentBlockEntityId = blockEntityId;
     }
 
     /** Restores the enclosing submission identity after model emission. */
@@ -438,6 +452,8 @@ public final class ChimeraEntityBridge {
         modelIdDepth--;
         currentEntityId = modelIdDepth < previousModelEntityIds.length
                 ? previousModelEntityIds[modelIdDepth] : 0;
+        currentBlockEntityId = modelIdDepth < previousModelBlockEntityIds.length
+                ? previousModelBlockEntityIds[modelIdDepth] : 0;
     }
 
     /**
@@ -478,6 +494,10 @@ public final class ChimeraEntityBridge {
 
     public static int currentEntityId() {
         return enabled ? currentEntityId : 0;
+    }
+
+    public static int currentBlockEntityId() {
+        return enabled ? currentBlockEntityId : 0;
     }
 
     public static void setCurrentEntityId(int value) {
@@ -833,13 +853,17 @@ public final class ChimeraEntityBridge {
             previousEntityIds[index] = 0;
             previousSubmissionFamilies[index] = ChimeraEntitySubmission.FAMILY_NONE;
             previousModelEntityIds[index] = 0;
+            previousBlockEntityIds[index] = 0;
+            previousModelBlockEntityIds[index] = 0;
         }
+        currentBlockEntityId = 0;
     }
 
     private static void popSubmission() {
         if (submittingDepth <= 0) {
             submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
             currentEntityId = 0;
+            currentBlockEntityId = 0;
             return;
         }
         submittingDepth--;
@@ -847,6 +871,10 @@ public final class ChimeraEntityBridge {
                 ? 0
                 : submittingDepth < previousEntityIds.length
                 ? previousEntityIds[submittingDepth] : 0;
+        currentBlockEntityId = submittingDepth == 0
+                ? 0
+                : submittingDepth < previousBlockEntityIds.length
+                ? previousBlockEntityIds[submittingDepth] : 0;
         submissionFamily = submittingDepth == 0
                 ? ChimeraEntitySubmission.FAMILY_NONE
                 : submittingDepth < previousSubmissionFamilies.length

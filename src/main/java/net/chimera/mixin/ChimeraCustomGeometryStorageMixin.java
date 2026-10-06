@@ -40,7 +40,8 @@ public abstract class ChimeraCustomGeometryStorageMixin implements ChimeraCustom
                 && ChimeraEntityBridge.currentSubmissionFamily() == ChimeraEntitySubmission.FAMILY_BLOCK
                 && ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
             chimera$blockSubmits.computeIfAbsent(renderType, ignored -> new ArrayList<>())
-                    .add(new BlockSubmit(poseStack.last().copy(), renderer, ChimeraEntityBridge.currentEntityId()));
+                    .add(new BlockSubmit(poseStack.last().copy(), renderer, ChimeraEntityBridge.currentEntityId(),
+                            ChimeraEntityBridge.currentBlockEntityId()));
             callback.cancel();
         }
     }

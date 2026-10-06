@@ -9,7 +9,8 @@ import java.util.Map;
 
 /** Block-entity custom geometry held back from the host batch for the block family. */
 public interface ChimeraCustomGeometryStorage {
-    record BlockSubmit(PoseStack.Pose pose, SubmitNodeCollector.CustomGeometryRenderer renderer, int entityId) {}
+    record BlockSubmit(PoseStack.Pose pose, SubmitNodeCollector.CustomGeometryRenderer renderer,
+                       int entityId, int blockEntityId) {}
 
     Map<RenderType, List<BlockSubmit>> chimera$blockSubmits();
 }

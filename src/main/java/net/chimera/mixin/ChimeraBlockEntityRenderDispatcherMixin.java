@@ -24,7 +24,8 @@ public abstract class ChimeraBlockEntityRenderDispatcherMixin {
     ) {
         if (ChimeraRenderer.segmentsActive()
                 && ChimeraEntityBridge.isWorldSubmissionWindow()) {
-            ChimeraEntityBridge.beginBlockEntity();
+            ChimeraEntityBridge.beginBlockEntity(
+                    net.chimera.render.shader.ChimeraTerrainPipelines.blockStateId(state.blockState));
         }
     }
 

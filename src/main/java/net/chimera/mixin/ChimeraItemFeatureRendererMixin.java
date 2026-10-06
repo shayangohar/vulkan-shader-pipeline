@@ -76,7 +76,7 @@ public abstract class ChimeraItemFeatureRendererMixin {
         ChimeraEntityBridge.Family family = item.chimera$family() == ChimeraEntitySubmission.FAMILY_BLOCK
                 ? ChimeraEntityBridge.Family.BLOCK : ChimeraEntityBridge.Family.ENTITY;
         boolean packed = ChimeraFamilyDraw.emit(family, renderType, source -> {
-            ChimeraEntityBridge.beginModelEntity(item.chimera$entityId());
+            ChimeraEntityBridge.beginModelEntity(item.chimera$entityId(), item.chimera$blockEntityId());
             try {
                 original.call(displayContext, poseStack, source, lightCoords, overlayCoords,
                         tintLayers, quads, renderType, ItemStackRenderState.FoilType.NONE);

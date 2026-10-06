@@ -182,7 +182,7 @@ public final class UniformRegistry {
             return uniforms.stream()
                     .filter(uniform -> !blocked.contains(uniform.name())
                             && !((stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND)
-                            && uniform.name().equals("entityId"))
+                            && isEntityIdentity(uniform.name()))
                             && !isDeviationForName(deviations, "UNIFORM_DECLARATION_UNUSED:",
                             uniform.name()))
                     .toList();
@@ -607,7 +607,7 @@ public final class UniformRegistry {
                 deviations.add("UNIFORM_CONFLICT:" + name);
             }
             if ((stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND)
-                    && name.equals("entityId")) {
+                    && isEntityIdentity(name)) {
                 if (!type.equals("int") && !type.equals("float")) {
                     deviations.add("ENTITY_ID_UNSUPPORTED:" + type);
                 } else if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
@@ -914,6 +914,11 @@ public final class UniformRegistry {
     private static boolean isReferenced(String source, String name) {
         Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source);
         return matcher.find() && matcher.find();
+    }
+
+    /** Iris EntityPatcher names served per vertex from EntityIds, not from the pack UBO. */
+    static boolean isEntityIdentity(String name) {
+        return name.equals("entityId") || name.equals("blockEntityId");
     }
 
     /** Accounts for stage-local legacy shadow matrix aliases during planning. */
