@@ -1835,6 +1835,15 @@ public class ChimeraMainPass implements MainPass {
             }
         }
         if (runEarlyPost) {
+            // Iris beginHand copies depthtex2 before deferred runs. A pack solid hand
+            // already captured it at its segment; otherwise no hand has drawn yet and
+            // the opaque depth is the pre-hand depth.
+            if (this.packDepthTargets.isConfigured() && this.packDepthTargets.plan().depthtex2()
+                    && !this.packDepthTargets.currentAvailable("depthtex2")
+                    && !this.packDepthTargets.capturePreHand(
+                            commandBuffer, this.hdrFramebuffer.getDepthAttachment())) {
+                LOGGER.warn("[chimera] pack depth graph: early depthtex2 capture unavailable");
+            }
             // Deferred passes read depthtex0 here, before translucents: the
             // opaque depth. finishLevelSegment re-captures it for composite.
             if (this.packFrameSchedule.earlyReadsDepthtex0()

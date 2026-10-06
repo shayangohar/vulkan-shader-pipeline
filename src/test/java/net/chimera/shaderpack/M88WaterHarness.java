@@ -145,9 +145,9 @@ public final class M88WaterHarness {
     }
 
     /**
-     * Iris runs deferred passes between opaque and translucent geometry. A
-     * deferred pass that reads depthtex0 still belongs there; only the
-     * pre-hand depth has no seam before translucents.
+     * Iris runs every deferred pass between opaque and translucent geometry,
+     * after beginHand has copied depthtex2. A deferred pass reading depthtex0
+     * or depthtex2 still belongs there; only composites move late.
      */
     private static void verifyDeferredSchedule() {
         PackProgramPlan opaqueDepth = post("deferred1", "depthtex0", 0);
@@ -160,9 +160,9 @@ public final class M88WaterHarness {
         assertTrue(schedule.earlyReadsDepthtex0(), "schedule does not request the early depthtex0 capture");
         assertTrue(schedule.deviations().contains("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:deferred1"),
                 "early depthtex0 is not reported: " + schedule.deviations());
-        assertTrue(schedule.postStage("deferred2").window() == PackFrameSchedulePlan.PostWindow.LATE
-                        && schedule.deviations().contains("SCHEDULE_POST_AFTER_DEPTH:deferred2"),
-                "deferred2 reading depthtex2 must wait for the pre-hand seam: " + schedule.snapshot());
+        assertTrue(schedule.postStage("deferred2").window() == PackFrameSchedulePlan.PostWindow.EARLY
+                        && !schedule.deviations().contains("SCHEDULE_POST_AFTER_DEPTH:deferred2"),
+                "deferred2 reading depthtex2 must stay in Iris order before translucents: " + schedule.snapshot());
         assertTrue(schedule.postStage("composite").window() == PackFrameSchedulePlan.PostWindow.LATE,
                 "composite moved out of the late window: " + schedule.snapshot());
         PackFrameSchedulePlan noDepth = PackFrameSchedulePlan.build(

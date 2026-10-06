@@ -543,10 +543,11 @@ public final class M86ConformanceHarness {
         PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(
                 analysis.plan().programs(), graph);
         PackFrameSchedulePlan.PostStage deferred = schedule.postStage("deferred");
-        if (label.equals("BSL") && deferred != null
-                && deferred.window() == PackFrameSchedulePlan.PostWindow.LATE) {
-            assertTrue(schedule.deviations().contains("SCHEDULE_POST_AFTER_DEPTH:deferred"),
-                    "M8.6 BSL depth-dependent deferred stage lacks its schedule deviation");
+        // Iris order: BSL's deferred reads depthtex2 and still runs before translucents.
+        if (label.equals("BSL") && deferred != null) {
+            assertTrue(deferred.window() == PackFrameSchedulePlan.PostWindow.EARLY
+                            && !schedule.deviations().contains("SCHEDULE_POST_AFTER_DEPTH:deferred"),
+                    "M8.6 BSL deferred left the Iris deferred seam: " + schedule.snapshot());
         }
     }
 

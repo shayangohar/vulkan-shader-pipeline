@@ -107,12 +107,13 @@ public final class PackFrameSchedulePlan {
                                 .map(UniformRegistry.SamplerBinding::name).toList();
                         boolean deferred = program.name().startsWith("deferred");
                         boolean prepare = program.name().startsWith("prepare");
-                        // Iris runs deferred passes between opaque and
-                        // translucent geometry, where depthtex0 is the opaque
-                        // depth. Only the pre-hand snapshot has no seam there.
-                        boolean requiresLateDepth = !prepare && (deferred
-                                ? samplers.contains("depthtex2")
-                                : samplers.contains("depthtex0") || samplers.contains("depthtex2"));
+                        // Iris runs every deferred pass, in order, between opaque and
+                        // translucent geometry (beginTranslucents), after beginHand has
+                        // copied depthtex2; there depthtex0 is the opaque depth. A
+                        // deferred pass never moves late: Bliss's deferred computes the
+                        // sky light its deferred1/2 and composites read.
+                        boolean requiresLateDepth = !prepare && !deferred
+                                && (samplers.contains("depthtex0") || samplers.contains("depthtex2"));
                         PostWindow window = target.isFinal()
                                 ? PostWindow.FINAL
                                 : prepare ? PostWindow.PREPARE
