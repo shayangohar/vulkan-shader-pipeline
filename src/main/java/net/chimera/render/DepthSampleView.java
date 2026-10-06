@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.vulkanmod.vulkan.Vulkan;
+import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -11,10 +12,12 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
  * conversion.
  *
  * <p>Sampling a combined depth-stencil attachment needs a depth-only view; the
- * host image keeps its own depth-stencil view and is never replaced. A view
- * owned by Chimera cannot use VulkanMod's deferred free queue, so destroying it
- * waits for GPU idle first: a resize or pack replacement must not race an
- * in-flight conversion that still reads it.</p>
+ * host image keeps its own depth-stencil view and is never replaced. A retired
+ * view is destroyed through VulkanMod's frame ops, once the current frame's
+ * fence has signalled. Waiting for GPU idle is not enough: the command buffer
+ * still being recorded can already hold a conversion that samples the old
+ * view, and destroying it before submission loses the device (re-joining a
+ * world recreates the HDR depth image mid-frame).</p>
  */
 final class DepthSampleView {
     private long view;
@@ -26,14 +29,11 @@ final class DepthSampleView {
         if (view != 0L && imageId == nextImageId) {
             return view;
         }
-        if (view != 0L) {
-            // The old view can belong to a depth image retired by a resize or
-            // dimension change; the GPU may still be reading it.
-            Vulkan.waitIdle();
-        }
-        destroy();
-        view = VulkanImage.createImageView(nextImageId, image.format, VK_IMAGE_ASPECT_DEPTH_BIT,
+        // Create before retiring, so the new handle cannot reuse the old one.
+        long next = VulkanImage.createImageView(nextImageId, image.format, VK_IMAGE_ASPECT_DEPTH_BIT,
                 image.arrayLayers, image.mipLevels);
+        destroy();
+        view = next;
         imageId = view == 0L ? 0L : nextImageId;
         return view;
     }
@@ -42,13 +42,14 @@ final class DepthSampleView {
         return view != 0L;
     }
 
-    /** Destroys the view after the GPU has finished using it. */
+    /** Retires the view; it is destroyed after every recorded use has finished on the GPU. */
     void destroy() {
         if (view == 0L) {
             return;
         }
-        Vulkan.waitIdle();
-        vkDestroyImageView(Vulkan.getVkDevice(), view, null);
+        long retired = view;
+        MemoryManager.getInstance().addFrameOp(
+                () -> vkDestroyImageView(Vulkan.getVkDevice(), retired, null));
         view = 0L;
         imageId = 0L;
     }
