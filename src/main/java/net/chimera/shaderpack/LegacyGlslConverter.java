@@ -461,6 +461,12 @@ public final class LegacyGlslConverter {
                     throw new IllegalArgumentException("POST_VERTEX_BUILTIN_UNSUPPORTED:" + token.text());
                 }
             }
+            // The pack positions geometry in GL clip space, where NDC y = -1 is image row 0.
+            // Post passes keep VulkanMod's negative-height viewport, which maps y = -1 to the
+            // last row, so the authored position is mirrored once here. Packs that draw a
+            // partial quad and address it by gl_FragCoord (Bliss's exposure texel) need this.
+            converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraPostMain()");
+            converted += "\nvoid main() { chimeraPostMain(); gl_Position.y = -gl_Position.y; }\n";
             String uniforms = interfacePlan.executableUniforms().isEmpty() ? ""
                     : generatedUniformBlock(interfacePlan.executableUniforms(), converted);
             return new PostVertexConversion("#version 460\n" + uniforms + FULLSCREEN_VERTEX_INPUTS + converted,
@@ -476,8 +482,8 @@ public final class LegacyGlslConverter {
                 return vec2(float((gl_VertexIndex << 1) & 2), 1.0 - float(gl_VertexIndex & 2));
             }
             mat4 chimeraFullscreenProjection() {
-                return mat4(2.0, 0.0, 0.0, 0.0, 0.0, -2.0, 0.0, 0.0,
-                            0.0, 0.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0);
+                return mat4(2.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0,
+                            0.0, 0.0, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0);
             }
             vec4 chimeraFullscreenPosition() {
                 return chimeraFullscreenProjection() * vec4(chimeraFullscreenUv(), 0.0, 1.0);
