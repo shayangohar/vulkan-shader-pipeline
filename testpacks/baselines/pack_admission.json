@@ -6,7 +6,7 @@
     "gbuffers_basic",
     "gbuffers_beaconbeam",
     "gbuffers_clouds",
-    "gbuffers_spidereyes",
+    "gbuffers_entities_glowing",
     "gbuffers_textured"
   ],
   "Bliss_v2.1.2_(Chocapic13_Shaders_edit).zip": [
@@ -19,6 +19,7 @@
     "gbuffers_block_translucent",
     "gbuffers_clouds",
     "gbuffers_damagedblock",
+    "gbuffers_entities_glowing",
     "gbuffers_hand_water",
     "gbuffers_particles",
     "gbuffers_particles_translucent",
@@ -39,9 +40,9 @@
     "gbuffers_beaconbeam",
     "gbuffers_block_translucent",
     "gbuffers_clouds",
+    "gbuffers_entities_glowing",
     "gbuffers_lightning",
     "gbuffers_line",
-    "gbuffers_spidereyes",
     "gbuffers_textured"
   ],
   "MakeUp-UltraFast-9.5g.zip": [
@@ -51,8 +52,8 @@
     "gbuffers_basic",
     "gbuffers_beaconbeam",
     "gbuffers_clouds",
+    "gbuffers_entities_glowing",
     "gbuffers_line",
-    "gbuffers_spidereyes",
     "gbuffers_textured"
   ],
   "Solas Shader V3.7b.zip": [
@@ -65,7 +66,6 @@
     "gbuffers_basic",
     "gbuffers_beaconbeam",
     "gbuffers_clouds",
-    "gbuffers_spidereyes",
     "gbuffers_textured",
     "shadow"
   ],
@@ -83,7 +83,6 @@
     "gbuffers_clouds",
     "gbuffers_damagedblock",
     "gbuffers_entities",
-    "gbuffers_entities_glowing",
     "gbuffers_entities_translucent",
     "gbuffers_hand",
     "gbuffers_hand_water",

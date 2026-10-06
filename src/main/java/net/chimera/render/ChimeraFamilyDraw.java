@@ -36,7 +36,7 @@ public final class ChimeraFamilyDraw {
             return false;
         }
         // The pipeline follows the selected family, not the base family:
-        // translucent and glowing draws need their own MRT windows.
+        // translucent and spider-eyes draws need their own MRT windows.
         ChimeraMainPass mainPass = ChimeraRenderer.getMainPass();
         PackPipelines.PackEntity selectedPipeline = mainPass == null
                 ? null : mainPass.familyPipeline(selected);

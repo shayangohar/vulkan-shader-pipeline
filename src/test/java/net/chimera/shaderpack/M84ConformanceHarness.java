@@ -40,7 +40,7 @@ public final class M84ConformanceHarness {
     private static void verifyRegistry() {
         List<String> executable = List.of(
                 "gbuffers_entities_translucent",
-                "gbuffers_entities_glowing",
+                "gbuffers_spidereyes",
                 "gbuffers_damagedblock",
                 "gbuffers_hand_water",
                 "gbuffers_particles_translucent",
@@ -53,8 +53,8 @@ public final class M84ConformanceHarness {
                 FamilyAdapterRegistry.stageFor("gbuffers_entities_translucent"),
                 "M8.4 translucent entity stage");
         assertEquals(UniformRegistry.Stage.ENTITY,
-                FamilyAdapterRegistry.stageFor("gbuffers_entities_glowing"),
-                "M8.4 glowing entity stage");
+                FamilyAdapterRegistry.stageFor("gbuffers_spidereyes"),
+                "M8.4 spider-eyes entity stage");
         assertEquals(UniformRegistry.Stage.BLOCK,
                 FamilyAdapterRegistry.stageFor("gbuffers_damagedblock"),
                 "M8.4 damaged block stage");
@@ -100,7 +100,7 @@ public final class M84ConformanceHarness {
                 "M8.4 supported report stability");
 
         for (String name : List.of(
-                "gbuffers_entities", "gbuffers_entities_translucent", "gbuffers_entities_glowing",
+                "gbuffers_entities", "gbuffers_entities_translucent", "gbuffers_spidereyes",
                 "gbuffers_block", "gbuffers_hand", "gbuffers_hand_water",
                 "gbuffers_particles", "gbuffers_particles_translucent", "gbuffers_weather")) {
             PackProgramPlan plan = first.plan().program(name);

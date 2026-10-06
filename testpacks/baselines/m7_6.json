@@ -3,7 +3,7 @@
   "fixture": "m7_6/families",
   "fixtures": {
     "families": {
-      "reportSha256": "a548a72d9e31319f3cc7a4e6d6dcd972ad7e78bc4e08646babe9425cf02f5e40",
+      "reportSha256": "68f19ec6a8a82b5b1a2d0ae989dc08580d8a7b55ffad7dde1c78d5f3338447bf",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "80d96b5eab7d4baeee89f8f0a4d9a268fa79bfd7466b21ea0b608bed6f4219da",
@@ -20,7 +20,6 @@
         "final",
         "gbuffers_block",
         "gbuffers_entities",
-        "gbuffers_entities_glowing",
         "gbuffers_entities_translucent",
         "gbuffers_hand",
         "gbuffers_hand_water",
@@ -50,7 +49,6 @@
         "PARTICLE_STATE_FIXED_TO_HOST",
         "PARTICLE_TRANSLUCENT_INSTALLED",
         "PARTICLE_VERTEX_BRIDGE",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_hand_water->gbuffers_hand",
         "PROGRAM_ALIAS_RECORDED:gbuffers_particles_translucent->gbuffers_particles"

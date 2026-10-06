@@ -3,7 +3,7 @@
   "fixture": "m6_3/entities",
   "fixtures": {
     "entities": {
-      "reportSha256": "1f615c7799b400545098fd7ae513d29b3c306df5dbd42ca5a5693b437b74f98c",
+      "reportSha256": "4918541aab79efc75bc1c6a139a2685950d33007cfef7027228933e86ae313cb",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "1d9fc1ec14a079ee287fabc03344c028032138b1383189c3cff26c06c0c458f5",
@@ -12,7 +12,6 @@
       "expectedExecutablePrograms": [
         "final",
         "gbuffers_entities",
-        "gbuffers_entities_glowing",
         "gbuffers_entities_translucent"
       ],
       "expectedFallbackPrograms": [],
@@ -26,12 +25,11 @@
         "FAMILY_ADAPTER_INSTALLED",
         "FIXED_VERTEX_SUBSTITUTION",
         "LIVE_UNIFORM_BRIDGE",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
       ]
     },
     "unsupported_entities": {
-      "reportSha256": "647813a21c54f8e7b80e5042916902fca209cf58a3fcd18aba9a2a0999fa167f",
+      "reportSha256": "d724a97f8414e563b636f9c774ab907d35d75c5afbd1fd603c2651f7e4ac5876",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "f66ceb456c20495e724ea97e83a138a48fb5fd80668857f4b7d0c108179576a4",
@@ -42,7 +40,6 @@
       ],
       "expectedFallbackPrograms": [
         "gbuffers_entities",
-        "gbuffers_entities_glowing",
         "gbuffers_entities_translucent"
       ],
       "expectedDeviations": [
@@ -51,7 +48,6 @@
         "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
         "FIXED_VERTEX_SUBSTITUTION",
         "LIVE_UNIFORM_BRIDGE",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
       ]
     }

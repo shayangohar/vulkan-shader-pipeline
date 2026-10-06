@@ -17,8 +17,8 @@ public final class FamilyAdapterRegistry {
             Map.entry("gbuffers_entities_translucent", plan("gbuffers_entities_translucent",
                     FamilyAdapterPlan.Family.ENTITY_TRANSLUCENT, UniformRegistry.Stage.ENTITY,
                     FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY)),
-            Map.entry("gbuffers_entities_glowing", plan("gbuffers_entities_glowing",
-                    FamilyAdapterPlan.Family.GLOWING, UniformRegistry.Stage.ENTITY,
+            Map.entry("gbuffers_spidereyes", plan("gbuffers_spidereyes",
+                    FamilyAdapterPlan.Family.SPIDER_EYES, UniformRegistry.Stage.ENTITY,
                     FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY)),
             Map.entry("gbuffers_block", plan("gbuffers_block", FamilyAdapterPlan.Family.BLOCK,
                     UniformRegistry.Stage.BLOCK, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY)),
@@ -89,7 +89,7 @@ public final class FamilyAdapterRegistry {
         FamilyAdapterPlan.Family family = forProgram(name).family();
         return family == FamilyAdapterPlan.Family.ENTITY
                 || family == FamilyAdapterPlan.Family.ENTITY_TRANSLUCENT
-                || family == FamilyAdapterPlan.Family.GLOWING
+                || family == FamilyAdapterPlan.Family.SPIDER_EYES
                 || family == FamilyAdapterPlan.Family.BLOCK
                 || family == FamilyAdapterPlan.Family.DAMAGED_BLOCK
                 || family == FamilyAdapterPlan.Family.HAND
@@ -118,7 +118,7 @@ public final class FamilyAdapterRegistry {
         FamilyAdapterPlan.Family family = forProgram(name).family();
         return family == FamilyAdapterPlan.Family.ENTITY
                 || family == FamilyAdapterPlan.Family.ENTITY_TRANSLUCENT
-                || family == FamilyAdapterPlan.Family.GLOWING;
+                || family == FamilyAdapterPlan.Family.SPIDER_EYES;
     }
 
     public static boolean isBlockFamily(String name) {

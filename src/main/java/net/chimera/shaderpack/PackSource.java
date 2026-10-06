@@ -346,7 +346,7 @@ public final class PackSource {
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_water");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_entities");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_entities_translucent");
-            loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_entities_glowing");
+            loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_spidereyes");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_block");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_damagedblock");
             loadStandardPair(variant.getValue(), byName, deviations, "gbuffers_hand");

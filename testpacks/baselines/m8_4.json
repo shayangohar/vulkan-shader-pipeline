@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "51d086d9726f62e5c197c15cd47e679e632bd01c5b3e379bd8a979b3af9aefa1",
+      "reportSha256": "c004b264df9a439c4c0d22ae776550439da34bdd5d084945ca5daa9c6c7339c8",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -12,8 +12,8 @@
         "gbuffers_damagedblock.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
         "gbuffers_entities.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
         "gbuffers_entities.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
-        "gbuffers_entities_glowing.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
-        "gbuffers_entities_glowing.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
+        "gbuffers_spidereyes.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
+        "gbuffers_spidereyes.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
         "gbuffers_entities_translucent.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
         "gbuffers_entities_translucent.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
         "gbuffers_hand.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -33,12 +33,12 @@
         "gbuffers_block",
         "gbuffers_damagedblock",
         "gbuffers_entities",
-        "gbuffers_entities_glowing",
         "gbuffers_entities_translucent",
         "gbuffers_hand",
         "gbuffers_hand_water",
         "gbuffers_particles",
         "gbuffers_particles_translucent",
+        "gbuffers_spidereyes",
         "gbuffers_weather"
       ],
       "expectedFallbackPrograms": [],
@@ -46,6 +46,7 @@
         "gbuffers_skybasic"
       ],
       "expectedDeviations": [
+        "BLEND_PROGRAM_DEFAULT:gbuffers_spidereyes",
         "BLOCK_ENTITY_ID_DEFAULTED",
         "BLOCK_VERTEX_BRIDGE",
         "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
@@ -70,7 +71,7 @@
       ]
     },
     "unsupported_families": {
-      "reportSha256": "3bc7c52bcbf9fe43407511b27893244071b579070797eb9e31e8af1c60b59bc5",
+      "reportSha256": "9041977990dac46617b1a1363f7a4024b7b9d3a5dd1634f12587ffdc911c1b6d",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -85,7 +86,6 @@
       ],
       "expectedFallbackPrograms": [
         "gbuffers_entities",
-        "gbuffers_entities_glowing",
         "gbuffers_entities_translucent"
       ],
       "expectedUnsupportedPrograms": [
@@ -99,7 +99,6 @@
         "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
         "FIXED_VERTEX_SUBSTITUTION",
         "LIVE_UNIFORM_BRIDGE",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_entities_glowing->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
       ]
     }

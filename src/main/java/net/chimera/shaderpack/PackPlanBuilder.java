@@ -239,13 +239,7 @@ public final class PackPlanBuilder {
         }
 
         if (FamilyAdapterRegistry.isEntityLike(program.name()) && vertex == null) {
-            // Preserve the pre-M8.4 inventory contract for the historical
-            // fragment-only glowing fixture. The new glowing adapter requires
-            // a paired vertex stage; the missing pair is already represented
-            // by the unsupported eligibility result.
-            if (!program.name().equals("gbuffers_entities_glowing")) {
-                deviations.add(vertexBridgeDeviation(program.name()));
-            }
+            deviations.add(vertexBridgeDeviation(program.name()));
         }
         if (FamilyAdapterRegistry.isParticleLike(program.name()) && vertex == null) {
             deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
@@ -527,7 +521,7 @@ public final class PackPlanBuilder {
         // Blend directives reach the per-attachment state of the world MRT
         // pipelines; other programs keep the directive as a named gap.
         PackBlendPlan blendPlan = PackBlendPlan.forProgram(directiveProgram,
-                config == null ? PackSettingsPlan.empty() : config.settings());
+                config == null ? PackSettingsPlan.empty() : config.settings()).withIrisDefault(program.name());
         if (blendPlan.overridesAnything() && geometryOutputPlan == null) {
             deviations.add("BLEND_DIRECTIVE_UNSUPPORTED:" + program.name());
             blendPlan = PackBlendPlan.empty();
@@ -607,7 +601,7 @@ public final class PackPlanBuilder {
             case "gbuffers_hand", "gbuffers_hand_water"
                     -> "HAND_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_entities", "gbuffers_entities_translucent",
-                    "gbuffers_entities_glowing" -> "ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
+                    "gbuffers_spidereyes" -> "ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
             default -> "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
         };
     }

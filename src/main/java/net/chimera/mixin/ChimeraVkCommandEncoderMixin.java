@@ -126,7 +126,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
         var previousPhase = PackUniformProvider.setRenderingPhase(switch (ChimeraEntityBridge.activeFamily()) {
-            case ENTITY, ENTITY_TRANSLUCENT, GLOWING -> net.chimera.shaderpack.PackRenderingPhase.ENTITIES;
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES -> net.chimera.shaderpack.PackRenderingPhase.ENTITIES;
             case BLOCK -> net.chimera.shaderpack.PackRenderingPhase.BLOCK_ENTITIES;
             case DAMAGED_BLOCK -> net.chimera.shaderpack.PackRenderingPhase.DESTROY;
             case HAND -> net.chimera.shaderpack.PackRenderingPhase.HAND_SOLID;

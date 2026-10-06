@@ -17,7 +17,7 @@ public record FamilyAdapterPlan(
         SHADOW,
         ENTITY,
         ENTITY_TRANSLUCENT,
-        GLOWING,
+        SPIDER_EYES,
         BLOCK,
         DAMAGED_BLOCK,
         HAND,

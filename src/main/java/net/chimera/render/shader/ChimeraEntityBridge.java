@@ -24,7 +24,7 @@ public final class ChimeraEntityBridge {
     public enum Family {
         ENTITY,
         ENTITY_TRANSLUCENT,
-        GLOWING,
+        SPIDER_EYES,
         BLOCK,
         DAMAGED_BLOCK,
         HAND,
@@ -38,7 +38,7 @@ public final class ChimeraEntityBridge {
     private static PackEntityIdResolver resolver = PackEntityIdResolver.empty();
     private static GraphicsPipeline entityPipeline;
     private static GraphicsPipeline translucentEntityPipeline;
-    private static GraphicsPipeline glowingEntityPipeline;
+    private static GraphicsPipeline spiderEyesPipeline;
     private static GraphicsPipeline blockPipeline;
     private static GraphicsPipeline damagedBlockPipeline;
     private static GraphicsPipeline handPipeline;
@@ -102,6 +102,8 @@ public final class ChimeraEntityBridge {
     );
     /** Fixed core particle/weather, item and crumbling discard threshold. */
     private static final float FIXED_ALPHA_CUTOUT = 0.1F;
+    /** Iris AlphaTests.NON_ZERO_ALPHA: GREATER 0.0001. */
+    private static final float NON_ZERO_ALPHA = 0.0001F;
     private ChimeraEntityBridge() {}
 
     public static void install(PackPipelines.PackEntity entity,
@@ -122,7 +124,7 @@ public final class ChimeraEntityBridge {
     public static void install(
             PackPipelines.PackEntity entity,
             PackPipelines.PackEntity translucentEntity,
-            PackPipelines.PackEntity glowingEntity,
+            PackPipelines.PackEntity spiderEyes,
             PackPipelines.PackEntity block,
             PackPipelines.PackEntity damagedBlock,
             PackPipelines.PackHand hand,
@@ -135,7 +137,7 @@ public final class ChimeraEntityBridge {
         releaseEntityBuffer();
         entityPipeline = entity == null ? null : entity.pipeline();
         translucentEntityPipeline = translucentEntity == null ? null : translucentEntity.pipeline();
-        glowingEntityPipeline = glowingEntity == null ? null : glowingEntity.pipeline();
+        spiderEyesPipeline = spiderEyes == null ? null : spiderEyes.pipeline();
         blockPipeline = block == null ? null : block.pipeline();
         damagedBlockPipeline = damagedBlock == null ? null : damagedBlock.pipeline();
         handVariants = hand;
@@ -173,9 +175,9 @@ public final class ChimeraEntityBridge {
         unsupportedPipelineTraceLogged = false;
         flushTraceLogged = false;
         clearScopedState();
-        ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, glowing={}, "
+        ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
                         + "block={}, damagedBlock={}, hand={}, handWater={}, particle={}, particleTranslucent={}",
-                status(entityPipeline), status(translucentEntityPipeline), status(glowingEntityPipeline),
+                status(entityPipeline), status(translucentEntityPipeline), status(spiderEyesPipeline),
                 status(blockPipeline), status(damagedBlockPipeline), status(handPipeline),
                 status(handWaterPipeline), status(particlePipeline), status(translucentParticlePipeline));
         if (weatherPipeline != null) {
@@ -218,7 +220,7 @@ public final class ChimeraEntityBridge {
         submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
         entityPipeline = null;
         translucentEntityPipeline = null;
-        glowingEntityPipeline = null;
+        spiderEyesPipeline = null;
         blockPipeline = null;
         damagedBlockPipeline = null;
         handPipeline = null;
@@ -233,7 +235,7 @@ public final class ChimeraEntityBridge {
 
     public static boolean isInstalled() {
         return entityPipeline != null || translucentEntityPipeline != null
-                || glowingEntityPipeline != null || blockPipeline != null
+                || spiderEyesPipeline != null || blockPipeline != null
                 || damagedBlockPipeline != null || handPipeline != null
                 || handWaterPipeline != null || particlePipeline != null
                 || translucentParticlePipeline != null || weatherPipeline != null;
@@ -513,7 +515,7 @@ public final class ChimeraEntityBridge {
         // batch remains untouched and can render the entities normally.
         worldSubmissionWindow = enabled
                 && (entityPipeline != null || translucentEntityPipeline != null
-                || glowingEntityPipeline != null || blockPipeline != null
+                || spiderEyesPipeline != null || blockPipeline != null
                 || damagedBlockPipeline != null)
                 && ensureEntityBuffer();
     }
@@ -536,7 +538,7 @@ public final class ChimeraEntityBridge {
     /** True only when the separate entity batch can be flushed safely. */
     public static boolean isEntityBufferReady() {
         return enabled && (entityPipeline != null || translucentEntityPipeline != null
-                || glowingEntityPipeline != null || blockPipeline != null
+                || spiderEyesPipeline != null || blockPipeline != null
                 || damagedBlockPipeline != null)
                 && entityBufferSource != null;
     }
@@ -544,7 +546,7 @@ public final class ChimeraEntityBridge {
     public static boolean supportsSubmissionFamily(int family) {
         return switch (family) {
             case ChimeraEntitySubmission.FAMILY_ENTITY -> entityPipeline != null
-                    || translucentEntityPipeline != null || glowingEntityPipeline != null;
+                    || translucentEntityPipeline != null || spiderEyesPipeline != null;
             case ChimeraEntitySubmission.FAMILY_BLOCK -> blockPipeline != null
                     || damagedBlockPipeline != null;
             default -> false;
@@ -581,7 +583,11 @@ public final class ChimeraEntityBridge {
                 || pipeline == RenderPipelines.OPAQUE_PARTICLE
                 || pipeline == RenderPipelines.TRANSLUCENT_PARTICLE
                 || pipeline == RenderPipelines.WEATHER_DEPTH_WRITE
-                || pipeline == RenderPipelines.WEATHER_NO_DEPTH_WRITE) return FIXED_ALPHA_CUTOUT;
+                || pipeline == RenderPipelines.WEATHER_NO_DEPTH_WRITE
+                // Iris ENTITIES_EYES_TRANS: ONE_TENTH_ALPHA.
+                || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) return FIXED_ALPHA_CUTOUT;
+        // Iris ENTITIES_EYES: NON_ZERO_ALPHA.
+        if (pipeline == RenderPipelines.EYES) return NON_ZERO_ALPHA;
         String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
         if (cutout == null) return 0.0F;
         try {
@@ -604,9 +610,12 @@ public final class ChimeraEntityBridge {
                 return translucentEntityPipeline != null
                         ? Family.ENTITY_TRANSLUCENT : Family.HOST_FALLBACK;
             }
-            if (renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
-                return glowingEntityPipeline != null
-                        ? Family.GLOWING : Family.HOST_FALLBACK;
+            // Iris IrisPipelines: EYES -> ENTITIES_EYES and ENTITY_TRANSLUCENT_EMISSIVE ->
+            // ENTITIES_EYES_TRANS, both ProgramId.SpiderEyes (gbuffers_entities_glowing is unused).
+            if (renderType.pipeline() == RenderPipelines.EYES
+                    || renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
+                return spiderEyesPipeline != null
+                        ? Family.SPIDER_EYES : Family.HOST_FALLBACK;
             }
         }
         return base;
@@ -635,7 +644,7 @@ public final class ChimeraEntityBridge {
         return switch (activeFamily) {
             case DAMAGED_BLOCK -> pipeline == RenderPipelines.CRUMBLING
                     && format == DefaultVertexFormat.BLOCK;
-            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK ->
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK ->
                     format == DefaultVertexFormat.NEW_ENTITY
                     || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(format) != null;
@@ -663,7 +672,7 @@ public final class ChimeraEntityBridge {
     /** Families that append pack inputs to the host format instead of drawing it directly. */
     private static boolean widensVertexFormat(Family family) {
         return switch (family) {
-            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK, HAND, HAND_WATER -> true;
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, HAND, HAND_WATER -> true;
             case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, HOST_FALLBACK -> false;
         };
     }
@@ -678,7 +687,7 @@ public final class ChimeraEntityBridge {
             return format;
         }
         return switch (activeFamily) {
-            case ENTITY, ENTITY_TRANSLUCENT, GLOWING, BLOCK ->
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK ->
                     format == DefaultVertexFormat.NEW_ENTITY
                     ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY : format;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
@@ -814,7 +823,7 @@ public final class ChimeraEntityBridge {
             return true;
         }
         if (entityBufferUnavailable || (entityPipeline == null && translucentEntityPipeline == null
-                && glowingEntityPipeline == null && blockPipeline == null
+                && spiderEyesPipeline == null && blockPipeline == null
                 && damagedBlockPipeline == null)) {
             return false;
         }
@@ -888,7 +897,7 @@ public final class ChimeraEntityBridge {
         return switch (family) {
             case ENTITY -> entityPipeline;
             case ENTITY_TRANSLUCENT -> translucentEntityPipeline;
-            case GLOWING -> glowingEntityPipeline;
+            case SPIDER_EYES -> spiderEyesPipeline;
             case BLOCK -> blockPipeline;
             case DAMAGED_BLOCK -> damagedBlockPipeline;
             case HAND -> handPipeline;

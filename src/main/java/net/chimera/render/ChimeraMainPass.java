@@ -286,8 +286,8 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackEntity packEntityPipeline;
     /** Pack translucent world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packTranslucentEntityPipeline;
-    /** Pack glowing world-entity program on the guarded delayed model batch. */
-    private PackPipelines.PackEntity packGlowingEntityPipeline;
+    /** Pack spider-eyes program (Iris EYES and ENTITY_TRANSLUCENT_EMISSIVE) on the delayed model batch. */
+    private PackPipelines.PackEntity packSpiderEyesPipeline;
     /** Pack block-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packBlockPipeline;
     /** Pack damaged-block program on the guarded block draw lane. */
@@ -1028,7 +1028,7 @@ public class ChimeraMainPass implements MainPass {
         return switch (family) {
             case ENTITY -> this.packEntityPipeline;
             case ENTITY_TRANSLUCENT -> this.packTranslucentEntityPipeline;
-            case GLOWING -> this.packGlowingEntityPipeline;
+            case SPIDER_EYES -> this.packSpiderEyesPipeline;
             case BLOCK -> this.packBlockPipeline;
             case DAMAGED_BLOCK -> this.packDamagedBlockPipeline;
             case HAND -> this.packHandPipeline == null ? null : this.packHandPipeline.primary();
@@ -2135,7 +2135,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
         if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
         if (this.packTranslucentEntityPipeline != null) this.packTranslucentEntityPipeline.pipeline().cleanUp();
-        if (this.packGlowingEntityPipeline != null) this.packGlowingEntityPipeline.pipeline().cleanUp();
+        if (this.packSpiderEyesPipeline != null) this.packSpiderEyesPipeline.pipeline().cleanUp();
         if (this.packBlockPipeline != null) this.packBlockPipeline.pipeline().cleanUp();
         if (this.packDamagedBlockPipeline != null) this.packDamagedBlockPipeline.pipeline().cleanUp();
         if (this.packHandPipeline != null) this.packHandPipeline.cleanUp();
@@ -2182,7 +2182,7 @@ public class ChimeraMainPass implements MainPass {
         this.packShadowSlots = null;
         this.packEntityPipeline = null;
         this.packTranslucentEntityPipeline = null;
-        this.packGlowingEntityPipeline = null;
+        this.packSpiderEyesPipeline = null;
         this.packBlockPipeline = null;
         this.packDamagedBlockPipeline = null;
         this.packHandPipeline = null;
@@ -2942,7 +2942,7 @@ public class ChimeraMainPass implements MainPass {
         this.packShadowSlots = null;
         this.packEntityPipeline = null;
         this.packTranslucentEntityPipeline = null;
-        this.packGlowingEntityPipeline = null;
+        this.packSpiderEyesPipeline = null;
         this.packBlockPipeline = null;
         this.packDamagedBlockPipeline = null;
         this.packHandPipeline = null;
@@ -3324,19 +3324,19 @@ public class ChimeraMainPass implements MainPass {
                 if (name.equals("gbuffers_entities_translucent")) {
                     this.packTranslucentEntityPipeline = entity;
                 } else {
-                    this.packGlowingEntityPipeline = entity;
+                    this.packSpiderEyesPipeline = entity;
                 }
                 if (!attachPackStoragePipeline(name, entity.pipeline(), entity.imageBindings())) {
                     entity.pipeline().cleanUp();
                     if (name.equals("gbuffers_entities_translucent")) {
                         this.packTranslucentEntityPipeline = null;
                     } else {
-                        this.packGlowingEntityPipeline = null;
+                        this.packSpiderEyesPipeline = null;
                     }
                     continue;
                 }
                 markFamilyPipelineInstalled(name, name.equals("gbuffers_entities_translucent")
-                        ? "TRANSLUCENT_ENTITY_INSTALLED" : "GLOWING_ENTITY_INSTALLED");
+                        ? "TRANSLUCENT_ENTITY_INSTALLED" : "SPIDER_EYES_INSTALLED");
             } else if (name.equals("gbuffers_block")) {
                 PackPipelines.PackEntity block = PackPipelines.buildBlock(programPlan,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3480,7 +3480,7 @@ public class ChimeraMainPass implements MainPass {
             }
         }
         ChimeraEntityBridge.install(this.packEntityPipeline, this.packTranslucentEntityPipeline,
-                this.packGlowingEntityPipeline, this.packBlockPipeline, this.packDamagedBlockPipeline,
+                this.packSpiderEyesPipeline, this.packBlockPipeline, this.packDamagedBlockPipeline,
                 this.packHandPipeline, this.packHandWaterPipeline, this.packParticlePipeline,
                 this.packTranslucentParticlePipeline, this.packWeatherPipeline,
                 this.packPlan == null ? null : this.packPlan.entityIds());
