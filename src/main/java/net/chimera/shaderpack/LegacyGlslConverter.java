@@ -949,7 +949,8 @@ public final class LegacyGlslConverter {
             }
             converted = GlslTokenRewriter.replaceIdentifiers(converted, inputReplacements);
             converted = converted.replaceAll(
-                    "\\bgl_TextureMatrix\\s*\\[\\s*[01]\\s*\\]", "mat4(1.0)");
+                    "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", "mat4(1.0)");
+            converted = replaceLightmapTextureMatrices(converted);
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraFtransform()");
             if (shadowStage) {
@@ -1336,11 +1337,7 @@ public final class LegacyGlslConverter {
                     "TextureMat");
             // Iris VanillaTransformer/VanillaCoreTransformer: raw UV2 for both
             // light-coordinate aliases, normalized once by the legacy matrix.
-            converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*[12]\\s*\\]",
-                    "mat4(0.00390625, 0.0, 0.0, 0.0, "
-                            + "0.0, 0.00390625, 0.0, 0.0, "
-                            + "0.0, 0.0, 0.00390625, 0.0, "
-                            + "0.03125, 0.03125, 0.03125, 1.0)");
+            converted = replaceLightmapTextureMatrices(converted);
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraEntityFtransform()");
             for (String name : entityIdTypes.keySet()) {
@@ -3040,6 +3037,7 @@ public final class LegacyGlslConverter {
         replacements.putIfAbsent("gl_Color", "chimeraColorValue()");
         replacements.putIfAbsent("gl_MultiTexCoord0", "chimeraTexCoord0Value()");
         replacements.putIfAbsent("gl_MultiTexCoord1", "chimeraTexCoord1Value()");
+        replacements.putIfAbsent("gl_MultiTexCoord2", "chimeraTexCoord1Value()");
         replacements.putIfAbsent("gl_Normal", "chimeraNormalValue()");
         replacements.putIfAbsent("mc_Entity", "chimeraMcEntityValue()");
         replacements.putIfAbsent("mc_midTexCoord", "chimeraMidTexCoordValue()");
@@ -3156,7 +3154,7 @@ public final class LegacyGlslConverter {
             }
             case "UV2", "vaUV2", "a_Light" -> {
                 if (type.equals("ivec2")) {
-                    return "ivec2(chimeraTexCoord1Value().xy * 256.0)";
+                    return "ivec2(chimeraTexCoord1Value().xy)";
                 }
                 value = "chimeraTexCoord1Value()";
                 baseType = "vec4";
@@ -3321,10 +3319,12 @@ public final class LegacyGlslConverter {
                 return vec4(vec2(inUV) * CHIMERA_UV_SCALE, 0.0, 1.0);
             }
 
+            // Raw UV2 light coordinates (level * 16, 0..240), as Iris supplies
+            // gl_MultiTexCoord1; gl_TextureMatrix[1] normalizes them.
             vec4 chimeraTexCoord1Value() {
                 return vec4(
-                        (vec2(float((uint(inPositionLight.w) >> 4u) & 0xFu),
-                              float((uint(inPositionLight.w) >> 12u) & 0xFu)) + 0.5) / 16.0,
+                        vec2(float((uint(inPositionLight.w) >> 4u) & 0xFu),
+                             float((uint(inPositionLight.w) >> 12u) & 0xFu)) * 16.0,
                         0.0, 1.0);
             }
 
@@ -3652,9 +3652,22 @@ public final class LegacyGlslConverter {
         return result.toString();
     }
 
+    /**
+     * Iris's legacy lightmap matrix for gl_TextureMatrix[1] and [2]: the light
+     * coordinates arrive raw (0..240, as UV2) and this scale and offset
+     * normalize them to the lightmap texel centre, (level + 0.5) / 16.
+     */
+    private static String replaceLightmapTextureMatrices(String source) {
+        return source.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*[12]\\s*\\]",
+                "mat4(0.00390625, 0.0, 0.0, 0.0, "
+                        + "0.0, 0.00390625, 0.0, 0.0, "
+                        + "0.0, 0.0, 0.00390625, 0.0, "
+                        + "0.03125, 0.03125, 0.03125, 1.0)");
+    }
+
     /** Maps legacy matrix built-ins to the fixed terrain inputs used by the shadow adapter. */
     private static String normalizeShadowLegacyBuiltins(String source) {
-        String result = source.replaceAll(
+        String result = replaceLightmapTextureMatrices(source).replaceAll(
                 "\\bgl_TextureMatrix\\s*\\[\\s*\\d+\\s*\\]", "mat4(1.0)");
         return GlslTokenRewriter.replaceIdentifiers(result,
                 Map.of(
