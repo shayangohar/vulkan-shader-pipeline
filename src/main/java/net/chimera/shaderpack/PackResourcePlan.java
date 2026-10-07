@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -107,11 +108,13 @@ public final class PackResourcePlan {
             }
         }
 
+        Map<String, Set<Integer>> writtenEarlier = targetsWrittenEarlierInChain(plan);
         for (PackProgramPlan programPlan : plan.programs()) {
             if (programPlan == null || programPlan.interfacePlan() == null) continue;
             UniformRegistry.Stage stage = stageFor(programPlan.name());
             List<UniformRegistry.SamplerBinding> samplers = programPlan.interfacePlan()
                     .effective(stage).samplers();
+            Set<Integer> deactivatedOverrides = writtenEarlier.getOrDefault(programPlan.name(), Set.of());
             List<PackResourceBinding> programBindings = new ArrayList<>();
             boolean waterShadow = declaresWaterShadow(samplers);
             for (UniformRegistry.SamplerBinding sampler : samplers) {
@@ -119,7 +122,7 @@ public final class PackResourcePlan {
                 String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
                         ? programPlan.name() : resolved.selectedProgram();
                 PackResourceBinding binding = resolve(sourceProgram, sampler, waterShadow, declarations,
-                        shadersDir, settings == null ? Map.of() : settings.propertyValues());
+                        shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides);
                 if (!sourceProgram.equals(programPlan.name())) {
                     binding = new PackResourceBinding(programPlan.name(), binding.sampler(), binding.resourceKey(),
                             binding.kind(), binding.source(), binding.slot(), binding.filter(), binding.wrap(),
@@ -148,7 +151,7 @@ public final class PackResourcePlan {
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
             if (!sampler.glslType().equals("sampler2D")) continue;
             PackResourceBinding binding = resolve(program, sampler, declaresWaterShadow(iface.samplers()),
-                    resources.resourceDeclarations(), null, resources.propertyValues());
+                    resources.resourceDeclarations(), null, resources.propertyValues(), Set.of());
             boolean albedo = sampler.slot() == 0
                     && binding.kind() == PackResourceKind.TARGET
                     && binding.status() == PackResourceStatus.HOST_ALIAS
@@ -164,7 +167,8 @@ public final class PackResourcePlan {
             boolean waterShadow,
             Map<String, PackResourceDeclaration> declarations,
             Path shadersDir,
-            Map<String, String> propertyValues
+            Map<String, String> propertyValues,
+            Set<Integer> deactivatedOverrides
     ) {
         String name = sampler.name();
         String canonical = programResource(name, waterShadow);
@@ -178,6 +182,12 @@ public final class PackResourcePlan {
             declaration = textureDeclaration(declarations, textureStage, name, samplerType);
         }
         if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
+        Integer overriddenTarget = declaration == null ? null : targetIndex(name);
+        if (overriddenTarget != null && deactivatedOverrides.contains(overriddenTarget)) {
+            // An earlier pass of this chain wrote the target: it now samples the target.
+            deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
+            declaration = null;
+        }
         if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
             declaration = declarations.get("customTexture." + name);
         }
@@ -401,6 +411,40 @@ public final class PackResourcePlan {
     /** The legacy shadow sampler names whose meaning {@link #programResource} decides. */
     public static boolean isProgramShadowAlias(String sampler) {
         return "shadow".equals(sampler) || "watershadow".equals(sampler) || "shadowcolor".equals(sampler);
+    }
+
+    /**
+     * Iris CompositeRenderer: in one post chain (begin, prepare, deferred, or
+     * composite with final) a stage texture override of colortexN applies only
+     * until an earlier pass of that chain has written colortexN; later passes
+     * sample the target. Draw buffers and explicit flips count as writes, _pre
+     * flips do not. Bliss replaces colortex6 with blue noise for its early
+     * composites and then blurs bloom tiles in colortex6.
+     */
+    private static Map<String, Set<Integer>> targetsWrittenEarlierInChain(PackPlan plan) {
+        Map<String, List<Integer>> flips = plan.config() == null ? Map.of() : plan.config().flips();
+        Map<String, Set<Integer>> writtenByChain = new TreeMap<>();
+        Map<String, Set<Integer>> result = new TreeMap<>();
+        List<PackProgramPlan> programs = plan.activePrograms().stream()
+                .filter(program -> program != null && program.targetPlan() != null
+                        && postChain(program.name()) != null)
+                .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
+                .toList();
+        for (PackProgramPlan program : programs) {
+            Set<Integer> written = writtenByChain.computeIfAbsent(postChain(program.name()), key -> new TreeSet<>());
+            result.put(program.name(), Set.copyOf(written));
+            written.addAll(program.targetPlan().targetSlots());
+            written.addAll(flips.getOrDefault(program.name(), List.of()));
+        }
+        return result;
+    }
+
+    private static String postChain(String program) {
+        if (program.equals("final") || program.matches("composite\\d*")) return "composite";
+        if (program.matches("deferred\\d*")) return "deferred";
+        if (program.matches("prepare\\d*")) return "prepare";
+        if (program.matches("begin\\d*")) return "begin";
+        return null;
     }
 
     public static Integer targetIndex(String sampler) {
