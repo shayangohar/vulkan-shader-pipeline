@@ -671,6 +671,11 @@ public final class ConformanceHarness {
             assertEquals(0.1F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
                     "particle/weather fixed core cutout must not depend on an absent ALPHA_CUTOUT define");
         }
+        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.TEXT,
+                net.minecraft.client.renderer.RenderPipelines.TEXT_POLYGON_OFFSET)) {
+            assertEquals(0.1F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+                    "world text tests ONE_TENTH_ALPHA as Iris TEXT/TEXT_BE; untested glyph quads fill solid");
+        }
         Path root = Files.createTempDirectory("chimera-particle-contract-");
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Path vertex = shaders.resolve("gbuffers_textured.vsh");

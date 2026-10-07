@@ -595,6 +595,13 @@ public final class ChimeraEntityBridge {
                 || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) return FIXED_ALPHA_CUTOUT;
         // Iris ENTITIES_EYES: NON_ZERO_ALPHA.
         if (pipeline == RenderPipelines.EYES) return NON_ZERO_ALPHA;
+        // Iris TEXT and TEXT_BE: ONE_TENTH_ALPHA; HAND_TEXT: NON_ZERO_ALPHA. The core
+        // text shader discards below 0.1 without a define; untested, every glyph
+        // quad wrote its transparent texels.
+        if (isTextPipeline(pipeline)) {
+            return activeFamily == Family.HAND || activeFamily == Family.HAND_WATER
+                    ? NON_ZERO_ALPHA : FIXED_ALPHA_CUTOUT;
+        }
         String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
         if (cutout == null) return 0.0F;
         try {
