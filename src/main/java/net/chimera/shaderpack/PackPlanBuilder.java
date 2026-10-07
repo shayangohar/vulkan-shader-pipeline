@@ -317,21 +317,22 @@ public final class PackPlanBuilder {
                 try {
                     java.util.List<UniformRegistry.UniformDeclaration> fragmentUniforms =
                             interfacePlan.project("fragment", stage).executableUniforms();
+                    LegacyGlslConverter.VertexSamplerPlan vertexSamplers = vertexSamplerPlan(interfacePlan, stage, vertex);
                     conversion = program.name().equals("gbuffers_damagedblock")
                             ? LegacyGlslConverter.convertCrumblingVertexChecked(
                             vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms)
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                             : FamilyAdapterRegistry.isBlockFamily(program.name())
                             ? LegacyGlslConverter.convertBlockVertexChecked(
                             vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms)
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                             : FamilyAdapterRegistry.isHandFamily(program.name())
                             ? LegacyGlslConverter.convertHandVertexChecked(
                             vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms)
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                             : LegacyGlslConverter.convertEntityVertexChecked(
                             vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
-                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms);
+                            stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers);
                 } catch (IllegalArgumentException failure) {
                     deviations.add(entityBridgeDeviation(program.name(), true));
                     deviations.add(entityConversionDeviation(program.name(), failure));
@@ -450,7 +451,8 @@ public final class PackPlanBuilder {
                         LegacyGlslConverter.convertParticleVertexChecked(
                                 vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
                                 stageMatch.locations(), allowStorageBuffers,
-                                interfacePlan.effective(stage).executableUniforms());
+                                interfacePlan.effective(stage).executableUniforms(),
+                                vertexSamplerPlan(interfacePlan, stage, vertex));
                 if (conversion == null) {
                     deviations.add(FamilyAdapterRegistry.isWeatherFamily(program.name())
                             ? "WEATHER_VERTEX_BRIDGE_UNSUPPORTED"
@@ -742,6 +744,17 @@ public final class PackPlanBuilder {
             return "source";
         }
         return message.replaceAll("[^A-Za-z0-9_.-]+", "_");
+    }
+
+    /** The program's samplers as its vertex stage declares them, at the fragment stage's bindings. */
+    private static LegacyGlslConverter.VertexSamplerPlan vertexSamplerPlan(
+            UniformRegistry.ProgramInterfacePlan plan,
+            UniformRegistry.Stage stage,
+            String vertex
+    ) {
+        if (vertex == null) return null;
+        return new LegacyGlslConverter.VertexSamplerPlan(plan.project("vertex", stage),
+                PackPipelines.entitySamplerSlots(interfaceSlots(plan, stage)));
     }
 
     private static int[] interfaceSlots(

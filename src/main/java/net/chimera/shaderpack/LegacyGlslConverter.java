@@ -584,16 +584,7 @@ public final class LegacyGlslConverter {
             // come from the canonical program layout, never the filtered stage order.
             List<UniformRegistry.SamplerBinding> samplers = interfacePlan.samplers();
             int bindingBase = geometryStage
-                    ? (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
-                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
-                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
-                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE)
-                    ? (interfacePlan.executableUniforms().isEmpty() ? 2 : 3)
-                    : (interfacePlan.stage() == UniformRegistry.Stage.SHADOW
-                    && !interfacePlan.executableUniforms().isEmpty()
-                    ? GEOMETRY_SAMPLER_BINDING_BASE + 1
-                    : GEOMETRY_SAMPLER_BINDING_BASE
-                    + (!interfacePlan.executableUniforms().isEmpty() ? 1 : 0))
+                    ? geometrySamplerBindingBase(interfacePlan)
                     : (interfacePlan.executableUniforms().isEmpty() ? 0 : 1);
             if (geometryStage) {
                 // GLSL 460: 'texture' is the sampling function name, so a pack
@@ -626,8 +617,7 @@ public final class LegacyGlslConverter {
                 String name = samplers.get(i).name();
                 String srcName = geometryStage && name.equals("texture") ? "chimeraTexture" : name;
                 int binding = geometryStage
-                        ? bindingBase + configIndexOf(name, geometrySamplerSlots,
-                        interfacePlan.stage(), interfacePlan)
+                        ? geometrySamplerBinding(name, geometrySamplerSlots, interfacePlan)
                         : bindingBase + interfacePlan.samplerIndex(name);
                 if (binding < bindingBase) {
                     throw new IllegalArgumentException("sampler is missing from the generated config: " + name);
@@ -1083,8 +1073,22 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
+        return convertEntityVertexChecked(source, sourceFile, fragmentSource, sharedLocations,
+                allowStorageBuffers, fragmentUniforms, null);
+    }
+
+    /** Entity vertex conversion whose referenced samplers take the program's shared bindings. */
+    public static TerrainVertexConversion convertEntityVertexChecked(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms,
+            VertexSamplerPlan samplerPlan
+    ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
+                ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
     /** Converts the block-entity variant, which uses the host ModelOffset field. */
@@ -1118,8 +1122,22 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
+        return convertBlockVertexChecked(source, sourceFile, fragmentSource, sharedLocations,
+                allowStorageBuffers, fragmentUniforms, null);
+    }
+
+    /** Block vertex conversion whose referenced samplers take the program's shared bindings. */
+    public static TerrainVertexConversion convertBlockVertexChecked(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms,
+            VertexSamplerPlan samplerPlan
+    ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
+                BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
     /** Hand models use the real entity inputs; held items/maps get layout variants at build time. */
@@ -1153,8 +1171,22 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
+        return convertHandVertexChecked(source, sourceFile, fragmentSource, sharedLocations,
+                allowStorageBuffers, fragmentUniforms, null);
+    }
+
+    /** Hand vertex conversion whose referenced samplers take the program's shared bindings. */
+    public static TerrainVertexConversion convertHandVertexChecked(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            Map<String, Integer> sharedLocations,
+            boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms,
+            VertexSamplerPlan samplerPlan
+    ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                HAND_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
+                HAND_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
     /** Host damage meshes keep BLOCK, including its lightmap and normal offsets. */
@@ -1163,13 +1195,24 @@ public final class LegacyGlslConverter {
             Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
+        return convertCrumblingVertexChecked(source, sourceFile, fragmentSource, sharedLocations,
+                allowStorageBuffers, fragmentUniforms, null);
+    }
+
+    /** Crumbling vertex conversion whose referenced samplers take the program's shared bindings. */
+    public static TerrainVertexConversion convertCrumblingVertexChecked(
+            String source, Path sourceFile, String fragmentSource,
+            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms,
+            VertexSamplerPlan samplerPlan
+    ) {
         String liveInputs = stripComments(removeEntityAttributes(pruneUnreachableVertexFunctions(
                 prepareSource(source, sourceFile, true))));
         if (containsIdentifier(liveInputs, "mc_midTexCoord") || containsIdentifier(liveInputs, "at_tangent")) {
             throw new IllegalArgumentException("crumbling BLOCK has no material mid-coordinate or tangent attribute");
         }
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                CRUMBLING_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
+                CRUMBLING_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
     private static TerrainVertexConversion convertEntityVertex(
@@ -1183,7 +1226,7 @@ public final class LegacyGlslConverter {
     ) {
         try {
             return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                    vertexPreamble, allowStorageBuffers, fragmentUniforms);
+                    vertexPreamble, allowStorageBuffers, fragmentUniforms, null);
         } catch (Exception e) {
             return null;
         }
@@ -1202,7 +1245,8 @@ public final class LegacyGlslConverter {
             Map<String, Integer> sharedLocations,
             String vertexPreamble,
             boolean allowStorageBuffers,
-            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms,
+            VertexSamplerPlan samplerPlan
     ) {
             String src = prepareSource(source, sourceFile, true);
             src = expandModernVaryingLists(src);
@@ -1227,7 +1271,7 @@ public final class LegacyGlslConverter {
             String beforeFeatures = removeEntityIdDeclarations(stripped);
             rejectEntityVertexFeatures(
                     stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
-                    allowStorageBuffers);
+                    allowStorageBuffers, samplerPlan != null);
 
             EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
             Map<String, String> vertexTypes = new TreeMap<>(vertexVaryings.types());
@@ -1290,6 +1334,9 @@ public final class LegacyGlslConverter {
             // opaque uniforms require layout(binding) even when unread.
             // Referenced samplers already failed loudly in rejection.
             converted = stripUnreferencedSamplerDeclarations(converted);
+            if (samplerPlan != null) {
+                converted = bindVertexSamplers(converted, samplerPlan);
+            }
             // Legacy MVP is a mat4; substituting vec4 ftransform() silently
             // turns authored MVP * gl_Vertex into component-wise multiplication.
             Map<String, String> inputs = Map.ofEntries(
@@ -1437,6 +1484,17 @@ public final class LegacyGlslConverter {
             Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
+        return convertParticleVertexChecked(source, sourceFile, fragmentSource, sharedLocations,
+                allowStorageBuffers, fragmentUniforms, null);
+    }
+
+    /** Particle and weather vertex conversion whose referenced samplers take the shared bindings. */
+    public static TerrainVertexConversion convertParticleVertexChecked(
+            String source, Path sourceFile, String fragmentSource,
+            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms,
+            VertexSamplerPlan samplerPlan
+    ) {
         String liveInputs = stripComments(removeEntityAttributes(pruneUnreachableVertexFunctions(
                 prepareSource(source, sourceFile, true))));
         if (containsIdentifier(liveInputs, "mc_midTexCoord") || containsIdentifier(liveInputs, "at_tangent")
@@ -1444,7 +1502,7 @@ public final class LegacyGlslConverter {
             throw new IllegalArgumentException("particle format has no material mid-coordinate or tangent attribute");
         }
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                PARTICLE_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms);
+                PARTICLE_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
     /** Converts a particle fragment with the shared host sampler and varying rules. */
@@ -1631,7 +1689,7 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("sky format has no material mid-coordinate or tangent attribute");
             }
             return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, locations,
-                    skyPreamble(contract), allowStorageBuffers, uniforms);
+                    skyPreamble(contract), allowStorageBuffers, uniforms, null);
         } catch (RuntimeException failure) {
             return null;
         }
@@ -1753,6 +1811,30 @@ public final class LegacyGlslConverter {
     }
 
     /** Position of the sampler's registry slot in the emitted geometry config array. */
+    /** First sampler binding of a geometry-family program, after its host and pack UBOs. */
+    private static int geometrySamplerBindingBase(UniformRegistry.ProgramInterface interfacePlan) {
+        UniformRegistry.Stage stage = interfacePlan.stage();
+        boolean uniforms = !interfacePlan.executableUniforms().isEmpty();
+        if (stage == UniformRegistry.Stage.ENTITY || stage == UniformRegistry.Stage.BLOCK
+                || stage == UniformRegistry.Stage.HAND || stage == UniformRegistry.Stage.PARTICLE) {
+            return uniforms ? 3 : 2;
+        }
+        return GEOMETRY_SAMPLER_BINDING_BASE + (uniforms ? 1 : 0);
+    }
+
+    /**
+     * Descriptor binding of one geometry-family sampler. Both stages of a
+     * program share one descriptor layout (VulkanMod exposes every image
+     * binding to all graphics stages), so the vertex and fragment stages
+     * declare a sampler at the same binding.
+     */
+    private static int geometrySamplerBinding(
+            String name, int[] slots, UniformRegistry.ProgramInterface interfacePlan
+    ) {
+        int index = configIndexOf(name, slots, interfacePlan.stage(), interfacePlan);
+        return index < 0 ? -1 : geometrySamplerBindingBase(interfacePlan) + index;
+    }
+
     private static int configIndexOf(
             String name,
             int[] slots,
@@ -2714,8 +2796,47 @@ public final class LegacyGlslConverter {
         }
     }
 
+    /**
+     * The program's samplers as the vertex stage sees them: the stage projection and the
+     * program's ordered sampler slots, which fix each sampler's shared descriptor binding.
+     */
+    public record VertexSamplerPlan(UniformRegistry.ProgramInterface vertexInterface, int[] slots) {}
+
+    /**
+     * Declares the vertex stage's samplers at the bindings the fragment stage uses for
+     * them. Iris binds the same textures to every stage of a program; Bliss reads its
+     * light colours from colortex4 in particle, weather and emissive vertex shaders.
+     */
+    private static String bindVertexSamplers(String source, VertexSamplerPlan plan) {
+        UniformRegistry.ProgramInterface vertexInterface = plan.vertexInterface();
+        Map<String, String> samplerTypes = new TreeMap<>();
+        for (UniformRegistry.SamplerBinding sampler : vertexInterface.samplers()) {
+            samplerTypes.put(sampler.name(), sampler.glslType());
+        }
+        // Same order as the fragment stage: rename an OptiFine 'texture' sampler before
+        // the texture-call rewrite turns texture2D into texture.
+        String converted = GlslTokenRewriter.renameSamplerIdentifier(source, "texture", "chimeraTexture");
+        converted = convertTextureCalls(converted);
+        converted = GlslTokenRewriter.rewriteShadowCalls(converted, samplerTypes);
+        for (UniformRegistry.SamplerBinding sampler : vertexInterface.samplers()) {
+            String name = sampler.name().equals("texture") ? "chimeraTexture" : sampler.name();
+            if (!hasSamplerDeclaration(converted, name)) continue;
+            int binding = geometrySamplerBinding(sampler.name(), plan.slots(), vertexInterface);
+            if (binding < 0) {
+                throw new IllegalArgumentException("unsupported entity vertex sampler: " + sampler.name());
+            }
+            converted = rewriteSamplerDeclaration(converted, name, binding);
+        }
+        Matcher unbound = Pattern.compile("(?m)^\\s*uniform\\s+[iu]?sampler\\w*\\s+([A-Za-z_]\\w*)")
+                .matcher(converted);
+        if (unbound.find()) {
+            throw new IllegalArgumentException("unsupported entity vertex sampler: " + unbound.group(1));
+        }
+        return converted;
+    }
+
     private static void rejectEntityVertexFeatures(
-            String source, boolean allowStorageBuffers
+            String source, boolean allowStorageBuffers, boolean allowSamplers
     ) {
         // Served and dead uniform declarations are stripped before this
         // check, so a remaining value-type uniform names a referenced
@@ -2749,7 +2870,8 @@ public final class LegacyGlslConverter {
                     break;
                 }
             }
-            if (referenced) {
+            boolean image = vertexSampler.group().matches("(?s).*\\buniform\\s+u?i?image\\w*.*");
+            if (referenced && (image || !allowSamplers)) {
                 String first = vertexSampler.group(1).split(",")[0].trim();
                 throw new IllegalArgumentException(
                         "unsupported entity vertex sampler: " + first);
