@@ -1341,13 +1341,13 @@ public final class LegacyGlslConverter {
             // turns authored MVP * gl_Vertex into component-wise multiplication.
             Map<String, String> inputs = Map.ofEntries(
                     Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
-                    Map.entry("gl_Color", vertexPreamble == PARTICLE_VERTEX_PREAMBLE || isSkyPreamble(vertexPreamble)
+                    Map.entry("gl_Color", nativeLayoutPreamble(vertexPreamble)
                             ? "(Color * ColorModulator)" : "Color"),
                     Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
                     Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2), 0.0, 1.0)"),
                     Map.entry("gl_MultiTexCoord2", "vec4(vec2(UV2), 0.0, 1.0)"),
                     Map.entry("gl_Normal", "Normal.xyz"),
-                    Map.entry("gl_NormalMatrix", vertexPreamble == PARTICLE_VERTEX_PREAMBLE || isSkyPreamble(vertexPreamble)
+                    Map.entry("gl_NormalMatrix", nativeLayoutPreamble(vertexPreamble)
                             ? "transpose(inverse(mat3(ModelViewMat)))" : "mat3(ModelViewMat)"),
                     Map.entry("gl_ModelViewMatrix", "ModelViewMat"),
                     Map.entry("gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)"),
@@ -3686,11 +3686,167 @@ public final class LegacyGlslConverter {
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
+    /**
+     * DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, drawn as quads. Iris supplies the
+     * missing inputs as for any host format: UV0 (0.5, 0.5) and full light (240, 240). The
+     * line offset is zero except while {@link #prepareLineVertex} widens a fallback program.
+     */
+    private static final String LINE_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 2) in vec3 Normal;\n"
+                    + "layout(location = 3) in float LineWidth;\n"
+                    + "#define chimeraLineWidth LineWidth\n"
+                    + "#define chimeraLineDirection Normal\n"
+                    + "#define chimeraLineVertexIndex gl_VertexIndex")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /** Iris VanillaTransformer VIEW_SHRINK, applied to the model-view matrix of widened lines. */
+    private static final String LINE_WIDEN_GLOBALS = """
+            vec3 chimeraLineOffset = vec3(0.0);
+            const mat4 chimeraLineViewScale = mat4(
+                    1.0 - (1.0 / 256.0), 0.0, 0.0, 0.0,
+                    0.0, 1.0 - (1.0 / 256.0), 0.0, 0.0,
+                    0.0, 0.0, 1.0 - (1.0 / 256.0), 0.0,
+                    0.0, 0.0, 0.0, 1.0);
+            """;
+
+    /**
+     * Iris VanillaTransformer iris_widen_lines: the program runs once at the far end of the
+     * segment and once at the near end, and the near end moves across the screen-space line.
+     */
+    private static final String LINE_WIDEN_MAIN = """
+
+            void main() {
+                chimeraLineOffset = chimeraLineDirection;
+                chimeraLineMain();
+                vec4 linePosEnd = gl_Position;
+                gl_Position = vec4(0.0);
+                chimeraLineOffset = vec3(0.0);
+                chimeraLineMain();
+                vec4 linePosStart = gl_Position;
+                vec2 chimeraScreenSize = vec2(viewWidth, viewHeight);
+                vec3 ndc1 = linePosStart.xyz / linePosStart.w;
+                vec3 ndc2 = linePosEnd.xyz / linePosEnd.w;
+                vec2 lineScreenDirection = normalize((ndc2.xy - ndc1.xy) * chimeraScreenSize);
+                vec2 lineOffset = vec2(-lineScreenDirection.y, lineScreenDirection.x)
+                        * chimeraLineWidth / chimeraScreenSize;
+                if (lineOffset.x < 0.0) {
+                    lineOffset *= -1.0;
+                }
+                if (chimeraLineVertexIndex % 2 == 0) {
+                    gl_Position = vec4((ndc1 + vec3(lineOffset, 0.0)) * linePosStart.w, linePosStart.w);
+                } else {
+                    gl_Position = vec4((ndc1 - vec3(lineOffset, 0.0)) * linePosStart.w, linePosStart.w);
+                }
+            }
+            """;
+
+    private static final Pattern LINE_CORE_INPUT_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*(?:in|attribute)[ \\t]+\\w+[ \\t]+(?:vaPosition|vaColor|vaNormal|vaUV0|vaUV1|vaUV2)"
+                    + "[ \\t]*;[ \\t]*$");
+    private static final Pattern LINE_CORE_MATRIX_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*uniform[ \\t]+mat[34][ \\t]+(?:modelViewMatrix|modelViewMatrixInverse|projectionMatrix"
+                    + "|projectionMatrixInverse|normalMatrix|textureMatrix)[ \\t]*;[ \\t]*$");
+
+    /**
+     * Applies Iris's line handling to an authored vertex source before its interface is
+     * planned. Iris compiles the pack's own gbuffers_line through VanillaCoreTransformer
+     * (IrisRenderingPipeline: isLines when the pack has the program): the core inputs
+     * and matrices name the host values, and the program widens its own line. A fallback
+     * program (gbuffers_basic) is widened by Iris instead (VanillaTransformer, new lines):
+     * its main runs twice and gl_ModelViewMatrix carries VIEW_SHRINK.
+     */
+    public static String prepareLineVertex(String source, Path sourceFile, boolean packLineProgram) {
+        if (source == null) return null;
+        String src = source;
+        if (sourceFile != null) {
+            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
+                    sourceFile.getParent(), sourceFile, source,
+                    PackEngineDefines.forPack(Map.of()),
+                    PackEngineDefines.lockedNames(Set.of(), false, false));
+            if (!prepared.successful()) {
+                throw new IllegalArgumentException(prepared.deviations().toString());
+            }
+            src = prepared.source();
+        }
+        src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("gl_VertexID", "chimeraLineVertexIndex"));
+        if (packLineProgram) {
+            src = LINE_CORE_INPUT_DECLARATION.matcher(src).replaceAll("");
+            src = LINE_CORE_MATRIX_DECLARATION.matcher(src).replaceAll("");
+            return GlslTokenRewriter.replaceIdentifiers(src, Map.ofEntries(
+                    Map.entry("vaPosition", "gl_Vertex.xyz"),
+                    Map.entry("vaColor", "gl_Color"),
+                    Map.entry("vaNormal", "gl_Normal"),
+                    Map.entry("vaUV0", "vec2(0.0)"),
+                    Map.entry("vaUV1", "vec2(0.0)"),
+                    Map.entry("vaUV2", "vec2(0.0)"),
+                    Map.entry("modelViewMatrix", "gl_ModelViewMatrix"),
+                    Map.entry("modelViewMatrixInverse", "inverse(gl_ModelViewMatrix)"),
+                    Map.entry("projectionMatrix", "gl_ProjectionMatrix"),
+                    Map.entry("projectionMatrixInverse", "inverse(gl_ProjectionMatrix)"),
+                    Map.entry("normalMatrix", "gl_NormalMatrix"),
+                    Map.entry("textureMatrix", "gl_TextureMatrix[0]")));
+        }
+        src = src.replaceAll("\\bftransform\\s*\\(\\s*\\)", "(gl_ModelViewProjectionMatrix * gl_Vertex)");
+        src = GlslTokenRewriter.replaceIdentifiers(src, Map.of(
+                "gl_Vertex", "(gl_Vertex + vec4(chimeraLineOffset, 0.0))",
+                "gl_ModelViewMatrix", "(chimeraLineViewScale * gl_ModelViewMatrix)",
+                "gl_ModelViewProjectionMatrix", "(gl_ProjectionMatrix * chimeraLineViewScale * gl_ModelViewMatrix)",
+                // Iris feeds a widened program +Z; only the wrapper reads the line direction.
+                "gl_Normal", "vec3(0.0, 0.0, 1.0)"));
+        Matcher main = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)").matcher(src);
+        if (!main.find()) {
+            throw new IllegalArgumentException("line vertex requires main");
+        }
+        src = src.substring(0, main.start()) + "void chimeraLineMain()" + src.substring(main.end());
+        String globals = LINE_WIDEN_GLOBALS;
+        java.util.Set<String> declared = new java.util.HashSet<>();
+        UniformRegistry.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
+        if (!declared.contains("viewWidth")) globals += "uniform float viewWidth;\n";
+        if (!declared.contains("viewHeight")) globals += "uniform float viewHeight;\n";
+        Matcher header = Pattern.compile("\\A(?:[ \\t]*(?:#version|#extension)[^\\n]*\\n|[ \\t]*\\r?\\n)*")
+                .matcher(src);
+        int insert = header.find() ? header.end() : 0;
+        return src.substring(0, insert) + globals + src.substring(insert) + LINE_WIDEN_MAIN;
+    }
+
+    /** Converts a gbuffers_line vertex (after {@link #prepareLineVertex}) onto the host line layout. */
+    public static TerrainVertexConversion convertLineVertexChecked(
+            String source, String fragmentSource,
+            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> uniforms,
+            VertexSamplerPlan samplerPlan
+    ) {
+        String liveInputs = stripComments(removeEntityAttributes(pruneUnreachableVertexFunctions(
+                prepareSource(source, null, true))));
+        if (containsIdentifier(liveInputs, "mc_midTexCoord") || containsIdentifier(liveInputs, "at_tangent")
+                || containsIdentifier(liveInputs, "Tangent")) {
+            throw new IllegalArgumentException("line format has no material mid-coordinate or tangent attribute");
+        }
+        return convertEntityVertexOrThrow(source, null, fragmentSource, sharedLocations,
+                LINE_VERTEX_PREAMBLE, allowStorageBuffers, uniforms, samplerPlan);
+    }
+
     public static final List<FamilyAdapterPlan.VertexContract> SKY_CONTRACTS = List.of(
             FamilyAdapterPlan.VertexContract.SKY_POSITION,
             FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR,
             FamilyAdapterPlan.VertexContract.SKY_POSITION_UV,
             FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV);
+
+    /**
+     * Lanes drawn on the host's own vertex layout (particles, weather, sky, lines): as in Iris's
+     * VanillaTransformer, gl_Color carries the host ColorModulator and gl_NormalMatrix is the
+     * model-view normal matrix.
+     */
+    private static boolean nativeLayoutPreamble(String preamble) {
+        return preamble == PARTICLE_VERTEX_PREAMBLE || preamble == LINE_VERTEX_PREAMBLE
+                || isSkyPreamble(preamble);
+    }
 
     private static boolean isSkyPreamble(String preamble) {
         return preamble.contains("mat4 chimeraSkyProjection()");

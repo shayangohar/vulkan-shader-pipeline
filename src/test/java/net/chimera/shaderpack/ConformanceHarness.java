@@ -35,6 +35,7 @@ public final class ConformanceHarness {
         verifyRainContracts();
         verifyRequestedFamilyFallbackAndCrumbling();
         verifyParticleFallbackAndTargets();
+        verifyLineLane();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -660,6 +661,108 @@ public final class ConformanceHarness {
             }
             Files.deleteIfExists(shaders);
             Files.deleteIfExists(root);
+        }
+    }
+
+    /**
+     * Iris ShaderKey.LINES: a pack's own gbuffers_line runs as authored on the core inputs
+     * and widens its own line; a gbuffers_basic fallback is widened by Iris (main runs at
+     * both segment ends, VIEW_SHRINK, +Z normal). Both compile on the host line layout.
+     */
+    private static void verifyLineLane() throws IOException {
+        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LINES,
+                net.minecraft.client.renderer.RenderPipelines.LINES_TRANSLUCENT,
+                net.minecraft.client.renderer.RenderPipelines.SECONDARY_BLOCK_OUTLINE)) {
+            assertTrue(net.chimera.render.shader.ChimeraEntityBridge.isLinePipeline(host),
+                    host.getLocation() + " must route to gbuffers_line");
+            assertEquals(0.0F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+                    "Iris LINES uses AlphaTests.OFF");
+        }
+        String fragment = """
+                #version 120
+                /* DRAWBUFFERS:0 */
+                varying vec4 tint;
+                varying vec3 normal;
+                void main() {
+                    gl_FragData[0] = tint + vec4(normal * 0.001, 0.0);
+                }
+                """;
+        Path fallback = Files.createTempDirectory("chimera-line-fallback-");
+        Path packLine = Files.createTempDirectory("chimera-line-authored-");
+        try {
+            Path shaders = Files.createDirectory(fallback.resolve("shaders"));
+            Files.writeString(shaders.resolve("gbuffers_basic.vsh"), """
+                    #version 120
+                    varying vec4 tint;
+                    varying vec3 normal;
+                    void main() {
+                        tint = gl_Color;
+                        normal = gl_NormalMatrix * gl_Normal;
+                        gl_Position = ftransform();
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_basic.fsh"), fragment);
+            var analysis = PackProbe.analyze(fallback);
+            var plan = analysis.plan().program("gbuffers_line");
+            assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("gbuffers_line"),
+                    "basic fallback line rejected: " + (plan == null ? "missing" : plan.deviations()));
+            assertEquals("gbuffers_basic", analysis.resolution().resolution("gbuffers_line").selectedProgram(),
+                    "line fallback source");
+            assertEquals(FamilyAdapterPlan.VertexContract.HOST_LINE, plan.familyAdapter().vertexContract(),
+                    "line keeps the host layout");
+            String converted = plan.convertedVertex();
+            assertTrue(converted.contains("layout(location = 3) in float LineWidth;")
+                            && converted.contains("void chimeraLineMain()")
+                            && converted.contains("chimeraLineOffset = chimeraLineDirection;")
+                            && converted.contains("chimeraLineViewScale")
+                            && converted.contains("vec3(0.0, 0.0, 1.0)")
+                            && converted.contains("tint = (Color * ColorModulator);"),
+                    "fallback line lost Iris widening: " + converted);
+            var compiled = PackCompileCheck.run(fallback, analysis);
+            assertTrue(compiled.failures().isEmpty(), "fallback line compilation: " + compiled.failures());
+
+            shaders = Files.createDirectory(packLine.resolve("shaders"));
+            Files.writeString(shaders.resolve("gbuffers_line.vsh"), """
+                    #version 130
+                    uniform float viewWidth;
+                    uniform float viewHeight;
+                    out vec4 tint;
+                    out vec3 normal;
+                    void main() {
+                        vec4 start = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0);
+                        vec4 end = projectionMatrix * modelViewMatrix * vec4(vaPosition + vaNormal, 1.0);
+                        vec2 direction = normalize((end.xy / end.w - start.xy / start.w) * vec2(viewWidth, viewHeight));
+                        vec2 offset = vec2(-direction.y, direction.x) * 2.0 / vec2(viewWidth, viewHeight);
+                        gl_Position = start + vec4((gl_VertexID % 2 == 0 ? offset : -offset) * start.w, 0.0, 0.0);
+                        tint = gl_Color;
+                        normal = gl_NormalMatrix * gl_Normal;
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_line.fsh"), fragment.replace("varying", "in"));
+            analysis = PackProbe.analyze(packLine);
+            plan = analysis.plan().program("gbuffers_line");
+            assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("gbuffers_line"),
+                    "authored line rejected: " + (plan == null ? "missing" : plan.deviations()));
+            converted = plan.convertedVertex();
+            assertTrue(!converted.contains("chimeraLineMain")
+                            && converted.contains("chimeraLineVertexIndex % 2")
+                            && converted.contains("ProjMat * ModelViewMat")
+                            && converted.contains("Normal.xyz"),
+                    "authored line lost Iris core inputs: " + converted);
+            compiled = PackCompileCheck.run(packLine, analysis);
+            assertTrue(compiled.failures().isEmpty(), "authored line compilation: " + compiled.failures());
+        } finally {
+            deleteTree(fallback);
+            deleteTree(packLine);
+        }
+    }
+
+    private static void deleteTree(Path root) throws IOException {
+        if (!Files.exists(root)) return;
+        try (var paths = Files.walk(root)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
         }
     }
 

@@ -305,6 +305,7 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackParticle packTranslucentParticlePipeline;
     /** Pack weather program on the host weather draw window. */
     private PackPipelines.PackParticle packWeatherPipeline;
+    private PackPipelines.PackParticle packLinePipeline;
     private PackPipelines.PackSkyFamily packSkyBasicPipeline;
     private PackPipelines.PackSkyFamily packSkyTexturedPipeline;
     private PackPipelines.PackSky packCloudPipeline;
@@ -1046,6 +1047,7 @@ public class ChimeraMainPass implements MainPass {
             case PARTICLE -> this.packParticlePipeline;
             case PARTICLE_TRANSLUCENT -> this.packTranslucentParticlePipeline;
             case WEATHER -> this.packWeatherPipeline;
+            case LINE -> this.packLinePipeline;
             default -> null;
         };
     }
@@ -2148,6 +2150,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.packParticlePipeline != null) this.packParticlePipeline.pipeline().cleanUp();
         if (this.packTranslucentParticlePipeline != null) this.packTranslucentParticlePipeline.pipeline().cleanUp();
         if (this.packWeatherPipeline != null) this.packWeatherPipeline.pipeline().cleanUp();
+        if (this.packLinePipeline != null) this.packLinePipeline.pipeline().cleanUp();
         if (this.packSkyBasicPipeline != null) this.packSkyBasicPipeline.cleanUp();
         if (this.packSkyTexturedPipeline != null) this.packSkyTexturedPipeline.cleanUp();
         if (this.packCloudPipeline != null) this.packCloudPipeline.pipeline().cleanUp();
@@ -2197,6 +2200,7 @@ public class ChimeraMainPass implements MainPass {
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
         this.packWeatherPipeline = null;
+        this.packLinePipeline = null;
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
@@ -2959,6 +2963,7 @@ public class ChimeraMainPass implements MainPass {
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
         this.packWeatherPipeline = null;
+        this.packLinePipeline = null;
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
@@ -3483,6 +3488,21 @@ public class ChimeraMainPass implements MainPass {
                     continue;
                 }
                 markFamilyPipelineInstalled(name, "WEATHER_PIPELINE_INSTALLED");
+            } else if (FamilyAdapterRegistry.isLineFamily(name)) {
+                PackPipelines.PackParticle line = PackPipelines.buildLine(programPlan,
+                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
+                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
+                if (line == null) {
+                    markFamilyPipelineFallback(name, "LINE_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                this.packLinePipeline = line;
+                if (!attachPackStoragePipeline(name, line.pipeline(), line.imageBindings())) {
+                    line.pipeline().cleanUp();
+                    this.packLinePipeline = null;
+                    continue;
+                }
+                markFamilyPipelineInstalled(name, "LINE_PIPELINE_INSTALLED");
             } else {
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
@@ -3498,6 +3518,7 @@ public class ChimeraMainPass implements MainPass {
                 this.packTranslucentParticlePipeline, this.packWeatherPipeline,
                 this.packPlan == null ? null : this.packPlan.entityIds());
         ChimeraEntityBridge.installTextVariants(this.packTranslucentEntityTextPipeline, this.packBlockTextPipeline);
+        ChimeraEntityBridge.installLine(this.packLinePipeline);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 this.packEntityPipeline == null ? "none"
                         : this.packEntityPipeline.outputPlan() == null

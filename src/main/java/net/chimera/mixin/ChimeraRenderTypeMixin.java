@@ -29,26 +29,31 @@ public abstract class ChimeraRenderTypeMixin {
     private void chimera$immediateFamilyWindow(MeshData mesh, Operation<Void> original) {
         RenderType type = (RenderType) (Object) this;
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass != null && ChimeraEntityBridge.isWorldSubmissionWindow()
-                && (type.pipeline() == RenderPipelines.WEATHER_DEPTH_WRITE
+        // Weather and lines (block outlines) keep their native layout; only the program
+        // and its authored targets change.
+        boolean weather = (type.pipeline() == RenderPipelines.WEATHER_DEPTH_WRITE
                 || type.pipeline() == RenderPipelines.WEATHER_NO_DEPTH_WRITE)
-                && mesh != null && mesh.drawState().format() == DefaultVertexFormat.PARTICLE
-                && ChimeraEntityBridge.beginWeatherDraw()) {
-            var weather = pass.particlePipeline(ChimeraEntityBridge.Family.WEATHER);
+                && mesh != null && mesh.drawState().format() == DefaultVertexFormat.PARTICLE;
+        boolean line = ChimeraEntityBridge.isLinePipeline(type.pipeline())
+                && mesh != null && mesh.drawState().format() == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
+        if (pass != null && ChimeraEntityBridge.isWorldSubmissionWindow() && (weather || line)
+                && (weather ? ChimeraEntityBridge.beginWeatherDraw() : ChimeraEntityBridge.beginLineDraw())) {
+            var lane = pass.particlePipeline(weather
+                    ? ChimeraEntityBridge.Family.WEATHER : ChimeraEntityBridge.Family.LINE);
             boolean window = false;
             try {
-                pass.prepareProgramImages(weather.pipeline());
-                if (weather.requiresDynamicAttachments()) {
-                    window = pass.beginPackFamilyWindow(weather.outputPlan());
+                pass.prepareProgramImages(lane.pipeline());
+                if (lane.requiresDynamicAttachments()) {
+                    window = pass.beginPackFamilyWindow(lane.outputPlan());
                     if (!window) {
                         ChimeraEntityBridge.endDraw();
-                        original.call(mesh); // Weather keeps its native layout.
+                        original.call(mesh);
                         return;
                     }
                 }
                 original.call(mesh);
             } finally {
-                if (window) pass.endPackFamilyWindow(weather.outputPlan());
+                if (window) pass.endPackFamilyWindow(lane.outputPlan());
                 ChimeraEntityBridge.endDraw();
             }
             return;

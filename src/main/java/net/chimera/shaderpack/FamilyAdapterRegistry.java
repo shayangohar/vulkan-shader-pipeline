@@ -42,7 +42,11 @@ public final class FamilyAdapterRegistry {
             Map.entry("gbuffers_clouds", plan("gbuffers_clouds", FamilyAdapterPlan.Family.CLOUD,
                     UniformRegistry.Stage.CLOUD, FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR)),
             Map.entry("gbuffers_weather", plan("gbuffers_weather", FamilyAdapterPlan.Family.WEATHER,
-                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_PARTICLE))
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_PARTICLE)),
+            // Iris LINES, LINES_TRANSLUCENT and SECONDARY_BLOCK_OUTLINE (ShaderKey.LINES) on the
+            // host line layout, served like weather from the host transform blocks.
+            Map.entry("gbuffers_line", plan("gbuffers_line", FamilyAdapterPlan.Family.LINE,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LINE))
     );
 
     private FamilyAdapterRegistry() {}
@@ -104,6 +108,10 @@ public final class FamilyAdapterRegistry {
 
     public static boolean isWeatherFamily(String name) {
         return forProgram(name).family() == FamilyAdapterPlan.Family.WEATHER;
+    }
+
+    public static boolean isLineFamily(String name) {
+        return forProgram(name).family() == FamilyAdapterPlan.Family.LINE;
     }
 
     public static boolean isSkyFamily(String name) {

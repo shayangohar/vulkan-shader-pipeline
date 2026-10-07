@@ -765,13 +765,14 @@ public final class PackPipelines {
 
     /** Builds the particle family on the host DefaultVertexFormat.PARTICLE path. */
     public static PackParticle buildParticle(PackProgramPlan plan) {
-        return buildParticle(plan, "pack_gbuffers_particles", PackAdvancedResourcePlan.empty(), null);
+        return buildParticle(plan, PackAdvancedResourcePlan.empty(), null);
     }
 
     public static PackParticle buildParticle(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return buildParticle(plan, "pack_gbuffers_particles", advancedResources, storageOwner);
+        return buildParticle(plan, "pack_gbuffers_particles", com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE,
+                advancedResources, storageOwner);
     }
 
     /** Builds an independent opaque or translucent particle-family pipeline. */
@@ -782,11 +783,22 @@ public final class PackPipelines {
     public static PackParticle buildParticleFamily(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(), advancedResources, storageOwner);
+        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE, advancedResources, storageOwner);
+    }
+
+    /** Builds gbuffers_line on the host line layout (Iris ShaderKey.LINES). */
+    public static PackParticle buildLine(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH,
+                advancedResources, storageOwner);
     }
 
     private static PackParticle buildParticle(
-            PackProgramPlan plan, String pipelineName, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+            PackProgramPlan plan, String pipelineName, com.mojang.blaze3d.vertex.VertexFormat format,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         if (plan == null || !plan.executable() || plan.convertedVertex() == null
                 || plan.convertedFragment() == null || plan.interfacePlan() == null
@@ -800,8 +812,7 @@ public final class PackPipelines {
             int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
                     .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
             OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
-            Pipeline.Builder builder = new MetadataBuilder(com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE,
-            pipelineName);
+            Pipeline.Builder builder = new MetadataBuilder(format, pipelineName);
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             ordinary.apply(builder);
             advancedResources = advancedResources == null

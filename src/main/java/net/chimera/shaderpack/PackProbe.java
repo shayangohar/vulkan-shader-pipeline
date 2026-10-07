@@ -501,6 +501,7 @@ public final class PackProbe {
                 && (!FamilyAdapterRegistry.isEntityLike(name)
                 && !FamilyAdapterRegistry.isParticleLike(name)
                 && !FamilyAdapterRegistry.isWeatherFamily(name)
+                && !FamilyAdapterRegistry.isLineFamily(name)
                 && !FamilyAdapterRegistry.isSkyFamily(name)
                 && !FamilyAdapterRegistry.isCloudFamily(name)
                 || inventory.stages.contains("vertex"));
@@ -533,6 +534,9 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isParticleLike(name)) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "PARTICLE_VERTEX_BRIDGE" : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isLineFamily(name)) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "LINE_VERTEX_BRIDGE" : "LINE_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "WEATHER_VERTEX_BRIDGE" : "WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
@@ -691,6 +695,11 @@ public final class PackProbe {
             deviations.add("FAMILY_ADAPTER_INSTALLED");
             deviations.add("WEATHER_STATE_FIXED_TO_HOST");
         }
+        if (FamilyAdapterRegistry.isLineFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add("LINE_STATE_FIXED_TO_HOST");
+        }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
                         || stage.equals("tess_evaluation") || stage.equals("compute"))) {
@@ -711,6 +720,7 @@ public final class PackProbe {
                 : (FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name)
                 || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isLineFamily(name)
                 || FamilyAdapterRegistry.isSkyFamily(name)
                 || FamilyAdapterRegistry.isCloudFamily(name))
                 ? UniformRegistry.ENTITY_NAME_TO_SLOT
@@ -729,6 +739,7 @@ public final class PackProbe {
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
                             : FamilyAdapterRegistry.isEntityLike(name)
                             || FamilyAdapterRegistry.isParticleLike(name)
+                            || FamilyAdapterRegistry.isLineFamily(name)
                             || FamilyAdapterRegistry.isWeatherFamily(name)
                             ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
                             : "SAMPLER_NOT_MAPPED:" + sampler);
@@ -863,6 +874,7 @@ public final class PackProbe {
                     || deviation.equals("HAND_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("WEATHER_VERTEX_BRIDGE_UNSUPPORTED")
+                    || deviation.equals("LINE_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("SKY_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("CLOUD_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED")

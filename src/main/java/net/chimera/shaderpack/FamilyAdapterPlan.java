@@ -27,7 +27,8 @@ public record FamilyAdapterPlan(
         SKY,
         CLOUD,
         WEATHER,
-        OUTLINE,
+        /** gbuffers_line: block outlines and other LINES draws (Iris ProgramId.Line). */
+        LINE,
         SPECIAL,
         POST,
         UNKNOWN
@@ -38,6 +39,8 @@ public record FamilyAdapterPlan(
         EXTENDED_ENTITY,
         EXTENDED_PARTICLE,
         HOST_PARTICLE,
+        /** DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, drawn as quads. */
+        HOST_LINE,
         HOST_BLOCK,
         SKY_POSITION,
         SKY_POSITION_COLOR,

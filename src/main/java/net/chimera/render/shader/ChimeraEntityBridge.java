@@ -32,6 +32,7 @@ public final class ChimeraEntityBridge {
         PARTICLE,
         PARTICLE_TRANSLUCENT,
         WEATHER,
+        LINE,
         HOST_FALLBACK
     }
 
@@ -51,6 +52,8 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
     private static GraphicsPipeline weatherPipeline;
+    /** gbuffers_line on the host line layout (Iris ShaderKey.LINES). */
+    private static GraphicsPipeline linePipeline;
     private static GraphicsPipeline activePipeline;
     private static Family activeFamily;
     /** The family requested for the current guarded draw, even if host fallback is selected. */
@@ -152,6 +155,7 @@ public final class ChimeraEntityBridge {
         particlePipeline = particle == null ? null : particle.pipeline();
         translucentParticlePipeline = translucentParticle == null ? null : translucentParticle.pipeline();
         weatherPipeline = weather == null ? null : weather.pipeline();
+        linePipeline = null;
         activePipeline = null;
         activeFamily = null;
         requestedFamily = null;
@@ -237,6 +241,7 @@ public final class ChimeraEntityBridge {
         particlePipeline = null;
         translucentParticlePipeline = null;
         weatherPipeline = null;
+        linePipeline = null;
         resolver = PackEntityIdResolver.empty();
     }
 
@@ -245,7 +250,8 @@ public final class ChimeraEntityBridge {
                 || spiderEyesPipeline != null || blockPipeline != null
                 || damagedBlockPipeline != null || handPipeline != null
                 || handWaterPipeline != null || particlePipeline != null
-                || translucentParticlePipeline != null || weatherPipeline != null;
+                || translucentParticlePipeline != null || weatherPipeline != null
+                || linePipeline != null;
     }
 
     public static boolean isDrawActive() {
@@ -404,6 +410,25 @@ public final class ChimeraEntityBridge {
 
     public static boolean isWeatherDrawActive() {
         return isDrawActive(Family.WEATHER);
+    }
+
+    /** Installs gbuffers_line after {@link #install}; without it lines keep their host draw. */
+    public static void installLine(PackPipelines.PackParticle line) {
+        linePipeline = line == null ? null : line.pipeline();
+        if (linePipeline != null) {
+            ChimeraMod.LOGGER.info("[chimera] family bridge: line=installed");
+        }
+    }
+
+    /** Iris IrisPipelines: LINES, LINES_TRANSLUCENT and SECONDARY_BLOCK_OUTLINE use ShaderKey.LINES. */
+    public static boolean isLinePipeline(RenderPipeline pipeline) {
+        return pipeline == RenderPipelines.LINES || pipeline == RenderPipelines.LINES_TRANSLUCENT
+                || pipeline == RenderPipelines.SECONDARY_BLOCK_OUTLINE;
+    }
+
+    /** Opens a guarded line draw on the host line vertex contract. */
+    public static boolean beginLineDraw() {
+        return beginSimpleDraw(Family.LINE);
     }
 
     public static boolean beginCrumblingDraw() {
@@ -706,6 +731,7 @@ public final class ChimeraEntityBridge {
                     || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(format) != null;
             case PARTICLE, PARTICLE_TRANSLUCENT, WEATHER -> format == DefaultVertexFormat.PARTICLE;
+            case LINE -> isLinePipeline(pipeline) && format == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
             case HOST_FALLBACK -> false;
         };
     }
@@ -730,7 +756,7 @@ public final class ChimeraEntityBridge {
     private static boolean widensVertexFormat(Family family) {
         return switch (family) {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, HAND, HAND_WATER -> true;
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, HOST_FALLBACK -> false;
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, HOST_FALLBACK -> false;
         };
     }
 
@@ -751,7 +777,7 @@ public final class ChimeraEntityBridge {
                     format == DefaultVertexFormat.NEW_ENTITY
                     ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY : format;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER -> format;
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE -> format;
             case HOST_FALLBACK -> format;
         };
     }
@@ -965,6 +991,7 @@ public final class ChimeraEntityBridge {
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
             case WEATHER -> weatherPipeline;
+            case LINE -> linePipeline;
             case HOST_FALLBACK -> null;
         };
     }

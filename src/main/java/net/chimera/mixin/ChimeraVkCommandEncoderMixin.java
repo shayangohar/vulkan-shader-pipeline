@@ -133,6 +133,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
             case HAND_WATER -> net.chimera.shaderpack.PackRenderingPhase.HAND_TRANSLUCENT;
             case PARTICLE, PARTICLE_TRANSLUCENT -> net.chimera.shaderpack.PackRenderingPhase.PARTICLES;
             case WEATHER -> net.chimera.shaderpack.PackRenderingPhase.RAIN_SNOW;
+            case LINE -> net.chimera.shaderpack.PackRenderingPhase.OUTLINE;
             case HOST_FALLBACK -> net.chimera.shaderpack.PackRenderingPhase.NONE;
         });
         try {

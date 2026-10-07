@@ -111,6 +111,19 @@ public final class PackPlanBuilder {
         PackProgramResolution sourceResolution = resolution == null ? null : resolution.resolution(program.name());
         String directiveProgram = sourceResolution == null || sourceResolution.selectedProgram().isBlank()
                 ? program.name() : sourceResolution.selectedProgram();
+        // Iris line handling rewrites the authored vertex before anything reads its
+        // interface: the widened fallback declares and reads the screen size.
+        boolean lineFamily = FamilyAdapterRegistry.isLineFamily(program.name());
+        String lineFailure = null;
+        if (lineFamily && vertex != null) {
+            try {
+                vertex = LegacyGlslConverter.prepareLineVertex(vertex,
+                        preparedSnapshot ? null : program.vertexPath(),
+                        directiveProgram.equals("gbuffers_line"));
+            } catch (RuntimeException failure) {
+                lineFailure = safeReason(failure);
+            }
+        }
         PackAlphaTestPlan alphaTestPlan = PackAlphaTestPlan.forProgram(
                 program.name(), directiveProgram, config == null ? PackSettingsPlan.empty() : config.settings());
         // Only a program that can execute (entity families need a vertex
@@ -178,6 +191,7 @@ public final class PackPlanBuilder {
                 && (!FamilyAdapterRegistry.isEntityLike(program.name())
                 && !FamilyAdapterRegistry.isParticleLike(program.name())
                 && !FamilyAdapterRegistry.isWeatherFamily(program.name())
+                && !lineFamily
                 && !FamilyAdapterRegistry.isSkyFamily(program.name())
                 && !FamilyAdapterRegistry.isCloudFamily(program.name()) || vertex != null)
                 && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
@@ -246,6 +260,11 @@ public final class PackPlanBuilder {
         }
         if (FamilyAdapterRegistry.isWeatherFamily(program.name()) && vertex == null) {
             deviations.add("WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
+        }
+        if (lineFamily && (vertex == null || lineFailure != null)) {
+            deviations.add("LINE_VERTEX_BRIDGE_UNSUPPORTED");
+            if (lineFailure != null) deviations.add("LINE_VERTEX_CONVERSION_FAILED:" + lineFailure);
+            executable = false;
         }
 
         try {
@@ -444,6 +463,34 @@ public final class PackPlanBuilder {
                             : "SKY_FRAGMENT_BRIDGE_UNSUPPORTED");
                     executable = false;
                 }
+            } else if (executable && lineFamily) {
+                int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
+                LegacyGlslConverter.TerrainVertexConversion conversion = null;
+                try {
+                    // prepareLineVertex already expanded the includes.
+                    conversion = LegacyGlslConverter.convertLineVertexChecked(
+                            vertex, fragment, stageMatch.locations(), allowStorageBuffers,
+                            interfacePlan.effective(stage).executableUniforms(),
+                            vertexSamplerPlan(interfacePlan, stage, vertex));
+                } catch (IllegalArgumentException failure) {
+                    deviations.add("LINE_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
+                }
+                if (conversion == null) {
+                    deviations.add("LINE_VERTEX_BRIDGE_UNSUPPORTED");
+                    executable = false;
+                } else {
+                    convertedVertex = conversion.source();
+                    vertexLayout = conversion.layout();
+                    deviations.add("LINE_VERTEX_BRIDGE");
+                    convertedFragment = LegacyGlslConverter.convertParticleFragment(
+                            fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
+                            vertexLayout, interfacePlan.project("fragment", stage),
+                            geometryOutputPlan);
+                    if (convertedFragment == null) {
+                        deviations.add("LINE_FRAGMENT_BRIDGE_UNSUPPORTED");
+                        executable = false;
+                    }
+                }
             } else if (executable && (FamilyAdapterRegistry.isParticleLike(program.name())
                     || FamilyAdapterRegistry.isWeatherFamily(program.name()))) {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
@@ -587,6 +634,7 @@ public final class PackPlanBuilder {
         return FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name)
                 || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isLineFamily(name)
                 || FamilyAdapterRegistry.isSkyFamily(name)
                 || name.equals("gbuffers_terrain")
                 || name.equals("gbuffers_water");
