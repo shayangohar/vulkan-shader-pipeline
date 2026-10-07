@@ -292,6 +292,9 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackEntity packBlockPipeline;
     /** Pack damaged-block program on the guarded block draw lane. */
     private PackPipelines.PackEntity packDamagedBlockPipeline;
+    /** The translucent-entity and block programs on Iris's GLYPH text layout (TEXT, TEXT_BE). */
+    private PackPipelines.PackEntity packTranslucentEntityTextPipeline;
+    private PackPipelines.PackEntity packBlockTextPipeline;
     /** Pack first-person hand program on the guarded hand draw window. */
     private PackPipelines.PackHand packHandPipeline;
     /** Pack first-person water program on the guarded hand draw window. */
@@ -2138,6 +2141,8 @@ public class ChimeraMainPass implements MainPass {
         if (this.packSpiderEyesPipeline != null) this.packSpiderEyesPipeline.pipeline().cleanUp();
         if (this.packBlockPipeline != null) this.packBlockPipeline.pipeline().cleanUp();
         if (this.packDamagedBlockPipeline != null) this.packDamagedBlockPipeline.pipeline().cleanUp();
+        if (this.packTranslucentEntityTextPipeline != null) this.packTranslucentEntityTextPipeline.pipeline().cleanUp();
+        if (this.packBlockTextPipeline != null) this.packBlockTextPipeline.pipeline().cleanUp();
         if (this.packHandPipeline != null) this.packHandPipeline.cleanUp();
         if (this.packHandWaterPipeline != null) this.packHandWaterPipeline.cleanUp();
         if (this.packParticlePipeline != null) this.packParticlePipeline.pipeline().cleanUp();
@@ -2185,6 +2190,8 @@ public class ChimeraMainPass implements MainPass {
         this.packSpiderEyesPipeline = null;
         this.packBlockPipeline = null;
         this.packDamagedBlockPipeline = null;
+        this.packTranslucentEntityTextPipeline = null;
+        this.packBlockTextPipeline = null;
         this.packHandPipeline = null;
         this.packHandWaterPipeline = null;
         this.packParticlePipeline = null;
@@ -2945,6 +2952,8 @@ public class ChimeraMainPass implements MainPass {
         this.packSpiderEyesPipeline = null;
         this.packBlockPipeline = null;
         this.packDamagedBlockPipeline = null;
+        this.packTranslucentEntityTextPipeline = null;
+        this.packBlockTextPipeline = null;
         this.packHandPipeline = null;
         this.packHandWaterPipeline = null;
         this.packParticlePipeline = null;
@@ -3337,6 +3346,9 @@ public class ChimeraMainPass implements MainPass {
                 }
                 markFamilyPipelineInstalled(name, name.equals("gbuffers_entities_translucent")
                         ? "TRANSLUCENT_ENTITY_INSTALLED" : "SPIDER_EYES_INSTALLED");
+                if (name.equals("gbuffers_entities_translucent")) {
+                    this.packTranslucentEntityTextPipeline = buildTextVariant(name, programPlan);
+                }
             } else if (name.equals("gbuffers_block")) {
                 PackPipelines.PackEntity block = PackPipelines.buildBlock(programPlan,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3375,6 +3387,7 @@ public class ChimeraMainPass implements MainPass {
                         + "stride={}, samplers={})",
                         net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                         Arrays.toString(block.samplerSlots()));
+                this.packBlockTextPipeline = buildTextVariant(name, programPlan);
             } else if (FamilyAdapterRegistry.isBlockFamily(name)) {
                 PackPipelines.PackEntity damaged = PackPipelines.buildEntityFamily(programPlan,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3484,6 +3497,7 @@ public class ChimeraMainPass implements MainPass {
                 this.packHandPipeline, this.packHandWaterPipeline, this.packParticlePipeline,
                 this.packTranslucentParticlePipeline, this.packWeatherPipeline,
                 this.packPlan == null ? null : this.packPlan.entityIds());
+        ChimeraEntityBridge.installTextVariants(this.packTranslucentEntityTextPipeline, this.packBlockTextPipeline);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 this.packEntityPipeline == null ? "none"
                         : this.packEntityPipeline.outputPlan() == null
@@ -3796,6 +3810,28 @@ public class ChimeraMainPass implements MainPass {
                 && !this.packPlan.isProgramDisabled(name)
                 && !this.packPlan.isProgramAlias(name)
                 && this.packPlan.resources().programAllowed(name);
+    }
+
+    /**
+     * The program on Iris's GLYPH text layout, sharing its descriptors and outputs.
+     * Without it the text keeps its host draw.
+     */
+    private PackPipelines.PackEntity buildTextVariant(String name, PackProgramPlan programPlan) {
+        PackPipelines.PackEntity text = PackPipelines.buildLayoutVariant(programPlan,
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
+                this.packPlan == null ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources(),
+                this.packStorageBufferOwner);
+        if (text == null) {
+            LOGGER.warn("[chimera] pack {}: text layout variant unavailable; text stays host-drawn", name);
+            return null;
+        }
+        if (!attachPackStoragePipeline(name, text.pipeline(), text.imageBindings())) {
+            text.pipeline().cleanUp();
+            return null;
+        }
+        LOGGER.info("[chimera] pack {}: text layout variant installed (stride={})", name,
+                net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH.getVertexSize());
+        return text;
     }
 
     private void markFamilyPipelineInstalled(String name, String deviation) {

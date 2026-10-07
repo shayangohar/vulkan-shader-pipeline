@@ -250,7 +250,9 @@ public final class ConformanceHarness {
             var host = entry.getKey();
             var extended = entry.getValue();
             assertEquals(host, net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(extended), "hand variant host lookup");
-            assertEquals(host.getVertexSize() + 20, extended.getVertexSize(), "hand prefix plus20byte material inputs");
+            boolean computedNormal = net.chimera.render.vertex.ChimeraVertexFormats.computesNormal(extended);
+            assertEquals(host.getVertexSize() + (computedNormal ? 24 : 20), extended.getVertexSize(),
+                    "hand prefix plus 20-byte material inputs (and a 4-byte GLYPH normal)");
             for (int i = 0; i < host.getElements().size(); i++) {
                 assertEquals(host.getOffset(host.getElements().get(i)), extended.getOffset(host.getElements().get(i)), "hand native attribute offset");
             }
@@ -259,10 +261,25 @@ public final class ConformanceHarness {
             assertTrue(source.contains("void chimeraHandMain()")
                             && source.contains("void main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
                     "authored hand returns must still reach exactly one Vulkan clip conversion");
-            if (host != com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY) {
+            if (computedNormal) {
+                // Iris GLYPH: text has a per-quad normal, ahead of the material inputs.
+                assertTrue(source.contains("layout(location = 4) in vec3 Normal;")
+                                && source.contains("layout(location = 5) in uvec4 EntityIds;")
+                                && source.contains("const ivec2 UV1 = ivec2(0);"), "GLYPH text inputs");
+            } else if (host != com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY) {
                 assertTrue(source.contains("const vec3 Normal = vec3(0.0, 0.0, 1.0);")
                                 && source.contains("const ivec2 UV1 = ivec2(0);"), "Iris missing normal/overlay defaults");
             }
+        }
+        // World and sign text: the entity and block programs take the same GLYPH layout.
+        var entity = LegacyGlslConverter.convertEntityVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        var block = LegacyGlslConverter.convertBlockVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        for (var program : List.of(entity, block)) {
+            String glyph = LegacyGlslConverter.layoutVertexForFormat(program.source(),
+                    com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+            assertTrue(PackCompileCheck.compile(glyph, true) == null, "entity-family GLYPH layout fails compilation");
+            assertTrue(glyph.contains("layout(location = 4) in vec3 Normal;")
+                    && glyph.contains("layout(location = 7) in vec4 ChimeraPackedTangent;"), "entity-family GLYPH inputs");
         }
         var raster = new org.joml.Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, true);
         var snapshot = new org.joml.Matrix4f(raster);

@@ -633,6 +633,30 @@ public final class PackPipelines {
                 ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
     }
 
+    /**
+     * The same entity or block program built for another native host layout, as Iris
+     * draws TEXT with IrisVertexFormats.GLYPH through gbuffers_entities_translucent and
+     * TEXT_BE through gbuffers_block_translucent (falling back to gbuffers_block).
+     */
+    public static PackEntity buildLayoutVariant(
+            PackProgramPlan plan, VertexFormat host,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        VertexFormat extended = host == null ? null : ChimeraVertexFormats.handFormats().get(host);
+        if (plan == null || !plan.executable() || extended == null) return null;
+        UniformRegistry.Stage stage = switch (plan.familyAdapter().family()) {
+            case BLOCK, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
+            default -> UniformRegistry.Stage.ENTITY;
+        };
+        try {
+            String vertex = LegacyGlslConverter.layoutVertexForFormat(plan.convertedVertex(), host);
+            return buildEntityLike(plan, stage, "pack_" + plan.name() + "_" + extended.getVertexSize(), extended,
+                    advancedResources, storageOwner, vertex);
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
+    }
+
     /** Builds the first-person hand adapter on the same append-only host format. */
     public static PackHand buildHand(PackProgramPlan plan) {
         return buildHand(plan, PackAdvancedResourcePlan.empty(), null);

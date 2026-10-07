@@ -59,6 +59,16 @@ final class PackCompileCheck {
                     }
                 }
             }
+            if (program.name().equals("gbuffers_entities_translucent") || program.name().equals("gbuffers_block")) {
+                // Iris GLYPH text variant (TEXT and TEXT_BE).
+                String variant = LegacyGlslConverter.layoutVertexForFormat(program.convertedVertex(),
+                        com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+                String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                if (error != null) {
+                    failures.add(program.name() + " text input variant: " + error);
+                    vertexError = error;
+                }
+            }
             if (FamilyAdapterRegistry.isSkyFamily(program.name())) {
                 for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
                     String variant = LegacyGlslConverter.skyVertexForContract(program.convertedVertex(), contract);

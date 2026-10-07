@@ -3630,17 +3630,31 @@ public final class LegacyGlslConverter {
 
     /** Same immutable hand program, adapted only to the host inputs of this draw. */
     public static String handVertexForFormat(String converted, com.mojang.blaze3d.vertex.VertexFormat host) {
+        return layoutVertexForFormat(converted, host);
+    }
+
+    /**
+     * Same immutable entity, block or hand program, adapted only to the inputs of
+     * the extended format its native host layout uploads as: held maps, item quads
+     * and world or sign text keep their own prefixes, as in Iris.
+     */
+    public static String layoutVertexForFormat(String converted, com.mojang.blaze3d.vertex.VertexFormat host) {
         if (host == com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY) return converted;
-        if (converted == null || !converted.contains(HAND_VERTEX_PREAMBLE)) {
-            throw new IllegalArgumentException("hand program lacks the entity input contract");
+        String contract = converted == null ? null
+                : converted.contains(HAND_VERTEX_PREAMBLE) ? HAND_VERTEX_PREAMBLE
+                : converted.contains(BLOCK_VERTEX_PREAMBLE) ? BLOCK_VERTEX_PREAMBLE
+                : converted.contains(ENTITY_VERTEX_PREAMBLE) ? ENTITY_VERTEX_PREAMBLE : null;
+        if (contract == null) {
+            throw new IllegalArgumentException("program lacks the entity input contract");
         }
-        if (!net.chimera.render.vertex.ChimeraVertexFormats.handFormats().containsKey(host)) {
-            throw new IllegalArgumentException("unsupported hand host format");
+        var extended = net.chimera.render.vertex.ChimeraVertexFormats.handFormats().get(host);
+        if (extended == null) {
+            throw new IllegalArgumentException("unsupported entity-family host format");
         }
-        // Input locations follow the native prefix. Iris VanillaTransformer
+        // Input locations follow the uploaded format. Iris VanillaTransformer
         // supplies +Z for formats without a normal, zero for a missing lightmap.
-        String preamble = HAND_VERTEX_PREAMBLE;
-        var names = host.getElementAttributeNames();
+        String preamble = contract;
+        var names = extended.getElementAttributeNames();
         String[] types = {"vec3", "vec4", "vec2", "ivec2", "ivec2", "vec3"};
         String[] attributes = {"Position", "Color", "UV0", "UV1", "UV2", "Normal"};
         String[] defaults = {null, "vec4(1.0)", null, "ivec2(0)", "ivec2(0)", "vec3(0.0, 0.0, 1.0)"};
@@ -3652,12 +3666,12 @@ public final class LegacyGlslConverter {
             preamble = preamble.replace("layout(location = " + i + ") in " + types[i] + " " + attributes[i] + ";", declaration);
         }
         preamble = preamble.replace("layout(location = 6) in uvec4 EntityIds;",
-                        "layout(location = " + names.size() + ") in uvec4 EntityIds;")
+                        "layout(location = " + names.indexOf("EntityIds") + ") in uvec4 EntityIds;")
                 .replace("layout(location = 7) in vec2 MidTexCoord;",
-                        "layout(location = " + (names.size() + 1) + ") in vec2 MidTexCoord;")
+                        "layout(location = " + names.indexOf("MidTexCoord") + ") in vec2 MidTexCoord;")
                 .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                        "layout(location = " + (names.size() + 2) + ") in vec4 ChimeraPackedTangent;");
-        return converted.replace(HAND_VERTEX_PREAMBLE, preamble);
+                        "layout(location = " + names.indexOf("Tangent") + ") in vec4 ChimeraPackedTangent;");
+        return converted.replace(contract, preamble);
     }
 
     /** Iris VanillaTransformer supplies +Z for a host format without a normal. */

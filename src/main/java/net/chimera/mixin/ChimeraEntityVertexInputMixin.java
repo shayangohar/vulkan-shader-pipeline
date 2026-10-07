@@ -69,7 +69,8 @@ public abstract class ChimeraEntityVertexInputMixin {
                     case "UV0", "MidTexCoord" -> VK_FORMAT_R32G32_SFLOAT;
                     case "UV2" -> VK_FORMAT_R16G16_SINT;
                     case "EntityIds" -> VK_FORMAT_R16G16B16A16_UINT;
-                    case "Tangent" -> VK_FORMAT_R8G8B8A8_SNORM;
+                    // Normal is three bytes plus a pad byte, as in EXTENDED_ENTITY.
+                    case "Normal", "Tangent" -> VK_FORMAT_R8G8B8A8_SNORM;
                     default -> throw new IllegalArgumentException("unsupported hand attribute " + names.get(i));
                 };
                 describe(i, nativeFormat, format.getOffset(elements.get(i)));

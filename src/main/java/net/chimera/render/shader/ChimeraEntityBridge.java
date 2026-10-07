@@ -45,6 +45,9 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline handWaterPipeline;
     private static PackPipelines.PackHand handVariants;
     private static PackPipelines.PackHand handWaterVariants;
+    /** The translucent-entity and block programs built for Iris's GLYPH text layout. */
+    private static GraphicsPipeline translucentEntityTextPipeline;
+    private static GraphicsPipeline blockTextPipeline;
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
     private static GraphicsPipeline weatherPipeline;
@@ -142,6 +145,8 @@ public final class ChimeraEntityBridge {
         damagedBlockPipeline = damagedBlock == null ? null : damagedBlock.pipeline();
         handVariants = hand;
         handWaterVariants = handWater;
+        translucentEntityTextPipeline = null;
+        blockTextPipeline = null;
         handPipeline = hand == null ? null : hand.primary().pipeline();
         handWaterPipeline = handWater == null ? null : handWater.primary().pipeline();
         particlePipeline = particle == null ? null : particle.pipeline();
@@ -227,6 +232,8 @@ public final class ChimeraEntityBridge {
         handWaterPipeline = null;
         handVariants = null;
         handWaterVariants = null;
+        translucentEntityTextPipeline = null;
+        blockTextPipeline = null;
         particlePipeline = null;
         translucentParticlePipeline = null;
         weatherPipeline = null;
@@ -603,7 +610,42 @@ public final class ChimeraEntityBridge {
     }
 
     /** Selects the most specific installed entity lane for one host render type. */
+    /**
+     * Installs the text layout variants after {@link #install}: Iris draws TEXT with
+     * gbuffers_entities_translucent and a block entity's TEXT_BE with its block program.
+     */
+    public static void installTextVariants(PackPipelines.PackEntity translucentEntityText,
+                                           PackPipelines.PackEntity blockText) {
+        translucentEntityTextPipeline = translucentEntityText == null ? null : translucentEntityText.pipeline();
+        blockTextPipeline = blockText == null ? null : blockText.pipeline();
+    }
+
+    /** World and sign text pipelines Iris routes through getText (see-through and intensity stay host). */
+    public static boolean isTextPipeline(RenderPipeline pipeline) {
+        return pipeline == RenderPipelines.TEXT || pipeline == RenderPipelines.TEXT_POLYGON_OFFSET;
+    }
+
+    private static boolean isGlyphFormat(VertexFormat format) {
+        return format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP
+                || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH;
+    }
+
+    private static GraphicsPipeline textPipelineFor(Family family) {
+        if (family == null) return null;
+        return switch (family) {
+            case ENTITY_TRANSLUCENT -> translucentEntityTextPipeline;
+            case BLOCK -> blockTextPipeline;
+            default -> null;
+        };
+    }
+
     public static Family familyForRenderType(Family base, RenderType renderType) {
+        if (renderType != null && isTextPipeline(renderType.pipeline())) {
+            // Iris IrisPipelines.getText: TEXT_BE (block program) inside a block entity,
+            // TEXT (gbuffers_entities_translucent) otherwise.
+            Family text = base == Family.BLOCK ? Family.BLOCK : Family.ENTITY_TRANSLUCENT;
+            return textPipelineFor(text) != null ? text : Family.HOST_FALLBACK;
+        }
         if (base == Family.ENTITY && renderType != null) {
             if (renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT
                     || renderType.pipeline() == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) {
@@ -641,6 +683,14 @@ public final class ChimeraEntityBridge {
         }
         if (activePipeline == null) return false;
         VertexFormat format = pipeline.getVertexFormat();
+        if (isGlyphFormat(format) && isTextPipeline(pipeline)
+                && (activeFamily == Family.ENTITY_TRANSLUCENT || activeFamily == Family.BLOCK)) {
+            // Text keeps its family window and outputs; only its native layout differs.
+            GraphicsPipeline text = textPipelineFor(activeFamily);
+            if (text == null) return false;
+            activePipeline = text;
+            return true;
+        }
         return switch (activeFamily) {
             case DAMAGED_BLOCK -> pipeline == RenderPipelines.CRUMBLING
                     && format == DefaultVertexFormat.BLOCK;
@@ -685,6 +735,9 @@ public final class ChimeraEntityBridge {
         }
         if (!isDrawActive() || format == null) {
             return format;
+        }
+        if (format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP && textPipelineFor(activeFamily) != null) {
+            return net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH;
         }
         return switch (activeFamily) {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK ->
