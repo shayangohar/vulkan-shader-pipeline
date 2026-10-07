@@ -461,7 +461,7 @@ public final class ConformanceHarness {
         var textured = new PackPipelines.PackSkyFamily(variants.entrySet().stream().collect(java.util.stream.Collectors.toMap(
                 java.util.Map.Entry::getKey, entry -> new PackPipelines.PackSky(null, new int[0], "", "", entry.getKey(),
                         GeometryOutputPlan.empty("textured"), new ProgramImageBindingManifest(List.of())))));
-        net.chimera.render.shader.ChimeraSkyBridge.install(basic, textured, null, true);
+        net.chimera.render.shader.ChimeraSkyBridge.install(basic, textured, null, true, "off");
         net.chimera.render.shader.ChimeraSkyBridge.setEnabled(true);
         try {
             for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.SKY,
@@ -476,6 +476,8 @@ public final class ConformanceHarness {
                 assertEquals("textured", net.chimera.render.shader.ChimeraSkyBridge.outputPlan().programName(), "wrong textured family");
             }
             assertTrue(net.chimera.render.shader.ChimeraSkyBridge.skipHostClouds(), "authored empty clouds changed");
+            assertEquals(net.minecraft.client.CloudStatus.OFF, net.chimera.render.shader.ChimeraSkyBridge.packCloudStatus(),
+                    "pack clouds directive not applied");
             assertTrue(!net.chimera.render.shader.ChimeraSkyBridge.shouldUsePackPipeline(net.minecraft.client.renderer.RenderPipelines.GUI)
                             && !net.chimera.render.shader.ChimeraSkyBridge.isDrawActive(), "sky selection leaked to GUI");
         } finally {

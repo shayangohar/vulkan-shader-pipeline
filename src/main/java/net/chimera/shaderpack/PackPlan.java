@@ -150,6 +150,17 @@ public record PackPlan(
         return value != null && !value.enabled();
     }
 
+    /**
+     * Iris's {@code clouds} directive: "off", "fast" or "fancy", or null when
+     * the pack leaves the player's setting alone (Iris logs and ignores other values).
+     */
+    public String cloudSetting() {
+        String value = settings.propertyValues().get("clouds");
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.equals("off") || trimmed.equals("fast") || trimmed.equals("fancy") ? trimmed : null;
+    }
+
     /** Iris's sky directive controls the extra horizon coverage. */
     public boolean skyEnabled() {
         return !"false".equalsIgnoreCase(settings.propertyValues().get("sky"));

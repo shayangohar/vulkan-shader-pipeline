@@ -3495,7 +3495,8 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
         ChimeraSkyBridge.install(this.packSkyBasicPipeline, this.packSkyTexturedPipeline,
-                this.packCloudPipeline, this.packCloudsDrawNothing);
+                this.packCloudPipeline, this.packCloudsDrawNothing,
+                this.packPlan == null ? null : this.packPlan.cloudSetting());
         this.packPostStages.sort(Comparator.comparing(
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
         buildPackPostExecutionPlan();

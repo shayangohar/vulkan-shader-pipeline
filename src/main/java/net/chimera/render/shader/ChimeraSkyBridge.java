@@ -2,6 +2,7 @@ package net.chimera.render.shader;
 
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.chimera.ChimeraMod;
+import net.minecraft.client.CloudStatus;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.chimera.shaderpack.PackPipelines;
 import net.vulkanmod.render.shader.PipelineManager;
@@ -16,6 +17,7 @@ public final class ChimeraSkyBridge {
     private static PackPipelines.PackSkyFamily skyTextured;
     private static PackPipelines.PackSky clouds;
     private static boolean cloudsDrawNothing;
+    private static CloudStatus packCloudStatus;
     private static PackPipelines.PackSky active;
     private static boolean enabled;
     private static boolean cloudTraceLogged;
@@ -25,11 +27,18 @@ public final class ChimeraSkyBridge {
     public static void install(PackPipelines.PackSkyFamily basic,
                                PackPipelines.PackSkyFamily textured,
                                PackPipelines.PackSky cloud,
-                               boolean authoredCloudsDrawNothing) {
+                               boolean authoredCloudsDrawNothing,
+                               String cloudSetting) {
         skyBasic = basic;
         skyTextured = textured;
         clouds = cloud;
         cloudsDrawNothing = authoredCloudsDrawNothing;
+        packCloudStatus = cloudSetting == null ? null : switch (cloudSetting) {
+            case "off" -> CloudStatus.OFF;
+            case "fast" -> CloudStatus.FAST;
+            case "fancy" -> CloudStatus.FANCY;
+            default -> null;
+        };
         active = null;
         enabled = false;
         cloudTraceLogged = false;
@@ -47,7 +56,13 @@ public final class ChimeraSkyBridge {
         skyTextured = null;
         clouds = null;
         cloudsDrawNothing = false;
+        packCloudStatus = null;
         cloudTraceLogged = false;
+    }
+
+    /** The installed pack's clouds directive, which replaces the player's cloud setting (Iris). */
+    public static CloudStatus packCloudStatus() {
+        return packCloudStatus;
     }
 
     public static boolean isInstalled() {
