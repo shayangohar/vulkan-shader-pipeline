@@ -10,9 +10,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.PerspectiveProjectionMatrixBuffer;
+import net.minecraft.client.renderer.Sheets;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
@@ -25,7 +28,13 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     private static boolean diverted;
     private static Boolean translucentPhase;
     private final ByteBufferBuilder vertices = new ByteBufferBuilder(256 * 1024);
-    private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediate(vertices);
+    /**
+     * Vanilla RenderBuffers' fixed buffers, in its order. A foil item writes its glint
+     * and its own layer at once (VertexMultiConsumer); in one shared buffer, opening
+     * the second ends the first ("Not building!").
+     */
+    private final java.util.SequencedMap<RenderType, ByteBufferBuilder> fixed = fixedBuffers();
+    private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediateWithBuffers(fixed, vertices);
     private final SubmitNodeStorage submits = new SubmitNodeStorage();
     private final FeatureRenderDispatcher dispatcher;
     // Separate buffers: a later upload must not overwrite an earlier draw's projection.
@@ -115,10 +124,23 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         diverted = false;
         translucentPhase = null;
     }
+    private static java.util.SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
+        var result = new java.util.LinkedHashMap<RenderType, ByteBufferBuilder>();
+        for (RenderType type : java.util.List.of(Sheets.solidBlockSheet(), Sheets.cutoutBlockSheet(),
+                Sheets.translucentItemSheet(), Sheets.translucentBlockItemSheet(), Sheets.shieldSheet(),
+                Sheets.bedSheet(), Sheets.shulkerBoxSheet(), Sheets.signSheet(), Sheets.hangingSignSheet(),
+                Sheets.chestSheet(), RenderTypes.armorEntityGlint(), RenderTypes.glint(),
+                RenderTypes.glintTranslucent(), RenderTypes.entityGlint(), RenderTypes.waterMask())) {
+            result.put(type, new ByteBufferBuilder(type.bufferSize()));
+        }
+        return result;
+    }
+
     @Override public void close() {
         dispatcher.close();
         solidProjection.close();
         translucentProjection.close();
         vertices.close();
+        fixed.values().forEach(ByteBufferBuilder::close);
     }
 }
