@@ -34,6 +34,8 @@ public final class ChimeraEntityBridge {
         WEATHER,
         LINE,
         GLINT,
+        /** First-person glint: the glint program under the hand projection. */
+        HAND_GLINT,
         HOST_FALLBACK
     }
 
@@ -57,6 +59,7 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline linePipeline;
     /** gbuffers_armor_glint on the host POSITION_TEX glint layers (Iris ShaderKey.GLINT). */
     private static GraphicsPipeline glintPipeline;
+    private static GraphicsPipeline handGlintPipeline;
     private static GraphicsPipeline activePipeline;
     private static Family activeFamily;
     /** The family requested for the current guarded draw, even if host fallback is selected. */
@@ -160,6 +163,7 @@ public final class ChimeraEntityBridge {
         weatherPipeline = weather == null ? null : weather.pipeline();
         linePipeline = null;
         glintPipeline = null;
+        handGlintPipeline = null;
         activePipeline = null;
         activeFamily = null;
         requestedFamily = null;
@@ -247,6 +251,7 @@ public final class ChimeraEntityBridge {
         weatherPipeline = null;
         linePipeline = null;
         glintPipeline = null;
+        handGlintPipeline = null;
         resolver = PackEntityIdResolver.empty();
     }
 
@@ -256,7 +261,7 @@ public final class ChimeraEntityBridge {
                 || damagedBlockPipeline != null || handPipeline != null
                 || handWaterPipeline != null || particlePipeline != null
                 || translucentParticlePipeline != null || weatherPipeline != null
-                || linePipeline != null || glintPipeline != null;
+                || linePipeline != null || glintPipeline != null || handGlintPipeline != null;
     }
 
     public static boolean isDrawActive() {
@@ -403,7 +408,8 @@ public final class ChimeraEntityBridge {
      * (PARTICLE), lines and glint. Returns false for any other family.
      */
     public static boolean beginHostLayoutDraw(Family family) {
-        return (family == Family.WEATHER || family == Family.LINE || family == Family.GLINT)
+        return (family == Family.WEATHER || family == Family.LINE || family == Family.GLINT
+                || family == Family.HAND_GLINT)
                 && beginSimpleDraw(family);
     }
 
@@ -436,10 +442,11 @@ public final class ChimeraEntityBridge {
     }
 
     /** Installs gbuffers_armor_glint after {@link #install}; without it glint keeps its host draw. */
-    public static void installGlint(PackPipelines.PackParticle glint) {
+    public static void installGlint(PackPipelines.PackParticle glint, PackPipelines.PackParticle handGlint) {
         glintPipeline = glint == null ? null : glint.pipeline();
+        handGlintPipeline = handGlint == null ? null : handGlint.pipeline();
         if (glintPipeline != null) {
-            ChimeraMod.LOGGER.info("[chimera] family bridge: glint=installed");
+            ChimeraMod.LOGGER.info("[chimera] family bridge: glint=installed, handGlint={}", status(handGlintPipeline));
         }
     }
 
@@ -744,7 +751,7 @@ public final class ChimeraEntityBridge {
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(format) != null;
             case PARTICLE, PARTICLE_TRANSLUCENT, WEATHER -> format == DefaultVertexFormat.PARTICLE;
             case LINE -> isLinePipeline(pipeline) && format == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
-            case GLINT -> pipeline == RenderPipelines.GLINT && format == DefaultVertexFormat.POSITION_TEX;
+            case GLINT, HAND_GLINT -> pipeline == RenderPipelines.GLINT && format == DefaultVertexFormat.POSITION_TEX;
             case HOST_FALLBACK -> false;
         };
     }
@@ -769,7 +776,7 @@ public final class ChimeraEntityBridge {
     private static boolean widensVertexFormat(Family family) {
         return switch (family) {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, HAND, HAND_WATER -> true;
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HOST_FALLBACK -> false;
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT, HOST_FALLBACK -> false;
         };
     }
 
@@ -790,7 +797,7 @@ public final class ChimeraEntityBridge {
                     format == DefaultVertexFormat.NEW_ENTITY
                     ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY : format;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT -> format;
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT -> format;
             case HOST_FALLBACK -> format;
         };
     }
@@ -1006,6 +1013,7 @@ public final class ChimeraEntityBridge {
             case WEATHER -> weatherPipeline;
             case LINE -> linePipeline;
             case GLINT -> glintPipeline;
+            case HAND_GLINT -> handGlintPipeline;
             case HOST_FALLBACK -> null;
         };
     }

@@ -69,6 +69,15 @@ final class PackCompileCheck {
                     vertexError = error;
                 }
             }
+            if (FamilyAdapterRegistry.isGlintFamily(program.name())) {
+                // First-person glint: the same program under the hand projection.
+                String variant = LegacyGlslConverter.handGlintVertex(program.convertedVertex());
+                String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                if (error != null) {
+                    failures.add(program.name() + " hand glint variant: " + error);
+                    vertexError = error;
+                }
+            }
             if (FamilyAdapterRegistry.isSkyFamily(program.name())) {
                 for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
                     String variant = LegacyGlslConverter.skyVertexForContract(program.convertedVertex(), contract);

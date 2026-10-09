@@ -815,6 +815,12 @@ public final class ConformanceHarness {
                     "glint lost Iris input semantics: " + converted);
             assertTrue(plan.alphaTestPlan().perDrawReference() && plan.convertedFragment().contains("discard;"),
                     "glint lost its per-draw alpha test");
+            String hand = LegacyGlslConverter.handGlintVertex(converted);
+            assertTrue(hand.contains("void chimeraHandMain()")
+                            && hand.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w)")
+                            && hand.contains("chimeraHandProjection() * ModelViewMat")
+                            && !hand.contains("\nvoid main() {\n"),
+                    "hand glint must share the hand family's projection and clip-depth remap: " + hand);
             var compiled = PackCompileCheck.run(root, analysis);
             assertTrue(compiled.failures().isEmpty(), "glint compilation: " + compiled.failures());
         } finally {

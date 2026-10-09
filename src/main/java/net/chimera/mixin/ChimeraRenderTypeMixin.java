@@ -39,7 +39,7 @@ public abstract class ChimeraRenderTypeMixin {
                 : ChimeraEntityBridge.isLinePipeline(type.pipeline())
                 && format == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH ? ChimeraEntityBridge.Family.LINE
                 : type.pipeline() == RenderPipelines.GLINT && format == DefaultVertexFormat.POSITION_TEX
-                && !ChimeraHandRenderer.active() ? ChimeraEntityBridge.Family.GLINT
+                ? (ChimeraHandRenderer.active() ? ChimeraEntityBridge.Family.HAND_GLINT : ChimeraEntityBridge.Family.GLINT)
                 : null;
         if (pass != null && lane != null && ChimeraEntityBridge.isWorldSubmissionWindow()
                 && ChimeraEntityBridge.beginHostLayoutDraw(lane)) {

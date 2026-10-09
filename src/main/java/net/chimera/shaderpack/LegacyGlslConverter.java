@@ -1370,6 +1370,13 @@ public final class LegacyGlslConverter {
                 inputs.remove("gbufferModelView");
                 inputs.remove("gbufferModelViewInverse");
             }
+            if (vertexPreamble == GLINT_VERTEX_PREAMBLE) {
+                // Glint also draws in the hand, where ModelViewMat is the hand pose: the
+                // world matrices stay the pack's own uniforms, as in Iris.
+                inputs = new java.util.HashMap<>(inputs);
+                inputs.remove("gbufferModelView");
+                inputs.remove("gbufferModelViewInverse");
+            }
             if (isSkyPreamble(vertexPreamble)) {
                 inputs = new java.util.HashMap<>(inputs);
                 inputs.put("gl_ProjectionMatrix", "chimeraSkyProjection()");
@@ -3817,6 +3824,36 @@ public final class LegacyGlslConverter {
             .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /** The glint layout under the hand's legacy projection, as {@link #HAND_VERTEX_PREAMBLE}. */
+    private static final String GLINT_HAND_VERTEX_PREAMBLE = GLINT_VERTEX_PREAMBLE
+            .replace("vec4 chimeraEntityVertexValue()", """
+                    mat4 chimeraHandProjection() {
+                        mat4 legacy = ProjMat;
+                        legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
+                        legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
+                        legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
+                        legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
+                        return legacy;
+                    }
+                    vec4 chimeraEntityVertexValue()""")
+            .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
+
+    /**
+     * The converted glint program for first-person glint. Iris draws held glint with the
+     * same ShaderKey.GLINT program under the hand projection; here it takes the hand
+     * family's legacy projection and clip-depth remap, so its depth is computed exactly
+     * as the held item's and the EQUAL depth test meets it.
+     */
+    public static String handGlintVertex(String converted) {
+        int start = converted == null ? -1 : converted.indexOf(GLINT_VERTEX_PREAMBLE);
+        if (start < 0) throw new IllegalArgumentException("not a converted glint vertex");
+        String body = converted.substring(start + GLINT_VERTEX_PREAMBLE.length());
+        body = GlslTokenRewriter.replaceIdentifiers(body, Map.of("ProjMat", "chimeraHandProjection()"));
+        body = body.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraHandMain()");
+        return converted.substring(0, start) + GLINT_HAND_VERTEX_PREAMBLE + body
+                + "\nvoid main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+    }
 
     /**
      * Iris VanillaTransformer for GLINT (isGlint): gl_Color is

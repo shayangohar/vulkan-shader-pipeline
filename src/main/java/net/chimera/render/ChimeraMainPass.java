@@ -307,6 +307,7 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackParticle packWeatherPipeline;
     private PackPipelines.PackParticle packLinePipeline;
     private PackPipelines.PackParticle packGlintPipeline;
+    private PackPipelines.PackParticle packHandGlintPipeline;
     private PackPipelines.PackSkyFamily packSkyBasicPipeline;
     private PackPipelines.PackSkyFamily packSkyTexturedPipeline;
     private PackPipelines.PackSky packCloudPipeline;
@@ -1050,6 +1051,7 @@ public class ChimeraMainPass implements MainPass {
             case WEATHER -> this.packWeatherPipeline;
             case LINE -> this.packLinePipeline;
             case GLINT -> this.packGlintPipeline;
+            case HAND_GLINT -> this.packHandGlintPipeline;
             default -> null;
         };
     }
@@ -2154,6 +2156,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.packWeatherPipeline != null) this.packWeatherPipeline.pipeline().cleanUp();
         if (this.packLinePipeline != null) this.packLinePipeline.pipeline().cleanUp();
         if (this.packGlintPipeline != null) this.packGlintPipeline.pipeline().cleanUp();
+        if (this.packHandGlintPipeline != null) this.packHandGlintPipeline.pipeline().cleanUp();
         if (this.packSkyBasicPipeline != null) this.packSkyBasicPipeline.cleanUp();
         if (this.packSkyTexturedPipeline != null) this.packSkyTexturedPipeline.cleanUp();
         if (this.packCloudPipeline != null) this.packCloudPipeline.pipeline().cleanUp();
@@ -2205,6 +2208,7 @@ public class ChimeraMainPass implements MainPass {
         this.packWeatherPipeline = null;
         this.packLinePipeline = null;
         this.packGlintPipeline = null;
+        this.packHandGlintPipeline = null;
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
@@ -2969,6 +2973,7 @@ public class ChimeraMainPass implements MainPass {
         this.packWeatherPipeline = null;
         this.packLinePipeline = null;
         this.packGlintPipeline = null;
+        this.packHandGlintPipeline = null;
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
@@ -3523,6 +3528,7 @@ public class ChimeraMainPass implements MainPass {
                     continue;
                 }
                 markFamilyPipelineInstalled(name, "GLINT_PIPELINE_INSTALLED");
+                this.packHandGlintPipeline = buildHandGlint(name, programPlan);
             } else {
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
@@ -3539,7 +3545,7 @@ public class ChimeraMainPass implements MainPass {
                 this.packPlan == null ? null : this.packPlan.entityIds());
         ChimeraEntityBridge.installTextVariants(this.packTranslucentEntityTextPipeline, this.packBlockTextPipeline);
         ChimeraEntityBridge.installLine(this.packLinePipeline);
-        ChimeraEntityBridge.installGlint(this.packGlintPipeline);
+        ChimeraEntityBridge.installGlint(this.packGlintPipeline, this.packHandGlintPipeline);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 this.packEntityPipeline == null ? "none"
                         : this.packEntityPipeline.outputPlan() == null
@@ -3874,6 +3880,23 @@ public class ChimeraMainPass implements MainPass {
         LOGGER.info("[chimera] pack {}: text layout variant installed (stride={})", name,
                 net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH.getVertexSize());
         return text;
+    }
+
+    /** The glint program under the hand projection; without it first-person glint stays host-drawn. */
+    private PackPipelines.PackParticle buildHandGlint(String name, PackProgramPlan programPlan) {
+        PackPipelines.PackParticle hand = PackPipelines.buildHandGlint(programPlan,
+                this.packPlan == null ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources(),
+                this.packStorageBufferOwner);
+        if (hand == null) {
+            LOGGER.warn("[chimera] pack {}: hand glint variant unavailable; first-person glint stays host-drawn", name);
+            return null;
+        }
+        if (!attachPackStoragePipeline(name, hand.pipeline(), hand.imageBindings())) {
+            hand.pipeline().cleanUp();
+            return null;
+        }
+        LOGGER.info("[chimera] pack {}: hand glint variant installed", name);
+        return hand;
     }
 
     private void markFamilyPipelineInstalled(String name, String deviation) {

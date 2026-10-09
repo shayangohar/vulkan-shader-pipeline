@@ -799,6 +799,21 @@ public final class PackPipelines {
                 com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, advancedResources, storageOwner);
     }
 
+    /** The same glint program for first-person glint, under the hand projection. */
+    public static PackParticle buildHandGlint(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || plan.convertedVertex() == null) return null;
+        String vertex;
+        try {
+            vertex = LegacyGlslConverter.handGlintVertex(plan.convertedVertex());
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
+        return buildParticle(plan, "pack_" + plan.name() + "_hand",
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, vertex, advancedResources, storageOwner);
+    }
+
     /** Builds gbuffers_line on the host line layout (Iris ShaderKey.LINES). */
     public static PackParticle buildLine(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
@@ -812,7 +827,15 @@ public final class PackPipelines {
             PackProgramPlan plan, String pipelineName, com.mojang.blaze3d.vertex.VertexFormat format,
             PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        if (plan == null || !plan.executable() || plan.convertedVertex() == null
+        return buildParticle(plan, pipelineName, format, plan == null ? null : plan.convertedVertex(),
+                advancedResources, storageOwner);
+    }
+
+    private static PackParticle buildParticle(
+            PackProgramPlan plan, String pipelineName, com.mojang.blaze3d.vertex.VertexFormat format,
+            String convertedVertex, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || !plan.executable() || convertedVertex == null
                 || plan.convertedFragment() == null || plan.interfacePlan() == null
                 || plan.interfacePlan().effective(UniformRegistry.Stage.PARTICLE).stage()
                 != UniformRegistry.Stage.PARTICLE) {
@@ -831,7 +854,7 @@ public final class PackPipelines {
                     ? PackAdvancedResourcePlan.empty() : advancedResources;
             ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
             String vertexSource = bindPackShader(
-                    plan.convertedVertex(), plan.name(), advancedResources, layout,
+                    convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, UniformRegistry.Stage.PARTICLE, VK_SHADER_STAGE_VERTEX_BIT);
             String fragmentSource = bindPackShader(
                     plan.convertedFragment(), plan.name(), advancedResources, layout,

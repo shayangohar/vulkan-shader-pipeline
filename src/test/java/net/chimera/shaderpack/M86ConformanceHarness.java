@@ -191,8 +191,13 @@ public final class M86ConformanceHarness {
                 "translucent pack hand must run before pack final");
         assertTrue(schedule.indexOf("dispatcher.renderAllFeatures();")
                         < schedule.indexOf("ChimeraEntityBridge.endDraw();")
-                        && schedule.indexOf("buffers.endBatch();") < schedule.indexOf("ChimeraEntityBridge.endDraw();"),
+                        && schedule.indexOf("buffers.endLastBatch();") < schedule.indexOf("ChimeraEntityBridge.endDraw();"),
                 "hand submission, emission and flush must share the family scope");
+        // Glint flushes after the hand scope closes, in its own HAND_GLINT lane.
+        assertTrue(schedule.indexOf("type.pipeline() != RenderPipelines.GLINT")
+                        < schedule.indexOf("ChimeraEntityBridge.endDraw();")
+                        && schedule.indexOf("ChimeraEntityBridge.endDraw();") < schedule.indexOf("buffers.endBatch();"),
+                "hand glint must flush after the hand family scope");
 
         int resolve = main.indexOf("resolvePackWorldToOutput(commandBuffer, hdrColor);");
         int finalCall = main.indexOf("finishPackFinalBeforeHand();", resolve);

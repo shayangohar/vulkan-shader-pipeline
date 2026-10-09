@@ -10,6 +10,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.PerspectiveProjectionMatrixBuffer;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.Sheets;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
@@ -49,6 +50,8 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     public static void beginFrame() { diverted = false; }
     public static boolean diverted() { return diverted; }
     public static boolean active() { return translucentPhase != null; }
+    /** True while the translucent half of the hand schedule draws. */
+    public static boolean translucentPhase() { return Boolean.TRUE.equals(translucentPhase); }
     public static boolean skip(ItemStack item) {
         return active() && translucent(item) != translucentPhase;
     }
@@ -108,6 +111,15 @@ public final class ChimeraHandRenderer implements AutoCloseable {
                     minecraft.getEntityRenderDispatcher().getPackedLightCoords(camera.entity(), tick));
             // In 1.21.11 this only submits. Scope both emission and the GPU flush.
             dispatcher.renderAllFeatures();
+            // Item and model layers flush inside the hand scope. Glint then draws in its
+            // own lane (Iris ShaderKey.GLINT under the hand projection), over the depth
+            // those layers wrote.
+            buffers.endLastBatch();
+            for (RenderType type : fixed.keySet()) {
+                if (type.pipeline() != RenderPipelines.GLINT) buffers.endBatch(type);
+            }
+            ChimeraEntityBridge.endDraw();
+            draw = false;
             buffers.endBatch();
         } finally {
             submits.endFrame();
