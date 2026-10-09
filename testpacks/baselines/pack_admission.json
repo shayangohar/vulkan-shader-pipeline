@@ -39,6 +39,22 @@
     "gbuffers_lightning",
     "gbuffers_textured"
   ],
+  "ComplementaryUnbound_r5.9.3.zip": [
+    "clrwl_gbuffers",
+    "clrwl_gbuffers_damagedblock",
+    "clrwl_gbuffers_translucent",
+    "clrwl_shadow",
+    "dh_terrain",
+    "dh_water",
+    "gbuffers_armor_glint",
+    "gbuffers_basic",
+    "gbuffers_beaconbeam",
+    "gbuffers_block_translucent",
+    "gbuffers_clouds",
+    "gbuffers_entities_glowing",
+    "gbuffers_lightning",
+    "gbuffers_textured"
+  ],
   "MakeUp-UltraFast-9.5g.zip": [
     "dh_terrain",
     "dh_water",
