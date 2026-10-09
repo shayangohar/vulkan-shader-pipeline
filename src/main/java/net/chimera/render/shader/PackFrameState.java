@@ -120,6 +120,8 @@ final class PackFrameState {
     private float alphaCutout;
     // Per draw: the host entity pipeline's ALPHA_CUTOUT, 0 where it has none.
     private float entityAlphaReference;
+    // Per frame: the glint strength option, vanilla Globals.GlintAlpha (Iris isGlint gl_Color).
+    private float glintAlpha = 1.0F;
     private net.chimera.shaderpack.PackRenderingPhase renderingPhase = net.chimera.shaderpack.PackRenderingPhase.NONE;
     private int currentTime;
     private int bedrockLevel;
@@ -221,6 +223,7 @@ final class PackFrameState {
         this.nightVision = nightVision(minecraft, cameraEntity, partialTick);
         this.darknessLightFactor = darknessLightFactor(minecraft, partialTick);
         this.screenBrightness = minecraft.options.gamma().get().floatValue();
+        this.glintAlpha = minecraft.options.glintStrength().get().floatValue();
 
         captureWorld(minecraft.level, minecraft, camera, partialTick);
         evaluateCustomValues();
@@ -375,6 +378,7 @@ final class PackFrameState {
             case "biome_precipitation" -> target.putInt(0, biomePrecipitation);
             case "AlphaCutout" -> target.putFloat(0, alphaCutout);
             case UniformRegistry.ENTITY_ALPHA_REFERENCE -> target.putFloat(0, entityAlphaReference);
+            case UniformRegistry.GLINT_ALPHA -> target.putFloat(0, glintAlpha);
             case "renderStage" -> target.putInt(0, renderingPhase.ordinal());
             case "ColorModulator" -> writeFloatArray(target, shaderColor, 4);
             case "Light0_Direction" -> writeVec3(target, lightDirection0);

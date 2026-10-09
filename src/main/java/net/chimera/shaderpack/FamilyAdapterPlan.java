@@ -29,6 +29,8 @@ public record FamilyAdapterPlan(
         WEATHER,
         /** gbuffers_line: block outlines and other LINES draws (Iris ProgramId.Line). */
         LINE,
+        /** gbuffers_armor_glint: enchantment glint layers (Iris ProgramId.ArmorGlint). */
+        GLINT,
         SPECIAL,
         POST,
         UNKNOWN
@@ -41,6 +43,8 @@ public record FamilyAdapterPlan(
         HOST_PARTICLE,
         /** DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, drawn as quads. */
         HOST_LINE,
+        /** DefaultVertexFormat.POSITION_TEX glint layers. */
+        HOST_GLINT,
         HOST_BLOCK,
         SKY_POSITION,
         SKY_POSITION_COLOR,

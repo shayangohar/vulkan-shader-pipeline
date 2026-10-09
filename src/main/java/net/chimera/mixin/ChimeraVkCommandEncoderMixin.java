@@ -134,6 +134,8 @@ public abstract class ChimeraVkCommandEncoderMixin {
             case PARTICLE, PARTICLE_TRANSLUCENT -> net.chimera.shaderpack.PackRenderingPhase.PARTICLES;
             case WEATHER -> net.chimera.shaderpack.PackRenderingPhase.RAIN_SNOW;
             case LINE -> net.chimera.shaderpack.PackRenderingPhase.OUTLINE;
+            // Iris draws world glint inside the entity phase; it has none of its own.
+            case GLINT -> net.chimera.shaderpack.PackRenderingPhase.ENTITIES;
             case HOST_FALLBACK -> net.chimera.shaderpack.PackRenderingPhase.NONE;
         });
         try {

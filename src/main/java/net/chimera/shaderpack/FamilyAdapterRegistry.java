@@ -46,7 +46,10 @@ public final class FamilyAdapterRegistry {
             // Iris LINES, LINES_TRANSLUCENT and SECONDARY_BLOCK_OUTLINE (ShaderKey.LINES) on the
             // host line layout, served like weather from the host transform blocks.
             Map.entry("gbuffers_line", plan("gbuffers_line", FamilyAdapterPlan.Family.LINE,
-                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LINE))
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LINE)),
+            // Iris GLINT (ShaderKey.GLINT) on the host POSITION_TEX glint layers.
+            Map.entry("gbuffers_armor_glint", plan("gbuffers_armor_glint", FamilyAdapterPlan.Family.GLINT,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_GLINT))
     );
 
     private FamilyAdapterRegistry() {}
@@ -112,6 +115,15 @@ public final class FamilyAdapterRegistry {
 
     public static boolean isLineFamily(String name) {
         return forProgram(name).family() == FamilyAdapterPlan.Family.LINE;
+    }
+
+    public static boolean isGlintFamily(String name) {
+        return forProgram(name).family() == FamilyAdapterPlan.Family.GLINT;
+    }
+
+    /** Lanes whose pack program runs on a host vertex layout Iris also draws natively: lines and glint. */
+    public static boolean isHostLayoutFamily(String name) {
+        return isLineFamily(name) || isGlintFamily(name);
     }
 
     public static boolean isSkyFamily(String name) {

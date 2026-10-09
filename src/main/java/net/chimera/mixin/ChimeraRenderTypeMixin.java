@@ -29,22 +29,26 @@ public abstract class ChimeraRenderTypeMixin {
     private void chimera$immediateFamilyWindow(MeshData mesh, Operation<Void> original) {
         RenderType type = (RenderType) (Object) this;
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        // Weather and lines (block outlines) keep their native layout; only the program
-        // and its authored targets change.
-        boolean weather = (type.pipeline() == RenderPipelines.WEATHER_DEPTH_WRITE
+        // Weather, lines (block outlines) and world glint keep their native layout; only
+        // the program and its authored targets change. The host buffer flushes glint
+        // after the pack has drawn the items and models it lies on (EQUAL depth test).
+        var format = mesh == null ? null : mesh.drawState().format();
+        ChimeraEntityBridge.Family lane = (type.pipeline() == RenderPipelines.WEATHER_DEPTH_WRITE
                 || type.pipeline() == RenderPipelines.WEATHER_NO_DEPTH_WRITE)
-                && mesh != null && mesh.drawState().format() == DefaultVertexFormat.PARTICLE;
-        boolean line = ChimeraEntityBridge.isLinePipeline(type.pipeline())
-                && mesh != null && mesh.drawState().format() == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
-        if (pass != null && ChimeraEntityBridge.isWorldSubmissionWindow() && (weather || line)
-                && (weather ? ChimeraEntityBridge.beginWeatherDraw() : ChimeraEntityBridge.beginLineDraw())) {
-            var lane = pass.particlePipeline(weather
-                    ? ChimeraEntityBridge.Family.WEATHER : ChimeraEntityBridge.Family.LINE);
+                && format == DefaultVertexFormat.PARTICLE ? ChimeraEntityBridge.Family.WEATHER
+                : ChimeraEntityBridge.isLinePipeline(type.pipeline())
+                && format == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH ? ChimeraEntityBridge.Family.LINE
+                : type.pipeline() == RenderPipelines.GLINT && format == DefaultVertexFormat.POSITION_TEX
+                && !ChimeraHandRenderer.active() ? ChimeraEntityBridge.Family.GLINT
+                : null;
+        if (pass != null && lane != null && ChimeraEntityBridge.isWorldSubmissionWindow()
+                && ChimeraEntityBridge.beginHostLayoutDraw(lane)) {
+            var lanePipeline = pass.particlePipeline(lane);
             boolean window = false;
             try {
-                pass.prepareProgramImages(lane.pipeline());
-                if (lane.requiresDynamicAttachments()) {
-                    window = pass.beginPackFamilyWindow(lane.outputPlan());
+                pass.prepareProgramImages(lanePipeline.pipeline());
+                if (lanePipeline.requiresDynamicAttachments()) {
+                    window = pass.beginPackFamilyWindow(lanePipeline.outputPlan());
                     if (!window) {
                         ChimeraEntityBridge.endDraw();
                         original.call(mesh);
@@ -53,7 +57,7 @@ public abstract class ChimeraRenderTypeMixin {
                 }
                 original.call(mesh);
             } finally {
-                if (window) pass.endPackFamilyWindow(lane.outputPlan());
+                if (window) pass.endPackFamilyWindow(lanePipeline.outputPlan());
                 ChimeraEntityBridge.endDraw();
             }
             return;

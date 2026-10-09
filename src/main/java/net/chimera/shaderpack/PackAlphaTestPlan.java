@@ -48,7 +48,8 @@ record PackAlphaTestPlan(
         String name = programName == null ? "" : programName;
         boolean geometry = name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
         boolean entity = FamilyAdapterRegistry.isEntityLike(name)
-                || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name);
+                || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isGlintFamily(name);
         boolean shadow = name.equals("shadow");
         if (!geometry && !entity && !shadow) {
             return off(false);

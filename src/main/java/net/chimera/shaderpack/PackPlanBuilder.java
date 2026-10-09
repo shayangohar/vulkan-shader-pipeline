@@ -111,17 +111,21 @@ public final class PackPlanBuilder {
         PackProgramResolution sourceResolution = resolution == null ? null : resolution.resolution(program.name());
         String directiveProgram = sourceResolution == null || sourceResolution.selectedProgram().isBlank()
                 ? program.name() : sourceResolution.selectedProgram();
-        // Iris line handling rewrites the authored vertex before anything reads its
-        // interface: the widened fallback declares and reads the screen size.
-        boolean lineFamily = FamilyAdapterRegistry.isLineFamily(program.name());
-        String lineFailure = null;
-        if (lineFamily && vertex != null) {
+        // Iris's line and glint handling rewrites the authored vertex before anything
+        // reads its interface: a widened line declares and reads the screen size, and
+        // glint reads the glint strength.
+        boolean hostLayoutFamily = FamilyAdapterRegistry.isHostLayoutFamily(program.name());
+        String hostLayoutLane = FamilyAdapterRegistry.isGlintFamily(program.name()) ? "GLINT" : "LINE";
+        String hostLayoutFailure = null;
+        if (hostLayoutFamily && vertex != null) {
             try {
-                vertex = LegacyGlslConverter.prepareLineVertex(vertex,
-                        preparedSnapshot ? null : program.vertexPath(),
+                Path vertexFile = preparedSnapshot ? null : program.vertexPath();
+                vertex = FamilyAdapterRegistry.isGlintFamily(program.name())
+                        ? LegacyGlslConverter.prepareGlintVertex(vertex, vertexFile)
+                        : LegacyGlslConverter.prepareLineVertex(vertex, vertexFile,
                         directiveProgram.equals("gbuffers_line"));
             } catch (RuntimeException failure) {
-                lineFailure = safeReason(failure);
+                hostLayoutFailure = safeReason(failure);
             }
         }
         PackAlphaTestPlan alphaTestPlan = PackAlphaTestPlan.forProgram(
@@ -130,7 +134,8 @@ public final class PackPlanBuilder {
         // stage) receives the host alpha test.
         if ((FamilyAdapterRegistry.isEntityLike(program.name())
                 || FamilyAdapterRegistry.isParticleLike(program.name())
-                || FamilyAdapterRegistry.isWeatherFamily(program.name())) && vertex != null) {
+                || FamilyAdapterRegistry.isWeatherFamily(program.name())
+                || FamilyAdapterRegistry.isGlintFamily(program.name())) && vertex != null) {
             fragment = alphaTestPlan.injectDrawTest(fragment);
             if (FamilyAdapterRegistry.isEntityLike(program.name())
                     && !program.name().equals("gbuffers_damagedblock")) fragment = EntityOverlayColor.inject(fragment);
@@ -191,7 +196,7 @@ public final class PackPlanBuilder {
                 && (!FamilyAdapterRegistry.isEntityLike(program.name())
                 && !FamilyAdapterRegistry.isParticleLike(program.name())
                 && !FamilyAdapterRegistry.isWeatherFamily(program.name())
-                && !lineFamily
+                && !hostLayoutFamily
                 && !FamilyAdapterRegistry.isSkyFamily(program.name())
                 && !FamilyAdapterRegistry.isCloudFamily(program.name()) || vertex != null)
                 && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
@@ -261,9 +266,11 @@ public final class PackPlanBuilder {
         if (FamilyAdapterRegistry.isWeatherFamily(program.name()) && vertex == null) {
             deviations.add("WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
         }
-        if (lineFamily && (vertex == null || lineFailure != null)) {
-            deviations.add("LINE_VERTEX_BRIDGE_UNSUPPORTED");
-            if (lineFailure != null) deviations.add("LINE_VERTEX_CONVERSION_FAILED:" + lineFailure);
+        if (hostLayoutFamily && (vertex == null || hostLayoutFailure != null)) {
+            deviations.add(hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
+            if (hostLayoutFailure != null) {
+                deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:" + hostLayoutFailure);
+            }
             executable = false;
         }
 
@@ -463,31 +470,31 @@ public final class PackPlanBuilder {
                             : "SKY_FRAGMENT_BRIDGE_UNSUPPORTED");
                     executable = false;
                 }
-            } else if (executable && lineFamily) {
+            } else if (executable && hostLayoutFamily) {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
                 LegacyGlslConverter.TerrainVertexConversion conversion = null;
                 try {
-                    // prepareLineVertex already expanded the includes.
-                    conversion = LegacyGlslConverter.convertLineVertexChecked(
-                            vertex, fragment, stageMatch.locations(), allowStorageBuffers,
-                            interfacePlan.effective(stage).executableUniforms(),
+                    // The line and glint preparation already expanded the includes.
+                    conversion = LegacyGlslConverter.convertHostLayoutVertexChecked(
+                            familyAdapter.vertexContract(), vertex, fragment, stageMatch.locations(),
+                            allowStorageBuffers, interfacePlan.effective(stage).executableUniforms(),
                             vertexSamplerPlan(interfacePlan, stage, vertex));
                 } catch (IllegalArgumentException failure) {
-                    deviations.add("LINE_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
+                    deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
                 }
                 if (conversion == null) {
-                    deviations.add("LINE_VERTEX_BRIDGE_UNSUPPORTED");
+                    deviations.add(hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
                     executable = false;
                 } else {
                     convertedVertex = conversion.source();
                     vertexLayout = conversion.layout();
-                    deviations.add("LINE_VERTEX_BRIDGE");
+                    deviations.add(hostLayoutLane + "_VERTEX_BRIDGE");
                     convertedFragment = LegacyGlslConverter.convertParticleFragment(
                             fragment, preparedSnapshot ? null : program.fragmentPath(), slots,
                             vertexLayout, interfacePlan.project("fragment", stage),
                             geometryOutputPlan);
                     if (convertedFragment == null) {
-                        deviations.add("LINE_FRAGMENT_BRIDGE_UNSUPPORTED");
+                        deviations.add(hostLayoutLane + "_FRAGMENT_BRIDGE_UNSUPPORTED");
                         executable = false;
                     }
                 }
@@ -634,7 +641,7 @@ public final class PackPlanBuilder {
         return FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name)
                 || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isLineFamily(name)
+                || FamilyAdapterRegistry.isHostLayoutFamily(name)
                 || FamilyAdapterRegistry.isSkyFamily(name)
                 || name.equals("gbuffers_terrain")
                 || name.equals("gbuffers_water");

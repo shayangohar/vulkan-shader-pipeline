@@ -787,6 +787,14 @@ public final class PackPipelines {
                 com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE, advancedResources, storageOwner);
     }
 
+    /** Builds gbuffers_armor_glint on the host POSITION_TEX glint layers (Iris ShaderKey.GLINT). */
+    public static PackParticle buildGlint(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, advancedResources, storageOwner);
+    }
+
     /** Builds gbuffers_line on the host line layout (Iris ShaderKey.LINES). */
     public static PackParticle buildLine(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner

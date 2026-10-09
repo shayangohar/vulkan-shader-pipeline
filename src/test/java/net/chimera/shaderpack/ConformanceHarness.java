@@ -36,6 +36,7 @@ public final class ConformanceHarness {
         verifyRequestedFamilyFallbackAndCrumbling();
         verifyParticleFallbackAndTargets();
         verifyLineLane();
+        verifyGlintLane();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -550,7 +551,7 @@ public final class ConformanceHarness {
                 .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
         boolean weather = false;
         for (var instruction : immediate.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call && call.name.equals("beginWeatherDraw")) weather = true;
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call && call.name.equals("beginHostLayoutDraw")) weather = true;
         }
         assertTrue(weather, "weather must own its actual immediate draw");
         var indexed = nativeClass("net/chimera/mixin/ChimeraVkRenderPassMixin");
@@ -755,6 +756,67 @@ public final class ConformanceHarness {
             deleteTree(fallback);
             deleteTree(packLine);
         }
+        System.out.println("[chimera] line lane, authored and widened: PASS");
+    }
+
+    /**
+     * Iris ShaderKey.GLINT: gbuffers_armor_glint on the host POSITION_TEX layers, with the
+     * glint strength in gl_Color's alpha, NON_ZERO_ALPHA, and unbound material attributes.
+     */
+    private static void verifyGlintLane() throws IOException {
+        var host = net.minecraft.client.renderer.RenderPipelines.GLINT;
+        assertEquals(com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, host.getVertexFormat(),
+                "glint host format changed");
+        assertEquals(0.0001F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+                "Iris GLINT uses AlphaTests.NON_ZERO_ALPHA");
+        Path root = Files.createTempDirectory("chimera-glint-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("gbuffers_armor_glint.vsh"), """
+                    #version 120
+                    attribute vec4 at_tangent;
+                    varying vec2 texCoord;
+                    varying vec4 color;
+                    varying vec4 tangent;
+                    void main() {
+                        texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                        color = gl_Color;
+                        tangent = at_tangent;
+                        gl_Position = ftransform();
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_armor_glint.fsh"), """
+                    #version 120
+                    /* DRAWBUFFERS:0 */
+                    uniform sampler2D texture;
+                    varying vec2 texCoord;
+                    varying vec4 color;
+                    varying vec4 tangent;
+                    void main() {
+                        gl_FragData[0] = texture2D(texture, texCoord) * color + tangent * 0.001;
+                    }
+                    """);
+            var analysis = PackProbe.analyze(root);
+            var plan = analysis.plan().program("gbuffers_armor_glint");
+            assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("gbuffers_armor_glint"),
+                    "glint rejected: " + (plan == null ? "missing" : plan.deviations()));
+            assertEquals(FamilyAdapterPlan.VertexContract.HOST_GLINT, plan.familyAdapter().vertexContract(),
+                    "glint keeps the host layout");
+            String converted = plan.convertedVertex();
+            assertTrue(converted.contains("layout(location = 1) in vec2 UV0;")
+                            && converted.contains("const vec4 Color = vec4(1.0);")
+                            && converted.contains(UniformRegistry.GLINT_ALPHA)
+                            && converted.contains("TextureMat")
+                            && converted.contains("tangent = vec4(0.0, 0.0, 0.0, 1.0);"),
+                    "glint lost Iris input semantics: " + converted);
+            assertTrue(plan.alphaTestPlan().perDrawReference() && plan.convertedFragment().contains("discard;"),
+                    "glint lost its per-draw alpha test");
+            var compiled = PackCompileCheck.run(root, analysis);
+            assertTrue(compiled.failures().isEmpty(), "glint compilation: " + compiled.failures());
+        } finally {
+            deleteTree(root);
+        }
+        System.out.println("[chimera] glint lane on the host layout: PASS");
     }
 
     private static void deleteTree(Path root) throws IOException {

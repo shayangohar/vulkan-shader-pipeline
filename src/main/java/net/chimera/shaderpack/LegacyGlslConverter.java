@@ -3763,17 +3763,7 @@ public final class LegacyGlslConverter {
      */
     public static String prepareLineVertex(String source, Path sourceFile, boolean packLineProgram) {
         if (source == null) return null;
-        String src = source;
-        if (sourceFile != null) {
-            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
-                    sourceFile.getParent(), sourceFile, source,
-                    PackEngineDefines.forPack(Map.of()),
-                    PackEngineDefines.lockedNames(Set.of(), false, false));
-            if (!prepared.successful()) {
-                throw new IllegalArgumentException(prepared.deviations().toString());
-            }
-            src = prepared.source();
-        }
+        String src = expandIncludes(source, sourceFile);
         src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("gl_VertexID", "chimeraLineVertexIndex"));
         if (packLineProgram) {
             src = LINE_CORE_INPUT_DECLARATION.matcher(src).replaceAll("");
@@ -3809,27 +3799,98 @@ public final class LegacyGlslConverter {
         UniformRegistry.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
         if (!declared.contains("viewWidth")) globals += "uniform float viewWidth;\n";
         if (!declared.contains("viewHeight")) globals += "uniform float viewHeight;\n";
-        Matcher header = Pattern.compile("\\A(?:[ \\t]*(?:#version|#extension)[^\\n]*\\n|[ \\t]*\\r?\\n)*")
-                .matcher(src);
-        int insert = header.find() ? header.end() : 0;
-        return src.substring(0, insert) + globals + src.substring(insert) + LINE_WIDEN_MAIN;
+        return insertAfterHeader(src, globals) + LINE_WIDEN_MAIN;
     }
 
-    /** Converts a gbuffers_line vertex (after {@link #prepareLineVertex}) onto the host line layout. */
-    public static TerrainVertexConversion convertLineVertexChecked(
-            String source, String fragmentSource,
+    /**
+     * DefaultVertexFormat.POSITION_TEX glint layers. Iris supplies the missing inputs: +Z
+     * normal and full light; gl_Color is the host ColorModulator with the glint strength in
+     * its alpha ({@link #prepareGlintVertex}).
+     */
+    private static final String GLINT_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 1) in vec4 Color;", "const vec4 Color = vec4(1.0);")
+            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * Iris VanillaTransformer for GLINT (isGlint): gl_Color is
+     * vec4(ColorModulator.rgb, ColorModulator.a * GlintAlpha). Applied to the authored vertex
+     * before its interface is planned, so the glint strength is an ordinary planned uniform.
+     */
+    public static String prepareGlintVertex(String source, Path sourceFile) {
+        if (source == null) return null;
+        String src = expandIncludes(source, sourceFile);
+        src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("gl_Color",
+                "vec4(gl_Color.rgb, gl_Color.a * " + UniformRegistry.GLINT_ALPHA + ")"));
+        return insertAfterHeader(src, "uniform float " + UniformRegistry.GLINT_ALPHA + ";\n");
+    }
+
+    private static String expandIncludes(String source, Path sourceFile) {
+        if (sourceFile == null) return source;
+        ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
+                sourceFile.getParent(), sourceFile, source,
+                PackEngineDefines.forPack(Map.of()),
+                PackEngineDefines.lockedNames(Set.of(), false, false));
+        if (!prepared.successful()) {
+            throw new IllegalArgumentException(prepared.deviations().toString());
+        }
+        return prepared.source();
+    }
+
+    /** Inserts declarations after the #version and #extension lines that must lead the source. */
+    private static String insertAfterHeader(String source, String declarations) {
+        Matcher header = Pattern.compile("\\A(?:[ \\t]*(?:#version|#extension)[^\\n]*\\n|[ \\t]*\\r?\\n)*")
+                .matcher(source);
+        int insert = header.find() ? header.end() : 0;
+        return source.substring(0, insert) + declarations + source.substring(insert);
+    }
+
+    /**
+     * Converts a line or glint vertex (after {@link #prepareLineVertex} or
+     * {@link #prepareGlintVertex}) onto its host layout.
+     */
+    public static TerrainVertexConversion convertHostLayoutVertexChecked(
+            FamilyAdapterPlan.VertexContract contract, String source, String fragmentSource,
             Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> uniforms,
             VertexSamplerPlan samplerPlan
     ) {
-        String liveInputs = stripComments(removeEntityAttributes(pruneUnreachableVertexFunctions(
-                prepareSource(source, null, true))));
-        if (containsIdentifier(liveInputs, "mc_midTexCoord") || containsIdentifier(liveInputs, "at_tangent")
-                || containsIdentifier(liveInputs, "Tangent")) {
-            throw new IllegalArgumentException("line format has no material mid-coordinate or tangent attribute");
+        String preamble = switch (contract) {
+            case HOST_LINE -> LINE_VERTEX_PREAMBLE;
+            case HOST_GLINT -> GLINT_VERTEX_PREAMBLE;
+            default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
+        };
+        return convertEntityVertexOrThrow(unboundMaterialAttributes(source), null, fragmentSource,
+                sharedLocations, preamble, allowStorageBuffers, uniforms, samplerPlan);
+    }
+
+    private static final Pattern MATERIAL_ATTRIBUTE_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*(?:attribute|in)[ \\t]+(float|vec2|vec3|vec4)[ \\t]+(mc_midTexCoord|at_tangent)[ \\t]*;[ \\t]*$");
+
+    /**
+     * A host layout without mid-coordinates or tangents leaves those attributes unbound in
+     * Iris, so GL reads its default (0, 0, 0, 1) cut to the declared type.
+     */
+    private static String unboundMaterialAttributes(String source) {
+        Map<String, String> defaults = new java.util.HashMap<>();
+        Matcher declaration = MATERIAL_ATTRIBUTE_DECLARATION.matcher(source);
+        while (declaration.find()) {
+            defaults.put(declaration.group(2), switch (declaration.group(1)) {
+                case "float" -> "0.0";
+                case "vec2" -> "vec2(0.0)";
+                case "vec3" -> "vec3(0.0)";
+                default -> "vec4(0.0, 0.0, 0.0, 1.0)";
+            });
         }
-        return convertEntityVertexOrThrow(source, null, fragmentSource, sharedLocations,
-                LINE_VERTEX_PREAMBLE, allowStorageBuffers, uniforms, samplerPlan);
+        if (defaults.isEmpty()) return source;
+        return GlslTokenRewriter.replaceIdentifiers(
+                MATERIAL_ATTRIBUTE_DECLARATION.matcher(source).replaceAll(""), defaults);
     }
 
     public static final List<FamilyAdapterPlan.VertexContract> SKY_CONTRACTS = List.of(
@@ -3839,13 +3900,13 @@ public final class LegacyGlslConverter {
             FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV);
 
     /**
-     * Lanes drawn on the host's own vertex layout (particles, weather, sky, lines): as in Iris's
+     * Lanes drawn on the host's own vertex layout (particles, weather, sky, lines, glint): as in Iris's
      * VanillaTransformer, gl_Color carries the host ColorModulator and gl_NormalMatrix is the
      * model-view normal matrix.
      */
     private static boolean nativeLayoutPreamble(String preamble) {
         return preamble == PARTICLE_VERTEX_PREAMBLE || preamble == LINE_VERTEX_PREAMBLE
-                || isSkyPreamble(preamble);
+                || preamble == GLINT_VERTEX_PREAMBLE || isSkyPreamble(preamble);
     }
 
     private static boolean isSkyPreamble(String preamble) {

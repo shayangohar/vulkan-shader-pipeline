@@ -37,6 +37,8 @@ public final class UniformRegistry {
     public static final String DYNAMIC_TRANSFORMS_UBO = "DynamicTransforms";
     /** Per-draw entity alpha-test reference, Chimera's counterpart of iris_currentAlphaTest. */
     public static final String ENTITY_ALPHA_REFERENCE = "chimeraAlphaTestRef";
+    /** Vanilla Globals.GlintAlpha (glint strength), declared into glint programs before planning. */
+    public static final String GLINT_ALPHA = "chimeraGlintAlpha";
     public static final String PROJECTION_UBO = "Projection";
 
     /** Descriptor bindings of the host ordinary-transform blocks. */
@@ -829,7 +831,7 @@ public final class UniformRegistry {
     private static final Set<String> HOST_ONLY = Set.of(
             "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd",
             "FogEnvironmentalStart", "FogEnvironmentalEnd", "FogRenderDistanceStart",
-            "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE,
+            "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE, GLINT_ALPHA,
             "ScreenSize", "TextureSize", "TexelSize", "Light0_Direction", "Light1_Direction",
             "ColorModulator", "ModelOffset", "ChunkOffset", "UseRgss", "CurrentTime", "EndPortalLayers",
             "screenSize", "textureSize", "texelSize");
@@ -1267,6 +1269,7 @@ public final class UniformRegistry {
         addLive(specs, "FogCloudsEnd", "float");
         addLive(specs, "AlphaCutout", "float");
         addLive(specs, ENTITY_ALPHA_REFERENCE, "float");
+        addLive(specs, GLINT_ALPHA, "float");
         addLive(specs, "ScreenSize", "vec2");
         addLive(specs, "TextureSize", "ivec2");
         addLive(specs, "TexelSize", "vec2");
