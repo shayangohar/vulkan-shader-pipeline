@@ -262,7 +262,11 @@ public final class PackPipelines {
     public record PackHand(Map<VertexFormat, PackEntity> variants) {
         public PackHand { variants = Map.copyOf(variants); }
         public PackEntity primary() { return variants.get(com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY); }
-        public PackEntity forFormat(VertexFormat format) { return variants.get(ChimeraVertexFormats.handHostFormat(format)); }
+        /** The variant for a native hand mesh shape, or null for any other layout (glint keeps its host draw). */
+        public PackEntity forFormat(VertexFormat format) {
+            VertexFormat host = ChimeraVertexFormats.handHostFormat(format);
+            return host == null ? null : variants.get(host);
+        }
         public void cleanUp() { variants.values().forEach(value -> value.pipeline().cleanUp()); }
     }
 

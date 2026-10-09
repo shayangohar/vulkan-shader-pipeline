@@ -769,6 +769,10 @@ public final class ConformanceHarness {
                 "glint host format changed");
         assertEquals(0.0001F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
                 "Iris GLINT uses AlphaTests.NON_ZERO_ALPHA");
+        // A held foil item flushes its glint inside the hand scope; the hand lane has no
+        // POSITION_TEX variant, so the lookup must answer host fallback, not throw.
+        assertTrue(new PackPipelines.PackHand(java.util.Map.of()).forFormat(host.getVertexFormat()) == null,
+                "hand glint must fall back to its host draw");
         Path root = Files.createTempDirectory("chimera-glint-");
         try {
             Path shaders = Files.createDirectory(root.resolve("shaders"));
