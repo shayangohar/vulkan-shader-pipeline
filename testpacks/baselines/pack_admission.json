@@ -2,8 +2,6 @@
   "BSL_v10.1.8.zip": [
     "dh_terrain",
     "dh_water",
-    "gbuffers_basic",
-    "gbuffers_beaconbeam",
     "gbuffers_clouds",
     "gbuffers_entities_glowing",
     "gbuffers_textured"
@@ -12,8 +10,6 @@
     "dh_shadow",
     "dh_terrain",
     "dh_water",
-    "gbuffers_basic",
-    "gbuffers_beaconbeam",
     "gbuffers_block_translucent",
     "gbuffers_clouds",
     "gbuffers_damagedblock",
@@ -28,12 +24,9 @@
     "clrwl_shadow",
     "dh_terrain",
     "dh_water",
-    "gbuffers_basic",
-    "gbuffers_beaconbeam",
     "gbuffers_block_translucent",
     "gbuffers_clouds",
     "gbuffers_entities_glowing",
-    "gbuffers_lightning",
     "gbuffers_textured"
   ],
   "ComplementaryUnbound_r5.9.3.zip": [
@@ -43,19 +36,14 @@
     "clrwl_shadow",
     "dh_terrain",
     "dh_water",
-    "gbuffers_basic",
-    "gbuffers_beaconbeam",
     "gbuffers_block_translucent",
     "gbuffers_clouds",
     "gbuffers_entities_glowing",
-    "gbuffers_lightning",
     "gbuffers_textured"
   ],
   "MakeUp-UltraFast-9.5g.zip": [
     "dh_terrain",
     "dh_water",
-    "gbuffers_basic",
-    "gbuffers_beaconbeam",
     "gbuffers_clouds",
     "gbuffers_entities_glowing",
     "gbuffers_textured"

@@ -7,6 +7,7 @@ import net.chimera.render.EntityTransformBinding;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
+import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.render.engine.VkCommandEncoder;
@@ -124,22 +125,22 @@ public abstract class ChimeraVkCommandEncoderMixin {
         ChimeraEntityBridge.noteHostTransformRoutes(describeTransformSources(
                 dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
+        HostLayoutLane lane = HostLayoutLane.of(ChimeraEntityBridge.activeFamily());
+        if (lane != null) {
+            PackUniformProvider.updateDrawEntityId(ChimeraEntityBridge.drawEntityId());
+            // Restored with the family's texture snapshot when the draw ends.
+            if (lane.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
+        }
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
-        var previousPhase = PackUniformProvider.setRenderingPhase(switch (ChimeraEntityBridge.activeFamily()) {
+        var previousPhase = PackUniformProvider.setRenderingPhase(lane != null ? lane.phase()
+                : switch (ChimeraEntityBridge.activeFamily()) {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES -> net.chimera.shaderpack.PackRenderingPhase.ENTITIES;
             case BLOCK -> net.chimera.shaderpack.PackRenderingPhase.BLOCK_ENTITIES;
             case DAMAGED_BLOCK -> net.chimera.shaderpack.PackRenderingPhase.DESTROY;
             case HAND -> net.chimera.shaderpack.PackRenderingPhase.HAND_SOLID;
             case HAND_WATER -> net.chimera.shaderpack.PackRenderingPhase.HAND_TRANSLUCENT;
             case PARTICLE, PARTICLE_TRANSLUCENT -> net.chimera.shaderpack.PackRenderingPhase.PARTICLES;
-            case WEATHER -> net.chimera.shaderpack.PackRenderingPhase.RAIN_SNOW;
-            case LINE -> net.chimera.shaderpack.PackRenderingPhase.OUTLINE;
-            // Iris draws world glint inside the entity phase; it has none of its own.
-            case GLINT -> net.chimera.shaderpack.PackRenderingPhase.ENTITIES;
-            case HAND_GLINT -> net.chimera.render.ChimeraHandRenderer.translucentPhase()
-                    ? net.chimera.shaderpack.PackRenderingPhase.HAND_TRANSLUCENT
-                    : net.chimera.shaderpack.PackRenderingPhase.HAND_SOLID;
-            case HOST_FALLBACK -> net.chimera.shaderpack.PackRenderingPhase.NONE;
+            default -> net.chimera.shaderpack.PackRenderingPhase.NONE;
         });
         try {
             renderer.uploadAndBindUBOs(packPipeline);

@@ -49,7 +49,16 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LINE)),
             // Iris GLINT (ShaderKey.GLINT) on the host POSITION_TEX glint layers.
             Map.entry("gbuffers_armor_glint", plan("gbuffers_armor_glint", FamilyAdapterPlan.Family.GLINT,
-                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_GLINT))
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_GLINT)),
+            // Iris LIGHTNING (LIGHTNING, DRAGON_RAYS) on the host POSITION_COLOR layout.
+            Map.entry("gbuffers_lightning", plan("gbuffers_lightning", FamilyAdapterPlan.Family.LIGHTNING,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LIGHTNING)),
+            // Iris BEACON (BEACON_BEAM_OPAQUE, BEACON_BEAM_TRANSLUCENT) on the host BLOCK layout.
+            Map.entry("gbuffers_beaconbeam", plan("gbuffers_beaconbeam", FamilyAdapterPlan.Family.BEACON_BEAM,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_BEACON)),
+            // Iris LEASH (ProgramId.Basic) on the host POSITION_COLOR_LIGHTMAP lead strip.
+            Map.entry("gbuffers_basic", plan("gbuffers_basic", FamilyAdapterPlan.Family.BASIC,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LEASH))
     );
 
     private FamilyAdapterRegistry() {}
@@ -121,9 +130,25 @@ public final class FamilyAdapterRegistry {
         return forProgram(name).family() == FamilyAdapterPlan.Family.GLINT;
     }
 
-    /** Lanes whose pack program runs on a host vertex layout Iris also draws natively: lines and glint. */
+    /**
+     * Lanes whose pack program runs on a host vertex layout Iris also draws natively: lines,
+     * glint, lightning, beacon beams and leads.
+     */
     public static boolean isHostLayoutFamily(String name) {
-        return isLineFamily(name) || isGlintFamily(name);
+        return forProgram(name).vertexContract().hostLayout();
+    }
+
+    /** The lane label a host-layout program's deviations carry (LINE, GLINT, ...), or null. */
+    public static String hostLayoutLane(String name) {
+        FamilyAdapterPlan plan = forProgram(name);
+        return plan.vertexContract().hostLayout() ? plan.family().name() : null;
+    }
+
+    /** Every host-layout lane label. */
+    public static java.util.Set<String> hostLayoutLanes() {
+        return CONTRACTS.values().stream().filter(plan -> plan.vertexContract().hostLayout())
+                .map(plan -> plan.family().name())
+                .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
     }
 
     public static boolean isSkyFamily(String name) {

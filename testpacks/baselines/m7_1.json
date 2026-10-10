@@ -15,10 +15,10 @@
   "nether": {
     "dimension": "minecraft:the_nether",
     "folder": "nether",
-    "reportSha256": "c66e4a6df9de1baf7b2adeb6a16f885a8fdb43638565c8b7d0ae45ef2b19fc00",
-    "sourceHashDigest": "9d54600702898233dccaabda093de7cd99e5da5a1a78098d6ed9ec2a41fca181",
+    "reportSha256": "ecca3a521a9ac8653e6789b03978b4a4c860825c82b57f0feca505b0ec980f4f",
+    "sourceHashDigest": "8fd2de54c73fe1abaf36f9af33ba724fd9fe084b14fec278bd9e4f39a988a901",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "08270ba8d48729b8f35df2120e60c62fee5003970fccc7d25611f91f745196c2",
+    "resolutionFingerprint": "bfa7bb9e17c0b8050a89343c9ecd9680252426e10cb042ba63709172a9f9583a",
     "aliases": ["gbuffers_block->gbuffers_textured_lit","gbuffers_block_translucent->gbuffers_textured_lit","gbuffers_damagedblock->gbuffers_textured_lit","gbuffers_entities->gbuffers_textured_lit","gbuffers_entities_glowing->gbuffers_textured_lit","gbuffers_entities_translucent->gbuffers_textured_lit","gbuffers_hand->gbuffers_textured_lit","gbuffers_hand_water->gbuffers_textured_lit","gbuffers_item->gbuffers_textured_lit","gbuffers_lightning->gbuffers_textured_lit","gbuffers_particles->gbuffers_textured_lit","gbuffers_particles_translucent->gbuffers_textured_lit","gbuffers_terrain->gbuffers_textured_lit","gbuffers_terrain_cutout->gbuffers_textured_lit","gbuffers_terrain_solid->gbuffers_textured_lit","gbuffers_water->gbuffers_textured_lit","gbuffers_weather->gbuffers_textured_lit"],
     "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_line","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","shadow","shadow_block","shadow_cutout","shadow_entities","shadow_lightning","shadow_solid","shadow_water"],
     "disabledPrograms": ["final"]

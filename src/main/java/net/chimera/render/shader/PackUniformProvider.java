@@ -149,6 +149,18 @@ public final class PackUniformProvider {
         }
     }
 
+    /**
+     * Sets the entityId the next host-layout lane draw reads (Iris's fallback entityId
+     * uniform), rewriting its one binding only when the value changes.
+     */
+    public static void updateDrawEntityId(int entityId) {
+        if (!INSTANCE.frameState.setDrawEntityId(entityId)) return;
+        Binding binding = INSTANCE.bindings.get(new UniformKey(UniformRegistry.DRAW_ENTITY_ID, "int"));
+        if (binding != null) {
+            INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+    }
+
     /** Returns the enclosing phase for an exception-safe draw-scope restore. */
     public static net.chimera.shaderpack.PackRenderingPhase setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase phase) {
         var previous = INSTANCE.frameState.setRenderingPhase(phase);

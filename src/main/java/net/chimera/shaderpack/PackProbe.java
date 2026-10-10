@@ -535,7 +535,7 @@ public final class PackProbe {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "PARTICLE_VERTEX_BRIDGE" : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isHostLayoutFamily(name)) {
-                String lane = FamilyAdapterRegistry.isGlintFamily(name) ? "GLINT" : "LINE";
+                String lane = FamilyAdapterRegistry.hostLayoutLane(name);
                 deviations.add(lane + (programPlan.convertedVertex() != null
                         ? "_VERTEX_BRIDGE" : "_VERTEX_BRIDGE_UNSUPPORTED"));
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
@@ -699,8 +699,7 @@ public final class PackProbe {
         if (FamilyAdapterRegistry.isHostLayoutFamily(name)
                 && programPlan != null && programPlan.executable()) {
             deviations.add("FAMILY_ADAPTER_INSTALLED");
-            deviations.add(FamilyAdapterRegistry.isGlintFamily(name)
-                    ? "GLINT_STATE_FIXED_TO_HOST" : "LINE_STATE_FIXED_TO_HOST");
+            deviations.add(FamilyAdapterRegistry.hostLayoutLane(name) + "_STATE_FIXED_TO_HOST");
         }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
@@ -851,6 +850,11 @@ public final class PackProbe {
         return imagesReady && storageReady;
     }
 
+    /** A host-layout lane (LINE, GLINT, LIGHTNING, ...) whose vertex could not be bridged. */
+    private static final Set<String> HOST_LAYOUT_BRIDGE_FAILURES = FamilyAdapterRegistry.hostLayoutLanes().stream()
+            .map(lane -> lane + "_VERTEX_BRIDGE_UNSUPPORTED")
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+
     private static boolean hasSevereDeviation(Collection<String> deviations) {
         for (String deviation : deviations) {
             if (deviation.equals("UNSUPPORTED_PACK_STAGE")
@@ -876,8 +880,7 @@ public final class PackProbe {
                     || deviation.equals("HAND_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("WEATHER_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("LINE_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("GLINT_VERTEX_BRIDGE_UNSUPPORTED")
+                    || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)
                     || deviation.equals("SKY_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("CLOUD_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED")

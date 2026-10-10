@@ -39,7 +39,7 @@
       }
     },
     "unsupported_water": {
-      "reportSha256": "305ae619dd0342d93bc5c63e8c894d5a4d9c378ac949aa83559385a53c423bd9",
+      "reportSha256": "2dda6be4142e73b250b80d12531c27ef54ede124be74c576e874d1baa034313d",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -58,6 +58,9 @@
         "gbuffers_entities_translucent": [
           "fragment"
         ],
+        "gbuffers_lightning": [
+          "fragment"
+        ],
         "gbuffers_water": [
           "fragment",
           "vertex"
@@ -73,6 +76,10 @@
         "gbuffers_entities_translucent": [
           "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
+        ],
+        "gbuffers_lightning": [
+          "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
         ],
         "gbuffers_water": [
           "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",

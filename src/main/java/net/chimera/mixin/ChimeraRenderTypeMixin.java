@@ -10,6 +10,7 @@ import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.ChimeraHandRenderer;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.HostLayoutLane;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -29,21 +30,14 @@ public abstract class ChimeraRenderTypeMixin {
     private void chimera$immediateFamilyWindow(MeshData mesh, Operation<Void> original) {
         RenderType type = (RenderType) (Object) this;
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        // Weather, lines (block outlines) and world glint keep their native layout; only
-        // the program and its authored targets change. The host buffer flushes glint
-        // after the pack has drawn the items and models it lies on (EQUAL depth test).
+        // A host-layout lane (weather, lines, glint, lightning, beacon beams, leads) keeps its
+        // native layout; only the program and its authored targets change. The host buffer
+        // flushes glint after the pack has drawn the items and models it lies on (EQUAL depth).
         var format = mesh == null ? null : mesh.drawState().format();
-        ChimeraEntityBridge.Family lane = (type.pipeline() == RenderPipelines.WEATHER_DEPTH_WRITE
-                || type.pipeline() == RenderPipelines.WEATHER_NO_DEPTH_WRITE)
-                && format == DefaultVertexFormat.PARTICLE ? ChimeraEntityBridge.Family.WEATHER
-                : ChimeraEntityBridge.isLinePipeline(type.pipeline())
-                && format == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH ? ChimeraEntityBridge.Family.LINE
-                : type.pipeline() == RenderPipelines.GLINT && format == DefaultVertexFormat.POSITION_TEX
-                ? (ChimeraHandRenderer.active() ? ChimeraEntityBridge.Family.HAND_GLINT : ChimeraEntityBridge.Family.GLINT)
-                : null;
+        HostLayoutLane lane = HostLayoutLane.forDraw(type.pipeline(), format, ChimeraHandRenderer.active());
         if (pass != null && lane != null && ChimeraEntityBridge.isWorldSubmissionWindow()
-                && ChimeraEntityBridge.beginHostLayoutDraw(lane)) {
-            var lanePipeline = pass.particlePipeline(lane);
+                && ChimeraEntityBridge.beginHostLayoutDraw(lane.family())) {
+            var lanePipeline = pass.particlePipeline(lane.family());
             boolean window = false;
             try {
                 pass.prepareProgramImages(lanePipeline.pipeline());

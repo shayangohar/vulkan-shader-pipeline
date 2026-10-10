@@ -20,6 +20,7 @@ import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
@@ -303,11 +304,9 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackParticle packParticlePipeline;
     /** Pack translucent particle program on the host translucent particle window. */
     private PackPipelines.PackParticle packTranslucentParticlePipeline;
-    /** Pack weather program on the host weather draw window. */
-    private PackPipelines.PackParticle packWeatherPipeline;
-    private PackPipelines.PackParticle packLinePipeline;
-    private PackPipelines.PackParticle packGlintPipeline;
-    private PackPipelines.PackParticle packHandGlintPipeline;
+    /** Pack programs of the installed host-layout lanes (weather, lines, glint, lightning, ...). */
+    private final java.util.EnumMap<ChimeraEntityBridge.Family, PackPipelines.PackParticle> packHostLayoutPipelines =
+            new java.util.EnumMap<>(ChimeraEntityBridge.Family.class);
     private PackPipelines.PackSkyFamily packSkyBasicPipeline;
     private PackPipelines.PackSkyFamily packSkyTexturedPipeline;
     private PackPipelines.PackSky packCloudPipeline;
@@ -1043,16 +1042,12 @@ public class ChimeraMainPass implements MainPass {
         };
     }
 
-    /** The selected host-particle lane retains its own authored output contract. */
+    /** The selected host-particle or host-layout lane retains its own authored output contract. */
     public PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
         return switch (family) {
             case PARTICLE -> this.packParticlePipeline;
             case PARTICLE_TRANSLUCENT -> this.packTranslucentParticlePipeline;
-            case WEATHER -> this.packWeatherPipeline;
-            case LINE -> this.packLinePipeline;
-            case GLINT -> this.packGlintPipeline;
-            case HAND_GLINT -> this.packHandGlintPipeline;
-            default -> null;
+            default -> this.packHostLayoutPipelines.get(family);
         };
     }
 
@@ -2153,10 +2148,7 @@ public class ChimeraMainPass implements MainPass {
         if (this.packHandWaterPipeline != null) this.packHandWaterPipeline.cleanUp();
         if (this.packParticlePipeline != null) this.packParticlePipeline.pipeline().cleanUp();
         if (this.packTranslucentParticlePipeline != null) this.packTranslucentParticlePipeline.pipeline().cleanUp();
-        if (this.packWeatherPipeline != null) this.packWeatherPipeline.pipeline().cleanUp();
-        if (this.packLinePipeline != null) this.packLinePipeline.pipeline().cleanUp();
-        if (this.packGlintPipeline != null) this.packGlintPipeline.pipeline().cleanUp();
-        if (this.packHandGlintPipeline != null) this.packHandGlintPipeline.pipeline().cleanUp();
+        this.packHostLayoutPipelines.values().forEach(lane -> lane.pipeline().cleanUp());
         if (this.packSkyBasicPipeline != null) this.packSkyBasicPipeline.cleanUp();
         if (this.packSkyTexturedPipeline != null) this.packSkyTexturedPipeline.cleanUp();
         if (this.packCloudPipeline != null) this.packCloudPipeline.pipeline().cleanUp();
@@ -2205,10 +2197,7 @@ public class ChimeraMainPass implements MainPass {
         this.packHandWaterPipeline = null;
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
-        this.packWeatherPipeline = null;
-        this.packLinePipeline = null;
-        this.packGlintPipeline = null;
-        this.packHandGlintPipeline = null;
+        this.packHostLayoutPipelines.clear();
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
@@ -2970,10 +2959,7 @@ public class ChimeraMainPass implements MainPass {
         this.packHandWaterPipeline = null;
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
-        this.packWeatherPipeline = null;
-        this.packLinePipeline = null;
-        this.packGlintPipeline = null;
-        this.packHandGlintPipeline = null;
+        this.packHostLayoutPipelines.clear();
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
@@ -3483,52 +3469,8 @@ public class ChimeraMainPass implements MainPass {
                     continue;
                 }
                 markFamilyPipelineInstalled(name, "PARTICLE_TRANSLUCENT_INSTALLED");
-            } else if (FamilyAdapterRegistry.isWeatherFamily(name)) {
-                PackPipelines.PackParticle weather = PackPipelines.buildParticleFamily(programPlan,
-                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
-                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
-                if (weather == null) {
-                    markFamilyPipelineFallback(name, "WEATHER_PIPELINE_BUILD_FAILED");
-                    continue;
-                }
-                this.packWeatherPipeline = weather;
-                if (!attachPackStoragePipeline(name, weather.pipeline(), weather.imageBindings())) {
-                    weather.pipeline().cleanUp();
-                    this.packWeatherPipeline = null;
-                    continue;
-                }
-                markFamilyPipelineInstalled(name, "WEATHER_PIPELINE_INSTALLED");
-            } else if (FamilyAdapterRegistry.isLineFamily(name)) {
-                PackPipelines.PackParticle line = PackPipelines.buildLine(programPlan,
-                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
-                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
-                if (line == null) {
-                    markFamilyPipelineFallback(name, "LINE_PIPELINE_BUILD_FAILED");
-                    continue;
-                }
-                this.packLinePipeline = line;
-                if (!attachPackStoragePipeline(name, line.pipeline(), line.imageBindings())) {
-                    line.pipeline().cleanUp();
-                    this.packLinePipeline = null;
-                    continue;
-                }
-                markFamilyPipelineInstalled(name, "LINE_PIPELINE_INSTALLED");
-            } else if (FamilyAdapterRegistry.isGlintFamily(name)) {
-                PackPipelines.PackParticle glint = PackPipelines.buildGlint(programPlan,
-                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
-                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
-                if (glint == null) {
-                    markFamilyPipelineFallback(name, "GLINT_PIPELINE_BUILD_FAILED");
-                    continue;
-                }
-                this.packGlintPipeline = glint;
-                if (!attachPackStoragePipeline(name, glint.pipeline(), glint.imageBindings())) {
-                    glint.pipeline().cleanUp();
-                    this.packGlintPipeline = null;
-                    continue;
-                }
-                markFamilyPipelineInstalled(name, "GLINT_PIPELINE_INSTALLED");
-                this.packHandGlintPipeline = buildHandGlint(name, programPlan);
+            } else if (!HostLayoutLane.forProgram(name).isEmpty()) {
+                installHostLayoutLanes(name, programPlan);
             } else {
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
@@ -3541,11 +3483,10 @@ public class ChimeraMainPass implements MainPass {
         ChimeraEntityBridge.install(this.packEntityPipeline, this.packTranslucentEntityPipeline,
                 this.packSpiderEyesPipeline, this.packBlockPipeline, this.packDamagedBlockPipeline,
                 this.packHandPipeline, this.packHandWaterPipeline, this.packParticlePipeline,
-                this.packTranslucentParticlePipeline, this.packWeatherPipeline,
+                this.packTranslucentParticlePipeline,
                 this.packPlan == null ? null : this.packPlan.entityIds());
         ChimeraEntityBridge.installTextVariants(this.packTranslucentEntityTextPipeline, this.packBlockTextPipeline);
-        ChimeraEntityBridge.installLine(this.packLinePipeline);
-        ChimeraEntityBridge.installGlint(this.packGlintPipeline, this.packHandGlintPipeline);
+        ChimeraEntityBridge.installHostLayout(this.packHostLayoutPipelines);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 this.packEntityPipeline == null ? "none"
                         : this.packEntityPipeline.outputPlan() == null
@@ -3882,21 +3823,42 @@ public class ChimeraMainPass implements MainPass {
         return text;
     }
 
-    /** The glint program under the hand projection; without it first-person glint stays host-drawn. */
-    private PackPipelines.PackParticle buildHandGlint(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackParticle hand = PackPipelines.buildHandGlint(programPlan,
-                this.packPlan == null ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources(),
-                this.packStorageBufferOwner);
-        if (hand == null) {
-            LOGGER.warn("[chimera] pack {}: hand glint variant unavailable; first-person glint stays host-drawn", name);
-            return null;
+    /**
+     * Builds the host-layout lanes one program serves (HostLayoutLane), world lane first. A
+     * world lane that fails falls back to the host draw for this program. A hand variant
+     * (first-person glint) needs its world lane; without it that draw stays host-drawn.
+     */
+    private void installHostLayoutLanes(String name, PackProgramPlan programPlan) {
+        PackAdvancedResourcePlan advanced = this.packPlan == null
+                ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources();
+        for (HostLayoutLane lane : HostLayoutLane.forProgram(name)) {
+            PackPipelines.PackParticle built = switch (lane) {
+                case WEATHER -> PackPipelines.buildParticleFamily(programPlan, advanced, this.packStorageBufferOwner);
+                case HAND_GLINT -> PackPipelines.buildHandGlint(programPlan, advanced, this.packStorageBufferOwner);
+                default -> PackPipelines.buildHostLayout(programPlan, advanced, this.packStorageBufferOwner);
+            };
+            if (built == null) {
+                if (lane.hand()) {
+                    LOGGER.warn("[chimera] pack {}: {} variant unavailable; that draw stays host-drawn", name,
+                            lane.name().toLowerCase());
+                    continue;
+                }
+                markFamilyPipelineFallback(name, lane + "_PIPELINE_BUILD_FAILED");
+                return;
+            }
+            if (!attachPackStoragePipeline(name, built.pipeline(), built.imageBindings())) {
+                // The storage owner has reported this fallback.
+                built.pipeline().cleanUp();
+                if (lane.hand()) continue;
+                return;
+            }
+            this.packHostLayoutPipelines.put(lane.family(), built);
+            if (lane.hand()) {
+                LOGGER.info("[chimera] pack {}: {} variant installed", name, lane.name().toLowerCase());
+            } else {
+                markFamilyPipelineInstalled(name, lane + "_PIPELINE_INSTALLED");
+            }
         }
-        if (!attachPackStoragePipeline(name, hand.pipeline(), hand.imageBindings())) {
-            hand.pipeline().cleanUp();
-            return null;
-        }
-        LOGGER.info("[chimera] pack {}: hand glint variant installed", name);
-        return hand;
     }
 
     private void markFamilyPipelineInstalled(String name, String deviation) {

@@ -37,6 +37,7 @@ public final class ConformanceHarness {
         verifyParticleFallbackAndTargets();
         verifyLineLane();
         verifyGlintLane();
+        verifyHostLayoutLanes();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -674,7 +675,8 @@ public final class ConformanceHarness {
         for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LINES,
                 net.minecraft.client.renderer.RenderPipelines.LINES_TRANSLUCENT,
                 net.minecraft.client.renderer.RenderPipelines.SECONDARY_BLOCK_OUTLINE)) {
-            assertTrue(net.chimera.render.shader.ChimeraEntityBridge.isLinePipeline(host),
+            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, host.getVertexFormat(), false)
+                            == net.chimera.render.shader.HostLayoutLane.LINE,
                     host.getLocation() + " must route to gbuffers_line");
             assertEquals(0.0F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
                     "Iris LINES uses AlphaTests.OFF");
@@ -827,6 +829,151 @@ public final class ConformanceHarness {
             deleteTree(root);
         }
         System.out.println("[chimera] glint lane on the host layout: PASS");
+    }
+
+    /**
+     * The HostLayoutLane table against Iris IrisPipelines and the pack-side contracts, then
+     * LIGHTNING (through the entity fallback), BEACON and LEASH converted and compiled with
+     * Iris's host-layout inputs and identity: entityId per draw, blockEntityId -1.
+     */
+    private static void verifyHostLayoutLanes() throws IOException {
+        var lanes = net.chimera.render.shader.HostLayoutLane.values();
+        java.util.Set<String> servedPrograms = new java.util.HashSet<>();
+        for (var lane : lanes) {
+            assertTrue(net.chimera.render.shader.HostLayoutLane.of(lane.family()) == lane,
+                    lane + " family must name its lane");
+            for (var host : lane.pipelines()) {
+                assertEquals(lane.format(), host.getVertexFormat(), host.getLocation() + " host format changed");
+                assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, lane.format(), lane.hand()) == lane
+                        && lane.serves(host), host.getLocation() + " must route to " + lane);
+            }
+            FamilyAdapterPlan adapter = FamilyAdapterRegistry.forProgram(lane.program());
+            if (lane == net.chimera.render.shader.HostLayoutLane.WEATHER) {
+                assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE, adapter.vertexContract(),
+                        "weather keeps the particle conversion");
+            } else {
+                assertTrue(adapter.vertexContract().hostLayout(), lane.program() + " must be a host-layout program");
+                assertEquals(lane.format(), PackPipelines.hostLayoutFormat(adapter.vertexContract()),
+                        lane + " pack layout and host layout disagree");
+                servedPrograms.add(lane.program());
+            }
+        }
+        for (String program : List.of("gbuffers_line", "gbuffers_armor_glint", "gbuffers_lightning",
+                "gbuffers_beaconbeam", "gbuffers_basic")) {
+            assertTrue(servedPrograms.contains(program), program + " has no host-layout lane");
+        }
+        assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size(),
+                "every host-layout program needs a lane");
+        var table = net.chimera.render.shader.HostLayoutLane.class;
+        assertTrue(net.chimera.render.shader.HostLayoutLane.LINE.whiteAlbedo()
+                        && net.chimera.render.shader.HostLayoutLane.LIGHTNING.whiteAlbedo()
+                        && net.chimera.render.shader.HostLayoutLane.LEASH.whiteAlbedo()
+                        && !net.chimera.render.shader.HostLayoutLane.GLINT.whiteAlbedo()
+                        && !net.chimera.render.shader.HostLayoutLane.BEACON_BEAM.whiteAlbedo(),
+                "Iris binds white to unit 0 exactly for host formats without UV0: " + table.getSimpleName());
+        assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(
+                        net.minecraft.client.renderer.RenderPipelines.LINES,
+                        net.minecraft.client.renderer.RenderPipelines.LINES.getVertexFormat(), true) == null,
+                "a world-only lane must not take a first-person draw");
+        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LIGHTNING,
+                net.minecraft.client.renderer.RenderPipelines.DRAGON_RAYS,
+                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_OPAQUE,
+                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_TRANSLUCENT,
+                net.minecraft.client.renderer.RenderPipelines.LEASH)) {
+            assertEquals(0.0F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+                    "Iris LIGHTNING, BEACON and LEASH use AlphaTests.OFF");
+        }
+
+        Path root = Files.createTempDirectory("chimera-host-layout-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            // No gbuffers_lightning: lightning falls back to gbuffers_entities, as in BSL and MakeUp.
+            Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                    #version 120
+                    uniform int entityId;
+                    attribute int blockEntityId;
+                    varying vec2 texCoord;
+                    varying vec2 light;
+                    varying vec4 color;
+                    varying vec3 normal;
+                    varying float block;
+                    void main() {
+                        texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                        light = (gl_TextureMatrix[1] * gl_MultiTexCoord1).xy;
+                        color = gl_Color;
+                        normal = gl_NormalMatrix * gl_Normal;
+                        block = float(blockEntityId);
+                        gl_Position = ftransform();
+                        if (entityId == 10101) gl_Position.z -= 0.0001;
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                    #version 120
+                    /* DRAWBUFFERS:0 */
+                    uniform sampler2D texture;
+                    uniform int entityId;
+                    varying vec2 texCoord;
+                    varying vec2 light;
+                    varying vec4 color;
+                    varying vec3 normal;
+                    varying float block;
+                    void main() {
+                        vec4 albedo = texture2D(texture, texCoord) * color;
+                        if (entityId == 10101) albedo = vec4(1.0);
+                        gl_FragData[0] = albedo + vec4(light, normal.z, block) * 0.001;
+                    }
+                    """);
+            for (String program : List.of("gbuffers_beaconbeam", "gbuffers_basic")) {
+                Files.copy(shaders.resolve("gbuffers_entities.vsh"), shaders.resolve(program + ".vsh"));
+                Files.copy(shaders.resolve("gbuffers_entities.fsh"), shaders.resolve(program + ".fsh"));
+            }
+            var analysis = PackProbe.analyze(root);
+            assertEquals("gbuffers_entities", analysis.resolution().resolution("gbuffers_lightning").selectedProgram(),
+                    "Iris ProgramId.Lightning falls back to gbuffers_entities");
+            Map<String, List<String>> expected = Map.of(
+                    "gbuffers_lightning", List.of("layout(location = 1) in vec4 Color;",
+                            "const vec2 UV0 = vec2(0.5);", "const ivec2 UV2 = ivec2(240);",
+                            "const vec3 Normal = vec3(0.0, 0.0, 1.0);"),
+                    "gbuffers_beaconbeam", List.of("layout(location = 2) in vec2 UV0;",
+                            "layout(location = 3) in ivec2 UV2;", "layout(location = 4) in vec3 Normal;",
+                            "return vec4(Position + ModelOffset, 1.0);"),
+                    "gbuffers_basic", List.of("layout(location = 1) in vec4 Color;",
+                            "const vec2 UV0 = vec2(0.5);", "layout(location = 2) in ivec2 UV2;",
+                            "const vec3 Normal = vec3(0.0, 0.0, 1.0);"));
+            for (var entry : expected.entrySet()) {
+                var plan = analysis.plan().program(entry.getKey());
+                assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(entry.getKey()),
+                        entry.getKey() + " rejected: " + (plan == null ? "missing" : plan.deviations()));
+                String vertex = plan.convertedVertex();
+                for (String line : entry.getValue()) {
+                    assertTrue(vertex.contains(line), entry.getKey() + " lost Iris host input " + line + ": " + vertex);
+                }
+                assertTrue(vertex.contains("(Color * ColorModulator)")
+                                && vertex.contains(UniformRegistry.DRAW_ENTITY_ID + " == 10101")
+                                && vertex.contains("float((-1))")
+                                && !vertex.contains("chimeraEntityId")
+                                && plan.convertedFragment().contains(UniformRegistry.DRAW_ENTITY_ID + " == 10101"),
+                        entry.getKey() + " must read entityId per draw and blockEntityId -1: " + vertex);
+                assertTrue(!plan.alphaTestPlan().perDrawReference(),
+                        entry.getKey() + " has no Iris alpha test (AlphaTests.OFF)");
+            }
+            var compiled = PackCompileCheck.run(root, analysis);
+            assertTrue(compiled.failures().isEmpty(), "host-layout lane compilation: " + compiled.failures());
+        } finally {
+            deleteTree(root);
+        }
+        var renderLanes = nativeClass("net/chimera/mixin/ChimeraCustomFeatureRendererMixin").methods.stream()
+                .filter(method -> method.name.equals("chimera$renderLanes")).findFirst().orElseThrow();
+        boolean identity = false;
+        boolean flush = false;
+        for (var instruction : renderLanes.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                if (call.name.equals("beginDrawIdentity")) identity = true;
+                if (identity && call.name.equals("endBatch")) flush = true;
+            }
+        }
+        assertTrue(flush, "held lane geometry must flush inside its submitter's draw identity");
+        System.out.println("[chimera] host-layout lanes (lightning, beacon, lead) and draw identity: PASS");
     }
 
     private static void deleteTree(Path root) throws IOException {

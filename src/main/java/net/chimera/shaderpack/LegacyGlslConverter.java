@@ -3868,6 +3868,85 @@ public final class LegacyGlslConverter {
         return insertAfterHeader(src, "uniform float " + UniformRegistry.GLINT_ALPHA + ";\n");
     }
 
+    /**
+     * DefaultVertexFormat.POSITION_COLOR lightning and dragon rays. Iris supplies the missing
+     * inputs as for any host format: UV0 (0.5, 0.5), full light (240, 240) and +Z.
+     */
+    private static final String LIGHTNING_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * DefaultVertexFormat.BLOCK beacon beams: position, colour, texture, light and normal, at
+     * the crumbling layout's locations, with the host colour modulator as for any native layout.
+     */
+    private static final String BEACON_VERTEX_PREAMBLE = "// DefaultVertexFormat.BLOCK beacon beam\n"
+            + CRUMBLING_VERTEX_PREAMBLE;
+
+    /**
+     * DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads. Iris supplies UV0 (0.5, 0.5) and +Z;
+     * the light coordinates are the lead's own.
+     */
+    private static final String LEASH_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 2) in ivec2 UV2;")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * Expands a host-layout stage's includes before its interface is planned; the line and
+     * glint vertices do this in {@link #prepareLineVertex} and {@link #prepareGlintVertex}.
+     */
+    public static String prepareHostLayoutSource(String source, Path sourceFile) {
+        return source == null ? null : expandIncludes(source, sourceFile);
+    }
+
+    /**
+     * Iris applies EntityPatcher only to entity and text formats. On any other host layout
+     * entityId and blockEntityId stay uniforms (CommonUniforms): entityId is the entity being
+     * drawn, Iris's fallback "for when entityId via attributes cannot be used (lightning)", and
+     * blockEntityId is the constant -1. Applied to both stages of a host-layout program before
+     * its interface is planned, so the entity id is an ordinary per-draw uniform
+     * ({@link UniformRegistry#DRAW_ENTITY_ID}).
+     */
+    public static String prepareHostLayoutIdentity(String source) {
+        if (source == null) return null;
+        Map<String, String> types = new java.util.HashMap<>();
+        Matcher declaration = ENTITY_ID_DECLARATION.matcher(stripComments(source));
+        while (declaration.find()) {
+            for (String declarator : declaration.group(3).split(",")) {
+                String value = declarator.trim();
+                int equals = value.indexOf('=');
+                String name = equals < 0 ? value : value.substring(0, equals).trim();
+                if (ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.group(2));
+            }
+        }
+        if (types.isEmpty()) return source;
+        String src = removeEntityIdDeclarations(source);
+        boolean readsEntityId = types.containsKey("entityId")
+                && containsIdentifier(stripComments(src), "entityId");
+        Map<String, String> replacements = new java.util.HashMap<>();
+        if (types.containsKey("entityId")) {
+            replacements.put("entityId", "float".equals(types.get("entityId"))
+                    ? "float(" + UniformRegistry.DRAW_ENTITY_ID + ")" : UniformRegistry.DRAW_ENTITY_ID);
+        }
+        if (types.containsKey("blockEntityId")) {
+            replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
+        }
+        src = GlslTokenRewriter.replaceIdentifiers(src, replacements);
+        return readsEntityId ? insertAfterHeader(src, "uniform int " + UniformRegistry.DRAW_ENTITY_ID + ";\n") : src;
+    }
+
     private static String expandIncludes(String source, Path sourceFile) {
         if (sourceFile == null) return source;
         ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
@@ -3889,8 +3968,8 @@ public final class LegacyGlslConverter {
     }
 
     /**
-     * Converts a line or glint vertex (after {@link #prepareLineVertex} or
-     * {@link #prepareGlintVertex}) onto its host layout.
+     * Converts a host-layout vertex (after {@link #prepareLineVertex}, {@link #prepareGlintVertex}
+     * or {@link #prepareHostLayoutSource}, and {@link #prepareHostLayoutIdentity}) onto its layout.
      */
     public static TerrainVertexConversion convertHostLayoutVertexChecked(
             FamilyAdapterPlan.VertexContract contract, String source, String fragmentSource,
@@ -3901,6 +3980,9 @@ public final class LegacyGlslConverter {
         String preamble = switch (contract) {
             case HOST_LINE -> LINE_VERTEX_PREAMBLE;
             case HOST_GLINT -> GLINT_VERTEX_PREAMBLE;
+            case HOST_LIGHTNING -> LIGHTNING_VERTEX_PREAMBLE;
+            case HOST_BEACON -> BEACON_VERTEX_PREAMBLE;
+            case HOST_LEASH -> LEASH_VERTEX_PREAMBLE;
             default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
         };
         return convertEntityVertexOrThrow(unboundMaterialAttributes(source), null, fragmentSource,
@@ -3937,13 +4019,15 @@ public final class LegacyGlslConverter {
             FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV);
 
     /**
-     * Lanes drawn on the host's own vertex layout (particles, weather, sky, lines, glint): as in Iris's
-     * VanillaTransformer, gl_Color carries the host ColorModulator and gl_NormalMatrix is the
-     * model-view normal matrix.
+     * Lanes drawn on the host's own vertex layout (particles, weather, sky and the host-layout
+     * lanes): as in Iris's VanillaTransformer, gl_Color carries the host ColorModulator and
+     * gl_NormalMatrix is the model-view normal matrix.
      */
     private static boolean nativeLayoutPreamble(String preamble) {
         return preamble == PARTICLE_VERTEX_PREAMBLE || preamble == LINE_VERTEX_PREAMBLE
-                || preamble == GLINT_VERTEX_PREAMBLE || isSkyPreamble(preamble);
+                || preamble == GLINT_VERTEX_PREAMBLE || preamble == LIGHTNING_VERTEX_PREAMBLE
+                || preamble == BEACON_VERTEX_PREAMBLE || preamble == LEASH_VERTEX_PREAMBLE
+                || isSkyPreamble(preamble);
     }
 
     private static boolean isSkyPreamble(String preamble) {

@@ -111,19 +111,27 @@ public final class PackPlanBuilder {
         PackProgramResolution sourceResolution = resolution == null ? null : resolution.resolution(program.name());
         String directiveProgram = sourceResolution == null || sourceResolution.selectedProgram().isBlank()
                 ? program.name() : sourceResolution.selectedProgram();
-        // Iris's line and glint handling rewrites the authored vertex before anything
-        // reads its interface: a widened line declares and reads the screen size, and
-        // glint reads the glint strength.
-        boolean hostLayoutFamily = FamilyAdapterRegistry.isHostLayoutFamily(program.name());
-        String hostLayoutLane = FamilyAdapterRegistry.isGlintFamily(program.name()) ? "GLINT" : "LINE";
+        // Iris's handling of a host-layout lane rewrites the authored sources before anything
+        // reads their interface: a widened line declares and reads the screen size, glint
+        // reads the glint strength, and every such lane reads entityId as a per-draw uniform.
+        String hostLayoutLane = FamilyAdapterRegistry.hostLayoutLane(program.name());
+        boolean hostLayoutFamily = hostLayoutLane != null;
         String hostLayoutFailure = null;
         if (hostLayoutFamily && vertex != null) {
             try {
                 Path vertexFile = preparedSnapshot ? null : program.vertexPath();
                 vertex = FamilyAdapterRegistry.isGlintFamily(program.name())
                         ? LegacyGlslConverter.prepareGlintVertex(vertex, vertexFile)
-                        : LegacyGlslConverter.prepareLineVertex(vertex, vertexFile,
-                        directiveProgram.equals("gbuffers_line"));
+                        : FamilyAdapterRegistry.isLineFamily(program.name())
+                        ? LegacyGlslConverter.prepareLineVertex(vertex, vertexFile,
+                        directiveProgram.equals("gbuffers_line"))
+                        : LegacyGlslConverter.prepareHostLayoutSource(vertex, vertexFile);
+                vertex = LegacyGlslConverter.prepareHostLayoutIdentity(vertex);
+                if (fragment != null) {
+                    fragment = LegacyGlslConverter.prepareHostLayoutIdentity(
+                            LegacyGlslConverter.prepareHostLayoutSource(fragment,
+                                    preparedSnapshot ? null : program.fragmentPath()));
+                }
             } catch (RuntimeException failure) {
                 hostLayoutFailure = safeReason(failure);
             }

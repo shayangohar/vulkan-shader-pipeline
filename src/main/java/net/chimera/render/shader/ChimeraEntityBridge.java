@@ -36,6 +36,9 @@ public final class ChimeraEntityBridge {
         GLINT,
         /** First-person glint: the glint program under the hand projection. */
         HAND_GLINT,
+        LIGHTNING,
+        BEACON_BEAM,
+        LEASH,
         HOST_FALLBACK
     }
 
@@ -54,12 +57,14 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline blockTextPipeline;
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
-    private static GraphicsPipeline weatherPipeline;
-    /** gbuffers_line on the host line layout (Iris ShaderKey.LINES). */
-    private static GraphicsPipeline linePipeline;
-    /** gbuffers_armor_glint on the host POSITION_TEX glint layers (Iris ShaderKey.GLINT). */
-    private static GraphicsPipeline glintPipeline;
-    private static GraphicsPipeline handGlintPipeline;
+    /** The installed lanes of {@link HostLayoutLane}, keyed by their family. */
+    private static final java.util.EnumMap<Family, GraphicsPipeline> hostLayoutPipelines =
+            new java.util.EnumMap<>(Family.class);
+    /**
+     * The entity id a host-layout draw reads (Iris's fallback entityId uniform): the submitter
+     * of the custom geometry being drawn, 0 for any other draw.
+     */
+    private static int drawEntityId;
     private static GraphicsPipeline activePipeline;
     private static Family activeFamily;
     /** The family requested for the current guarded draw, even if host fallback is selected. */
@@ -121,7 +126,7 @@ public final class ChimeraEntityBridge {
 
     public static void install(PackPipelines.PackEntity entity,
                                PackEntityIdResolver nextResolver) {
-        install(entity, null, null, null, null, null, null, null, null, null, nextResolver);
+        install(entity, null, null, null, null, null, null, null, null, nextResolver);
     }
 
     public static void install(
@@ -131,9 +136,10 @@ public final class ChimeraEntityBridge {
             PackPipelines.PackParticle particle,
             PackEntityIdResolver nextResolver
     ) {
-        install(entity, null, null, block, null, hand, null, particle, null, null, nextResolver);
+        install(entity, null, null, block, null, hand, null, particle, null, nextResolver);
     }
 
+    /** Installs the family lanes; the host-layout lanes follow through {@link #installHostLayout}. */
     public static void install(
             PackPipelines.PackEntity entity,
             PackPipelines.PackEntity translucentEntity,
@@ -144,7 +150,6 @@ public final class ChimeraEntityBridge {
             PackPipelines.PackHand handWater,
             PackPipelines.PackParticle particle,
             PackPipelines.PackParticle translucentParticle,
-            PackPipelines.PackParticle weather,
             PackEntityIdResolver nextResolver
     ) {
         releaseEntityBuffer();
@@ -161,10 +166,8 @@ public final class ChimeraEntityBridge {
         handWaterPipeline = handWater == null ? null : handWater.primary().pipeline();
         particlePipeline = particle == null ? null : particle.pipeline();
         translucentParticlePipeline = translucentParticle == null ? null : translucentParticle.pipeline();
-        weatherPipeline = weather == null ? null : weather.pipeline();
-        linePipeline = null;
-        glintPipeline = null;
-        handGlintPipeline = null;
+        hostLayoutPipelines.clear();
+        drawEntityId = 0;
         activePipeline = null;
         activeFamily = null;
         requestedFamily = null;
@@ -199,8 +202,22 @@ public final class ChimeraEntityBridge {
                 status(entityPipeline), status(translucentEntityPipeline), status(spiderEyesPipeline),
                 status(blockPipeline), status(damagedBlockPipeline), status(handPipeline),
                 status(handWaterPipeline), status(particlePipeline), status(translucentParticlePipeline));
-        if (weatherPipeline != null) {
-            ChimeraMod.LOGGER.info("[chimera] family bridge: weather=installed");
+    }
+
+    /**
+     * Installs the host-layout lanes after {@link #install}. A lane without a pipeline keeps
+     * its host draw.
+     */
+    public static void installHostLayout(java.util.Map<Family, PackPipelines.PackParticle> lanes) {
+        hostLayoutPipelines.clear();
+        if (lanes != null) {
+            lanes.forEach((family, lane) -> {
+                if (HostLayoutLane.of(family) != null && lane != null) hostLayoutPipelines.put(family, lane.pipeline());
+            });
+        }
+        if (!hostLayoutPipelines.isEmpty()) {
+            ChimeraMod.LOGGER.info("[chimera] family bridge: host-layout lanes={}",
+                    hostLayoutPipelines.keySet().stream().map(family -> family.name().toLowerCase()).toList());
         }
     }
 
@@ -213,6 +230,7 @@ public final class ChimeraEntityBridge {
             activeFamily = null;
             requestedFamily = null;
             currentEntityId = 0;
+            drawEntityId = 0;
             submittingDepth = 0;
             entitySubmissionDepth = 0;
             blockSubmissionDepth = 0;
@@ -250,10 +268,8 @@ public final class ChimeraEntityBridge {
         blockTextPipeline = null;
         particlePipeline = null;
         translucentParticlePipeline = null;
-        weatherPipeline = null;
-        linePipeline = null;
-        glintPipeline = null;
-        handGlintPipeline = null;
+        hostLayoutPipelines.clear();
+        drawEntityId = 0;
         resolver = PackEntityIdResolver.empty();
     }
 
@@ -262,8 +278,7 @@ public final class ChimeraEntityBridge {
                 || spiderEyesPipeline != null || blockPipeline != null
                 || damagedBlockPipeline != null || handPipeline != null
                 || handWaterPipeline != null || particlePipeline != null
-                || translucentParticlePipeline != null || weatherPipeline != null
-                || linePipeline != null || glintPipeline != null || handGlintPipeline != null;
+                || translucentParticlePipeline != null || !hostLayoutPipelines.isEmpty();
     }
 
     public static boolean isDrawActive() {
@@ -406,13 +421,34 @@ public final class ChimeraEntityBridge {
     }
 
     /**
-     * Opens a guarded draw for a lane that keeps its host vertex layout: weather
-     * (PARTICLE), lines and glint. Returns false for any other family.
+     * Opens a guarded draw for a {@link HostLayoutLane}, which keeps its host vertex layout.
+     * Returns false for any other family.
      */
     public static boolean beginHostLayoutDraw(Family family) {
-        return (family == Family.WEATHER || family == Family.LINE || family == Family.GLINT
-                || family == Family.HAND_GLINT)
-                && beginSimpleDraw(family);
+        return HostLayoutLane.of(family) != null && beginSimpleDraw(family);
+    }
+
+    /**
+     * Scopes the entity id the host-layout draws flushed inside it read: the submitter of
+     * the custom geometry being drawn (a lightning bolt, the ender dragon's rays). Iris
+     * serves the same value through its fallback entityId uniform.
+     */
+    public static void beginDrawIdentity(int entityId) {
+        drawEntityId = enabled ? entityId : 0;
+    }
+
+    public static void endDrawIdentity() {
+        drawEntityId = 0;
+    }
+
+    /** The entity id the active host-layout draw reads. */
+    public static int drawEntityId() {
+        return enabled ? drawEntityId : 0;
+    }
+
+    /** True when this host-layout lane has an installed pack pipeline. */
+    public static boolean hostLayoutInstalled(HostLayoutLane lane) {
+        return lane != null && hostLayoutPipelines.containsKey(lane.family());
     }
 
     public static boolean isHandDrawActive() {
@@ -427,29 +463,6 @@ public final class ChimeraEntityBridge {
 
     public static boolean isWeatherDrawActive() {
         return isDrawActive(Family.WEATHER);
-    }
-
-    /** Installs gbuffers_line after {@link #install}; without it lines keep their host draw. */
-    public static void installLine(PackPipelines.PackParticle line) {
-        linePipeline = line == null ? null : line.pipeline();
-        if (linePipeline != null) {
-            ChimeraMod.LOGGER.info("[chimera] family bridge: line=installed");
-        }
-    }
-
-    /** Iris IrisPipelines: LINES, LINES_TRANSLUCENT and SECONDARY_BLOCK_OUTLINE use ShaderKey.LINES. */
-    public static boolean isLinePipeline(RenderPipeline pipeline) {
-        return pipeline == RenderPipelines.LINES || pipeline == RenderPipelines.LINES_TRANSLUCENT
-                || pipeline == RenderPipelines.SECONDARY_BLOCK_OUTLINE;
-    }
-
-    /** Installs gbuffers_armor_glint after {@link #install}; without it glint keeps its host draw. */
-    public static void installGlint(PackPipelines.PackParticle glint, PackPipelines.PackParticle handGlint) {
-        glintPipeline = glint == null ? null : glint.pipeline();
-        handGlintPipeline = handGlint == null ? null : handGlint.pipeline();
-        if (glintPipeline != null) {
-            ChimeraMod.LOGGER.info("[chimera] family bridge: glint=installed, handGlint={}", status(handGlintPipeline));
-        }
     }
 
     public static boolean beginCrumblingDraw() {
@@ -751,9 +764,9 @@ public final class ChimeraEntityBridge {
                     format == DefaultVertexFormat.NEW_ENTITY
                     || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(format) != null;
-            case PARTICLE, PARTICLE_TRANSLUCENT, WEATHER -> format == DefaultVertexFormat.PARTICLE;
-            case LINE -> isLinePipeline(pipeline) && format == DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
-            case GLINT, HAND_GLINT -> pipeline == RenderPipelines.GLINT && format == DefaultVertexFormat.POSITION_TEX;
+            case PARTICLE, PARTICLE_TRANSLUCENT -> format == DefaultVertexFormat.PARTICLE;
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH ->
+                    HostLayoutLane.of(activeFamily).serves(pipeline);
             case HOST_FALLBACK -> false;
         };
     }
@@ -778,7 +791,8 @@ public final class ChimeraEntityBridge {
     private static boolean widensVertexFormat(Family family) {
         return switch (family) {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, HAND, HAND_WATER -> true;
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT, HOST_FALLBACK -> false;
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
+                 LIGHTNING, BEACON_BEAM, LEASH, HOST_FALLBACK -> false;
         };
     }
 
@@ -799,7 +813,8 @@ public final class ChimeraEntityBridge {
                     format == DefaultVertexFormat.NEW_ENTITY
                     ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY : format;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT -> format;
+            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
+                 LIGHTNING, BEACON_BEAM, LEASH -> format;
             case HOST_FALLBACK -> format;
         };
     }
@@ -1020,10 +1035,7 @@ public final class ChimeraEntityBridge {
             case HAND_WATER -> handWaterPipeline;
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
-            case WEATHER -> weatherPipeline;
-            case LINE -> linePipeline;
-            case GLINT -> glintPipeline;
-            case HAND_GLINT -> handGlintPipeline;
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH -> hostLayoutPipelines.get(family);
             case HOST_FALLBACK -> null;
         };
     }

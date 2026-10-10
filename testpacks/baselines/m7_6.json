@@ -3,7 +3,7 @@
   "fixture": "m7_6/families",
   "fixtures": {
     "families": {
-      "reportSha256": "68f19ec6a8a82b5b1a2d0ae989dc08580d8a7b55ffad7dde1c78d5f3338447bf",
+      "reportSha256": "781a8c14068f1d4eefa35a6c8ea65a03761c2d44ade36aa58f8cd79397c489c7",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "80d96b5eab7d4baeee89f8f0a4d9a268fa79bfd7466b21ea0b608bed6f4219da",
@@ -23,6 +23,7 @@
         "gbuffers_entities_translucent",
         "gbuffers_hand",
         "gbuffers_hand_water",
+        "gbuffers_lightning",
         "gbuffers_particles",
         "gbuffers_particles_translucent"
       ],
@@ -45,12 +46,15 @@
         "HAND_STATE_FIXED_TO_HOST",
         "HAND_TRANSLUCENT_ITEM_PHASE",
         "HAND_VERTEX_BRIDGE",
+        "LIGHTNING_STATE_FIXED_TO_HOST",
+        "LIGHTNING_VERTEX_BRIDGE",
         "LIVE_UNIFORM_BRIDGE",
         "PARTICLE_STATE_FIXED_TO_HOST",
         "PARTICLE_TRANSLUCENT_INSTALLED",
         "PARTICLE_VERTEX_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_hand_water->gbuffers_hand",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_particles_translucent->gbuffers_particles"
       ]
     },

@@ -31,6 +31,12 @@ public record FamilyAdapterPlan(
         LINE,
         /** gbuffers_armor_glint: enchantment glint layers (Iris ProgramId.ArmorGlint). */
         GLINT,
+        /** gbuffers_lightning: lightning bolts and dragon death rays (Iris ProgramId.Lightning). */
+        LIGHTNING,
+        /** gbuffers_beaconbeam: beacon and end gateway beams (Iris ProgramId.BeaconBeam). */
+        BEACON_BEAM,
+        /** gbuffers_basic: leads (Iris ShaderKey.LEASH, ProgramId.Basic). */
+        BASIC,
         SPECIAL,
         POST,
         UNKNOWN
@@ -45,6 +51,12 @@ public record FamilyAdapterPlan(
         HOST_LINE,
         /** DefaultVertexFormat.POSITION_TEX glint layers. */
         HOST_GLINT,
+        /** DefaultVertexFormat.POSITION_COLOR lightning and dragon rays. */
+        HOST_LIGHTNING,
+        /** DefaultVertexFormat.BLOCK beacon beams. */
+        HOST_BEACON,
+        /** DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads, drawn as a triangle strip. */
+        HOST_LEASH,
         HOST_BLOCK,
         SKY_POSITION,
         SKY_POSITION_COLOR,
@@ -55,7 +67,18 @@ public record FamilyAdapterPlan(
         @Deprecated
         CLOUD_GENERATED,
         FULLSCREEN,
-        HOST_FALLBACK
+        HOST_FALLBACK;
+
+        /**
+         * Lanes whose program runs on a host vertex layout Iris also draws natively
+         * (VanillaTransformer), converted by LegacyGlslConverter.convertHostLayoutVertexChecked.
+         */
+        public boolean hostLayout() {
+            return switch (this) {
+                case HOST_LINE, HOST_GLINT, HOST_LIGHTNING, HOST_BEACON, HOST_LEASH -> true;
+                default -> false;
+            };
+        }
     }
 
     public FamilyAdapterPlan {

@@ -791,12 +791,28 @@ public final class PackPipelines {
                 com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE, advancedResources, storageOwner);
     }
 
-    /** Builds gbuffers_armor_glint on the host POSITION_TEX glint layers (Iris ShaderKey.GLINT). */
-    public static PackParticle buildGlint(
+    /**
+     * Builds a host-layout lane (lines, glint, lightning, beacon beams, leads) on the host
+     * vertex format of its contract, as Iris draws ShaderKey.LINES, GLINT, LIGHTNING, BEACON
+     * and LEASH.
+     */
+    public static PackParticle buildHostLayout(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
-                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, advancedResources, storageOwner);
+                hostLayoutFormat(plan.familyAdapter().vertexContract()), advancedResources, storageOwner);
+    }
+
+    /** The host vertex format a host-layout contract draws on. */
+    public static com.mojang.blaze3d.vertex.VertexFormat hostLayoutFormat(FamilyAdapterPlan.VertexContract contract) {
+        return switch (contract) {
+            case HOST_LINE -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
+            case HOST_GLINT -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX;
+            case HOST_LIGHTNING -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR;
+            case HOST_BEACON -> com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK;
+            case HOST_LEASH -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
+            default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
+        };
     }
 
     /** The same glint program for first-person glint, under the hand projection. */
@@ -812,15 +828,6 @@ public final class PackPipelines {
         }
         return buildParticle(plan, "pack_" + plan.name() + "_hand",
                 com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, vertex, advancedResources, storageOwner);
-    }
-
-    /** Builds gbuffers_line on the host line layout (Iris ShaderKey.LINES). */
-    public static PackParticle buildLine(
-            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
-    ) {
-        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
-                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH,
-                advancedResources, storageOwner);
     }
 
     private static PackParticle buildParticle(
