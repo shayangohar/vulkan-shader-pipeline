@@ -16,34 +16,43 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.List;
+import java.util.Map;
 
-/** Draws separated block-entity custom geometry through the pack block family. */
+/** Draws the separated entity and block-entity custom geometry through their pack families. */
 @Mixin(CustomFeatureRenderer.class)
 public abstract class ChimeraCustomFeatureRendererMixin {
     @Inject(method = "render", at = @At("RETURN"), require = 1)
-    private void chimera$renderBlockGeometry(SubmitNodeCollection collection,
-                                             MultiBufferSource.BufferSource bufferSource, CallbackInfo callback) {
-        if (!(collection.getCustomGeometrySubmits() instanceof ChimeraCustomGeometryStorage storage)
-                || storage.chimera$blockSubmits().isEmpty()) {
+    private void chimera$renderHeldGeometry(SubmitNodeCollection collection,
+                                            MultiBufferSource.BufferSource bufferSource, CallbackInfo callback) {
+        if (!(collection.getCustomGeometrySubmits() instanceof ChimeraCustomGeometryStorage storage)) {
             return;
         }
         try {
-            for (var entry : storage.chimera$blockSubmits().entrySet()) {
-                RenderType type = entry.getKey();
-                // A batch the family cannot admit is drawn by the host, never dropped.
-                if (!ChimeraRenderer.segmentsActive() || !ChimeraEntityBridge.isInstalled()
-                        || !ChimeraFamilyDraw.emit(ChimeraEntityBridge.Family.BLOCK, type,
-                        source -> chimera$emit(source.getBuffer(type), entry.getValue(), true))) {
-                    chimera$emit(bufferSource.getBuffer(type), entry.getValue(), false);
-                }
-            }
+            chimera$renderFamily(ChimeraEntityBridge.Family.ENTITY, storage.chimera$entitySubmits(), bufferSource);
+            chimera$renderFamily(ChimeraEntityBridge.Family.BLOCK, storage.chimera$blockSubmits(), bufferSource);
         } finally {
+            storage.chimera$entitySubmits().clear();
             storage.chimera$blockSubmits().clear();
         }
     }
 
     @Unique
-    private static void chimera$emit(VertexConsumer consumer, List<ChimeraCustomGeometryStorage.BlockSubmit> submits,
+    private static void chimera$renderFamily(ChimeraEntityBridge.Family family,
+                                             Map<RenderType, List<ChimeraCustomGeometryStorage.HeldSubmit>> held,
+                                             MultiBufferSource.BufferSource hostSource) {
+        for (var entry : held.entrySet()) {
+            RenderType type = entry.getKey();
+            // A batch the family cannot admit is drawn by the host, never dropped.
+            if (!ChimeraRenderer.segmentsActive() || !ChimeraEntityBridge.isInstalled()
+                    || !ChimeraFamilyDraw.emit(family, type,
+                    source -> chimera$emit(source.getBuffer(type), entry.getValue(), true))) {
+                chimera$emit(hostSource.getBuffer(type), entry.getValue(), false);
+            }
+        }
+    }
+
+    @Unique
+    private static void chimera$emit(VertexConsumer consumer, List<ChimeraCustomGeometryStorage.HeldSubmit> submits,
                                      boolean pack) {
         for (var submit : submits) {
             if (pack) ChimeraEntityBridge.beginModelEntity(submit.entityId(), submit.blockEntityId());

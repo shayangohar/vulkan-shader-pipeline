@@ -20,44 +20,63 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Separates block-entity custom geometry (the end portal and gateway, after
- * Iris's entitySolid swap) from the host batch, as ChimeraModelFeatureStorageMixin
- * does for block-entity models, so it can draw with the pack block program.
+ * Separates world custom geometry in the entity format from the host batch, as
+ * ChimeraModelFeatureStorageMixin does for models, so it draws with the pack family
+ * of its submitter: block entities (the end portal and gateway, after Iris's
+ * entitySolid swap) with the block program, and entities (paintings, experience orbs,
+ * guardian beams, fishing bobbers) with the entity programs. Iris picks these programs
+ * per pipeline at draw time; drawn by the host they wrote only colour into an image
+ * deferred packs never show.
  */
 @Mixin(CustomFeatureRenderer.Storage.class)
 public abstract class ChimeraCustomGeometryStorageMixin implements ChimeraCustomGeometryStorage {
     @Unique
-    private final Map<RenderType, List<BlockSubmit>> chimera$blockSubmits = new LinkedHashMap<>();
+    private final Map<RenderType, List<HeldSubmit>> chimera$blockSubmits = new LinkedHashMap<>();
+    @Unique
+    private final Map<RenderType, List<HeldSubmit>> chimera$entitySubmits = new LinkedHashMap<>();
 
     @Inject(method = "add", at = @At("HEAD"), cancellable = true, require = 1)
     private void chimera$separate(PoseStack poseStack, RenderType renderType,
                                   SubmitNodeCollector.CustomGeometryRenderer renderer, CallbackInfo callback) {
-        if (ChimeraRenderer.segmentsActive()
-                && ChimeraEntityBridge.isInstalled()
-                && ChimeraEntityBridge.isWorldSubmissionWindow()
-                && ChimeraEntityBridge.isEntityBufferReady()
-                && ChimeraEntityBridge.isSubmittingEntity()
-                && ChimeraEntityBridge.currentSubmissionFamily() == ChimeraEntitySubmission.FAMILY_BLOCK
-                && ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
-            chimera$blockSubmits.computeIfAbsent(renderType, ignored -> new ArrayList<>())
-                    .add(new BlockSubmit(poseStack.last().copy(), renderer, ChimeraEntityBridge.currentEntityId(),
-                            ChimeraEntityBridge.currentBlockEntityId()));
-            callback.cancel();
+        if (!ChimeraRenderer.segmentsActive()
+                || !ChimeraEntityBridge.isInstalled()
+                || !ChimeraEntityBridge.isWorldSubmissionWindow()
+                || !ChimeraEntityBridge.isEntityBufferReady()
+                || !ChimeraEntityBridge.isSubmittingEntity()
+                || !ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
+            return;
         }
+        int family = ChimeraEntityBridge.currentSubmissionFamily();
+        if (!ChimeraEntityBridge.supportsSubmissionFamily(family)) {
+            return;
+        }
+        Map<RenderType, List<HeldSubmit>> held = family == ChimeraEntitySubmission.FAMILY_BLOCK
+                ? chimera$blockSubmits : chimera$entitySubmits;
+        held.computeIfAbsent(renderType, ignored -> new ArrayList<>())
+                .add(new HeldSubmit(poseStack.last().copy(), renderer, ChimeraEntityBridge.currentEntityId(),
+                        ChimeraEntityBridge.currentBlockEntityId()));
+        callback.cancel();
     }
 
     @Inject(method = "clear", at = @At("HEAD"), require = 1)
     private void chimera$clear(CallbackInfo callback) {
         chimera$blockSubmits.clear();
+        chimera$entitySubmits.clear();
     }
 
     @Inject(method = "endFrame", at = @At("HEAD"), require = 1)
     private void chimera$clearAtFrameEnd(CallbackInfo callback) {
         chimera$blockSubmits.clear();
+        chimera$entitySubmits.clear();
     }
 
     @Override
-    public Map<RenderType, List<BlockSubmit>> chimera$blockSubmits() {
+    public Map<RenderType, List<HeldSubmit>> chimera$blockSubmits() {
         return chimera$blockSubmits;
+    }
+
+    @Override
+    public Map<RenderType, List<HeldSubmit>> chimera$entitySubmits() {
+        return chimera$entitySubmits;
     }
 }
