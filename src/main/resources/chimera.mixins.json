@@ -47,6 +47,7 @@
     "ChimeraTextFeatureRendererMixin",
     "ChimeraBlockModelSubmitMixin",
     "ChimeraBlockSubmitMixin",
+    "ChimeraFabricBlockStateModelCommandMixin",
     "ChimeraBlockFeatureRendererMixin",
     "ChimeraEntityVertexInputMixin",
     "ChimeraRenderPipelineMixin",
