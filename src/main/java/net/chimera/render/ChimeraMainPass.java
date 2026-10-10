@@ -4043,6 +4043,14 @@ public class ChimeraMainPass implements MainPass {
         return !this.packPostChainRejected && this.packShadowPipeline != null && this.packGeometryPipeline != null;
     }
 
+    /**
+     * True while the pack renders its own shadow map. Iris then suppresses vanilla entity
+     * ground shadows (IrisRenderingPipeline.shouldDisableVanillaEntityShadows: shadowRenderer != null).
+     */
+    public boolean packShadowPassActive() {
+        return usePackShadowRuntime();
+    }
+
     /** Makes newly created shadow images valid shader inputs exactly once. */
     private boolean prepareShadowForSampling(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.needsInitialSamplingLayout()) {
