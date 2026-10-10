@@ -33,6 +33,7 @@ public final class ChimeraFamilyDraw {
         ChimeraEntityBridge.Family selected = ChimeraEntityBridge.familyForRenderType(base, renderType);
         ChimeraEntityBridge.noteFamilyBatch(selected, 1);
         if (!ChimeraEntityBridge.beginDraw(selected)) {
+            ChimeraEntityBridge.noteFamilyHostFallback(selected, renderType);
             return false;
         }
         // The pipeline follows the selected family, not the base family:

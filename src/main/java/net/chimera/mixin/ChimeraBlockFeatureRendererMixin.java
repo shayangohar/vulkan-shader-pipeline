@@ -78,16 +78,22 @@ public abstract class ChimeraBlockFeatureRendererMixin {
             RenderType renderType,
             java.util.function.Consumer<MultiBufferSource.BufferSource> body
     ) {
-        if (!(submit instanceof ChimeraEntitySubmission entity)
-                || !entity.chimera$isWorldEntity()
-                || !ChimeraRenderer.segmentsActive()
-                || !ChimeraEntityBridge.isInstalled()
-                || ChimeraEntityBridge.isDrawActive()
-                || !ChimeraEntityBridge.supportsSubmissionFamily(entity.chimera$family())
-                || !ChimeraEntityBridge.supportsWorldPipeline(renderType.pipeline())
-                || !ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
+        if (!ChimeraRenderer.segmentsActive() || !ChimeraEntityBridge.isInstalled()) {
             return false;
         }
+        String rejected = !(submit instanceof ChimeraEntitySubmission) ? "no-identity"
+                : !((ChimeraEntitySubmission) submit).chimera$isWorldEntity() ? "not-world-entity"
+                : ChimeraEntityBridge.isDrawActive() ? "draw-active"
+                : !ChimeraEntityBridge.supportsSubmissionFamily(((ChimeraEntitySubmission) submit).chimera$family())
+                ? "family-unsupported"
+                : !ChimeraEntityBridge.supportsWorldPipeline(renderType.pipeline()) ? "pipeline-unsupported"
+                : !ChimeraEntityBridge.supportsWorldRenderType(renderType) ? "format-unsupported"
+                : null;
+        if (rejected != null) {
+            ChimeraEntityBridge.noteSubmissionKeptOnHost(rejected, renderType);
+            return false;
+        }
+        ChimeraEntitySubmission entity = (ChimeraEntitySubmission) submit;
         ChimeraEntityBridge.Family base = entity.chimera$family() == ChimeraEntitySubmission.FAMILY_BLOCK
                 ? ChimeraEntityBridge.Family.BLOCK : ChimeraEntityBridge.Family.ENTITY;
         return ChimeraFamilyDraw.emit(base, renderType, source -> {

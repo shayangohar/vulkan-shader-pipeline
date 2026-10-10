@@ -93,6 +93,7 @@ public final class ChimeraEntityBridge {
     private static final EnumSet<Family> transformContractTraceFamilies = EnumSet.noneOf(Family.class);
     private static boolean separatedBatchTraceLogged;
     private static boolean unsupportedPipelineTraceLogged;
+    private static final java.util.Set<String> submissionHostTraces = new java.util.HashSet<>();
     private static boolean flushTraceLogged;
     private static ByteBufferBuilder entityBuffer;
     private static MultiBufferSource.BufferSource entityBufferSource;
@@ -190,6 +191,7 @@ public final class ChimeraEntityBridge {
         transformContractTraceFamilies.clear();
         separatedBatchTraceLogged = false;
         unsupportedPipelineTraceLogged = false;
+        submissionHostTraces.clear();
         flushTraceLogged = false;
         clearScopedState();
         ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
@@ -826,6 +828,14 @@ public final class ChimeraEntityBridge {
     }
 
     /** Emits one diagnostic when a world entity uses a lane outside the contract. */
+    /** Emits one diagnostic per reason a world block or block-model submission keeps its host draw. */
+    public static void noteSubmissionKeptOnHost(String reason, RenderType renderType) {
+        if (submissionHostTraces.add(reason)) {
+            ChimeraMod.LOGGER.info("[chimera] entity bridge: block submission kept on host reason={} type={}",
+                    reason, renderType == null ? "unknown" : renderType);
+        }
+    }
+
     public static void noteUnsupportedWorldPipeline(RenderType renderType) {
         if (!unsupportedPipelineTraceLogged) {
             unsupportedPipelineTraceLogged = true;
