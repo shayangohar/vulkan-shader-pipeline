@@ -899,6 +899,26 @@ public final class LegacyGlslConverter {
                 ENTITY_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, true, allowStorageBuffers);
     }
 
+    /**
+     * Converts the shadow program for a shadow-pass key Iris draws on the host's own layout
+     * (IrisPipelines.assignToShadow: SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_TEXT,
+     * SHADOW_TEXT_BG and SHADOW_BASIC, and GLINT's SHADOW_ENTITIES_CUTOUT). It is the
+     * shadow_entities bridge on that layout's inputs: the legacy matrix built-ins name the draw's
+     * host blocks, which the pass loads with the light view and projection, and an input the
+     * layout lacks reads Iris's value for it. The host-layout preparation has already expanded
+     * the includes. Reports the first concrete failure.
+     */
+    public static TerrainVertexConversion convertShadowLaneVertexChecked(
+            FamilyAdapterPlan.VertexContract contract,
+            String source,
+            String fragmentSource,
+            UniformRegistry.ProgramInterface interfacePlan,
+            boolean allowStorageBuffers
+    ) {
+        return convertModernTerrainVertexOrThrow(source, null, fragmentSource,
+                shadowLanePreamble(contract), interfacePlan, true, true, allowStorageBuffers);
+    }
+
     private static TerrainVertexConversion convertModernTerrainVertexOrThrow(
             String source,
             Path sourceFile,
@@ -4041,6 +4061,123 @@ public final class LegacyGlslConverter {
             .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP glyph quads in the shadow pass. Iris draws
+     * them on its GLYPH layout, whose normal, entity ids, mid-coordinate and tangent it computes
+     * per quad; the host mesh has none of them, so they read +Z (VanillaTransformer's normal for
+     * a layout without one), 0, 0 and (0, 0, 0, 1).
+     */
+    private static final String TEXT_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * DefaultVertexFormat.POSITION boat water mask. Iris supplies the host colour modulator,
+     * UV0 (0.5, 0.5), full light (240, 240) and +Z.
+     */
+    private static final String WATER_MASK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 1) in vec4 Color;", "const vec4 Color = vec4(1.0);")
+            .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * The POSITION_TEX glint mesh under Iris's shadow program for it, SHADOW_ENTITIES_CUTOUT on
+     * the ENTITY layout: the mesh supplies position and texture coordinates, and every other
+     * ENTITY input reads GL's unbound-attribute default (0, 0, 0, 1).
+     */
+    private static final String SHADOW_GLINT_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 1) in vec4 Color;", "const vec4 Color = vec4(0.0, 0.0, 0.0, 1.0);")
+            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(0);")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * The shadow bridge's input preamble for a host-layout shadow lane: the layout's inputs, then
+     * the chimera*Value helpers the shadow converter reads. As under Iris's VanillaTransformer,
+     * gl_Color is the vertex colour times the host colour modulator, mc_Entity, mc_midTexCoord,
+     * at_tangent and at_midBlock read their unbound defaults, and a widened line sees +Z for
+     * gl_Normal.
+     */
+    private static String shadowLanePreamble(FamilyAdapterPlan.VertexContract contract) {
+        String inputs = switch (contract) {
+            case HOST_LINE -> LINE_VERTEX_PREAMBLE;
+            case HOST_LIGHTNING -> LIGHTNING_VERTEX_PREAMBLE;
+            case HOST_LEASH, HOST_TEXT_BACKGROUND -> LEASH_VERTEX_PREAMBLE;
+            case HOST_GLINT -> SHADOW_GLINT_VERTEX_PREAMBLE;
+            case HOST_TEXT -> TEXT_VERTEX_PREAMBLE;
+            case HOST_WATER_MASK -> WATER_MASK_VERTEX_PREAMBLE;
+            default -> throw new IllegalArgumentException("no shadow lane on contract: " + contract);
+        };
+        String normal = contract == FamilyAdapterPlan.VertexContract.HOST_LINE ? "vec3(0.0, 0.0, 1.0)" : "Normal";
+        return inputs + """
+                vec4 chimeraVertexValue() {
+                    return chimeraEntityVertexValue();
+                }
+
+                vec4 chimeraColorValue() {
+                    return Color * ColorModulator;
+                }
+
+                vec4 chimeraTexCoord0Value() {
+                    return vec4(UV0, 0.0, 1.0);
+                }
+
+                // Raw UV2 light coordinates (level * 16, 0..240), as for terrain.
+                vec4 chimeraTexCoord1Value() {
+                    return vec4(vec2(UV2), 0.0, 1.0);
+                }
+
+                vec2 chimeraMcEntityValue() {
+                    return vec2(0.0);
+                }
+
+                vec2 chimeraMidTexCoordValue() {
+                    return vec2(0.0);
+                }
+
+                uvec2 chimeraMidTexCoordRawValue() {
+                    return uvec2(0u);
+                }
+
+                ivec4 chimeraMidBlockRawValue() {
+                    return ivec4(0, 0, 0, 1);
+                }
+
+                vec3 chimeraMidBlockValue() {
+                    return vec3(0.0);
+                }
+
+                vec3 chimeraNormalValue() {
+                    return %s;
+                }
+
+                vec4 chimeraTangentValue() {
+                    return vec4(0.0, 0.0, 0.0, 1.0);
+                }
+
+                vec4 chimeraFtransform() {
+                    return chimeraEntityFtransform();
+                }
+
+                """.formatted(normal);
+    }
 
     /**
      * Expands a host-layout stage's includes before its interface is planned; the line and

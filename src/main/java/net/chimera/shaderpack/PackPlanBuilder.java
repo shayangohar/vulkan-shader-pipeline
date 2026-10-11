@@ -113,24 +113,29 @@ public final class PackPlanBuilder {
                 ? program.name() : sourceResolution.selectedProgram();
         // Iris's handling of a host-layout lane rewrites the authored sources before anything
         // reads their interface: a widened line declares and reads the screen size, glint
-        // reads the glint strength, and every such lane reads entityId as a per-draw uniform.
+        // reads the glint strength, and a lane whose format Iris does not entity-patch reads
+        // entityId as a per-draw uniform.
         String hostLayoutLane = FamilyAdapterRegistry.hostLayoutLane(program.name());
         boolean hostLayoutFamily = hostLayoutLane != null;
+        boolean shadowLane = FamilyAdapterRegistry.isShadowLaneFamily(program.name());
         String hostLayoutFailure = null;
         if (hostLayoutFamily && vertex != null) {
             try {
                 Path vertexFile = preparedSnapshot ? null : program.vertexPath();
+                // Iris widens every program drawn on the line layout except a pack's own
+                // gbuffers_line (ShaderAttributeInputs.newLines from the LineWidth element).
                 vertex = FamilyAdapterRegistry.isGlintFamily(program.name())
                         ? LegacyGlslConverter.prepareGlintVertex(vertex, vertexFile)
-                        : FamilyAdapterRegistry.isLineFamily(program.name())
+                        : familyAdapter.vertexContract() == FamilyAdapterPlan.VertexContract.HOST_LINE
                         ? LegacyGlslConverter.prepareLineVertex(vertex, vertexFile,
                         directiveProgram.equals("gbuffers_line"))
                         : LegacyGlslConverter.prepareHostLayoutSource(vertex, vertexFile);
-                vertex = LegacyGlslConverter.prepareHostLayoutIdentity(vertex);
+                boolean perVertexIds = FamilyAdapterRegistry.readsEntityIdsPerVertex(program.name());
+                if (!perVertexIds) vertex = LegacyGlslConverter.prepareHostLayoutIdentity(vertex);
                 if (fragment != null) {
-                    fragment = LegacyGlslConverter.prepareHostLayoutIdentity(
-                            LegacyGlslConverter.prepareHostLayoutSource(fragment,
-                                    preparedSnapshot ? null : program.fragmentPath()));
+                    fragment = LegacyGlslConverter.prepareHostLayoutSource(fragment,
+                            preparedSnapshot ? null : program.fragmentPath());
+                    if (!perVertexIds) fragment = LegacyGlslConverter.prepareHostLayoutIdentity(fragment);
                 }
             } catch (RuntimeException failure) {
                 hostLayoutFailure = safeReason(failure);
@@ -323,6 +328,24 @@ public final class PackPlanBuilder {
                     vertexLayout = conversion.layout();
                     deviations.add("CLOUD_VERTEX_BRIDGE");
                     deviations.add("CLOUD_STATE_FIXED_TO_HOST");
+                }
+            } else if (shadowLane && vertex != null && hostLayoutFailure == null) {
+                LegacyGlslConverter.TerrainVertexConversion conversion = null;
+                try {
+                    // The host-layout preparation already expanded the includes.
+                    conversion = LegacyGlslConverter.convertShadowLaneVertexChecked(
+                            familyAdapter.vertexContract(), vertex, fragment,
+                            interfacePlan.project("vertex", stage), allowStorageBuffers);
+                } catch (RuntimeException failure) {
+                    deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
+                }
+                if (conversion == null) {
+                    deviations.add(hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
+                    executable = false;
+                } else {
+                    convertedVertex = conversion.source();
+                    vertexLayout = conversion.layout();
+                    deviations.add(hostLayoutLane + "_VERTEX_BRIDGE");
                 }
             } else if (FamilyAdapterRegistry.isShadowEntityFamily(program.name()) && vertex != null) {
                 LegacyGlslConverter.TerrainVertexConversion conversion = null;

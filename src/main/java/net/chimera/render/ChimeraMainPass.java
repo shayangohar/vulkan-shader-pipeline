@@ -3880,7 +3880,8 @@ public class ChimeraMainPass implements MainPass {
     /**
      * Builds the host-layout lanes one program serves (HostLayoutLane), world lane first. A
      * world lane that fails falls back to the host draw for this program. A hand variant
-     * (first-person glint) needs its world lane; without it that draw stays host-drawn.
+     * (first-person glint) needs its world lane; without it that draw stays host-drawn. A
+     * shadow lane that fails leaves its draws out of the shadow map.
      */
     private void installHostLayoutLanes(String name, PackProgramPlan programPlan) {
         PackAdvancedResourcePlan advanced = this.packPlan == null
@@ -3892,7 +3893,7 @@ public class ChimeraMainPass implements MainPass {
                 default -> PackPipelines.buildHostLayout(programPlan, advanced, this.packStorageBufferOwner);
             };
             if (built == null) {
-                if (lane.hand()) {
+                if (lane.pass() == HostLayoutLane.Pass.HAND) {
                     LOGGER.warn("[chimera] pack {}: {} variant unavailable; that draw stays host-drawn", name,
                             lane.name().toLowerCase());
                     continue;
@@ -3903,11 +3904,11 @@ public class ChimeraMainPass implements MainPass {
             if (!attachPackStoragePipeline(name, built.pipeline(), built.imageBindings())) {
                 // The storage owner has reported this fallback.
                 built.pipeline().cleanUp();
-                if (lane.hand()) continue;
+                if (lane.pass() == HostLayoutLane.Pass.HAND) continue;
                 return;
             }
             this.packHostLayoutPipelines.put(lane.family(), built);
-            if (lane.hand()) {
+            if (lane.pass() == HostLayoutLane.Pass.HAND) {
                 LOGGER.info("[chimera] pack {}: {} variant installed", name, lane.name().toLowerCase());
             } else {
                 markFamilyPipelineInstalled(name, lane + "_PIPELINE_INSTALLED");

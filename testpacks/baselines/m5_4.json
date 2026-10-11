@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "920aa412da4ff06f5d333304a7333358771496e2063284e45b5bb241a270b569",
+      "reportSha256": "21ae638e543f2a49d18da500f68e19fd37ed3740a9dd73f5e79dfd972c90483e",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -18,7 +18,35 @@
           "fragment",
           "vertex"
         ],
+        "shadow_basic": [
+          "fragment",
+          "vertex"
+        ],
         "shadow_entities": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_glint": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_leash": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_lightning": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_lines": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_text": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_text_bg": [
           "fragment",
           "vertex"
         ]
@@ -36,6 +64,13 @@
           "LIVE_UNIFORM_BRIDGE",
           "SHADOW_VERTEX_BRIDGE"
         ],
+        "shadow_basic": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_basic->shadow",
+          "SHADOW_BASIC_STATE_FIXED_TO_HOST",
+          "SHADOW_BASIC_VERTEX_BRIDGE"
+        ],
         "shadow_entities": [
           "ENTITY_VERTEX_FORMAT_EXTENDED",
           "FAMILY_ADAPTER_INSTALLED",
@@ -43,6 +78,48 @@
           "PROGRAM_ALIAS_RECORDED:shadow_entities->shadow",
           "SHADOW_ENTITY_STATE_FIXED_TO_HOST",
           "SHADOW_ENTITY_VERTEX_BRIDGE"
+        ],
+        "shadow_glint": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_glint->shadow",
+          "SHADOW_GLINT_STATE_FIXED_TO_HOST",
+          "SHADOW_GLINT_VERTEX_BRIDGE"
+        ],
+        "shadow_leash": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_leash->shadow",
+          "SHADOW_LEASH_STATE_FIXED_TO_HOST",
+          "SHADOW_LEASH_VERTEX_BRIDGE"
+        ],
+        "shadow_lightning": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_lightning->shadow",
+          "SHADOW_LIGHTNING_STATE_FIXED_TO_HOST",
+          "SHADOW_LIGHTNING_VERTEX_BRIDGE"
+        ],
+        "shadow_lines": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_lines->shadow",
+          "SHADOW_LINES_STATE_FIXED_TO_HOST",
+          "SHADOW_LINES_VERTEX_BRIDGE"
+        ],
+        "shadow_text": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_text->shadow",
+          "SHADOW_TEXT_STATE_FIXED_TO_HOST",
+          "SHADOW_TEXT_VERTEX_BRIDGE"
+        ],
+        "shadow_text_bg": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_text_bg->shadow",
+          "SHADOW_TEXT_BG_STATE_FIXED_TO_HOST",
+          "SHADOW_TEXT_BG_VERTEX_BRIDGE"
         ]
       },
       "sourceHashes": {
@@ -55,7 +132,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "4604b1115304a88db7d898e804f7741a103f99ad7ee0e967c54965ab9e7dfb20",
+      "reportSha256": "72182d225b8e8737ced784908bd975d64be9f23525c65e8ec24b521d061e09dc",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -71,7 +148,35 @@
           "fragment",
           "vertex"
         ],
+        "shadow_basic": [
+          "fragment",
+          "vertex"
+        ],
         "shadow_entities": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_glint": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_leash": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_lightning": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_lines": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_text": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_text_bg": [
           "fragment",
           "vertex"
         ]
@@ -88,11 +193,53 @@
           "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
           "SHADOW_VERTEX_BRIDGE"
         ],
+        "shadow_basic": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_basic->shadow",
+          "SHADOW_BASIC_VERTEX_BRIDGE",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
         "shadow_entities": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_entities->shadow",
           "SHADOW_ENTITY_VERTEX_BRIDGE",
           "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
+        "shadow_glint": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_glint->shadow",
+          "SHADOW_GLINT_VERTEX_BRIDGE",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
+        "shadow_leash": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_leash->shadow",
+          "SHADOW_LEASH_VERTEX_BRIDGE",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
+        "shadow_lightning": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_lightning->shadow",
+          "SHADOW_LIGHTNING_VERTEX_BRIDGE",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
+        "shadow_lines": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_lines->shadow",
+          "SHADOW_LINES_VERTEX_BRIDGE",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
+        "shadow_text": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_text->shadow",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_TEXT_VERTEX_BRIDGE"
+        ],
+        "shadow_text_bg": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_text_bg->shadow",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_TEXT_BG_VERTEX_BRIDGE"
         ]
       },
       "sourceHashes": {

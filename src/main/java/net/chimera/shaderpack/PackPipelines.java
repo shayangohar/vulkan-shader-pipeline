@@ -814,15 +814,23 @@ public final class PackPipelines {
     }
 
     /**
-     * Builds a host-layout lane (lines, glint, lightning, beacon beams, leads) on the host
-     * vertex format of its contract, as Iris draws ShaderKey.LINES, GLINT, LIGHTNING, BEACON
-     * and LEASH.
+     * Builds a host-layout lane on the host vertex format of its contract: in the main pass
+     * lines, glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING,
+     * BEACON and LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
+     * shadow map's attachments with blending off, as shadow_entities is built.
      */
     public static PackParticle buildHostLayout(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
-                hostLayoutFormat(plan.familyAdapter().vertexContract()), advancedResources, storageOwner);
+        if (plan == null) return null;
+        VertexFormat format = hostLayoutFormat(plan.familyAdapter().vertexContract());
+        if (!plan.familyAdapter().stage().shadowPass()) {
+            return buildParticle(plan, "pack_" + plan.name(), format, advancedResources, storageOwner);
+        }
+        PackEntity shadow = buildEntityLike(plan, UniformRegistry.Stage.SHADOW_ENTITY, "pack_" + plan.name(),
+                format, advancedResources, storageOwner);
+        return shadow == null ? null : new PackParticle(shadow.pipeline(), shadow.samplerSlots(),
+                shadow.convertedVertex(), shadow.convertedFragment(), shadow.outputPlan(), shadow.imageBindings());
     }
 
     /** The host vertex format a host-layout contract draws on. */
@@ -832,7 +840,9 @@ public final class PackPipelines {
             case HOST_GLINT -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX;
             case HOST_LIGHTNING -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR;
             case HOST_BEACON -> com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK;
-            case HOST_LEASH -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
+            case HOST_LEASH, HOST_TEXT_BACKGROUND -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
+            case HOST_TEXT -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
+            case HOST_WATER_MASK -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION;
             default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
         };
     }
@@ -1385,7 +1395,10 @@ public final class PackPipelines {
     private static UniformRegistry.Stage stageForProgram(String name) {
         if (name != null && PostTargetPlan.isPostProgramName(name)) return UniformRegistry.Stage.POST;
         if ("shadow".equals(name)) return UniformRegistry.Stage.SHADOW;
-        if (name != null && FamilyAdapterRegistry.isShadowEntityFamily(name)) return UniformRegistry.Stage.SHADOW_ENTITY;
+        // shadow_entities and the host-layout shadow lanes share the entity-layout shadow descriptors.
+        if (name != null && FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.SHADOW_ENTITY) {
+            return UniformRegistry.Stage.SHADOW_ENTITY;
+        }
         if ("gbuffers_terrain".equals(name)) return UniformRegistry.Stage.GEOMETRY;
         if ("gbuffers_water".equals(name)) return UniformRegistry.Stage.TRANSLUCENT;
         if (name != null && FamilyAdapterRegistry.isParticleLike(name)) return UniformRegistry.Stage.PARTICLE;

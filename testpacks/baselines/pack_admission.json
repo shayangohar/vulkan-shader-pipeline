@@ -91,10 +91,17 @@
     "gbuffers_water",
     "gbuffers_weather",
     "shadow",
+    "shadow_basic",
     "shadow_block",
     "shadow_cutout",
     "shadow_entities",
+    "shadow_glint",
+    "shadow_leash",
+    "shadow_lightning",
+    "shadow_lines",
     "shadow_solid",
+    "shadow_text",
+    "shadow_text_bg",
     "shadow_water"
   ]
 }

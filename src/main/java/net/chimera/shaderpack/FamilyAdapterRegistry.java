@@ -16,6 +16,23 @@ public final class FamilyAdapterRegistry {
             // pass, on the entity layout (the end portal and gateway too, after the entitySolid swap).
             Map.entry("shadow_entities", plan("shadow_entities", FamilyAdapterPlan.Family.SHADOW_ENTITIES,
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY)),
+            // Iris IrisPipelines.assignToShadow keys drawn on the host's own layout. Each key resolves
+            // its Iris program through PackResolutionPlan (shadow_lightning is itself an Iris program;
+            // the others name a ShaderKey and select shadow or shadow_entities).
+            Map.entry("shadow_lines", plan("shadow_lines", FamilyAdapterPlan.Family.SHADOW_LINES,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_LINE)),
+            Map.entry("shadow_leash", plan("shadow_leash", FamilyAdapterPlan.Family.SHADOW_LEASH,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_LEASH)),
+            Map.entry("shadow_lightning", plan("shadow_lightning", FamilyAdapterPlan.Family.SHADOW_LIGHTNING,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_LIGHTNING)),
+            Map.entry("shadow_glint", plan("shadow_glint", FamilyAdapterPlan.Family.SHADOW_GLINT,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_GLINT)),
+            Map.entry("shadow_text", plan("shadow_text", FamilyAdapterPlan.Family.SHADOW_TEXT,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_TEXT)),
+            Map.entry("shadow_text_bg", plan("shadow_text_bg", FamilyAdapterPlan.Family.SHADOW_TEXT_BG,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_TEXT_BACKGROUND)),
+            Map.entry("shadow_basic", plan("shadow_basic", FamilyAdapterPlan.Family.SHADOW_BASIC,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_WATER_MASK)),
             Map.entry("gbuffers_entities", plan("gbuffers_entities", FamilyAdapterPlan.Family.ENTITY,
                     UniformRegistry.Stage.ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY)),
             Map.entry("gbuffers_entities_translucent", plan("gbuffers_entities_translucent",
@@ -116,15 +133,31 @@ public final class FamilyAdapterRegistry {
                 || family == FamilyAdapterPlan.Family.HAND_WATER;
     }
 
-    /** The programs that draw into the shadow map: shadow (terrain) and shadow_entities. */
+    /** The programs that draw into the shadow map: shadow (terrain), shadow_entities and the shadow lanes. */
     public static boolean isShadowFamily(String name) {
-        FamilyAdapterPlan.Family family = forProgram(name).family();
-        return family == FamilyAdapterPlan.Family.SHADOW || family == FamilyAdapterPlan.Family.SHADOW_ENTITIES;
+        return forProgram(name).stage().shadowPass();
     }
 
     /** The shadow program on the entity layout (Iris ProgramId.ShadowEntities). */
     public static boolean isShadowEntityFamily(String name) {
         return forProgram(name).family() == FamilyAdapterPlan.Family.SHADOW_ENTITIES;
+    }
+
+    /** A shadow-pass key drawn on the host's own layout (lines, leads, lightning, glint, text, water mask). */
+    public static boolean isShadowLaneFamily(String name) {
+        FamilyAdapterPlan plan = forProgram(name);
+        return plan.stage().shadowPass() && plan.vertexContract().hostLayout();
+    }
+
+    /**
+     * True when Iris's EntityPatcher applies to the lane's ShaderKey format (ENTITY for shadow
+     * glint, GLYPH for shadow text): entityId and blockEntityId are per-vertex attributes there,
+     * which the host mesh lacks, so they read the unbound value 0. Every other host-layout lane
+     * reads them as Iris's CommonUniforms fallback: the draw's entity id and blockEntityId -1.
+     */
+    public static boolean readsEntityIdsPerVertex(String name) {
+        FamilyAdapterPlan.Family family = forProgram(name).family();
+        return family == FamilyAdapterPlan.Family.SHADOW_GLINT || family == FamilyAdapterPlan.Family.SHADOW_TEXT;
     }
 
     public static boolean isParticleLike(String name) {
@@ -137,23 +170,20 @@ public final class FamilyAdapterRegistry {
         return forProgram(name).family() == FamilyAdapterPlan.Family.WEATHER;
     }
 
-    public static boolean isLineFamily(String name) {
-        return forProgram(name).family() == FamilyAdapterPlan.Family.LINE;
-    }
-
     public static boolean isGlintFamily(String name) {
         return forProgram(name).family() == FamilyAdapterPlan.Family.GLINT;
     }
 
     /**
      * Lanes whose pack program runs on a host vertex layout Iris also draws natively: lines,
-     * glint, lightning, beacon beams and leads.
+     * glint, lightning, beacon beams and leads, and in the shadow pass also text and the
+     * water mask.
      */
     public static boolean isHostLayoutFamily(String name) {
         return forProgram(name).vertexContract().hostLayout();
     }
 
-    /** The lane label a host-layout program's deviations carry (LINE, GLINT, ...), or null. */
+    /** The lane label a host-layout program's deviations carry (LINE, GLINT, SHADOW_LINES, ...), or null. */
     public static String hostLayoutLane(String name) {
         FamilyAdapterPlan plan = forProgram(name);
         return plan.vertexContract().hostLayout() ? plan.family().name() : null;

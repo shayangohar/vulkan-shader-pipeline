@@ -39,6 +39,7 @@ public final class ConformanceHarness {
         verifyGlintLane();
         verifyHostLayoutLanes();
         verifyShadowEntityCasters();
+        verifyShadowLanes();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -676,7 +677,8 @@ public final class ConformanceHarness {
         for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LINES,
                 net.minecraft.client.renderer.RenderPipelines.LINES_TRANSLUCENT,
                 net.minecraft.client.renderer.RenderPipelines.SECONDARY_BLOCK_OUTLINE)) {
-            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, host.getVertexFormat(), false)
+            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, host.getVertexFormat(),
+                            net.chimera.render.shader.HostLayoutLane.Pass.WORLD)
                             == net.chimera.render.shader.HostLayoutLane.LINE,
                     host.getLocation() + " must route to gbuffers_line");
             assertEquals(0.0F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
@@ -845,7 +847,7 @@ public final class ConformanceHarness {
                     lane + " family must name its lane");
             for (var host : lane.pipelines()) {
                 assertEquals(lane.format(), host.getVertexFormat(), host.getLocation() + " host format changed");
-                assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, lane.format(), lane.hand()) == lane
+                assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, lane.format(), lane.pass()) == lane
                         && lane.serves(host), host.getLocation() + " must route to " + lane);
             }
             FamilyAdapterPlan adapter = FamilyAdapterRegistry.forProgram(lane.program());
@@ -860,7 +862,8 @@ public final class ConformanceHarness {
             }
         }
         for (String program : List.of("gbuffers_line", "gbuffers_armor_glint", "gbuffers_lightning",
-                "gbuffers_beaconbeam", "gbuffers_basic")) {
+                "gbuffers_beaconbeam", "gbuffers_basic", "shadow_lines", "shadow_leash", "shadow_lightning",
+                "shadow_glint", "shadow_text", "shadow_text_bg", "shadow_basic")) {
             assertTrue(servedPrograms.contains(program), program + " has no host-layout lane");
         }
         assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size(),
@@ -869,12 +872,16 @@ public final class ConformanceHarness {
         assertTrue(net.chimera.render.shader.HostLayoutLane.LINE.whiteAlbedo()
                         && net.chimera.render.shader.HostLayoutLane.LIGHTNING.whiteAlbedo()
                         && net.chimera.render.shader.HostLayoutLane.LEASH.whiteAlbedo()
+                        && net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT_BG.whiteAlbedo()
+                        && net.chimera.render.shader.HostLayoutLane.SHADOW_BASIC.whiteAlbedo()
                         && !net.chimera.render.shader.HostLayoutLane.GLINT.whiteAlbedo()
+                        && !net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT.whiteAlbedo()
                         && !net.chimera.render.shader.HostLayoutLane.BEACON_BEAM.whiteAlbedo(),
                 "Iris binds white to unit 0 exactly for host formats without UV0: " + table.getSimpleName());
         assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(
                         net.minecraft.client.renderer.RenderPipelines.LINES,
-                        net.minecraft.client.renderer.RenderPipelines.LINES.getVertexFormat(), true) == null,
+                        net.minecraft.client.renderer.RenderPipelines.LINES.getVertexFormat(),
+                        net.chimera.render.shader.HostLayoutLane.Pass.HAND) == null,
                 "a world-only lane must not take a first-person draw");
         for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LIGHTNING,
                 net.minecraft.client.renderer.RenderPipelines.DRAGON_RAYS,
@@ -987,47 +994,7 @@ public final class ConformanceHarness {
         Path root = Files.createTempDirectory("chimera-shadow-entities-");
         try {
             Path shaders = Files.createDirectory(root.resolve("shaders"));
-            // BSL-style legacy shadow program: terrain attributes and both identities.
-            Files.writeString(shaders.resolve("shadow.vsh"), """
-                    #version 120
-                    attribute vec4 mc_Entity;
-                    attribute vec4 mc_midTexCoord;
-                    attribute vec3 at_midBlock;
-                    uniform int entityId;
-                    uniform mat4 shadowModelView;
-                    uniform mat4 shadowModelViewInverse;
-                    uniform mat4 shadowProjection;
-                    uniform mat4 shadowProjectionInverse;
-                    const float entityShadowDistanceMul = 0.25;
-                    const float shadowDistanceRenderMul = 1.0;
-                    const float shadowDistance = 128.0;
-                    varying vec2 texCoord;
-                    varying vec4 color;
-                    varying float mat;
-                    void main() {
-                        texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
-                        color = gl_Color;
-                        mat = mc_Entity.x + at_midBlock.x + mc_midTexCoord.y;
-                        vec3 normal = gl_NormalMatrix * gl_Normal;
-                        vec4 position = shadowModelViewInverse * shadowProjectionInverse * ftransform();
-                        if (entityId == 10001) position.y += normal.y * 0.0;
-                        gl_Position = shadowProjection * shadowModelView * position;
-                    }
-                    """);
-            Files.writeString(shaders.resolve("shadow.fsh"), """
-                    #version 120
-                    /* DRAWBUFFERS:01 */
-                    uniform sampler2D tex;
-                    uniform int blockEntityId;
-                    varying vec2 texCoord;
-                    varying vec4 color;
-                    varying float mat;
-                    void main() {
-                        if (blockEntityId / 100 == 155) discard;
-                        gl_FragData[0] = texture2D(tex, texCoord) * color;
-                        gl_FragData[1] = vec4(mat);
-                    }
-                    """);
+            writeLegacyShadowProgram(shaders);
             Files.writeString(shaders.resolve("shaders.properties"), """
                     shadowPlayer=true
                     shadowBlockEntities=0
@@ -1092,18 +1059,201 @@ public final class ConformanceHarness {
         assertTrue(snapshotAfterCasters, "entity casters must draw before the shadowtex1 snapshot, as in Iris");
         var draw = nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
                 .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
+        boolean lane = false;
         boolean guard = false;
         boolean dropped = false;
         for (var instruction : draw.instructions) {
             if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
-                if (call.name.equals("isShadowCasterPass")) guard = true;
+                if (call.name.equals("beginHostLayoutDraw")) lane = true;
+                if (lane && call.name.equals("isShadowCasterPass")) guard = true;
                 if (guard && call.name.equals("close") && call.owner.equals("com/mojang/blaze3d/vertex/MeshData")) {
                     dropped = true;
                 }
             }
         }
-        assertTrue(dropped, "a shadow-pass draw without a shadow lane must be dropped, not drawn with its host shader");
+        assertTrue(dropped, "a shadow-pass draw tries its shadow lane first; one without an installed lane "
+                + "must be dropped, not drawn with its host shader");
         System.out.println("[chimera] shadow_entities conversion, directives and caster order: PASS");
+    }
+
+    /**
+     * The shadow pass's host-layout lanes (Iris IrisPipelines.assignToShadow): each key runs the
+     * Iris program it names through the fallback chain, never a pack file of its own name, on its
+     * host layout with Iris's inputs. Leads, lines, lightning, text backgrounds and the water mask
+     * read entityId per draw and blockEntityId -1; glint and text read the unbound per-vertex 0.
+     * Lines are widened. Every lane tests alpha per draw and compiles.
+     */
+    private static void verifyShadowLanes() throws IOException {
+        var shadowPass = net.chimera.render.shader.HostLayoutLane.Pass.SHADOW;
+        Map<com.mojang.blaze3d.pipeline.RenderPipeline, net.chimera.render.shader.HostLayoutLane> routes = Map.of(
+                net.minecraft.client.renderer.RenderPipelines.LINES, net.chimera.render.shader.HostLayoutLane.SHADOW_LINES,
+                net.minecraft.client.renderer.RenderPipelines.SECONDARY_BLOCK_OUTLINE,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_LINES,
+                net.minecraft.client.renderer.RenderPipelines.LEASH, net.chimera.render.shader.HostLayoutLane.SHADOW_LEASH,
+                net.minecraft.client.renderer.RenderPipelines.LIGHTNING,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_LIGHTNING,
+                net.minecraft.client.renderer.RenderPipelines.GLINT, net.chimera.render.shader.HostLayoutLane.SHADOW_GLINT,
+                net.minecraft.client.renderer.RenderPipelines.TEXT, net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT,
+                net.minecraft.client.renderer.RenderPipelines.TEXT_SEE_THROUGH,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT,
+                net.minecraft.client.renderer.RenderPipelines.TEXT_BACKGROUND,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT_BG,
+                net.minecraft.client.renderer.RenderPipelines.WATER_MASK,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_BASIC);
+        for (var route : routes.entrySet()) {
+            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(route.getKey(),
+                            route.getKey().getVertexFormat(), shadowPass) == route.getValue(),
+                    route.getKey().getLocation() + " must route to " + route.getValue() + " in the shadow pass");
+        }
+        // Iris assigns no shadow key to these (or cancels them): they stay out of the map.
+        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LINES_TRANSLUCENT,
+                net.minecraft.client.renderer.RenderPipelines.DRAGON_RAYS,
+                net.minecraft.client.renderer.RenderPipelines.TEXT_INTENSITY,
+                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_OPAQUE)) {
+            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, host.getVertexFormat(), shadowPass) == null,
+                    host.getLocation() + " has no Iris shadow key");
+        }
+        assertEquals(0.0001F, net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT.alphaReference(),
+                "Iris SHADOW_TEXT: NON_ZERO_ALPHA");
+        assertEquals(0.0001F, net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT_BG.alphaReference(),
+                "Iris SHADOW_TEXT_BG: NON_ZERO_ALPHA");
+        assertEquals(0.1F, net.chimera.render.shader.HostLayoutLane.SHADOW_GLINT.alphaReference(),
+                "Iris GLINT in the shadow pass: SHADOW_ENTITIES_CUTOUT, ONE_TENTH_ALPHA");
+        for (var lane : List.of(net.chimera.render.shader.HostLayoutLane.SHADOW_LINES,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_LEASH,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_LIGHTNING,
+                net.chimera.render.shader.HostLayoutLane.SHADOW_BASIC)) {
+            assertEquals(0.0F, lane.alphaReference(), lane + ": Iris AlphaTests.OFF");
+        }
+
+        Path root = Files.createTempDirectory("chimera-shadow-lanes-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            writeLegacyShadowProgram(shaders);
+            // A pack file named like a shader key is not an Iris program and is never selected.
+            Files.writeString(shaders.resolve("shadow_text.vsh"), "#version 120\nvoid main() { decoy(); }\n");
+            Files.writeString(shaders.resolve("shadow_text.fsh"), "#version 120\nvoid main() { decoy(); }\n");
+            var analysis = PackProbe.analyze(root);
+            Map<String, List<String>> inputs = Map.of(
+                    "shadow_lines", List.of("layout(location = 3) in float LineWidth;", "void chimeraLineMain()",
+                            "chimeraLineViewScale", "chimeraShadowUniforms.viewWidth"),
+                    "shadow_leash", List.of("layout(location = 2) in ivec2 UV2;", "const vec2 UV0 = vec2(0.5);"),
+                    "shadow_lightning", List.of("layout(location = 1) in vec4 Color;", "const ivec2 UV2 = ivec2(240);"),
+                    "shadow_text_bg", List.of("layout(location = 2) in ivec2 UV2;", "const vec2 UV0 = vec2(0.5);"),
+                    "shadow_basic", List.of("const vec4 Color = vec4(1.0);", "const ivec2 UV2 = ivec2(240);"),
+                    "shadow_text", List.of("layout(location = 2) in vec2 UV0;", "layout(location = 3) in ivec2 UV2;"),
+                    "shadow_glint", List.of("layout(location = 1) in vec2 UV0;",
+                            "const vec4 Color = vec4(0.0, 0.0, 0.0, 1.0);"));
+            for (var entry : inputs.entrySet()) {
+                String key = entry.getKey();
+                var plan = analysis.plan().program(key);
+                assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(key),
+                        key + " rejected: " + (plan == null ? "missing" : plan.deviations()));
+                assertEquals("shadow", analysis.resolution().resolution(key).selectedProgram(),
+                        key + " must run Iris's shadow program through its fallback chain");
+                String vertex = plan.convertedVertex();
+                for (String line : entry.getValue()) {
+                    assertTrue(vertex.contains(line), key + " lost Iris host input " + line + ": " + vertex);
+                }
+                for (String line : List.of("return Color * ColorModulator;",
+                        "return ProjMat * ModelViewMat * chimeraEntityVertexValue();",
+                        "layout(binding = 2) uniform ChimeraShadowUniforms",
+                        "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);")) {
+                    assertTrue(vertex.contains(line), key + " lost the shadow bridge " + line + ": " + vertex);
+                }
+                assertTrue(!vertex.contains("decoy") && !vertex.contains("MVP") && !vertex.contains("inPositionLight"),
+                        key + " must convert the shadow program on its host layout: " + vertex);
+                String fragment = plan.convertedFragment();
+                if (FamilyAdapterRegistry.readsEntityIdsPerVertex(key)) {
+                    assertTrue(vertex.contains("const uvec4 EntityIds = uvec4(0);")
+                                    && vertex.contains("chimeraEntityId = EntityIds.x;")
+                                    && fragment.contains("int(chimeraBlockEntityId) / 100 == 155"),
+                            key + " reads Iris's entity-patched ids, unbound on the host mesh: " + vertex);
+                } else {
+                    assertTrue(vertex.contains("chimeraShadowUniforms." + UniformRegistry.DRAW_ENTITY_ID + " == 10001")
+                                    && !vertex.contains("chimeraEntityId")
+                                    && fragment.contains("(-1) / 100 == 155"),
+                            key + " must read entityId per draw and blockEntityId -1: " + vertex + "\n" + fragment);
+                }
+                assertTrue(fragment.contains("chimeraShadowColor1") && plan.alphaTestPlan().perDrawReference(),
+                        key + " must write both shadow colours and test alpha per draw: " + fragment);
+                assertTrue(plan.deviations().contains(FamilyAdapterRegistry.hostLayoutLane(key) + "_VERTEX_BRIDGE"),
+                        key + " must record its vertex bridge: " + plan.deviations());
+            }
+            var compiled = PackCompileCheck.run(root, analysis);
+            assertTrue(compiled.failures().isEmpty(), "shadow lane compilation: " + compiled.failures());
+
+            // An authored shadow_entities serves the ShadowEntities keys; the Shadow keys keep shadow.
+            Files.copy(shaders.resolve("shadow.vsh"), shaders.resolve("shadow_entities.vsh"));
+            Files.copy(shaders.resolve("shadow.fsh"), shaders.resolve("shadow_entities.fsh"));
+            var authored = PackProbe.analyze(root).resolution();
+            for (String key : List.of("shadow_lines", "shadow_leash", "shadow_basic")) {
+                assertEquals("shadow", authored.resolution(key).selectedProgram(), key + " is Iris ProgramId.Shadow");
+            }
+            for (String key : List.of("shadow_text", "shadow_text_bg", "shadow_glint", "shadow_lightning")) {
+                assertEquals("shadow_entities", authored.resolution(key).selectedProgram(),
+                        key + " is Iris ProgramId.ShadowEntities (shadow_lightning falls back to it)");
+            }
+        } finally {
+            deleteTree(root);
+        }
+
+        var flames = nativeClass("net/chimera/mixin/ChimeraFlameFeatureRendererMixin").methods.stream()
+                .filter(method -> method.name.equals("chimera$packFlames")).findFirst().orElseThrow();
+        boolean flameId = false;
+        boolean family = false;
+        for (var instruction : flames.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                if (call.name.equals("flameEntityId")) flameId = true;
+                if (call.name.equals("emit") && call.owner.equals("net/chimera/render/ChimeraFamilyDraw")) family = true;
+            }
+        }
+        assertTrue(flameId && family, "burning-entity fire must draw through the entity family with Iris's entity_flame id");
+        System.out.println("[chimera] shadow lanes (lines, leads, lightning, glint, text, water mask) and flames: PASS");
+    }
+
+    /** BSL-style legacy shadow program: terrain attributes, both identities and both shadow colours. */
+    private static void writeLegacyShadowProgram(Path shaders) throws IOException {
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                    #version 120
+                    attribute vec4 mc_Entity;
+                    attribute vec4 mc_midTexCoord;
+                    attribute vec3 at_midBlock;
+                    uniform int entityId;
+                    uniform mat4 shadowModelView;
+                    uniform mat4 shadowModelViewInverse;
+                    uniform mat4 shadowProjection;
+                    uniform mat4 shadowProjectionInverse;
+                    const float entityShadowDistanceMul = 0.25;
+                    const float shadowDistanceRenderMul = 1.0;
+                    const float shadowDistance = 128.0;
+                    varying vec2 texCoord;
+                    varying vec4 color;
+                    varying float mat;
+                    void main() {
+                        texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                        color = gl_Color;
+                        mat = mc_Entity.x + at_midBlock.x + mc_midTexCoord.y;
+                        vec3 normal = gl_NormalMatrix * gl_Normal;
+                        vec4 position = shadowModelViewInverse * shadowProjectionInverse * ftransform();
+                        if (entityId == 10001) position.y += normal.y * 0.0;
+                        gl_Position = shadowProjection * shadowModelView * position;
+                    }
+                    """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                    #version 120
+                    /* DRAWBUFFERS:01 */
+                    uniform sampler2D tex;
+                    uniform int blockEntityId;
+                    varying vec2 texCoord;
+                    varying vec4 color;
+                    varying float mat;
+                    void main() {
+                        if (blockEntityId / 100 == 155) discard;
+                        gl_FragData[0] = texture2D(tex, texCoord) * color;
+                        gl_FragData[1] = vec4(mat);
+                    }
+                    """);
     }
 
     private static void deleteTree(Path root) throws IOException {

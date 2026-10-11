@@ -20,6 +20,23 @@ public record FamilyAdapterPlan(
          * SHADOW_ENTITIES_CUTOUT, ProgramId.ShadowEntities, falling back to shadow).
          */
         SHADOW_ENTITIES,
+        /** shadow_lines: line draws in the shadow pass (Iris SHADOW_LINES, ProgramId.Shadow). */
+        SHADOW_LINES,
+        /** shadow_leash: leads in the shadow pass (Iris SHADOW_LEASH, ProgramId.Shadow). */
+        SHADOW_LEASH,
+        /** shadow_lightning: lightning bolts in the shadow pass (Iris ProgramId.ShadowLightning). */
+        SHADOW_LIGHTNING,
+        /**
+         * shadow_glint: glint layers in the shadow pass. Iris draws them with SHADOW_ENTITIES_CUTOUT,
+         * the entity-layout program, on the glint's own POSITION_TEX mesh.
+         */
+        SHADOW_GLINT,
+        /** shadow_text: world text and name tags in the shadow pass (Iris SHADOW_TEXT, ProgramId.ShadowEntities). */
+        SHADOW_TEXT,
+        /** shadow_text_bg: text backgrounds in the shadow pass (Iris SHADOW_TEXT_BG, ProgramId.ShadowEntities). */
+        SHADOW_TEXT_BG,
+        /** shadow_basic: the boat water mask in the shadow pass (Iris SHADOW_BASIC, ProgramId.Shadow). */
+        SHADOW_BASIC,
         ENTITY,
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,
@@ -62,6 +79,12 @@ public record FamilyAdapterPlan(
         HOST_BEACON,
         /** DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads, drawn as a triangle strip. */
         HOST_LEASH,
+        /** DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP glyph quads (world text and name tags). */
+        HOST_TEXT,
+        /** DefaultVertexFormat.POSITION_COLOR_LIGHTMAP text background quads. */
+        HOST_TEXT_BACKGROUND,
+        /** DefaultVertexFormat.POSITION boat water mask. */
+        HOST_WATER_MASK,
         HOST_BLOCK,
         SKY_POSITION,
         SKY_POSITION_COLOR,
@@ -76,11 +99,13 @@ public record FamilyAdapterPlan(
 
         /**
          * Lanes whose program runs on a host vertex layout Iris also draws natively
-         * (VanillaTransformer), converted by LegacyGlslConverter.convertHostLayoutVertexChecked.
+         * (VanillaTransformer): converted by LegacyGlslConverter.convertHostLayoutVertexChecked in
+         * the main pass and convertShadowLaneVertexChecked in the shadow pass.
          */
         public boolean hostLayout() {
             return switch (this) {
-                case HOST_LINE, HOST_GLINT, HOST_LIGHTNING, HOST_BEACON, HOST_LEASH -> true;
+                case HOST_LINE, HOST_GLINT, HOST_LIGHTNING, HOST_BEACON, HOST_LEASH,
+                     HOST_TEXT, HOST_TEXT_BACKGROUND, HOST_WATER_MASK -> true;
                 default -> false;
             };
         }

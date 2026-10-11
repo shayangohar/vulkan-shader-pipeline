@@ -41,6 +41,14 @@ public final class ChimeraEntityBridge {
         LEASH,
         /** Every entity-format caster in the shadow pass (Iris SHADOW_ENTITIES_CUTOUT). */
         SHADOW_ENTITIES,
+        /** The shadow pass's host-layout lanes (HostLayoutLane, Pass.SHADOW). */
+        SHADOW_LINES,
+        SHADOW_LEASH,
+        SHADOW_LIGHTNING,
+        SHADOW_GLINT,
+        SHADOW_TEXT,
+        SHADOW_TEXT_BG,
+        SHADOW_BASIC,
         HOST_FALLBACK
     }
 
@@ -482,11 +490,13 @@ public final class ChimeraEntityBridge {
 
     /**
      * Opens a guarded draw for a {@link HostLayoutLane}, which keeps its host vertex layout.
-     * Returns false for any other family.
+     * Returns false for any other family, and for a lane of the other pass: shadow lanes draw
+     * only inside the shadow caster window, the others never inside it.
      */
     public static boolean beginHostLayoutDraw(Family family) {
-        // The lanes draw into gbuffers; the shadow pass has no shadow lanes for them yet.
-        return HostLayoutLane.of(family) != null && !isShadowCasterPass() && beginSimpleDraw(family);
+        HostLayoutLane lane = HostLayoutLane.of(family);
+        return lane != null && (lane.pass() == HostLayoutLane.Pass.SHADOW) == isShadowCasterPass()
+                && beginSimpleDraw(family);
     }
 
     /**
@@ -625,6 +635,14 @@ public final class ChimeraEntityBridge {
         return enabled ? currentEntityId : 0;
     }
 
+    /**
+     * The entity id Iris gives burning-entity fire (MixinFlameFeatureRenderer): the pack's
+     * entity.properties id for minecraft:entity_flame.
+     */
+    public static int flameEntityId() {
+        return resolver.resolveName("minecraft:entity_flame");
+    }
+
     public static int currentBlockEntityId() {
         return enabled ? currentBlockEntityId : 0;
     }
@@ -708,6 +726,9 @@ public final class ChimeraEntityBridge {
      * the whole quad, and its glint lit that box.</p>
      */
     public static float alphaReference(RenderPipeline pipeline) {
+        // A host-layout lane tests at its Iris ShaderKey's alpha test.
+        HostLayoutLane lane = isDrawActive() ? HostLayoutLane.of(activeFamily) : null;
+        if (lane != null) return lane.alphaReference();
         // Iris SHADOW_ENTITIES_CUTOUT tests every entity caster at ONE_TENTH_ALPHA.
         if (isShadowCasterPass()) return FIXED_ALPHA_CUTOUT;
         if (pipeline == RenderPipelines.CRUMBLING
@@ -777,7 +798,8 @@ public final class ChimeraEntityBridge {
 
     public static Family familyForRenderType(Family base, RenderType renderType) {
         if (isShadowCasterPass()) {
-            // One shadow program for every entity-format caster; text keeps no shadow lane.
+            // One shadow program for every entity-format caster. A batch on another layout
+            // (text, leads, lines, lightning, glint) draws through its HostLayoutLane shadow lane.
             return renderType != null && renderType.format() == DefaultVertexFormat.NEW_ENTITY
                     ? Family.SHADOW_ENTITIES : Family.HOST_FALLBACK;
         }
@@ -840,8 +862,9 @@ public final class ChimeraEntityBridge {
                     || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(format) != null;
             case PARTICLE, PARTICLE_TRANSLUCENT -> format == DefaultVertexFormat.PARTICLE;
-            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH ->
-                    HostLayoutLane.of(activeFamily).serves(pipeline);
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH,
+                 SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG,
+                 SHADOW_BASIC -> HostLayoutLane.of(activeFamily).serves(pipeline);
             case HOST_FALLBACK -> false;
         };
     }
@@ -867,7 +890,8 @@ public final class ChimeraEntityBridge {
         return switch (family) {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, HAND, HAND_WATER, SHADOW_ENTITIES -> true;
             case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
-                 LIGHTNING, BEACON_BEAM, LEASH, HOST_FALLBACK -> false;
+                 LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
+                 SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC, HOST_FALLBACK -> false;
         };
     }
 
@@ -889,7 +913,8 @@ public final class ChimeraEntityBridge {
                     ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY : format;
             case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
             case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
-                 LIGHTNING, BEACON_BEAM, LEASH -> format;
+                 LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
+                 SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC -> format;
             case HOST_FALLBACK -> format;
         };
     }
@@ -1110,7 +1135,9 @@ public final class ChimeraEntityBridge {
             case HAND_WATER -> handWaterPipeline;
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
-            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH -> hostLayoutPipelines.get(family);
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH,
+                 SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG,
+                 SHADOW_BASIC -> hostLayoutPipelines.get(family);
             case SHADOW_ENTITIES -> shadowCasterPass ? shadowCasterPipeline : null;
             case HOST_FALLBACK -> null;
         };

@@ -127,7 +127,10 @@ record PackResolutionPlan(
     /** Materialize selected prepared sources under the requested adapter's name. */
     List<PackProgram> executablePrograms(List<PackProgram> programs) {
         Map<String, PackProgram> result = new TreeMap<>();
-        if (programs != null) programs.forEach(program -> result.put(program.name(), program));
+        if (programs != null) {
+            programs.stream().filter(program -> !isShaderKey(program.name()))
+                    .forEach(program -> result.put(program.name(), program));
+        }
         Map<String, PackProgram> shipped = new TreeMap<>(result);
         for (PackProgramResolution resolved : resolutions.values()) {
             if (!resolved.executable() || resolved.requestedProgram().equals(resolved.selectedProgram())) continue;
@@ -179,6 +182,13 @@ record PackResolutionPlan(
         addChain(result, "shadow_entities", "shadow");
         addChain(result, "shadow_lightning", "shadow_entities", "shadow");
         addChain(result, "shadow_block", "shadow");
+        // Iris shadow ShaderKeys drawn on host layouts: each runs the Iris program it names.
+        addKeyChain(result, "shadow_lines", "shadow");
+        addKeyChain(result, "shadow_leash", "shadow");
+        addKeyChain(result, "shadow_basic", "shadow");
+        addKeyChain(result, "shadow_glint", "shadow_entities", "shadow");
+        addKeyChain(result, "shadow_text", "shadow_entities", "shadow");
+        addKeyChain(result, "shadow_text_bg", "shadow_entities", "shadow");
         addChain(result, "gbuffers_basic");
         addChain(result, "gbuffers_line", "gbuffers_basic");
         addChain(result, "gbuffers_textured", "gbuffers_basic");
@@ -221,6 +231,20 @@ record PackResolutionPlan(
             Collections.addAll(chain, parents);
         }
         map.put(name, List.copyOf(chain));
+    }
+
+    /**
+     * A shader key that is not an Iris program name: it resolves only through the programs
+     * Iris uses for it, so a pack file of the same name is never selected.
+     */
+    private static void addKeyChain(Map<String, List<String>> map, String key, String... programs) {
+        map.put(key, List.of(programs));
+    }
+
+    /** True for a requested name that is a shader key, never an authorable program. */
+    static boolean isShaderKey(String name) {
+        List<String> chain = FALLBACKS.get(name);
+        return chain != null && !chain.get(0).equals(name);
     }
 
     private static boolean supportsCurrentAdapter(String name) {

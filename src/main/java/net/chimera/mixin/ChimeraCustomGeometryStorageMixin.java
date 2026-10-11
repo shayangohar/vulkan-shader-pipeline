@@ -31,8 +31,9 @@ import java.util.Map;
  * wrote only colour into an image deferred packs never show.</p>
  *
  * <p>Geometry a host-layout lane serves (lightning, dragon rays, beacon beams, fishing
- * lines) keeps its host format and lane, and is held only so each batch draws with its
- * submitter's entity id, the value Iris's fallback entityId uniform carries.</p>
+ * lines) keeps its host format and lane, in the main pass or the shadow pass, and is held
+ * only so each batch draws with its submitter's entity id, the value Iris's fallback
+ * entityId uniform carries.</p>
  */
 @Mixin(CustomFeatureRenderer.Storage.class)
 public abstract class ChimeraCustomGeometryStorageMixin implements ChimeraCustomGeometryStorage {
@@ -65,8 +66,11 @@ public abstract class ChimeraCustomGeometryStorageMixin implements ChimeraCustom
     /** The held list a submission belongs to, or null when it stays in the host batch. */
     @Unique
     private Map<RenderType, List<HeldSubmit>> chimera$destination(RenderType renderType) {
+        // World geometry: the shadow caster window holds it for the shadow pass's lanes.
+        HostLayoutLane.Pass pass = ChimeraEntityBridge.isShadowCasterPass()
+                ? HostLayoutLane.Pass.SHADOW : HostLayoutLane.Pass.WORLD;
         if (ChimeraEntityBridge.hostLayoutInstalled(
-                HostLayoutLane.forDraw(renderType.pipeline(), renderType.format(), false))) {
+                HostLayoutLane.forDraw(renderType.pipeline(), renderType.format(), pass))) {
             return chimera$laneSubmits;
         }
         int family = ChimeraEntityBridge.currentSubmissionFamily();

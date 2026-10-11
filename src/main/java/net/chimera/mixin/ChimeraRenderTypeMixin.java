@@ -29,20 +29,13 @@ public abstract class ChimeraRenderTypeMixin {
     @WrapMethod(method = "draw")
     private void chimera$immediateFamilyWindow(MeshData mesh, Operation<Void> original) {
         RenderType type = (RenderType) (Object) this;
-        if (ChimeraEntityBridge.isShadowCasterPass() && !ChimeraEntityBridge.shouldUsePackPipeline(type.pipeline())) {
-            // Iris draws every shadow-pass pipeline with a shadow program. One without a
-            // shadow lane here stays out of the shadow map: its host shader would write
-            // colour and depth the pack's shadow programs never produce.
-            ChimeraEntityBridge.noteShadowCasterDropped(type.pipeline());
-            if (mesh != null) mesh.close();
-            return;
-        }
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        // A host-layout lane (weather, lines, glint, lightning, beacon beams, leads) keeps its
-        // native layout; only the program and its authored targets change. The host buffer
-        // flushes glint after the pack has drawn the items and models it lies on (EQUAL depth).
+        // A host-layout lane (weather, lines, glint, lightning, beacon beams, leads, and in the
+        // shadow pass text and the water mask) keeps its native layout; only the program and its
+        // authored targets change. The host buffer flushes glint after the pack has drawn the
+        // items and models it lies on (EQUAL depth).
         var format = mesh == null ? null : mesh.drawState().format();
-        HostLayoutLane lane = HostLayoutLane.forDraw(type.pipeline(), format, ChimeraHandRenderer.active());
+        HostLayoutLane lane = HostLayoutLane.forDraw(type.pipeline(), format, HostLayoutLane.Pass.current());
         if (pass != null && lane != null && ChimeraEntityBridge.isWorldSubmissionWindow()
                 && ChimeraEntityBridge.beginHostLayoutDraw(lane.family())) {
             var lanePipeline = pass.particlePipeline(lane.family());
@@ -62,6 +55,14 @@ public abstract class ChimeraRenderTypeMixin {
                 if (window) pass.endPackFamilyWindow(lanePipeline.outputPlan());
                 ChimeraEntityBridge.endDraw();
             }
+            return;
+        }
+        if (ChimeraEntityBridge.isShadowCasterPass() && !ChimeraEntityBridge.shouldUsePackPipeline(type.pipeline())) {
+            // Iris draws every shadow-pass pipeline with a shadow program. One without an
+            // installed shadow lane here stays out of the shadow map: its host shader would
+            // write colour and depth the pack's shadow programs never produce.
+            ChimeraEntityBridge.noteShadowCasterDropped(type.pipeline());
+            if (mesh != null) mesh.close();
             return;
         }
         boolean hand = ChimeraHandRenderer.active()
