@@ -40,9 +40,13 @@ public final class M83ConformanceHarness {
         assertTrue(LegacyGlslConverter.supportsShadowVertex(legacy,
                         "#version 120\nvoid main(){gl_FragColor=vec4(1.0);}"),
                 "legacy shadow compatibility regressed");
-        assertTrue(!LegacyGlslConverter.supportsModernShadow(
+        // Any desktop version converts (GlslVersion); GLSL ES is not one.
+        assertTrue(LegacyGlslConverter.supportsModernShadow(
                 "#version 450\nvoid main(){gl_Position=vec4(0.0);}", ""),
-                "unsupported modern shadow version was accepted");
+                "a desktop 450 shadow was refused");
+        assertTrue(!LegacyGlslConverter.supportsModernShadow(
+                "#version 300 es\nvoid main(){gl_Position=vec4(0.0);}", ""),
+                "a GLSL ES shadow was accepted");
 
         // The generated epilogue must be generic. Pack-authored Z compression
         // remains in the renamed source entry point and is never duplicated.

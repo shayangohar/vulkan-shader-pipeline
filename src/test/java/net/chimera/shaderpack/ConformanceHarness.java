@@ -40,6 +40,9 @@ public final class ConformanceHarness {
         verifyHostLayoutLanes();
         verifyShadowEntityCasters();
         verifyShadowLanes();
+        verifyShadowCulling();
+        verifyShadowPassOrder();
+        verifyGlslBreadth();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -1035,14 +1038,13 @@ public final class ConformanceHarness {
                             && !directives.lightBlockEntities()
                             && directives.deviations().contains("SHADOW_DIRECTIVE_MALFORMED:shadowLightBlockEntities"),
                     "Iris reads true/1 and false/0 and keeps its default otherwise: " + directives);
-            assertEquals(32.0F, analysis.config().shadowSettings().entityCasterDistance(),
-                    "Iris entity BoxCuller: shadowDistance * shadowDistanceRenderMul * entityShadowDistanceMul");
+            assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.ADVANCED, 32.0, 0.0),
+                    analysis.plan().shadowCulling().entities(192),
+                    "Iris entity frustum: advanced, BoxCuller(shadowDistance * shadowDistanceRenderMul"
+                            + " * entityShadowDistanceMul)");
         } finally {
             deleteTree(root);
         }
-        assertEquals(Float.POSITIVE_INFINITY, new PackConfig.ShadowSettings(2048, 128.0F,
-                        Map.of("entityShadowDistanceMul", "0.25"), List.of()).entityCasterDistance(),
-                "without shadowDistanceRenderMul (Iris -1) entity casters have no distance limit");
         assertEquals(ShadowCasterDirectives.DEFAULTS, ShadowCasterDirectives.fromProperties(Map.of()),
                 "Iris defaults: entities and block entities on, player and light block entities off");
 
@@ -1210,6 +1212,264 @@ public final class ConformanceHarness {
         }
         assertTrue(flameId && family, "burning-entity fire must draw through the entity family with Iris's entity_flame id");
         System.out.println("[chimera] shadow lanes (lines, leads, lightning, glint, text, water mask) and flames: PASS");
+    }
+
+    /**
+     * Iris ShadowRenderer.createShadowFrustum: the culling each shadow.culling state picks, with
+     * its distances, and the advanced frustum's planes against known casters.
+     */
+    private static void verifyShadowCulling() {
+        int renderDistance = 192;
+        java.util.function.BiFunction<Map<String, String>, Map<String, String>, ShadowCullingPlan> plan =
+                (properties, constants) -> ShadowCullingPlan.of(properties,
+                        new PackConfig.ShadowSettings(2048, 128.0F, constants, List.of()));
+        Map<String, String> unitRender = Map.of("shadowDistanceRenderMul", "1.0");
+        var advanced = ShadowCullingPlan.Mode.ADVANCED;
+        double none = Double.POSITIVE_INFINITY;
+
+        ShadowCullingPlan unset = plan.apply(Map.of(), unitRender);
+        assertEquals(ShadowCullingPlan.State.DEFAULT, unset.state(), "no shadow.culling is Iris DEFAULT");
+        assertEquals(new ShadowCullingPlan.Culler(advanced, 128.0, 0.0), unset.terrain(renderDistance),
+                "DEFAULT without a geometry stage is advanced, BoxCuller(shadowDistance * renderMul)");
+        assertEquals(unset.terrain(renderDistance), unset.entities(renderDistance),
+                "entityShadowDistanceMul 1 reuses the terrain frustum");
+        assertEquals(new ShadowCullingPlan.Culler(advanced, none, 0.0), unset.terrain(96),
+                "a box at or past the render distance is no box");
+        assertEquals(new ShadowCullingPlan.Culler(advanced, none, 0.0),
+                plan.apply(Map.of(), Map.of()).terrain(renderDistance),
+                "renderMul unset (Iris -1) means the player's shadow distance, 32 chunks by default");
+        assertEquals(new ShadowCullingPlan.Culler(advanced, 0.0, 0.0),
+                plan.apply(Map.of(), Map.of("shadowDistanceRenderMul", "0.0")).terrain(renderDistance),
+                "a zero distance keeps Iris's BoxCuller(0)");
+        assertEquals(unset.terrain(renderDistance),
+                plan.apply(Map.of("shadow.culling", "true"), unitRender).terrain(renderDistance), "true is ADVANCED");
+
+        ShadowCullingPlan distance = plan.apply(Map.of("shadow.culling", "false"), unitRender);
+        assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.DISTANCE, 128.0, 0.0),
+                distance.terrain(renderDistance), "false culls by distance only");
+        assertEquals(ShadowCullingPlan.Culler.NONE, distance.terrain(96), "a distance past the render distance culls nothing");
+        assertEquals(ShadowCullingPlan.Culler.NONE,
+                plan.apply(Map.of("shadow.culling", "false"), Map.of()).terrain(renderDistance),
+                "a negative distance culls nothing");
+
+        ShadowCullingPlan safeZone = plan.apply(Map.of("shadow.culling", "reversed"), Map.of("voxelDistance", "32.0"));
+        assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.SAFE_ZONE, 128.0, 32.0),
+                safeZone.terrain(renderDistance),
+                "reversed: voxelDistance box always drawn, outer box shadowDistance (renderMul -1 taken as 1)");
+        assertEquals(safeZone.terrain(renderDistance),
+                plan.apply(Map.of("shadow.culling", "safe_zone"), Map.of("voxelDistance", "32.0")).terrain(renderDistance),
+                "safe_zone is reversed");
+
+        assertEquals(new ShadowCullingPlan.Culler(advanced, 32.0, 0.0),
+                plan.apply(Map.of(), Map.of("shadowDistanceRenderMul", "1.0", "entityShadowDistanceMul", "0.25"))
+                        .entities(renderDistance), "entities: BoxCuller(shadowDistance * renderMul * entityMul)");
+        assertEquals(new ShadowCullingPlan.Culler(advanced, none, 0.0),
+                plan.apply(Map.of(), Map.of("entityShadowDistanceMul", "0.25")).entities(renderDistance),
+                "a negative entity multiplier product is the player's shadow distance");
+        ShadowCullingPlan malformed = plan.apply(Map.of("shadow.culling", "maybe"), unitRender);
+        assertTrue(malformed.state() == ShadowCullingPlan.State.DEFAULT
+                        && malformed.deviations().contains("SHADOW_CULLING_DIRECTIVE_MALFORMED:maybe"),
+                "Iris keeps the default for an unrecognized value: " + malformed);
+
+        // A camera at the origin looking down -Z, 70 degree vertical field, 16:9; planes only.
+        org.joml.Matrix4f camera = new org.joml.Matrix4f()
+                .perspective((float) Math.toRadians(70.0), 16.0F / 9.0F, 0.05F, 1000.0F);
+        var open = new ShadowCullingPlan.Culler(advanced, none, 0.0);
+        var overhead = new net.chimera.render.ShadowCullingFrustum(open, camera,
+                new org.joml.Vector3f(0.0F, 1.0F, 0.0F));
+        assertTrue(cube(overhead, 0, 0, -20), "a visible caster is kept");
+        assertTrue(cube(overhead, 0, 50, -20), "a caster above the view shadows what the camera sees");
+        assertTrue(!cube(overhead, 0, 50, 20), "with the sun overhead, a caster behind the camera shadows nothing seen");
+        assertTrue(!cube(overhead, 0, -100, -20), "a caster below the view shadows nothing seen");
+        var side = new net.chimera.render.ShadowCullingFrustum(open, camera,
+                new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        assertTrue(cube(side, 200, 0, -20), "a caster on the light's side shadows into the view");
+        assertTrue(!cube(side, -200, 0, -20), "a caster on the far side of the view shadows nothing seen");
+        var oblique = new net.chimera.render.ShadowCullingFrustum(open, camera,
+                new org.joml.Vector3f(1.0F, 1.0F, 0.0F).normalize());
+        assertTrue(cube(oblique, 30, 30, -20), "the light's ray from this caster crosses the view");
+        assertTrue(!cube(oblique, -30, -30, -20), "the light's ray from this caster leaves the view");
+        var boxed = new net.chimera.render.ShadowCullingFrustum(
+                new ShadowCullingPlan.Culler(advanced, 64.0, 0.0), camera, new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        assertTrue(!cube(boxed, 100, 0, -20), "the BoxCuller still bounds the advanced frustum");
+        var zone = new net.chimera.render.ShadowCullingFrustum(safeZone.terrain(1024), camera,
+                new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        assertTrue(cube(zone, -20, 0, -20) && zone.forced(-20, 0, -20, -19, 1, -19),
+                "a caster in the safe zone is drawn whatever the view");
+        assertTrue(!cube(zone, -60, 0, -20) && !zone.forced(-60, 0, -20, -59, 1, -19),
+                "outside the safe zone the advanced planes decide");
+        assertTrue(!cube(zone, 200, 0, -20), "the outer box bounds the safe zone frustum");
+        var off = new net.chimera.render.ShadowCullingFrustum(ShadowCullingPlan.Culler.NONE, camera,
+                new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        assertTrue(cube(off, -200, 0, -20) && !off.forced(0, 0, 0, 1, 1, 1), "no culling keeps everything");
+        System.out.println("[chimera] Iris shadow culling (advanced, safe zone, distance): PASS");
+    }
+
+    private static boolean cube(net.chimera.render.ShadowCullingFrustum frustum, float x, float y, float z) {
+        return frustum.visible(x, y, z, x + 1.0F, y + 1.0F, z + 1.0F);
+    }
+
+    /**
+     * One version rule (any desktop 110-460, compatibility or core), modern declarations in the
+     * entity-style converters, Iris core-profile names, and GL's discard of an output past the
+     * route, on a Photon-shaped pack.
+     */
+    private static void verifyGlslBreadth() throws IOException {
+        for (String accepted : List.of("#version 110", "#version 120e", "#version 150", "#version 330 core",
+                "#version 400 compatibility", "#version 430 compatibility", "#version 460")) {
+            assertTrue(GlslVersion.declaredAndSupported(accepted + "\nvoid main() {}"), accepted + " is a desktop version");
+        }
+        for (String refused : List.of("#version 300 es", "#version 100", "#version 470", "#version 200")) {
+            assertTrue(!GlslVersion.declaredAndSupported(refused + "\nvoid main() {}"), refused + " is not");
+        }
+        assertTrue(GlslVersion.first("#version 400").irisCore() && GlslVersion.first("#version 140 core").irisCore()
+                        && !GlslVersion.first("#version 400 compatibility").irisCore()
+                        && !GlslVersion.first("#version 130").irisCore(),
+                "Iris core mode: the core profile, or 150 and above with no profile");
+        assertEquals("writeonly uniform image3D a;\nwriteonly uniform image3D b;",
+                GlslTokenRewriter.splitOpaqueDeclarationLists("writeonly uniform image3D a, b;"),
+                "each image of a list takes its own binding");
+        assertEquals("/* a comment\nover two lines */\n\nin vec3 mc_Entity;",
+                GlslTokenRewriter.expandStorageQualifierAliases(
+                        "/* a comment\nover two lines */\n#define attribute in\nattribute vec3 mc_Entity;"),
+                "a storage-qualifier alias applies after its definition, lexed as one stream");
+
+        Path root = Files.createTempDirectory("chimera-glsl-breadth-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                    #version 400 compatibility
+                    #define attribute in
+                    out vec2 uv;
+                    flat out uint material_mask;
+                    flat out mat3 tbn;
+                    attribute vec4 at_tangent;
+                    attribute vec3 mc_Entity;
+                    attribute vec2 mc_midTexCoord;
+                    void main() {
+                        uv = gl_MultiTexCoord0.xy + mc_midTexCoord * 0.0;
+                        material_mask = uint(gl_VertexID & 1) + uint(mc_Entity.x);
+                        tbn = mat3(at_tangent.xyz, gl_Normal, cross(at_tangent.xyz, gl_Normal));
+                        gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                    #version 400 compatibility
+                    uniform sampler2D gtexture;
+                    in vec2 uv;
+                    flat in uint material_mask;
+                    flat in mat3 tbn;
+                    layout (location = 0) out vec4 gbuffer_data_0;
+                    layout (location = 1) out vec4 gbuffer_data_1;
+                    /* RENDERTARGETS: 1 */
+                    float[2] unused_pair() { return float[2](0.0, 1.0); }
+                    void main() {
+                        gbuffer_data_0 = texture(gtexture, uv) * float(material_mask + 1u) * tbn[0].x;
+                        gbuffer_data_1 = vec4(tbn[2], 1.0);
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_basic.vsh"), """
+                    #version 400
+                    in vec3 vaPosition;
+                    in vec4 vaColor;
+                    in ivec2 vaUV2;
+                    uniform mat4 modelViewMatrix;
+                    uniform mat4 projectionMatrix;
+                    out vec4 tint;
+                    out vec2 light_levels;
+                    void main() {
+                        tint = vaColor;
+                        light_levels = vec2(vaUV2) / 240.0;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0);
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_basic.fsh"), """
+                    #version 400
+                    in vec4 tint;
+                    in vec2 light_levels;
+                    layout (location = 0) out vec4 color;
+                    /* RENDERTARGETS: 0 */
+                    void main() {
+                        color = tint * light_levels.x;
+                    }
+                    """);
+            Files.writeString(shaders.resolve("shadow.vsh"), """
+                    #version 430 compatibility
+                    out vec2 uv;
+                    attribute vec3 mc_Entity;
+                    void main() {
+                        uv = gl_MultiTexCoord0.xy + mc_Entity.xy * 0.0;
+                        gl_Position = ftransform();
+                    }
+                    """);
+            Files.writeString(shaders.resolve("shadow.fsh"), """
+                    #version 430 compatibility
+                    uniform sampler2D gtexture;
+                    in vec2 uv;
+                    layout (location = 0) out vec3 shadowcolor0_out;
+                    /* RENDERTARGETS: 0 */
+                    void main() {
+                        shadowcolor0_out = texture(gtexture, uv).rgb;
+                    }
+                    """);
+            var analysis = PackProbe.analyze(root);
+            for (String name : List.of("gbuffers_entities", "gbuffers_basic", "shadow")) {
+                var plan = analysis.plan().program(name);
+                assertTrue(plan != null && plan.executable(),
+                        name + " must convert: " + (plan == null ? "missing" : plan.deviations()));
+            }
+            var entities = analysis.plan().program("gbuffers_entities");
+            assertTrue(entities.convertedVertex().startsWith("#version 460")
+                            && entities.convertedVertex().contains("gl_VertexIndex")
+                            && !entities.convertedVertex().contains("attribute"),
+                    "a 400 compatibility entity vertex converts with its modern declarations: "
+                            + entities.convertedVertex());
+            assertTrue(entities.deviations().contains("FRAGMENT_OUTPUT_DISCARDED:1")
+                            && entities.convertedFragment().contains("vec4 gbuffer_data_1;")
+                            && !entities.convertedFragment().contains("unused_pair"),
+                    "an output past the route is written to nothing, and an unread array function goes: "
+                            + entities.deviations() + "\n" + entities.convertedFragment());
+            String basic = analysis.plan().program("gbuffers_basic").convertedVertex();
+            assertTrue(!basic.contains("vaPosition") && !basic.contains("modelViewMatrix")
+                            && basic.contains("ivec2(vec4(vec2(UV2), 0.0, 1.0).xy)"),
+                    "Iris core names become the host inputs: " + basic);
+            assertTrue(analysis.plan().program("shadow").convertedFragment()
+                            .contains("layout(location = 0) out vec3 chimeraShadowColor0;"),
+                    "a shadow colour keeps the type the pack writes");
+            var compiled = PackCompileCheck.run(root, analysis);
+            assertTrue(compiled.failures().isEmpty(), "GLSL breadth compilation: " + compiled.failures());
+        } finally {
+            deleteTree(root);
+        }
+        System.out.println("[chimera] GLSL breadth (versions, modern entity declarations, core names, discarded outputs): PASS");
+    }
+
+    /** Iris renders shadows before any terrain: the shadow segment runs at the opaque layer's HEAD. */
+    private static void verifyShadowPassOrder() throws IOException {
+        var hook = nativeClass("net/chimera/mixin/WorldRendererMixin").methods.stream()
+                .filter(method -> {
+                    for (var instruction : method.instructions) {
+                        if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                                && call.name.equals("renderShadowSegment")) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }).findFirst().orElseThrow(() -> new AssertionError("no mixin method starts the shadow segment"));
+        String point = null;
+        for (var annotation : hook.visibleAnnotations == null
+                ? List.<org.objectweb.asm.tree.AnnotationNode>of() : hook.visibleAnnotations) {
+            if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
+            for (int i = 0; i < annotation.values.size(); i += 2) {
+                if (!annotation.values.get(i).equals("at")) continue;
+                var at = (org.objectweb.asm.tree.AnnotationNode) ((List<?>) annotation.values.get(i + 1)).get(0);
+                for (int j = 0; j < at.values.size(); j += 2) {
+                    if (at.values.get(j).equals("value")) point = (String) at.values.get(j + 1);
+                }
+            }
+        }
+        assertEquals("HEAD", point, "the shadow map must render before the opaque layer samples it");
+        System.out.println("[chimera] shadow pass before opaque terrain: PASS");
     }
 
     /** BSL-style legacy shadow program: terrain attributes, both identities and both shadow colours. */
@@ -1642,9 +1902,14 @@ public final class ConformanceHarness {
 
         assertExtendedFormat();
         verifyMaterialParserEdgeCases();
+        // The version number no longer gates (GlslVersion); the legacy converter still refuses
+        // modern syntax, which the modern terrain path converts, and GLSL ES.
         assertTrue(LegacyGlslConverter.convertTerrainVertex(
-                "#version 330\nvoid main() { gl_Position = vec4(0.0); }", null, "") == null,
-                "modern terrain vertex source was accepted");
+                "#version 330\nin vec3 Position;\nvoid main() { gl_Position = vec4(Position, 1.0); }", null, "") == null,
+                "modern terrain vertex syntax was accepted by the legacy converter");
+        assertTrue(LegacyGlslConverter.convertTerrainVertex(
+                "#version 300 es\nvoid main() { gl_Position = vec4(0.0); }", null, "") == null,
+                "GLSL ES terrain vertex source was accepted");
         assertTrue(LegacyGlslConverter.convertTerrainVertex(
                 "#version 120\nvoid main() { gl_Position = ftransform(); float n = gl_Normal.x; }",
                 null, "") == null,

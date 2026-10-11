@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "material": {
-      "reportSha256": "f8d857652c3912157d4e44a6d5298e16b908827c5bb610513aa242cc3014c0a9",
+      "reportSha256": "cb952f8903b07c2b1b03b0991ff95aca319043665d5ae71050d5b8e03e86fdf5",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -39,14 +39,17 @@
         "composite": [],
         "final": [],
         "gbuffers_block": [
-          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
-          "BLOCK_VERTEX_CONVERSION_FAILED:unsupported entity attribute: mc_Entity",
+          "BLOCK_ENTITY_ID_DEFAULTED",
+          "BLOCK_VERTEX_BRIDGE",
+          "ENTITY_STATE_FIXED_TO_HOST",
+          "ENTITY_VERTEX_FORMAT_EXTENDED",
+          "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
         ],
         "gbuffers_damagedblock": [
-          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
-          "BLOCK_VERTEX_CONVERSION_FAILED:unsupported entity attribute: mc_Entity",
+          "BLOCK_VERTEX_BRIDGE",
+          "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
           "FIXED_VERTEX_SUBSTITUTION",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
@@ -73,7 +76,7 @@
       }
     },
     "unsupported_vertex": {
-      "reportSha256": "93e224505350672bca2777884cd515fb4bc56f8982da4468702b782dbf39aecb",
+      "reportSha256": "97e4e0debd675cd6f8851d039c85135da5f1671f5a32bf377c8208da86e70cb1",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -110,14 +113,17 @@
         "composite": [],
         "final": [],
         "gbuffers_block": [
-          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
-          "BLOCK_VERTEX_CONVERSION_FAILED:unsupported entity attribute: mc_Entity",
+          "BLOCK_ENTITY_ID_DEFAULTED",
+          "BLOCK_VERTEX_BRIDGE",
+          "ENTITY_STATE_FIXED_TO_HOST",
+          "ENTITY_VERTEX_FORMAT_EXTENDED",
+          "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
         ],
         "gbuffers_damagedblock": [
-          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
-          "BLOCK_VERTEX_CONVERSION_FAILED:unsupported entity attribute: mc_Entity",
+          "BLOCK_VERTEX_BRIDGE",
+          "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
           "FIXED_VERTEX_SUBSTITUTION",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"

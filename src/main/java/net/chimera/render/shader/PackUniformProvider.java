@@ -129,6 +129,14 @@ public final class PackUniformProvider {
     /** Camera-relative world view, without a native celestial pose or model translation. */
     public static Matrix4f currentSkyModelView() { return INSTANCE.frameState.modelView(); }
 
+    /**
+     * The camera's gbufferProjection x gbufferModelView (GL clip range, camera-relative), written
+     * to dest: the view shadow culling keeps casters for, as Iris's frustum reads it.
+     */
+    public static Matrix4f currentCameraViewProjection(Matrix4f dest) {
+        return INSTANCE.frameState.cameraViewProjection(dest);
+    }
+
     /** Publishes the exact shadow state used by the shadow render. */
     public static void updateShadowState(Matrix4f modelView, Matrix4f projection) {
         INSTANCE.frameState.updateShadow(modelView, projection);

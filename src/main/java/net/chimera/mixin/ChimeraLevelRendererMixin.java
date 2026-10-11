@@ -29,7 +29,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Drives Chimera's world/output split inside LevelRenderer.renderLevel:
  *
  * - HEAD opens the internal RGBA16F world target.
- * - The SOLID layer tail records the shadow map and resumes that target.
+ * - The opaque layer's head records the shadow map and resumes that target.
  * - RETURN resolves the finished HDR world into the stable output target used
  *   by hand, GUI, and VulkanMod's post chain.
  */

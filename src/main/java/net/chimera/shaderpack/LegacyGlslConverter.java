@@ -49,7 +49,7 @@ public final class LegacyGlslConverter {
             "gl_Vertex", "gl_Color", "gl_MultiTexCoord0", "gl_MultiTexCoord1",
             "gl_MultiTexCoord2", "gl_Normal", "gl_NormalMatrix", "gl_ModelViewMatrix",
             "gl_ModelViewProjectionMatrix", "gl_ProjectionMatrix", "gl_TextureMatrix",
-            "gl_Position");
+            "gl_Position", "gl_VertexID");
     private static final Pattern TERRAIN_ATTRIBUTE_DECL =
             Pattern.compile("(?m)\\battribute\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
     private static final Pattern SHADOW_ATTRIBUTE_DECL = Pattern.compile(
@@ -67,10 +67,6 @@ public final class LegacyGlslConverter {
                     + "(?:in|varying)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
     private static final Pattern MODERN_GEOMETRY_OUTPUT_DECL = Pattern.compile(
             "(?m)^\\s*out\\s+vec4\\s+(\\w+)\\s*;\\s*");
-    private static final Pattern TERRAIN_VERSION =
-            Pattern.compile("(?m)^\\s*#version\\s+120(?:e)?\\s*$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern ENTITY_VERSION = Pattern.compile(
-            "(?im)^\\s*#version\\s+(?:120e?|130)(?:\\s+.*)?$");
     private static final Pattern ENTITY_ID_DECLARATION = Pattern.compile(
             "(?m)\\b(uniform|attribute|in)\\s+(int|float)\\s+"
                     + "([^;{}]*\\b(?:entityId|blockEntityId)\\b[^;{}]*);\\s*");
@@ -146,27 +142,15 @@ public final class LegacyGlslConverter {
     private LegacyGlslConverter() {}
 
     /**
-     * Normalizes the measured modern post subset before interface scanning.
-     * This is deliberately narrow: the existing token translator remains the
-     * only executable rewrite path and unsupported versions fail closed.
+     * Normalizes modern post syntax before interface scanning: the version,
+     * precision and input layouts go, and the existing token translator
+     * remains the only executable rewrite path.
      */
     static String normalizeModernPost(String source) {
         if (source == null) {
             throw new IllegalArgumentException("post source is missing");
         }
-        Matcher versions = Pattern.compile("(?im)^\\s*#version\\s+(\\d+)(?:\\s+.*)?$")
-                .matcher(source);
-        boolean found = false;
-        while (versions.find()) {
-            found = true;
-            int version = Integer.parseInt(versions.group(1));
-            if (version != 120 && version != 130 && version != 330 && version != 400) {
-                throw new IllegalArgumentException("unsupported modern post GLSL version: " + version);
-            }
-        }
-        if (!found) {
-            throw new IllegalArgumentException("post source is missing a GLSL version");
-        }
+        GlslVersion.requireSupported(source, "modern post", true);
         String result = VERSION_LINE.matcher(source).replaceAll("");
         result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
         result = PRECISION_DECL.matcher(result).replaceAll("");
@@ -544,15 +528,14 @@ public final class LegacyGlslConverter {
                 validatePostVersion(src);
                 src = VERSION_LINE.matcher(src).replaceAll("");
             } else {
-                modern = src.contains("#version 460") || src.contains("#version 450")
+                GlslVersion version = GlslVersion.first(src);
+                modern = (version != null && version.number() >= 450)
                         || (interfacePlan.stage().shadowPass()
                         && MODERN_TERRAIN_DECL.matcher(src).find());
-                if (interfacePlan.stage().shadowPass() && modern) {
-                    src = VERSION_LINE.matcher(src).replaceAll("");
+                // One version line for Vulkan, where an authored profile means nothing.
+                src = VERSION_LINE.matcher(src).replaceAll("");
+                if (modern) {
                     src = "#version 460\n" + src;
-                }
-                if (!modern) {
-                    src = VERSION_LINE.matcher(src).replaceAll("");
                 }
             }
 
@@ -640,13 +623,19 @@ public final class LegacyGlslConverter {
                 }
                 src = convertPostOutputs(src, shadowOutputs);
                 Map<String, String> outputs = new TreeMap<>();
+                // Each shadow colour keeps the type the pack writes (Photon writes a vec3), as
+                // post outputs do; a colour the pack does not write is declared vec4.
+                String[] types = {"vec4", "vec4"};
                 for (int location : shadowOutputs.outputLocations()) {
-                    outputs.put("chimeraFragColor" + location,
-                            "chimeraShadowColor" + shadowOutputs.targetForOutput(location));
+                    int target = shadowOutputs.targetForOutput(location);
+                    outputs.put("chimeraFragColor" + location, "chimeraShadowColor" + target);
+                    types[target] = shadowOutputs.outputType(location);
                 }
                 src = GlslTokenRewriter.replaceIdentifiers(src, outputs);
-                outDecl = "layout(location = 0) out vec4 chimeraShadowColor0;\n"
-                        + "layout(location = 1) out vec4 chimeraShadowColor1;";
+                outDecl = "layout(location = 0) out " + types[0] + " chimeraShadowColor0;\n"
+                        + "layout(location = 1) out " + types[1] + " chimeraShadowColor1;"
+                        + (shadowOutputs.discardedOutputs().isEmpty() ? ""
+                        : "\n" + discardedOutputDeclarations(shadowOutputs).stripTrailing());
             } else if (src.contains("gl_FragColor") || src.contains("gl_FragData")) {
                 src = GlslTokenRewriter.rewriteSingleOutput(src);
                 // Targets beyond 0 are consumed by nothing in M4's single-attachment passes.
@@ -758,13 +747,23 @@ public final class LegacyGlslConverter {
         Map<String, String> replacements = new TreeMap<>();
         int last = 0;
         for (PostTargetPlan.ModernOutput output : outputs) {
+            String declaration = source.substring(output.start(), output.end());
+            if (targetPlan.discardedOutputs().contains(output.location())) {
+                // Past the route: GL discards it, so it becomes a private global the
+                // pack still writes. Line breaks stay so line numbers do not move.
+                result.append(source, last, output.start())
+                        .append(declaration.replaceAll("[^\\r\\n]", ""))
+                        .append(output.type()).append(' ').append(output.name()).append(';');
+                last = output.end();
+                continue;
+            }
             if (!targetPlan.outputLocations().contains(output.location())) {
                 throw new IllegalArgumentException("modern fragment output exceeds target route: " + output.name());
             }
             replacements.put(output.name(), "chimeraFragColor" + output.location());
             // The generated declaration replaces this one; keep its line breaks.
             result.append(source, last, output.start())
-                    .append(source.substring(output.start(), output.end()).replaceAll("[^\\r\\n]", ""));
+                    .append(declaration.replaceAll("[^\\r\\n]", ""));
             last = output.end();
         }
         result.append(source.substring(last));
@@ -777,6 +776,15 @@ public final class LegacyGlslConverter {
             declarations.append("layout(location = ").append(location).append(") out ")
                     .append(targetPlan.outputType(location))
                     .append(" chimeraFragColor").append(location).append(";\n");
+        }
+        return declarations.append(discardedOutputDeclarations(targetPlan)).toString();
+    }
+
+    /** Private globals for discarded gl_FragData writes; a discarded modern output keeps its own. */
+    private static String discardedOutputDeclarations(PostTargetPlan targetPlan) {
+        StringBuilder declarations = new StringBuilder();
+        for (int location : targetPlan.discardedOutputs()) {
+            declarations.append("vec4 ").append(GlslTokenRewriter.DISCARDED_OUTPUT).append(location).append(";\n");
         }
         return declarations.toString();
     }
@@ -1347,10 +1355,7 @@ public final class LegacyGlslConverter {
             src = expandModernVaryingLists(src);
             src = pruneUnreachableVertexFunctions(src);
             String stripped = stripComments(src);
-            if (!ENTITY_VERSION.matcher(src).find()
-                    || stripped.matches("(?s).*#version\\s+(?!120(?:e)?|130\\b)\\d+.*")) {
-                throw new IllegalArgumentException("entity vertex requires #version 120, 120e, or 130");
-            }
+            GlslVersion.requireSupported(stripped, "entity vertex", true);
             if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
                 throw new IllegalArgumentException("entity vertex requires main and gl_Position");
@@ -1453,6 +1458,8 @@ public final class LegacyGlslConverter {
                     Map.entry("at_tangent", "chimeraEntityTangentValue()"),
                     Map.entry("Tangent", "chimeraEntityTangentValue()"),
                     Map.entry("isElytraFlying", "(chimeraIsElytraFlying != 0)"),
+                    // Vulkan's index counts from the draw's first vertex, as GL's does.
+                    Map.entry("gl_VertexID", "gl_VertexIndex"),
                     Map.entry("entityId", entityIdExpression(layout, "entityId")),
                     Map.entry("blockEntityId", entityIdExpression(layout, "blockEntityId")));
             // ProjMat and gl_ProjectionMatrix belong to the host raster path.
@@ -1692,10 +1699,7 @@ public final class LegacyGlslConverter {
         try {
             String src = defaultUnboundIdentityAttributes(prepareSource(source, sourceFile, true));
             String stripped = stripComments(src);
-            if (!TERRAIN_VERSION.matcher(src).find()
-                    || stripped.matches("(?s).*#version\\s+(?!120(?:e)?\\b)\\d+.*")) {
-                throw new IllegalArgumentException("legacy vertex requires #version 120 or #version 120e");
-            }
+            GlslVersion.requireSupported(stripped, "legacy vertex", true);
             if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
                 throw new IllegalArgumentException("legacy vertex requires main and gl_Position");
@@ -1842,13 +1846,7 @@ public final class LegacyGlslConverter {
     public static boolean requiresExtendedTerrain(String source) {
         String stripped = stripComments(source == null ? "" : source);
         if (stripped.isBlank()) return false;
-        if (hasVersionDirective(source)) {
-            int version = modernTerrainVersion(source);
-            if (version != 120 && version != 130 && version != 330
-                    && version != 400 && version != 460) {
-                return false;
-            }
-        }
+        if (!GlslVersion.supportedIfDeclared(source)) return false;
         return (hasModernTerrainVersion(source) && modernTerrainVersion(source) >= 130)
                 || stripped.matches("(?s).*\\b(?:in|out|flat|noperspective|mc_midTexCoord|at_tangent|"
                 + "gl_NormalMatrix|gl_ModelViewMatrix|gl_ProjectionMatrix|gl_TextureMatrix)\\b.*");
@@ -2378,31 +2376,11 @@ public final class LegacyGlslConverter {
     }
 
     private static void validatePostVersion(String source) {
-        Matcher versions = Pattern.compile("(?im)^\\s*#version\\s+([0-9]+)(e?)(?:\\s+.*)?$")
-                .matcher(source);
-        while (versions.find()) {
-            int version = Integer.parseInt(versions.group(1));
-            if (version != 120 && version != 130 && version != 330 && version != 400) {
-                throw new IllegalArgumentException("unsupported post GLSL version: " + version);
-            }
-        }
+        GlslVersion.requireSupported(source, "post", false);
     }
 
     private static void validateEntityFragmentVersion(String source) {
-        Matcher versions = Pattern.compile(
-                "(?im)^\\s*#version\\s+([0-9]+)(e?)(?:\\s+.*)?$")
-                .matcher(source == null ? "" : source);
-        boolean found = false;
-        while (versions.find()) {
-            found = true;
-            int version = Integer.parseInt(versions.group(1));
-            if (version != 120 && version != 130) {
-                throw new IllegalArgumentException("unsupported entity GLSL version: " + version);
-            }
-        }
-        if (!found) {
-            throw new IllegalArgumentException("entity fragment is missing a supported GLSL version");
-        }
+        GlslVersion.requireSupported(source, "entity fragment", true);
     }
 
     private static String removePackMetadataConstants(String source) {
@@ -2596,17 +2574,19 @@ public final class LegacyGlslConverter {
         // following declaration from the ^ anchor, silently keeping every
         // second consecutive attribute.
         Matcher matcher = Pattern.compile(
-                "(?m)^\\s*(?:attribute|in)\\s+(float|vec2|vec4)\\s+"
-                        + "(mc_Entity|mc_midTexCoord|at_tangent|Tangent)[ \\t]*;[ \\t]*")
+                "(?m)^\\s*(?:attribute|in)\\s+(float|vec2|vec3|vec4)\\s+"
+                        + "(mc_Entity|at_midBlock|mc_midTexCoord|at_tangent|Tangent)[ \\t]*;[ \\t]*")
                 .matcher(source == null ? "" : source);
         StringBuilder output = new StringBuilder();
         while (matcher.find()) {
-            // Iris's entity vertex format has no mc_Entity (only iris_Entity),
+            // Iris's entity vertex format has no mc_Entity or at_midBlock (terrain inputs),
             // so GL reads the unbound attribute's default (0, 0, 0, 1).
-            String replacement = !matcher.group(2).equals("mc_Entity") ? ""
-                    : "\nconst " + matcher.group(1) + " mc_Entity = " + switch (matcher.group(1)) {
+            String name = matcher.group(2);
+            String replacement = !name.equals("mc_Entity") && !name.equals("at_midBlock") ? ""
+                    : "\nconst " + matcher.group(1) + " " + name + " = " + switch (matcher.group(1)) {
                         case "float" -> "0.0";
                         case "vec2" -> "vec2(0.0)";
+                        case "vec3" -> "vec3(0.0)";
                         default -> "vec4(0.0, 0.0, 0.0, 1.0)";
                     } + ";";
             matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
@@ -3013,9 +2993,9 @@ public final class LegacyGlslConverter {
                     || (name.equals("at_tangent") && type.equals("vec4"))
                     // Iris capital-T tangent names the same host input.
                     || (name.equals("Tangent") && type.equals("vec4"))
-                    // Real packs declare standard Iris attributes the active
-                    // body may not use; declared-but-unused is acceptable.
-                    || name.equals("mc_Entity") && type.equals("vec4");
+                    // Terrain inputs the entity format lacks read GL's unbound default.
+                    || (name.equals("mc_Entity") || name.equals("at_midBlock"))
+                    && (type.equals("float") || type.equals("vec2") || type.equals("vec3") || type.equals("vec4"));
             if (!supported) {
                 throw new IllegalArgumentException("unsupported entity attribute: " + name);
             }
@@ -3034,8 +3014,8 @@ public final class LegacyGlslConverter {
             throw new IllegalArgumentException("entity vertex interface: " + failure.getMessage());
         }
         if (withoutInterfaces.matches("(?s).*\\battribute\\b.*")
-                && !withoutInterfaces.matches("(?s).*\\battribute\\s+(?:int|float|vec2|vec4)\\s+"
-                + "(?:entityId|blockEntityId|mc_midTexCoord|at_tangent|Tangent|mc_Entity)\\s*;.*")) {
+                && !withoutInterfaces.matches("(?s).*\\battribute\\s+(?:int|float|vec2|vec3|vec4)\\s+"
+                + "(?:entityId|blockEntityId|mc_midTexCoord|at_tangent|Tangent|mc_Entity|at_midBlock)\\s*;.*")) {
             throw new IllegalArgumentException("unsupported entity attribute declaration");
         }
         // Interpolation survives on scanned varyings via the shared layout. Pack-authored
@@ -3048,50 +3028,22 @@ public final class LegacyGlslConverter {
 
     /** Host inputs the entity vertex bridge serves (see the attribute check above). */
     private static final Set<String> ENTITY_ATTRIBUTE_NAMES = Set.of(
-            "entityId", "blockEntityId", "mc_midTexCoord", "at_tangent", "Tangent", "mc_Entity");
+            "entityId", "blockEntityId", "mc_midTexCoord", "at_tangent", "Tangent", "mc_Entity", "at_midBlock");
 
     private static String stripComments(String source) {
         return GlslLexer.stripComments(source);
     }
 
     private static boolean hasModernTerrainVersion(String source) {
-        if (source == null) {
-            return false;
-        }
-        Matcher versions = Pattern.compile("(?im)^\\s*#version\\s+(\\d+)(?:\\s+.*)?$")
-                .matcher(source);
-        boolean found = false;
-        while (versions.find()) {
-            found = true;
-            int version = Integer.parseInt(versions.group(1));
-            if (version != 120 && version != 130 && version != 330 && version != 400 && version != 460) {
-                return false;
-            }
-        }
-        return found;
+        return GlslVersion.declaredAndSupported(source);
     }
 
     private static int modernTerrainVersion(String source) {
-        if (source == null) {
-            return 0;
-        }
-        Matcher versions = Pattern.compile("(?im)^\\s*#version\\s+(\\d+)(?:\\s+.*)?$")
-                .matcher(source);
-        int highest = 0;
-        while (versions.find()) {
-            highest = Math.max(highest, Integer.parseInt(versions.group(1)));
-        }
-        return highest;
-    }
-
-    private static boolean hasVersionDirective(String source) {
-        return source != null && Pattern.compile("(?im)^\\s*#version\\s+\\d+").matcher(source).find();
+        return GlslVersion.highest(source);
     }
 
     static String normalizeModernTerrain(String source) {
-        if (!hasModernTerrainVersion(source)) {
-            throw new IllegalArgumentException("modern terrain requires GLSL 120, 130, 330, 400, or prepared 460");
-        }
+        GlslVersion.requireSupported(source, "modern terrain", true);
         String result = VERSION_LINE.matcher(source).replaceAll("");
         result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
         result = PRECISION_DECL.matcher(result).replaceAll("");
@@ -3105,25 +3057,12 @@ public final class LegacyGlslConverter {
     }
 
     private static boolean hasShadowTerrainVersion(String source) {
-        if (source == null) return false;
-        Matcher versions = Pattern.compile("(?im)^\\s*#version\\s+(\\d+)(?:e)?(?:\\s+.*)?$")
-                .matcher(source);
-        boolean found = false;
-        while (versions.find()) {
-            found = true;
-            int version = Integer.parseInt(versions.group(1));
-            if (version != 120 && version != 130 && version != 330
-                    && version != 400 && version != 460) {
-                return false;
-            }
-        }
-        return found;
+        return GlslVersion.declaredAndSupported(source);
     }
 
     private static int shadowVersion(String source) {
-        Matcher version = Pattern.compile("(?im)^\\s*#version\\s+(\\d+)(?:e)?(?:\\s+.*)?$")
-                .matcher(source == null ? "" : source);
-        return version.find() ? Integer.parseInt(version.group(1)) : 0;
+        GlslVersion version = GlslVersion.first(source);
+        return version == null ? 0 : version.number();
     }
 
     private static boolean usesExtendedShadowInputs(String source) {
@@ -3138,9 +3077,7 @@ public final class LegacyGlslConverter {
     }
 
     private static String normalizeShadowTerrain(String source) {
-        if (!hasShadowTerrainVersion(source)) {
-            throw new IllegalArgumentException("shadow requires GLSL 120, 120e, 130, 330, 400, or 460");
-        }
+        GlslVersion.requireSupported(source, "shadow", true);
         String result = VERSION_LINE.matcher(source).replaceAll("");
         result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
         result = PRECISION_DECL.matcher(result).replaceAll("");
@@ -3199,7 +3136,8 @@ public final class LegacyGlslConverter {
             String type = matcher.group(1);
             String name = matcher.group(2);
             boolean supported = switch (name) {
-                case "mc_Entity" -> type.equals("float") || type.equals("vec2") || type.equals("vec4");
+                case "mc_Entity" -> type.equals("float") || type.equals("vec2") || type.equals("vec3")
+                        || type.equals("vec4");
                 case "mc_midTexCoord" -> type.equals("vec2") || type.equals("vec4");
                 case "at_midBlock" -> type.equals("vec3") || type.equals("ivec3");
                 default -> false;
@@ -3233,7 +3171,7 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException("unsupported terrain attribute: " + name);
             }
             if (name.equals("mc_Entity")
-                    && !(type.equals("float") || type.equals("vec2") || type.equals("vec4"))) {
+                    && !(type.equals("float") || type.equals("vec2") || type.equals("vec3") || type.equals("vec4"))) {
                 throw new IllegalArgumentException("unsupported mc_Entity type: " + type);
             }
             if (name.equals("mc_midTexCoord")
@@ -3344,6 +3282,7 @@ public final class LegacyGlslConverter {
                 case "mc_Entity" -> switch (type) {
                     case "float" -> "chimeraMcEntityValue().x";
                     case "vec2" -> "chimeraMcEntityValue()";
+                    case "vec3" -> "vec3(chimeraMcEntityValue(), 0.0)";
                     case "vec4" -> "vec4(chimeraMcEntityValue(), 0.0, 1.0)";
                     default -> "";
                 };
@@ -3911,6 +3850,87 @@ public final class LegacyGlslConverter {
                 }
             }
             """;
+
+    /** Iris core-profile vertex inputs, as a pack declares them. */
+    private static final Pattern CORE_INPUT_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*(?:layout[ \\t]*\\([^;{}()]*\\)[ \\t]*)?(?:in|attribute)[ \\t]+(\\w+)[ \\t]+"
+                    + "(vaPosition|vaColor|vaNormal|vaUV0|vaUV1|vaUV2)[ \\t]*;[ \\t]*$");
+    /** Iris core-profile uniforms: the host matrices, the chunk offset. */
+    private static final Pattern CORE_UNIFORM_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*uniform[ \\t]+(\\w+)[ \\t]+(modelViewMatrix|modelViewMatrixInverse|projectionMatrix"
+                    + "|projectionMatrixInverse|normalMatrix|textureMatrix|chunkOffset)[ \\t]*;[ \\t]*$");
+    /** Iris SodiumCoreTransformer's overlay for a format without one: no hurt flash, no white flash. */
+    public static final String NO_OVERLAY = "ivec2(0, 10)";
+
+    /** The type Iris gives a core name a stage reads without declaring it (VanillaCoreTransformer). */
+    private static final Map<String, String> CORE_NAME_TYPES = Map.ofEntries(
+            Map.entry("vaPosition", "vec3"), Map.entry("vaColor", "vec4"), Map.entry("vaNormal", "vec3"),
+            Map.entry("vaUV0", "vec2"), Map.entry("vaUV1", "vec2"), Map.entry("vaUV2", "vec2"),
+            Map.entry("modelViewMatrix", "mat4"), Map.entry("modelViewMatrixInverse", "mat4"),
+            Map.entry("projectionMatrix", "mat4"), Map.entry("projectionMatrixInverse", "mat4"),
+            Map.entry("normalMatrix", "mat3"), Map.entry("textureMatrix", "mat4"), Map.entry("chunkOffset", "vec3"));
+
+    /**
+     * Iris's core-profile mode (TransformPatcher: a core profile, 150 and above with no
+     * profile, or any program drawn on the line layout) names the host inputs and matrices
+     * itself: vaPosition and the other core inputs, modelViewMatrix and the other matrices, and
+     * chunkOffset. Each converter already serves the compatibility built-ins with the same
+     * values (VanillaCoreTransformer maps both spellings to one input), so the stage is
+     * rewritten to those before its interface is planned. In core mode Iris serves the names
+     * whether or not the stage declares them; elsewhere it leaves a declared core input
+     * unbound, which only a driver's attribute order made meaningful (Photon's compatibility
+     * gbuffers_basic reads vaColor), so a declared one gets its intended value.
+     *
+     * <p>chunkOffset is zero: Chimera's positions are already camera-relative, which Iris's
+     * vaPosition plus chunkOffset is. overlay is the stage's overlay coordinates: the host
+     * input on the entity layouts, {@link #NO_OVERLAY} elsewhere. On a format without UVs, Iris
+     * leaves vaUV0 and vaUV2 unbound (zero) where the compatibility inputs read (0.5, 0.5) and
+     * full light; a pack's own gbuffers_line keeps Iris's zeros ({@link #prepareLineVertex}).</p>
+     */
+    public static String prepareIrisCoreProfile(String source, Path sourceFile, boolean vertexStage,
+                                                String overlay, boolean coreMode) {
+        if (source == null) return null;
+        Map<String, String> declared = new TreeMap<>();
+        String result = expandIncludes(source, sourceFile);
+        if (vertexStage) {
+            Matcher inputs = CORE_INPUT_DECLARATION.matcher(result);
+            while (inputs.find()) declared.put(inputs.group(2), inputs.group(1));
+            result = inputs.replaceAll("");
+        }
+        Matcher uniforms = CORE_UNIFORM_DECLARATION.matcher(result);
+        while (uniforms.find()) declared.put(uniforms.group(2), uniforms.group(1));
+        result = uniforms.replaceAll("");
+        if (coreMode) {
+            String stripped = stripComments(result);
+            for (Map.Entry<String, String> name : CORE_NAME_TYPES.entrySet()) {
+                boolean input = name.getKey().startsWith("va");
+                if ((vertexStage || !input) && containsIdentifier(stripped, name.getKey())) {
+                    declared.putIfAbsent(name.getKey(), name.getValue());
+                }
+            }
+        }
+        if (declared.isEmpty()) return source;
+        Map<String, String> replacements = new TreeMap<>();
+        for (Map.Entry<String, String> entry : declared.entrySet()) {
+            String type = entry.getValue();
+            replacements.put(entry.getKey(), switch (entry.getKey()) {
+                case "vaPosition" -> type.equals("vec4") ? "gl_Vertex" : adaptModernTerrainType(type, "gl_Vertex.xyz", "vec3");
+                case "vaColor" -> adaptModernTerrainType(type, "gl_Color", "vec4");
+                case "vaNormal" -> adaptModernTerrainType(type, "gl_Normal", "vec3");
+                case "vaUV0" -> adaptModernTerrainType(type, "gl_MultiTexCoord0.xy", "vec2");
+                case "vaUV1" -> type.equals("ivec2") ? overlay : adaptModernTerrainType(type, "vec2(" + overlay + ")", "vec2");
+                case "vaUV2" -> adaptModernTerrainType(type, "gl_MultiTexCoord1.xy", "vec2");
+                case "modelViewMatrix" -> "gl_ModelViewMatrix";
+                case "modelViewMatrixInverse" -> "inverse(gl_ModelViewMatrix)";
+                case "projectionMatrix" -> "gl_ProjectionMatrix";
+                case "projectionMatrixInverse" -> "inverse(gl_ProjectionMatrix)";
+                case "normalMatrix" -> "gl_NormalMatrix";
+                case "textureMatrix" -> "gl_TextureMatrix[0]";
+                default -> "vec3(0.0)"; // chunkOffset
+            });
+        }
+        return GlslTokenRewriter.replaceIdentifiers(result, replacements);
+    }
 
     private static final Pattern LINE_CORE_INPUT_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(?:in|attribute)[ \\t]+\\w+[ \\t]+(?:vaPosition|vaColor|vaNormal|vaUV0|vaUV1|vaUV2)"

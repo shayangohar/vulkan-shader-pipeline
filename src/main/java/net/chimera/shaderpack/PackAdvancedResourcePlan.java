@@ -1116,7 +1116,9 @@ public final class PackAdvancedResourcePlan {
             } else {
                 localDeviations.add("COMPUTE_WORKGROUP_UNSUPPORTED:shadowcomp");
             }
-            if (!text.matches("(?s).*#version\\s+430\\s+compatibility.*")) {
+            // Compute stages exist from GLSL 430; any profile converts to Chimera's 450 module.
+            GlslVersion version = GlslVersion.first(text);
+            if (version == null || !version.supported() || version.number() < 430) {
                 localDeviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
             }
             TreeSet<String> names = new TreeSet<>();

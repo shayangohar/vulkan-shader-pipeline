@@ -36,15 +36,17 @@ public final class M80ConformanceHarness {
         assertTrue(!composite1.convertedFragment().contains("#version 400"),
                 "M8.0 old version directive remains");
 
-        assertTrue(!unsupported.executable(), "M8.0 unsupported version was not rejected");
+        // Any desktop version converts (GlslVersion); GLSL ES is not one.
+        assertTrue(!unsupported.executable(), "M8.0 GLSL ES post was not rejected");
         assertTrue(unsupported.deviations().stream()
-                        .anyMatch(value -> value.equals("TRANSLATION_UNSUPPORTED:unsupported modern post GLSL version: 450")
+                        .anyMatch(value -> value.startsWith("TRANSLATION_UNSUPPORTED:")
                                 || value.equals("POST_CONVERTER_UNSUPPORTED")),
-                "M8.0 unsupported version has no named fallback");
-        assertTrue(LegacyGlslConverter.supportsModernPost("#version 330\nvoid main(){}"),
+                "M8.0 GLSL ES post has no named fallback");
+        assertTrue(LegacyGlslConverter.supportsModernPost("#version 330\nvoid main(){}")
+                        && LegacyGlslConverter.supportsModernPost("#version 450 core\nvoid main(){}"),
                 "M8.0 version capability check failed");
-        assertTrue(!LegacyGlslConverter.supportsModernPost("#version 450\nvoid main(){}"),
-                "M8.0 unsupported version was accepted");
+        assertTrue(!LegacyGlslConverter.supportsModernPost("#version 300 es\nvoid main(){}"),
+                "M8.0 GLSL ES post was accepted");
         verifyAuthoredFullscreenVertex();
         verifyAuthoredPostConstants();
         verifyDistinctPostResources();

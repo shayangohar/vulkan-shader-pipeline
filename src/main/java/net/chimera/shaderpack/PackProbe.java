@@ -26,8 +26,6 @@ import java.util.regex.Pattern;
 public final class PackProbe {
     private static final Set<String> STAGE_EXTENSIONS = Set.of(
             ".vsh", ".fsh", ".gsh", ".tcs", ".tes", ".csh");
-    private static final Pattern VERSION = Pattern.compile(
-            "(?m)^\\s*#version\\s+(\\d+)");
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
             "#define\\s+DRAWBUFFERS(\\d+)");
     private static final Pattern TARGET_COMMENT = Pattern.compile(
@@ -881,7 +879,6 @@ public final class PackProbe {
                     || deviation.startsWith("POST_TARGET_DIRECTIVE_DUPLICATE:")
                     || deviation.startsWith("POST_TARGET_INDEX_UNSUPPORTED:")
                     || deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")
-                    || deviation.startsWith("POST_OUTPUT_INDEX_UNMAPPED:")
                     || deviation.equals("FINAL_MRT_UNSUPPORTED")
                     || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
@@ -958,28 +955,18 @@ public final class PackProbe {
         }
     }
 
+    /**
+     * Labels a program whose conversion failed: a version outside the one rule
+     * (GlslVersion), or syntax beyond the legacy subset. A validated conversion
+     * clears it, so the version number alone never rejects a program.
+     */
     private static boolean usesUnsupportedModernGlsl(String source, boolean post, boolean entity) {
-        Matcher version = VERSION.matcher(source);
-        int number = 120;
-        if (version.find()) {
-            try {
-                number = Integer.parseInt(version.group(1));
-            } catch (NumberFormatException ignored) {
-                return true;
-            }
-        }
-        if (number >= 330 || number < 120) {
+        if (!GlslVersion.supportedIfDeclared(source)) {
             return true;
         }
-        if (entity && number != 120 && number != 130) {
-            return true;
-        }
-        if (post) {
-            return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
-        }
-        if (entity) {
-            // The entity bridge accepts simple GLSL 130 stage declarations. The
-            // converter still performs the authoritative feature check below.
+        if (post || entity) {
+            // Stage declarations convert in these families; the converter still
+            // performs the authoritative feature check.
             return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
         }
         return source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective|buffer)\\b.*");

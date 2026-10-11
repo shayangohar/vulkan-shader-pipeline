@@ -190,6 +190,35 @@ public final class GlslTokenRewriter {
         return GlslLexer.render(tokens);
     }
 
+    /** A sampler or image declaration naming several resources: {@code writeonly uniform image3D a, b;}. */
+    private static final java.util.regex.Pattern OPAQUE_DECLARATION_LIST = java.util.regex.Pattern.compile(
+            "(?m)^([ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
+                    + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)+)"
+                    + "((?:u|i)?(?:sampler|image)\\w+)\\s+"
+                    + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)+)\\s*;");
+
+    /**
+     * Splits sampler and image declarations that name several resources into one declaration
+     * each, with the same qualifiers, so every resource can take its own binding. Solas declares
+     * its two floodfill images in one statement.
+     */
+    public static String splitOpaqueDeclarationLists(String source) {
+        if (source == null) return null;
+        java.util.regex.Matcher matcher = OPAQUE_DECLARATION_LIST.matcher(source);
+        StringBuilder result = new StringBuilder();
+        while (matcher.find()) {
+            StringBuilder replacement = new StringBuilder();
+            for (String name : matcher.group(3).split(",")) {
+                if (replacement.length() > 0) replacement.append('\n');
+                replacement.append(matcher.group(1)).append(matcher.group(2)).append(' ')
+                        .append(name.trim()).append(';');
+            }
+            matcher.appendReplacement(result, java.util.regex.Matcher.quoteReplacement(replacement.toString()));
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
     public static String rewriteTextureCalls(String source) {
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
         for (int index = 0; index < tokens.size(); index++) {
@@ -458,6 +487,60 @@ public final class GlslTokenRewriter {
      * those aliases are touched, in source order: a later {@code #undef} or
      * redefinition ends the alias, and every other macro stays as written.
      */
+    /** {@code #define attribute in}: a macro renaming one storage qualifier to another. */
+    private static final java.util.regex.Pattern STORAGE_ALIAS_DEFINE = java.util.regex.Pattern.compile(
+            "^\\s*#\\s*define\\s+(attribute|varying)\\s+(in|out|attribute|varying)\\s*(?://.*)?$");
+
+    /**
+     * Applies macros that rename a storage qualifier and drops their definitions, so every
+     * converter reads a declaration in the spelling it was compiled with. Photon defines
+     * {@code attribute} as {@code in} for strict drivers. Each alias holds from its definition to
+     * its #undef; the removed lines stay empty, so line numbers do not move.
+     */
+    static String expandStorageQualifierAliases(String source) {
+        if (source == null || !source.contains("#")) return source;
+        // Directives are read line by line; substitution runs over one token
+        // stream, so a block comment spanning lines is never lexed in pieces.
+        String[] lines = source.split("\n", -1);
+        List<Map<String, String>> active = new ArrayList<>(lines.length);
+        boolean[] drop = new boolean[lines.length];
+        boolean[] directive = new boolean[lines.length];
+        Map<String, String> aliases = new java.util.HashMap<>();
+        boolean changed = false;
+        for (int line = 0; line < lines.length; line++) {
+            String body = lines[line].endsWith("\r")
+                    ? lines[line].substring(0, lines[line].length() - 1) : lines[line];
+            java.util.regex.Matcher define = STORAGE_ALIAS_DEFINE.matcher(body);
+            java.util.regex.Matcher undef = UNDEF.matcher(body);
+            if (define.matches()) {
+                aliases.put(define.group(1), define.group(2));
+                drop[line] = true;
+                changed = true;
+            } else if (undef.matches() && aliases.remove(undef.group(1)) != null) {
+                drop[line] = true;
+            } else {
+                directive[line] = body.stripLeading().startsWith("#");
+            }
+            active.add(Map.copyOf(aliases));
+        }
+        if (!changed) return source;
+        StringBuilder result = new StringBuilder(source.length());
+        int line = 0;
+        for (GlslLexer.Token token : GlslLexer.lex(source)) {
+            String text = token.text();
+            if (drop[line]) {
+                result.append(lineBreaks(text));
+            } else if (!directive[line] && token.kind() == GlslLexer.Kind.IDENTIFIER
+                    && active.get(line).containsKey(text)) {
+                result.append(active.get(line).get(text));
+            } else {
+                result.append(text);
+            }
+            for (int at = 0; at < text.length(); at++) if (text.charAt(at) == '\n') line++;
+        }
+        return result.toString();
+    }
+
     static String expandSamplerAliases(String source) {
         if (source == null || !source.contains("#")) return source;
         Set<String> samplers = new java.util.HashSet<>();
@@ -857,6 +940,9 @@ public final class GlslTokenRewriter {
         return GlslLexer.render(tokens.subList(range[0], range[1])).trim();
     }
 
+    /** The private global a discarded gl_FragData[N] write goes to (PostTargetPlan.discardedOutputs). */
+    static final String DISCARDED_OUTPUT = "chimeraDiscardedFragData";
+
     static String rewritePostOutputs(String source, PostTargetPlan targetPlan) {
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
         for (int index = 0; index < tokens.size(); index++) {
@@ -883,10 +969,11 @@ public final class GlslTokenRewriter {
             } catch (NumberFormatException e) {
                 throw new IllegalArgumentException("non-constant gl_FragData index");
             }
-            if (targetPlan == null || !targetPlan.outputLocations().contains(location)) {
+            boolean discarded = targetPlan != null && targetPlan.discardedOutputs().contains(location);
+            if (!discarded && (targetPlan == null || !targetPlan.outputLocations().contains(location))) {
                 throw new IllegalArgumentException("fragment output is not in the target plan");
             }
-            tokens.set(index, identifier("chimeraFragColor" + location));
+            tokens.set(index, identifier((discarded ? DISCARDED_OUTPUT : "chimeraFragColor") + location));
             tokens.set(open, raw(""));
             tokens.set(number, raw(""));
             tokens.set(close, raw(""));

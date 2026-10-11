@@ -32,6 +32,7 @@ import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.ShadowCasterDirectives;
+import net.chimera.shaderpack.ShadowCullingPlan;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackProbe;
@@ -89,8 +90,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * VulkShade:
  *
  *   - renderLevel HEAD opens the internal RGBA16F world target.
- *   - The SOLID layer tail temporarily records the shadow map and resumes the
- *     world target.
+ *   - The opaque layer's head temporarily records the shadow map and resumes
+ *     the world target.
  *   - renderLevel RETURN resolves the HDR world into a separate output target.
  *     Entity passes inside renderLevel follow the HDR alias; hand, GUI, and
  *     post-chain passes follow the output alias.
@@ -288,6 +289,8 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackEntity packShadowEntityPipeline;
     /** Set once the caster pass failed; the shadow map keeps its terrain for the rest of the session. */
     private boolean shadowCastersFailed;
+    /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
+    private ShadowCullingPlan shadowCulling;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
     /** Pack translucent world-entity program on the guarded delayed model batch. */
@@ -403,7 +406,7 @@ public class ChimeraMainPass implements MainPass {
     private String currentDimension = "minecraft:overworld";
 
     /**
-     * Armed at level-segment HEAD, consumed at the SOLID layer tail
+     * Armed at level-segment HEAD, consumed at the opaque layer's head
      * (WorldRendererMixin): guarantees exactly one shadow segment per frame.
      */
     private boolean shadowPending;
@@ -665,8 +668,7 @@ public class ChimeraMainPass implements MainPass {
         try {
             prepareProgramImages(this.packShadowEntityPipeline.pipeline());
             ChimeraShadowCasters.render(cameraX, cameraY, cameraZ, this.shadowMap.getLightView(),
-                    this.shadowMap.getPackLightProjection(), directives,
-                    this.packConfig.shadowSettings().entityCasterDistance());
+                    this.shadowMap.getPackLightProjection(), directives, shadowCullingFrustum(true));
         } catch (RuntimeException failure) {
             this.shadowCastersFailed = true;
             if (this.conformanceReport != null) {
@@ -677,9 +679,9 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /**
-     * Chooses the shadow pass's sections from the light volume. The pack
-     * projection carries GL clip depth, which the frustum test expects; both
-     * projections cover the same volume.
+     * Chooses the shadow pass's sections from the light volume and Iris's terrain
+     * shadow frustum. The pack projection carries GL clip depth, which the frustum
+     * test expects; both projections cover the same volume.
      */
     private void beginShadowSections(double cameraX, double cameraY, double cameraZ) {
         if (!(WorldRenderer.getInstance() instanceof ChimeraSectionGridAccess access)) return;
@@ -687,19 +689,33 @@ public class ChimeraMainPass implements MainPass {
         if (grid == null) return;
         ShadowSectionQueue.begin(grid, grid.getChunkAreaManager().size,
                 this.shadowMap.getPackLightProjection(), this.shadowMap.getLightView(),
-                cameraX, cameraY, cameraZ);
+                shadowCullingFrustum(false), cameraX, cameraY, cameraZ);
     }
 
     /**
-     * Renders the shadow map at the tail of the SOLID section layer.
-     * Closes the HDR pass opened at HEAD, draws terrain from the light's
-     * perspective into the shadow map, then reopens the HDR pass (load ops)
-     * so the remaining layers continue into it.
+     * This frame's Iris shadow frustum, terrain or entity: built from the camera's view and the
+     * shadow light, with the render distance Iris reads each frame.
+     */
+    private ShadowCullingFrustum shadowCullingFrustum(boolean entities) {
+        if (this.shadowCulling == null) return ShadowCullingFrustum.none();
+        int renderDistance = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+        ShadowCullingPlan.Culler culler = entities
+                ? this.shadowCulling.entities(renderDistance) : this.shadowCulling.terrain(renderDistance);
+        return new ShadowCullingFrustum(culler, PackUniformProvider.currentCameraViewProjection(new Matrix4f()),
+                PackUniformProvider.currentSunLightVector());
+    }
+
+    /**
+     * Renders the shadow map at the head of the opaque section layer, before
+     * any terrain draw samples it, as Iris renders shadows first. Closes the
+     * HDR pass opened at HEAD, draws the casters from the light's perspective
+     * into the shadow map, then reopens the HDR pass (load ops) so the
+     * terrain layers draw into it.
      *
      * Timing matters: by this point cullTerrain has updated VulkanMod's
-     * section graph for this frame and the main SOLID pass has drawn. The
-     * shadow phase draws its own sections chosen from the light volume
-     * ({@link ShadowSectionQueue}), not the camera's culled queues.
+     * section graph for this frame. The shadow phase draws its own sections
+     * chosen from the light volume ({@link ShadowSectionQueue}), not the
+     * camera's culled queues.
      */
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.isInitialized() || !this.shadowFrameReady || !shadowAttachmentsLive()) {
@@ -735,16 +751,15 @@ public class ChimeraMainPass implements MainPass {
                 PackGeometryContext.beginGeometry(resumeColors, resumeDepth);
                 this.rebindMainTarget();
             } else if (resumePackCoverage && this.hdrFramebuffer != null) {
-                // Continue the interrupted opaque layer on the same pack
-                // target. The outer renderSectionLayer return will close and
-                // commit this resumed window normally.
+                // Continue an interrupted coverage window on the same pack
+                // target; its owner closes and commits it as usual.
                 PackGeometryContext.beginPreserving(
                         resumeColors.get(0),
                         resumeColors.size() > 1 ? resumeColors.get(1) : this.packCoverageOwner.image(),
                         this.hdrFramebuffer.getDepthAttachment());
                 this.rebindMainTarget();
             } else {
-                // Reopen the HDR pass (load ops) for the host terrain layers.
+                // Reopen the HDR pass (load ops) for the terrain layers.
                 this.rebindMainTarget();
             }
         }
@@ -874,7 +889,7 @@ public class ChimeraMainPass implements MainPass {
         }
 
         // Compute the light once before any terrain draw. The shadow pass at
-        // the opaque-layer tail reuses this exact state.
+        // the opaque layer's head reuses this exact state.
         if (this.shadowMap.isInitialized()) {
             this.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
                     cameraX, cameraY, cameraZ);
@@ -886,7 +901,7 @@ public class ChimeraMainPass implements MainPass {
             }
         }
 
-        // Arm this frame's shadow segment; consumed at the SOLID layer tail.
+        // Arm this frame's shadow segment; consumed at the opaque layer's head.
         this.shadowPending = this.shadowFrameReady;
 
         // Terrain shaders sample the shadow map from their first draw.
@@ -2251,6 +2266,7 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalApplied = false;
         this.packConfig = null;
         this.packPlan = null;
+        this.shadowCulling = null;
         this.packTargetGraph = null;
         this.packFrameSchedule = PackFrameSchedulePlan.empty();
         this.packPrograms = null;
@@ -2820,6 +2836,12 @@ public class ChimeraMainPass implements MainPass {
                 : PackConfig.parse(this.packPrograms, result.shadersDir());
         this.packPlan = analysis.plan() == null
                 ? new PackPlan(this.packConfig, List.of()) : analysis.plan();
+        this.shadowCulling = this.packPlan.shadowCulling();
+        int renderDistance = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+        LOGGER.info("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
+                this.shadowCulling.state(), this.shadowCulling.terrain(renderDistance).describe(),
+                this.shadowCulling.entities(renderDistance).describe(), renderDistance,
+                this.shadowCulling.deviations().isEmpty() ? "" : " " + this.shadowCulling.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(this.packPlan.terrainMaterial());
         PackUniformProvider.installRuntimeSettings(this.packPlan.runtimeSettings());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",

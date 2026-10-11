@@ -65,11 +65,11 @@ public final class ChimeraShadowCasters implements AutoCloseable {
 
     /**
      * Draws this frame's casters into the open shadow map. The light matrices are
-     * camera-relative, like the terrain casters'; entityDistance is the half-size of Iris's
-     * entity BoxCuller, infinite when the pack sets none.
+     * camera-relative, like the terrain casters'; culling is Iris's entity shadow frustum.
      */
     static void render(double cameraX, double cameraY, double cameraZ, Matrix4f lightView,
-                       Matrix4f lightProjection, ShadowCasterDirectives directives, float entityDistance) {
+                       Matrix4f lightProjection, ShadowCasterDirectives directives,
+                       ShadowCullingFrustum culling) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null
                 || !(minecraft.levelRenderer instanceof ChimeraLevelRenderStateAccessor access)) {
@@ -79,7 +79,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
         if (camera == null || !camera.initialized) return;
         if (instance == null) instance = new ChimeraShadowCasters(minecraft);
         instance.draw(minecraft, minecraft.level, camera, cameraX, cameraY, cameraZ, lightView,
-                lightProjection, directives, entityDistance);
+                lightProjection, directives, culling);
     }
 
     public static void destroy() {
@@ -91,7 +91,8 @@ public final class ChimeraShadowCasters implements AutoCloseable {
 
     private void draw(Minecraft minecraft, ClientLevel level, CameraRenderState camera,
                       double cameraX, double cameraY, double cameraZ, Matrix4f lightView,
-                      Matrix4f lightProjection, ShadowCasterDirectives directives, float entityDistance) {
+                      Matrix4f lightProjection, ShadowCasterDirectives directives,
+                      ShadowCullingFrustum culling) {
         // Submission and drawing both sit in the caster window: the storage mixins hold
         // each submission for the shadow family as it arrives.
         if (!ChimeraEntityBridge.beginShadowCasters()) return;
@@ -99,7 +100,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
         RenderSystem.getModelViewStack().pushMatrix();
         try {
             DeltaTracker delta = minecraft.getDeltaTracker();
-            CasterFrustum frustum = new CasterFrustum(lightView, lightProjection, entityDistance);
+            CasterFrustum frustum = new CasterFrustum(lightView, lightProjection, culling);
             frustum.prepare(cameraX, cameraY, cameraZ);
             extractEntities(minecraft, level, frustum, delta, directives, cameraX, cameraY, cameraZ);
             if (directives.anyBlockEntities()) {
@@ -210,18 +211,19 @@ public final class ChimeraShadowCasters implements AutoCloseable {
     }
 
     /**
-     * The light volume, narrowed for entities to Iris's camera-centred BoxCuller when the pack
-     * sets an entity shadow distance (Iris ShadowRenderer.createShadowFrustum).
+     * The light volume, narrowed by Iris's entity shadow frustum (ShadowRenderer
+     * .createShadowFrustum); its safe zone is kept whole, as for terrain. Entities that ignore
+     * culling, such as lightning bolts, never reach this test, as in Iris.
      */
     private static final class CasterFrustum extends Frustum {
-        private final double distance;
+        private final ShadowCullingFrustum culling;
         private double cameraX;
         private double cameraY;
         private double cameraZ;
 
-        CasterFrustum(Matrix4f view, Matrix4f projection, double distance) {
+        CasterFrustum(Matrix4f view, Matrix4f projection, ShadowCullingFrustum culling) {
             super(view, projection);
-            this.distance = distance;
+            this.culling = culling;
         }
 
         @Override
@@ -234,16 +236,14 @@ public final class ChimeraShadowCasters implements AutoCloseable {
 
         @Override
         public boolean isVisible(AABB box) {
-            // A zero distance culls every caster (Iris CullEverythingFrustum); entities
-            // that ignore culling still draw, as there.
-            if (!(distance > 0.0)) return false;
-            if (!Double.isInfinite(distance)
-                    && (box.maxX < cameraX - distance || box.minX > cameraX + distance
-                    || box.maxY < cameraY - distance || box.minY > cameraY + distance
-                    || box.maxZ < cameraZ - distance || box.minZ > cameraZ + distance)) {
-                return false;
-            }
-            return super.isVisible(box);
+            float minX = (float) (box.minX - cameraX);
+            float minY = (float) (box.minY - cameraY);
+            float minZ = (float) (box.minZ - cameraZ);
+            float maxX = (float) (box.maxX - cameraX);
+            float maxY = (float) (box.maxY - cameraY);
+            float maxZ = (float) (box.maxZ - cameraZ);
+            if (culling.forced(minX, minY, minZ, maxX, maxY, maxZ)) return true;
+            return culling.visible(minX, minY, minZ, maxX, maxY, maxZ) && super.isVisible(box);
         }
     }
 }

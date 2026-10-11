@@ -4,7 +4,7 @@
   "overworld": {
     "dimension": "minecraft:overworld",
     "folder": "overworld",
-    "reportSha256": "5d4fc9006e14f8145e91e83a8dd1dba67e7519917eb75ff5e1ecf74d3e9dbea1",
+    "reportSha256": "39298be55722bda537fdef1619267661a9095d920bedc81b97c0739cbf7ef476",
     "sourceHashDigest": "2fa955c822f0c5b0ededa40fafd55a310ffc44237211b3de1c9fa10d4b130a9e",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
     "resolutionFingerprint": "079b27ab36257cce49e41b6c2815b99bb88166efa7c901289f421e5ada7ca187",
@@ -37,7 +37,7 @@
   "custom": {
     "dimension": "custom:moon",
     "folder": "overworld",
-    "reportSha256": "96cf84ebdf57402561073b95e459cb4100c8420275dbe6b12baede64ef590136",
+    "reportSha256": "8afaccea48fdd830218a665e3a2a6bc1b71fbc7b6be5e0f652c9c511f0a083fa",
     "sourceHashDigest": "2fa955c822f0c5b0ededa40fafd55a310ffc44237211b3de1c9fa10d4b130a9e",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
     "resolutionFingerprint": "78a02c1faef3b8c714e6497a6393fecbceb76ee3a3d6d96ef44e4cb09cc34cac",

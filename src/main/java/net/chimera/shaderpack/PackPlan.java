@@ -171,6 +171,14 @@ public record PackPlan(
         return ShadowCasterDirectives.fromProperties(settings.propertyValues());
     }
 
+    /** How the shadow pass culls its casters (Iris shadow.culling and the shadow distances). */
+    public ShadowCullingPlan shadowCulling() {
+        PackConfig.ShadowSettings shadow = config != null ? config.shadowSettings()
+                : new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
+                        PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of());
+        return ShadowCullingPlan.of(settings.propertyValues(), shadow);
+    }
+
     /**
      * The programs that take part in the frame. Iris removes a program the pack switches off
      * ({@code program.<name>.enabled}) from the pipeline entirely, so it neither runs nor counts

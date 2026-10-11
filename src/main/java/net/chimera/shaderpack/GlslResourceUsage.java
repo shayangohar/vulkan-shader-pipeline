@@ -496,6 +496,18 @@ final class GlslResourceUsage {
             return nameIndex;
         }
         int start = returnType;
+        // An array return type (Photon: float[9] sh_coeff_order_2(...)) reaches back to its element type.
+        while (tokens.get(start).symbol("]")) {
+            int depth = 0;
+            int cursor = start;
+            for (; cursor >= 0; cursor = GlslLexer.previousSignificant(tokens, cursor)) {
+                if (tokens.get(cursor).symbol("]")) depth++;
+                else if (tokens.get(cursor).symbol("[") && --depth == 0) break;
+            }
+            int element = cursor < 0 ? -1 : GlslLexer.previousSignificant(tokens, cursor);
+            if (element < 0) break;
+            start = element;
+        }
         int previous = GlslLexer.previousSignificant(tokens, start);
         while (previous >= 0
                 && tokens.get(previous).kind() == GlslLexer.Kind.IDENTIFIER

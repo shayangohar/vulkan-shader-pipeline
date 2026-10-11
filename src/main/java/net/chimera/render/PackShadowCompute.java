@@ -470,6 +470,7 @@ public final class PackShadowCompute implements AutoCloseable {
         try {
             String body = normalizeVersion(source);
             body = removeLegacyExtensions(body);
+            body = GlslTokenRewriter.splitOpaqueDeclarationLists(body);
             body = GlslTokenRewriter.rewriteTextureCalls(body);
             Set<String> boundedSamplers = new TreeSet<>(samplerNames);
             Matcher samplerParameter = SAMPLER_3D_PARAMETER.matcher(body);

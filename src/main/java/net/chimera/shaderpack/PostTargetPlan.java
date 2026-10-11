@@ -76,6 +76,7 @@ public final class PostTargetPlan {
     private final String programName;
     private final List<Integer> targetSlots;
     private final List<Integer> outputLocations;
+    private final List<Integer> discardedOutputs;
     private final List<Integer> outputFormats;
     private final int[] outputFormatsArray;
     private final Map<Integer, String> outputTypes;
@@ -86,6 +87,7 @@ public final class PostTargetPlan {
             String programName,
             List<Integer> targetSlots,
             List<Integer> outputLocations,
+            List<Integer> discardedOutputs,
             List<Integer> outputFormats,
             Map<Integer, String> outputTypes,
             List<Integer> mipmappedTargets,
@@ -94,6 +96,7 @@ public final class PostTargetPlan {
         this.programName = programName;
         this.targetSlots = List.copyOf(targetSlots);
         this.outputLocations = List.copyOf(outputLocations);
+        this.discardedOutputs = List.copyOf(discardedOutputs);
         this.outputFormats = List.copyOf(outputFormats);
         this.outputFormatsArray = outputFormats.stream().mapToInt(Integer::intValue).toArray();
         this.outputTypes = Map.copyOf(outputTypes);
@@ -160,21 +163,25 @@ public final class PostTargetPlan {
                 deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
             }
         }
-        for (int output : outputSet) {
-            if (output < 0 || output >= targetSlots.size()) {
-                deviations.add("POST_OUTPUT_INDEX_UNMAPPED:" + output);
-            }
+        // GL discards a fragment output with no draw buffer at its location, so an output
+        // past the route is written to nothing (Photon declares a second gbuffer output it
+        // routes only when normal or specular mapping is on).
+        List<Integer> discardedOutputs = outputSet.stream()
+                .filter(output -> output >= targetSlots.size()).toList();
+        for (int output : discardedOutputs) {
+            deviations.add("FRAGMENT_OUTPUT_DISCARDED:" + output);
         }
         if (programName.equals("final") && targetSlots.size() != 1) {
             deviations.add("FINAL_MRT_UNSUPPORTED");
         }
 
-        List<Integer> outputLocations = outputSet.stream().toList();
+        List<Integer> outputLocations = outputSet.stream()
+                .filter(output -> output < targetSlots.size()).toList();
         List<Integer> outputFormats = targetSlots.stream()
                 .map(slot -> safeFormats.getOrDefault(slot, DEFAULT_FORMAT))
                 .toList();
         PostTargetPlan plan = new PostTargetPlan(
-                programName, targetSlots, outputLocations, outputFormats,
+                programName, targetSlots, outputLocations, discardedOutputs, outputFormats,
                 outputTypes, parseMipmappedTargets(text), deviations);
         return new ParseResult(plan, plan.deviations());
     }
@@ -348,6 +355,11 @@ public final class PostTargetPlan {
     /** Fragment output locations used by the source. */
     public List<Integer> outputLocations() {
         return outputLocations;
+    }
+
+    /** Output locations past the route: written, and discarded as GL discards them. */
+    public List<Integer> discardedOutputs() {
+        return discardedOutputs;
     }
 
     /** Vulkan format for each output location, in output location order. */

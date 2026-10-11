@@ -118,6 +118,20 @@ public final class PackPlanBuilder {
         String hostLayoutLane = FamilyAdapterRegistry.hostLayoutLane(program.name());
         boolean hostLayoutFamily = hostLayoutLane != null;
         boolean shadowLane = FamilyAdapterRegistry.isShadowLaneFamily(program.name());
+        // Iris core-profile names (vaPosition, modelViewMatrix) become the compatibility built-ins
+        // every converter serves. A pack's own gbuffers_line vertex keeps Iris's unbound UVs
+        // (prepareLineVertex).
+        boolean lineLayout = familyAdapter.vertexContract() == FamilyAdapterPlan.VertexContract.HOST_LINE;
+        String overlay = stage == UniformRegistry.Stage.POST || isTerrainMaterialFamily(program.name())
+                ? LegacyGlslConverter.NO_OVERLAY : "UV1";
+        if (vertex != null && !(lineLayout && directiveProgram.equals("gbuffers_line"))) {
+            vertex = LegacyGlslConverter.prepareIrisCoreProfile(vertex,
+                    preparedSnapshot ? null : program.vertexPath(), true, overlay, irisCoreMode(vertex));
+        }
+        if (fragment != null) {
+            fragment = LegacyGlslConverter.prepareIrisCoreProfile(fragment,
+                    preparedSnapshot ? null : program.fragmentPath(), false, overlay, irisCoreMode(fragment));
+        }
         String hostLayoutFailure = null;
         if (hostLayoutFamily && vertex != null) {
             try {
@@ -508,6 +522,10 @@ public final class PackPlanBuilder {
                         fragment, preparedSnapshot ? null : program.fragmentPath(),
                         slots, vertexLayout, interfacePlan.project("fragment", stage),
                         geometryOutputPlan);
+                if (convertedFragment == null) {
+                    deviations.add("ENTITY_FRAGMENT_BRIDGE_UNSUPPORTED");
+                    executable = false;
+                }
             } else if (executable && (FamilyAdapterRegistry.isSkyFamily(program.name())
                     || FamilyAdapterRegistry.isCloudFamily(program.name()))) {
                 int[] slots = PackPipelines.entitySamplerSlots(interfaceSlots(interfacePlan, stage));
@@ -811,8 +829,21 @@ public final class PackPlanBuilder {
         return result;
     }
 
+    /**
+     * Iris TransformPatcher compiles a stage in core-profile mode for a core profile and for 150
+     * and above with no profile, serving the core names whether or not the stage declares them.
+     * Iris also uses that mode for any program on the line layout; there a compatibility stage
+     * only gets the core names it declares, so its own variables of those names stay its own.
+     */
+    private static boolean irisCoreMode(String source) {
+        GlslVersion version = GlslVersion.first(source);
+        return version != null && version.irisCore();
+    }
+
+    /** Post stages in modern syntax: GLSL 140 and later, where in/out and layouts appear. */
     private static boolean hasModernVersion(String source) {
-        return source.matches("(?s).*#version\\s+(?:330|400)(?:\\s+.*)?(?:\\r?\\n|$).*");
+        GlslVersion version = GlslVersion.first(source);
+        return version != null && version.supported() && version.number() >= 140;
     }
 
     private static String source(

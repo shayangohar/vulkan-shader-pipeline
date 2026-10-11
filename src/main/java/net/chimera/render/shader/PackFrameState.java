@@ -512,6 +512,11 @@ final class PackFrameState {
         return new Matrix4f(modelView);
     }
 
+    /** gbufferProjection x gbufferModelView, in the legacy GL clip range packs read. */
+    Matrix4f cameraViewProjection(Matrix4f dest) {
+        return dest.set(projection).mul(modelView);
+    }
+
     Matrix4f projectionForTest() {
         return new Matrix4f(projection);
     }

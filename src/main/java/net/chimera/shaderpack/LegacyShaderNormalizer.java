@@ -13,7 +13,8 @@ import java.util.regex.Pattern;
  * program: gl_Fog fields to Chimera's fog uniforms, and gl_FogFragCoord to
  * an ordinary varying. It also gives every uniform its own declaration, so
  * per-name rewriters never meet a declarator list, and expands macros that
- * alias a sampler, so planning sees every sampler a program uses.
+ * alias a sampler, so planning sees every sampler a program uses, or a
+ * storage qualifier, so every converter reads declarations in one spelling.
  */
 final class LegacyShaderNormalizer {
     /** Iris's name for the legacy built-in fog distance varying. */
@@ -101,7 +102,8 @@ final class LegacyShaderNormalizer {
         }
         try {
             List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(GlslTokenRewriter.expandSamplerAliases(
-                    GlslTokenRewriter.splitUniformDeclarators(source))));
+                    GlslTokenRewriter.splitUniformDeclarators(
+                            GlslTokenRewriter.expandStorageQualifierAliases(source)))));
             int version = authoredVersion(source);
             renameLateBuiltinDefinitions(tokens, version);
             endLineCommentsAtTheirLine(tokens, version);
