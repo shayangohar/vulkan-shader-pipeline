@@ -44,6 +44,7 @@ public final class ConformanceHarness {
         verifyShadowPassOrder();
         verifyGlslBreadth();
         verifyComputeDeclarationLists();
+        verifyComputeFrameSlots();
         verifyIndentedProperties();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
@@ -1500,6 +1501,29 @@ public final class ConformanceHarness {
             deleteTree(root);
         }
         System.out.println("[chimera] compute declaration lists (plan, translation, compile): PASS");
+    }
+
+    /**
+     * The shadowcomp uniform block is written while a frame is recorded, so each frame in flight
+     * owns one: with a single block the next frame's values reached the GPU before this frame's
+     * dispatch, and Solas's floodfill read one frameCounter parity only and flickered.
+     */
+    private static void verifyComputeFrameSlots() throws IOException {
+        var compute = nativeClass("net/chimera/render/PackShadowCompute");
+        var dispatch = compute.methods.stream().filter(method -> method.name.equals("dispatch"))
+                .findFirst().orElseThrow(() -> new AssertionError("PackShadowCompute.dispatch is missing"));
+        boolean frameSlot = false;
+        for (var instruction : dispatch.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                    && call.owner.equals("net/vulkanmod/vulkan/Renderer") && call.name.equals("getCurrentFrame")) {
+                frameSlot = true;
+            }
+        }
+        assertTrue(frameSlot, "shadowcomp must bind the current frame slot's uniform block");
+        assertTrue(compute.fields.stream().noneMatch(field -> field.name.equals("uniformData")
+                        || field.name.equals("descriptorSet")),
+                "shadowcomp keeps no uniform block or descriptor set shared across frames in flight");
+        System.out.println("[chimera] shadowcomp uniforms per frame in flight: PASS");
     }
 
     /**

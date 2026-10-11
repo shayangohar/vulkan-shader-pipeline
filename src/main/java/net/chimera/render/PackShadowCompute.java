@@ -7,6 +7,7 @@ import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.ShaderSourcePreprocessor;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.render.shader.PackUniformProvider;
+import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Vulkan;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -106,16 +107,25 @@ public final class PackShadowCompute implements AutoCloseable {
     private long shaderModule;
     private long setLayout;
     private long descriptorPool;
-    private long descriptorSet;
     private long pipelineLayout;
     private long pipeline;
-    private long uniformBuffer;
-    private long uniformAllocation;
-    private long uniformMappedAddress;
-    private ByteBuffer uniformData;
-    private boolean uniformMappedByChimera;
+    private FrameSlot[] frames = new FrameSlot[0];
     private boolean failed;
     private boolean dispatchObserved;
+
+    /**
+     * One frame in flight's uniform block and the descriptor set that binds it. Values are
+     * written while the frame is recorded; with one shared block, the next frame's write could
+     * land before the GPU ran this frame's dispatch, and Solas's floodfill, which alternates its
+     * two images by frameCounter parity, read one parity only and left the other image empty.
+     */
+    private static final class FrameSlot {
+        long descriptorSet;
+        long uniformBuffer;
+        long uniformAllocation;
+        ByteBuffer uniformData;
+        boolean uniformMappedByChimera;
+    }
 
     private PackShadowCompute(
             PackAdvancedResourcePlan.ComputeSpec spec,
@@ -261,16 +271,18 @@ public final class PackShadowCompute implements AutoCloseable {
                 PackStorageImage image = owner.imageForSymbol(name);
                 if (image != null) image.transitionToGeneral(stack, commandBuffer);
             }
+            // This frame slot's fence has signalled, so its block is free to rewrite.
+            FrameSlot frame = frames[Renderer.getCurrentFrame() % frames.length];
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-                    pipelineLayout, 0, stack.longs(descriptorSet), null);
-            if (!computeUniforms.isEmpty() && uniformData != null) {
-                MemoryUtil.memSet(uniformData, 0);
+                    pipelineLayout, 0, stack.longs(frame.descriptorSet), null);
+            if (!computeUniforms.isEmpty() && frame.uniformData != null) {
+                MemoryUtil.memSet(frame.uniformData, 0);
                 List<UniformRegistry.UniformDeclaration> declarations = computeUniforms.stream()
                         .map(value -> new UniformRegistry.UniformDeclaration(value.name(), value.type()))
                         .toList();
                 int[] offsets = computeUniforms.stream().mapToInt(ComputeUniform::offset).toArray();
                 int[] sizes = computeUniforms.stream().mapToInt(ComputeUniform::size).toArray();
-                PackUniformProvider.writeComputeUniforms(declarations, offsets, sizes, uniformData);
+                PackUniformProvider.writeComputeUniforms(declarations, offsets, sizes, frame.uniformData);
             }
             int x = groups(imageNames.get(0), spec.localSizeX(), true);
             int y = groups(imageNames.get(0), spec.localSizeY(), false);
@@ -302,7 +314,12 @@ public final class PackShadowCompute implements AutoCloseable {
         ByteBuffer code = compileSpirv(source);
         if (code == null) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (!createUniformBuffer(stack)) return;
+            int frameCount = Math.max(1, Renderer.getFramesNum());
+            frames = new FrameSlot[frameCount];
+            for (int index = 0; index < frameCount; index++) {
+                frames[index] = new FrameSlot();
+                if (!createUniformBuffer(stack, frames[index])) return;
+            }
             VkShaderModuleCreateInfo moduleInfo = VkShaderModuleCreateInfo.calloc(stack)
                     .sType$Default().pCode(code);
             LongBuffer module = stack.mallocLong(1);
@@ -346,72 +363,33 @@ public final class PackShadowCompute implements AutoCloseable {
             boolean hasUniformBuffer = uniformBufferSize > 0;
             int poolSizeCount = 1 + (hasCombinedSamplers ? 1 : 0) + (hasUniformBuffer ? 1 : 0);
             VkDescriptorPoolSize.Buffer poolSizes = VkDescriptorPoolSize.calloc(poolSizeCount, stack);
-            poolSizes.get(0).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(imageNames.size());
+            poolSizes.get(0).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    .descriptorCount(imageNames.size() * frames.length);
             int poolIndex = 1;
-            if (!samplerNames.isEmpty()) {
+            if (hasCombinedSamplers) {
                 poolSizes.get(poolIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(samplerNames.size() + sampled2dNames.size());
-            } else if (!sampled2dNames.isEmpty()) {
-                poolSizes.get(poolIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(sampled2dNames.size());
+                        .descriptorCount((samplerNames.size() + sampled2dNames.size()) * frames.length);
             }
             if (hasUniformBuffer) {
                 poolSizes.get(poolIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .descriptorCount(1);
+                        .descriptorCount(frames.length);
             }
             VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-                    .sType$Default().maxSets(1).pPoolSizes(poolSizes);
+                    .sType$Default().maxSets(frames.length).pPoolSizes(poolSizes);
             LongBuffer pool = stack.mallocLong(1);
             if (vkCreateDescriptorPool(Vulkan.getVkDevice(), poolInfo, null, pool) != VK_SUCCESS) return;
             descriptorPool = pool.get(0);
 
+            LongBuffer layouts = stack.mallocLong(frames.length);
+            for (int index = 0; index < frames.length; index++) layouts.put(index, setLayout);
             VkDescriptorSetAllocateInfo allocateInfo = VkDescriptorSetAllocateInfo.calloc(stack)
-                    .sType$Default().descriptorPool(descriptorPool).pSetLayouts(stack.longs(setLayout));
-            LongBuffer descriptor = stack.mallocLong(1);
-            if (vkAllocateDescriptorSets(Vulkan.getVkDevice(), allocateInfo, descriptor) != VK_SUCCESS) return;
-            descriptorSet = descriptor.get(0);
-
-            VkDescriptorImageInfo.Buffer images = VkDescriptorImageInfo.calloc(resourceCount, stack);
-            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(bindingCount, stack);
-            for (int index = 0; index < imageNames.size(); index++) {
-                PackStorageImage image = owner.imageForSymbol(imageNames.get(index));
-                images.get(index).imageView(image.getImageView()).imageLayout(VK_IMAGE_LAYOUT_GENERAL);
-                writes.get(index).sType$Default().dstSet(descriptorSet).dstBinding(index)
-                        .dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                        .pImageInfo(images.slice(index, 1));
+                    .sType$Default().descriptorPool(descriptorPool).pSetLayouts(layouts);
+            LongBuffer descriptors = stack.mallocLong(frames.length);
+            if (vkAllocateDescriptorSets(Vulkan.getVkDevice(), allocateInfo, descriptors) != VK_SUCCESS) return;
+            for (int index = 0; index < frames.length; index++) {
+                frames[index].descriptorSet = descriptors.get(index);
+                if (!writeDescriptors(frames[index], resourceCount, bindingCount, uniformBinding)) return;
             }
-            for (int index = 0; index < samplerNames.size(); index++) {
-                int binding = imageNames.size() + index;
-                PackStorageImage image = owner.imageForSymbol(samplerNames.get(index));
-                images.get(binding).sampler(image.getSampler()).imageView(image.getImageView())
-                        .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
-                writes.get(binding).sType$Default().dstSet(descriptorSet).dstBinding(binding)
-                        .dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .pImageInfo(images.slice(binding, 1));
-            }
-            for (int index = 0; index < sampled2dNames.size(); index++) {
-                int binding = imageNames.size() + samplerNames.size() + index;
-                VulkanImage image = sampledResourceOwner == null
-                        ? null : sampledResourceOwner.image(sampled2dNames.get(index));
-                if (image == null) return;
-                images.get(binding).sampler(image.getSampler()).imageView(image.getImageView())
-                        .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                writes.get(binding).sType$Default().dstSet(descriptorSet).dstBinding(binding)
-                        .dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .pImageInfo(images.slice(binding, 1));
-            }
-            if (uniformBufferSize > 0) {
-                VkDescriptorBufferInfo.Buffer buffer = VkDescriptorBufferInfo.calloc(1, stack)
-                        .buffer(uniformBuffer).offset(0L).range(uniformBufferSize);
-                writes.get(uniformBinding).sType$Default().dstSet(descriptorSet)
-                        .dstBinding(uniformBinding).dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .pBufferInfo(buffer);
-            }
-            vkUpdateDescriptorSets(Vulkan.getVkDevice(), writes, null);
 
             VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.calloc(stack)
                     .sType$Default().pSetLayouts(stack.longs(setLayout));
@@ -432,8 +410,59 @@ public final class PackShadowCompute implements AutoCloseable {
         }
     }
 
-    /** Allocates one host-visible uniform block for all live compute values. */
-    private boolean createUniformBuffer(MemoryStack stack) {
+    /**
+     * Points one frame slot's set at the shared images and samplers and at the slot's own
+     * uniform block. False when a sampled resource has no owner.
+     */
+    private boolean writeDescriptors(FrameSlot frame, int resourceCount, int bindingCount, int uniformBinding) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkDescriptorImageInfo.Buffer images = VkDescriptorImageInfo.calloc(resourceCount, stack);
+            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(bindingCount, stack);
+            for (int index = 0; index < imageNames.size(); index++) {
+                PackStorageImage image = owner.imageForSymbol(imageNames.get(index));
+                images.get(index).imageView(image.getImageView()).imageLayout(VK_IMAGE_LAYOUT_GENERAL);
+                writes.get(index).sType$Default().dstSet(frame.descriptorSet).dstBinding(index)
+                        .dstArrayElement(0).descriptorCount(1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                        .pImageInfo(images.slice(index, 1));
+            }
+            for (int index = 0; index < samplerNames.size(); index++) {
+                int binding = imageNames.size() + index;
+                PackStorageImage image = owner.imageForSymbol(samplerNames.get(index));
+                images.get(binding).sampler(image.getSampler()).imageView(image.getImageView())
+                        .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
+                writes.get(binding).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
+                        .dstArrayElement(0).descriptorCount(1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                        .pImageInfo(images.slice(binding, 1));
+            }
+            for (int index = 0; index < sampled2dNames.size(); index++) {
+                int binding = imageNames.size() + samplerNames.size() + index;
+                VulkanImage image = sampledResourceOwner == null
+                        ? null : sampledResourceOwner.image(sampled2dNames.get(index));
+                if (image == null) return false;
+                images.get(binding).sampler(image.getSampler()).imageView(image.getImageView())
+                        .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                writes.get(binding).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
+                        .dstArrayElement(0).descriptorCount(1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                        .pImageInfo(images.slice(binding, 1));
+            }
+            if (uniformBufferSize > 0) {
+                VkDescriptorBufferInfo.Buffer buffer = VkDescriptorBufferInfo.calloc(1, stack)
+                        .buffer(frame.uniformBuffer).offset(0L).range(uniformBufferSize);
+                writes.get(uniformBinding).sType$Default().dstSet(frame.descriptorSet)
+                        .dstBinding(uniformBinding).dstArrayElement(0).descriptorCount(1)
+                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                        .pBufferInfo(buffer);
+            }
+            vkUpdateDescriptorSets(Vulkan.getVkDevice(), writes, null);
+            return true;
+        }
+    }
+
+    /** Allocates one frame slot's host-visible uniform block for all live compute values. */
+    private boolean createUniformBuffer(MemoryStack stack, FrameSlot frame) {
         if (uniformBufferSize <= 0) return true;
         VkBufferCreateInfo bufferInfo = VkBufferCreateInfo.calloc(stack)
                 .sType$Default()
@@ -452,18 +481,18 @@ public final class PackShadowCompute implements AutoCloseable {
                 buffer, allocation, info) != VK_SUCCESS) {
             return false;
         }
-        uniformBuffer = buffer.get(0);
-        uniformAllocation = allocation.get(0);
-        uniformMappedAddress = info.pMappedData();
-        if (uniformMappedAddress == 0L) {
+        frame.uniformBuffer = buffer.get(0);
+        frame.uniformAllocation = allocation.get(0);
+        long mappedAddress = info.pMappedData();
+        if (mappedAddress == 0L) {
             PointerBuffer mapped = stack.mallocPointer(1);
-            if (Vma.vmaMapMemory(Vulkan.getAllocator(), uniformAllocation, mapped) != VK_SUCCESS) {
+            if (Vma.vmaMapMemory(Vulkan.getAllocator(), frame.uniformAllocation, mapped) != VK_SUCCESS) {
                 return false;
             }
-            uniformMappedAddress = mapped.get(0);
-            uniformMappedByChimera = true;
+            mappedAddress = mapped.get(0);
+            frame.uniformMappedByChimera = true;
         }
-        uniformData = MemoryUtil.memByteBuffer(uniformMappedAddress, uniformBufferSize);
+        frame.uniformData = MemoryUtil.memByteBuffer(mappedAddress, uniformBufferSize);
         return true;
     }
 
@@ -814,22 +843,20 @@ public final class PackShadowCompute implements AutoCloseable {
         if (descriptorPool != 0L) vkDestroyDescriptorPool(Vulkan.getVkDevice(), descriptorPool, null);
         if (setLayout != 0L) vkDestroyDescriptorSetLayout(Vulkan.getVkDevice(), setLayout, null);
         if (shaderModule != 0L) vkDestroyShaderModule(Vulkan.getVkDevice(), shaderModule, null);
-        if (uniformMappedByChimera && uniformAllocation != 0L) {
-            Vma.vmaUnmapMemory(Vulkan.getAllocator(), uniformAllocation);
-        }
-        if (uniformBuffer != 0L) {
-            Vma.vmaDestroyBuffer(Vulkan.getAllocator(), uniformBuffer, uniformAllocation);
+        for (FrameSlot frame : frames) {
+            if (frame == null) continue;
+            if (frame.uniformMappedByChimera && frame.uniformAllocation != 0L) {
+                Vma.vmaUnmapMemory(Vulkan.getAllocator(), frame.uniformAllocation);
+            }
+            if (frame.uniformBuffer != 0L) {
+                Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.uniformBuffer, frame.uniformAllocation);
+            }
         }
         pipeline = 0L;
         pipelineLayout = 0L;
         descriptorPool = 0L;
-        descriptorSet = 0L;
         setLayout = 0L;
         shaderModule = 0L;
-        uniformBuffer = 0L;
-        uniformAllocation = 0L;
-        uniformMappedAddress = 0L;
-        uniformData = null;
-        uniformMappedByChimera = false;
+        frames = new FrameSlot[0];
     }
 }
