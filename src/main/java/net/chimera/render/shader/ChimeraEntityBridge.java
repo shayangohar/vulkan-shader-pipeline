@@ -78,11 +78,6 @@ public final class ChimeraEntityBridge {
      */
     private static boolean shadowCasterPass;
     private static final java.util.Set<RenderPipeline> droppedShadowPipelines = new java.util.HashSet<>();
-    /**
-     * The entity id a host-layout draw reads (Iris's fallback entityId uniform): the submitter
-     * of the custom geometry being drawn, 0 for any other draw.
-     */
-    private static int drawEntityId;
     private static GraphicsPipeline activePipeline;
     private static Family activeFamily;
     /** The family requested for the current guarded draw, even if host fallback is selected. */
@@ -188,7 +183,6 @@ public final class ChimeraEntityBridge {
         shadowCasterPipeline = null;
         shadowCasterPass = false;
         droppedShadowPipelines.clear();
-        drawEntityId = 0;
         activePipeline = null;
         activeFamily = null;
         requestedFamily = null;
@@ -293,7 +287,6 @@ public final class ChimeraEntityBridge {
             activeFamily = null;
             requestedFamily = null;
             currentEntityId = 0;
-            drawEntityId = 0;
             submittingDepth = 0;
             entitySubmissionDepth = 0;
             blockSubmissionDepth = 0;
@@ -336,7 +329,6 @@ public final class ChimeraEntityBridge {
         shadowCasterPipeline = null;
         shadowCasterPass = false;
         droppedShadowPipelines.clear();
-        drawEntityId = 0;
         resolver = PackEntityIdResolver.empty();
     }
 
@@ -497,24 +489,6 @@ public final class ChimeraEntityBridge {
         HostLayoutLane lane = HostLayoutLane.of(family);
         return lane != null && (lane.pass() == HostLayoutLane.Pass.SHADOW) == isShadowCasterPass()
                 && beginSimpleDraw(family);
-    }
-
-    /**
-     * Scopes the entity id the host-layout draws flushed inside it read: the submitter of
-     * the custom geometry being drawn (a lightning bolt, the ender dragon's rays). Iris
-     * serves the same value through its fallback entityId uniform.
-     */
-    public static void beginDrawIdentity(int entityId) {
-        drawEntityId = enabled ? entityId : 0;
-    }
-
-    public static void endDrawIdentity() {
-        drawEntityId = 0;
-    }
-
-    /** The entity id the active host-layout draw reads. */
-    public static int drawEntityId() {
-        return enabled ? drawEntityId : 0;
     }
 
     /** True when this host-layout lane has an installed pack pipeline. */
@@ -714,7 +688,6 @@ public final class ChimeraEntityBridge {
         return renderType.format() == DefaultVertexFormat.NEW_ENTITY;
     }
 
-    /** Compatibility query retained for the M6.3 conformance surface. */
     /**
      * The host pipeline's discard threshold (fixed core value or ALPHA_CUTOUT
      * define), or 0 for a pipeline that never discards. The pack program tests

@@ -34,6 +34,10 @@ final class GlslResourceUsage {
     private static final Set<String> FUNCTION_QUALIFIERS = Set.of(
             "const", "inline", "static", "highp", "mediump", "lowp", "precise",
             "invariant");
+    /** Qualifiers GLSL allows between {@code uniform} and an opaque type. */
+    private static final Set<String> TYPE_QUALIFIERS = Set.of(
+            "highp", "mediump", "lowp", "writeonly", "readonly", "coherent", "volatile",
+            "restrict");
 
     /** Complete token range for one top-level function definition. */
     record FunctionDefinition(
@@ -395,18 +399,17 @@ final class GlslResourceUsage {
             if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER) continue;
             if (token.identifier("uniform")) {
                 int type = GlslLexer.nextSignificant(tokens, index);
+                while (type >= 0 && TYPE_QUALIFIERS.contains(tokens.get(type).text())) {
+                    type = GlslLexer.nextSignificant(tokens, type);
+                }
                 if (type < 0 || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) continue;
                 String typeName = tokens.get(type).text();
                 if (isSampler(typeName)) {
                     collectUniformNames(tokens, type, samplers, declarationTokens);
                 } else if (isImageType(typeName)) {
-                    int name = GlslLexer.nextSignificant(tokens, type);
-                    if (name >= 0 && tokens.get(name).kind() == GlslLexer.Kind.IDENTIFIER) {
-                        images.add(tokens.get(name).text());
-                        declarationTokens.add(index);
-                        declarationTokens.add(type);
-                        declarationTokens.add(name);
-                    }
+                    // Every name of a list: writeonly uniform image3D a, b;
+                    declarationTokens.add(index);
+                    collectUniformNames(tokens, type, images, declarationTokens);
                 }
             } else if (isImageType(token.text())) {
                 int name = GlslLexer.nextSignificant(tokens, index);

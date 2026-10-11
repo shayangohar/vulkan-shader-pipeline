@@ -122,8 +122,6 @@ final class PackFrameState {
     private float entityAlphaReference;
     // Per frame: the glint strength option, vanilla Globals.GlintAlpha (Iris isGlint gl_Color).
     private float glintAlpha = 1.0F;
-    // Per draw: the entityId a host-layout lane reads (Iris's fallback entity uniform).
-    private int drawEntityId;
     private net.chimera.shaderpack.PackRenderingPhase renderingPhase = net.chimera.shaderpack.PackRenderingPhase.NONE;
     private int currentTime;
     private int bedrockLevel;
@@ -381,7 +379,6 @@ final class PackFrameState {
             case "AlphaCutout" -> target.putFloat(0, alphaCutout);
             case UniformRegistry.ENTITY_ALPHA_REFERENCE -> target.putFloat(0, entityAlphaReference);
             case UniformRegistry.GLINT_ALPHA -> target.putFloat(0, glintAlpha);
-            case UniformRegistry.DRAW_ENTITY_ID -> target.putInt(0, drawEntityId);
             case "renderStage" -> target.putInt(0, renderingPhase.ordinal());
             case "ColorModulator" -> writeFloatArray(target, shaderColor, 4);
             case "Light0_Direction" -> writeVec3(target, lightDirection0);
@@ -737,13 +734,6 @@ final class PackFrameState {
         if (atlasSize[0] == width && atlasSize[1] == height) return false;
         atlasSize[0] = width;
         atlasSize[1] = height;
-        return true;
-    }
-
-    /** Returns true when the per-draw host-layout entity id changed. */
-    boolean setDrawEntityId(int entityId) {
-        if (this.drawEntityId == entityId) return false;
-        this.drawEntityId = entityId;
         return true;
     }
 

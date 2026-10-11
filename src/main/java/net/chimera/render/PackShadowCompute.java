@@ -36,11 +36,13 @@ import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -134,15 +136,14 @@ public final class PackShadowCompute implements AutoCloseable {
         this.uniformBufferSize = uniformBufferSize(this.computeUniforms);
     }
 
-    public static PackShadowCompute load(
-            PackAdvancedResourcePlan plan,
-            PackAdvancedImageOwner owner,
-            Path shadersDir,
-            Map<String, String> initialMacros,
-            Set<String> lockedMacros
-    ) {
-        return load(plan, owner, null, shadersDir, initialMacros, lockedMacros);
-    }
+    /** A translated shadowcomp module and the resources it binds, in binding order. */
+    private record Module(
+            String source,
+            List<String> imageNames,
+            List<String> samplerNames,
+            List<String> sampled2dNames,
+            List<ComputeUniform> uniforms
+    ) {}
 
     public static PackShadowCompute load(
             PackAdvancedResourcePlan plan,
@@ -155,47 +156,87 @@ public final class PackShadowCompute implements AutoCloseable {
         if (plan == null || owner == null || !plan.capabilityPossible()) return null;
         PackAdvancedResourcePlan.ComputeSpec spec = plan.computeStages().get("shadowcomp");
         if (spec == null || !spec.supported()) return null;
+        Module module;
         try {
-            Path sourcePath = shadersDir.resolve(spec.relativeSource()).normalize();
-            String source = Files.readString(sourcePath);
-            Map<String, String> macros = PackEngineDefines.forCompute(
-                    initialMacros, plan.capabilityPossible());
-            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepareForRuntime(
-                    shadersDir, sourcePath, source,
-                    macros,
-                    PackEngineDefines.lockedNames(
-                            lockedMacros, plan.capabilityPossible(), true));
-            if (prepared.deviations().stream().anyMatch(value ->
-                    value == null || !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:"))) {
-                return null;
-            }
-            List<String> names = spec.imageNames().stream()
-                    .filter(name -> owner.imageForSymbol(name) != null)
-                    .toList();
-            if (names.size() != spec.imageNames().size()) return null;
-            List<String> samplers = spec.samplerNames().stream()
-                    .filter(name -> owner.imageForSymbol(name) != null)
-                    .toList();
-            if (samplers.size() != spec.samplerNames().size()) return null;
-            List<String> sampled2d = standardSampledResources(prepared.source(), sampledResourceOwner);
-            List<ComputeUniform> uniforms = computeUniforms(prepared.source());
-            int uniformBinding = names.size() + samplers.size() + sampled2d.size();
-            String translated = translate(prepared.source(), names, samplers, sampled2d,
-                    owner, sampledResourceOwner, uniforms, uniformBinding);
-            if (translated == null) return null;
+            module = module(plan, spec, symbol -> owner.imageForSymbol(symbol) != null,
+                    sampledResourceOwner, shadersDir, initialMacros, lockedMacros);
+        } catch (IOException | RuntimeException failure) {
+            LOGGER.warn("[chimera] shadowcomp translation failed: {}", failure.getMessage());
+            return null;
+        }
+        try {
             PackShadowCompute compute = new PackShadowCompute(
-                    spec, owner, sampledResourceOwner, names, samplers, sampled2d,
-                    uniforms);
-            compute.create(translated);
+                    spec, owner, sampledResourceOwner, module.imageNames(), module.samplerNames(),
+                    module.sampled2dNames(), module.uniforms());
+            compute.create(module.source());
             if (compute.pipeline == 0L) {
                 compute.close();
                 return null;
             }
             return compute;
-        } catch (IOException | RuntimeException failure) {
+        } catch (RuntimeException failure) {
             LOGGER.warn("[chimera] shadowcomp load failed: {}", failure.getMessage(), failure);
             return null;
         }
+    }
+
+    /**
+     * The shadowcomp source exactly as {@link #load} compiles it, given an owner for every image
+     * the plan supports; null when the plan has no supported shadowcomp. The pack compile check
+     * compiles it offline. Throws with the reason when the stage does not translate.
+     */
+    public static String translatedSource(
+            PackAdvancedResourcePlan plan,
+            Path shadersDir,
+            Map<String, String> initialMacros,
+            Set<String> lockedMacros
+    ) throws IOException {
+        if (plan == null || !plan.capabilityPossible()) return null;
+        PackAdvancedResourcePlan.ComputeSpec spec = plan.computeStages().get("shadowcomp");
+        if (spec == null || !spec.supported()) return null;
+        Predicate<String> owned = symbol -> {
+            PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(symbol);
+            return image != null && image.supported();
+        };
+        return module(plan, spec, owned, null, shadersDir, initialMacros, lockedMacros).source();
+    }
+
+    private static Module module(
+            PackAdvancedResourcePlan plan,
+            PackAdvancedResourcePlan.ComputeSpec spec,
+            Predicate<String> owned,
+            PackResourceOwner sampledResourceOwner,
+            Path shadersDir,
+            Map<String, String> initialMacros,
+            Set<String> lockedMacros
+    ) throws IOException {
+        Path sourcePath = shadersDir.resolve(spec.relativeSource()).normalize();
+        String source = Files.readString(sourcePath);
+        Map<String, String> macros = PackEngineDefines.forCompute(
+                initialMacros, plan.capabilityPossible());
+        ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepareForRuntime(
+                shadersDir, sourcePath, source,
+                macros,
+                PackEngineDefines.lockedNames(
+                        lockedMacros, plan.capabilityPossible(), true));
+        List<String> blocking = prepared.deviations().stream()
+                .filter(value -> value == null || !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:"))
+                .toList();
+        if (!blocking.isEmpty()) {
+            throw new IllegalArgumentException("preprocessing deviations " + blocking);
+        }
+        List<String> unowned = new ArrayList<>();
+        spec.imageNames().stream().filter(owned.negate()).forEach(unowned::add);
+        spec.samplerNames().stream().filter(owned.negate()).forEach(unowned::add);
+        if (!unowned.isEmpty()) {
+            throw new IllegalArgumentException("no image owner for " + unowned);
+        }
+        List<String> sampled2d = standardSampledResources(prepared.source(), sampledResourceOwner);
+        List<ComputeUniform> uniforms = computeUniforms(prepared.source());
+        int uniformBinding = spec.imageNames().size() + spec.samplerNames().size() + sampled2d.size();
+        String translated = translate(prepared.source(), plan, spec.imageNames(), spec.samplerNames(),
+                sampled2d, uniforms, uniformBinding);
+        return new Module(translated, spec.imageNames(), spec.samplerNames(), sampled2d, uniforms);
     }
 
     public boolean isInstalled() { return pipeline != 0L && !failed; }
@@ -456,179 +497,170 @@ public final class PackShadowCompute implements AutoCloseable {
         }
     }
 
+    /** Throws IllegalArgumentException naming the first declaration the module cannot bind. */
     private static String translate(
             String source,
+            PackAdvancedResourcePlan plan,
             List<String> imageNames,
             List<String> samplerNames,
             List<String> sampled2dNames,
-            PackAdvancedImageOwner owner,
-            PackResourceOwner sampledResourceOwner,
             List<ComputeUniform> computeUniforms,
             int uniformBinding
     ) {
-        if (source == null) return null;
-        try {
-            String body = normalizeVersion(source);
-            body = removeLegacyExtensions(body);
-            body = GlslTokenRewriter.splitOpaqueDeclarationLists(body);
-            body = GlslTokenRewriter.rewriteTextureCalls(body);
-            Set<String> boundedSamplers = new TreeSet<>(samplerNames);
-            Matcher samplerParameter = SAMPLER_3D_PARAMETER.matcher(body);
-            while (samplerParameter.find()) {
-                boundedSamplers.add(samplerParameter.group(1));
-            }
-            body = GlslTokenRewriter.rewriteTexelFetchBounds(body, boundedSamplers);
+        String body = normalizeVersion(source);
+        body = removeLegacyExtensions(body);
+        body = GlslTokenRewriter.splitUniformDeclarators(body);
+        body = GlslTokenRewriter.rewriteTextureCalls(body);
+        Set<String> boundedSamplers = new TreeSet<>(samplerNames);
+        Matcher samplerParameter = SAMPLER_3D_PARAMETER.matcher(body);
+        while (samplerParameter.find()) {
+            boundedSamplers.add(samplerParameter.group(1));
+        }
+        body = GlslTokenRewriter.rewriteTexelFetchBounds(body, boundedSamplers);
 
-            Set<String> declaredSamplers = new TreeSet<>();
-            Set<String> declaredSampled2d = new TreeSet<>();
-            Matcher sampler = SAMPLER_DECLARATION.matcher(body);
-            StringBuffer samplerResult = new StringBuffer();
-            while (sampler.find()) {
-                String type = sampler.group(1);
-                String name = sampler.group(2);
-                if (type.endsWith("2D") || type.equals("sampler2DShadow")) {
-                    if (!sampled2dNames.contains(name)) {
-                        if (GlslTokenRewriter.identifierCount(body, name) > 1) {
-                            throw new IllegalArgumentException("unsupported compute sampler: " + name);
-                        }
-                        sampler.appendReplacement(samplerResult, "");
-                        continue;
-                    }
-                    if (sampledResourceOwner == null
-                            || sampledResourceOwner.image(name) == null) {
-                        throw new IllegalArgumentException("compute sampler unavailable: " + name);
-                    }
-                    int binding = imageNames.size() + samplerNames.size()
-                            + sampled2dNames.indexOf(name);
-                    String replacement = "layout(binding = " + binding
-                            + ") uniform sampler2D " + name + ";";
-                    declaredSampled2d.add(name);
-                    sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
-                    continue;
-                }
-                if (!samplerNames.contains(name)) {
+        Set<String> declaredSamplers = new TreeSet<>();
+        Set<String> declaredSampled2d = new TreeSet<>();
+        Matcher sampler = SAMPLER_DECLARATION.matcher(body);
+        StringBuffer samplerResult = new StringBuffer();
+        while (sampler.find()) {
+            String type = sampler.group(1);
+            String name = sampler.group(2);
+            if (type.endsWith("2D") || type.equals("sampler2DShadow")) {
+                if (!sampled2dNames.contains(name)) {
                     if (GlslTokenRewriter.identifierCount(body, name) > 1) {
                         throw new IllegalArgumentException("unsupported compute sampler: " + name);
                     }
                     sampler.appendReplacement(samplerResult, "");
                     continue;
                 }
-                int binding = imageNames.size() + samplerNames.indexOf(name);
-                PackAdvancedResourcePlan.ImageSpec image = owner.specForSymbol(name);
-                String replacement = "layout(binding = " + binding + ") uniform "
-                        + samplerType(image) + " " + name + ";";
-                declaredSamplers.add(name);
+                // sampled2dNames holds only resources the pack owner has loaded.
+                int binding = imageNames.size() + samplerNames.size()
+                        + sampled2dNames.indexOf(name);
+                String replacement = "layout(binding = " + binding
+                        + ") uniform sampler2D " + name + ";";
+                declaredSampled2d.add(name);
                 sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
+                continue;
             }
-            sampler.appendTail(samplerResult);
-            body = samplerResult.toString();
-
-            Matcher image = IMAGE_DECLARATION.matcher(body);
-            StringBuffer imageResult = new StringBuffer();
-            while (image.find()) {
-                String type = image.group(1);
-                String name = image.group(2);
-                int binding = imageNames.indexOf(name);
-                if (binding < 0) binding = indexBySampler(imageNames, name, owner);
-                if (binding < 0) {
-                    throw new IllegalArgumentException("unsupported compute image: " + name);
+            if (!samplerNames.contains(name)) {
+                if (GlslTokenRewriter.identifierCount(body, name) > 1) {
+                    throw new IllegalArgumentException("unsupported compute sampler: " + name);
                 }
-                PackAdvancedResourcePlan.ImageSpec spec = owner.specForSymbol(name);
-                String replacement = "layout(" + spec.internalFormat() + ", binding = " + binding
-                        + ") uniform " + imageType(spec, type) + " " + name + ";";
-                image.appendReplacement(imageResult, Matcher.quoteReplacement(replacement));
+                sampler.appendReplacement(samplerResult, "");
+                continue;
             }
-            image.appendTail(imageResult);
-            body = imageResult.toString();
+            int binding = imageNames.size() + samplerNames.indexOf(name);
+            PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(name);
+            String replacement = "layout(binding = " + binding + ") uniform "
+                    + samplerType(image) + " " + name + ";";
+            declaredSamplers.add(name);
+            sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
+        }
+        sampler.appendTail(samplerResult);
+        body = samplerResult.toString();
 
-            Matcher valueUniform = VALUE_UNIFORM_DECLARATION.matcher(body);
-            StringBuffer uniformResult = new StringBuffer();
-            while (valueUniform.find()) {
-                String type = valueUniform.group(1);
-                String declarators = valueUniform.group(2).trim();
-                StringBuilder replacement = new StringBuilder();
-                for (String declarator : declarators.split(",")) {
-                    String name = declarator.trim();
-                    int initializer = name.indexOf('=');
-                    if (initializer >= 0) name = name.substring(0, initializer).trim();
-                    String uniformName = name;
-                    ComputeUniform uniform = computeUniforms.stream()
-                            .filter(value -> value.name().equals(uniformName))
-                            .findFirst().orElse(null);
-                    if (uniform == null) {
-                        if (GlslTokenRewriter.identifierCount(body, name) > 1) {
-                            throw new IllegalArgumentException("unsupported compute uniform: " + name);
-                        }
-                        continue;
-                    }
-                }
-                valueUniform.appendReplacement(uniformResult,
-                        Matcher.quoteReplacement(replacement.toString()));
+        Matcher image = IMAGE_DECLARATION.matcher(body);
+        StringBuffer imageResult = new StringBuffer();
+        while (image.find()) {
+            String type = image.group(1);
+            String name = image.group(2);
+            int binding = imageNames.indexOf(name);
+            if (binding < 0) binding = indexBySampler(imageNames, name, plan);
+            if (binding < 0) {
+                throw new IllegalArgumentException("unsupported compute image: " + name);
             }
-            valueUniform.appendTail(uniformResult);
-            body = uniformResult.toString();
+            PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(name);
+            String replacement = "layout(" + spec.internalFormat() + ", binding = " + binding
+                    + ") uniform " + imageType(spec, type) + " " + name + ";";
+            image.appendReplacement(imageResult, Matcher.quoteReplacement(replacement));
+        }
+        image.appendTail(imageResult);
+        body = imageResult.toString();
 
-            Matcher unsupportedUniform = ANY_UNIFORM_DECLARATION.matcher(body);
-            StringBuffer unsupportedResult = new StringBuffer();
-            while (unsupportedUniform.find()) {
-                String type = unsupportedUniform.group(1);
-                String declarators = unsupportedUniform.group(2).trim();
-                if (isTranslatedResourceDeclaration(type, declarators, imageNames, samplerNames,
-                        sampled2dNames)) {
-                    unsupportedUniform.appendReplacement(unsupportedResult,
-                            Matcher.quoteReplacement(unsupportedUniform.group()));
-                    continue;
-                }
-                for (String declarator : declarators.split(",")) {
-                    String name = declarator.trim();
-                    int initializer = name.indexOf('=');
-                    if (initializer >= 0) name = name.substring(0, initializer).trim();
-                    name = name.replaceFirst("\\[.*$", "").trim();
-                    if (!name.matches("[A-Za-z_]\\w*")) {
-                        throw new IllegalArgumentException("unsupported compute uniform declaration: "
-                                + type + " " + declarators);
-                    }
+        Matcher valueUniform = VALUE_UNIFORM_DECLARATION.matcher(body);
+        StringBuffer uniformResult = new StringBuffer();
+        while (valueUniform.find()) {
+            String type = valueUniform.group(1);
+            String declarators = valueUniform.group(2).trim();
+            StringBuilder replacement = new StringBuilder();
+            for (String declarator : declarators.split(",")) {
+                String name = declarator.trim();
+                int initializer = name.indexOf('=');
+                if (initializer >= 0) name = name.substring(0, initializer).trim();
+                String uniformName = name;
+                ComputeUniform uniform = computeUniforms.stream()
+                        .filter(value -> value.name().equals(uniformName))
+                        .findFirst().orElse(null);
+                if (uniform == null) {
                     if (GlslTokenRewriter.identifierCount(body, name) > 1) {
                         throw new IllegalArgumentException("unsupported compute uniform: " + name);
                     }
+                    continue;
                 }
-                unsupportedUniform.appendReplacement(unsupportedResult, "");
             }
-            unsupportedUniform.appendTail(unsupportedResult);
-            body = unsupportedResult.toString();
-            body = addDispatchBoundsGuard(body, imageNames);
-
-            StringBuilder generated = new StringBuilder();
-            for (String name : samplerNames) {
-                if (declaredSamplers.contains(name)) continue;
-                if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
-                int binding = imageNames.size() + samplerNames.indexOf(name);
-                PackAdvancedResourcePlan.ImageSpec imageSpec = owner.specForSymbol(name);
-                generated.append("layout(binding = ").append(binding).append(") uniform ")
-                        .append(samplerType(imageSpec)).append(' ').append(name).append(";\n");
-            }
-            for (String name : sampled2dNames) {
-                if (declaredSampled2d.contains(name)) continue;
-                if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
-                int binding = imageNames.size() + samplerNames.size() + sampled2dNames.indexOf(name);
-                generated.append("layout(binding = ").append(binding)
-                        .append(") uniform sampler2D ").append(name).append(";\n");
-            }
-            StringBuilder values = new StringBuilder();
-            if (!computeUniforms.isEmpty()) {
-                values.append("layout(std140, binding = ").append(uniformBinding)
-                        .append(") uniform ChimeraShadowComputeValues {\n");
-                for (ComputeUniform uniform : computeUniforms) {
-                    values.append("    ").append(uniform.type()).append(' ')
-                            .append(uniform.name()).append(';').append('\n');
-                }
-                values.append("};\n");
-            }
-            return "#version 450\n" + values + generated + body;
-        } catch (RuntimeException failure) {
-            LOGGER.warn("[chimera] shadowcomp translation failed: {}", failure.getMessage());
-            return null;
+            valueUniform.appendReplacement(uniformResult,
+                    Matcher.quoteReplacement(replacement.toString()));
         }
+        valueUniform.appendTail(uniformResult);
+        body = uniformResult.toString();
+
+        Matcher unsupportedUniform = ANY_UNIFORM_DECLARATION.matcher(body);
+        StringBuffer unsupportedResult = new StringBuffer();
+        while (unsupportedUniform.find()) {
+            String type = unsupportedUniform.group(1);
+            String declarators = unsupportedUniform.group(2).trim();
+            if (isTranslatedResourceDeclaration(type, declarators, imageNames, samplerNames,
+                    sampled2dNames)) {
+                unsupportedUniform.appendReplacement(unsupportedResult,
+                        Matcher.quoteReplacement(unsupportedUniform.group()));
+                continue;
+            }
+            for (String declarator : declarators.split(",")) {
+                String name = declarator.trim();
+                int initializer = name.indexOf('=');
+                if (initializer >= 0) name = name.substring(0, initializer).trim();
+                name = name.replaceFirst("\\[.*$", "").trim();
+                if (!name.matches("[A-Za-z_]\\w*")) {
+                    throw new IllegalArgumentException("unsupported compute uniform declaration: "
+                            + type + " " + declarators);
+                }
+                if (GlslTokenRewriter.identifierCount(body, name) > 1) {
+                    throw new IllegalArgumentException("unsupported compute uniform: " + name);
+                }
+            }
+            unsupportedUniform.appendReplacement(unsupportedResult, "");
+        }
+        unsupportedUniform.appendTail(unsupportedResult);
+        body = unsupportedResult.toString();
+        body = addDispatchBoundsGuard(body, imageNames);
+
+        StringBuilder generated = new StringBuilder();
+        for (String name : samplerNames) {
+            if (declaredSamplers.contains(name)) continue;
+            if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
+            int binding = imageNames.size() + samplerNames.indexOf(name);
+            PackAdvancedResourcePlan.ImageSpec imageSpec = plan.imageForSymbol(name);
+            generated.append("layout(binding = ").append(binding).append(") uniform ")
+                    .append(samplerType(imageSpec)).append(' ').append(name).append(";\n");
+        }
+        for (String name : sampled2dNames) {
+            if (declaredSampled2d.contains(name)) continue;
+            if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
+            int binding = imageNames.size() + samplerNames.size() + sampled2dNames.indexOf(name);
+            generated.append("layout(binding = ").append(binding)
+                    .append(") uniform sampler2D ").append(name).append(";\n");
+        }
+        StringBuilder values = new StringBuilder();
+        if (!computeUniforms.isEmpty()) {
+            values.append("layout(std140, binding = ").append(uniformBinding)
+                    .append(") uniform ChimeraShadowComputeValues {\n");
+            for (ComputeUniform uniform : computeUniforms) {
+                values.append("    ").append(uniform.type()).append(' ')
+                        .append(uniform.name()).append(';').append('\n');
+            }
+            values.append("};\n");
+        }
+        return "#version 450\n" + values + generated + body;
     }
 
     private static String normalizeVersion(String source) {
@@ -757,9 +789,9 @@ public final class PackShadowCompute implements AutoCloseable {
                 || spec.internalFormat().equalsIgnoreCase("r16ui"));
     }
 
-    private static int indexBySampler(List<String> names, String name, PackAdvancedImageOwner owner) {
+    private static int indexBySampler(List<String> names, String name, PackAdvancedResourcePlan plan) {
         for (int index = 0; index < names.size(); index++) {
-            PackAdvancedResourcePlan.ImageSpec spec = owner.specForSymbol(names.get(index));
+            PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(names.get(index));
             if (spec != null && spec.sampler().equals(name)) return index;
         }
         return -1;

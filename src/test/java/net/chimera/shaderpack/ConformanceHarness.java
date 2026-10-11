@@ -43,6 +43,8 @@ public final class ConformanceHarness {
         verifyShadowCulling();
         verifyShadowPassOrder();
         verifyGlslBreadth();
+        verifyComputeDeclarationLists();
+        verifyIndentedProperties();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -959,12 +961,13 @@ public final class ConformanceHarness {
                 for (String line : entry.getValue()) {
                     assertTrue(vertex.contains(line), entry.getKey() + " lost Iris host input " + line + ": " + vertex);
                 }
+                // Iris draws these batches with its fallback entityId already reset to 0.
                 assertTrue(vertex.contains("(Color * ColorModulator)")
-                                && vertex.contains(UniformRegistry.DRAW_ENTITY_ID + " == 10101")
+                                && vertex.contains("(0) == 10101")
                                 && vertex.contains("float((-1))")
                                 && !vertex.contains("chimeraEntityId")
-                                && plan.convertedFragment().contains(UniformRegistry.DRAW_ENTITY_ID + " == 10101"),
-                        entry.getKey() + " must read entityId per draw and blockEntityId -1: " + vertex);
+                                && plan.convertedFragment().contains("(0) == 10101"),
+                        entry.getKey() + " must read entityId 0 and blockEntityId -1: " + vertex);
                 assertTrue(!plan.alphaTestPlan().perDrawReference(),
                         entry.getKey() + " has no Iris alpha test (AlphaTests.OFF)");
             }
@@ -973,18 +976,7 @@ public final class ConformanceHarness {
         } finally {
             deleteTree(root);
         }
-        var renderLanes = nativeClass("net/chimera/mixin/ChimeraCustomFeatureRendererMixin").methods.stream()
-                .filter(method -> method.name.equals("chimera$renderLanes")).findFirst().orElseThrow();
-        boolean identity = false;
-        boolean flush = false;
-        for (var instruction : renderLanes.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
-                if (call.name.equals("beginDrawIdentity")) identity = true;
-                if (identity && call.name.equals("endBatch")) flush = true;
-            }
-        }
-        assertTrue(flush, "held lane geometry must flush inside its submitter's draw identity");
-        System.out.println("[chimera] host-layout lanes (lightning, beacon, lead) and draw identity: PASS");
+        System.out.println("[chimera] host-layout lanes (lightning, beacon, lead) and Iris's draw-time entityId: PASS");
     }
 
     /**
@@ -1172,10 +1164,10 @@ public final class ConformanceHarness {
                                     && fragment.contains("int(chimeraBlockEntityId) / 100 == 155"),
                             key + " reads Iris's entity-patched ids, unbound on the host mesh: " + vertex);
                 } else {
-                    assertTrue(vertex.contains("chimeraShadowUniforms." + UniformRegistry.DRAW_ENTITY_ID + " == 10001")
+                    assertTrue(vertex.contains("(0) == 10001")
                                     && !vertex.contains("chimeraEntityId")
                                     && fragment.contains("(-1) / 100 == 155"),
-                            key + " must read entityId per draw and blockEntityId -1: " + vertex + "\n" + fragment);
+                            key + " must read entityId 0 and blockEntityId -1: " + vertex + "\n" + fragment);
                 }
                 assertTrue(fragment.contains("chimeraShadowColor1") && plan.alphaTestPlan().perDrawReference(),
                         key + " must write both shadow colours and test alpha per draw: " + fragment);
@@ -1327,8 +1319,14 @@ public final class ConformanceHarness {
                         && !GlslVersion.first("#version 130").irisCore(),
                 "Iris core mode: the core profile, or 150 and above with no profile");
         assertEquals("writeonly uniform image3D a;\nwriteonly uniform image3D b;",
-                GlslTokenRewriter.splitOpaqueDeclarationLists("writeonly uniform image3D a, b;"),
+                GlslTokenRewriter.splitUniformDeclarators("writeonly uniform image3D a, b;"),
                 "each image of a list takes its own binding");
+        assertEquals("layout(rgba8) uniform writeonly image3D a;\nlayout(rgba8) uniform writeonly image3D b;",
+                GlslTokenRewriter.splitUniformDeclarators("layout(rgba8) uniform writeonly image3D a, b;"),
+                "qualifiers on either side of uniform stay on every declarator");
+        assertEquals("#define W writeonly\nuniform sampler3D a;\nuniform sampler3D b;",
+                GlslTokenRewriter.splitUniformDeclarators("#define W writeonly\nuniform sampler3D a, b;"),
+                "a directive before the declaration is not a qualifier");
         assertEquals("/* a comment\nover two lines */\n\nin vec3 mc_Entity;",
                 GlslTokenRewriter.expandStorageQualifierAliases(
                         "/* a comment\nover two lines */\n#define attribute in\nattribute vec3 mc_Entity;"),
@@ -1442,6 +1440,91 @@ public final class ConformanceHarness {
             deleteTree(root);
         }
         System.out.println("[chimera] GLSL breadth (versions, modern entity declarations, core names, discarded outputs): PASS");
+    }
+
+    /**
+     * Solas declares its two floodfill images, and their samplers, each in one statement. The
+     * plan and the runtime translator must see both names: Solas fell to vanilla in game with
+     * "unsupported compute image: floodfill_img_copy".
+     */
+    private static void verifyComputeDeclarationLists() throws IOException {
+        Path root = Files.createTempDirectory("chimera-compute-lists-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("shaders.properties"), """
+                    iris.features.optional=CUSTOM_IMAGES
+                    image.floodfill_img = floodfillSampler rgba rgba16f half_float false false 8 4 8
+                    image.floodfill_img_copy = floodfillSamplerCopy rgba rgba16f half_float false false 8 4 8
+                    """);
+            Files.writeString(shaders.resolve("shadowcomp.csh"), """
+                    #version 430 compatibility
+                    layout (local_size_x = 2, local_size_y = 2, local_size_z = 2) in;
+                    uniform int frameCounter;
+                    writeonly uniform image3D floodfill_img, floodfill_img_copy;
+                    uniform sampler3D floodfillSampler, floodfillSamplerCopy;
+                    vec3 gather(sampler3D image, ivec3 pos) {
+                        return texelFetch(image, pos + ivec3(1, 0, 0), 0).rgb;
+                    }
+                    void main() {
+                        ivec3 pos = ivec3(gl_GlobalInvocationID);
+                        if ((frameCounter & 1) == 0) {
+                            imageStore(floodfill_img_copy, pos, vec4(gather(floodfillSampler, pos), 1.0));
+                        } else {
+                            imageStore(floodfill_img, pos, vec4(gather(floodfillSamplerCopy, pos), 1.0));
+                        }
+                    }
+                    """);
+            Files.writeString(shaders.resolve("final.fsh"), """
+                    #version 120
+                    uniform sampler2D colortex0;
+                    void main() {
+                        gl_FragColor = texture2D(colortex0, vec2(0.5));
+                    }
+                    """);
+            PackPlan plan = PackProbe.analyze(root).plan();
+            PackAdvancedResourcePlan.ComputeSpec compute = plan.advancedResources().computeStages().get("shadowcomp");
+            assertTrue(compute != null && compute.supported(), "the list-declared shadowcomp is supported: "
+                    + (compute == null ? "missing" : compute.deviations()));
+            assertEquals(List.of("floodfill_img", "floodfill_img_copy"), compute.imageNames(),
+                    "the plan records every image of a declaration list");
+            assertEquals(List.of("floodfillSampler", "floodfillSamplerCopy"), compute.samplerNames(),
+                    "the plan records every sampler of a declaration list");
+            String translated = net.chimera.render.PackShadowCompute.translatedSource(plan.advancedResources(),
+                    shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
+            assertTrue(translated.contains("layout(rgba16f, binding = 1) uniform image3D floodfill_img_copy;")
+                            && translated.contains("layout(binding = 3) uniform sampler3D floodfillSamplerCopy;"),
+                    "each listed resource takes its own binding: " + translated);
+            String error = PackCompileCheck.compileShadowCompute(root, plan);
+            assertTrue(error == null, "the translated shadowcomp compiles: " + error);
+        } finally {
+            deleteTree(root);
+        }
+        System.out.println("[chimera] compute declaration lists (plan, translation, compile): PASS");
+    }
+
+    /**
+     * Properties.load skips a line's leading whitespace. Photon indents its composite17 switch
+     * inside {@code #ifdef MC_GL_RENDERER_INTEL}; read with the indent, the switch never applied.
+     */
+    private static void verifyIndentedProperties() throws IOException {
+        Path root = Files.createTempDirectory("chimera-indented-properties-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("shaders.properties"),
+                    "#ifdef MC_GL_RENDERER_INTEL\n\tprogram.composite1.enabled = true\n#else\n"
+                            + "\tprogram.composite1.enabled = false\n#endif\n");
+            String post = "#version 120\nuniform sampler2D colortex0;\n"
+                    + "void main() { gl_FragColor = texture2D(colortex0, vec2(0.5)); }\n";
+            Files.writeString(shaders.resolve("composite1.fsh"), post);
+            Files.writeString(shaders.resolve("final.fsh"), post);
+            var analysis = PackProbe.analyze(root);
+            assertEquals(Boolean.FALSE, analysis.settings().programEnabled().get("composite1"),
+                    "an indented program switch applies");
+            assertEquals(1, analysis.plan().disabledProgramCount(), "the switched-off program is disabled");
+        } finally {
+            deleteTree(root);
+        }
+        System.out.println("[chimera] indented shaders.properties lines: PASS");
     }
 
     /** Iris renders shadows before any terrain: the shadow segment runs at the opaque layer's HEAD. */

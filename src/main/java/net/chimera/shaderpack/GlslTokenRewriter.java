@@ -190,35 +190,6 @@ public final class GlslTokenRewriter {
         return GlslLexer.render(tokens);
     }
 
-    /** A sampler or image declaration naming several resources: {@code writeonly uniform image3D a, b;}. */
-    private static final java.util.regex.Pattern OPAQUE_DECLARATION_LIST = java.util.regex.Pattern.compile(
-            "(?m)^([ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
-                    + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)+)"
-                    + "((?:u|i)?(?:sampler|image)\\w+)\\s+"
-                    + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)+)\\s*;");
-
-    /**
-     * Splits sampler and image declarations that name several resources into one declaration
-     * each, with the same qualifiers, so every resource can take its own binding. Solas declares
-     * its two floodfill images in one statement.
-     */
-    public static String splitOpaqueDeclarationLists(String source) {
-        if (source == null) return null;
-        java.util.regex.Matcher matcher = OPAQUE_DECLARATION_LIST.matcher(source);
-        StringBuilder result = new StringBuilder();
-        while (matcher.find()) {
-            StringBuilder replacement = new StringBuilder();
-            for (String name : matcher.group(3).split(",")) {
-                if (replacement.length() > 0) replacement.append('\n');
-                replacement.append(matcher.group(1)).append(matcher.group(2)).append(' ')
-                        .append(name.trim()).append(';');
-            }
-            matcher.appendReplacement(result, java.util.regex.Matcher.quoteReplacement(replacement.toString()));
-        }
-        matcher.appendTail(result);
-        return result.toString();
-    }
-
     public static String rewriteTextureCalls(String source) {
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
         for (int index = 0; index < tokens.size(); index++) {
@@ -404,13 +375,14 @@ public final class GlslTokenRewriter {
     }
 
     /**
-     * Splits {@code [layout(...)] uniform T a, b[2], c = x;} into one
-     * declaration per name. GLSL gives each declarator the same qualifiers and
-     * type, so this changes nothing a shader can observe; it lets every
-     * per-name rewriter (bindings, advanced images) find each declaration.
-     * Interface blocks are left alone.
+     * Splits {@code [layout(...)] [writeonly] uniform T a, b[2], c = x;} into
+     * one declaration per name. GLSL gives each declarator the same qualifiers
+     * and type, so this changes nothing a shader can observe; it lets every
+     * per-name rewriter (bindings, advanced images, the shadowcomp translator)
+     * find each declaration. Solas declares its two floodfill images in one
+     * statement. Interface blocks are left alone.
      */
-    static String splitUniformDeclarators(String source) {
+    public static String splitUniformDeclarators(String source) {
         if (source == null || !source.contains("uniform") || !source.contains(",")) return source;
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
         boolean changed = false;
@@ -420,15 +392,10 @@ public final class GlslTokenRewriter {
             if (token.symbol("{")) depth++;
             if (token.symbol("}")) depth--;
             if (depth != 0 || !token.identifier("uniform") || inDirective(tokens, index)) continue;
-            int start = index;
-            int before = GlslLexer.previousSignificant(tokens, index);
-            if (before >= 0 && tokens.get(before).symbol(")")) {
-                int open = matchingBackward(tokens, before);
-                int keyword = open < 0 ? -1 : GlslLexer.previousSignificant(tokens, open);
-                if (keyword >= 0 && tokens.get(keyword).identifier("layout")) start = keyword;
-            }
+            int start = qualifierStart(tokens, index);
             int type = GlslLexer.nextSignificant(tokens, index);
-            while (type >= 0 && PRECISION_QUALIFIERS.contains(tokens.get(type).text())) {
+            while (type >= 0 && (PRECISION_QUALIFIERS.contains(tokens.get(type).text())
+                    || MEMORY_QUALIFIERS.contains(tokens.get(type).text()))) {
                 type = GlslLexer.nextSignificant(tokens, type);
             }
             int first = type < 0 ? -1 : GlslLexer.nextSignificant(tokens, type);
@@ -468,7 +435,30 @@ public final class GlslTokenRewriter {
         return changed ? GlslLexer.render(tokens) : source;
     }
 
+    /** The first token of the memory qualifiers and layout(...) written before {@code uniform}. */
+    private static int qualifierStart(List<GlslLexer.Token> tokens, int uniform) {
+        int start = uniform;
+        while (true) {
+            int before = GlslLexer.previousSignificant(tokens, start);
+            if (before < 0 || inDirective(tokens, before)) return start;
+            GlslLexer.Token previous = tokens.get(before);
+            if (previous.kind() == GlslLexer.Kind.IDENTIFIER
+                    && MEMORY_QUALIFIERS.contains(previous.text())) {
+                start = before;
+            } else if (previous.symbol(")")) {
+                int open = matchingBackward(tokens, before);
+                int keyword = open < 0 ? -1 : GlslLexer.previousSignificant(tokens, open);
+                if (keyword < 0 || !tokens.get(keyword).identifier("layout")) return start;
+                start = keyword;
+            } else {
+                return start;
+            }
+        }
+    }
+
     private static final Set<String> PRECISION_QUALIFIERS = Set.of("lowp", "mediump", "highp");
+    private static final Set<String> MEMORY_QUALIFIERS = Set.of(
+            "writeonly", "readonly", "coherent", "volatile", "restrict");
 
     private static final java.util.regex.Pattern ALIAS_DEFINE = java.util.regex.Pattern.compile(
             "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*(?://.*)?$");
@@ -480,13 +470,6 @@ public final class GlslTokenRewriter {
     private static final java.util.regex.Pattern SAMPLER_DECLARATION = java.util.regex.Pattern.compile(
             "\\buniform\\s+(?:(?:lowp|mediump|highp)\\s+)?[iu]?sampler\\w*\\s+([A-Za-z_]\\w*)");
 
-    /**
-     * Expands object-like macros that name a declared sampler
-     * ({@code #define SRC_SAMPLER colortex0}), as Iris's full preprocessing
-     * does before any analysis, so sampler use is visible to planning. Only
-     * those aliases are touched, in source order: a later {@code #undef} or
-     * redefinition ends the alias, and every other macro stays as written.
-     */
     /** {@code #define attribute in}: a macro renaming one storage qualifier to another. */
     private static final java.util.regex.Pattern STORAGE_ALIAS_DEFINE = java.util.regex.Pattern.compile(
             "^\\s*#\\s*define\\s+(attribute|varying)\\s+(in|out|attribute|varying)\\s*(?://.*)?$");
@@ -541,6 +524,13 @@ public final class GlslTokenRewriter {
         return result.toString();
     }
 
+    /**
+     * Expands object-like macros that name a declared sampler
+     * ({@code #define SRC_SAMPLER colortex0}), as Iris's full preprocessing
+     * does before any analysis, so sampler use is visible to planning. Only
+     * those aliases are touched, in source order: a later {@code #undef} or
+     * redefinition ends the alias, and every other macro stays as written.
+     */
     static String expandSamplerAliases(String source) {
         if (source == null || !source.contains("#")) return source;
         Set<String> samplers = new java.util.HashSet<>();

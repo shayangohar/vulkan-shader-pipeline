@@ -1100,7 +1100,8 @@ public final class PackAdvancedResourcePlan {
                 deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
                 return result;
             }
-            String text = prepared.source();
+            // The plan reads what PackShadowCompute translates: one declaration per name.
+            String text = GlslTokenRewriter.splitUniformDeclarators(prepared.source());
             List<String> localDeviations = new ArrayList<>(prepared.deviations());
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
             localDeviations.addAll(usage.deviations());
@@ -1276,6 +1277,16 @@ public final class PackAdvancedResourcePlan {
     }
 
     public Map<String, ImageSpec> images() { return images; }
+
+    /** The image a shader symbol names: the image itself, or the sampler that reads it. */
+    public ImageSpec imageForSymbol(String symbol) {
+        ImageSpec direct = images.get(symbol);
+        if (direct != null) return direct;
+        return images.values().stream()
+                .filter(value -> value.sampler().equals(symbol))
+                .findFirst().orElse(null);
+    }
+
     public Map<String, ComputeSpec> computeStages() { return computeStages; }
     public Map<String, List<GraphicsImageBinding>> graphicsImages() { return graphicsImages; }
     public List<GraphicsImageBinding> graphicsImages(String program) {

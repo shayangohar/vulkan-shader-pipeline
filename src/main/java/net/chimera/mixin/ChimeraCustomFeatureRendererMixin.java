@@ -18,10 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Draws the held custom geometry: entity and block-entity geometry through their pack
- * families, and host-layout lane geometry with its submitter's entity id.
- */
+/** Draws the held entity and block-entity custom geometry through their pack families. */
 @Mixin(CustomFeatureRenderer.class)
 public abstract class ChimeraCustomFeatureRendererMixin {
     @Inject(method = "render", at = @At("RETURN"), require = 1)
@@ -33,41 +30,9 @@ public abstract class ChimeraCustomFeatureRendererMixin {
         try {
             chimera$renderFamily(ChimeraEntityBridge.Family.ENTITY, storage.chimera$entitySubmits(), bufferSource);
             chimera$renderFamily(ChimeraEntityBridge.Family.BLOCK, storage.chimera$blockSubmits(), bufferSource);
-            chimera$renderLanes(storage.chimera$laneSubmits(), bufferSource);
         } finally {
             storage.chimera$entitySubmits().clear();
             storage.chimera$blockSubmits().clear();
-            storage.chimera$laneSubmits().clear();
-        }
-    }
-
-    /**
-     * Draws host-layout lane geometry on the host source, one batch per run of submitters
-     * sharing an entity id, each flushed while that id is the draw identity. Iris's fallback
-     * entityId uniform carries the same value only when the batch happens to flush before
-     * its renderer returns; every pack tested identifies the lightning bolt by entityId.
-     */
-    @Unique
-    private static void chimera$renderLanes(Map<RenderType, List<ChimeraCustomGeometryStorage.HeldSubmit>> held,
-                                            MultiBufferSource.BufferSource hostSource) {
-        for (var entry : held.entrySet()) {
-            RenderType type = entry.getKey();
-            List<ChimeraCustomGeometryStorage.HeldSubmit> submits = entry.getValue();
-            for (int start = 0, end; start < submits.size(); start = end) {
-                int entityId = submits.get(start).entityId();
-                end = start;
-                // Requesting the buffer first flushes any pending host batch outside this identity.
-                VertexConsumer consumer = hostSource.getBuffer(type);
-                for (; end < submits.size() && submits.get(end).entityId() == entityId; end++) {
-                    submits.get(end).renderer().render(submits.get(end).pose(), consumer);
-                }
-                ChimeraEntityBridge.beginDrawIdentity(entityId);
-                try {
-                    hostSource.endBatch(type);
-                } finally {
-                    ChimeraEntityBridge.endDrawIdentity();
-                }
-            }
         }
     }
 

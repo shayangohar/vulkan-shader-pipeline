@@ -126,11 +126,8 @@ public abstract class ChimeraVkCommandEncoderMixin {
                 dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
         HostLayoutLane lane = HostLayoutLane.of(ChimeraEntityBridge.activeFamily());
-        if (lane != null) {
-            PackUniformProvider.updateDrawEntityId(ChimeraEntityBridge.drawEntityId());
-            // Restored with the family's texture snapshot when the draw ends.
-            if (lane.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
-        }
+        // Restored with the family's texture snapshot when the draw ends.
+        if (lane != null && lane.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
         var previousPhase = PackUniformProvider.setRenderingPhase(lane != null ? lane.phase()
                 : switch (ChimeraEntityBridge.activeFamily()) {

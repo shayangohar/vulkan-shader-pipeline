@@ -181,20 +181,8 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     }
 
     PackStorageImage imageForSymbol(String symbol) {
-        PackStorageImage direct = images.get(symbol);
-        if (direct != null) return direct;
-        for (PackAdvancedResourcePlan.ImageSpec spec : plan.images().values()) {
-            if (spec.sampler().equals(symbol)) return images.get(spec.name());
-        }
-        return null;
-    }
-
-    PackAdvancedResourcePlan.ImageSpec specForSymbol(String symbol) {
-        PackAdvancedResourcePlan.ImageSpec direct = plan.images().get(symbol);
-        if (direct != null) return direct;
-        return plan.images().values().stream()
-                .filter(value -> value.sampler().equals(symbol))
-                .findFirst().orElse(null);
+        PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(symbol);
+        return spec == null ? null : images.get(spec.name());
     }
 
     public boolean available(String name) {

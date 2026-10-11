@@ -39,11 +39,6 @@ public final class UniformRegistry {
     public static final String ENTITY_ALPHA_REFERENCE = "chimeraAlphaTestRef";
     /** Vanilla Globals.GlintAlpha (glint strength), declared into glint programs before planning. */
     public static final String GLINT_ALPHA = "chimeraGlintAlpha";
-    /**
-     * Per-draw entityId of a host-layout lane: Iris CommonUniforms' fallback entity uniform,
-     * declared into those programs before planning (LegacyGlslConverter.prepareHostLayoutIdentity).
-     */
-    public static final String DRAW_ENTITY_ID = "chimeraDrawEntityId";
     public static final String PROJECTION_UBO = "Projection";
 
     /** Descriptor bindings of the host ordinary-transform blocks. */
@@ -851,7 +846,6 @@ public final class UniformRegistry {
             "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd",
             "FogEnvironmentalStart", "FogEnvironmentalEnd", "FogRenderDistanceStart",
             "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE, GLINT_ALPHA,
-            DRAW_ENTITY_ID,
             "ScreenSize", "TextureSize", "TexelSize", "Light0_Direction", "Light1_Direction",
             "ColorModulator", "ModelOffset", "ChunkOffset", "UseRgss", "CurrentTime", "EndPortalLayers",
             "screenSize", "textureSize", "texelSize");
@@ -1290,7 +1284,6 @@ public final class UniformRegistry {
         addLive(specs, "AlphaCutout", "float");
         addLive(specs, ENTITY_ALPHA_REFERENCE, "float");
         addLive(specs, GLINT_ALPHA, "float");
-        addLive(specs, DRAW_ENTITY_ID, "int");
         addLive(specs, "ScreenSize", "vec2");
         addLive(specs, "TextureSize", "ivec2");
         addLive(specs, "TexelSize", "vec2");

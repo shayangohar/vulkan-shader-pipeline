@@ -4209,11 +4209,13 @@ public final class LegacyGlslConverter {
 
     /**
      * Iris applies EntityPatcher only to entity and text formats. On any other host layout
-     * entityId and blockEntityId stay uniforms (CommonUniforms): entityId is the entity being
-     * drawn, Iris's fallback "for when entityId via attributes cannot be used (lightning)", and
-     * blockEntityId is the constant -1. Applied to both stages of a host-layout program before
-     * its interface is planned, so the entity id is an ordinary per-draw uniform
-     * ({@link UniformRegistry#DRAW_ENTITY_ID}).
+     * entityId and blockEntityId stay uniforms (CommonUniforms). blockEntityId is the constant
+     * -1. entityId is Iris's fallback "for when entityId via attributes cannot be used
+     * (lightning)", read from CapturedRenderingState when the batch draws. Iris 1.21.11 never
+     * sets it for these draws: its lightning override is commented out, and a custom-geometry
+     * batch flushes after CustomFeatureRenderer has reset the entity to 0. Complementary's
+     * shadow program cuts entity shadows past 26 blocks, so a bolt drawn with its own id lost
+     * most of its shadow. Applied to both stages of a host-layout program before planning.
      */
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;
@@ -4229,18 +4231,14 @@ public final class LegacyGlslConverter {
         }
         if (types.isEmpty()) return source;
         String src = removeEntityIdDeclarations(source);
-        boolean readsEntityId = types.containsKey("entityId")
-                && containsIdentifier(stripComments(src), "entityId");
         Map<String, String> replacements = new java.util.HashMap<>();
         if (types.containsKey("entityId")) {
-            replacements.put("entityId", "float".equals(types.get("entityId"))
-                    ? "float(" + UniformRegistry.DRAW_ENTITY_ID + ")" : UniformRegistry.DRAW_ENTITY_ID);
+            replacements.put("entityId", "float".equals(types.get("entityId")) ? "(0.0)" : "(0)");
         }
         if (types.containsKey("blockEntityId")) {
             replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
         }
-        src = GlslTokenRewriter.replaceIdentifiers(src, replacements);
-        return readsEntityId ? insertAfterHeader(src, "uniform int " + UniformRegistry.DRAW_ENTITY_ID + ";\n") : src;
+        return GlslTokenRewriter.replaceIdentifiers(src, replacements);
     }
 
     private static String expandIncludes(String source, Path sourceFile) {

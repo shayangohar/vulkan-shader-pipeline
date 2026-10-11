@@ -99,17 +99,55 @@ final class PackCompileCheck {
                     + " [" + dump(pack, program.name() + ".fsh", prepared.fragment()) + "]");
             if (vertexError == null && fragmentError == null) compiled++;
         }
+        String computeError = compileShadowCompute(pack, analysis.plan());
+        if (computeError != null) {
+            failures.add("shadowcomp: " + computeError);
+        } else if (hasShadowCompute(analysis.plan())) {
+            compiled++;
+        }
         return new Result(compiled, List.copyOf(failures));
+    }
+
+    private static boolean hasShadowCompute(PackPlan plan) {
+        PackAdvancedResourcePlan advanced = plan.advancedResources();
+        if (advanced == null || !advanced.capabilityPossible()) return false;
+        PackAdvancedResourcePlan.ComputeSpec spec = advanced.computeStages().get("shadowcomp");
+        return spec != null && spec.supported();
+    }
+
+    /**
+     * Translates the plan's supported shadowcomp exactly as the runtime does
+     * ({@link net.chimera.render.PackShadowCompute#translatedSource}) and compiles it. Returns
+     * the first error, or null when it compiles or the plan schedules no shadowcomp. Solas fell
+     * to vanilla in game on a translation failure no offline check ran.
+     */
+    static String compileShadowCompute(Path pack, PackPlan plan) {
+        if (!hasShadowCompute(plan)) return null;
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
+            String source = net.chimera.render.PackShadowCompute.translatedSource(
+                    plan.advancedResources(), loaded.shadersDir(),
+                    plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
+            String error = compile(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_compute_shader, "pack.csh");
+            if (error != null) error += " [" + dump(pack, "shadowcomp.csh", source) + "]";
+            return error;
+        } catch (java.io.IOException | RuntimeException failure) {
+            return "translation failed: " + failure.getMessage();
+        }
     }
 
     /** VulkanMod's shaderc settings; returns the first error line, or null on success. */
     static String compile(String source, boolean vertex) {
+        return vertex ? compile(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
+                : compile(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+    }
+
+    private static String compile(String source, int kind, String fileName) {
         long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
         long options = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_initialize();
         // Heap buffers and explicit sizes: large sources overflow LWJGL's stack
         // (M87EntityRealPackHarness.compileStage).
         java.nio.ByteBuffer text = org.lwjgl.system.MemoryUtil.memUTF8(source);
-        java.nio.ByteBuffer name = org.lwjgl.system.MemoryUtil.memUTF8(vertex ? "pack.vsh" : "pack.fsh");
+        java.nio.ByteBuffer name = org.lwjgl.system.MemoryUtil.memUTF8(fileName);
         java.nio.ByteBuffer entry = org.lwjgl.system.MemoryUtil.memASCII("main");
         long result = 0;
         try {
@@ -118,8 +156,7 @@ final class PackCompileCheck {
                     org.lwjgl.util.shaderc.Shaderc.shaderc_env_version_vulkan_1_2);
             result = org.lwjgl.util.shaderc.Shaderc.nshaderc_compile_into_spv(compiler,
                     org.lwjgl.system.MemoryUtil.memAddress(text), text.remaining() - 1,
-                    vertex ? org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_vertex_shader
-                            : org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_fragment_shader,
+                    kind,
                     org.lwjgl.system.MemoryUtil.memAddress(name),
                     org.lwjgl.system.MemoryUtil.memAddress(entry), options);
             if (result != 0 && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)

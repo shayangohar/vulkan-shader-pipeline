@@ -720,7 +720,11 @@ record PackSettingsPlan(
             return pending.length() > 0;
         }
 
-        /** The completed logical line, or null while a continuation is open or the line is dropped. */
+        /**
+         * The completed logical line, or null while a continuation is open or the line is dropped.
+         * Leading whitespace goes, as Properties.load skips it: Photon indents its
+         * {@code program.<world>/composite17.enabled} switches inside {@code #ifdef}.
+         */
         String accept(String raw) {
             String trimmed = raw.strip();
             if (trimmed.isEmpty() || trimmed.startsWith("#")) return null;
@@ -728,7 +732,7 @@ record PackSettingsPlan(
                 pending.append(trimmed, 0, trimmed.length() - 1).append(' ');
                 return null;
             }
-            if (pending.length() == 0) return raw;
+            if (pending.length() == 0) return trimmed;
             String line = pending + trimmed;
             pending.setLength(0);
             return line;
