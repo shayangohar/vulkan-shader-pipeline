@@ -166,6 +166,11 @@ public record PackPlan(
         return !"false".equalsIgnoreCase(settings.propertyValues().get("sky"));
     }
 
+    /** Which entities and block entities the pack lets cast shadows (Iris shadowEntities and friends). */
+    public ShadowCasterDirectives shadowCasters() {
+        return ShadowCasterDirectives.fromProperties(settings.propertyValues());
+    }
+
     /**
      * The programs that take part in the frame. Iris removes a program the pack switches off
      * ({@code program.<name>.enabled}) from the pipeline entirely, so it neither runs nor counts

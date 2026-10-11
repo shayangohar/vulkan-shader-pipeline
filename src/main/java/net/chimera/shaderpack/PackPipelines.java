@@ -569,9 +569,9 @@ public final class PackPipelines {
             Pipeline.Builder builder = prepareBuilder(prepared, plan.name(), advancedResources,
                     ChimeraVertexFormats.terrainFormat(materialPlan), PackUniformProvider.shared()::supplier);
             verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource, fragmentSource, storageOwner);
-            MrtPipelineContext.begin(new int[] {37, 37}, deviceMaxColorAttachments());
+            MrtPipelineContext.begin(shadowAttachmentFormats(), deviceMaxColorAttachments());
             GraphicsPipeline pipeline = createNative(builder, prepared.imageBindings());
-            MrtPipelineContext.register(pipeline, new int[] {37, 37});
+            MrtPipelineContext.register(pipeline, shadowAttachmentFormats());
             MrtPipelineContext.end();
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
@@ -584,6 +584,22 @@ public final class PackPipelines {
             handleBuildFailure(plan.name(), e);
             return null;
         }
+    }
+
+    /** ChimeraShadowMap's colour attachments, shadowcolor0 and shadowcolor1: both VK_FORMAT_R8G8B8A8_UNORM. */
+    private static int[] shadowAttachmentFormats() {
+        return new int[] {37, 37};
+    }
+
+    /**
+     * Builds shadow_entities on EXTENDED_ENTITY for the shadow pass's entity lane, as Iris draws
+     * every entity and block-entity pipeline in the shadow pass with SHADOW_ENTITIES_CUTOUT.
+     */
+    public static PackEntity buildShadowEntities(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return plan == null ? null : buildEntityLike(plan, UniformRegistry.Stage.SHADOW_ENTITY, "pack_" + plan.name(),
+                ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
     }
 
     /** Builds the guarded world entity pipeline on the append-only entity format. */
@@ -712,8 +728,9 @@ public final class PackPipelines {
         try {
             UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
                     .effective(stage);
-            int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
-                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
+            int[] declaredSlots = interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray();
+            int[] slots = stage.shadowPass() ? shadowSamplerSlots(declaredSlots) : entitySamplerSlots(declaredSlots);
             OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
             Pipeline.Builder builder = new MetadataBuilder(vertexFormat,
             pipelineName);
@@ -734,11 +751,17 @@ public final class PackPipelines {
             addStorageBufferDescriptors(builder, plan.name(), advancedResources);
             addStorageImageDescriptors(builder, plan.name(), advancedResources);
             addAdvancedSamplerDescriptors(builder, plan.name(), advancedResources);
-            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
-            boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
-            if (dynamicAttachments) {
-                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments(),
-                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            // A shadow-lane program renders into the shadow map's colour attachments with
+            // blending off (Iris shadow programs: BlendModeOverride.OFF), never the gbuffers.
+            GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
+            int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats()
+                    : outputPlan != null && outputPlan.requiresDynamicAttachments()
+                    ? outputPlan.outputFormatsArray() : null;
+            PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
+                    ? new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF, PackBlendPlan.Mode.OFF}
+                    : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
+            if (attachmentFormats != null) {
+                MrtPipelineContext.begin(attachmentFormats, deviceMaxColorAttachments(), attachmentBlends);
             }
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
@@ -748,11 +771,10 @@ public final class PackPipelines {
             try {
                 pipeline = createNative(builder, imageBindings);
             } finally {
-                if (dynamicAttachments) MrtPipelineContext.end();
+                if (attachmentFormats != null) MrtPipelineContext.end();
             }
-            if (dynamicAttachments) {
-                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray(),
-                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            if (attachmentFormats != null) {
+                MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends);
             }
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
@@ -1271,11 +1293,12 @@ public final class PackPipelines {
             boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
             if (!iface.executableUniforms().isEmpty()) {
                 // Entity-family vertex shaders may declare the same pack
-                // uniform block the fragment uses (live cameraPosition). The
-                // buffer is shared, so the binding must be visible to both
-                // stages whenever the converted vertex actually declares it.
+                // uniform block the fragment uses (live cameraPosition; a
+                // shadow vertex reads its shadow matrices). The buffer is
+                // shared, so the binding must be visible to both stages
+                // whenever the converted vertex actually declares it.
                 boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
-                        .contains("layout(binding = 2) uniform ChimeraEntityUniforms");
+                        .contains("layout(binding = 2) uniform ");
                 int uniformStages = vertexUniforms
                         ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
                         : VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1349,7 +1372,7 @@ public final class PackPipelines {
                 .distinct()
                 .toArray();
         if (stage == UniformRegistry.Stage.POST) return declared;
-        if (stage == UniformRegistry.Stage.SHADOW) return shadowSamplerSlots(declared);
+        if (stage.shadowPass()) return shadowSamplerSlots(declared);
         if (stage == UniformRegistry.Stage.GEOMETRY
                 || stage == UniformRegistry.Stage.TRANSLUCENT) {
             return interleaveLightmap(declared);
@@ -1362,6 +1385,7 @@ public final class PackPipelines {
     private static UniformRegistry.Stage stageForProgram(String name) {
         if (name != null && PostTargetPlan.isPostProgramName(name)) return UniformRegistry.Stage.POST;
         if ("shadow".equals(name)) return UniformRegistry.Stage.SHADOW;
+        if (name != null && FamilyAdapterRegistry.isShadowEntityFamily(name)) return UniformRegistry.Stage.SHADOW_ENTITY;
         if ("gbuffers_terrain".equals(name)) return UniformRegistry.Stage.GEOMETRY;
         if ("gbuffers_water".equals(name)) return UniformRegistry.Stage.TRANSLUCENT;
         if (name != null && FamilyAdapterRegistry.isParticleLike(name)) return UniformRegistry.Stage.PARTICLE;

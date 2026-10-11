@@ -136,7 +136,8 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         diverted = false;
         translucentPhase = null;
     }
-    private static java.util.SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
+    /** Vanilla RenderBuffers' fixed buffers, for any Chimera-owned source a foil item may write to. */
+    static java.util.SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
         var result = new java.util.LinkedHashMap<RenderType, ByteBufferBuilder>();
         for (RenderType type : java.util.List.of(Sheets.solidBlockSheet(), Sheets.cutoutBlockSheet(),
                 Sheets.translucentItemSheet(), Sheets.translucentBlockItemSheet(), Sheets.shieldSheet(),

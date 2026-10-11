@@ -516,6 +516,9 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "SHADOW_VERTEX_BRIDGE" : "SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "SHADOW_ENTITY_VERTEX_BRIDGE" : "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
                 deviations.add(programPlan.terrainMaterial().modern()
                         ? (programPlan.convertedVertex() != null
@@ -554,6 +557,8 @@ public final class PackProbe {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                deviations.add("SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex")) {
                 if (programPlan.convertedVertex() != null && executablePostName) {
                     deviations.add(programPlan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
@@ -634,6 +639,8 @@ public final class PackProbe {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                deviations.add("SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             }
@@ -701,6 +708,13 @@ public final class PackProbe {
             deviations.add("FAMILY_ADAPTER_INSTALLED");
             deviations.add(FamilyAdapterRegistry.hostLayoutLane(name) + "_STATE_FIXED_TO_HOST");
         }
+        if (FamilyAdapterRegistry.isShadowEntityFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            // Depth and cull follow each caster's host pipeline; blending is off, as in Iris.
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
+            deviations.add("SHADOW_ENTITY_STATE_FIXED_TO_HOST");
+        }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
                         || stage.equals("tess_evaluation") || stage.equals("compute"))) {
@@ -716,7 +730,7 @@ public final class PackProbe {
 
         Map<String, Integer> knownSamplers = name.equals("gbuffers_terrain")
                 ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
-                : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT
+                : FamilyAdapterRegistry.isShadowFamily(name) ? UniformRegistry.SHADOW_NAME_TO_SLOT
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
                 : (FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name)
@@ -736,7 +750,7 @@ public final class PackProbe {
                             ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
                             ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
                             : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
-                            : name.equals("shadow")
+                            : FamilyAdapterRegistry.isShadowFamily(name)
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
                             : FamilyAdapterRegistry.isEntityLike(name)
                             || FamilyAdapterRegistry.isParticleLike(name)
@@ -752,10 +766,10 @@ public final class PackProbe {
             // standard resource requirement without embedding a path.
             deviations.add("NOISETEX_PACK_RESOURCE");
         }
-        boolean authoredShadowOutputs = name.equals("shadow") && programPlan != null
+        boolean authoredShadowOutputs = FamilyAdapterRegistry.isShadowFamily(name) && programPlan != null
                 && programPlan.convertedFragment() != null && programPlan.executable();
         if (!authoredShadowOutputs && targetResult == null && targets.size() > 1) {
-            if (name.equals("shadow")) {
+            if (FamilyAdapterRegistry.isShadowFamily(name)) {
                 deviations.add("SHADOW_COLOR_TARGET_UNSUPPORTED");
             } else {
                 deviations.add("MRT_NOT_SUPPORTED");
@@ -1137,7 +1151,8 @@ public final class PackProbe {
             return;
         }
         for (String key : shadowSettings.rawValues().keySet()) {
-            if (key.equals("shadowMapResolution") || key.equals("shadowDistance")) {
+            if (key.equals("shadowMapResolution") || key.equals("shadowDistance")
+                    || key.equals("entityShadowDistanceMul")) {
                 if (shadowSettings.deviations().contains("SHADOW_SETTING_DEFAULTED:" + key)) {
                     deviations.add("SHADOW_SETTING_DEFAULTED:" + key);
                 } else {

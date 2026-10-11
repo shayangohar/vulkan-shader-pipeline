@@ -60,6 +60,12 @@ public final class UniformRegistry {
         GEOMETRY,
         /** shadow gbuffers path (terrain inputs, but no shadow feedback samplers). */
         SHADOW,
+        /**
+         * shadow_entities on the shadow pass's entity lane: the shadow interface on the
+         * extended entity inputs, with entityId and blockEntityId per vertex (Iris
+         * SHADOW_ENTITIES_CUTOUT, EntityPatcher).
+         */
+        SHADOW_ENTITY,
         /** gbuffers_water on the host translucent terrain layer. */
         TRANSLUCENT,
         /** gbuffers_entities on the guarded world entity lane. */
@@ -73,7 +79,17 @@ public final class UniformRegistry {
         /** gbuffers_skybasic and gbuffers_skytextured host sky lanes. */
         SKY,
         /** gbuffers_clouds host cloud lane. */
-        CLOUD
+        CLOUD;
+
+        /** Programs that draw into the shadow map: its samplers, outputs and uniforms. */
+        public boolean shadowPass() {
+            return this == SHADOW || this == SHADOW_ENTITY;
+        }
+
+        /** Stages whose entityId and blockEntityId come from the EntityIds input, not the pack UBO. */
+        public boolean perVertexEntityIdentity() {
+            return this == ENTITY || this == BLOCK || this == HAND || this == SHADOW_ENTITY;
+        }
     }
 
     /** One ordinary GLSL uniform declaration, excluding sampler declarations. */
@@ -188,8 +204,7 @@ public final class UniformRegistry {
             }
             return uniforms.stream()
                     .filter(uniform -> !blocked.contains(uniform.name())
-                            && !((stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND)
-                            && isEntityIdentity(uniform.name()))
+                            && !(stage.perVertexEntityIdentity() && isEntityIdentity(uniform.name()))
                             && !isDeviationForName(deviations, "UNIFORM_DECLARATION_UNUSED:",
                             uniform.name()))
                     .toList();
@@ -613,8 +628,7 @@ public final class UniformRegistry {
             if (conflicts.contains(name)) {
                 deviations.add("UNIFORM_CONFLICT:" + name);
             }
-            if ((stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND)
-                    && isEntityIdentity(name)) {
+            if (stage.perVertexEntityIdentity() && isEntityIdentity(name)) {
                 if (!type.equals("int") && !type.equals("float")) {
                     deviations.add("ENTITY_ID_UNSUPPORTED:" + type);
                 } else if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
@@ -679,7 +693,7 @@ public final class UniformRegistry {
         Map<String, Integer> slots = switch (stage) {
             case POST -> NAME_TO_SLOT;
             case GEOMETRY -> GEOMETRY_NAME_TO_SLOT;
-            case SHADOW -> SHADOW_NAME_TO_SLOT;
+            case SHADOW, SHADOW_ENTITY -> SHADOW_NAME_TO_SLOT;
             case TRANSLUCENT -> TRANSLUCENT_NAME_TO_SLOT;
             case ENTITY, BLOCK, HAND -> ENTITY_NAME_TO_SLOT;
             case PARTICLE -> ENTITY_NAME_TO_SLOT;
@@ -699,7 +713,7 @@ public final class UniformRegistry {
             if (stage == Stage.POST && slot == null) {
                 slot = extendedPostColorSlot(sampler.getKey());
             }
-            if (stage != Stage.POST && stage != Stage.SHADOW && slot == null) {
+            if (stage != Stage.POST && !stage.shadowPass() && slot == null) {
                 slot = gbufferColorInputSlot(sampler.getKey());
             }
             if (stage == Stage.POST && slot == null && sampler.getKey().equals("tex")
@@ -724,7 +738,7 @@ public final class UniformRegistry {
                     && customSamplerSlots != null
                     && customSamplerSlots.containsKey(sampler.getKey()));
             if (!mappedType || slot == null) {
-                if (stage == Stage.SHADOW && sampler.getKey().startsWith("shadowcolor")) {
+                if (stage.shadowPass() && sampler.getKey().startsWith("shadowcolor")) {
                     deviations.add("SHADOW_COLOR_INPUT_UNSUPPORTED");
                 } else if (stage == Stage.TRANSLUCENT
                         && (sampler.getKey().startsWith("depthtex")
@@ -736,7 +750,7 @@ public final class UniformRegistry {
                 } else if (stage == Stage.TRANSLUCENT) {
                     deviations.add("TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler.getKey());
                 } else {
-                    deviations.add(stage == Stage.SHADOW
+                    deviations.add(stage.shadowPass()
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler.getKey()
                             : "SAMPLER_NOT_MAPPED:" + sampler.getKey());
                 }

@@ -15,6 +15,11 @@ public record FamilyAdapterPlan(
         TERRAIN,
         WATER,
         SHADOW,
+        /**
+         * shadow_entities: entities and block entities in the shadow pass (Iris
+         * SHADOW_ENTITIES_CUTOUT, ProgramId.ShadowEntities, falling back to shadow).
+         */
+        SHADOW_ENTITIES,
         ENTITY,
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,

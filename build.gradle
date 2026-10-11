@@ -856,6 +856,9 @@ tasks.register('packCompileTest', JavaExec) {
                 file('testpacks/baselines/pack_admission.json').absolutePath
         systemProperty 'chimera.packCompile.updateAdmission',
                 (project.findProperty('packAdmissionUpdate') ?: 'false').toString()
+        // -PpackCompileDump=<program> writes that program's prepared stages to build/pack-report.
+        systemProperty 'chimera.packCompile.dumpProgram',
+                (project.findProperty('packCompileDump') ?: '').toString()
     }
 }
 

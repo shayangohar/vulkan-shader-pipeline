@@ -147,9 +147,9 @@ public final class PackPlanBuilder {
             fragment = alphaTestPlan.injectDrawTest(fragment);
             if (FamilyAdapterRegistry.isEntityLike(program.name())
                     && !program.name().equals("gbuffers_damagedblock")) fragment = EntityOverlayColor.inject(fragment);
-        } else if (program.name().equals("shadow") && vertex != null) {
-            // Iris alpha-tests shadow terrain by layer; the shadow pass sets
-            // the reference per layer (ChimeraMainPass.renderShadowMap).
+        } else if (FamilyAdapterRegistry.isShadowFamily(program.name()) && vertex != null) {
+            // Iris alpha-tests shadow terrain by layer and entity casters at 0.1; the
+            // shadow pass sets the reference per draw (ChimeraMainPass.renderShadowMap).
             fragment = alphaTestPlan.injectDrawTest(fragment);
         }
         UniformRegistry.ProgramInterfacePlan interfacePlan = UniformRegistry.planProgram(
@@ -202,6 +202,7 @@ public final class PackPlanBuilder {
         boolean executable = isExecutableFamily(program.name())
                 && fragment != null
                 && (!FamilyAdapterRegistry.isEntityLike(program.name())
+                && !FamilyAdapterRegistry.isShadowEntityFamily(program.name())
                 && !FamilyAdapterRegistry.isParticleLike(program.name())
                 && !FamilyAdapterRegistry.isWeatherFamily(program.name())
                 && !hostLayoutFamily
@@ -226,7 +227,7 @@ public final class PackPlanBuilder {
                 }
             }
         }
-        if (stage == UniformRegistry.Stage.SHADOW) {
+        if (stage.shadowPass()) {
             PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
             for (String deviation : shadowOutputs.deviations()) {
                 deviations.add(deviation.replaceFirst("^POST_", "SHADOW_"));
@@ -265,7 +266,8 @@ public final class PackPlanBuilder {
             executable = false;
         }
 
-        if (FamilyAdapterRegistry.isEntityLike(program.name()) && vertex == null) {
+        if ((FamilyAdapterRegistry.isEntityLike(program.name())
+                || FamilyAdapterRegistry.isShadowEntityFamily(program.name())) && vertex == null) {
             deviations.add(vertexBridgeDeviation(program.name()));
         }
         if (FamilyAdapterRegistry.isParticleLike(program.name()) && vertex == null) {
@@ -321,6 +323,23 @@ public final class PackPlanBuilder {
                     vertexLayout = conversion.layout();
                     deviations.add("CLOUD_VERTEX_BRIDGE");
                     deviations.add("CLOUD_STATE_FIXED_TO_HOST");
+                }
+            } else if (FamilyAdapterRegistry.isShadowEntityFamily(program.name()) && vertex != null) {
+                LegacyGlslConverter.TerrainVertexConversion conversion = null;
+                try {
+                    conversion = LegacyGlslConverter.convertShadowEntityVertexChecked(
+                            vertex, preparedSnapshot ? null : program.vertexPath(), fragment,
+                            interfacePlan.project("vertex", stage), allowStorageBuffers);
+                } catch (RuntimeException failure) {
+                    deviations.add("SHADOW_ENTITY_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
+                }
+                if (conversion == null) {
+                    deviations.add(vertexBridgeDeviation(program.name()));
+                    executable = false;
+                } else {
+                    convertedVertex = conversion.source();
+                    vertexLayout = conversion.layout();
+                    deviations.add("SHADOW_ENTITY_VERTEX_BRIDGE");
                 }
             } else if (isTerrainLike(program.name()) && vertex != null) {
                 boolean modernTerrain = terrainMaterial.modern();
@@ -448,7 +467,7 @@ public final class PackPlanBuilder {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
                 }
-            } else if (executable && program.name().equals("shadow")) {
+            } else if (executable && FamilyAdapterRegistry.isShadowFamily(program.name())) {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.FragmentConversionRequest
                         .of(fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots)
@@ -634,9 +653,10 @@ public final class PackPlanBuilder {
                 || name.equals("shadow");
     }
 
+    /** Programs whose modern sources are normalized like terrain: terrain, water and both shadow lanes. */
     private static boolean isTerrainMaterialFamily(String name) {
         return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
-                || name.equals("shadow");
+                || FamilyAdapterRegistry.isShadowFamily(name);
     }
 
     /**
@@ -658,6 +678,7 @@ public final class PackPlanBuilder {
     private static String vertexBridgeDeviation(String name) {
         return switch (name) {
             case "shadow" -> "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
+            case "shadow_entities" -> "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_water" -> "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_particles", "gbuffers_particles_translucent"
                     -> "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED";

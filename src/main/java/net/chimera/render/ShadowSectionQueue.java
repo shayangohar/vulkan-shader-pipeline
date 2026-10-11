@@ -27,12 +27,22 @@ public final class ShadowSectionQueue {
     private final Matrix4f lightMatrix = new Matrix4f();
     private AreaSetQueue areas;
     private StaticQueue<RenderSection>[] sections;
+    /** Sections inside the light volume holding block entities, which the caster pass draws. */
+    private final java.util.List<RenderSection> blockEntitySections = new java.util.ArrayList<>();
     private boolean active;
 
     private ShadowSectionQueue() {}
 
     public static boolean active() {
         return INSTANCE.active;
+    }
+
+    /**
+     * The sections inside the light volume that hold block entities, as Iris extracts block
+     * entities from its shadow-culled section list. Valid while the queue is active.
+     */
+    public static java.util.List<RenderSection> blockEntitySections() {
+        return INSTANCE.active ? INSTANCE.blockEntitySections : java.util.List.of();
     }
 
     public static AreaSetQueue areas() {
@@ -56,12 +66,14 @@ public final class ShadowSectionQueue {
 
     static void end() {
         INSTANCE.active = false;
+        INSTANCE.blockEntitySections.clear();
     }
 
     @SuppressWarnings("unchecked")
     private boolean fill(SectionGrid grid, int areaCount, Matrix4f lightProjection, Matrix4f lightView,
                          double cameraX, double cameraY, double cameraZ) {
         this.active = false;
+        this.blockEntitySections.clear();
         if (grid == null || grid.sections == null || areaCount <= 0) return false;
         if (this.areas == null || this.areas.size() != areaCount) {
             this.areas = new AreaSetQueue(areaCount);
@@ -75,13 +87,16 @@ public final class ShadowSectionQueue {
 
         this.frustum.set(this.lightMatrix.set(lightProjection).mul(lightView));
         for (RenderSection section : grid.sections) {
-            if (section == null || section.isCompletelyEmpty()) continue;
+            // A chest alone bakes no geometry: its section is empty but still casts.
+            if (section == null || (section.isCompletelyEmpty() && !section.containsBlockEntities())) continue;
             ChunkArea area = section.getChunkArea();
             if (area == null || area.index < 0 || area.index >= areaCount) continue;
             float x = (float) (section.xOffset - cameraX);
             float y = (float) (section.yOffset - cameraY);
             float z = (float) (section.zOffset - cameraZ);
             if (!this.frustum.testAab(x, y, z, x + 16.0f, y + 16.0f, z + 16.0f)) continue;
+            if (section.containsBlockEntities()) this.blockEntitySections.add(section);
+            if (section.isCompletelyEmpty()) continue;
             StaticQueue<RenderSection> queue = this.sections[area.index];
             if (queue == null) {
                 queue = new StaticQueue<>(SECTIONS_PER_AREA);

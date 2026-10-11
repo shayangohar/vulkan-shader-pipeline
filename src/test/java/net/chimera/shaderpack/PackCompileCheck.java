@@ -88,6 +88,11 @@ final class PackCompileCheck {
                     }
                 }
             }
+            // -Dchimera.packCompile.dumpProgram=<name> writes that program's prepared stages for review.
+            if (program.name().equals(System.getProperty("chimera.packCompile.dumpProgram"))) {
+                dump(pack, program.name() + ".vsh", prepared.vertex());
+                dump(pack, program.name() + ".fsh", prepared.fragment());
+            }
             if (vertexError != null) failures.add(program.name() + " vertex: " + vertexError
                     + " [" + dump(pack, program.name() + ".vsh", prepared.vertex()) + "]");
             if (fragmentError != null) failures.add(program.name() + " fragment: " + fragmentError

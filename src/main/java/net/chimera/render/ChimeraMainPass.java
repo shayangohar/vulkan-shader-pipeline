@@ -31,6 +31,7 @@ import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.ShadowCasterDirectives;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackProbe;
@@ -283,6 +284,10 @@ public class ChimeraMainPass implements MainPass {
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     private GraphicsPipeline packShadowPipeline;
     private int[] packShadowSlots;
+    /** shadow_entities on the shadow pass's entity lane; null leaves entities out of the shadow map. */
+    private PackPipelines.PackEntity packShadowEntityPipeline;
+    /** Set once the caster pass failed; the shadow map keeps its terrain for the rest of the session. */
+    private boolean shadowCastersFailed;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
     /** Pack translucent world-entity program on the guarded delayed model batch. */
@@ -552,8 +557,9 @@ public class ChimeraMainPass implements MainPass {
                             this.shadowMap.getLightView(), projection);
                 }
                 if (packShadow) {
-                    // shadowtex1 is the opaque and cutout casters only; the
-                    // translucent layer below reaches shadowtex0 alone, and
+                    renderShadowCasters(cameraX, cameraY, cameraZ);
+                    // shadowtex1 is the opaque, cutout and entity casters only;
+                    // the translucent layer below reaches shadowtex0 alone, and
                     // packs tint through shadowcolor where the two differ.
                     if (Renderer.getInstance().getBoundRenderPass() != null) {
                         Renderer.getInstance().endRenderPass(cmd);
@@ -643,6 +649,32 @@ public class ChimeraMainPass implements MainPass {
         }
     }
 
+
+    /**
+     * Iris ShadowRenderer: entities and block entities cast after the opaque terrain and
+     * before the translucent layer, with shadow_entities. A failure leaves the terrain map
+     * intact and turns the casters off for the session.
+     */
+    private void renderShadowCasters(double cameraX, double cameraY, double cameraZ) {
+        if (this.packShadowEntityPipeline == null || this.shadowCastersFailed
+                || this.packPlan == null || this.packConfig == null) {
+            return;
+        }
+        ShadowCasterDirectives directives = this.packPlan.shadowCasters();
+        if (!directives.anyEntities() && !directives.anyBlockEntities()) return;
+        try {
+            prepareProgramImages(this.packShadowEntityPipeline.pipeline());
+            ChimeraShadowCasters.render(cameraX, cameraY, cameraZ, this.shadowMap.getLightView(),
+                    this.shadowMap.getPackLightProjection(), directives,
+                    this.packConfig.shadowSettings().entityCasterDistance());
+        } catch (RuntimeException failure) {
+            this.shadowCastersFailed = true;
+            if (this.conformanceReport != null) {
+                this.conformanceReport.addDeviation("SHADOW_ENTITY_DRAW_FAILED");
+            }
+            LOGGER.warn("[chimera] shadow casters failed; entities cast no shadow this session", failure);
+        }
+    }
 
     /**
      * Chooses the shadow pass's sections from the light volume. The pack
@@ -1038,6 +1070,8 @@ public class ChimeraMainPass implements MainPass {
             case DAMAGED_BLOCK -> this.packDamagedBlockPipeline;
             case HAND -> this.packHandPipeline == null ? null : this.packHandPipeline.primary();
             case HAND_WATER -> this.packHandWaterPipeline == null ? null : this.packHandWaterPipeline.primary();
+            // The shadow pass owns the shadow map's attachments; casters open no window.
+            case SHADOW_ENTITIES -> this.packShadowEntityPipeline;
             default -> null;
         };
     }
@@ -2137,6 +2171,7 @@ public class ChimeraMainPass implements MainPass {
         this.packGeometryTerrain = null;
         this.packTranslucentTerrain = null;
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
+        if (this.packShadowEntityPipeline != null) this.packShadowEntityPipeline.pipeline().cleanUp();
         if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
         if (this.packTranslucentEntityPipeline != null) this.packTranslucentEntityPipeline.pipeline().cleanUp();
         if (this.packSpiderEyesPipeline != null) this.packSpiderEyesPipeline.pipeline().cleanUp();
@@ -2186,6 +2221,8 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
+        this.packShadowEntityPipeline = null;
+        this.shadowCastersFailed = false;
         this.packEntityPipeline = null;
         this.packTranslucentEntityPipeline = null;
         this.packSpiderEyesPipeline = null;
@@ -2948,6 +2985,8 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentSuspendLogged = false;
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
+        this.packShadowEntityPipeline = null;
+        this.shadowCastersFailed = false;
         this.packEntityPipeline = null;
         this.packTranslucentEntityPipeline = null;
         this.packSpiderEyesPipeline = null;
@@ -3105,6 +3144,20 @@ public class ChimeraMainPass implements MainPass {
                 if (TRACE_TRANSITIONS) {
                     LOGGER.info("[chimera] pack shadow converted fragment:\n{}", shadow.convertedFragment());
                 }
+            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                PackPipelines.PackEntity casters = PackPipelines.buildShadowEntities(programPlan,
+                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
+                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
+                if (casters == null) {
+                    markFamilyPipelineFallback(name, "SHADOW_ENTITY_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                if (!attachPackStoragePipeline(name, casters.pipeline(), casters.imageBindings())) {
+                    casters.pipeline().cleanUp();
+                    continue;
+                }
+                this.packShadowEntityPipeline = casters;
+                markFamilyPipelineInstalled(name, "SHADOW_ENTITY_PIPELINE_INSTALLED");
             } else if (PostTargetPlan.isPostProgramName(name)) {
                 PackPipelines.PackPost post = PackPipelines.buildPost(programPlan, fixedVertex,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3487,6 +3540,7 @@ public class ChimeraMainPass implements MainPass {
                 this.packPlan == null ? null : this.packPlan.entityIds());
         ChimeraEntityBridge.installTextVariants(this.packTranslucentEntityTextPipeline, this.packBlockTextPipeline);
         ChimeraEntityBridge.installHostLayout(this.packHostLayoutPipelines);
+        ChimeraEntityBridge.installShadowCasters(this.packShadowEntityPipeline);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 this.packEntityPipeline == null ? "none"
                         : this.packEntityPipeline.outputPlan() == null

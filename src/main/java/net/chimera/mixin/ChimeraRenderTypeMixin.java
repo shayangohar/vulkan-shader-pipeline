@@ -29,6 +29,14 @@ public abstract class ChimeraRenderTypeMixin {
     @WrapMethod(method = "draw")
     private void chimera$immediateFamilyWindow(MeshData mesh, Operation<Void> original) {
         RenderType type = (RenderType) (Object) this;
+        if (ChimeraEntityBridge.isShadowCasterPass() && !ChimeraEntityBridge.shouldUsePackPipeline(type.pipeline())) {
+            // Iris draws every shadow-pass pipeline with a shadow program. One without a
+            // shadow lane here stays out of the shadow map: its host shader would write
+            // colour and depth the pack's shadow programs never produce.
+            ChimeraEntityBridge.noteShadowCasterDropped(type.pipeline());
+            if (mesh != null) mesh.close();
+            return;
+        }
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
         // A host-layout lane (weather, lines, glint, lightning, beacon beams, leads) keeps its
         // native layout; only the program and its authored targets change. The host buffer

@@ -38,6 +38,7 @@ public final class ConformanceHarness {
         verifyLineLane();
         verifyGlintLane();
         verifyHostLayoutLanes();
+        verifyShadowEntityCasters();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                         List.of("colortex3", "depthtex0", "colortex0", "colortex2")),
@@ -974,6 +975,135 @@ public final class ConformanceHarness {
         }
         assertTrue(flush, "held lane geometry must flush inside its submitter's draw identity");
         System.out.println("[chimera] host-layout lanes (lightning, beacon, lead) and draw identity: PASS");
+    }
+
+    /**
+     * shadow_entities (Iris SHADOW_ENTITIES_CUTOUT): with no authored shadow_entities, the shadow
+     * program converts onto the entity layout, reads the draw's host matrices, carries entityId
+     * and blockEntityId per vertex, and tests alpha per draw; the pass draws entity casters
+     * before the shadowtex1 snapshot and drops what it cannot serve.
+     */
+    private static void verifyShadowEntityCasters() throws IOException {
+        Path root = Files.createTempDirectory("chimera-shadow-entities-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            // BSL-style legacy shadow program: terrain attributes and both identities.
+            Files.writeString(shaders.resolve("shadow.vsh"), """
+                    #version 120
+                    attribute vec4 mc_Entity;
+                    attribute vec4 mc_midTexCoord;
+                    attribute vec3 at_midBlock;
+                    uniform int entityId;
+                    uniform mat4 shadowModelView;
+                    uniform mat4 shadowModelViewInverse;
+                    uniform mat4 shadowProjection;
+                    uniform mat4 shadowProjectionInverse;
+                    const float entityShadowDistanceMul = 0.25;
+                    const float shadowDistanceRenderMul = 1.0;
+                    const float shadowDistance = 128.0;
+                    varying vec2 texCoord;
+                    varying vec4 color;
+                    varying float mat;
+                    void main() {
+                        texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                        color = gl_Color;
+                        mat = mc_Entity.x + at_midBlock.x + mc_midTexCoord.y;
+                        vec3 normal = gl_NormalMatrix * gl_Normal;
+                        vec4 position = shadowModelViewInverse * shadowProjectionInverse * ftransform();
+                        if (entityId == 10001) position.y += normal.y * 0.0;
+                        gl_Position = shadowProjection * shadowModelView * position;
+                    }
+                    """);
+            Files.writeString(shaders.resolve("shadow.fsh"), """
+                    #version 120
+                    /* DRAWBUFFERS:01 */
+                    uniform sampler2D tex;
+                    uniform int blockEntityId;
+                    varying vec2 texCoord;
+                    varying vec4 color;
+                    varying float mat;
+                    void main() {
+                        if (blockEntityId / 100 == 155) discard;
+                        gl_FragData[0] = texture2D(tex, texCoord) * color;
+                        gl_FragData[1] = vec4(mat);
+                    }
+                    """);
+            Files.writeString(shaders.resolve("shaders.properties"), """
+                    shadowPlayer=true
+                    shadowBlockEntities=0
+                    shadowLightBlockEntities=maybe
+                    """);
+            var analysis = PackProbe.analyze(root);
+            assertEquals("shadow", analysis.resolution().resolution("shadow_entities").selectedProgram(),
+                    "Iris ProgramId.ShadowEntities falls back to shadow");
+            var plan = analysis.plan().program("shadow_entities");
+            assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("shadow_entities"),
+                    "shadow_entities rejected: " + (plan == null ? "missing" : plan.deviations()));
+            String vertex = plan.convertedVertex();
+            for (String line : List.of("layout(location = 6) in uvec4 EntityIds;",
+                    "return ProjMat * ModelViewMat * chimeraEntityVertexValue();",
+                    "mat3(ModelViewMat) * chimeraNormalValue()", "TextureMat * chimeraTexCoord0Value()",
+                    "chimeraEntityId = EntityIds.x;", "chimeraBlockEntityId = EntityIds.y;",
+                    "layout(binding = 2) uniform ChimeraShadowUniforms",
+                    "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);")) {
+                assertTrue(vertex.contains(line), "shadow_entities vertex lost " + line + ": " + vertex);
+            }
+            assertTrue(!vertex.contains("MVP") && !vertex.contains("inPositionLight")
+                            && !vertex.contains("chimeraShadowUniforms.entityId"),
+                    "shadow_entities must not read terrain inputs or a uniform entityId: " + vertex);
+            String fragment = plan.convertedFragment();
+            assertTrue(fragment.contains("flat in uint chimeraBlockEntityId")
+                            && fragment.contains("int(chimeraBlockEntityId) / 100 == 155")
+                            && fragment.contains("chimeraShadowColor1")
+                            && plan.alphaTestPlan().perDrawReference(),
+                    "shadow_entities fragment must read blockEntityId per vertex and test alpha per draw: " + fragment);
+            String terrain = analysis.plan().program("shadow").convertedVertex();
+            assertTrue(terrain.contains("MVP") && !terrain.contains("EntityIds"),
+                    "the terrain shadow program keeps its own inputs: " + terrain);
+            var compiled = PackCompileCheck.run(root, analysis);
+            assertTrue(compiled.failures().isEmpty(), "shadow_entities compilation: " + compiled.failures());
+
+            ShadowCasterDirectives directives = analysis.plan().shadowCasters();
+            assertTrue(directives.entities() && directives.player() && !directives.blockEntities()
+                            && !directives.lightBlockEntities()
+                            && directives.deviations().contains("SHADOW_DIRECTIVE_MALFORMED:shadowLightBlockEntities"),
+                    "Iris reads true/1 and false/0 and keeps its default otherwise: " + directives);
+            assertEquals(32.0F, analysis.config().shadowSettings().entityCasterDistance(),
+                    "Iris entity BoxCuller: shadowDistance * shadowDistanceRenderMul * entityShadowDistanceMul");
+        } finally {
+            deleteTree(root);
+        }
+        assertEquals(Float.POSITIVE_INFINITY, new PackConfig.ShadowSettings(2048, 128.0F,
+                        Map.of("entityShadowDistanceMul", "0.25"), List.of()).entityCasterDistance(),
+                "without shadowDistanceRenderMul (Iris -1) entity casters have no distance limit");
+        assertEquals(ShadowCasterDirectives.DEFAULTS, ShadowCasterDirectives.fromProperties(Map.of()),
+                "Iris defaults: entities and block entities on, player and light block entities off");
+
+        var shadowMap = nativeClass("net/chimera/render/ChimeraMainPass").methods.stream()
+                .filter(method -> method.name.equals("renderShadowMap")).findFirst().orElseThrow();
+        boolean casters = false;
+        boolean snapshotAfterCasters = false;
+        for (var instruction : shadowMap.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                if (call.name.equals("renderShadowCasters")) casters = true;
+                if (casters && call.name.equals("captureOpaqueDepth")) snapshotAfterCasters = true;
+            }
+        }
+        assertTrue(snapshotAfterCasters, "entity casters must draw before the shadowtex1 snapshot, as in Iris");
+        var draw = nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
+                .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
+        boolean guard = false;
+        boolean dropped = false;
+        for (var instruction : draw.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                if (call.name.equals("isShadowCasterPass")) guard = true;
+                if (guard && call.name.equals("close") && call.owner.equals("com/mojang/blaze3d/vertex/MeshData")) {
+                    dropped = true;
+                }
+            }
+        }
+        assertTrue(dropped, "a shadow-pass draw without a shadow lane must be dropped, not drawn with its host shader");
+        System.out.println("[chimera] shadow_entities conversion, directives and caster order: PASS");
     }
 
     private static void deleteTree(Path root) throws IOException {

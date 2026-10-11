@@ -49,7 +49,7 @@ public final class PackConfig {
                     + "ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|shadowIntervalSize|sunPathRotation|sunPathOffset)"
+                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|shadowIntervalSize|sunPathRotation|sunPathOffset|entityShadowDistanceMul)"
                     + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
     private static final Pattern PACK_NUMERIC_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(int|float)\\s+"
@@ -157,6 +157,26 @@ public final class PackConfig {
         /** Iris's shadow grid cell; the shadow view snaps to it so texels stay put in the world. */
         public float intervalSize() {
             return finiteValue("shadowIntervalSize", DEFAULT_SHADOW_INTERVAL_SIZE);
+        }
+
+        /** Iris entityShadowDistanceMul: the entity caster distance relative to terrain's. */
+        public float entityDistanceMultiplier() {
+            return finiteValue("entityShadowDistanceMul", 1.0F);
+        }
+
+        /**
+         * Half-size in blocks of the camera-centred box entity casters must touch, as Iris
+         * ShadowRenderer's entity BoxCuller: shadowDistance times shadowDistanceRenderMul, times
+         * entityShadowDistanceMul unless that is 1 or negative. Iris defaults
+         * shadowDistanceRenderMul to -1, and a negative product means no distance limit
+         * (infinity here); the render distance still bounds entities.
+         */
+        public float entityCasterDistance() {
+            float renderMultiplier = rawValues.containsKey("shadowDistanceRenderMul")
+                    ? distanceRenderMultiplier() : -1.0F;
+            float entityMultiplier = entityDistanceMultiplier();
+            if (entityMultiplier != 1.0F && entityMultiplier >= 0.0F) renderMultiplier *= entityMultiplier;
+            return renderMultiplier < 0.0F ? Float.POSITIVE_INFINITY : distance * renderMultiplier;
         }
 
         private float finiteValue(String name, float fallback) {
@@ -615,11 +635,13 @@ public final class PackConfig {
         validateFiniteShadowSetting(rawValues, deviations, "sunPathRotation", -360.0F, 360.0F);
         validateFiniteShadowSetting(rawValues, deviations, "sunPathOffset", -360.0F, 360.0F);
         validateFiniteShadowSetting(rawValues, deviations, "shadowIntervalSize", 0.0F, 64.0F);
+        validateFiniteShadowSetting(rawValues, deviations, "entityShadowDistanceMul", -64.0F, 64.0F);
 
         for (String key : rawValues.keySet()) {
             if (!key.equals("shadowMapResolution") && !key.equals("shadowDistance")
                     && !key.equals("shadowDistanceRenderMul") && !key.equals("shadowIntervalSize")
-                    && !key.equals("sunPathRotation") && !key.equals("sunPathOffset")) {
+                    && !key.equals("sunPathRotation") && !key.equals("sunPathOffset")
+                    && !key.equals("entityShadowDistanceMul")) {
                 deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
             }
         }

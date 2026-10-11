@@ -508,7 +508,7 @@ public final class LegacyGlslConverter {
         try {
             boolean geometryInterface = interfacePlan != null
                     && (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
-                    || interfacePlan.stage() == UniformRegistry.Stage.SHADOW
+                    || interfacePlan.stage().shadowPass()
                     || interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
                     || interfacePlan.stage() == UniformRegistry.Stage.ENTITY
                     || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
@@ -545,9 +545,9 @@ public final class LegacyGlslConverter {
                 src = VERSION_LINE.matcher(src).replaceAll("");
             } else {
                 modern = src.contains("#version 460") || src.contains("#version 450")
-                        || (interfacePlan.stage() == UniformRegistry.Stage.SHADOW
+                        || (interfacePlan.stage().shadowPass()
                         && MODERN_TERRAIN_DECL.matcher(src).find());
-                if (interfacePlan.stage() == UniformRegistry.Stage.SHADOW && modern) {
+                if (interfacePlan.stage().shadowPass() && modern) {
                     src = VERSION_LINE.matcher(src).replaceAll("");
                     src = "#version 460\n" + src;
                 }
@@ -560,9 +560,7 @@ public final class LegacyGlslConverter {
             src = stripUnusedConsumedConsts(src, packConstants);
             src = KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
-            if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
-                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
-                    || interfacePlan.stage() == UniformRegistry.Stage.HAND) {
+            if (interfacePlan.stage().perVertexEntityIdentity()) {
                 src = removeEntityIdDeclarations(src, interfacePlan);
                 src = replaceEntityIdReferences(src, terrainLayout);
             }
@@ -573,7 +571,7 @@ public final class LegacyGlslConverter {
                 src = rewriteElytraFlyingBool(src, interfacePlan);
             }
             if (geometryStage && modern && geometryOutputPlan == null
-                    && interfacePlan.stage() != UniformRegistry.Stage.SHADOW) {
+                    && !interfacePlan.stage().shadowPass()) {
                 src = convertModernGeometryOutputs(src);
             }
             src = convertVaryings(src, geometryStage, terrainLayout, postVaryingLayout,
@@ -634,7 +632,7 @@ public final class LegacyGlslConverter {
             } else if (geometryOutputPlan != null) {
                 src = convertGeometryOutputs(src, geometryOutputPlan);
                 outDecl = geometryOutputDeclarations(geometryOutputPlan);
-            } else if (interfacePlan.stage() == UniformRegistry.Stage.SHADOW) {
+            } else if (interfacePlan.stage().shadowPass()) {
                 PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", src).plan();
                 if (!shadowOutputs.executable() || shadowOutputs.targetSlots().stream()
                         .anyMatch(target -> target < 0 || target > 1)) {
@@ -673,9 +671,10 @@ public final class LegacyGlslConverter {
             // and glslang rejects it ("'fragColor' : undeclared identifier").
             // Emit the declaration directly after the version line.
             String uniformBlock;
-            if (interfacePlan.stage() == UniformRegistry.Stage.SHADOW
+            if (interfacePlan.stage().shadowPass()
                     && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = generatedShadowUniformBlock(interfacePlan.executableUniforms());
+                uniformBlock = generatedShadowUniformBlock(interfacePlan.executableUniforms(),
+                        shadowUniformBinding(interfacePlan.stage()));
                 src = qualifyShadowUniformReferences(src, interfacePlan.executableUniforms());
             } else if (geometryStage && terrainContract(interfacePlan.stage())) {
                 StringBuilder geometryBlocks = new StringBuilder();
@@ -701,13 +700,11 @@ public final class LegacyGlslConverter {
             } else {
                 uniformBlock = "";
             }
-            String chimeraVaryingDeclaration = (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
-                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
-                    || interfacePlan.stage() == UniformRegistry.Stage.HAND)
+            String chimeraVaryingDeclaration = interfacePlan.stage().perVertexEntityIdentity()
                     ? chimeraFragmentVaryings(terrainLayout) : "";
             String declarations = chimeraVaryingDeclaration
                     + (outDecl != null ? outDecl + "\n" : "") + uniformBlock;
-            if (interfacePlan.stage() == UniformRegistry.Stage.SHADOW) {
+            if (interfacePlan.stage().shadowPass()) {
                 declarations = SHADOW_RENDER_STAGE_DEFINES + declarations;
             }
             if (!geometryStage || !modern) {
@@ -876,6 +873,42 @@ public final class LegacyGlslConverter {
             boolean allowStorageBuffers
     ) {
         try {
+            return convertModernTerrainVertexOrThrow(source, sourceFile, fragmentSource, vertexPreamble,
+                    interfacePlan, shadowStage, false, allowStorageBuffers);
+        } catch (RuntimeException failure) {
+            return null;
+        }
+    }
+
+    /**
+     * Converts the shadow program for the shadow pass's entity lane (Iris shadow_entities,
+     * ShaderKey.SHADOW_ENTITIES_CUTOUT): the shadow bridge reading EXTENDED_ENTITY. The legacy
+     * matrix built-ins name the draw's host blocks, as Iris's iris_ModelViewMat and iris_ProjMat
+     * do, and the pass loads the light view and projection into them. entityId and
+     * blockEntityId are per-vertex, as Iris's EntityPatcher makes them on the entity layout.
+     * Reports the first concrete failure.
+     */
+    public static TerrainVertexConversion convertShadowEntityVertexChecked(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            UniformRegistry.ProgramInterface interfacePlan,
+            boolean allowStorageBuffers
+    ) {
+        return convertModernTerrainVertexOrThrow(source, sourceFile, fragmentSource,
+                ENTITY_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, true, allowStorageBuffers);
+    }
+
+    private static TerrainVertexConversion convertModernTerrainVertexOrThrow(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            String vertexPreamble,
+            UniformRegistry.ProgramInterface interfacePlan,
+            boolean shadowStage,
+            boolean entityInputs,
+            boolean allowStorageBuffers
+    ) {
             boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
             String vertex = shadowStage
                     ? normalizeShadowTerrain(defaultUnboundIdentityAttributes(prepareSource(source, sourceFile, true)))
@@ -893,9 +926,21 @@ public final class LegacyGlslConverter {
                 throw new IllegalArgumentException(usage.deviations().toString());
             }
             vertex = GlslTokenRewriter.removeUnreachableFunctions(vertex, usage);
+            // On the entity layout both stages read entityId and blockEntityId from EntityIds.
+            Map<String, String> entityIdTypes = new java.util.LinkedHashMap<>();
+            if (entityInputs) {
+                String authoredVertex = stripComments(vertex);
+                for (String name : ENTITY_ID_NAMES) {
+                    String type = entityIdentifierType(name, authoredVertex, fragment);
+                    if (type != null) entityIdTypes.put(name, type);
+                }
+            }
             vertex = interfacePlan == null
                     ? stripShadowUniformDeclarations(vertex)
                     : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
+            if (entityInputs) {
+                vertex = removeEntityIdDeclarations(vertex, interfacePlan);
+            }
             String stripped = stripComments(vertex);
             if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
@@ -923,6 +968,13 @@ public final class LegacyGlslConverter {
                 locations.put(name, location);
                 location += vertexVaryings.slots().get(name);
             }
+            if (!entityIdTypes.isEmpty()) {
+                vertexTypes = new TreeMap<>(vertexTypes);
+                for (Map.Entry<String, String> id : entityIdTypes.entrySet()) {
+                    locations.put(entityIdVarying(id.getKey()), location++);
+                    vertexTypes.put(entityIdVarying(id.getKey()), id.getValue());
+                }
+            }
             TerrainVaryingLayout layout = new TerrainVaryingLayout(vertexTypes, locations, vertexVaryings.qualifiers());
 
             // The prepared source keeps one version directive so the shared
@@ -935,11 +987,16 @@ public final class LegacyGlslConverter {
             Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
             if (shadowStage) {
                 inputReplacements.putAll(shadowAttributeInputReplacements(vertex));
-                inputReplacements.putAll(shadowMatrixBuiltinReplacements());
+                inputReplacements.putAll(entityInputs
+                        ? entityShadowMatrixBuiltinReplacements() : shadowMatrixBuiltinReplacements());
+            }
+            for (String name : entityIdTypes.keySet()) {
+                inputReplacements.put(name, entityIdExpression(layout, name));
             }
             converted = GlslTokenRewriter.replaceIdentifiers(converted, inputReplacements);
+            // Iris gives entity programs the draw's texture matrix (iris_TextureMat).
             converted = converted.replaceAll(
-                    "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", "mat4(1.0)");
+                    "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", entityInputs ? "TextureMat" : "mat4(1.0)");
             converted = replaceLightmapTextureMatrices(converted);
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                     "chimeraFtransform()");
@@ -953,7 +1010,8 @@ public final class LegacyGlslConverter {
             }
             String uniformBlock = shadowStage && interfacePlan != null
                     && !interfacePlan.executableUniforms().isEmpty()
-                    ? generatedShadowUniformBlock(interfacePlan.executableUniforms())
+                    ? generatedShadowUniformBlock(interfacePlan.executableUniforms(),
+                    shadowUniformBinding(interfacePlan.stage()))
                     : !shadowStage && interfacePlan != null
                     && !interfacePlan.executableUniforms().isEmpty()
                     ? generatedGeometryUniformBlock(interfacePlan.executableUniforms()) : "";
@@ -962,15 +1020,19 @@ public final class LegacyGlslConverter {
                 converted = qualifyShadowUniformReferences(converted,
                         interfacePlan.executableUniforms());
             }
-            String effectivePreamble = shadowStage && !extendedShadow
+            String chimeraVaryings = "";
+            for (String name : entityIdTypes.keySet()) {
+                converted = injectMainPrologue(converted,
+                        entityIdVarying(name) + " = EntityIds." + entityIdComponent(name) + ";");
+                chimeraVaryings += "layout(location = " + layout.location(entityIdVarying(name))
+                        + ") flat out uint " + entityIdVarying(name) + ";\n";
+            }
+            String effectivePreamble = shadowStage && !extendedShadow && !entityInputs
                     ? SHADOW_VERTEX_PREAMBLE : vertexPreamble;
             String body = shadowStage ? shadowClipRangeWrapper(converted) : converted;
             return new TerrainVertexConversion("#version 460\n"
                     + effectivePreamble + SHADOW_RENDER_STAGE_DEFINES
-                    + uniformBlock + body, layout);
-        } catch (RuntimeException failure) {
-            return null;
-        }
+                    + chimeraVaryings + uniformBlock + body, layout);
     }
 
     /** Converts the same strict bridge for the shadow pipeline's one-matrix UBO. */
@@ -1005,6 +1067,19 @@ public final class LegacyGlslConverter {
                 "gl_NormalMatrix", "mat3(transpose(shadowModelViewInverse))",
                 "gl_ProjectionMatrix", "shadowProjection",
                 "gl_ModelViewProjectionMatrix", "MVP");
+    }
+
+    /**
+     * On the shadow pass's entity lane the legacy built-ins are the draw's own host matrices,
+     * as Iris's iris_ModelViewMat and iris_ProjMat are; a render type's layering transform
+     * stays in them. The camera's gbuffer matrices remain the pack uniforms.
+     */
+    private static Map<String, String> entityShadowMatrixBuiltinReplacements() {
+        return Map.of(
+                "gl_ModelViewMatrix", "ModelViewMat",
+                "gl_NormalMatrix", "mat3(ModelViewMat)",
+                "gl_ProjectionMatrix", "ProjMat",
+                "gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)");
     }
 
     /** Converts legacy and simple compatibility shadow vertices with one plan. */
@@ -1823,7 +1898,8 @@ public final class LegacyGlslConverter {
         UniformRegistry.Stage stage = interfacePlan.stage();
         boolean uniforms = !interfacePlan.executableUniforms().isEmpty();
         if (stage == UniformRegistry.Stage.ENTITY || stage == UniformRegistry.Stage.BLOCK
-                || stage == UniformRegistry.Stage.HAND || stage == UniformRegistry.Stage.PARTICLE) {
+                || stage == UniformRegistry.Stage.HAND || stage == UniformRegistry.Stage.PARTICLE
+                || stage == UniformRegistry.Stage.SHADOW_ENTITY) {
             return uniforms ? 3 : 2;
         }
         return GEOMETRY_SAMPLER_BINDING_BASE + (uniforms ? 1 : 0);
@@ -1848,7 +1924,7 @@ public final class LegacyGlslConverter {
             UniformRegistry.Stage stage,
             UniformRegistry.ProgramInterface interfacePlan
     ) {
-        if (stage == UniformRegistry.Stage.SHADOW) {
+        if (stage.shadowPass()) {
             Integer slotValue = UniformRegistry.SHADOW_NAME_TO_SLOT.get(name);
             if (slotValue == null && interfacePlan != null) {
                 slotValue = interfacePlan.samplers().stream()
@@ -1950,10 +2026,19 @@ public final class LegacyGlslConverter {
         return names;
     }
 
+    /**
+     * The shadow program's pack uniform block follows its lane's host blocks: binding 3 after
+     * the terrain blocks, binding 2 after the entity transform blocks.
+     */
+    private static int shadowUniformBinding(UniformRegistry.Stage stage) {
+        return stage == UniformRegistry.Stage.SHADOW_ENTITY ? 2 : 3;
+    }
+
     private static String generatedShadowUniformBlock(
-            List<UniformRegistry.UniformDeclaration> uniforms
+            List<UniformRegistry.UniformDeclaration> uniforms,
+            int binding
     ) {
-        StringBuilder block = new StringBuilder("layout(binding = 3) uniform ChimeraShadowUniforms {\n");
+        StringBuilder block = new StringBuilder("layout(binding = " + binding + ") uniform ChimeraShadowUniforms {\n");
         for (UniformRegistry.UniformDeclaration uniform : uniforms) {
             block.append("    ").append(uniform.glslType()).append(' ')
                     .append(uniform.name()).append(";\n");
@@ -3212,11 +3297,7 @@ public final class LegacyGlslConverter {
                 .mapToInt(UniformRegistry.SamplerBinding::slot).toArray())
                 : PackPipelines.interleaveLightmap(interfacePlan.samplerLayout().stream()
                 .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
-        int bindingBase = shadowStage
-                ? GEOMETRY_SAMPLER_BINDING_BASE
-                + (!interfacePlan.executableUniforms().isEmpty() ? 1 : 0)
-                : GEOMETRY_SAMPLER_BINDING_BASE
-                + (!interfacePlan.executableUniforms().isEmpty() ? 1 : 0);
+        int bindingBase = geometrySamplerBindingBase(interfacePlan);
         for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
             String sourceName = sampler.name().equals("texture")
                     ? "chimeraTexture" : sampler.name();
@@ -3605,6 +3686,64 @@ public final class LegacyGlslConverter {
                 }
                 float handedness = ChimeraPackedTangent.w < 0.0 ? -1.0 : 1.0;
                 return vec4(candidate * inversesqrt(lengthSquared), handedness);
+            }
+
+            """;
+
+    /**
+     * The shadow bridge's input helpers over EXTENDED_ENTITY and the host transform blocks
+     * (Iris SHADOW_ENTITIES_CUTOUT on IrisVertexFormats.ENTITY). The entity layout has no
+     * mc_Entity or at_midBlock, so both read GL's unbound-attribute default (0, 0, 0, 1),
+     * as under Iris.
+     */
+    private static final String ENTITY_SHADOW_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE + """
+            vec4 chimeraVertexValue() {
+                return chimeraEntityVertexValue();
+            }
+
+            vec4 chimeraColorValue() {
+                return Color;
+            }
+
+            vec4 chimeraTexCoord0Value() {
+                return vec4(UV0, 0.0, 1.0);
+            }
+
+            // Raw UV2 light coordinates (level * 16, 0..240), as for terrain.
+            vec4 chimeraTexCoord1Value() {
+                return vec4(vec2(UV2), 0.0, 1.0);
+            }
+
+            vec2 chimeraMcEntityValue() {
+                return vec2(0.0);
+            }
+
+            vec2 chimeraMidTexCoordValue() {
+                return MidTexCoord;
+            }
+
+            uvec2 chimeraMidTexCoordRawValue() {
+                return uvec2(round(MidTexCoord * 32768.0));
+            }
+
+            ivec4 chimeraMidBlockRawValue() {
+                return ivec4(0, 0, 0, 1);
+            }
+
+            vec3 chimeraMidBlockValue() {
+                return vec3(0.0);
+            }
+
+            vec3 chimeraNormalValue() {
+                return chimeraEntityNormalValue();
+            }
+
+            vec4 chimeraTangentValue() {
+                return chimeraEntityTangentValue();
+            }
+
+            vec4 chimeraFtransform() {
+                return chimeraEntityFtransform();
             }
 
             """;

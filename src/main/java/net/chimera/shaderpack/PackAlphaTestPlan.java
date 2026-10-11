@@ -20,6 +20,7 @@ record PackAlphaTestPlan(
          * Each shadow terrain layer tests against the reference the shadow
          * pass sets for it: Iris's 0.1 for solid and cutout, none for
          * translucent. Without it every foliage quad cast a square shadow.
+         * Entity casters test at 0.1 (Iris SHADOW_ENTITIES_CUTOUT).
          */
         DYNAMIC_SHADOW,
         FIXED
@@ -50,7 +51,7 @@ record PackAlphaTestPlan(
         boolean entity = FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
                 || FamilyAdapterRegistry.isGlintFamily(name);
-        boolean shadow = name.equals("shadow");
+        boolean shadow = FamilyAdapterRegistry.isShadowFamily(name);
         if (!geometry && !entity && !shadow) {
             return off(false);
         }

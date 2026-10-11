@@ -12,6 +12,7 @@
     "GameRendererDepthMixin",
     "ChimeraGameRendererHandAccess",
     "ChimeraLevelRendererMixin",
+    "ChimeraLevelRenderStateAccessor",
     "ChimeraSkyRendererMixin",
     "ChimeraMinecraftMixin",
     "VkCommandEncoderAliasMixin",

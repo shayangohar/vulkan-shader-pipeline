@@ -4,7 +4,7 @@
     "fixture": "advanced_images",
     "images": ["lightimg0", "voxel_img"],
     "compute": "shadowcomp",
-    "fingerprint": "81c332e2d6cbf8a00cf0f4efc27bd9c3eb43bae9186601e93550fec3261e5b8c"
+    "fingerprint": "68daad17666fb2e9112a0b079265ca9db01ff85412665840d4db3f1effa0d620"
   },
   "unsupported": {
     "fixture": "unsupported_advanced",

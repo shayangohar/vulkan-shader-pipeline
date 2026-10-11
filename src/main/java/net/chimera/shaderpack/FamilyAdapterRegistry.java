@@ -12,6 +12,10 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.TRANSLUCENT, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN)),
             Map.entry("shadow", plan("shadow", FamilyAdapterPlan.Family.SHADOW,
                     UniformRegistry.Stage.SHADOW, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN)),
+            // Iris SHADOW_ENTITIES_CUTOUT: every entity and block-entity pipeline in the shadow
+            // pass, on the entity layout (the end portal and gateway too, after the entitySolid swap).
+            Map.entry("shadow_entities", plan("shadow_entities", FamilyAdapterPlan.Family.SHADOW_ENTITIES,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY)),
             Map.entry("gbuffers_entities", plan("gbuffers_entities", FamilyAdapterPlan.Family.ENTITY,
                     UniformRegistry.Stage.ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY)),
             Map.entry("gbuffers_entities_translucent", plan("gbuffers_entities_translucent",
@@ -110,6 +114,17 @@ public final class FamilyAdapterRegistry {
                 || family == FamilyAdapterPlan.Family.DAMAGED_BLOCK
                 || family == FamilyAdapterPlan.Family.HAND
                 || family == FamilyAdapterPlan.Family.HAND_WATER;
+    }
+
+    /** The programs that draw into the shadow map: shadow (terrain) and shadow_entities. */
+    public static boolean isShadowFamily(String name) {
+        FamilyAdapterPlan.Family family = forProgram(name).family();
+        return family == FamilyAdapterPlan.Family.SHADOW || family == FamilyAdapterPlan.Family.SHADOW_ENTITIES;
+    }
+
+    /** The shadow program on the entity layout (Iris ProgramId.ShadowEntities). */
+    public static boolean isShadowEntityFamily(String name) {
+        return forProgram(name).family() == FamilyAdapterPlan.Family.SHADOW_ENTITIES;
     }
 
     public static boolean isParticleLike(String name) {

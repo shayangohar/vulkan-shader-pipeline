@@ -6,6 +6,7 @@ import com.mojang.blaze3d.textures.GpuTexture;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.ChimeraHandRenderer;
+import net.chimera.render.ChimeraShadowCasters;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
@@ -41,6 +42,9 @@ public abstract class GameRendererDepthMixin {
 
     @Inject(method = "close", at = @At("HEAD"), require = 1)
     private void chimera$destroyHand(CallbackInfo callback) { ChimeraHandRenderer.destroy(); }
+
+    @Inject(method = "close", at = @At("HEAD"), require = 1)
+    private void chimera$destroyShadowCasters(CallbackInfo callback) { ChimeraShadowCasters.destroy(); }
 
     @Redirect(
             method = "renderLevel",
