@@ -12,7 +12,7 @@ public final class TerrainMidBlockHarness {
 
     public static void main(String[] args) {
         net.chimera.shaderpack.TerrainMaterialPlan plan = new net.chimera.shaderpack.TerrainMaterialPlan(
-                true, true, true, true, false, java.util.List.of());
+                true, true, true, true, java.util.List.of());
         ChimeraExtVertexBuilder builder = new ChimeraExtVertexBuilder(plan);
         // A glowstone-like block at section position (4, 7, 9), emission 15.
         builder.setBlockData(7, -1, 15, 4, 7, 9);

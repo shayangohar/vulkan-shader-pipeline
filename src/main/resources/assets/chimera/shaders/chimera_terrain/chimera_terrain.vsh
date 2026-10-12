@@ -65,6 +65,11 @@ void main() {
     outCylindricalDistance = max(length(worldPos.xz), abs(worldPos.y));
 
     vec4 baseColor = unpackUnorm4x8(inPackedColor);
+#ifdef CHIMERA_SEPARATE_AO
+    // separateAo meshes carry the light pipeline's brightness in alpha (Iris); terrain
+    // vertex alpha is otherwise always 1, so fold it into RGB and keep the block opaque.
+    baseColor = vec4(baseColor.rgb * baseColor.a, 1.0);
+#endif
     outVertexColor = baseColor * fetchLightmap(uint(inPositionLight.w));
 
     outFadeFactor = SectionFadeFactors[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];

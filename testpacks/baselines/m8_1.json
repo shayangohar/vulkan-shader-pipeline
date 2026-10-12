@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "55173a033dcbfacebe007531ffdf42a4ac2b8e9562a04dca296bdad82226648c",
+      "reportSha256": "397148750352fef9db452c29a2aec8682287573b15bd75f5957ed3df4cfbd6fa",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -35,8 +35,6 @@
         "MODERN_WATER_VERTEX_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
         "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
-        "SEPARATE_AO_ATTRIBUTE",
-        "SEPARATE_AO_HOST_COLOR_FALLBACK",
         "TERRAIN_NORMAL_AUTHORITATIVE",
         "TERRAIN_TANGENT_DERIVED_FALLBACK",
         "TRANSLUCENT_STATE_FIXED_TO_HOST"

@@ -23,6 +23,7 @@
     "WorldRendererLevelMixin",
     "FluidRendererMixin",
     "ChimeraBlockRendererMixin",
+    "ChimeraBlockSeparateAoMixin",
     "ChimeraClientLevelShadeMixin",
     "ChimeraGuiVignetteMixin",
     "ChimeraScreenEffectWaterMixin",

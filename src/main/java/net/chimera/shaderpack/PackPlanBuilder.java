@@ -91,8 +91,7 @@ public final class PackPlanBuilder {
         String fragment = source(stages, "fragment", program.executableFragmentSource());
         String vertex = source(stages, "vertex", program.executableVertexSource());
         FamilyAdapterPlan familyAdapter = FamilyAdapterRegistry.forProgram(program.name());
-        TerrainMaterialPlan terrainMaterial = TerrainMaterialPlan.forProgram(
-                program.name(), vertex, fragment, config);
+        TerrainMaterialPlan terrainMaterial = TerrainMaterialPlan.forProgram(program.name(), vertex, fragment);
         // Preserve the M5 report contract: root-level packs are inventoried
         // from their authored declarations, while nested dimension variants
         // use the active preprocessed snapshot.

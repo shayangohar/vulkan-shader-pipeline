@@ -47,7 +47,7 @@ public final class ConformanceHarness {
         verifyComputeFrameSlots();
         verifyComputeUniformOffsets();
         verifyMidBlockInputs();
-        verifyOldLighting();
+        verifyTerrainShading();
         verifyScreenOverlays();
         verifyIndentedProperties();
         PackPostTargetsHarness.run();
@@ -1710,31 +1710,40 @@ public final class ConformanceHarness {
     }
 
     /**
-     * Iris reads oldLighting (default off) and, while a pack is active without it, meshes terrain
-     * and fluids unshaded: ClientLevel.getShade sees shaded = false. Chimera kept Minecraft's face
-     * shading, so Solas's walls and ceiling rendered at 0.5-0.8 of Iris's brightness.
+     * Iris reads oldLighting and separateAo (both default off). Without oldLighting it meshes
+     * terrain and fluids unshaded: ClientLevel.getShade sees shaded = false; Chimera kept
+     * Minecraft's face shading, so Solas's walls and ceiling rendered at 0.5-0.8 of Iris's
+     * brightness. With separateAo it keeps the tint in RGB and carries the light pipeline's
+     * brightness in alpha; Chimera multiplied it into RGB and gave packs a constant AO word
+     * nobody read, so BSL, Complementary, Bliss, Photon and Solas darkened corners twice.
      */
-    private static void verifyOldLighting() throws IOException {
-        assertTrue(OldLightingDirective.fromProperties(java.util.Map.of()).disablesDirectionalShading(),
-                "Iris's oldLighting defaults to off");
-        for (String value : List.of("true", "1", " true ")) {
-            var directive = OldLightingDirective.fromProperties(java.util.Map.of("oldLighting", value));
-            assertTrue(directive.oldLighting() && directive.deviations().isEmpty(), "oldLighting=" + value + " keeps shading");
+    private static void verifyTerrainShading() throws IOException {
+        assertEquals(new TerrainShadingDirectives(false, false, List.of()), TerrainShadingDirectives.fromProperties(Map.of()),
+                "Iris's oldLighting and separateAo default to off");
+        assertTrue(TerrainShadingDirectives.DEFAULTS.disablesDirectionalShading()
+                        && !TerrainShadingDirectives.VANILLA.disablesDirectionalShading()
+                        && !TerrainShadingDirectives.VANILLA.separateAo(),
+                "a pack without directives lights faces itself; vanilla keeps shading and AO in RGB");
+        for (String key : List.of("oldLighting", "separateAo")) {
+            for (String value : List.of("true", "1", " true ")) {
+                var directives = TerrainShadingDirectives.fromProperties(Map.of(key, value));
+                assertTrue(terrainShading(directives, key) && directives.deviations().isEmpty(), key + "=" + value + " switches on");
+            }
+            for (String value : List.of("false", "0")) {
+                var directives = TerrainShadingDirectives.fromProperties(Map.of(key, value));
+                assertTrue(!terrainShading(directives, key) && directives.deviations().isEmpty(), key + "=" + value + " switches off");
+            }
         }
-        for (String value : List.of("false", "0")) {
-            var directive = OldLightingDirective.fromProperties(java.util.Map.of("oldLighting", value));
-            assertTrue(directive.disablesDirectionalShading() && directive.deviations().isEmpty(),
-                    "oldLighting=" + value + " removes shading");
-        }
-        var malformed = OldLightingDirective.fromProperties(java.util.Map.of("oldLighting", "yes"));
-        assertTrue(malformed.disablesDirectionalShading()
-                        && malformed.deviations().contains("OLD_LIGHTING_DIRECTIVE_MALFORMED"),
-                "an unexpected value keeps Iris's default and is reported: " + malformed);
+        var malformed = TerrainShadingDirectives.fromProperties(Map.of("oldLighting", "yes", "separateAo", "maybe"));
+        assertTrue(malformed.disablesDirectionalShading() && !malformed.separateAo()
+                        && malformed.deviations().containsAll(List.of(
+                                "OLD_LIGHTING_DIRECTIVE_MALFORMED", "SEPARATE_AO_DIRECTIVE_MALFORMED")),
+                "unexpected values keep Iris's defaults and are reported: " + malformed);
 
-        Path root = Files.createTempDirectory("chimera-old-lighting-");
+        Path root = Files.createTempDirectory("chimera-terrain-shading-");
         try {
             Path shaders = Files.createDirectory(root.resolve("shaders"));
-            Files.writeString(shaders.resolve("shaders.properties"), "oldLighting=true\n");
+            Files.writeString(shaders.resolve("shaders.properties"), "oldLighting=true\nseparateAo=true\n");
             Files.writeString(shaders.resolve("final.fsh"), """
                     #version 120
                     uniform sampler2D colortex0;
@@ -1742,31 +1751,52 @@ public final class ConformanceHarness {
                         gl_FragColor = texture2D(colortex0, vec2(0.5));
                     }
                     """);
-            assertTrue(PackProbe.analyze(root).plan().oldLighting().oldLighting(),
-                    "the pack plan reads shaders.properties oldLighting");
+            var shading = PackProbe.analyze(root).plan().terrainShading();
+            assertTrue(shading.oldLighting() && shading.separateAo(),
+                    "the pack plan reads shaders.properties oldLighting and separateAo: " + shading);
         } finally {
             deleteTree(root);
         }
 
-        var mixin = nativeClass("net/chimera/mixin/ChimeraClientLevelShadeMixin");
-        boolean targetsClientLevel = false;
-        for (var annotation : annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations)) {
-            if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")) continue;
-            Object targets = annotationValue(annotation, "value");
-            targetsClientLevel = targets instanceof List<?> list && list.stream().anyMatch(type ->
-                    ((org.objectweb.asm.Type) type).getInternalName().equals("net/minecraft/client/multiplayer/ClientLevel"));
-        }
-        boolean shadeHook = false;
-        for (var method : mixin.methods) {
+        // Iris XHFPTerrainVertex: ColorABGR.withAlpha(tint, brightness) instead of mulRGB.
+        assertEquals(0x7F336699, net.chimera.render.vertex.SeparateAoColor.argb(0xFF336699, 0.5F),
+                "a block quad keeps its tint and carries the brightness in alpha");
+        assertEquals(0xFF336699, net.chimera.render.vertex.SeparateAoColor.argb(0x00336699, 1.0004F),
+                "a brightness rounding just above 1 stays opaque instead of wrapping to 0");
+        assertEquals(0xCC3F7FFF, net.chimera.render.vertex.SeparateAoColor.rgba(1.0F, 0.5F, 0.25F, 0.8F),
+                "a fluid vertex keeps its tint and carries brightness times shade in alpha");
+        String fixedVertex = resourceText("assets/chimera/shaders/chimera_terrain/chimera_terrain.vsh");
+        String separateAoVertex = net.chimera.render.shader.ChimeraTerrainPipelines.withSeparateAo(fixedVertex);
+        assertTrue(fixedVertex.contains("#ifdef CHIMERA_SEPARATE_AO")
+                        && separateAoVertex.replace("\r\n", "\n").startsWith("#version 460\n#define CHIMERA_SEPARATE_AO\n"),
+                "Chimera's own terrain pipeline folds the alpha brightness back into RGB under separateAo");
+        compileVertex(separateAoVertex, "chimera_terrain_separate_ao.vsh");
+
+        var shadeMixin = nativeClass("net/chimera/mixin/ChimeraClientLevelShadeMixin");
+        boolean shadeArgument = false;
+        for (var method : shadeMixin.methods) {
             for (var annotation : annotations(method.visibleAnnotations, method.invisibleAnnotations)) {
                 if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/ModifyVariable;")) continue;
-                shadeHook = annotationValue(annotation, "method") instanceof List<?> names && names.contains("getShade")
+                shadeArgument = annotationValue(annotation, "method") instanceof List<?> names && names.contains("getShade")
                         && Boolean.TRUE.equals(annotationValue(annotation, "argsOnly"))
                         && method.desc.equals("(Z)Z");
             }
         }
-        assertTrue(targetsClientLevel && shadeHook, "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
-        assertMixinRegistered("ChimeraClientLevelShadeMixin");
+        assertTrue(mixinTargets(shadeMixin, "net/minecraft/client/multiplayer/ClientLevel") && shadeArgument,
+                "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
+        var blockMixin = nativeClass("net/chimera/mixin/ChimeraBlockSeparateAoMixin");
+        assertTrue(mixinTargets(blockMixin, "net/vulkanmod/render/chunk/build/frapi/render/AbstractBlockRenderContext")
+                        && injects(blockMixin, "Lorg/spongepowered/asm/mixin/injection/Redirect;", "shadeQuad",
+                        "Lnet/vulkanmod/render/chunk/build/frapi/helper/ColorHelper;multiplyRGB(IF)I"),
+                "block quads route VulkanMod's brightness multiply through separateAo");
+        var fluidMixin = nativeClass("net/chimera/mixin/FluidRendererMixin");
+        assertTrue(mixinTargets(fluidMixin, "net/vulkanmod/render/chunk/build/renderer/FluidRenderer")
+                        && injects(fluidMixin, "Lorg/spongepowered/asm/mixin/injection/Inject;", "updateColor", null),
+                "fluid colours apply separateAo after VulkanMod computes them");
+        for (String name : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin", "FluidRendererMixin")) {
+            assertMixinRegistered(name);
+        }
+
         var pass = nativeClass("net/chimera/render/ChimeraMainPass");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
             var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
@@ -1775,13 +1805,69 @@ public final class ConformanceHarness {
             for (var instruction : method.instructions) {
                 if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
                         && call.owner.equals("net/chimera/render/shader/ChimeraTerrainPipelines")
-                        && call.name.equals("setDirectionalShadingDisabled")) {
+                        && call.name.equals("setTerrainShading")) {
                     applies = true;
                 }
             }
-            assertTrue(applies, "ChimeraMainPass." + name + " applies the directional shading state");
+            assertTrue(applies, "ChimeraMainPass." + name + " applies the terrain shading state");
         }
-        System.out.println("[chimera] oldLighting directional shading (directive, mixin, install): PASS");
+        System.out.println("[chimera] terrain shading oldLighting/separateAo (directives, encoding, mixins, install): PASS");
+    }
+
+    private static boolean terrainShading(TerrainShadingDirectives directives, String key) {
+        return key.equals("oldLighting") ? directives.oldLighting() : directives.separateAo();
+    }
+
+    private static boolean mixinTargets(org.objectweb.asm.tree.ClassNode mixin, String target) {
+        for (var annotation : annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations)) {
+            if (annotation.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")
+                    && annotationValue(annotation, "value") instanceof List<?> list && list.stream().anyMatch(type ->
+                    ((org.objectweb.asm.Type) type).getInternalName().equals(target))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True when an injector of {@code desc} names {@code method} and, if given, an @At {@code target}. */
+    private static boolean injects(org.objectweb.asm.tree.ClassNode mixin, String desc, String method, String target) {
+        for (var handler : mixin.methods) {
+            for (var annotation : annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
+                if (!annotation.desc.equals(desc)
+                        || !(annotationValue(annotation, "method") instanceof List<?> names && names.contains(method))) {
+                    continue;
+                }
+                Object at = annotationValue(annotation, "at");
+                List<?> ats = at instanceof List<?> list ? list : at == null ? List.of() : List.of(at);
+                if (target == null || ats.stream().anyMatch(value ->
+                        value instanceof org.objectweb.asm.tree.AnnotationNode node && target.equals(annotationValue(node, "target")))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static String resourceText(String path) throws IOException {
+        try (var input = ConformanceHarness.class.getClassLoader().getResourceAsStream(path)) {
+            if (input == null) throw new IOException("missing resource " + path);
+            return new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    private static void compileVertex(String source, String name) {
+        long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
+        long result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_spv(compiler, source,
+                org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_vertex_shader, name, "main", 0L);
+        try {
+            assertTrue(result != 0 && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)
+                            == org.lwjgl.util.shaderc.Shaderc.shaderc_compilation_status_success,
+                    name + " compiles: " + (result == 0 ? "no shader result"
+                            : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result)));
+        } finally {
+            if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
+            org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
+        }
     }
 
     /**

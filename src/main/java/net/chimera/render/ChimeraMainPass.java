@@ -2279,7 +2279,7 @@ public class ChimeraMainPass implements MainPass {
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
-        ChimeraTerrainPipelines.setDirectionalShadingDisabled(false);
+        ChimeraTerrainPipelines.setTerrainShading(net.chimera.shaderpack.TerrainShadingDirectives.VANILLA);
         PackUniformProvider.resetSession();
     }
 
@@ -2821,7 +2821,7 @@ public class ChimeraMainPass implements MainPass {
             if (dir == null) LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
-            ChimeraTerrainPipelines.setDirectionalShadingDisabled(false);
+            ChimeraTerrainPipelines.setTerrainShading(net.chimera.shaderpack.TerrainShadingDirectives.VANILLA);
             PackUniformProvider.installRuntimeSettings(null);
             this.packNeedsHdrDepth = false;
             return;
@@ -2848,10 +2848,10 @@ public class ChimeraMainPass implements MainPass {
                 this.shadowCulling.entities(renderDistance).describe(), renderDistance,
                 this.shadowCulling.deviations().isEmpty() ? "" : " " + this.shadowCulling.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(this.packPlan.terrainMaterial());
-        net.chimera.shaderpack.OldLightingDirective lighting = this.packPlan.oldLighting();
-        LOGGER.info("[chimera] pack oldLighting: {}{}", lighting.oldLighting(),
-                lighting.deviations().isEmpty() ? "" : " " + lighting.deviations());
-        ChimeraTerrainPipelines.setDirectionalShadingDisabled(lighting.disablesDirectionalShading());
+        net.chimera.shaderpack.TerrainShadingDirectives shading = this.packPlan.terrainShading();
+        LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}{}", shading.oldLighting(),
+                shading.separateAo(), shading.deviations().isEmpty() ? "" : " " + shading.deviations());
+        ChimeraTerrainPipelines.setTerrainShading(shading);
         this.screenOverlays = this.packPlan.screenOverlays();
         LOGGER.info("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
                 this.screenOverlays.vignette(), this.screenOverlays.underwaterOverlay(),

@@ -54,7 +54,7 @@ public final class TerrainTangentCodecHarness {
      */
     private static void checkFluidNormal() {
         net.chimera.shaderpack.TerrainMaterialPlan plan = new net.chimera.shaderpack.TerrainMaterialPlan(
-                true, true, true, true, false, java.util.List.of());
+                true, true, true, true, java.util.List.of());
         ChimeraExtVertexBuilder builder = new ChimeraExtVertexBuilder(plan);
         int stride = plan.stride();
         long base = org.lwjgl.system.MemoryUtil.nmemCalloc(4, stride);

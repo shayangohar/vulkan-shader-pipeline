@@ -25,10 +25,11 @@ public final class M81ConformanceHarness {
         PackPlan plan = analysis.plan();
         assertTrue(plan != null, "M8.1 fixture plan is missing");
         assertTrue(plan.terrainMaterial().modern(), "modern terrain material plan was not selected");
-        assertTrue(plan.terrainMaterial().separateAo(), "separateAo did not select the AO word");
-        assertTrue(plan.terrainMaterial().stride() == 40, "modern AO stride is not 40 bytes");
-        assertTrue(ChimeraVertexFormats.terrainFormat(plan.terrainMaterial()).getVertexSize() == 40,
-                "modern AO vertex format is not 40 bytes");
+        // Iris carries separateAo in the colour's alpha, so it does not widen the layout.
+        assertTrue(plan.terrainShading().separateAo(), "the fixture's separateAo was not read");
+        assertTrue(plan.terrainMaterial().stride() == 36, "modern stride is not 36 bytes under separateAo");
+        assertTrue(ChimeraVertexFormats.terrainFormat(plan.terrainMaterial()).getVertexSize() == 36,
+                "modern vertex format is not 36 bytes under separateAo");
 
         verifyModernProgram(plan, "gbuffers_terrain");
         verifyModernProgram(plan, "gbuffers_water");
@@ -174,12 +175,9 @@ public final class M81ConformanceHarness {
     }
 
     private static void verifyFormatWidths() {
-        TerrainMaterialPlan modern = new TerrainMaterialPlan(true, true, true, true, false, java.util.List.of());
-        TerrainMaterialPlan ao = new TerrainMaterialPlan(true, true, true, true, true, java.util.List.of());
+        TerrainMaterialPlan modern = new TerrainMaterialPlan(true, true, true, true, java.util.List.of());
         assertTrue(ChimeraVertexFormats.terrainFormat(modern).getVertexSize() == 36,
                 "modern terrain format is not 36 bytes");
-        assertTrue(ChimeraVertexFormats.terrainFormat(ao).getVertexSize() == 40,
-                "modern AO format is not 40 bytes");
         assertTrue(ChimeraVertexFormats.terrainFormat(modern)
                         .getElementAttributeNames().contains("MidBlock"),
                 "modern format omitted MidBlock");

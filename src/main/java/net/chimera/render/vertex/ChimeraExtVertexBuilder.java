@@ -73,9 +73,6 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         MemoryUtil.memPutInt(ptr + 28, encodeMidBlock(x, y, z));
         // The fourth byte carries the quad tangent once the polygon closes.
         MemoryUtil.memPutInt(ptr + 32, packedNormal & 0x00FFFFFF);
-        if (materialPlan.separateAo()) {
-            MemoryUtil.memPutInt(ptr + 36, 0xFFFFFFFF);
-        }
 
         int index = polygonVertices++;
         if (index < 4) {
@@ -143,9 +140,6 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
             // VulkanMod's packed face normal, with the quad tangent frame in
             // its spare byte (TerrainTangentCodec).
             MemoryUtil.memPutInt(ptr + 32, TerrainTangentCodec.encode(polygonNormals[index], tangent));
-            if (materialPlan.separateAo()) {
-                MemoryUtil.memPutInt(ptr + 36, 0xFFFFFFFF);
-            }
         }
         polygonVertices = 0;
         Arrays.fill(polygonPointers, 0L);

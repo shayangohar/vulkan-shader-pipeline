@@ -171,9 +171,9 @@ public record PackPlan(
         return ShadowCasterDirectives.fromProperties(settings.propertyValues());
     }
 
-    /** Whether the pack keeps Minecraft's directional face shading (Iris oldLighting, default off). */
-    public OldLightingDirective oldLighting() {
-        return OldLightingDirective.fromProperties(settings.propertyValues());
+    /** How terrain vertex colours carry block lighting (Iris oldLighting and separateAo, both default off). */
+    public TerrainShadingDirectives terrainShading() {
+        return TerrainShadingDirectives.fromProperties(settings.propertyValues());
     }
 
     /** Which of Minecraft's screen overlays the pack keeps (Iris vignette and underwaterOverlay, default off). */

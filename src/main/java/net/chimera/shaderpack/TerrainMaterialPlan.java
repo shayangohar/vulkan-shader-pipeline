@@ -9,7 +9,6 @@ public record TerrainMaterialPlan(
         boolean midTexCoord,
         boolean midBlock,
         boolean tangent,
-        boolean separateAo,
         List<String> deviations
 ) {
     public TerrainMaterialPlan {
@@ -17,19 +16,18 @@ public record TerrainMaterialPlan(
     }
 
     public static TerrainMaterialPlan legacy() {
-        return new TerrainMaterialPlan(false, false, false, false, false, List.of());
+        return new TerrainMaterialPlan(false, false, false, false, List.of());
     }
 
-    /** The common modern contract is twelve bytes, plus an optional AO word. */
+    /** The common modern contract appends twelve bytes to the 24-byte host prefix. */
     public int stride() {
-        return modern ? 24 + 12 + (separateAo ? 4 : 0) : 24;
+        return modern ? 24 + 12 : 24;
     }
 
     public static TerrainMaterialPlan forProgram(
             String name,
             String vertexSource,
-            String fragmentSource,
-            PackConfig.PackConfigData config
+            String fragmentSource
     ) {
         if (!name.equals("gbuffers_terrain") && !name.equals("gbuffers_water")
                 && !name.equals("shadow")) {
@@ -49,14 +47,7 @@ public record TerrainMaterialPlan(
                 : "MODERN_TERRAIN_VERTEX_BRIDGE");
         deviations.add("TERRAIN_NORMAL_AUTHORITATIVE");
         deviations.add("TERRAIN_TANGENT_DERIVED_FALLBACK");
-        boolean separateAo = config != null
-                && config.settings() != null
-                && "true".equalsIgnoreCase(config.settings().propertyValues().get("separateAo"));
-        if (separateAo) {
-            deviations.add("SEPARATE_AO_ATTRIBUTE");
-            deviations.add("SEPARATE_AO_HOST_COLOR_FALLBACK");
-        }
-        return new TerrainMaterialPlan(true, true, true, true, separateAo, deviations);
+        return new TerrainMaterialPlan(true, true, true, true, deviations);
     }
 
     public TerrainMaterialPlan merge(TerrainMaterialPlan other) {
@@ -69,7 +60,6 @@ public record TerrainMaterialPlan(
                 midTexCoord || other.midTexCoord(),
                 midBlock || other.midBlock(),
                 tangent || other.tangent(),
-                separateAo || other.separateAo(),
                 merged);
     }
 }

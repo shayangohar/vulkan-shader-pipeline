@@ -3513,7 +3513,6 @@ public final class LegacyGlslConverter {
             layout(location = 5) in uvec2 inMidTexCoord;
             layout(location = 6) in int inMidBlock;
             layout(location = 7) in vec4 inTangent;
-            layout(location = 8) in vec4 inSeparateAo;
 
             vec2 chimeraMidTexCoordValue() {
                 return vec2(inMidTexCoord) / 32768.0;
@@ -3555,10 +3554,6 @@ public final class LegacyGlslConverter {
 
             vec3 chimeraNormalValue() {
                 return normalize(inTangent.xyz);
-            }
-
-            vec4 chimeraSeparateAoValue() {
-                return inSeparateAo;
             }
 
             """;

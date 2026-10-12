@@ -8,6 +8,7 @@ import net.chimera.render.vertex.ChimeraExtTerrainBuilder;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.PackMaterialResolver;
 import net.chimera.shaderpack.TerrainMaterialPlan;
+import net.chimera.shaderpack.TerrainShadingDirectives;
 import net.minecraft.client.Minecraft;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.shader.PipelineManager;
@@ -33,9 +34,8 @@ import net.vulkanmod.vulkan.shader.SPIRVUtils;
 public final class ChimeraTerrainPipelines {
     private static boolean initialized;
     private static boolean extendedMode;
-    private static GraphicsPipeline terrainPipeline;
-    private static GraphicsPipeline modernTerrainPipeline;
-    private static GraphicsPipeline modernTerrainAoPipeline;
+    /** Chimera's own terrain pipelines by vertex layout (bit 1: modern) and separateAo (bit 0). */
+    private static final GraphicsPipeline[] fixedPipelines = new GraphicsPipeline[4];
     private static PackMaterialResolver materialResolver = PackMaterialResolver.empty();
     private static TerrainMaterialPlan materialPlan = TerrainMaterialPlan.legacy();
     /** Pack geometry program (gbuffers_terrain) installed over the chimera terrain pipeline; null = none. */
@@ -46,6 +46,8 @@ public final class ChimeraTerrainPipelines {
     private static boolean translucentOverrideSuspended;
     /** True while the installed pack removes Minecraft's directional face shading; chunk builders read it. */
     private static volatile boolean directionalShadingDisabled;
+    /** True while the installed pack takes block brightness in the vertex colour's alpha; chunk builders read it. */
+    private static volatile boolean separateAo;
 
     private ChimeraTerrainPipelines() {}
 
@@ -58,17 +60,36 @@ public final class ChimeraTerrainPipelines {
     }
 
     /**
-     * Applies the installed pack's oldLighting, or restores vanilla shading when no pack is
-     * installed. Chunk meshes bake the shade into their vertex colours, so a change rebuilds
-     * the live level, as Iris reloads chunks when its directional shading setting changes.
+     * True while Chimera's terrain meshes carry the light pipeline's brightness in the vertex
+     * colour's alpha instead of multiplying it into RGB (Iris separateAo). Host-format meshes
+     * never do: VulkanMod's own terrain shader reads alpha as opacity.
      */
-    public static void setDirectionalShadingDisabled(boolean disabled) {
-        if (directionalShadingDisabled == disabled) {
+    public static boolean separateAoActive() {
+        return separateAo && extendedMode;
+    }
+
+    /**
+     * Applies the installed pack's oldLighting and separateAo, or
+     * {@link TerrainShadingDirectives#VANILLA} when no pack is installed. Chunk meshes bake
+     * both into their vertex colours, so a change rebuilds the live level once, as Iris reloads
+     * chunks when either of its WorldRenderingSettings values changes.
+     */
+    public static void setTerrainShading(TerrainShadingDirectives directives) {
+        TerrainShadingDirectives next = directives == null ? TerrainShadingDirectives.VANILLA : directives;
+        boolean shadingDisabled = next.disablesDirectionalShading();
+        if (directionalShadingDisabled == shadingDisabled && separateAo == next.separateAo()) {
             return;
         }
-        directionalShadingDisabled = disabled;
-        ChimeraMod.LOGGER.info("[chimera] directional shading: {}", disabled ? "off (pack lights faces)" : "vanilla");
-        rebuildLiveLevel("directional shading changed");
+        directionalShadingDisabled = shadingDisabled;
+        separateAo = next.separateAo();
+        ChimeraMod.LOGGER.info("[chimera] terrain shading: directional shading {}, ambient occlusion {}",
+                shadingDisabled ? "off (pack lights faces)" : "vanilla",
+                separateAo ? "in vertex alpha (separateAo)" : "in vertex RGB");
+        if (initialized && extendedMode) {
+            // Build the matching fixed pipeline here rather than on first draw.
+            fixedPipeline();
+        }
+        rebuildLiveLevel("terrain shading changed");
     }
 
     /**
@@ -94,7 +115,8 @@ public final class ChimeraTerrainPipelines {
             return;
         }
 
-        terrainPipeline = buildPipeline("chimera_terrain", ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN);
+        fixedPipelines[0] = buildPipeline("chimera_terrain", ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN,
+                "chimera_terrain", false);
         initialized = true;
 
         ChimeraMod.LOGGER.info("chimera terrain pipeline ready: stride={}B attributes={}",
@@ -151,7 +173,7 @@ public final class ChimeraTerrainPipelines {
         }
         materialPlan = next;
         if (initialized && extendedMode) {
-            ensureFixedPipeline();
+            fixedPipeline();
             setTerrainMode(true);
         }
     }
@@ -233,14 +255,11 @@ public final class ChimeraTerrainPipelines {
         }
     }
 
-    private static GraphicsPipeline buildPipeline(String name, VertexFormat vertexFormat) {
-        return buildPipeline(name, vertexFormat, name);
-    }
-
     private static GraphicsPipeline buildPipeline(
             String name,
             VertexFormat vertexFormat,
-            String shaderConfigName
+            String shaderConfigName,
+            boolean separateAo
     ) {
         JsonObject json = ChimeraShaderLoader.loadJson(shaderConfigName + ".json");
         PipelineConfig config = PipelineConfig.fromJson(name, json);
@@ -250,7 +269,9 @@ public final class ChimeraTerrainPipelines {
 
         String vertexPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.VERTEX_SHADER);
         String fragmentPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.FRAGMENT_SHADER);
-        builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, ChimeraShaderLoader.loadSource(vertexPath + ".vsh"));
+        String vertexSource = ChimeraShaderLoader.loadSource(vertexPath + ".vsh");
+        builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
+                separateAo ? withSeparateAo(vertexSource) : vertexSource);
         builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
 
         GraphicsPipeline pipeline = builder.createGraphicsPipeline();
@@ -263,26 +284,30 @@ public final class ChimeraTerrainPipelines {
         return pipeline;
     }
 
-    private static void ensureFixedPipeline() {
-        if (!initialized || !materialPlan.modern()) {
-            return;
+    /**
+     * Defines CHIMERA_SEPARATE_AO after the #version line. The vertex shader then multiplies
+     * the brightness that separateAo meshes carry in alpha back into RGB, as the vanilla
+     * terrain shader would have seen it, and keeps the block opaque.
+     */
+    public static String withSeparateAo(String source) {
+        int lineEnd = source.indexOf('\n', source.indexOf("#version"));
+        if (lineEnd < 0) {
+            throw new IllegalArgumentException("chimera_terrain vertex shader has no #version line");
         }
-        if (materialPlan.separateAo()) {
-            if (modernTerrainAoPipeline == null) {
-                modernTerrainAoPipeline = buildPipeline("chimera_terrain_modern_ao",
-                        ChimeraVertexFormats.MODERN_COMPRESSED_TERRAIN_AO, "chimera_terrain");
-            }
-        } else if (modernTerrainPipeline == null) {
-            modernTerrainPipeline = buildPipeline("chimera_terrain_modern",
-                    ChimeraVertexFormats.MODERN_COMPRESSED_TERRAIN, "chimera_terrain");
-        }
+        return source.substring(0, lineEnd + 1) + "#define CHIMERA_SEPARATE_AO\n" + source.substring(lineEnd + 1);
     }
 
+    /** The fixed pipeline for the session's vertex layout and separateAo, built on first use. */
     private static GraphicsPipeline fixedPipeline() {
-        ensureFixedPipeline();
-        if (materialPlan.modern()) {
-            return materialPlan.separateAo() ? modernTerrainAoPipeline : modernTerrainPipeline;
+        boolean modern = materialPlan.modern();
+        int variant = (modern ? 2 : 0) | (separateAo ? 1 : 0);
+        GraphicsPipeline pipeline = fixedPipelines[variant];
+        if (pipeline == null) {
+            String name = "chimera_terrain" + (modern ? "_modern" : "") + (separateAo ? "_separate_ao" : "");
+            pipeline = buildPipeline(name, ChimeraVertexFormats.terrainFormat(materialPlan), "chimera_terrain",
+                    separateAo);
+            fixedPipelines[variant] = pipeline;
         }
-        return terrainPipeline;
+        return pipeline;
     }
 }
