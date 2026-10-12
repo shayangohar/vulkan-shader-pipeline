@@ -117,22 +117,91 @@ final class PackCompileCheck {
 
     /**
      * Translates the plan's supported shadowcomp exactly as the runtime does
-     * ({@link net.chimera.render.PackShadowCompute#translatedSource}) and compiles it. Returns
-     * the first error, or null when it compiles or the plan schedules no shadowcomp. Solas fell
-     * to vanilla in game on a translation failure no offline check ran.
+     * ({@link net.chimera.render.PackShadowCompute#translatedModule}), compiles it, and checks
+     * its uniform block against the offsets dispatch writes. Returns the first error, or null
+     * when it passes or the plan schedules no shadowcomp. Solas fell to vanilla in game on a
+     * translation failure no offline check ran.
      */
     static String compileShadowCompute(Path pack, PackPlan plan) {
         if (!hasShadowCompute(plan)) return null;
         try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            String source = net.chimera.render.PackShadowCompute.translatedSource(
+            var module = net.chimera.render.PackShadowCompute.translatedModule(
                     plan.advancedResources(), loaded.shadersDir(),
                     plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
-            String error = compile(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_compute_shader, "pack.csh");
-            if (error != null) error += " [" + dump(pack, "shadowcomp.csh", source) + "]";
+            java.util.Map<String, Integer> written = new java.util.LinkedHashMap<>();
+            for (var uniform : module.uniforms()) written.put(uniform.name(), uniform.offset());
+            String error = compileComputeValues(module.source(), written);
+            if (error != null) error += " [" + dump(pack, "shadowcomp.csh", module.source()) + "]";
             return error;
         } catch (java.io.IOException | RuntimeException failure) {
             return "translation failed: " + failure.getMessage();
         }
+    }
+
+    /**
+     * Compiles a compute source and checks that its ChimeraShadowComputeValues block reads each
+     * value at the byte offset dispatch writes it. Returns the first error or disagreement, or
+     * null. Solas's frameCounter, declared after a vec3, read the vec3's padding word under
+     * implicit std140 packing and stayed 0, so its floodfill wrote one image only and flickered.
+     */
+    static String compileComputeValues(String source, java.util.Map<String, Integer> written) {
+        Compiled compiled = spirv(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_compute_shader, "pack.csh");
+        if (compiled.error() != null) return compiled.error();
+        java.util.Map<String, Integer> read = blockMemberOffsets(compiled.words(), "ChimeraShadowComputeValues");
+        for (var value : written.entrySet()) {
+            Integer offset = read.get(value.getKey());
+            if (!value.getValue().equals(offset)) {
+                return "uniform " + value.getKey() + " is written at offset " + value.getValue()
+                        + " but the compiled block reads offset " + offset;
+            }
+        }
+        return null;
+    }
+
+    /** Byte offset of each member of the named block, by member name, from SPIR-V decorations. */
+    private static java.util.Map<String, Integer> blockMemberOffsets(int[] words, String block) {
+        java.util.Map<Integer, String> names = new java.util.HashMap<>();
+        java.util.Map<Long, String> memberNames = new java.util.HashMap<>();
+        java.util.Map<Long, Integer> memberOffsets = new java.util.HashMap<>();
+        for (int index = 5; index < words.length; ) {
+            int count = words[index] >>> 16;
+            int opcode = words[index] & 0xFFFF;
+            if (count == 0) throw new IllegalStateException("malformed SPIR-V at word " + index);
+            if (opcode == 5) { // OpName
+                names.put(words[index + 1], spirvString(words, index + 2, index + count));
+            } else if (opcode == 6) { // OpMemberName
+                memberNames.put(member(words[index + 1], words[index + 2]),
+                        spirvString(words, index + 3, index + count));
+            } else if (opcode == 72 && words[index + 3] == 35) { // OpMemberDecorate ... Offset
+                memberOffsets.put(member(words[index + 1], words[index + 2]), words[index + 4]);
+            }
+            index += count;
+        }
+        java.util.Map<String, Integer> offsets = new java.util.HashMap<>();
+        for (var name : names.entrySet()) {
+            if (!name.getValue().equals(block)) continue;
+            for (var member : memberNames.entrySet()) {
+                if ((int) (member.getKey() >>> 32) != name.getKey()) continue;
+                offsets.put(member.getValue(), memberOffsets.get(member.getKey()));
+            }
+        }
+        return offsets;
+    }
+
+    private static long member(int type, int member) {
+        return ((long) type << 32) | (member & 0xFFFFFFFFL);
+    }
+
+    private static String spirvString(int[] words, int from, int end) {
+        StringBuilder text = new StringBuilder();
+        for (int index = from; index < end; index++) {
+            for (int shift = 0; shift < 32; shift += 8) {
+                int character = (words[index] >>> shift) & 0xFF;
+                if (character == 0) return text.toString();
+                text.append((char) character);
+            }
+        }
+        return text.toString();
     }
 
     /** VulkanMod's shaderc settings; returns the first error line, or null on success. */
@@ -141,7 +210,14 @@ final class PackCompileCheck {
                 : compile(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
     }
 
+    /** A shaderc result: the SPIR-V words on success, otherwise the first error line. */
+    private record Compiled(int[] words, String error) {}
+
     private static String compile(String source, int kind, String fileName) {
+        return spirv(source, kind, fileName).error();
+    }
+
+    private static Compiled spirv(String source, int kind, String fileName) {
         long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
         long options = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_initialize();
         // Heap buffers and explicit sizes: large sources overflow LWJGL's stack
@@ -161,14 +237,17 @@ final class PackCompileCheck {
                     org.lwjgl.system.MemoryUtil.memAddress(entry), options);
             if (result != 0 && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)
                     == org.lwjgl.util.shaderc.Shaderc.shaderc_compilation_status_success) {
-                return null;
+                java.nio.ByteBuffer bytes = org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_bytes(result);
+                int[] words = new int[bytes.remaining() / 4];
+                bytes.order(java.nio.ByteOrder.nativeOrder()).asIntBuffer().get(words);
+                return new Compiled(words, null);
             }
             String message = result == 0 ? "no result"
                     : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result);
-            if (message == null) return "unknown";
+            if (message == null) return new Compiled(null, "unknown");
             // Warnings precede errors in shaderc's report; name the first error.
-            return message.strip().lines().filter(line -> line.contains("error")).findFirst()
-                    .orElse(message.strip().lines().findFirst().orElse("unknown"));
+            return new Compiled(null, message.strip().lines().filter(line -> line.contains("error")).findFirst()
+                    .orElse(message.strip().lines().findFirst().orElse("unknown")));
         } finally {
             if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
             org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_release(options);

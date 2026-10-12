@@ -115,9 +115,8 @@ public final class PackShadowCompute implements AutoCloseable {
 
     /**
      * One frame in flight's uniform block and the descriptor set that binds it. Values are
-     * written while the frame is recorded; with one shared block, the next frame's write could
-     * land before the GPU ran this frame's dispatch, and Solas's floodfill, which alternates its
-     * two images by frameCounter parity, read one parity only and left the other image empty.
+     * written while the frame is recorded, so a block shared across frames in flight could be
+     * rewritten while the GPU still runs an earlier frame's dispatch.
      */
     private static final class FrameSlot {
         long descriptorSet;
@@ -147,7 +146,7 @@ public final class PackShadowCompute implements AutoCloseable {
     }
 
     /** A translated shadowcomp module and the resources it binds, in binding order. */
-    private record Module(
+    public record Module(
             String source,
             List<String> imageNames,
             List<String> samplerNames,
@@ -191,11 +190,12 @@ public final class PackShadowCompute implements AutoCloseable {
     }
 
     /**
-     * The shadowcomp source exactly as {@link #load} compiles it, given an owner for every image
+     * The shadowcomp module exactly as {@link #load} builds it, given an owner for every image
      * the plan supports; null when the plan has no supported shadowcomp. The pack compile check
-     * compiles it offline. Throws with the reason when the stage does not translate.
+     * compiles its source offline and checks the uniform offsets against the compiled block.
+     * Throws with the reason when the stage does not translate.
      */
-    public static String translatedSource(
+    public static Module translatedModule(
             PackAdvancedResourcePlan plan,
             Path shadersDir,
             Map<String, String> initialMacros,
@@ -208,7 +208,7 @@ public final class PackShadowCompute implements AutoCloseable {
             PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(symbol);
             return image != null && image.supported();
         };
-        return module(plan, spec, owned, null, shadersDir, initialMacros, lockedMacros).source();
+        return module(plan, spec, owned, null, shadersDir, initialMacros, lockedMacros);
     }
 
     private static Module module(
@@ -681,11 +681,14 @@ public final class PackShadowCompute implements AutoCloseable {
         }
         StringBuilder values = new StringBuilder();
         if (!computeUniforms.isEmpty()) {
+            // Each member states the offset dispatch writes it at. Implicit std140 packs a scalar
+            // into a vec3's fourth word, which this layout leaves empty: Solas's frameCounter,
+            // declared after cameraPosition, read that empty word and stayed 0.
             values.append("layout(std140, binding = ").append(uniformBinding)
                     .append(") uniform ChimeraShadowComputeValues {\n");
             for (ComputeUniform uniform : computeUniforms) {
-                values.append("    ").append(uniform.type()).append(' ')
-                        .append(uniform.name()).append(';').append('\n');
+                values.append("    layout(offset = ").append(uniform.offset()).append(") ")
+                        .append(uniform.type()).append(' ').append(uniform.name()).append(";\n");
             }
             values.append("};\n");
         }
@@ -782,7 +785,8 @@ public final class PackShadowCompute implements AutoCloseable {
         return (value + alignment - 1) / alignment * alignment;
     }
 
-    private record ComputeUniform(String name, String type, int offset, int size) {}
+    /** One live value of the uniform block: dispatch writes it at offset, and the block declares it there. */
+    public record ComputeUniform(String name, String type, int offset, int size) {}
 
     private static boolean isTranslatedResourceDeclaration(
             String type,

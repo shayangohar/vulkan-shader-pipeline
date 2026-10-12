@@ -45,6 +45,7 @@ public final class ConformanceHarness {
         verifyGlslBreadth();
         verifyComputeDeclarationLists();
         verifyComputeFrameSlots();
+        verifyComputeUniformOffsets();
         verifyIndentedProperties();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
@@ -1490,8 +1491,8 @@ public final class ConformanceHarness {
                     "the plan records every image of a declaration list");
             assertEquals(List.of("floodfillSampler", "floodfillSamplerCopy"), compute.samplerNames(),
                     "the plan records every sampler of a declaration list");
-            String translated = net.chimera.render.PackShadowCompute.translatedSource(plan.advancedResources(),
-                    shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
+            String translated = net.chimera.render.PackShadowCompute.translatedModule(plan.advancedResources(),
+                    shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames()).source();
             assertTrue(translated.contains("layout(rgba16f, binding = 1) uniform image3D floodfill_img_copy;")
                             && translated.contains("layout(binding = 3) uniform sampler3D floodfillSamplerCopy;"),
                     "each listed resource takes its own binding: " + translated);
@@ -1505,8 +1506,8 @@ public final class ConformanceHarness {
 
     /**
      * The shadowcomp uniform block is written while a frame is recorded, so each frame in flight
-     * owns one: with a single block the next frame's values reached the GPU before this frame's
-     * dispatch, and Solas's floodfill read one frameCounter parity only and flickered.
+     * owns one: a single block could be rewritten while the GPU still ran the previous frame's
+     * dispatch.
      */
     private static void verifyComputeFrameSlots() throws IOException {
         var compute = nativeClass("net/chimera/render/PackShadowCompute");
@@ -1524,6 +1525,80 @@ public final class ConformanceHarness {
                         || field.name.equals("descriptorSet")),
                 "shadowcomp keeps no uniform block or descriptor set shared across frames in flight");
         System.out.println("[chimera] shadowcomp uniforms per frame in flight: PASS");
+    }
+
+    /**
+     * Solas declares cameraPosition (vec3) before frameCounter. Dispatch wrote frameCounter after
+     * the vec3's padding word, implicit std140 packed it into that word, so the compute read 0,
+     * wrote only floodfill_img_copy, and every light flickered as the gbuffers alternated images.
+     */
+    private static void verifyComputeUniformOffsets() throws IOException {
+        Path root = Files.createTempDirectory("chimera-compute-offsets-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("shaders.properties"), """
+                    iris.features.optional=CUSTOM_IMAGES
+                    image.floodfill_img = floodfillSampler rgba rgba16f half_float false false 8 4 8
+                    image.floodfill_img_copy = floodfillSamplerCopy rgba rgba16f half_float false false 8 4 8
+                    """);
+            Files.writeString(shaders.resolve("shadowcomp.csh"), """
+                    #version 430 compatibility
+                    layout (local_size_x = 2, local_size_y = 2, local_size_z = 2) in;
+                    uniform vec3 cameraPosition;
+                    uniform int frameCounter;
+                    uniform float frameTimeCounter;
+                    uniform vec3 previousCameraPosition;
+                    uniform float wetness;
+                    writeonly uniform image3D floodfill_img, floodfill_img_copy;
+                    uniform sampler3D floodfillSampler, floodfillSamplerCopy;
+                    void main() {
+                        ivec3 pos = ivec3(gl_GlobalInvocationID);
+                        vec3 shift = cameraPosition - previousCameraPosition;
+                        vec4 value = vec4(shift, frameTimeCounter + wetness);
+                        if ((frameCounter & 1) == 0) {
+                            imageStore(floodfill_img_copy, pos, value + texelFetch(floodfillSampler, pos, 0));
+                        } else {
+                            imageStore(floodfill_img, pos, value + texelFetch(floodfillSamplerCopy, pos, 0));
+                        }
+                    }
+                    """);
+            Files.writeString(shaders.resolve("final.fsh"), """
+                    #version 120
+                    uniform sampler2D colortex0;
+                    void main() {
+                        gl_FragColor = texture2D(colortex0, vec2(0.5));
+                    }
+                    """);
+            PackPlan plan = PackProbe.analyze(root).plan();
+            var module = net.chimera.render.PackShadowCompute.translatedModule(plan.advancedResources(),
+                    shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
+            assertEquals(List.of("cameraPosition", "frameCounter", "frameTimeCounter", "previousCameraPosition",
+                            "wetness"), module.uniforms().stream().map(uniform -> uniform.name()).toList(),
+                    "every live value joins the uniform block");
+            String error = PackCompileCheck.compileShadowCompute(root, plan);
+            assertTrue(error == null, "the compiled block reads each value where dispatch writes it: " + error);
+            // The block as Chimera declared it before, with implicit offsets, against the offsets
+            // dispatch wrote then: frameCounter after the vec3's padding word, at 16.
+            String implicit = """
+                    #version 450
+                    layout(local_size_x = 1) in;
+                    layout(std140, binding = 0) uniform ChimeraShadowComputeValues {
+                        vec3 cameraPosition;
+                        int frameCounter;
+                    };
+                    layout(rgba16f, binding = 1) uniform image3D target;
+                    void main() {
+                        imageStore(target, ivec3(0), vec4(cameraPosition, float(frameCounter)));
+                    }
+                    """;
+            String mismatch = PackCompileCheck.compileComputeValues(implicit,
+                    java.util.Map.of("cameraPosition", 0, "frameCounter", 16));
+            assertTrue(mismatch != null && mismatch.contains("frameCounter"),
+                    "the offset check reports the implicit layout's frameCounter: " + mismatch);
+        } finally {
+            deleteTree(root);
+        }
+        System.out.println("[chimera] shadowcomp uniform offsets (declared offsets, compiled block): PASS");
     }
 
     /**
