@@ -623,6 +623,15 @@ tasks.register('terrainTangentTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('terrainMidBlockTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks that terrain at_midBlock points at the rendered block centre with its emission, as in Iris.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.vertex.TerrainMidBlockHarness'
+    jvmArgs '-ea'
+}
+
 tasks.register('nanTripwireTest', JavaExec) {
     group = 'verification'
     description = 'Checks NaN tripwire scan coverage and shader; -PnanTripwireGpu=true also runs headless Vulkan.'
@@ -1025,6 +1034,7 @@ tasks.named('check') {
     dependsOn tasks.named('packFrontEndTest')
     dependsOn tasks.named('selectorConfigTest')
     dependsOn tasks.named('terrainTangentTest')
+    dependsOn tasks.named('terrainMidBlockTest')
     dependsOn tasks.named('nanTripwireTest')
     dependsOn tasks.named('mipChainTest')
     dependsOn tasks.named('customUniformInventoryTest')

@@ -46,6 +46,7 @@ public final class ConformanceHarness {
         verifyComputeDeclarationLists();
         verifyComputeFrameSlots();
         verifyComputeUniformOffsets();
+        verifyMidBlockInputs();
         verifyIndentedProperties();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
@@ -1652,6 +1653,58 @@ public final class ConformanceHarness {
         }
         assertEquals("HEAD", point, "the shadow map must render before the opaque layer samples it");
         System.out.println("[chimera] shadow pass before opaque terrain: PASS");
+    }
+
+    /**
+     * Iris hands packs at_midBlock as four unnormalized signed bytes: the offset to the block's
+     * centre in 1/64 blocks, then its light emission. Solas voxelizes each block at
+     * gl_Vertex + at_midBlock / 64.0; Chimera's helper had already divided by 64, so blocks landed
+     * on voxel boundaries, neighbours raced into one voxel, and Solas's lights flickered.
+     */
+    private static void verifyMidBlockInputs() throws IOException {
+        Path root = Files.createTempDirectory("chimera-mid-block-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            writeLegacyShadowProgram(shaders);
+            Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), """
+                    #version 330 compatibility
+                    in vec3 vaPosition;
+                    in vec2 vaUV0;
+                    in vec4 at_midBlock;
+                    out vec2 terrainUv;
+                    out vec4 blockCentre;
+                    void main() {
+                        gl_Position = vec4(vaPosition, 1.0);
+                        terrainUv = vaUV0;
+                        blockCentre = vec4(vaPosition + at_midBlock.xyz / 64.0, at_midBlock.w / 15.0);
+                    }
+                    """);
+            Files.writeString(shaders.resolve("gbuffers_terrain.fsh"), """
+                    #version 330 compatibility
+                    uniform sampler2D texture;
+                    in vec2 terrainUv;
+                    in vec4 blockCentre;
+                    out vec4 fragColor;
+                    void main() {
+                        fragColor = texture2D(texture, terrainUv) * blockCentre;
+                    }
+                    """);
+            var analysis = PackProbe.analyze(root);
+            String shadow = analysis.plan().program("shadow").convertedVertex();
+            assertTrue(shadow.contains("chimeraMidBlockValue().xyz")
+                            && shadow.contains("return vec4(chimeraMidBlockRawValue());"),
+                    "a vec3 at_midBlock reads Iris's raw 1/64-block offset: " + shadow);
+            String terrain = analysis.plan().program("gbuffers_terrain").convertedVertex();
+            assertTrue(terrain.contains("chimeraMidBlockValue().xyz / 64.0")
+                            && terrain.contains("chimeraMidBlockValue().w / 15.0")
+                            && terrain.contains("return vec4(chimeraMidBlockRawValue());"),
+                    "a vec4 at_midBlock reads the raw offset and the emission byte: " + terrain);
+            var compiled = PackCompileCheck.run(root, analysis);
+            assertTrue(compiled.failures().isEmpty(), "at_midBlock programs compile: " + compiled.failures());
+        } finally {
+            deleteTree(root);
+        }
+        System.out.println("[chimera] terrain at_midBlock inputs (raw offset, emission): PASS");
     }
 
     /** BSL-style legacy shadow program: terrain attributes, both identities and both shadow colours. */

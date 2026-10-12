@@ -3139,7 +3139,8 @@ public final class LegacyGlslConverter {
                 case "mc_Entity" -> type.equals("float") || type.equals("vec2") || type.equals("vec3")
                         || type.equals("vec4");
                 case "mc_midTexCoord" -> type.equals("vec2") || type.equals("vec4");
-                case "at_midBlock" -> type.equals("vec3") || type.equals("ivec3");
+                case "at_midBlock" -> type.equals("vec3") || type.equals("vec4")
+                        || type.equals("ivec3") || type.equals("ivec4");
                 default -> false;
             };
             if (!supported) {
@@ -3213,7 +3214,7 @@ public final class LegacyGlslConverter {
         replacements.putIfAbsent("gl_Normal", "chimeraNormalValue()");
         replacements.putIfAbsent("mc_Entity", "chimeraMcEntityValue()");
         replacements.putIfAbsent("mc_midTexCoord", "chimeraMidTexCoordValue()");
-        replacements.putIfAbsent("at_midBlock", "chimeraMidBlockValue()");
+        replacements.putIfAbsent("at_midBlock", "chimeraMidBlockValue().xyz");
         replacements.putIfAbsent("at_tangent", "chimeraTangentValue()");
         replacements.putIfAbsent("gl_ModelViewMatrix", "gbufferModelView");
         replacements.putIfAbsent("gl_NormalMatrix", "mat3(gbufferModelView)");
@@ -3227,6 +3228,10 @@ public final class LegacyGlslConverter {
                 replacements.put(name, type.equals("vec4")
                         ? "vec4(chimeraMidTexCoordValue(), 0.0, 1.0)"
                         : "chimeraMidTexCoordValue()");
+            }
+            if (name.equals("at_midBlock")) {
+                String expression = modernTerrainInputExpression(type, name);
+                if (!expression.isBlank()) replacements.put(name, expression);
             }
         }
         return replacements;
@@ -3291,11 +3296,7 @@ public final class LegacyGlslConverter {
                     case "vec4" -> "vec4(chimeraMidTexCoordValue(), 0.0, 1.0)";
                     default -> "";
                 };
-                case "at_midBlock" -> switch (type) {
-                    case "vec3" -> "chimeraMidBlockValue()";
-                    case "ivec3" -> "chimeraMidBlockRawValue().xyz";
-                    default -> "";
-                };
+                case "at_midBlock" -> modernTerrainInputExpression(type, name);
                 default -> "";
             };
             if (!replacement.isBlank()) {
@@ -3352,7 +3353,7 @@ public final class LegacyGlslConverter {
                     };
                 }
                 value = "chimeraMidBlockValue()";
-                baseType = "vec3";
+                baseType = "vec4";
             }
             case "at_tangent" -> {
                 value = "chimeraTangentValue()";
@@ -3530,8 +3531,11 @@ public final class LegacyGlslConverter {
                         bitfieldExtract(inMidBlock, 24, 8));
             }
 
-            vec3 chimeraMidBlockValue() {
-                return vec3(chimeraMidBlockRawValue().xyz) / 64.0;
+            // Iris's at_midBlock: four unnormalized signed bytes, the offset from the
+            // vertex to its block's centre in 1/64 blocks, then the block's light
+            // emission. Packs divide by 64 themselves.
+            vec4 chimeraMidBlockValue() {
+                return vec4(chimeraMidBlockRawValue());
             }
 
             // Iris at_tangent from the quad's UVs, stored as a turn around the
@@ -3689,8 +3693,8 @@ public final class LegacyGlslConverter {
                 return ivec4(0, 0, 0, 1);
             }
 
-            vec3 chimeraMidBlockValue() {
-                return vec3(0.0);
+            vec4 chimeraMidBlockValue() {
+                return vec4(0.0, 0.0, 0.0, 1.0);
             }
 
             vec3 chimeraNormalValue() {
@@ -4180,8 +4184,8 @@ public final class LegacyGlslConverter {
                     return ivec4(0, 0, 0, 1);
                 }
 
-                vec3 chimeraMidBlockValue() {
-                    return vec3(0.0);
+                vec4 chimeraMidBlockValue() {
+                    return vec4(0.0, 0.0, 0.0, 1.0);
                 }
 
                 vec3 chimeraNormalValue() {
