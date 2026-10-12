@@ -44,8 +44,32 @@ public final class ChimeraTerrainPipelines {
     private static GraphicsPipeline translucentOverride;
     /** True for one translucent draw whose pack inputs are not live this frame. */
     private static boolean translucentOverrideSuspended;
+    /** True while the installed pack removes Minecraft's directional face shading; chunk builders read it. */
+    private static volatile boolean directionalShadingDisabled;
 
     private ChimeraTerrainPipelines() {}
+
+    /**
+     * True while the installed pack lights faces itself (Iris oldLighting off), so
+     * ClientLevel.getShade answers unshaded for block and fluid meshing.
+     */
+    public static boolean directionalShadingDisabled() {
+        return directionalShadingDisabled;
+    }
+
+    /**
+     * Applies the installed pack's oldLighting, or restores vanilla shading when no pack is
+     * installed. Chunk meshes bake the shade into their vertex colours, so a change rebuilds
+     * the live level, as Iris reloads chunks when its directional shading setting changes.
+     */
+    public static void setDirectionalShadingDisabled(boolean disabled) {
+        if (directionalShadingDisabled == disabled) {
+            return;
+        }
+        directionalShadingDisabled = disabled;
+        ChimeraMod.LOGGER.info("[chimera] directional shading: {}", disabled ? "off (pack lights faces)" : "vanilla");
+        rebuildLiveLevel("directional shading changed");
+    }
 
     /**
      * Installs/clears the pack geometry override. All terrain getter sites
@@ -144,7 +168,7 @@ public final class ChimeraTerrainPipelines {
         }
         materialResolver = next;
         if (extendedMode) {
-            rebuildLiveLevel();
+            rebuildLiveLevel("material map changed");
         }
     }
 
@@ -197,15 +221,15 @@ public final class ChimeraTerrainPipelines {
         extendedMode = chimeraMode;
 
         if (changed) {
-            rebuildLiveLevel();
+            rebuildLiveLevel("terrain format changed");
         }
     }
 
-    private static void rebuildLiveLevel() {
+    private static void rebuildLiveLevel(String reason) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level != null && minecraft.levelRenderer != null) {
             minecraft.levelRenderer.allChanged();
-            ChimeraMod.LOGGER.info("[chimera] terrain format changed: live level rebuilt (extended={})", extendedMode);
+            ChimeraMod.LOGGER.info("[chimera] {}: live level rebuilt (extended={})", reason, extendedMode);
         }
     }
 

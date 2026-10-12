@@ -23,6 +23,7 @@
     "WorldRendererLevelMixin",
     "FluidRendererMixin",
     "ChimeraBlockRendererMixin",
+    "ChimeraClientLevelShadeMixin",
     "QuadSorterMixin",
     "GraphicsPipelineMrtMixin",
     "ChimeraBufferBuilderMixin",

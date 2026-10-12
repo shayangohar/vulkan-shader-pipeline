@@ -2276,6 +2276,7 @@ public class ChimeraMainPass implements MainPass {
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
+        ChimeraTerrainPipelines.setDirectionalShadingDisabled(false);
         PackUniformProvider.resetSession();
     }
 
@@ -2817,6 +2818,7 @@ public class ChimeraMainPass implements MainPass {
             if (dir == null) LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
+            ChimeraTerrainPipelines.setDirectionalShadingDisabled(false);
             PackUniformProvider.installRuntimeSettings(null);
             this.packNeedsHdrDepth = false;
             return;
@@ -2843,6 +2845,10 @@ public class ChimeraMainPass implements MainPass {
                 this.shadowCulling.entities(renderDistance).describe(), renderDistance,
                 this.shadowCulling.deviations().isEmpty() ? "" : " " + this.shadowCulling.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(this.packPlan.terrainMaterial());
+        net.chimera.shaderpack.OldLightingDirective lighting = this.packPlan.oldLighting();
+        LOGGER.info("[chimera] pack oldLighting: {}{}", lighting.oldLighting(),
+                lighting.deviations().isEmpty() ? "" : " " + lighting.deviations());
+        ChimeraTerrainPipelines.setDirectionalShadingDisabled(lighting.disablesDirectionalShading());
         PackUniformProvider.installRuntimeSettings(this.packPlan.runtimeSettings());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 this.packPlan.selectedDimension(),

@@ -47,6 +47,7 @@ public final class ConformanceHarness {
         verifyComputeFrameSlots();
         verifyComputeUniformOffsets();
         verifyMidBlockInputs();
+        verifyOldLighting();
         verifyIndentedProperties();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
@@ -1705,6 +1706,100 @@ public final class ConformanceHarness {
             deleteTree(root);
         }
         System.out.println("[chimera] terrain at_midBlock inputs (raw offset, emission): PASS");
+    }
+
+    /**
+     * Iris reads oldLighting (default off) and, while a pack is active without it, meshes terrain
+     * and fluids unshaded: ClientLevel.getShade sees shaded = false. Chimera kept Minecraft's face
+     * shading, so Solas's walls and ceiling rendered at 0.5-0.8 of Iris's brightness.
+     */
+    private static void verifyOldLighting() throws IOException {
+        assertTrue(OldLightingDirective.fromProperties(java.util.Map.of()).disablesDirectionalShading(),
+                "Iris's oldLighting defaults to off");
+        for (String value : List.of("true", "1", " true ")) {
+            var directive = OldLightingDirective.fromProperties(java.util.Map.of("oldLighting", value));
+            assertTrue(directive.oldLighting() && directive.deviations().isEmpty(), "oldLighting=" + value + " keeps shading");
+        }
+        for (String value : List.of("false", "0")) {
+            var directive = OldLightingDirective.fromProperties(java.util.Map.of("oldLighting", value));
+            assertTrue(directive.disablesDirectionalShading() && directive.deviations().isEmpty(),
+                    "oldLighting=" + value + " removes shading");
+        }
+        var malformed = OldLightingDirective.fromProperties(java.util.Map.of("oldLighting", "yes"));
+        assertTrue(malformed.disablesDirectionalShading()
+                        && malformed.deviations().contains("OLD_LIGHTING_DIRECTIVE_MALFORMED"),
+                "an unexpected value keeps Iris's default and is reported: " + malformed);
+
+        Path root = Files.createTempDirectory("chimera-old-lighting-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("shaders.properties"), "oldLighting=true\n");
+            Files.writeString(shaders.resolve("final.fsh"), """
+                    #version 120
+                    uniform sampler2D colortex0;
+                    void main() {
+                        gl_FragColor = texture2D(colortex0, vec2(0.5));
+                    }
+                    """);
+            assertTrue(PackProbe.analyze(root).plan().oldLighting().oldLighting(),
+                    "the pack plan reads shaders.properties oldLighting");
+        } finally {
+            deleteTree(root);
+        }
+
+        var mixin = nativeClass("net/chimera/mixin/ChimeraClientLevelShadeMixin");
+        boolean targetsClientLevel = false;
+        for (var annotation : annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations)) {
+            if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")) continue;
+            Object targets = annotationValue(annotation, "value");
+            targetsClientLevel = targets instanceof List<?> list && list.stream().anyMatch(type ->
+                    ((org.objectweb.asm.Type) type).getInternalName().equals("net/minecraft/client/multiplayer/ClientLevel"));
+        }
+        boolean shadeHook = false;
+        for (var method : mixin.methods) {
+            for (var annotation : annotations(method.visibleAnnotations, method.invisibleAnnotations)) {
+                if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/ModifyVariable;")) continue;
+                shadeHook = annotationValue(annotation, "method") instanceof List<?> names && names.contains("getShade")
+                        && Boolean.TRUE.equals(annotationValue(annotation, "argsOnly"))
+                        && method.desc.equals("(Z)Z");
+            }
+        }
+        assertTrue(targetsClientLevel && shadeHook, "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
+        try (var config = ConformanceHarness.class.getClassLoader().getResourceAsStream("chimera.mixins.json")) {
+            assertTrue(config != null && new String(config.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                    .contains("\"ChimeraClientLevelShadeMixin\""), "the shade mixin is registered");
+        }
+        var pass = nativeClass("net/chimera/render/ChimeraMainPass");
+        for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
+            var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
+                    .orElseThrow(() -> new AssertionError("ChimeraMainPass." + name + " is missing"));
+            boolean applies = false;
+            for (var instruction : method.instructions) {
+                if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                        && call.owner.equals("net/chimera/render/shader/ChimeraTerrainPipelines")
+                        && call.name.equals("setDirectionalShadingDisabled")) {
+                    applies = true;
+                }
+            }
+            assertTrue(applies, "ChimeraMainPass." + name + " applies the directional shading state");
+        }
+        System.out.println("[chimera] oldLighting directional shading (directive, mixin, install): PASS");
+    }
+
+    private static List<org.objectweb.asm.tree.AnnotationNode> annotations(
+            List<org.objectweb.asm.tree.AnnotationNode> visible, List<org.objectweb.asm.tree.AnnotationNode> invisible) {
+        List<org.objectweb.asm.tree.AnnotationNode> all = new java.util.ArrayList<>();
+        if (visible != null) all.addAll(visible);
+        if (invisible != null) all.addAll(invisible);
+        return all;
+    }
+
+    private static Object annotationValue(org.objectweb.asm.tree.AnnotationNode annotation, String key) {
+        if (annotation.values == null) return null;
+        for (int index = 0; index + 1 < annotation.values.size(); index += 2) {
+            if (annotation.values.get(index).equals(key)) return annotation.values.get(index + 1);
+        }
+        return null;
     }
 
     /** BSL-style legacy shadow program: terrain attributes, both identities and both shadow colours. */

@@ -171,6 +171,11 @@ public record PackPlan(
         return ShadowCasterDirectives.fromProperties(settings.propertyValues());
     }
 
+    /** Whether the pack keeps Minecraft's directional face shading (Iris oldLighting, default off). */
+    public OldLightingDirective oldLighting() {
+        return OldLightingDirective.fromProperties(settings.propertyValues());
+    }
+
     /** How the shadow pass culls its casters (Iris shadow.culling and the shadow distances). */
     public ShadowCullingPlan shadowCulling() {
         PackConfig.ShadowSettings shadow = config != null ? config.shadowSettings()
