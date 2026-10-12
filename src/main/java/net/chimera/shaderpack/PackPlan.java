@@ -150,6 +150,44 @@ public record PackPlan(
         return value != null && !value.enabled();
     }
 
+    /**
+     * Iris's {@code clouds} directive: "off", "fast" or "fancy", or null when
+     * the pack leaves the player's setting alone (Iris logs and ignores other values).
+     */
+    public String cloudSetting() {
+        String value = settings.propertyValues().get("clouds");
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.equals("off") || trimmed.equals("fast") || trimmed.equals("fancy") ? trimmed : null;
+    }
+
+    /** Iris's sky directive controls the extra horizon coverage. */
+    public boolean skyEnabled() {
+        return !"false".equalsIgnoreCase(settings.propertyValues().get("sky"));
+    }
+
+    /** Which entities and block entities the pack lets cast shadows (Iris shadowEntities and friends). */
+    public ShadowCasterDirectives shadowCasters() {
+        return ShadowCasterDirectives.fromProperties(settings.propertyValues());
+    }
+
+    /** How the shadow pass culls its casters (Iris shadow.culling and the shadow distances). */
+    public ShadowCullingPlan shadowCulling() {
+        PackConfig.ShadowSettings shadow = config != null ? config.shadowSettings()
+                : new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
+                        PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of());
+        return ShadowCullingPlan.of(settings.propertyValues(), shadow);
+    }
+
+    /**
+     * The programs that take part in the frame. Iris removes a program the pack switches off
+     * ({@code program.<name>.enabled}) from the pipeline entirely, so it neither runs nor counts
+     * as a producer; the schedule and target graph are built from these, never from a gap.
+     */
+    public List<PackProgramPlan> activePrograms() {
+        return programs().stream().filter(program -> !isProgramDisabled(program.name())).toList();
+    }
+
     public boolean isProgramAlias(String name) {
         PackProgramResolution value = resolution.resolution(name);
         return value != null && !value.requestedProgram().equals(value.selectedProgram());

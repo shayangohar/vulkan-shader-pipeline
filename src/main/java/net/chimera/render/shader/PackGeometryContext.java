@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import net.chimera.render.PackPostTargets;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -109,7 +110,7 @@ public final class PackGeometryContext {
         for (int index = 0; index < colors.size(); index++) {
             VkRenderingAttachmentInfo info = colorAttachments.get(index);
             info.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
-                    .imageView(colors.get(index).getImageView())
+                    .imageView(PackPostTargets.attachmentView(colors.get(index)))
                     .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
                     .loadOp(clearShadowAttachments || (!geometryWindow && index == 0 && clearFirstColor)
                             ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)

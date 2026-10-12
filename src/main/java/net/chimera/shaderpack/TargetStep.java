@@ -4,7 +4,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-/** Immutable scheduled read/write information for one post program. */
+/**
+ * Immutable scheduled read/write information for one post program.
+ * {@code mipmapTargets} are regenerated before the step runs, as Iris's
+ * CompositeRenderer.setupMipmapping does for the program's directives.
+ */
 public record TargetStep(
         String programName,
         List<Integer> readTargets,
@@ -12,6 +16,7 @@ public record TargetStep(
         List<Integer> outputFormats,
         Map<Integer, Integer> readSides,
         Map<Integer, Integer> writeSides,
+        List<Integer> mipmapTargets,
         int width,
         int height,
         boolean finalStage,
@@ -25,6 +30,7 @@ public record TargetStep(
         outputFormats = outputFormats == null ? List.of() : List.copyOf(outputFormats);
         readSides = immutableMap(readSides);
         writeSides = immutableMap(writeSides);
+        mipmapTargets = mipmapTargets == null ? List.of() : mipmapTargets.stream().distinct().sorted().toList();
         deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
     }
 

@@ -50,7 +50,7 @@ public final class M76ConformanceHarness {
                 FamilyAdapterRegistry.stageFor("gbuffers_hand"), "M7.6 hand stage");
         assertEquals(UniformRegistry.Stage.PARTICLE,
                 FamilyAdapterRegistry.stageFor("gbuffers_particles"), "M7.6 particle stage");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_PARTICLE,
+        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
                 FamilyAdapterRegistry.forProgram("gbuffers_hand").vertexContract(),
                 "M7.6 hand contract");
         assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
@@ -82,9 +82,7 @@ public final class M76ConformanceHarness {
                             ? "missing" : first.resolution().resolution(name))
                             + " stage=" + (plan == null ? "missing" : plan.interfacePlan().effective(
                             FamilyAdapterRegistry.stageFor(name)).stage()));
-            FamilyAdapterPlan.VertexContract expectedContract = name.equals("gbuffers_hand")
-                    ? FamilyAdapterPlan.VertexContract.EXTENDED_PARTICLE
-                    : FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY;
+            FamilyAdapterPlan.VertexContract expectedContract = FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY;
             assertEquals(expectedContract, plan.familyAdapter().vertexContract(),
                     "M7.6 entity-like contract: " + name);
             assertTrue(plan.convertedVertex() != null && plan.convertedVertex().contains("#version 460"),
@@ -92,10 +90,10 @@ public final class M76ConformanceHarness {
             assertTrue(plan.convertedFragment() != null && plan.convertedFragment().contains("#version 460"),
                     "M7.6 entity-like fragment was not converted: " + name);
             if (name.equals("gbuffers_hand")) {
-                assertTrue(plan.convertedVertex().contains("layout(location = 1) in vec2 UV0"),
-                        "M7.6 hand vertex used the entity UV layout");
-                assertTrue(plan.convertedVertex().contains("layout(location = 3) in ivec2 UV2"),
-                        "M7.6 hand vertex omitted particle lightmap input");
+                assertTrue(plan.convertedVertex().contains("layout(location = 2) in vec2 UV0"),
+                        "hand primary vertex must use the actual arm entity UV layout");
+                assertTrue(plan.convertedVertex().contains("layout(location = 4) in ivec2 UV2"),
+                        "hand primary vertex omitted the arm lightmap input");
             }
             assertTrue(first.report().shouldAttempt(name),
                     "M7.6 entity-like report rejected: " + name);

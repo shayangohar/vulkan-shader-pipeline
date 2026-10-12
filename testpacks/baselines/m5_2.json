@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "material": {
-      "reportSha256": "189e25f6fb47ae6cd010df0f73629bfb287aee8b83ce9c27f1414b8a7877c900",
+      "reportSha256": "cb952f8903b07c2b1b03b0991ff95aca319043665d5ae71050d5b8e03e86fdf5",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -15,7 +15,19 @@
         "final": [
           "fragment"
         ],
+        "gbuffers_block": [
+          "fragment",
+          "vertex"
+        ],
+        "gbuffers_damagedblock": [
+          "fragment",
+          "vertex"
+        ],
         "gbuffers_terrain": [
+          "fragment",
+          "vertex"
+        ],
+        "gbuffers_water": [
           "fragment",
           "vertex"
         ]
@@ -26,9 +38,31 @@
         ],
         "composite": [],
         "final": [],
+        "gbuffers_block": [
+          "BLOCK_ENTITY_ID_DEFAULTED",
+          "BLOCK_VERTEX_BRIDGE",
+          "ENTITY_STATE_FIXED_TO_HOST",
+          "ENTITY_VERTEX_FORMAT_EXTENDED",
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
+        ],
+        "gbuffers_damagedblock": [
+          "BLOCK_VERTEX_BRIDGE",
+          "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
+          "FIXED_VERTEX_SUBSTITUTION",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
+        ],
         "gbuffers_terrain": [
           "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
           "LEGACY_TERRAIN_VERTEX_BRIDGE"
+        ],
+        "gbuffers_water": [
+          "ALPHA_TEST_DYNAMIC:gbuffers_water",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
+          "TRANSLUCENT_STATE_FIXED_TO_HOST",
+          "TRANSLUCENT_VERTEX_BRIDGE"
         ]
       },
       "sourceHashes": {
@@ -42,7 +76,7 @@
       }
     },
     "unsupported_vertex": {
-      "reportSha256": "253bf58a4b2d6f4e065f9af8598cfa85587b19114ef69b27850a69bbeaef221c",
+      "reportSha256": "97e4e0debd675cd6f8851d039c85135da5f1671f5a32bf377c8208da86e70cb1",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -55,7 +89,19 @@
         "final": [
           "fragment"
         ],
+        "gbuffers_block": [
+          "fragment",
+          "vertex"
+        ],
+        "gbuffers_damagedblock": [
+          "fragment",
+          "vertex"
+        ],
         "gbuffers_terrain": [
+          "fragment",
+          "vertex"
+        ],
+        "gbuffers_water": [
           "fragment",
           "vertex"
         ]
@@ -66,8 +112,29 @@
         ],
         "composite": [],
         "final": [],
+        "gbuffers_block": [
+          "BLOCK_ENTITY_ID_DEFAULTED",
+          "BLOCK_VERTEX_BRIDGE",
+          "ENTITY_STATE_FIXED_TO_HOST",
+          "ENTITY_VERTEX_FORMAT_EXTENDED",
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
+        ],
+        "gbuffers_damagedblock": [
+          "BLOCK_VERTEX_BRIDGE",
+          "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
+          "FIXED_VERTEX_SUBSTITUTION",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
+        ],
         "gbuffers_terrain": [
           "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"
+        ],
+        "gbuffers_water": [
+          "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
+          "TRANSLUCENT_STATE_FIXED_TO_HOST",
+          "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED"
         ]
       },
       "sourceHashes": {

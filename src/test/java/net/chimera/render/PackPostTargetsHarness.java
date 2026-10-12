@@ -69,15 +69,15 @@ public final class PackPostTargetsHarness {
                 "final fallback must resolve through target 0 when target 3 is unavailable");
 
         TargetSpec persistent = new TargetSpec(2, 97, 16, 16, false,
-                new float[] {0, 0, 0, 0}, true, true, List.of());
+                new float[] {0, 0, 0, 0}, true, true, false, List.of());
         TargetStep feedback = new TargetStep("feedback", List.of(2), List.of(2),
-                List.of(97), Map.of(2, 0), Map.of(2, 1), 16, 16,
+                List.of(97), Map.of(2, 0), Map.of(2, 1), List.of(), 16, 16,
                 false, true, List.of());
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(persistent, List.of(feedback)),
                 "persistent feedback target must be seeded before its first read");
         assertTrue(!PackTargetGraphPlan.requiresInitialSeed(persistent, List.of(
                         new TargetStep("producer", List.of(0), List.of(2),
-                                List.of(97), Map.of(0, 0), Map.of(2, 1), 16, 16,
+                                List.of(97), Map.of(0, 0), Map.of(2, 1), List.of(), 16, 16,
                                 false, true, List.of()),
                         feedback)),
                 "persistent target with a prior producer must not be reseeded");
@@ -86,7 +86,7 @@ public final class PackPostTargetsHarness {
         // its first read cannot sample undefined memory. Seeding fixes
         // first-frame contents only; it never redefines clear semantics.
         TargetSpec clearedFeedback = new TargetSpec(2, 97, 16, 16, true,
-                new float[] {0, 0, 0, 0}, true, true, List.of());
+                new float[] {0, 0, 0, 0}, true, true, false, List.of());
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(clearedFeedback, List.of(feedback)),
                 "declared feedback target must seed even when the pack clears it");
 

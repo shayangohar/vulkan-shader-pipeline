@@ -23,6 +23,8 @@ final class GlslResourceUsage {
     private static final Pattern FUNCTION_MACRO = Pattern.compile(
             "(?m)^[\\t ]*#[\\t ]*define[\\t ]+([A-Za-z_]\\w*)"
                     + "[\\t ]*\\([^\\r\\n)]*\\)[\\t ]*([^\\r\\n]*)$");
+    private static final Pattern OBJECT_MACRO = Pattern.compile(
+            "(?m)^[\\t ]*#[\\t ]*define[\\t ]+([A-Za-z_]\\w*)(?![\\w(])(?![\\t ]*\\()[\\t ]*([^\\r\\n]*)$");
     private static final Set<String> FUNCTION_KEYWORDS = Set.of(
             "if", "for", "while", "switch", "catch", "sizeof");
     private static final Set<String> VALUE_TYPES = Set.of(
@@ -32,6 +34,10 @@ final class GlslResourceUsage {
     private static final Set<String> FUNCTION_QUALIFIERS = Set.of(
             "const", "inline", "static", "highp", "mediump", "lowp", "precise",
             "invariant");
+    /** Qualifiers GLSL allows between {@code uniform} and an opaque type. */
+    private static final Set<String> TYPE_QUALIFIERS = Set.of(
+            "highp", "mediump", "lowp", "writeonly", "readonly", "coherent", "volatile",
+            "restrict");
 
     /** Complete token range for one top-level function definition. */
     record FunctionDefinition(
@@ -161,10 +167,10 @@ final class GlslResourceUsage {
                         if (next >= 0 && tokens.get(next).symbol("(")
                                 && !FUNCTION_KEYWORDS.contains(name)) {
                             pending.addAll(functionsByName.getOrDefault(name, List.of()));
-                            if (macroCalls.containsKey(name)) {
-                                addMacroDependencies(name, macroCalls, functionsByName,
-                                        pending, new HashSet<>());
-                            }
+                        }
+                        if (macroCalls.containsKey(name)) {
+                            addMacroDependencies(name, macroCalls, functionsByName,
+                                    pending, new HashSet<>());
                         }
                     }
                 }
@@ -305,24 +311,46 @@ final class GlslResourceUsage {
             if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
                     || FUNCTION_KEYWORDS.contains(token.text())) continue;
             int next = GlslLexer.nextSignificant(tokens, index);
-            if (next >= 0 && tokens.get(next).symbol("(")) {
+            boolean call = next >= 0 && tokens.get(next).symbol("(");
+            if (call) {
                 pending.addAll(functionsByName.getOrDefault(token.text(), List.of()));
-                if (macroCalls.containsKey(token.text())) {
-                    addMacroDependencies(token.text(), macroCalls, functionsByName,
-                            pending, new HashSet<>());
-                }
+            }
+            // An object-like macro is used by any reference outside its own #define line.
+            if (macroCalls.containsKey(token.text()) && (call || !onDirectiveLine(tokens, index))) {
+                addMacroDependencies(token.text(), macroCalls, functionsByName,
+                        pending, new HashSet<>());
             }
         }
     }
 
+    private static boolean onDirectiveLine(List<GlslLexer.Token> tokens, int index) {
+        GlslLexer.Token first = tokens.get(index);
+        for (int cursor = index - 1; cursor >= 0; cursor--) {
+            GlslLexer.Token token = tokens.get(cursor);
+            if (token.kind() == GlslLexer.Kind.TRIVIA && token.text().contains("\n")) break;
+            if (token.significant()) first = token;
+        }
+        return first.symbol("#");
+    }
+
     /**
-     * Collects only function-like macros. Object-like defines do not create
-     * callable dependencies. The replacement text is tokenized so names in
-     * comments and string literals cannot keep an unrelated GLSL function
-     * alive.
+     * The functions each macro can call once expanded. A function-like
+     * macro calls what its body calls. An object-like macro can name a
+     * function its use then calls ({@code #define tonemap tonemap_lottes},
+     * then {@code tonemap(x)}), so every identifier in its body counts. The
+     * replacement text is tokenized so names in comments and string literals
+     * cannot keep an unrelated GLSL function alive.
      */
     private static Map<String, List<String>> collectFunctionMacros(String source) {
         Map<String, List<String>> result = new HashMap<>();
+        Matcher objectLike = OBJECT_MACRO.matcher(source == null ? "" : source);
+        while (objectLike.find()) {
+            Set<String> named = new TreeSet<>();
+            for (GlslLexer.Token token : GlslLexer.lex(objectLike.group(2))) {
+                if (token.kind() == GlslLexer.Kind.IDENTIFIER) named.add(token.text());
+            }
+            result.put(objectLike.group(1), List.copyOf(named));
+        }
         Matcher matcher = FUNCTION_MACRO.matcher(source == null ? "" : source);
         while (matcher.find()) {
             Set<String> called = new TreeSet<>();
@@ -371,18 +399,17 @@ final class GlslResourceUsage {
             if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER) continue;
             if (token.identifier("uniform")) {
                 int type = GlslLexer.nextSignificant(tokens, index);
+                while (type >= 0 && TYPE_QUALIFIERS.contains(tokens.get(type).text())) {
+                    type = GlslLexer.nextSignificant(tokens, type);
+                }
                 if (type < 0 || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) continue;
                 String typeName = tokens.get(type).text();
                 if (isSampler(typeName)) {
                     collectUniformNames(tokens, type, samplers, declarationTokens);
                 } else if (isImageType(typeName)) {
-                    int name = GlslLexer.nextSignificant(tokens, type);
-                    if (name >= 0 && tokens.get(name).kind() == GlslLexer.Kind.IDENTIFIER) {
-                        images.add(tokens.get(name).text());
-                        declarationTokens.add(index);
-                        declarationTokens.add(type);
-                        declarationTokens.add(name);
-                    }
+                    // Every name of a list: writeonly uniform image3D a, b;
+                    declarationTokens.add(index);
+                    collectUniformNames(tokens, type, images, declarationTokens);
                 }
             } else if (isImageType(token.text())) {
                 int name = GlslLexer.nextSignificant(tokens, index);
@@ -472,6 +499,18 @@ final class GlslResourceUsage {
             return nameIndex;
         }
         int start = returnType;
+        // An array return type (Photon: float[9] sh_coeff_order_2(...)) reaches back to its element type.
+        while (tokens.get(start).symbol("]")) {
+            int depth = 0;
+            int cursor = start;
+            for (; cursor >= 0; cursor = GlslLexer.previousSignificant(tokens, cursor)) {
+                if (tokens.get(cursor).symbol("]")) depth++;
+                else if (tokens.get(cursor).symbol("[") && --depth == 0) break;
+            }
+            int element = cursor < 0 ? -1 : GlslLexer.previousSignificant(tokens, cursor);
+            if (element < 0) break;
+            start = element;
+        }
         int previous = GlslLexer.previousSignificant(tokens, start);
         while (previous >= 0
                 && tokens.get(previous).kind() == GlslLexer.Kind.IDENTIFIER

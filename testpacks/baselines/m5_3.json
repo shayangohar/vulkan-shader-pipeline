@@ -1,7 +1,7 @@
 {
   "fixtures": {
     "live_uniforms": {
-      "reportSha256": "ebe3ab64b101dc78fb12427de5a9ad235eff989f07140969a88ed7e6fc1ff247",
+      "reportSha256": "5f22e73da07e17a2089df8c5e1618e7b8b6b29258d9180b2811daf4b2737ef9f",
       "sourceHashes": {
         "composite.fsh": "4d39ca56718762ecb0f5ee347039243cbf07009ca70befad1f507776842f3db2",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
@@ -15,9 +15,24 @@
         "gbuffers_terrain"
       ],
       "expectedStages": {
-        "composite": ["fragment"],
-        "final": ["fragment"],
-        "gbuffers_terrain": ["fragment"]
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "gbuffers_block": [
+          "fragment"
+        ],
+        "gbuffers_damagedblock": [
+          "fragment"
+        ],
+        "gbuffers_terrain": [
+          "fragment"
+        ],
+        "gbuffers_water": [
+          "fragment"
+        ]
       },
       "expectedDeviations": {
         "global": [],
@@ -26,13 +41,26 @@
           "LIVE_UNIFORM_BRIDGE"
         ],
         "final": [],
-        "gbuffers_terrain": []
+        "gbuffers_block": [
+          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
+        ],
+        "gbuffers_damagedblock": [
+          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
+        ],
+        "gbuffers_terrain": [],
+        "gbuffers_water": [
+          "FIXED_VERTEX_SUBSTITUTION",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
+          "TRANSLUCENT_STATE_FIXED_TO_HOST"
+        ]
       }
     },
     "unsupported_uniform": {
-      "reportSha256": "e23d015eeb9fb191b3926f459be366d5e908e6f80ce3130baa27655a9876b44b",
+      "reportSha256": "e17dc1231ba574715fcfb5b59a2934a822ea4495518be2ebce1e6f0955701223",
       "sourceHashes": {
-        "composite.fsh": "c296ddec1644fb1be63888a1af0bf45a23c6459dc4dc4b6f3b7a944be6bffe38",
+        "composite.fsh": "398fcc335a0ed8520929824c9696fa04202a2573500a634ad1f0f7c5635e6b38",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
         "gbuffers_terrain.fsh": "ca84e05ffaae89c5e1d72fd847c0b3530342c115f9bc5613a6a6d241a1cf283b",
         "shaders.json": "7acba5a997d27ac05442eb70105260b9795ac424717cd28596e06833c6daed58"
@@ -43,9 +71,24 @@
         "gbuffers_terrain"
       ],
       "expectedStages": {
-        "composite": ["fragment"],
-        "final": ["fragment"],
-        "gbuffers_terrain": ["fragment"]
+        "composite": [
+          "fragment"
+        ],
+        "final": [
+          "fragment"
+        ],
+        "gbuffers_block": [
+          "fragment"
+        ],
+        "gbuffers_damagedblock": [
+          "fragment"
+        ],
+        "gbuffers_terrain": [
+          "fragment"
+        ],
+        "gbuffers_water": [
+          "fragment"
+        ]
       },
       "expectedDeviations": {
         "global": [],
@@ -54,7 +97,20 @@
           "UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"
         ],
         "final": [],
-        "gbuffers_terrain": []
+        "gbuffers_block": [
+          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
+        ],
+        "gbuffers_damagedblock": [
+          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
+        ],
+        "gbuffers_terrain": [],
+        "gbuffers_water": [
+          "FIXED_VERTEX_SUBSTITUTION",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
+          "TRANSLUCENT_STATE_FIXED_TO_HOST"
+        ]
       }
     }
   }

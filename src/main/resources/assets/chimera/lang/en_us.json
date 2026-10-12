@@ -1,0 +1,27 @@
+{
+  "key.category.chimera.keybinds": "Chimera",
+  "chimera.keybind.shaderPackSelection": "Shaderpack Selection Screen",
+
+  "options.chimera.shaderPackSelection": "Shader Packs...",
+  "options.chimera.shaderPackSelection.title": "Shader Packs",
+  "options.chimera.apply": "Apply",
+  "options.chimera.openShaderPackFolder": "Open Shader Pack Folder...",
+  "options.chimera.shaderPackSettings": "Shader Pack Settings...",
+  "options.chimera.shaderPackSettings.unavailable": "Shader pack settings are not available in Chimera yet",
+  "options.chimera.shaders.enabled": "Shaders: Enabled",
+  "options.chimera.shaders.disabled": "Shaders: Disabled",
+  "options.chimera.shaders.nonePresent": "Shaders: No Packs Present",
+  "options.chimera.downloadShaders": "Download Shaders",
+  "options.chimera.shaderPackSelection.addedPack": "Added Shader Pack \"%s\"",
+  "options.chimera.shaderPackSelection.addedPacks": "Added %s Shader Packs",
+  "options.chimera.shaderPackSelection.failedAdd": "Files were not valid Shader Packs",
+  "options.chimera.shaderPackSelection.failedAddSingle": "\"%s\" is not a valid Shader Pack",
+  "options.chimera.shaderPackSelection.copyError": "Could not add Shader Pack \"%s\"",
+  "options.chimera.shaderPackSelection.copyErrorAlreadyExists": "\"%s\" is already in your Shader Packs folder!",
+  "options.chimera.shaderPackSelection.missing": "\"%s\" is no longer in your Shader Packs folder",
+  "options.chimera.shaderPackSelection.notReady": "Chimera is not ready yet; try again in a moment",
+  "options.chimera.shaderPackSelection.readError": "There was an error reading your shaderpacks folder",
+
+  "pack.chimera.select.title": "Select",
+  "pack.chimera.list.label": "+ Drag and Drop Shader Packs to add"
+}

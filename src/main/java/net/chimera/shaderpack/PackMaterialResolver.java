@@ -5,6 +5,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -104,8 +105,14 @@ public final class PackMaterialResolver {
             byte[] bytes = Files.readAllBytes(file);
             sourceHash = ConformanceReport.textSha256(bytes);
             PackConditionals.State conditions = new PackConditionals.State(macros);
-            for (String line : PackSettingsPlan.logicalLines(file)) {
-                Matcher directive = CONDITION.matcher(line);
+            PackSettingsPlan.PropertyLineJoiner joiner = new PackSettingsPlan.PropertyLineJoiner();
+            boolean failed = false;
+            for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                if (PackSettingsPlan.PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
+                    // A directive line ends the open continuation.
+                    parseLine(joiner.finish(), ids, selectors, conflicts, deviations);
+                }
+                Matcher directive = CONDITION.matcher(raw);
                 if (directive.matches()) {
                     try {
                         conditions.apply(directive.group(1), directive.group(2).trim());
@@ -113,13 +120,22 @@ public final class PackMaterialResolver {
                         deviations.add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
                         ids.clear();
                         selectors.clear();
+                        failed = true;
                         break;
                     }
                     continue;
                 }
-                if (conditions.active()) {
+                if (!conditions.active()) {
+                    continue;
+                }
+                String line = joiner.accept(raw);
+                if (line != null) {
                     parseLine(line, ids, selectors, conflicts, deviations);
                 }
+            }
+            String last = failed ? null : joiner.finish();
+            if (last != null) {
+                parseLine(last, ids, selectors, conflicts, deviations);
             }
         } catch (IOException e) {
             deviations.add("BLOCK_PROPERTIES_READ_FAILED");

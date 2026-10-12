@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "milestone": "M8.0",
   "scope": "measured-modern-post-translation",
-  "supportedVersions": [120, 130, 330, 400],
+  "supportedVersions": "every desktop GLSL version from 110 to 460, compatibility or core (GlslVersion)",
   "runtimeTarget": "post",
   "externalPacks": ["Complementary Reimagined r5.8.1", "BSL v10.1.3"],
   "staticEligibilityIsNotRuntimeInstallation": true

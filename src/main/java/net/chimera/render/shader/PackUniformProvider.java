@@ -78,6 +78,7 @@ public final class PackUniformProvider {
     /** Captures the matrices supplied to LevelRenderer.renderLevel as well as game state. */
     public static void beginFrame(Camera camera, float partialTick,
                                   Matrix4f modelView, Matrix4f projection) {
+        setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase.NONE);
         INSTANCE.updateFrame(camera, partialTick, modelView, projection);
     }
 
@@ -86,9 +87,54 @@ public final class PackUniformProvider {
         return INSTANCE.frameState.sunLightVector();
     }
 
+    /**
+     * Debug: every bound float uniform whose current value holds NaN or infinity, as
+     * {@code name[component]=value}, sorted. These are the exact values the pack programs read.
+     */
+    public static java.util.List<String> nonFiniteUniforms() {
+        java.util.List<String> result = new java.util.ArrayList<>();
+        for (Binding binding : INSTANCE.bindings.values()) {
+            if (!"float".equals(UniformRegistry.pipelineType(binding.type))
+                    && !"mat4".equals(binding.type)) {
+                continue;
+            }
+            int count = UniformRegistry.pipelineCount(binding.type);
+            for (int i = 0; i < count; i++) {
+                float value = binding.buffer.getFloat(i * 4);
+                if (!Float.isFinite(value)) {
+                    result.add(binding.descriptor.name() + "[" + i + "]=" + value);
+                    break;
+                }
+            }
+        }
+        java.util.Collections.sort(result);
+        return result;
+    }
+
+    /** The shadow caster rotation derived with the celestial uniforms this frame. */
+    public static Matrix4f currentShadowLightRotation() {
+        return INSTANCE.frameState.shadowLightRotation();
+    }
+
     /** Installs the pack's sun path for the celestial frame and the shadow matrix. */
     public static void installSunPath(float rotationDegrees, float offsetDegrees) {
         INSTANCE.frameState.installSunPath(rotationDegrees, offsetDegrees);
+    }
+
+    public static float currentSunPathRotation() { return INSTANCE.frameState.sunPathRotation(); }
+
+    /** Iris SystemTimeUniforms.TIMER: the pack clock, which keeps running while paused. */
+    public static float currentFrameTimeCounter() { return INSTANCE.frameState.frameTimeCounter(); }
+
+    /** Camera-relative world view, without a native celestial pose or model translation. */
+    public static Matrix4f currentSkyModelView() { return INSTANCE.frameState.modelView(); }
+
+    /**
+     * The camera's gbufferProjection x gbufferModelView (GL clip range, camera-relative), written
+     * to dest: the view shadow culling keeps casters for, as Iris's frustum reads it.
+     */
+    public static Matrix4f currentCameraViewProjection(Matrix4f dest) {
+        return INSTANCE.frameState.cameraViewProjection(dest);
     }
 
     /** Publishes the exact shadow state used by the shadow render. */
@@ -109,6 +155,16 @@ public final class PackUniformProvider {
         if (binding != null) {
             INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
         }
+    }
+
+    /** Returns the enclosing phase for an exception-safe draw-scope restore. */
+    public static net.chimera.shaderpack.PackRenderingPhase setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase phase) {
+        var previous = INSTANCE.frameState.setRenderingPhase(phase);
+        Binding binding = INSTANCE.bindings.get(new UniformKey("renderStage", "int"));
+        if (binding != null && previous != phase) {
+            INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+        return previous;
     }
 
     /**
@@ -152,6 +208,7 @@ public final class PackUniformProvider {
 
     /** Drops frame history when the pack session is destroyed or reloaded. */
     public static void resetSession() {
+        setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase.NONE);
         INSTANCE.lastFrameNanos = 0L;
         INSTANCE.runtimeSettings = PackRuntimeSettings.empty();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
@@ -194,8 +251,7 @@ public final class PackUniformProvider {
         long now = System.nanoTime();
         float deltaSeconds = lastFrameNanos == 0L
                 ? 0.0f
-                : Math.min(Math.max(PackFrameState.quantizedFrameSecondsForTest(
-                now - lastFrameNanos), 0.0f), 0.25f);
+                : PackFrameState.quantizedFrameSecondsForTest(now - lastFrameNanos);
         lastFrameNanos = now;
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
         logDerivedValueFailures();
@@ -258,7 +314,7 @@ public final class PackUniformProvider {
 
     private static int bufferSize(String type) {
         return switch (type) {
-            case "float", "int" -> 4;
+            case "float", "int", "bool" -> 4;
             case "vec2", "ivec2" -> 8;
             case "vec3", "ivec3" -> 16;
             case "vec4", "ivec4" -> 16;

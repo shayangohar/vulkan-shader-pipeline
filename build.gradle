@@ -29,6 +29,9 @@ dependencies {
     // Host renderer (LGPL) - linked as a library, chimera stays MIT
     modImplementation "maven.modrinth:vulkanmod:${project.vulkanmod_version}"
 
+    // Optional: Mod Menu's config button opens the shader pack selector
+    modCompileOnly "maven.modrinth:modmenu:17.0.1-beta.1"
+
     // Vulkan bindings: bundled by VulkanMod at runtime; compile-only here
     compileOnly "org.lwjgl:lwjgl-vulkan:3.3.3"
     compileOnly "org.lwjgl:lwjgl-vma:3.3.3"
@@ -54,6 +57,16 @@ tasks.register('conformanceTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.shaderpack.ConformanceHarness'
     jvmArgs '-ea'
+}
+
+tasks.register('packReport', JavaExec) {
+    group = 'help'
+    description = 'Prints the offline plan report and ranked blocking reasons for -PpackReportPacks=<pack>[;<pack>...].'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.PackReportTool'
+    systemProperty 'chimera.packReport.packs', project.findProperty('packReportPacks') ?: ''
+    systemProperty 'chimera.packReport.verbose', project.findProperty('packReportVerbose') ?: 'false'
 }
 
 tasks.register('m62ConformanceTest', JavaExec) {
@@ -574,6 +587,24 @@ tasks.register('authoredOutputTest', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('selectorConfigTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks the shader selector config round trip and Iris pack-folder rules.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.config.SelectorConfigHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('packFrontEndTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks the pack front end reads Iris/GLSL formats in full (continuations, typed custom values).'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.PackFrontEndHarness'
+    jvmArgs '-ea'
+}
+
 tasks.register('spirvLocalInitTest', JavaExec) {
     group = 'verification'
     description = 'Checks that pack SPIR-V gives undefined locals the zero GL drivers use.'
@@ -590,6 +621,35 @@ tasks.register('terrainTangentTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.chimera.render.vertex.TerrainTangentCodecHarness'
     jvmArgs '-ea'
+}
+
+tasks.register('terrainMidBlockTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks that terrain at_midBlock points at the rendered block centre with its emission, as in Iris.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.vertex.TerrainMidBlockHarness'
+    jvmArgs '-ea'
+}
+
+tasks.register('nanTripwireTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks NaN tripwire scan coverage and shader; -PnanTripwireGpu=true also runs headless Vulkan.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.PackNanTripwireHarness'
+    jvmArgs '-ea', '-Dorg.lwjgl.system.stackSize=256'
+    systemProperty 'chimera.nanTripwire.gpu', (project.findProperty('nanTripwireGpu') ?: 'false').toString()
+}
+
+tasks.register('mipChainTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks colortex mip chain sizing; -PmipChainGpu=true also runs the blit chain on headless Vulkan.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.render.PackMipChainHarness'
+    jvmArgs '-ea', '-Dorg.lwjgl.system.stackSize=256'
+    systemProperty 'chimera.mipChain.gpu', (project.findProperty('mipChainGpu') ?: 'false').toString()
 }
 
 tasks.register('m84ConformanceTest', JavaExec) {
@@ -770,6 +830,47 @@ tasks.register('materialPlanConformance', JavaExec) {
     jvmArgs '-ea'
 }
 
+tasks.register('packCompileTest', JavaExec) {
+    group = 'verification'
+    description = 'Compiles every program the locked packs install, with the runtime preparation and VulkanMod shaderc target.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'net.chimera.shaderpack.PackCompileCheck'
+    jvmArgs '-ea'
+    doFirst {
+        // The same locked BSL and Complementary zips the entity gate reads.
+        def packs = ['m87EntityComplementary', 'm87EntityBsl'].collect { key ->
+            def value = project.findProperty(key) ?: System.getProperty('chimera.' + key)
+            if (value == null || value.toString().isBlank()) {
+                throw new GradleException("Missing locked pack path. Set -P${key}.")
+            }
+            def pack = file(value.toString())
+            if (!pack.isFile() && !pack.isDirectory()) {
+                throw new GradleException("Pack compile path does not exist: ${pack}")
+            }
+            pack.absolutePath
+        }
+        // Optional broadening packs: -PpackCompileExtra=<pack>;<pack>
+        def extra = (project.findProperty('packCompileExtra') ?: '').toString()
+        extra.split(';').findAll { !it.isBlank() }.each { value ->
+            def pack = file(value.trim())
+            if (!pack.isFile() && !pack.isDirectory()) {
+                throw new GradleException("Pack compile path does not exist: ${pack}")
+            }
+            packs << pack.absolutePath
+        }
+        systemProperty 'chimera.packCompile.packs', packs.join(File.pathSeparator)
+        // Programs each pack's plan rejects; -PpackAdmissionUpdate=true rewrites it after review.
+        systemProperty 'chimera.packCompile.admissionBaseline',
+                file('testpacks/baselines/pack_admission.json').absolutePath
+        systemProperty 'chimera.packCompile.updateAdmission',
+                (project.findProperty('packAdmissionUpdate') ?: 'false').toString()
+        // -PpackCompileDump=<program> writes that program's prepared stages to build/pack-report.
+        systemProperty 'chimera.packCompile.dumpProgram',
+                (project.findProperty('packCompileDump') ?: '').toString()
+    }
+}
+
 tasks.register('m87EntityRealPackTest', JavaExec) {
     group = 'verification'
     description = 'Checks locked-pack entity/block executability, exact target routes, and converted shader compilation.'
@@ -925,11 +1026,17 @@ tasks.named('check') {
     dependsOn tasks.named('m87PostBypassTest')
     dependsOn tasks.named('m87EntityTransformBindingTest')
     dependsOn tasks.named('m87EntityRealPackTest')
+    dependsOn tasks.named('packCompileTest')
     dependsOn tasks.named('m87ShadowMatrixTest')
     dependsOn tasks.named('m87VulkanBarrierTest')
     dependsOn tasks.named('authoredOutputTest')
     dependsOn tasks.named('spirvLocalInitTest')
+    dependsOn tasks.named('packFrontEndTest')
+    dependsOn tasks.named('selectorConfigTest')
     dependsOn tasks.named('terrainTangentTest')
+    dependsOn tasks.named('terrainMidBlockTest')
+    dependsOn tasks.named('nanTripwireTest')
+    dependsOn tasks.named('mipChainTest')
     dependsOn tasks.named('customUniformInventoryTest')
     dependsOn tasks.named('m88WaterTest')
 }

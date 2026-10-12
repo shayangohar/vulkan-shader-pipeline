@@ -132,6 +132,11 @@ public final class ChimeraTerrainPipelines {
         }
     }
 
+    /** The pack block.properties id of a block state, or -1 when unmapped (Iris BlockMaterialMapping). */
+    public static int blockStateId(net.minecraft.world.level.block.state.BlockState state) {
+        return materialResolver.resolve(state);
+    }
+
     public static void setMaterialResolver(PackMaterialResolver resolver) {
         PackMaterialResolver next = resolver == null ? PackMaterialResolver.empty() : resolver;
         if (materialResolver == next) {

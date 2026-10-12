@@ -32,7 +32,9 @@ public abstract class FluidRendererMixin {
         renderType = TerrainRenderType.getRemapped(renderType);
         TerrainBuilder builder = resources.builderPack.builder(renderType);
         if (builder instanceof ChimeraExtTerrainBuilder extended) {
-            extended.setFluidBlockAttributes(blockState, fluidState);
+            // Fluid vertices are section-local, as VulkanMod's fluid renderer places them.
+            extended.setFluidBlockAttributes(blockState, fluidState,
+                    blockPos.getX() & 15, blockPos.getY() & 15, blockPos.getZ() & 15);
         }
     }
 }

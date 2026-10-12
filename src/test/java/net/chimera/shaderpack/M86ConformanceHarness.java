@@ -179,11 +179,25 @@ public final class M86ConformanceHarness {
                 "M8.6 hand mixin still owns pack final");
         assertTrue(!depth.contains("finishPackFinalAfterHand"),
                 "M8.6 depth mixin still owns pack final");
-        assertTrue(main.contains("HAND_SCHEDULE_FALLBACK"),
-                "M8.6 hand fallback is not explicit");
-        assertTrue(!main.contains("this.packHandPipeline = hand;")
-                        && !main.contains("this.packHandWaterPipeline = hand;"),
-                "M8.6 late hand adapter is still installed");
+        String schedule = Files.readString(sourcePath("src/main/java/net/chimera/render/ChimeraHandRenderer.java"));
+        String level = Files.readString(sourcePath("src/main/java/net/chimera/mixin/ChimeraLevelRendererMixin.java"));
+        assertTrue(schedule.contains("!pass.hasPackHandSchedule()")
+                        && depth.contains("if (!ChimeraHandRenderer.diverted()) renderer.renderHandsWithItems"),
+                "hand fallback must remain vanilla unless both pack phases are installed");
+        assertTrue(level.contains("ordinal = 1") && level.contains("ChimeraHandRenderer.drawSolid();"),
+                "opaque pack hand must run before deferred");
+        assertTrue(level.indexOf("ChimeraHandRenderer.drawTranslucent();")
+                        < level.indexOf("pass.finishLevelSegment();"),
+                "translucent pack hand must run before pack final");
+        assertTrue(schedule.indexOf("dispatcher.renderAllFeatures();")
+                        < schedule.indexOf("ChimeraEntityBridge.endDraw();")
+                        && schedule.indexOf("buffers.endLastBatch();") < schedule.indexOf("ChimeraEntityBridge.endDraw();"),
+                "hand submission, emission and flush must share the family scope");
+        // Glint flushes after the hand scope closes, in its own HAND_GLINT lane.
+        assertTrue(schedule.indexOf("type.pipeline() != RenderPipelines.GLINT")
+                        < schedule.indexOf("ChimeraEntityBridge.endDraw();")
+                        && schedule.indexOf("ChimeraEntityBridge.endDraw();") < schedule.indexOf("buffers.endBatch();"),
+                "hand glint must flush after the hand family scope");
 
         int resolve = main.indexOf("resolvePackWorldToOutput(commandBuffer, hdrColor);");
         int finalCall = main.indexOf("finishPackFinalBeforeHand();", resolve);
@@ -204,7 +218,7 @@ public final class M86ConformanceHarness {
                 + " color = mix(color, vec4(fogColor * 5.0, 0.0), fog);\n}\n"
                 + "void main() { vec4 color = vec4(1.0);"
                 + " DoLavaFog(color, 4.0); gl_FragColor = color; }\n";
-        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(source);
+        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(source, false);
         assertTrue(normalized.successful(), "DoLavaFog normalization failed");
         UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(
                 normalized.source(), PostTargetPlan.parse("composite", source).plan());
@@ -215,7 +229,7 @@ public final class M86ConformanceHarness {
 
         // Division exposes a missing outer pair of parentheses; multiplication alone does not.
         LegacyShaderNormalizer.Result division = LegacyShaderNormalizer.normalize(
-                "float probe = 6.0 / gl_Fog.scale;");
+                "float probe = 6.0 / gl_Fog.scale;", false);
         assertTrue(division.successful(), "Fog scale division normalization failed");
         String expression = division.source().substring(division.source().indexOf("=") + 1,
                 division.source().lastIndexOf(';')).trim();
@@ -534,10 +548,11 @@ public final class M86ConformanceHarness {
         PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(
                 analysis.plan().programs(), graph);
         PackFrameSchedulePlan.PostStage deferred = schedule.postStage("deferred");
-        if (label.equals("BSL") && deferred != null
-                && deferred.window() == PackFrameSchedulePlan.PostWindow.LATE) {
-            assertTrue(schedule.deviations().contains("SCHEDULE_POST_AFTER_DEPTH:deferred"),
-                    "M8.6 BSL depth-dependent deferred stage lacks its schedule deviation");
+        // Iris order: BSL's deferred reads depthtex2 and still runs before translucents.
+        if (label.equals("BSL") && deferred != null) {
+            assertTrue(deferred.window() == PackFrameSchedulePlan.PostWindow.EARLY
+                            && !schedule.deviations().contains("SCHEDULE_POST_AFTER_DEPTH:deferred"),
+                    "M8.6 BSL deferred left the Iris deferred seam: " + schedule.snapshot());
         }
     }
 

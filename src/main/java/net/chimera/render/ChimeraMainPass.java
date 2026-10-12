@@ -20,6 +20,7 @@ import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
@@ -30,6 +31,8 @@ import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.ShadowCasterDirectives;
+import net.chimera.shaderpack.ShadowCullingPlan;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackProbe;
@@ -87,8 +90,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * VulkShade:
  *
  *   - renderLevel HEAD opens the internal RGBA16F world target.
- *   - The SOLID layer tail temporarily records the shadow map and resumes the
- *     world target.
+ *   - The opaque layer's head temporarily records the shadow map and resumes
+ *     the world target.
  *   - renderLevel RETURN resolves the HDR world into a separate output target.
  *     Entity passes inside renderLevel follow the HDR alias; hand, GUI, and
  *     post-chain passes follow the output alias.
@@ -203,6 +206,8 @@ public class ChimeraMainPass implements MainPass {
     private PackPipelines.PackPost packFinalPost;
     private PackPostExecution packFinalExecution;
     private final PackPostTargets packPostTargets = new PackPostTargets();
+    /** Debug NaN detector over pack targets; idle unless enabled. */
+    private final PackNanTripwire nanTripwire = new PackNanTripwire();
     private final PackDepthTargets packDepthTargets = new PackDepthTargets();
     /** Session-owned scene-seed coverage state. */
     private final PackCoverageOwner packCoverageOwner = new PackCoverageOwner();
@@ -218,11 +223,12 @@ public class ChimeraMainPass implements MainPass {
     /** Set only when the target graph itself cannot be configured. */
     private boolean packPostChainRejected;
     /**
-     * Set when the mask-critical family contract fails at install. Target
-     * reconfiguration (resize) honors it instead of recomputing post
-     * activity from targets alone; only a fresh install clears it.
+     * Mask-critical families this pack session could not install, or null.
+     * While set, the session loads as if no pack were selected, so resizes and
+     * screen resets cannot rebuild a half-installed frame. A pack change,
+     * reload or dimension variant clears it and re-evaluates.
      */
-    private boolean postChainFamilyBlocked;
+    private String packFrameUnsupported;
     /** True after the current frame has opened the target executor state. */
     private boolean packPostFrameStarted;
     private boolean packEarlyPostCompleted;
@@ -279,28 +285,38 @@ public class ChimeraMainPass implements MainPass {
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     private GraphicsPipeline packShadowPipeline;
     private int[] packShadowSlots;
+    /** shadow_entities on the shadow pass's entity lane; null leaves entities out of the shadow map. */
+    private PackPipelines.PackEntity packShadowEntityPipeline;
+    /** Set once the caster pass failed; the shadow map keeps its terrain for the rest of the session. */
+    private boolean shadowCastersFailed;
+    /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
+    private ShadowCullingPlan shadowCulling;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
     /** Pack translucent world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packTranslucentEntityPipeline;
-    /** Pack glowing world-entity program on the guarded delayed model batch. */
-    private PackPipelines.PackEntity packGlowingEntityPipeline;
+    /** Pack spider-eyes program (Iris EYES and ENTITY_TRANSLUCENT_EMISSIVE) on the delayed model batch. */
+    private PackPipelines.PackEntity packSpiderEyesPipeline;
     /** Pack block-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packBlockPipeline;
     /** Pack damaged-block program on the guarded block draw lane. */
     private PackPipelines.PackEntity packDamagedBlockPipeline;
+    /** The translucent-entity and block programs on Iris's GLYPH text layout (TEXT, TEXT_BE). */
+    private PackPipelines.PackEntity packTranslucentEntityTextPipeline;
+    private PackPipelines.PackEntity packBlockTextPipeline;
     /** Pack first-person hand program on the guarded hand draw window. */
-    private PackPipelines.PackEntity packHandPipeline;
+    private PackPipelines.PackHand packHandPipeline;
     /** Pack first-person water program on the guarded hand draw window. */
-    private PackPipelines.PackEntity packHandWaterPipeline;
+    private PackPipelines.PackHand packHandWaterPipeline;
     /** Pack particle program on the host particle draw window. */
     private PackPipelines.PackParticle packParticlePipeline;
     /** Pack translucent particle program on the host translucent particle window. */
     private PackPipelines.PackParticle packTranslucentParticlePipeline;
-    /** Pack weather program on the host weather draw window. */
-    private PackPipelines.PackParticle packWeatherPipeline;
-    private PackPipelines.PackSky packSkyBasicPipeline;
-    private PackPipelines.PackSky packSkyTexturedPipeline;
+    /** Pack programs of the installed host-layout lanes (weather, lines, glint, lightning, ...). */
+    private final java.util.EnumMap<ChimeraEntityBridge.Family, PackPipelines.PackParticle> packHostLayoutPipelines =
+            new java.util.EnumMap<>(ChimeraEntityBridge.Family.class);
+    private PackPipelines.PackSkyFamily packSkyBasicPipeline;
+    private PackPipelines.PackSkyFamily packSkyTexturedPipeline;
     private PackPipelines.PackSky packCloudPipeline;
     private boolean packCloudsDrawNothing;
     /** GL-registry slot-5 view of the shadow depth, for pack geometry sampling (shadowtex0). */
@@ -316,6 +332,8 @@ public class ChimeraMainPass implements MainPass {
     private boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
     private boolean pendingDepthClear;
+    private final ChimeraHorizonRenderer horizonRenderer = new ChimeraHorizonRenderer();
+
     /** Opens the stable output target before a screen frame starts. */
     private boolean earlyOutputPass = true;
     /** Internal world resources can retire independently from the output. */
@@ -388,7 +406,7 @@ public class ChimeraMainPass implements MainPass {
     private String currentDimension = "minecraft:overworld";
 
     /**
-     * Armed at level-segment HEAD, consumed at the SOLID layer tail
+     * Armed at level-segment HEAD, consumed at the opaque layer's head
      * (WorldRendererMixin): guarantees exactly one shadow segment per frame.
      */
     private boolean shadowPending;
@@ -420,20 +438,45 @@ public class ChimeraMainPass implements MainPass {
         this.packPath = initialPackPath;
         this.levelPhase = true;
         createResources();
-        Renderer.getInstance().addOnResizeCallback(this::onResize);
+        // VulkanMod already resizes the current main pass; this covers the
+        // frames where the host owns it, so Chimera's targets follow the
+        // swapchain without being rebuilt twice.
+        Renderer.getInstance().addOnResizeCallback(() -> {
+            if (Renderer.getInstance().getMainPass() != this) onResize();
+        });
     }
 
+    /**
+     * The pack to load at startup: {@code -Dchimera.pack} when given (an explicit override for
+     * testing), otherwise the selection saved in {@code config/chimera.properties}.
+     */
     private static Path startupPackPath() {
         String value = System.getProperty("chimera.pack");
-        if (value == null || value.isBlank()) {
+        if (value != null && !value.isBlank()) {
+            try {
+                return Path.of(value.trim());
+            } catch (RuntimeException failure) {
+                LOGGER.warn("[chimera] startup pack path is invalid: {}", value);
+                return null;
+            }
+        }
+        net.chimera.config.ChimeraConfig config = net.chimera.config.ChimeraConfig.get();
+        if (!config.shadersEnabled() || config.shaderPack().isEmpty()) {
             return null;
         }
-        try {
-            return Path.of(value.trim());
-        } catch (RuntimeException failure) {
-            LOGGER.warn("[chimera] startup pack path is invalid: {}", value);
-            return null;
+        String name = config.shaderPack().get();
+        Path pack = net.chimera.config.ShaderpackDirectory.resolve(
+                net.chimera.config.ShaderpackDirectory.root(), name).orElse(null);
+        if (pack == null) {
+            LOGGER.warn("[chimera] saved shader pack is no longer in the shaderpacks folder: {}", name);
         }
+        return pack;
+    }
+
+    /** The pack the frame will run once pending changes apply; null when none. */
+    Path selectedPackPath() {
+        PendingPackChange pending = this.packChangeQueue.pending();
+        return pending != null ? pending.path() : this.packPath;
     }
 
     /**
@@ -517,8 +560,9 @@ public class ChimeraMainPass implements MainPass {
                             this.shadowMap.getLightView(), projection);
                 }
                 if (packShadow) {
-                    // shadowtex1 is the opaque and cutout casters only; the
-                    // translucent layer below reaches shadowtex0 alone, and
+                    renderShadowCasters(cameraX, cameraY, cameraZ);
+                    // shadowtex1 is the opaque, cutout and entity casters only;
+                    // the translucent layer below reaches shadowtex0 alone, and
                     // packs tint through shadowcolor where the two differ.
                     if (Renderer.getInstance().getBoundRenderPass() != null) {
                         Renderer.getInstance().endRenderPass(cmd);
@@ -610,9 +654,34 @@ public class ChimeraMainPass implements MainPass {
 
 
     /**
-     * Chooses the shadow pass's sections from the light volume. The pack
-     * projection carries GL clip depth, which the frustum test expects; both
-     * projections cover the same volume.
+     * Iris ShadowRenderer: entities and block entities cast after the opaque terrain and
+     * before the translucent layer, with shadow_entities. A failure leaves the terrain map
+     * intact and turns the casters off for the session.
+     */
+    private void renderShadowCasters(double cameraX, double cameraY, double cameraZ) {
+        if (this.packShadowEntityPipeline == null || this.shadowCastersFailed
+                || this.packPlan == null || this.packConfig == null) {
+            return;
+        }
+        ShadowCasterDirectives directives = this.packPlan.shadowCasters();
+        if (!directives.anyEntities() && !directives.anyBlockEntities()) return;
+        try {
+            prepareProgramImages(this.packShadowEntityPipeline.pipeline());
+            ChimeraShadowCasters.render(cameraX, cameraY, cameraZ, this.shadowMap.getLightView(),
+                    this.shadowMap.getPackLightProjection(), directives, shadowCullingFrustum(true));
+        } catch (RuntimeException failure) {
+            this.shadowCastersFailed = true;
+            if (this.conformanceReport != null) {
+                this.conformanceReport.addDeviation("SHADOW_ENTITY_DRAW_FAILED");
+            }
+            LOGGER.warn("[chimera] shadow casters failed; entities cast no shadow this session", failure);
+        }
+    }
+
+    /**
+     * Chooses the shadow pass's sections from the light volume and Iris's terrain
+     * shadow frustum. The pack projection carries GL clip depth, which the frustum
+     * test expects; both projections cover the same volume.
      */
     private void beginShadowSections(double cameraX, double cameraY, double cameraZ) {
         if (!(WorldRenderer.getInstance() instanceof ChimeraSectionGridAccess access)) return;
@@ -620,19 +689,33 @@ public class ChimeraMainPass implements MainPass {
         if (grid == null) return;
         ShadowSectionQueue.begin(grid, grid.getChunkAreaManager().size,
                 this.shadowMap.getPackLightProjection(), this.shadowMap.getLightView(),
-                cameraX, cameraY, cameraZ);
+                shadowCullingFrustum(false), cameraX, cameraY, cameraZ);
     }
 
     /**
-     * Renders the shadow map at the tail of the SOLID section layer.
-     * Closes the HDR pass opened at HEAD, draws terrain from the light's
-     * perspective into the shadow map, then reopens the HDR pass (load ops)
-     * so the remaining layers continue into it.
+     * This frame's Iris shadow frustum, terrain or entity: built from the camera's view and the
+     * shadow light, with the render distance Iris reads each frame.
+     */
+    private ShadowCullingFrustum shadowCullingFrustum(boolean entities) {
+        if (this.shadowCulling == null) return ShadowCullingFrustum.none();
+        int renderDistance = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+        ShadowCullingPlan.Culler culler = entities
+                ? this.shadowCulling.entities(renderDistance) : this.shadowCulling.terrain(renderDistance);
+        return new ShadowCullingFrustum(culler, PackUniformProvider.currentCameraViewProjection(new Matrix4f()),
+                PackUniformProvider.currentSunLightVector());
+    }
+
+    /**
+     * Renders the shadow map at the head of the opaque section layer, before
+     * any terrain draw samples it, as Iris renders shadows first. Closes the
+     * HDR pass opened at HEAD, draws the casters from the light's perspective
+     * into the shadow map, then reopens the HDR pass (load ops) so the
+     * terrain layers draw into it.
      *
      * Timing matters: by this point cullTerrain has updated VulkanMod's
-     * section graph for this frame and the main SOLID pass has drawn. The
-     * shadow phase draws its own sections chosen from the light volume
-     * ({@link ShadowSectionQueue}), not the camera's culled queues.
+     * section graph for this frame. The shadow phase draws its own sections
+     * chosen from the light volume ({@link ShadowSectionQueue}), not the
+     * camera's culled queues.
      */
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.isInitialized() || !this.shadowFrameReady || !shadowAttachmentsLive()) {
@@ -668,16 +751,15 @@ public class ChimeraMainPass implements MainPass {
                 PackGeometryContext.beginGeometry(resumeColors, resumeDepth);
                 this.rebindMainTarget();
             } else if (resumePackCoverage && this.hdrFramebuffer != null) {
-                // Continue the interrupted opaque layer on the same pack
-                // target. The outer renderSectionLayer return will close and
-                // commit this resumed window normally.
+                // Continue an interrupted coverage window on the same pack
+                // target; its owner closes and commits it as usual.
                 PackGeometryContext.beginPreserving(
                         resumeColors.get(0),
                         resumeColors.size() > 1 ? resumeColors.get(1) : this.packCoverageOwner.image(),
                         this.hdrFramebuffer.getDepthAttachment());
                 this.rebindMainTarget();
             } else {
-                // Reopen the HDR pass (load ops) for the host terrain layers.
+                // Reopen the HDR pass (load ops) for the terrain layers.
                 this.rebindMainTarget();
             }
         }
@@ -750,6 +832,9 @@ public class ChimeraMainPass implements MainPass {
         String pending = pendingRequest == null
                 ? (hasPendingPackVariant() ? "dimension " + this.pendingPackDimension : "none")
                 : packLabel(pendingRequest.path());
+        if (this.packFrameUnsupported != null) {
+            active += " (unsupported: " + this.packFrameUnsupported + ")";
+        }
         return "Chimera pack: active=" + active
                 + ", dimension=" + this.currentDimension
                 + ", pending=" + pending;
@@ -795,6 +880,7 @@ public class ChimeraMainPass implements MainPass {
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
             this.packPostTargets.beginFrame(commandBuffer, hdrColor);
             this.packPostFrameStarted = true;
+            this.nanTripwire.beginFrame(commandBuffer, this.packPath == null ? "?" : String.valueOf(this.packPath.getFileName()));
             if (packCoverageRuntimeEnabled() && this.packPostChainActive) {
                 this.packPostTargets.prepareGeometryTarget(commandBuffer);
                 this.packCoverageOwner.beginFrame(commandBuffer);
@@ -803,9 +889,10 @@ public class ChimeraMainPass implements MainPass {
         }
 
         // Compute the light once before any terrain draw. The shadow pass at
-        // the opaque-layer tail reuses this exact state.
+        // the opaque layer's head reuses this exact state.
         if (this.shadowMap.isInitialized()) {
-            this.shadowMap.updateLight(PackUniformProvider.currentSunLightVector());
+            this.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
+                    cameraX, cameraY, cameraZ);
             this.shadowFrameReady = prepareShadowForSampling(cameraX, cameraY, cameraZ);
             if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
                 this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
@@ -814,7 +901,7 @@ public class ChimeraMainPass implements MainPass {
             }
         }
 
-        // Arm this frame's shadow segment; consumed at the SOLID layer tail.
+        // Arm this frame's shadow segment; consumed at the opaque layer's head.
         this.shadowPending = this.shadowFrameReady;
 
         // Terrain shaders sample the shadow map from their first draw.
@@ -834,6 +921,26 @@ public class ChimeraMainPass implements MainPass {
             this.levelPhase = true;
             this.pendingDepthClear = false;
         }
+        if (this.packPostChainActive
+                && this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE)) {
+            Renderer.getInstance().endRenderPass(commandBuffer);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
+                hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.PREPARE);
+                if (this.packPostChainActive) {
+                    this.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
+                }
+                hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            }
+            this.rebindMainTarget();
+        }
+    }
+
+    /** Called inside the native overworld sky scope, after its clears and before its disc. */
+    public void drawPackHorizon() {
+        if (this.levelPhase && this.packPlan != null && this.packPlan.skyEnabled()
+                && ChimeraSkyBridge.hasBasicSky()) this.horizonRenderer.draw();
     }
 
     /** Resolves the world into the stable output before hand and GUI work. */
@@ -973,24 +1080,41 @@ public class ChimeraMainPass implements MainPass {
         return switch (family) {
             case ENTITY -> this.packEntityPipeline;
             case ENTITY_TRANSLUCENT -> this.packTranslucentEntityPipeline;
-            case GLOWING -> this.packGlowingEntityPipeline;
+            case SPIDER_EYES -> this.packSpiderEyesPipeline;
             case BLOCK -> this.packBlockPipeline;
             case DAMAGED_BLOCK -> this.packDamagedBlockPipeline;
+            case HAND -> this.packHandPipeline == null ? null : this.packHandPipeline.primary();
+            case HAND_WATER -> this.packHandWaterPipeline == null ? null : this.packHandWaterPipeline.primary();
+            // The shadow pass owns the shadow map's attachments; casters open no window.
+            case SHADOW_ENTITIES -> this.packShadowEntityPipeline;
             default -> null;
         };
     }
 
+    /** The selected host-particle or host-layout lane retains its own authored output contract. */
+    public PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
+        return switch (family) {
+            case PARTICLE -> this.packParticlePipeline;
+            case PARTICLE_TRANSLUCENT -> this.packTranslucentParticlePipeline;
+            default -> this.packHostLayoutPipelines.get(family);
+        };
+    }
+
     /**
-     * Opens the authored MRT window around one separated entity/block family
-     * batch. The bridge only selects the pipeline; this pass owns the target
-     * transitions: it closes the host HDR pass, binds target 0 to the live
-     * HDR image plus the family's auxiliary targets and shared depth, and
+     * Opens the authored attachment window around one host geometry family
+     * draw or batch. The bridge only selects the pipeline; this pass owns the target
+     * transitions: it closes the host HDR pass, binds the declared targets
+     * in output-location order with shared depth (target 0 uses live HDR), and
      * enters the guarded geometry context whose dynamic-rendering bridge
      * supplies the attachments. Returns true only when this call opened the
      * window; the caller closes exactly what it opened.
      */
     public boolean beginPackFamilyWindow(net.chimera.shaderpack.PackPipelines.PackEntity family) {
-        if (family == null || !family.requiresDynamicAttachments()
+        return family != null && beginPackFamilyWindow(family.outputPlan());
+    }
+
+    public boolean beginPackFamilyWindow(net.chimera.shaderpack.GeometryOutputPlan outputs) {
+        if (outputs == null || !outputs.requiresDynamicAttachments()
                 || !this.packTargetResourcesReady || this.shadowPassActive
                 || this.hdrFramebuffer == null
                 || this.hdrFramebuffer.getDepthAttachment() == null
@@ -1001,12 +1125,11 @@ public class ChimeraMainPass implements MainPass {
             return false;
         }
         try {
-            List<Integer> outputs = family.outputPlan().targetSlots();
             VulkanImage hdrColor = this.hdrFramebuffer.getColorAttachment();
             Renderer.getInstance().endRenderPass();
-            this.packPostTargets.beginGeometry(Renderer.getCommandBuffer(), hdrColor, outputs);
+            this.packPostTargets.beginGeometry(Renderer.getCommandBuffer(), hdrColor, outputs.targetSlots());
             PackGeometryContext.beginGeometry(
-                    this.packPostTargets.geometryAttachments(outputs),
+                    this.packPostTargets.geometryAttachments(outputs.targetSlots()),
                     this.hdrFramebuffer.getDepthAttachment());
             return true;
         } catch (RuntimeException failure) {
@@ -1020,14 +1143,18 @@ public class ChimeraMainPass implements MainPass {
 
     /** Commits the family window's auxiliary outputs and reopens the HDR pass. */
     public void endPackFamilyWindow(net.chimera.shaderpack.PackPipelines.PackEntity family) {
-        if (family == null || !family.requiresDynamicAttachments()
+        if (family != null) endPackFamilyWindow(family.outputPlan());
+    }
+
+    public void endPackFamilyWindow(net.chimera.shaderpack.GeometryOutputPlan outputs) {
+        if (outputs == null || !outputs.requiresDynamicAttachments()
                 || !PackGeometryContext.geometryActive() || this.shadowPassActive) {
             return;
         }
         try {
             Renderer.getInstance().endRenderPass();
             PackGeometryContext.close();
-            this.packPostTargets.commitGeometry(family.outputPlan().targetSlots(),
+            this.packPostTargets.commitGeometry(outputs.targetSlots(),
                     this.hdrFramebuffer.getColorAttachment());
             this.currentFramebuffer = this.hdrFramebuffer;
             this.rebindMainTarget();
@@ -1174,6 +1301,8 @@ public class ChimeraMainPass implements MainPass {
         }
         Renderer.getInstance().endRenderPass(commandBuffer);
 
+        this.nanTripwire.finishFrame(commandBuffer);
+
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage outputColor = this.compositeFramebuffer.getColorAttachment();
             trace("presentRead", "outputColor", outputColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -1238,10 +1367,44 @@ public class ChimeraMainPass implements MainPass {
         Renderer renderer = Renderer.getInstance();
         renderer.bindGraphicsPipeline(pipeline);
         renderer.uploadAndBindUBOs(pipeline);
-        VK10.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+        VK10.vkCmdDraw(commandBuffer, ChimeraPostPipelines.FULLSCREEN_VERTICES, 1, 0, 0);
         ProgramImages program = this.programImages.get(pipeline);
         if (program != null && this.packStorageBufferOwner != null) {
             this.packStorageBufferOwner.recordDraw(program.name(), VK_SHADER_STAGE_FRAGMENT_BIT);
+        }
+    }
+
+    /**
+     * Debug: scans every committed colortex, its history side, and the float depth copies, so
+     * the first dirty check after a clean one names where a NaN entered. Also snapshots the
+     * frame's uniforms once.
+     */
+    private void sweepNanTripwire(VkCommandBuffer commandBuffer, String when) {
+        if (!PackNanTripwire.enabled()) return;
+        this.nanTripwire.checkUniforms();
+        for (int target = 0; target <= PackTargetGraphPlan.MAX_TARGET; target++) {
+            VulkanImage active = this.packPostTargets.activeTarget(target);
+            this.nanTripwire.check(commandBuffer, when + ": colortex" + target, active);
+            VulkanImage history = this.packPostTargets.previousTarget(target);
+            if (history != null && history != active) {
+                this.nanTripwire.check(commandBuffer, when + ": colortex" + target + " history", history);
+            }
+        }
+        if (this.packDepthTargets.isConfigured()) {
+            for (String name : List.of("depthtex0", "depthtex1", "depthtex2")) {
+                if (this.packDepthTargets.currentAvailable(name)) {
+                    this.nanTripwire.check(commandBuffer, when + ": " + name, this.packDepthTargets.image(name));
+                }
+            }
+        }
+    }
+
+    /** Debug: scans what one post stage just wrote. */
+    private void checkNanTripwireOutputs(VkCommandBuffer commandBuffer, PackPostExecution stage) {
+        if (!PackNanTripwire.enabled()) return;
+        for (int target : stage.outputTargets()) {
+            this.nanTripwire.check(commandBuffer, stage.name() + " -> colortex" + target,
+                    this.packPostTargets.activeTarget(target));
         }
     }
 
@@ -1260,7 +1423,10 @@ public class ChimeraMainPass implements MainPass {
                 throw new IllegalStateException("PACK_TARGET_FRAME_NOT_STARTED:post window " + window);
             }
             this.packPostTargets.requireFrameStarted();
+            // Each Iris composite renderer starts with every target base-level sampled.
+            this.packPostTargets.resetMipmapSampling();
             preparePackFullscreenState();
+            boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
                 PackFrameSchedulePlan.PostStage scheduled = this.packFrameSchedule.postStage(stage.name());
                 if (stage.finalStage() || scheduled == null || scheduled.window() != window) {
@@ -1282,9 +1448,14 @@ public class ChimeraMainPass implements MainPass {
                             unavailablePostInputs(post));
                     continue;
                 }
+                if (!tripwireSwept) {
+                    tripwireSwept = true;
+                    sweepNanTripwire(commandBuffer, "before " + window);
+                }
                 ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
                 boolean attempted = false;
                 try {
+                    this.packPostTargets.generateMipmaps(commandBuffer, post.name());
                     prepareProgramImages(post.pipeline());
                     previous = bindProgramImages(post.pipeline(), this.packPostTargets.sourceImages(), hdrColor,
                             DrawMaterialContext.captureLive());
@@ -1292,6 +1463,7 @@ public class ChimeraMainPass implements MainPass {
                     this.packPostTargets.prepare(post, commandBuffer);
                     drawFullscreen(commandBuffer, post.pipeline());
                     this.packPostTargets.finish(commandBuffer);
+                    checkNanTripwireOutputs(commandBuffer, stage);
                 } catch (RuntimeException stageFailure) {
                     if (attempted) {
                         this.packPostTargets.abort(commandBuffer);
@@ -1358,6 +1530,16 @@ public class ChimeraMainPass implements MainPass {
 
     /** Captures the pre-hand depth seam before the host hand draw begins. */
     public void beginHandSegment() {
+        if (this.levelPhase && this.packDepthTargets.isConfigured()
+                && this.packDepthTargets.plan().depthtex2()) {
+            var commandBuffer = Renderer.getCommandBuffer();
+            Renderer.getInstance().endRenderPass(commandBuffer);
+            if (!this.packDepthTargets.currentAvailable("depthtex2")) {
+                this.packDepthTargets.capturePreHand(commandBuffer, this.hdrFramebuffer.getDepthAttachment());
+            }
+            this.rebindMainTarget();
+            return;
+        }
         if (!this.packWorldResolved || !this.packDepthTargets.isConfigured()
                 || !this.packDepthTargets.plan().depthtex2()) {
             return;
@@ -1382,6 +1564,12 @@ public class ChimeraMainPass implements MainPass {
                     this.compositeFramebuffer.getHeight(), stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, this.compositeFramebuffer.scissor(stack));
         }
+    }
+
+    /** Divert the whole hand only when both halves can participate in the live pack frame. */
+    public boolean hasPackHandSchedule() {
+        return this.levelPhase && this.packPostChainActive && this.packTargetResourcesReady
+                && this.packHandPipeline != null && this.packHandWaterPipeline != null;
     }
 
     /** Runs the pack final stage after world post passes and before host hand. */
@@ -1422,6 +1610,10 @@ public class ChimeraMainPass implements MainPass {
             // into a GL-ordered image; the flipped resolve below moves that
             // image into the host-ordered output.
             Renderer.getInstance().endRenderPass(commandBuffer);
+            // No pack target is written between the last post output check and final.
+            // Re-reading every target/history/depth here adds cost but no new evidence.
+            this.packPostTargets.resetMipmapSampling();
+            this.packPostTargets.generateMipmaps(commandBuffer, this.packFinalPost.name());
             Renderer.getInstance().beginRenderPass(this.packFinalRenderPass, this.packFinalFramebuffer);
             PackRenderState finalState = capturePackRenderState();
             ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
@@ -1446,6 +1638,7 @@ public class ChimeraMainPass implements MainPass {
                 finalColor.transitionImageLayout(stack, commandBuffer,
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
+            this.nanTripwire.check(commandBuffer, "final", finalColor);
             resolveWorldToOutput(commandBuffer, finalColor);
             this.packFinalApplied = true;
         } catch (RuntimeException failure) {
@@ -1495,8 +1688,7 @@ public class ChimeraMainPass implements MainPass {
 
     private static String graphRejectionCode(String name, TargetStep step) {
         for (String deviation : step.deviations()) {
-            if (deviation.startsWith("POST_TARGET_MIPMAP_UNSUPPORTED:")
-                    || deviation.startsWith("POST_TARGET_ATTACHMENT_LIMIT:")
+            if (deviation.startsWith("POST_TARGET_ATTACHMENT_LIMIT:")
                     || deviation.startsWith("POST_TARGET_SIZE_CONFLICT:")
                     || deviation.startsWith("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:")
                     || deviation.startsWith("POST_TARGET_FEEDBACK_UNSUPPORTED:")
@@ -1696,6 +1888,15 @@ public class ChimeraMainPass implements MainPass {
             }
         }
         if (runEarlyPost) {
+            // Iris beginHand copies depthtex2 before deferred runs. A pack solid hand
+            // already captured it at its segment; otherwise no hand has drawn yet and
+            // the opaque depth is the pre-hand depth.
+            if (this.packDepthTargets.isConfigured() && this.packDepthTargets.plan().depthtex2()
+                    && !this.packDepthTargets.currentAvailable("depthtex2")
+                    && !this.packDepthTargets.capturePreHand(
+                            commandBuffer, this.hdrFramebuffer.getDepthAttachment())) {
+                LOGGER.warn("[chimera] pack depth graph: early depthtex2 capture unavailable");
+            }
             // Deferred passes read depthtex0 here, before translucents: the
             // opaque depth. finishLevelSegment re-captures it for composite.
             if (this.packFrameSchedule.earlyReadsDepthtex0()
@@ -1860,6 +2061,7 @@ public class ChimeraMainPass implements MainPass {
     public void cleanUp() {
         stopRenderWorkForCleanup();
         waitForImmediateDestruction("final pack cleanup");
+        this.horizonRenderer.close();
         cleanUpPackVariant();
         // The material owner has renderer lifetime: shader-pack replacement
         // must not close it, and final teardown closes it exactly once while
@@ -1867,6 +2069,7 @@ public class ChimeraMainPass implements MainPass {
         // previous valid companions instead of destroying them.
         if (this.materialMapOwner != null) this.materialMapOwner.close();
         this.materialMapOwner = null;
+        this.nanTripwire.close();
         cleanUpFramebuffersAndPasses();
         cleanUpPipelines();
         if (this.packSource != null) this.packSource.close();
@@ -1983,18 +2186,21 @@ public class ChimeraMainPass implements MainPass {
         this.packGeometryTerrain = null;
         this.packTranslucentTerrain = null;
         if (this.packShadowPipeline != null) this.packShadowPipeline.cleanUp();
+        if (this.packShadowEntityPipeline != null) this.packShadowEntityPipeline.pipeline().cleanUp();
         if (this.packEntityPipeline != null) this.packEntityPipeline.pipeline().cleanUp();
         if (this.packTranslucentEntityPipeline != null) this.packTranslucentEntityPipeline.pipeline().cleanUp();
-        if (this.packGlowingEntityPipeline != null) this.packGlowingEntityPipeline.pipeline().cleanUp();
+        if (this.packSpiderEyesPipeline != null) this.packSpiderEyesPipeline.pipeline().cleanUp();
         if (this.packBlockPipeline != null) this.packBlockPipeline.pipeline().cleanUp();
         if (this.packDamagedBlockPipeline != null) this.packDamagedBlockPipeline.pipeline().cleanUp();
-        if (this.packHandPipeline != null) this.packHandPipeline.pipeline().cleanUp();
-        if (this.packHandWaterPipeline != null) this.packHandWaterPipeline.pipeline().cleanUp();
+        if (this.packTranslucentEntityTextPipeline != null) this.packTranslucentEntityTextPipeline.pipeline().cleanUp();
+        if (this.packBlockTextPipeline != null) this.packBlockTextPipeline.pipeline().cleanUp();
+        if (this.packHandPipeline != null) this.packHandPipeline.cleanUp();
+        if (this.packHandWaterPipeline != null) this.packHandWaterPipeline.cleanUp();
         if (this.packParticlePipeline != null) this.packParticlePipeline.pipeline().cleanUp();
         if (this.packTranslucentParticlePipeline != null) this.packTranslucentParticlePipeline.pipeline().cleanUp();
-        if (this.packWeatherPipeline != null) this.packWeatherPipeline.pipeline().cleanUp();
-        if (this.packSkyBasicPipeline != null) this.packSkyBasicPipeline.pipeline().cleanUp();
-        if (this.packSkyTexturedPipeline != null) this.packSkyTexturedPipeline.pipeline().cleanUp();
+        this.packHostLayoutPipelines.values().forEach(lane -> lane.pipeline().cleanUp());
+        if (this.packSkyBasicPipeline != null) this.packSkyBasicPipeline.cleanUp();
+        if (this.packSkyTexturedPipeline != null) this.packSkyTexturedPipeline.cleanUp();
         if (this.packCloudPipeline != null) this.packCloudPipeline.pipeline().cleanUp();
         if (this.packShadowCompute != null) this.packShadowCompute.close();
         this.packShadowCompute = null;
@@ -2030,21 +2236,24 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentSlots = null;
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
+        this.packShadowEntityPipeline = null;
+        this.shadowCastersFailed = false;
         this.packEntityPipeline = null;
         this.packTranslucentEntityPipeline = null;
-        this.packGlowingEntityPipeline = null;
+        this.packSpiderEyesPipeline = null;
         this.packBlockPipeline = null;
         this.packDamagedBlockPipeline = null;
+        this.packTranslucentEntityTextPipeline = null;
+        this.packBlockTextPipeline = null;
         this.packHandPipeline = null;
         this.packHandWaterPipeline = null;
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
-        this.packWeatherPipeline = null;
+        this.packHostLayoutPipelines.clear();
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
         this.packCloudsDrawNothing = false;
-        this.postChainFamilyBlocked = false;
         this.shadowCutoutDispositionLogged = false;
         this.shadowFrameReady = false;
         this.shadowTransitionFallbackLogged = false;
@@ -2057,6 +2266,7 @@ public class ChimeraMainPass implements MainPass {
         this.packFinalApplied = false;
         this.packConfig = null;
         this.packPlan = null;
+        this.shadowCulling = null;
         this.packTargetGraph = null;
         this.packFrameSchedule = PackFrameSchedulePlan.empty();
         this.packPrograms = null;
@@ -2135,6 +2345,7 @@ public class ChimeraMainPass implements MainPass {
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
                 LOGGER.info("[chimera] pack change rolled back: {}", packLabel(previousPath));
+                reportPackChangeFailure(request.path(), rebuildFailure, "Previous pack restored.");
                 return true;
             } catch (RuntimeException restoreFailure) {
                 LOGGER.warn("[chimera] pack rollback failed; host seams remain active: {}",
@@ -2143,13 +2354,29 @@ public class ChimeraMainPass implements MainPass {
                 this.loggedPendingPackDimension = null;
                 markPackVariantFallback();
                 ChimeraRenderer.fallbackToHostRenderer();
+                reportPackChangeFailure(request.path(), rebuildFailure, "Vanilla rendering restored; rollback failed.");
                 return false;
             }
         }
     }
 
+    private static void reportPackChangeFailure(Path requested, RuntimeException failure, String recovery) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.gui != null) {
+            String reason = failure.getMessage();
+            if (reason == null || reason.isBlank()) reason = failure.getClass().getSimpleName();
+            // Full exception details stay in latest.log, not a multi-line shader dump in chat.
+            reason = reason.lines().findFirst().orElse("unknown error");
+            if (reason.length() > 160) reason = reason.substring(0, 160) + "…";
+            minecraft.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+                    "[Chimera] Failed to load " + packLabel(requested) + ": " + reason
+                            + ". " + recovery + " See latest.log."));
+        }
+    }
+
     /** Clears all pack-owned objects and closes the current source after the idle wait. */
     private void preparePackSessionReplacement(boolean waitForIdle) {
+        this.packFrameUnsupported = null;
         clearPackOverrides();
         this.levelPhase = false;
         this.pendingDepthClear = false;
@@ -2216,6 +2443,7 @@ public class ChimeraMainPass implements MainPass {
             this.shadowPending = false;
             waitForImmediateDestruction("dimension variant " + requested);
             cleanUpPackVariant();
+            this.packFrameUnsupported = null;
             this.packSource.selectDimension(requested);
             createResources();
             this.pendingPackDimension = null;
@@ -2270,20 +2498,15 @@ public class ChimeraMainPass implements MainPass {
         if (this.conformanceReport == null) {
             return;
         }
-        this.conformanceReport.addDeviation("PACK_VARIANT_REBUILD_FAILED");
-        for (ConformanceReport.ProgramReport program : this.conformanceReport.programs()) {
-            if (program.runtime() == ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED
-                    || program.runtime() == ConformanceReport.RuntimeDisposition.INSTALLED) {
-                this.conformanceReport.markRuntime(program.name(),
-                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "PACK_VARIANT_REBUILD_FAILED");
-            }
-        }
+        this.conformanceReport.markFrameFallback("PACK_VARIANT_REBUILD_FAILED", "PACK_VARIANT_REBUILD_FAILED");
         LOGGER.info("[chimera] conformance {}", this.conformanceReport.toJson());
     }
 
     @Override
     public void onResize() {
+        // Renderer idles the device before resize and may change its frames-in-flight
+        // count. Recreate the diagnostic ring at this same safe boundary.
+        this.nanTripwire.close();
         createResources();
     }
 
@@ -2333,7 +2556,7 @@ public class ChimeraMainPass implements MainPass {
             }
             int maxAttachments = deviceMaxColorAttachments();
             this.packTargetGraph = PackTargetGraphPlan.build(
-                    this.packPlan.programs(), this.packConfig, this.packPlan.resources(), width, height,
+                    this.packPlan.activePrograms(), this.packConfig, this.packPlan.resources(), width, height,
                     maxAttachments, deviceMaxImageDimension());
             this.packCoveragePlan = PackCoveragePlan.from(
                     this.packTargetGraph, this.packPlan, width, height);
@@ -2355,22 +2578,24 @@ public class ChimeraMainPass implements MainPass {
                         this.packCoveragePlan.deviations());
             }
             this.packFrameSchedule = PackFrameSchedulePlan.build(
-                    this.packPlan.programs(), this.packTargetGraph);
+                    this.packPlan.activePrograms(), this.packTargetGraph);
             this.packNeedsHdrDepth = this.packTargetGraph.depth().any();
             this.packDepthTargets.configure(width, height, this.packTargetGraph.depth());
             this.packTargetResourcesReady = this.packPostTargets.configure(this.packTargetGraph);
             this.packPostChainActive = this.packTargetResourcesReady
-                    && !this.packTargetGraph.steps().isEmpty()
-                    && !this.postChainFamilyBlocked;
+                    && !this.packTargetGraph.steps().isEmpty();
             if (this.packPostChainActive) {
-                LOGGER.info("[chimera] pack frame schedule: phases={}, early={}, late={}, final={}, depth={}, deviations={}",
+                LOGGER.info("[chimera] pack frame schedule: phases={}, prepare={}, early={}, late={}, final={}, depth={}, deviations={}",
                         this.packFrameSchedule.phases(),
+                        this.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.PREPARE).stream()
+                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
                         this.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.EARLY).stream()
                                 .map(PackFrameSchedulePlan.PostStage::name).toList(),
                         this.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.LATE).stream()
                                 .map(PackFrameSchedulePlan.PostStage::name).toList(),
                         this.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.FINAL).stream()
                                 .map(PackFrameSchedulePlan.PostStage::name).toList(),
+                        this.packTargetGraph.depth().names(),
                         this.packFrameSchedule.deviations());
                 LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, maxAttachments={}, fingerprint={}",
                         this.packTargetGraph.targets().size(), this.packTargetGraph.steps().size(),
@@ -2527,7 +2752,7 @@ public class ChimeraMainPass implements MainPass {
             MrtPipelineContext.begin(new int[] {target.format}, deviceLimit);
             VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
             attachments.get(0).sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
-                    .imageView(target.getImageView())
+                    .imageView(PackPostTargets.attachmentView(target))
                     .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
                     .loadOp(VK_ATTACHMENT_LOAD_OP_LOAD)
                     .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
@@ -2588,8 +2813,8 @@ public class ChimeraMainPass implements MainPass {
             return;
         }
         Path dir = this.packPath;
-        if (dir == null) {
-            LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
+        if (dir == null || this.packFrameUnsupported != null) {
+            if (dir == null) LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             PackUniformProvider.installRuntimeSettings(null);
@@ -2604,12 +2829,19 @@ public class ChimeraMainPass implements MainPass {
         LOGGER.info("[chimera] pack options: file={}, applied={}", optionFile == null ? "none" : optionFile,
                 net.chimera.shaderpack.PackOptionSources.overrides(dir));
         this.conformanceReport = analysis.report();
-        this.packPrograms = result.programs();
+        this.packPrograms = analysis.plan() == null ? result.programs()
+                : analysis.plan().programs().stream().map(PackProgramPlan::program).toList();
         this.packConfig = analysis.config() != null
                 ? analysis.config()
                 : PackConfig.parse(this.packPrograms, result.shadersDir());
         this.packPlan = analysis.plan() == null
                 ? new PackPlan(this.packConfig, List.of()) : analysis.plan();
+        this.shadowCulling = this.packPlan.shadowCulling();
+        int renderDistance = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+        LOGGER.info("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
+                this.shadowCulling.state(), this.shadowCulling.terrain(renderDistance).describe(),
+                this.shadowCulling.entities(renderDistance).describe(), renderDistance,
+                this.shadowCulling.deviations().isEmpty() ? "" : " " + this.shadowCulling.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(this.packPlan.terrainMaterial());
         PackUniformProvider.installRuntimeSettings(this.packPlan.runtimeSettings());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",
@@ -2775,21 +3007,24 @@ public class ChimeraMainPass implements MainPass {
         this.packTranslucentSuspendLogged = false;
         this.packShadowPipeline = null;
         this.packShadowSlots = null;
+        this.packShadowEntityPipeline = null;
+        this.shadowCastersFailed = false;
         this.packEntityPipeline = null;
         this.packTranslucentEntityPipeline = null;
-        this.packGlowingEntityPipeline = null;
+        this.packSpiderEyesPipeline = null;
         this.packBlockPipeline = null;
         this.packDamagedBlockPipeline = null;
+        this.packTranslucentEntityTextPipeline = null;
+        this.packBlockTextPipeline = null;
         this.packHandPipeline = null;
         this.packHandWaterPipeline = null;
         this.packParticlePipeline = null;
         this.packTranslucentParticlePipeline = null;
-        this.packWeatherPipeline = null;
+        this.packHostLayoutPipelines.clear();
         this.packSkyBasicPipeline = null;
         this.packSkyTexturedPipeline = null;
         this.packCloudPipeline = null;
         this.packCloudsDrawNothing = false;
-        this.postChainFamilyBlocked = false;
         this.shadowCutoutDispositionLogged = false;
         this.packPipelinesLoaded = true;
 
@@ -2931,6 +3166,20 @@ public class ChimeraMainPass implements MainPass {
                 if (TRACE_TRANSITIONS) {
                     LOGGER.info("[chimera] pack shadow converted fragment:\n{}", shadow.convertedFragment());
                 }
+            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                PackPipelines.PackEntity casters = PackPipelines.buildShadowEntities(programPlan,
+                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
+                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
+                if (casters == null) {
+                    markFamilyPipelineFallback(name, "SHADOW_ENTITY_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                if (!attachPackStoragePipeline(name, casters.pipeline(), casters.imageBindings())) {
+                    casters.pipeline().cleanUp();
+                    continue;
+                }
+                this.packShadowEntityPipeline = casters;
+                markFamilyPipelineInstalled(name, "SHADOW_ENTITY_PIPELINE_INSTALLED");
             } else if (PostTargetPlan.isPostProgramName(name)) {
                 PackPipelines.PackPost post = PackPipelines.buildPost(programPlan, fixedVertex,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3015,7 +3264,7 @@ public class ChimeraMainPass implements MainPass {
                 if (TRACE_TRANSITIONS) {
                     LOGGER.info("[chimera] pack gbuffers_terrain converted fragment:\n{}", terrain.convertedFragment());
                 }
-                LOGGER.info("[chimera] pack gbuffers_terrain: outputs={} dynamicMrt={}",
+                LOGGER.info("[chimera] pack gbuffers_terrain: outputs={} dynamicAttachments={}",
                         terrain.outputPlan() == null ? List.of(0) : terrain.outputPlan().targetSlots(),
                         terrain.requiresDynamicAttachments());
             } else if (name.equals("gbuffers_water")) {
@@ -3060,11 +3309,11 @@ public class ChimeraMainPass implements MainPass {
                     LOGGER.info("[chimera] pack gbuffers_water converted fragment:\n{}",
                             water.convertedFragment());
                 }
-                LOGGER.info("[chimera] pack gbuffers_water: outputs={} dynamicMrt={}",
+                LOGGER.info("[chimera] pack gbuffers_water: outputs={} dynamicAttachments={}",
                         water.outputPlan() == null ? List.of(0) : water.outputPlan().targetSlots(),
                         water.requiresDynamicAttachments());
             } else if (name.equals("gbuffers_skybasic") || name.equals("gbuffers_skytextured")) {
-                PackPipelines.PackSky sky = PackPipelines.buildSky(programPlan,
+                PackPipelines.PackSkyFamily sky = PackPipelines.buildSky(programPlan,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
                                 : this.packPlan.advancedResources(), this.packStorageBufferOwner);
                 if (sky == null) {
@@ -3076,15 +3325,18 @@ public class ChimeraMainPass implements MainPass {
                 } else {
                     this.packSkyTexturedPipeline = sky;
                 }
-                if (!attachPackStoragePipeline(name, sky.pipeline(), sky.imageBindings())) {
-                    sky.pipeline().cleanUp();
+                boolean attached = true;
+                for (var variant : sky.variants().values()) {
+                    attached &= attachPackStoragePipeline(name, variant.pipeline(), variant.imageBindings());
+                }
+                if (!attached) {
+                    sky.cleanUp();
                     if (name.equals("gbuffers_skybasic")) this.packSkyBasicPipeline = null;
                     else this.packSkyTexturedPipeline = null;
                     continue;
                 }
                 markFamilyPipelineInstalled(name, "SKY_PIPELINE_INSTALLED");
-                LOGGER.info("[chimera] pack {}: ok (sky pipeline installed, samplers={})",
-                        name, Arrays.toString(sky.samplerSlots()));
+                LOGGER.info("[chimera] pack {}: ok (sky installed, native layouts={})", name, sky.variants().size());
             } else if (name.equals("gbuffers_clouds")) {
                 PackPipelines.PackSky cloud = PackPipelines.buildCloud(programPlan,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3157,19 +3409,22 @@ public class ChimeraMainPass implements MainPass {
                 if (name.equals("gbuffers_entities_translucent")) {
                     this.packTranslucentEntityPipeline = entity;
                 } else {
-                    this.packGlowingEntityPipeline = entity;
+                    this.packSpiderEyesPipeline = entity;
                 }
                 if (!attachPackStoragePipeline(name, entity.pipeline(), entity.imageBindings())) {
                     entity.pipeline().cleanUp();
                     if (name.equals("gbuffers_entities_translucent")) {
                         this.packTranslucentEntityPipeline = null;
                     } else {
-                        this.packGlowingEntityPipeline = null;
+                        this.packSpiderEyesPipeline = null;
                     }
                     continue;
                 }
                 markFamilyPipelineInstalled(name, name.equals("gbuffers_entities_translucent")
-                        ? "TRANSLUCENT_ENTITY_INSTALLED" : "GLOWING_ENTITY_INSTALLED");
+                        ? "TRANSLUCENT_ENTITY_INSTALLED" : "SPIDER_EYES_INSTALLED");
+                if (name.equals("gbuffers_entities_translucent")) {
+                    this.packTranslucentEntityTextPipeline = buildTextVariant(name, programPlan);
+                }
             } else if (name.equals("gbuffers_block")) {
                 PackPipelines.PackEntity block = PackPipelines.buildBlock(programPlan,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3208,20 +3463,40 @@ public class ChimeraMainPass implements MainPass {
                         + "stride={}, samplers={})",
                         net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                         Arrays.toString(block.samplerSlots()));
+                this.packBlockTextPipeline = buildTextVariant(name, programPlan);
             } else if (FamilyAdapterRegistry.isBlockFamily(name)) {
-                // The host crumbling lane uses a distinct format and render
-                // pass. EXTENDED_ENTITY is not a safe substitute. Keep the
-                // host damage overlay until a matching crumbling adapter is
-                // available rather than corrupting the block batch.
-                markFamilyPipelineFallback(name, "DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED");
-                this.packDamagedBlockPipeline = null;
+                PackPipelines.PackEntity damaged = PackPipelines.buildEntityFamily(programPlan,
+                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
+                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
+                if (damaged == null) {
+                    markFamilyPipelineFallback(name, "DAMAGED_BLOCK_PIPELINE_BUILD_FAILED");
+                    continue;
+                }
+                if (!attachPackStoragePipeline(name, damaged.pipeline(), damaged.imageBindings())) {
+                    damaged.pipeline().cleanUp();
+                    continue;
+                }
+                this.packDamagedBlockPipeline = damaged;
+                markFamilyPipelineInstalled(name, "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
             } else if (name.equals("gbuffers_hand") || FamilyAdapterRegistry.isHandFamily(name)) {
-                // The current hand hook surrounds the late host first-person
-                // draw. Installing a pack hand pipeline here would execute it
-                // outside the two-phase world schedule and could erase or
-                // misplace the host hand. Keep host hand authoritative until a
-                // true two-phase hand adapter owns the draw schedule.
-                markFamilyPipelineFallback(name, "HAND_SCHEDULE_FALLBACK");
+                var hand = PackPipelines.buildHand(programPlan,
+                        this.packPlan == null ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources(),
+                        this.packStorageBufferOwner);
+                if (hand == null) {
+                    markFamilyPipelineFallback(name, "HAND_PIPELINE_BUILD_FAILED");
+                } else {
+                    boolean ready = true;
+                    for (var variant : hand.variants().values()) {
+                        if (!attachPackStoragePipeline(name, variant.pipeline(), variant.imageBindings())) {
+                            ready = false;
+                            break;
+                        }
+                    }
+                    if (!ready) { hand.cleanUp(); continue; }
+                    if (name.equals("gbuffers_hand")) this.packHandPipeline = hand;
+                    else this.packHandWaterPipeline = hand;
+                    markFamilyPipelineInstalled(name, "HAND_TWO_PHASE_INSTALLED");
+                }
             } else if (name.equals("gbuffers_particles")) {
                 PackPipelines.PackParticle particle = PackPipelines.buildParticle(programPlan,
                         this.packPlan == null ? PackAdvancedResourcePlan.empty()
@@ -3269,21 +3544,8 @@ public class ChimeraMainPass implements MainPass {
                     continue;
                 }
                 markFamilyPipelineInstalled(name, "PARTICLE_TRANSLUCENT_INSTALLED");
-            } else if (FamilyAdapterRegistry.isWeatherFamily(name)) {
-                PackPipelines.PackParticle weather = PackPipelines.buildParticleFamily(programPlan,
-                        this.packPlan == null ? PackAdvancedResourcePlan.empty()
-                                : this.packPlan.advancedResources(), this.packStorageBufferOwner);
-                if (weather == null) {
-                    markFamilyPipelineFallback(name, "WEATHER_PIPELINE_BUILD_FAILED");
-                    continue;
-                }
-                this.packWeatherPipeline = weather;
-                if (!attachPackStoragePipeline(name, weather.pipeline(), weather.imageBindings())) {
-                    weather.pipeline().cleanUp();
-                    this.packWeatherPipeline = null;
-                    continue;
-                }
-                markFamilyPipelineInstalled(name, "WEATHER_PIPELINE_INSTALLED");
+            } else if (!HostLayoutLane.forProgram(name).isEmpty()) {
+                installHostLayoutLanes(name, programPlan);
             } else {
                 if (this.conformanceReport != null) {
                     this.conformanceReport.markRuntime(name,
@@ -3294,10 +3556,13 @@ public class ChimeraMainPass implements MainPass {
             }
         }
         ChimeraEntityBridge.install(this.packEntityPipeline, this.packTranslucentEntityPipeline,
-                this.packGlowingEntityPipeline, this.packBlockPipeline, this.packDamagedBlockPipeline,
+                this.packSpiderEyesPipeline, this.packBlockPipeline, this.packDamagedBlockPipeline,
                 this.packHandPipeline, this.packHandWaterPipeline, this.packParticlePipeline,
-                this.packTranslucentParticlePipeline, this.packWeatherPipeline,
+                this.packTranslucentParticlePipeline,
                 this.packPlan == null ? null : this.packPlan.entityIds());
+        ChimeraEntityBridge.installTextVariants(this.packTranslucentEntityTextPipeline, this.packBlockTextPipeline);
+        ChimeraEntityBridge.installHostLayout(this.packHostLayoutPipelines);
+        ChimeraEntityBridge.installShadowCasters(this.packShadowEntityPipeline);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 this.packEntityPipeline == null ? "none"
                         : this.packEntityPipeline.outputPlan() == null
@@ -3305,9 +3570,12 @@ public class ChimeraMainPass implements MainPass {
                 this.packBlockPipeline == null ? "none"
                         :                 this.packBlockPipeline.outputPlan() == null
                         ? List.of(0) : this.packBlockPipeline.outputPlan().targetSlots());
-        enforceMaskCriticalFamilyContract();
+        if (!enforceMaskCriticalFamilyContract()) {
+            return;
+        }
         ChimeraSkyBridge.install(this.packSkyBasicPipeline, this.packSkyTexturedPipeline,
-                this.packCloudPipeline, this.packCloudsDrawNothing);
+                this.packCloudPipeline, this.packCloudsDrawNothing,
+                this.packPlan == null ? null : this.packPlan.cloudSetting());
         this.packPostStages.sort(Comparator.comparing(
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
         buildPackPostExecutionPlan();
@@ -3360,41 +3628,39 @@ public class ChimeraMainPass implements MainPass {
                 }
             };
     /**
-     * Mask-critical family contract (DOC-338 repair 4). Entity and block
-     * draws cover world pixels the pack temporal pass classifies by
-     * auxiliary material metadata. When either authored family stays
-     * host-fallback, its pixels would carry stale metadata under pack
-     * post, so the post chain is rejected loudly instead of running a
-     * mixed frame. Terrain and installed families keep rendering and
-     * presentation falls back to the identity path. Loud by design: mixed
-     * frames ghost, silent fallbacks lie.
+     * Mask-critical family contract (DOC-338 repair 4, DOC-497 B). Entity and
+     * block draws cover world pixels the pack's post passes classify by
+     * material metadata, and pack geometry writes authored targets only post
+     * presents. A frame missing either family therefore has no coherent pack
+     * form: post over host entities ghosts, and pack geometry without post is
+     * invisible. The whole session falls back to the host frame, as if no pack
+     * were selected, and says why. Returns false when the session was released.
      */
-    private void enforceMaskCriticalFamilyContract() {
+    private boolean enforceMaskCriticalFamilyContract() {
         List<String> missing = maskCriticalFamilyFallback();
         if (missing.isEmpty()) {
             LOGGER.info("[chimera] family bridge: mask-critical contract holds "
                     + "(entity and block installed or not authored)");
-            return;
+            return true;
         }
-        this.postChainFamilyBlocked = true;
-        this.packPostChainActive = false;
+        this.packFrameUnsupported = String.join(", ", missing);
         if (this.conformanceReport != null) {
-            this.conformanceReport.addDeviation(
-                    "POST_CHAIN_FAMILY_INCOMPLETE:" + String.join(",", missing));
-            for (PackPipelines.PackPost post : this.packPostStages) {
-                this.conformanceReport.markRuntime(post.name(),
-                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "POST_CHAIN_FAMILY_INCOMPLETE");
-            }
-            if (this.packFinalPost != null) {
-                this.conformanceReport.markRuntime(this.packFinalPost.name(),
-                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "POST_CHAIN_FAMILY_INCOMPLETE");
-            }
+            this.conformanceReport.markFrameFallback(
+                    "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing), "PACK_FRAME_UNSUPPORTED");
+            LOGGER.info("[chimera] conformance {}", this.conformanceReport.toJson());
+            logConformanceSummary();
         }
-        LOGGER.warn("[chimera] pack post chain rejected: mask-critical families fallback ({}); "
-                        + "terrain renders, presentation uses the identity path",
-                String.join(",", missing));
+        LOGGER.warn("[chimera] pack frame unsupported: {} could not install; vanilla rendering for {}",
+                this.packFrameUnsupported, packLabel(this.packPath));
+        // Nothing built this session has been submitted yet, so release it directly.
+        cleanUpPackVariant();
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.gui != null) {
+            minecraft.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+                    "[Chimera] " + packLabel(this.packPath) + " is not supported yet ("
+                            + this.packFrameUnsupported + " could not load). Rendering vanilla. See latest.log."));
+        }
+        return false;
     }
 
     /**
@@ -3611,6 +3877,67 @@ public class ChimeraMainPass implements MainPass {
                 && this.packPlan.resources().programAllowed(name);
     }
 
+    /**
+     * The program on Iris's GLYPH text layout, sharing its descriptors and outputs.
+     * Without it the text keeps its host draw.
+     */
+    private PackPipelines.PackEntity buildTextVariant(String name, PackProgramPlan programPlan) {
+        PackPipelines.PackEntity text = PackPipelines.buildLayoutVariant(programPlan,
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
+                this.packPlan == null ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources(),
+                this.packStorageBufferOwner);
+        if (text == null) {
+            LOGGER.warn("[chimera] pack {}: text layout variant unavailable; text stays host-drawn", name);
+            return null;
+        }
+        if (!attachPackStoragePipeline(name, text.pipeline(), text.imageBindings())) {
+            text.pipeline().cleanUp();
+            return null;
+        }
+        LOGGER.info("[chimera] pack {}: text layout variant installed (stride={})", name,
+                net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH.getVertexSize());
+        return text;
+    }
+
+    /**
+     * Builds the host-layout lanes one program serves (HostLayoutLane), world lane first. A
+     * world lane that fails falls back to the host draw for this program. A hand variant
+     * (first-person glint) needs its world lane; without it that draw stays host-drawn. A
+     * shadow lane that fails leaves its draws out of the shadow map.
+     */
+    private void installHostLayoutLanes(String name, PackProgramPlan programPlan) {
+        PackAdvancedResourcePlan advanced = this.packPlan == null
+                ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources();
+        for (HostLayoutLane lane : HostLayoutLane.forProgram(name)) {
+            PackPipelines.PackParticle built = switch (lane) {
+                case WEATHER -> PackPipelines.buildParticleFamily(programPlan, advanced, this.packStorageBufferOwner);
+                case HAND_GLINT -> PackPipelines.buildHandGlint(programPlan, advanced, this.packStorageBufferOwner);
+                default -> PackPipelines.buildHostLayout(programPlan, advanced, this.packStorageBufferOwner);
+            };
+            if (built == null) {
+                if (lane.pass() == HostLayoutLane.Pass.HAND) {
+                    LOGGER.warn("[chimera] pack {}: {} variant unavailable; that draw stays host-drawn", name,
+                            lane.name().toLowerCase());
+                    continue;
+                }
+                markFamilyPipelineFallback(name, lane + "_PIPELINE_BUILD_FAILED");
+                return;
+            }
+            if (!attachPackStoragePipeline(name, built.pipeline(), built.imageBindings())) {
+                // The storage owner has reported this fallback.
+                built.pipeline().cleanUp();
+                if (lane.pass() == HostLayoutLane.Pass.HAND) continue;
+                return;
+            }
+            this.packHostLayoutPipelines.put(lane.family(), built);
+            if (lane.pass() == HostLayoutLane.Pass.HAND) {
+                LOGGER.info("[chimera] pack {}: {} variant installed", name, lane.name().toLowerCase());
+            } else {
+                markFamilyPipelineInstalled(name, lane + "_PIPELINE_INSTALLED");
+            }
+        }
+    }
+
     private void markFamilyPipelineInstalled(String name, String deviation) {
         if (this.conformanceReport != null) {
             this.conformanceReport.markRuntime(name,
@@ -3639,6 +3966,8 @@ public class ChimeraMainPass implements MainPass {
         }
         List<PackProgram> postPrograms = this.packPrograms.stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
+                // A pass the pack switches off is not in the chain at all, as in Iris.
+                .filter(program -> this.packPlan == null || !this.packPlan.isProgramDisabled(program.name()))
                 .sorted(Comparator.comparing(PackProgram::name, PostTargetPlan.programComparator()))
                 .toList();
         String previousName = null;
@@ -3751,6 +4080,14 @@ public class ChimeraMainPass implements MainPass {
      */
     private boolean usePackShadowRuntime() {
         return !this.packPostChainRejected && this.packShadowPipeline != null && this.packGeometryPipeline != null;
+    }
+
+    /**
+     * True while the pack renders its own shadow map. Iris then suppresses vanilla entity
+     * ground shadows (IrisRenderingPipeline.shouldDisableVanillaEntityShadows: shadowRenderer != null).
+     */
+    public boolean packShadowPassActive() {
+        return usePackShadowRuntime();
     }
 
     /** Makes newly created shadow images valid shader inputs exactly once. */

@@ -12,6 +12,7 @@ public record TargetSpec(
         float[] clearColor,
         boolean persistent,
         boolean doubled,
+        boolean mipmapped,
         List<String> deviations
 ) {
     public TargetSpec {
@@ -35,6 +36,11 @@ public record TargetSpec(
 
     public boolean sameExtent(TargetSpec other) {
         return other != null && width == other.width && height == other.height;
+    }
+
+    /** A full chain down to 1x1, as glGenerateMipmap builds, or the base level alone. */
+    public int mipLevels() {
+        return mipmapped ? 32 - Integer.numberOfLeadingZeros(Math.max(1, Math.max(width, height))) : 1;
     }
 
     /** Persistent doubled targets need one extra side for previous-frame reads. */

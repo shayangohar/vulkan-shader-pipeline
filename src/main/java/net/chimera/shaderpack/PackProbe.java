@@ -26,12 +26,10 @@ import java.util.regex.Pattern;
 public final class PackProbe {
     private static final Set<String> STAGE_EXTENSIONS = Set.of(
             ".vsh", ".fsh", ".gsh", ".tcs", ".tes", ".csh");
-    private static final Pattern VERSION = Pattern.compile(
-            "(?m)^\\s*#version\\s+(\\d+)");
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
             "#define\\s+DRAWBUFFERS(\\d+)");
     private static final Pattern TARGET_COMMENT = Pattern.compile(
-            "(?i)(?:DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([0-9,\\s]+)");
+            "(?i)(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([0-9,\\s]+)");
     private static final Pattern FRAG_DATA = Pattern.compile(
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY = Pattern.compile(
@@ -239,6 +237,22 @@ public final class PackProbe {
 
         ConformanceReport report = report(packName, passListPresent, passInventory, metadataHashes,
                 settings, globalDeviations, loaded);
+        // Aliases are real requested-family plans, not synthetic host fallbacks.
+        // Inventory the selected source too so probe and runtime share admission.
+        for (PackProgramPlan planned : packPlan.programs()) {
+            PackProgramResolution resolved = resolution.resolution(planned.name());
+            if (resolved == null || !resolved.executable()
+                    || resolved.requestedProgram().equals(resolved.selectedProgram())) continue;
+            PackProgram program = planned.program();
+            Inventory inventory = new Inventory(program.name());
+            inventory.variantFolder = program.variantFolder();
+            addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
+                    program.preparedFragmentSource(), shadersDir);
+            if (program.vertexSource() != null) addSource(inventory, "vertex", program.vertexPath(),
+                    program.vertexSource(), program.preparedVertexSource(), shadersDir);
+            inventory.deviations.addAll(program.preparationDeviations());
+            inventories.put(program.name(), inventory);
+        }
         for (Inventory inventory : inventories.values()) {
             report.addProgram(toProgram(inventory, packConfig, packPlan.program(inventory.name),
                     resourcePlan, packPlan));
@@ -391,22 +405,15 @@ public final class PackProbe {
                 && programPlan.terrainMaterial().modern();
         boolean modern = usesUnsupportedModernGlsl(stripped,
                 executablePostName, FamilyAdapterRegistry.isEntityLike(name));
-        if (programPlan != null && executablePostName
-                && LegacyGlslConverter.supportsModernPost(fragment)) {
+        // A validated conversion is authoritative for every family, not just
+        // post/particles. The old lexical veto also rejected executable sky
+        // and modern shadow shaders that already passed their converter guards.
+        if (programPlan != null && programPlan.executable()
+                && programPlan.convertedFragment() != null
+                && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null)) {
             modern = false;
         }
         if (modernTerrain) {
-            modern = false;
-        }
-        // A prepared std430 storage block is an admitted M8.6b resource, not
-        // the unsupported modern GLSL feature that the historical probe used
-        // to classify every occurrence of the word "buffer" as. Keep this
-        // correction tied to the immutable program plan so an unrelated or
-        // rejected block still reports identity fallback.
-        if (programPlan != null && packPlan != null
-                && packPlan.advancedResources().bufferDependentPrograms().contains(name)
-                && packPlan.advancedResources().storageBufferProgramSupported(name)
-                && programPlan.executable()) {
             modern = false;
         }
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
@@ -421,8 +428,9 @@ public final class PackProbe {
         if (programPlan != null && programPlan.targetPlan() != null) {
             targetResult = new PostTargetPlan.ParseResult(
                     programPlan.targetPlan(), programPlan.targetPlan().deviations());
-        } else if (programPlan != null && programPlan.geometryOutputPlan() != null
-                && programPlan.geometryOutputPlan().requiresMrt()) {
+        } else if (programPlan != null && programPlan.geometryOutputPlan() != null) {
+            // The plan routes the prepared source, whose #if already chose one
+            // DRAWBUFFERS directive; an authored scan would count every branch.
             targetResult = new PostTargetPlan.ParseResult(
                     programPlan.geometryOutputPlan().targetPlan(),
                     programPlan.geometryOutputPlan().deviations());
@@ -491,6 +499,7 @@ public final class PackProbe {
                 && (!FamilyAdapterRegistry.isEntityLike(name)
                 && !FamilyAdapterRegistry.isParticleLike(name)
                 && !FamilyAdapterRegistry.isWeatherFamily(name)
+                && !FamilyAdapterRegistry.isHostLayoutFamily(name)
                 && !FamilyAdapterRegistry.isSkyFamily(name)
                 && !FamilyAdapterRegistry.isCloudFamily(name)
                 || inventory.stages.contains("vertex"));
@@ -505,6 +514,9 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "SHADOW_VERTEX_BRIDGE" : "SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                deviations.add(programPlan.convertedVertex() != null
+                        ? "SHADOW_ENTITY_VERTEX_BRIDGE" : "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
                 deviations.add(programPlan.terrainMaterial().modern()
                         ? (programPlan.convertedVertex() != null
@@ -520,9 +532,13 @@ public final class PackProbe {
             } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_hand")) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "HAND_VERTEX_BRIDGE" : "HAND_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_particles")) {
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isParticleLike(name)) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "PARTICLE_VERTEX_BRIDGE" : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isHostLayoutFamily(name)) {
+                String lane = FamilyAdapterRegistry.hostLayoutLane(name);
+                deviations.add(lane + (programPlan.convertedVertex() != null
+                        ? "_VERTEX_BRIDGE" : "_VERTEX_BRIDGE_UNSUPPORTED"));
             } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
                 deviations.add(programPlan.convertedVertex() != null
                         ? "WEATHER_VERTEX_BRIDGE" : "WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
@@ -539,6 +555,8 @@ public final class PackProbe {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                deviations.add("SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex")) {
                 if (programPlan.convertedVertex() != null && executablePostName) {
                     deviations.add(programPlan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
@@ -587,7 +605,7 @@ public final class PackProbe {
                 } else {
                     deviations.add("HAND_VERTEX_BRIDGE_UNSUPPORTED");
                 }
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_particles")) {
+            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isParticleLike(name)) {
                 if (LegacyGlslConverter.convertParticleVertex(vertex, null, fragment, Map.of()) != null) {
                     deviations.add("PARTICLE_VERTEX_BRIDGE");
                 } else {
@@ -619,6 +637,8 @@ public final class PackProbe {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             } else if (name.equals("shadow")) {
                 deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
+            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
+                deviations.add("SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (inventory.stages.contains("vertex")) {
                 deviations.add("FIXED_VERTEX_SUBSTITUTION");
             }
@@ -659,14 +679,14 @@ public final class PackProbe {
         if (FamilyAdapterRegistry.isBlockFamily(name)
                 && programPlan != null && programPlan.executable()) {
             if (name.equals("gbuffers_damagedblock")) {
-                deviations.add("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED");
+                deviations.add("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
             }
         }
         if (FamilyAdapterRegistry.isHandFamily(name)
                 && programPlan != null && programPlan.executable()) {
             if (name.equals("gbuffers_hand_water")) {
                 deviations.add("FAMILY_ADAPTER_INSTALLED");
-                deviations.add("HAND_WATER_SELECTION_FIXED_TO_CAMERA");
+                deviations.add("HAND_TRANSLUCENT_ITEM_PHASE");
             }
         }
         if (FamilyAdapterRegistry.isParticleLike(name)
@@ -681,6 +701,18 @@ public final class PackProbe {
             deviations.add("FAMILY_ADAPTER_INSTALLED");
             deviations.add("WEATHER_STATE_FIXED_TO_HOST");
         }
+        if (FamilyAdapterRegistry.isHostLayoutFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add(FamilyAdapterRegistry.hostLayoutLane(name) + "_STATE_FIXED_TO_HOST");
+        }
+        if (FamilyAdapterRegistry.isShadowEntityFamily(name)
+                && programPlan != null && programPlan.executable()) {
+            // Depth and cull follow each caster's host pipeline; blending is off, as in Iris.
+            deviations.add("FAMILY_ADAPTER_INSTALLED");
+            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
+            deviations.add("SHADOW_ENTITY_STATE_FIXED_TO_HOST");
+        }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
                         || stage.equals("tess_evaluation") || stage.equals("compute"))) {
@@ -689,18 +721,19 @@ public final class PackProbe {
         if (modern) {
             deviations.add("MODERN_GLSL_UNSUPPORTED");
         }
-        if (stripped.matches("(?s).*\\b(?:image\\w*|buffer)\\b.*")
+        if (PackAdvancedResourcePlan.containsAdvancedDeclarations(source)
                 && !advancedResourcesArePlanned(name, packPlan)) {
             deviations.add("ADVANCED_RESOURCE_UNSUPPORTED");
         }
 
         Map<String, Integer> knownSamplers = name.equals("gbuffers_terrain")
                 ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
-                : name.equals("shadow") ? UniformRegistry.SHADOW_NAME_TO_SLOT
+                : FamilyAdapterRegistry.isShadowFamily(name) ? UniformRegistry.SHADOW_NAME_TO_SLOT
                 : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
                 : (FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name)
                 || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isHostLayoutFamily(name)
                 || FamilyAdapterRegistry.isSkyFamily(name)
                 || FamilyAdapterRegistry.isCloudFamily(name))
                 ? UniformRegistry.ENTITY_NAME_TO_SLOT
@@ -715,10 +748,11 @@ public final class PackProbe {
                             ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
                             ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
                             : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
-                            : name.equals("shadow")
+                            : FamilyAdapterRegistry.isShadowFamily(name)
                             ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
                             : FamilyAdapterRegistry.isEntityLike(name)
                             || FamilyAdapterRegistry.isParticleLike(name)
+                            || FamilyAdapterRegistry.isHostLayoutFamily(name)
                             || FamilyAdapterRegistry.isWeatherFamily(name)
                             ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
                             : "SAMPLER_NOT_MAPPED:" + sampler);
@@ -730,10 +764,10 @@ public final class PackProbe {
             // standard resource requirement without embedding a path.
             deviations.add("NOISETEX_PACK_RESOURCE");
         }
-        boolean authoredShadowOutputs = name.equals("shadow") && programPlan != null
+        boolean authoredShadowOutputs = FamilyAdapterRegistry.isShadowFamily(name) && programPlan != null
                 && programPlan.convertedFragment() != null && programPlan.executable();
         if (!authoredShadowOutputs && targetResult == null && targets.size() > 1) {
-            if (name.equals("shadow")) {
+            if (FamilyAdapterRegistry.isShadowFamily(name)) {
                 deviations.add("SHADOW_COLOR_TARGET_UNSUPPORTED");
             } else {
                 deviations.add("MRT_NOT_SUPPORTED");
@@ -828,6 +862,11 @@ public final class PackProbe {
         return imagesReady && storageReady;
     }
 
+    /** A host-layout lane (LINE, GLINT, LIGHTNING, ...) whose vertex could not be bridged. */
+    private static final Set<String> HOST_LAYOUT_BRIDGE_FAILURES = FamilyAdapterRegistry.hostLayoutLanes().stream()
+            .map(lane -> lane + "_VERTEX_BRIDGE_UNSUPPORTED")
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+
     private static boolean hasSevereDeviation(Collection<String> deviations) {
         for (String deviation : deviations) {
             if (deviation.equals("UNSUPPORTED_PACK_STAGE")
@@ -840,7 +879,6 @@ public final class PackProbe {
                     || deviation.startsWith("POST_TARGET_DIRECTIVE_DUPLICATE:")
                     || deviation.startsWith("POST_TARGET_INDEX_UNSUPPORTED:")
                     || deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")
-                    || deviation.startsWith("POST_OUTPUT_INDEX_UNMAPPED:")
                     || deviation.equals("FINAL_MRT_UNSUPPORTED")
                     || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
@@ -853,6 +891,7 @@ public final class PackProbe {
                     || deviation.equals("HAND_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("WEATHER_VERTEX_BRIDGE_UNSUPPORTED")
+                    || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)
                     || deviation.equals("SKY_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("CLOUD_VERTEX_BRIDGE_UNSUPPORTED")
                     || deviation.equals("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED")
@@ -864,16 +903,18 @@ public final class PackProbe {
                     || deviation.startsWith("SAMPLER_NOT_MAPPED:")
                     || deviation.startsWith("SAMPLER_SLOT_CONFLICT:")
                     || deviation.startsWith("PACK_TEXTURE_MISSING:")
+                    || deviation.startsWith("PACK_RAW_TEXTURE_UNSUPPORTED:")
                     || deviation.startsWith("PACK_TEXTURE_PATH_UNSAFE:")
                     || deviation.startsWith("PACK_TEXTURE_LOAD_FAILED:")
                     || deviation.startsWith("PACK_RESOURCE_SLOT_LIMIT:")
                     || deviation.startsWith("STANDARD_RESOURCE_UNAVAILABLE:")
                     || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
                     || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
-                    || deviation.startsWith("TRANSLUCENT_TARGET_FEEDBACK:")
+                    || deviation.startsWith("GBUFFER_TARGET_FEEDBACK:")
                     || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
                     || deviation.equals("MISSING_FRAGMENT_SOURCE")
-                    || deviation.startsWith("PROGRAM_")
+                    || (deviation.startsWith("PROGRAM_")
+                    && !deviation.startsWith("PROGRAM_ALIAS_RECORDED:"))
                     || deviation.startsWith("SOURCE_INCLUDE_")
                     || deviation.equals("POST_CONVERTER_UNSUPPORTED")
                     || deviation.startsWith("TRANSLATION_UNSUPPORTED:")
@@ -882,6 +923,7 @@ public final class PackProbe {
                     || deviation.startsWith("POST_VARYING_UNSUPPORTED:")
                     || deviation.startsWith("ALPHA_TEST_MALFORMED:")
                     || deviation.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:")
+                    || deviation.startsWith("SOURCE_NORMALIZATION_FAILED:")
                     || isBlockingPreprocessorDeviation(deviation)) {
                 return true;
             }
@@ -913,28 +955,18 @@ public final class PackProbe {
         }
     }
 
+    /**
+     * Labels a program whose conversion failed: a version outside the one rule
+     * (GlslVersion), or syntax beyond the legacy subset. A validated conversion
+     * clears it, so the version number alone never rejects a program.
+     */
     private static boolean usesUnsupportedModernGlsl(String source, boolean post, boolean entity) {
-        Matcher version = VERSION.matcher(source);
-        int number = 120;
-        if (version.find()) {
-            try {
-                number = Integer.parseInt(version.group(1));
-            } catch (NumberFormatException ignored) {
-                return true;
-            }
-        }
-        if (number >= 330 || number < 120) {
+        if (!GlslVersion.supportedIfDeclared(source)) {
             return true;
         }
-        if (entity && number != 120 && number != 130) {
-            return true;
-        }
-        if (post) {
-            return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
-        }
-        if (entity) {
-            // The entity bridge accepts simple GLSL 130 stage declarations. The
-            // converter still performs the authoritative feature check below.
+        if (post || entity) {
+            // Stage declarations convert in these families; the converter still
+            // performs the authoritative feature check.
             return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
         }
         return source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective|buffer)\\b.*");
@@ -982,13 +1014,8 @@ public final class PackProbe {
         }
         Matcher comment = TARGET_COMMENT.matcher(source);
         while (comment.find()) {
-            String digits = comment.group(1).replaceAll("[,\\s]+", "");
-            if (digits.isEmpty() || !digits.matches("[0-9]+")) {
-                continue;
-            }
-            for (int index = 0; index < digits.length(); index++) {
-                addTarget(result, digits.substring(index, index + 1));
-            }
+            result.addAll(PostTargetPlan.parseCommentTargets(
+                    comment.group(1), comment.group(2), new ArrayList<>()));
         }
         Matcher fragData = FRAG_DATA.matcher(source);
         while (fragData.find()) {
@@ -1057,7 +1084,7 @@ public final class PackProbe {
                 settings.add(key);
                 boolean colortexFormat = COLORTEX_FORMAT.matcher(key).matches();
                 boolean shadowSetting = SHADOW_SETTING.matcher(key).matches();
-                boolean customValue = key.matches("(?:uniform|variable)\\.(?:float|int|bool)\\.[A-Za-z_]\\w*");
+                boolean customValue = key.matches("(?:uniform|variable)\\.(?:float|int|bool|vec2|vec3|vec4)\\.[A-Za-z_]\\w*");
                 boolean alphaTest = key.equals("alphaTest.gbuffers_terrain")
                         || key.equals("alphaTest.gbuffers_water");
                 if (shadowSetting) {
@@ -1111,7 +1138,8 @@ public final class PackProbe {
             return;
         }
         for (String key : shadowSettings.rawValues().keySet()) {
-            if (key.equals("shadowMapResolution") || key.equals("shadowDistance")) {
+            if (key.equals("shadowMapResolution") || key.equals("shadowDistance")
+                    || key.equals("entityShadowDistanceMul")) {
                 if (shadowSettings.deviations().contains("SHADOW_SETTING_DEFAULTED:" + key)) {
                     deviations.add("SHADOW_SETTING_DEFAULTED:" + key);
                 } else {
@@ -1167,8 +1195,7 @@ public final class PackProbe {
     }
 
     private static String stripComments(String source) {
-        return source.replaceAll("(?s)/\\*.*?\\*/", " ")
-                .replaceAll("(?m)//.*$", " ");
+        return GlslLexer.stripComments(source);
     }
 
     private static List<String> sorted(Collection<String> values) {

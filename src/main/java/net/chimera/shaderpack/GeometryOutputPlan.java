@@ -112,26 +112,17 @@ public record GeometryOutputPlan(
         Matcher define = DRAWBUFFERS_DEFINE.matcher(source);
         while (define.find()) result.add(parseDigits(define.group(1)));
         Matcher comment = TARGET_COMMENT.matcher(source);
-        while (comment.find()) result.add(parseTargets(comment.group(2)));
+        while (comment.find()) {
+            List<String> deviations = new ArrayList<>();
+            List<Integer> route = PostTargetPlan.parseCommentTargets(comment.group(1), comment.group(2), deviations);
+            result.add(deviations.isEmpty() ? route : List.of());
+        }
         return result;
     }
 
     private static List<Integer> parseDigits(String value) {
         List<Integer> result = new ArrayList<>();
         for (int i = 0; i < value.length(); i++) result.add(value.charAt(i) - '0');
-        return result;
-    }
-
-    private static List<Integer> parseTargets(String value) {
-        String text = value.trim();
-        if (!text.matches("[0-9,\\s]+")) return List.of();
-        if (text.indexOf(',') < 0) return parseDigits(text.replaceAll("\\s+", ""));
-        List<Integer> result = new ArrayList<>();
-        for (String token : text.split(",")) {
-            String item = token.trim();
-            if (!item.matches("\\d+")) return List.of();
-            result.add(Integer.parseInt(item));
-        }
         return result;
     }
 
@@ -154,6 +145,11 @@ public record GeometryOutputPlan(
 
     public boolean requiresMrt() {
         return targetSlots().size() > 1;
+    }
+
+    /** The host attachment is sufficient only for the identity route [0]. */
+    public boolean requiresDynamicAttachments() {
+        return executable && !targetSlots().equals(List.of(0));
     }
 
     /** The generated symbol for logical output location zero. */

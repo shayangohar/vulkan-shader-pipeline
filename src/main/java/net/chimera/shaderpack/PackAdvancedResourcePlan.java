@@ -56,6 +56,8 @@ public final class PackAdvancedResourcePlan {
                     + "buffer\\s+([A-Za-z_]\\w*)\\s*\\{");
     private static final Pattern STORAGE_BINDING = Pattern.compile(
             "(?i)\\bbinding\\s*=\\s*(\\d+)");
+    private static final Pattern IMAGE_TYPE = Pattern.compile(
+            "[iu]?image(?:1D|2D|3D|Cube|2DRect|1DArray|2DArray|CubeArray|Buffer|2DMS|2DMSArray)");
 
     public enum Status { SUPPORTED, UNSUPPORTED, UNAVAILABLE }
 
@@ -645,14 +647,17 @@ public final class PackAdvancedResourcePlan {
                                     stageMask(stageEntry.getKey())));
                     graphicsProducedImages.add(spec.name());
                 }
-                // A GLSL compiler still resolves declarations in helper
-                // functions that are not reachable from main().  Inject a
-                // descriptor for every referenced, pack-declared image
-                // sampler so those helpers compile.  Runtime eligibility
+                // Vulkan GLSL needs a binding for every opaque declaration,
+                // even one in an unreachable helper or one never referenced
+                // (Solas declares voxelSampler in terrain but only the shadow
+                // pass writes voxel_img).  Give every declared or referenced
+                // pack image sampler a descriptor.  Runtime eligibility
                 // remains based on liveSamplers() in usesAdvancedResource;
                 // this does not create a fake alias or make an unrelated
                 // sampler a dependency.
-                for (String sampler : usage.referencedSamplers()) {
+                Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
+                imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(stage.source()));
+                for (String sampler : imageSamplers) {
                     ImageSpec spec = images.values().stream()
                             .filter(value -> value.sampler().equals(sampler))
                             .findFirst().orElse(null);
@@ -1095,7 +1100,8 @@ public final class PackAdvancedResourcePlan {
                 deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
                 return result;
             }
-            String text = prepared.source();
+            // The plan reads what PackShadowCompute translates: one declaration per name.
+            String text = GlslTokenRewriter.splitUniformDeclarators(prepared.source());
             List<String> localDeviations = new ArrayList<>(prepared.deviations());
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
             localDeviations.addAll(usage.deviations());
@@ -1111,7 +1117,9 @@ public final class PackAdvancedResourcePlan {
             } else {
                 localDeviations.add("COMPUTE_WORKGROUP_UNSUPPORTED:shadowcomp");
             }
-            if (!text.matches("(?s).*#version\\s+430\\s+compatibility.*")) {
+            // Compute stages exist from GLSL 430; any profile converts to Chimera's 450 module.
+            GlslVersion version = GlslVersion.first(text);
+            if (version == null || !version.supported() || version.number() < 430) {
                 localDeviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
             }
             TreeSet<String> names = new TreeSet<>();
@@ -1269,6 +1277,16 @@ public final class PackAdvancedResourcePlan {
     }
 
     public Map<String, ImageSpec> images() { return images; }
+
+    /** The image a shader symbol names: the image itself, or the sampler that reads it. */
+    public ImageSpec imageForSymbol(String symbol) {
+        ImageSpec direct = images.get(symbol);
+        if (direct != null) return direct;
+        return images.values().stream()
+                .filter(value -> value.sampler().equals(symbol))
+                .findFirst().orElse(null);
+    }
+
     public Map<String, ComputeSpec> computeStages() { return computeStages; }
     public Map<String, List<GraphicsImageBinding>> graphicsImages() { return graphicsImages; }
     public List<GraphicsImageBinding> graphicsImages(String program) {
@@ -1338,6 +1356,13 @@ public final class PackAdvancedResourcePlan {
 
     static boolean containsStorageBlock(String source) {
         return GlslStorageBufferParser.hasBlock(source);
+    }
+
+    /** Inventory real opaque types and storage blocks, not image-prefixed identifiers. */
+    static boolean containsAdvancedDeclarations(String source) {
+        return containsStorageBlock(source) || GlslLexer.lex(source).stream().anyMatch(token ->
+                token.kind() == GlslLexer.Kind.IDENTIFIER
+                        && IMAGE_TYPE.matcher(token.text()).matches());
     }
 
     public ProgramBindingLayout bindingLayout(String program) {

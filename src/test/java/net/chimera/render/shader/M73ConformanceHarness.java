@@ -204,6 +204,12 @@ public final class M73ConformanceHarness {
                 assertVectorNear(state.sunLightVector().x, state.sunLightVector().y,
                         state.sunLightVector().z, carried,
                         "M7.3 pack light position left the shadow light at raw " + time[0]);
+                // The caster rotation (Iris's construction) looks along the same light. Raw 0 with
+                // a straight path is the sun overhead, where a fixed-up look-at had no basis.
+                org.joml.Vector3f depthAxis = state.shadowLightRotation()
+                        .transformDirection(new org.joml.Vector3f(state.sunLightVector()));
+                assertVectorNear(0.0f, 0.0f, 1.0f, depthAxis,
+                        "M7.3 shadow caster rotation left the shadow light at raw " + time[0]);
             }
         }
     }
@@ -353,7 +359,7 @@ public final class M73ConformanceHarness {
         org.joml.Matrix4f secondPackProjection = legacyProjection(secondProjection);
         PackFrameState state = new PackFrameState();
         state.rotateViewForTest(firstModel, firstProjection);
-        assertMatrixNear(firstModel, state.modelViewForTest(), "M7.3 first-frame model view");
+        assertMatrixNear(firstModel, state.modelView(), "M7.3 first-frame model view");
         assertMatrixNear(firstProjection, state.rasterProjectionForTest(),
                 "M7.3 host raster projection must remain unchanged");
         assertMatrixNear(firstPackProjection, state.projectionForTest(),
@@ -366,13 +372,26 @@ public final class M73ConformanceHarness {
                 "M7.3 host MVP must use the unconverted raster projection");
 
         state.rotateViewForTest(secondModel, secondProjection);
-        assertMatrixNear(secondModel, state.modelViewForTest(), "M7.3 second-frame model view");
+        assertMatrixNear(secondModel, state.modelView(), "M7.3 second-frame model view");
         assertMatrixNear(firstModel, state.previousModelViewForTest(),
                 "M7.3 previous model view must be the first frame, not the current one");
         assertMatrixNear(firstPackProjection, state.previousProjectionForTest(),
                 "M7.3 previous pack projection must be the first frame, not the current one");
         assertMatrixNear(secondPackProjection, state.projectionForTest(),
                 "M7.3 current pack projection must be converted once");
+        // DHCompat without Distant Horizons serves the gbuffer projection and its derivations.
+        for (String[] pair : new String[][] {{"dhProjection", "gbufferProjection"},
+                {"dhProjectionInverse", "gbufferProjectionInverse"},
+                {"dhPreviousProjection", "gbufferPreviousProjection"}}) {
+            MappedBuffer dh = new MappedBuffer(64);
+            MappedBuffer gbuffer = new MappedBuffer(64);
+            state.write(UniformRegistry.descriptor(pair[0], "mat4"), "mat4", dh);
+            state.write(UniformRegistry.descriptor(pair[1], "mat4"), "mat4", gbuffer);
+            for (int i = 0; i < 16; i++) {
+                assertNear(gbuffer.getFloat(i * 4), dh.getFloat(i * 4), 0.0f,
+                        "M7.3 " + pair[0] + " must equal " + pair[1] + " without Distant Horizons");
+            }
+        }
 
         state.rotateViewForTest(secondModel, secondProjection);
         assertMatrixNear(secondModel, state.previousModelViewForTest(),

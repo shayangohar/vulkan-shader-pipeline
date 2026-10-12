@@ -14,6 +14,13 @@ import net.vulkanmod.vulkan.shader.SPIRVUtils;
  * three-vertex triangle generated in the vertex stage, no vertex buffers.
  */
 public final class ChimeraPostPipelines {
+    /**
+     * Vertices of every fullscreen draw: a two-triangle quad over UV 0..1, as Iris's
+     * fullscreen quad. Packs that rescale the post geometry (Bliss draws clouds and
+     * bloom tiles into a sub-rectangle) need its edges to stay on the screen edges.
+     */
+    public static final int FULLSCREEN_VERTICES = 6;
+
     private ChimeraPostPipelines() {}
 
     public static GraphicsPipeline create(String name) {

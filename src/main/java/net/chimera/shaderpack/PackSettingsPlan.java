@@ -53,7 +53,7 @@ record PackSettingsPlan(
     private static final Pattern FEATURES = Pattern.compile(
             "^iris\\.features\\.(required|optional)\\s*=\\s*(.*)$");
     private static final Pattern CUSTOM_VALUE = Pattern.compile(
-            "^\\s*(uniform|variable)\\.(float|int|bool)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
+            "^\\s*(uniform|variable)\\.(float|int|bool|vec2|vec3|vec4)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
     private static final Pattern CONDITION = Pattern.compile(
             "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");
@@ -199,9 +199,17 @@ record PackSettingsPlan(
         Map<String, PackResourceDeclaration> resourceDeclarations = new TreeMap<>();
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
+            Set<String> toggleOptions = new TreeSet<>();
+            for (Option option : options.values()) {
+                if (option.type().equals("define")) toggleOptions.add(option.name());
+            }
+            for (Option option : helperOptions.values()) {
+                if (option.type().equals("define")) toggleOptions.add(option.name());
+            }
+            toggleOptions.addAll(disabled);
             parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations,
-                    mergedConditionMacros(defaults, helperDefaults, overrides));
+                    mergedConditionMacros(defaults, helperDefaults, overrides), toggleOptions);
         }
         Set<String> unsupportedRequired = new TreeSet<>();
         for (String feature : required) {
@@ -312,6 +320,20 @@ record PackSettingsPlan(
 
     boolean enabled(String name) {
         return programEnabled.getOrDefault(name, true);
+    }
+
+    /**
+     * Iris reads {@code program.<folder>/<name>.enabled} for the selected dimension folder
+     * (Photon writes {@code program.world0/composite2.enabled = DOF}) ahead of the bare name.
+     */
+    boolean enabled(String folder, String name) {
+        if (folder != null && !folder.isBlank()) {
+            Boolean scoped = programEnabled.get(folder + "/" + name);
+            if (scoped != null) {
+                return scoped;
+            }
+        }
+        return enabled(name);
     }
 
     String snapshotJson() {
@@ -520,31 +542,46 @@ record PackSettingsPlan(
             List<PackRuntimeSettings.Declaration> customValues,
             Map<String, PackResourceDeclaration> resourceDeclarations,
             List<String> deviations,
-            Map<String, String> initialMacros
+            Map<String, String> initialMacros,
+            Set<String> toggleOptions
     ) {
         PackConditionals.State conditions = new PackConditionals.State(
                 stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
         boolean invalidCondition = false;
         try {
-            for (String line : logicalLines(propertyFile)) {
-                Matcher directive = CONDITION.matcher(line);
-                if (directive.matches()) {
-                    if (!invalidCondition) {
-                        try {
-                            conditions.apply(directive.group(1), directive.group(2).trim());
-                        } catch (RuntimeException failure) {
-                            deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                            conditions = new PackConditionals.State(
-                                    stageIndependentDefaults(defaults));
-                            invalidCondition = true;
+            List<String> physical = Files.readAllLines(propertyFile, StandardCharsets.UTF_8);
+            PropertyLineJoiner joiner = new PropertyLineJoiner();
+            for (int index = 0; index <= physical.size(); index++) {
+                String raw = index < physical.size() ? physical.get(index) : null;
+                String line;
+                if (raw != null && PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
+                    // The directive ends the open continuation: handle that line first,
+                    // then revisit the directive.
+                    line = joiner.finish();
+                    index--;
+                } else if (raw == null) {
+                    line = joiner.finish();
+                } else {
+                    Matcher directive = CONDITION.matcher(raw);
+                    if (directive.matches()) {
+                        if (!invalidCondition) {
+                            try {
+                                conditions.apply(directive.group(1), directive.group(2).trim());
+                            } catch (RuntimeException failure) {
+                                deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
+                                conditions = new PackConditionals.State(
+                                        stageIndependentDefaults(defaults));
+                                invalidCondition = true;
+                            }
                         }
+                        continue;
                     }
-                    continue;
+                    if (invalidCondition || !conditions.active()) {
+                        continue;
+                    }
+                    line = PropertyLineJoiner.isDirective(raw) ? raw : joiner.accept(raw);
                 }
-                if (invalidCondition) {
-                    continue;
-                }
-                if (!conditions.active()) {
+                if (line == null) {
                     continue;
                 }
                 Matcher define = DEFINE.matcher(line);
@@ -594,8 +631,15 @@ record PackSettingsPlan(
                 Matcher enabled = PROGRAM_ENABLED.matcher(line);
                 if (enabled.matches()) {
                     try {
+                        // Iris evaluates the switch against the pack's option values: a toggle
+                        // the pack declares but leaves off (`//#define DOF`) is false. Only a
+                        // name that is no option at all keeps the program enabled.
+                        Map<String, String> switches = new java.util.HashMap<>(conditions.macros());
+                        for (String toggle : toggleOptions) {
+                            switches.putIfAbsent(toggle, "0");
+                        }
                         programEnabled.put(enabled.group(1), PackConditionals.evaluate(
-                                enabled.group(2).trim(), conditions.macros(), true));
+                                enabled.group(2).trim(), switches, true));
                     } catch (RuntimeException failure) {
                         programEnabled.put(enabled.group(1), true);
                         deviations.add("PROGRAM_ENABLE_EXPRESSION_UNSUPPORTED:" + enabled.group(1));
@@ -651,27 +695,56 @@ record PackSettingsPlan(
         }
     }
 
+    private static final Pattern PREPROCESSOR_LINE = Pattern.compile(
+            "^#\\s*(?:define|undef|include|line|pragma|error|warning|if|ifdef|ifndef|elif|else|endif)\\b");
+
     /**
-     * Joins a trailing backslash continuation into one logical line, which is how a pack writes an
-     * expression too long for a line: BSL's {@code isCold} is four of them. Directives are read
-     * through here too, so a conditioned block keeps its shape either way.
+     * Joins backslash continuations the way Iris's PropertiesPreprocessor and Properties
+     * loader do. Iris drops blank and plain {@code #} comment lines before preprocessing,
+     * so neither ends a continuation. Preprocessing then turns every directive line into
+     * an empty line, which does end one: Photon closes a multi-line
+     * {@code moon_phase_brightness} with {@code ") \"} right before its {@code #else}, and
+     * Bliss's conditioned {@code block.56} ends at its {@code #endif}. Callers evaluate
+     * conditions on physical lines, end an open continuation at each directive line, and
+     * feed only active non-directive lines to {@link #accept}.
      */
-    static List<String> logicalLines(Path propertyFile) throws IOException {
-        List<String> lines = new ArrayList<>();
-        StringBuilder pending = new StringBuilder();
-        for (String line : Files.readAllLines(propertyFile, StandardCharsets.UTF_8)) {
-            String trimmed = line.stripTrailing();
+    static final class PropertyLineJoiner {
+        private final StringBuilder pending = new StringBuilder();
+
+        /** A preprocessor directive line, which ends an open continuation. */
+        static boolean isDirective(String raw) {
+            return PREPROCESSOR_LINE.matcher(raw.strip()).find();
+        }
+
+        boolean pending() {
+            return pending.length() > 0;
+        }
+
+        /**
+         * The completed logical line, or null while a continuation is open or the line is dropped.
+         * Leading whitespace goes, as Properties.load skips it: Photon indents its
+         * {@code program.<world>/composite17.enabled} switches inside {@code #ifdef}.
+         */
+        String accept(String raw) {
+            String trimmed = raw.strip();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) return null;
             if (trimmed.endsWith("\\")) {
                 pending.append(trimmed, 0, trimmed.length() - 1).append(' ');
-                continue;
+                return null;
             }
-            lines.add(pending.length() == 0 ? line : pending + line);
+            if (pending.length() == 0) return trimmed;
+            String line = pending + trimmed;
             pending.setLength(0);
+            return line;
         }
-        if (pending.length() > 0) {
-            lines.add(pending.toString());
+
+        /** The open continuation as one logical line, at a directive line or the end of the file. */
+        String finish() {
+            if (pending.length() == 0) return null;
+            String line = pending.toString();
+            pending.setLength(0);
+            return line;
         }
-        return lines;
     }
 
     private static boolean isSupportedProperty(String key) {
@@ -688,10 +761,13 @@ record PackSettingsPlan(
     }
 
     private static PackResourceDeclaration resourceDeclaration(String key, String value) {
+        // Iris: a value with more than one word is a raw texture (file, type, format, size).
+        PackResourceKind textureKind = value.trim().split("\\s+").length > 1
+                ? PackResourceKind.RAW_TEXTURE : PackResourceKind.PACK_TEXTURE;
         if (key.startsWith("customTexture.")) {
             String sampler = key.substring("customTexture.".length()).trim();
             return sampler.isBlank() ? null
-                    : new PackResourceDeclaration(key, "*", sampler, value, PackResourceKind.PACK_TEXTURE);
+                    : new PackResourceDeclaration(key, "*", sampler, value, textureKind);
         }
         if (key.equals("texture.noise")) {
             return new PackResourceDeclaration(key, "*", "noisetex", value, PackResourceKind.NOISE);
@@ -699,8 +775,11 @@ record PackSettingsPlan(
         if (key.startsWith("texture.")) {
             String[] parts = key.split("\\.", 3);
             if (parts.length == 3 && !parts[1].isBlank() && !parts[2].isBlank()) {
-                return new PackResourceDeclaration(key, parts[1], parts[2], value,
-                        PackResourceKind.PACK_TEXTURE);
+                // Iris keeps only the sampler name: `texture.deferred.colortex6.1` declares a
+                // second texture for colortex6, told apart from the first by its type.
+                String sampler = parts[2].split("\\.")[0];
+                return sampler.isBlank() ? null
+                        : new PackResourceDeclaration(key, parts[1], sampler, value, textureKind);
             }
         }
         return null;

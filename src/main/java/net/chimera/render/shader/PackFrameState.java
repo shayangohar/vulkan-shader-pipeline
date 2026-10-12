@@ -61,6 +61,9 @@ final class PackFrameState {
     private final Vector3f upPosition = new Vector3f(0.0f, 1.0f, 0.0f);
     private final Vector3f skyColor = new Vector3f(0.0f, 0.0f, 0.0f);
     private final Vector3f sunLightVector = new Vector3f(0.0f, 1.0f, 0.0f);
+    private final IrisPlayerState irisPlayer = new IrisPlayerState();
+    /** The shadow caster rotation for the same light, as Iris builds it; its Z is sunLightVector. */
+    private final Matrix4f shadowLightRotation = new Matrix4f().rotateX((float) Math.toRadians(90.0));
     private final float[] fogColor = new float[4];
     private final float[] shaderColor = new float[4];
     private final float[] lightDirection0 = new float[3];
@@ -102,6 +105,7 @@ final class PackFrameState {
     private float wetness;
     private float eyeAltitude;
     private int biomeId;
+    private int biomeCategory;
     private int biomePrecipitation;
     private float viewWidth;
     private float viewHeight;
@@ -116,6 +120,9 @@ final class PackFrameState {
     private float alphaCutout;
     // Per draw: the host entity pipeline's ALPHA_CUTOUT, 0 where it has none.
     private float entityAlphaReference;
+    // Per frame: the glint strength option, vanilla Globals.GlintAlpha (Iris isGlint gl_Color).
+    private float glintAlpha = 1.0F;
+    private net.chimera.shaderpack.PackRenderingPhase renderingPhase = net.chimera.shaderpack.PackRenderingPhase.NONE;
     private int currentTime;
     private int bedrockLevel;
     private float screenSizeWidth;
@@ -162,9 +169,7 @@ final class PackFrameState {
 
     void begin(Minecraft minecraft, Camera camera, float partialTick,
                Matrix4f capturedModelView, Matrix4f capturedProjection, float deltaSeconds) {
-        this.frameTime = clamp(deltaSeconds, 0.0f, 0.25f);
-        this.frameTimeCounter = wrapped(this.frameTimeCounter + this.frameTime,
-                FRAME_TIME_COUNTER_WRAP);
+        advanceFrameTime(deltaSeconds);
         this.frameCounter = (this.frameCounter + 1) % FRAME_COUNTER_WRAP;
 
         boolean viewportChanged = captureWindow(minecraft);
@@ -175,6 +180,7 @@ final class PackFrameState {
 
         if (camera == null || minecraft == null) {
             clearCameraState();
+            irisPlayer.clear();
             clearWorldState();
             evaluateCustomValues();
             return;
@@ -182,6 +188,7 @@ final class PackFrameState {
 
         var position = camera.position();
         advanceCamera(position.x, position.y, position.z, viewportChanged);
+        irisPlayer.capture(minecraft, partialTick, position.x, position.y, position.z, frameTime);
 
         Entity cameraEntity = minecraft.getCameraEntity();
         if (cameraEntity == null) {
@@ -216,6 +223,7 @@ final class PackFrameState {
         this.nightVision = nightVision(minecraft, cameraEntity, partialTick);
         this.darknessLightFactor = darknessLightFactor(minecraft, partialTick);
         this.screenBrightness = minecraft.options.gamma().get().floatValue();
+        this.glintAlpha = minecraft.options.glintStrength().get().floatValue();
 
         captureWorld(minecraft.level, minecraft, camera, partialTick);
         evaluateCustomValues();
@@ -238,20 +246,34 @@ final class PackFrameState {
         this.sunPathOffset = offsetDegrees;
     }
 
+    float sunPathRotation() { return sunPathRotation; }
+    float frameTimeCounter() { return frameTimeCounter; }
+
     /** World-space light direction the shadow matrix looks along, derived with the uniforms. */
     Vector3f sunLightVector() {
         return sunLightVector;
     }
 
+    Matrix4f shadowLightRotation() {
+        return shadowLightRotation;
+    }
+
     void write(UniformRegistry.UniformDescriptor descriptor, String type, MappedBuffer target) {
         if (descriptor.sourceKey().startsWith("custom:")) {
             int index = runtimeSettings.indexOf(descriptor.name());
-            float value = index < 0 ? 0.0f : session.values()[index];
-            if (type.startsWith("i")) {
-                target.putInt(0, (int) value);
-            } else {
-                target.putFloat(0, value);
+            int width = runtimeSettings.widthOf(descriptor.name());
+            for (int lane = 0; lane < Math.max(width, 1); lane++) {
+                float value = index < 0 ? 0.0f : session.values()[index + lane];
+                if (type.startsWith("i") || type.equals("bool")) {
+                    target.putInt(lane * 4, (int) value);
+                } else {
+                    target.putFloat(lane * 4, value);
+                }
             }
+            return;
+        }
+        if (IrisPlayerState.NAMES.contains(descriptor.sourceKey())) {
+            irisPlayer.write(descriptor.sourceKey(), type, target);
             return;
         }
         switch (descriptor.sourceKey()) {
@@ -309,6 +331,10 @@ final class PackFrameState {
             case "gbufferPreviousModelView" -> writeMatrix(target, previousModelView);
             case "gbufferPreviousProjection" -> writeMatrix(target, previousProjection);
             case "gbufferProjection" -> writeMatrix(target, projection);
+            // DHCompat without Distant Horizons: the gbuffer projection and its derivations.
+            case "dhProjection" -> writeMatrix(target, projection);
+            case "dhProjectionInverse" -> writeMatrix(target, projectionInverse);
+            case "dhPreviousProjection" -> writeMatrix(target, previousProjection);
             case "ProjMat" -> writeMatrix(target, rasterProjection);
             case "gbufferProjectionInverse" -> writeMatrix(target, projectionInverse);
             case "MVP" -> writeMatrix(target, mvp);
@@ -348,9 +374,12 @@ final class PackFrameState {
             case "bedrockLevel" -> target.putInt(0, bedrockLevel);
             case "eyeAltitude" -> target.putFloat(0, eyeAltitude);
             case "biome" -> target.putInt(0, biomeId);
+            case "biome_category" -> target.putInt(0, biomeCategory);
             case "biome_precipitation" -> target.putInt(0, biomePrecipitation);
             case "AlphaCutout" -> target.putFloat(0, alphaCutout);
             case UniformRegistry.ENTITY_ALPHA_REFERENCE -> target.putFloat(0, entityAlphaReference);
+            case UniformRegistry.GLINT_ALPHA -> target.putFloat(0, glintAlpha);
+            case "renderStage" -> target.putInt(0, renderingPhase.ordinal());
             case "ColorModulator" -> writeFloatArray(target, shaderColor, 4);
             case "Light0_Direction" -> writeVec3(target, lightDirection0);
             case "Light1_Direction" -> writeVec3(target, lightDirection1);
@@ -363,7 +392,13 @@ final class PackFrameState {
         return Math.floorMod(value, FRAME_COUNTER_WRAP);
     }
     static float wrapFrameTimeCounter(float value) {
-        return wrapped(value, FRAME_TIME_COUNTER_WRAP);
+        return value >= FRAME_TIME_COUNTER_WRAP ? 0.0f : value;
+    }
+
+    void advanceFrameTime(float deltaSeconds) {
+        // Iris exposes the whole elapsed frame, including stalls, and resets at one hour.
+        this.frameTime = Math.max(deltaSeconds, 0.0f);
+        this.frameTimeCounter = wrapFrameTimeCounter(this.frameTimeCounter + this.frameTime);
     }
 
     static int irisWorldTimeForTest(long dayTime, boolean fixedTime, boolean netherOrEnd) {
@@ -470,8 +505,13 @@ final class PackFrameState {
         updateViewMatrices();
     }
 
-    Matrix4f modelViewForTest() {
+    Matrix4f modelView() {
         return new Matrix4f(modelView);
+    }
+
+    /** gbufferProjection x gbufferModelView, in the legacy GL clip range packs read. */
+    Matrix4f cameraViewProjection(Matrix4f dest) {
+        return dest.set(projection).mul(modelView);
     }
 
     Matrix4f projectionForTest() {
@@ -580,7 +620,9 @@ final class PackFrameState {
         cloudHeight = level.dimension() == net.minecraft.world.level.Level.OVERWORLD
                 ? 192.0f : 0.0f;
         BlockPos biomePos = BlockPos.containing(cameraOrigin.rawX, cameraOrigin.rawY, cameraOrigin.rawZ);
-        var biome = level.getBiome(biomePos).value();
+        var biomeHolder = level.getBiome(biomePos);
+        var biome = biomeHolder.value();
+        biomeCategory = BiomeIds.category(biomeHolder).ordinal();
         biomeTemperature = biome.getBaseTemperature();
         rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
         eyeAltitude = (float) cameraOrigin.y;
@@ -647,6 +689,8 @@ final class PackFrameState {
         CelestialSnapshot.upPosition(modelView, upPosition);
         CelestialSnapshot.lightVector(sunPathRotation, sunPathOffset,
                 lightAngleDegrees, sunLightVector);
+        CelestialSnapshot.shadowRotation(sunPathRotation, sunPathOffset,
+                lightAngleDegrees, shadowLightRotation);
         CelestialSnapshot.skyColor(skyColorPacked, skyColor);
     }
 
@@ -700,6 +744,12 @@ final class PackFrameState {
         return true;
     }
 
+    net.chimera.shaderpack.PackRenderingPhase setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase phase) {
+        var previous = renderingPhase;
+        renderingPhase = java.util.Objects.requireNonNull(phase);
+        return previous;
+    }
+
     void clearShadowState() {
         shadowModelView.identity();
         shadowProjection.identity();
@@ -713,6 +763,9 @@ final class PackFrameState {
      * author one.
      */
     private double engineValue(String name, int component) {
+        if (IrisPlayerState.NAMES.contains(name)) {
+            return irisPlayer.value(name, component);
+        }
         if (component < 0) {
             return scalarValue(name);
         }
@@ -736,9 +789,29 @@ final class PackFrameState {
             case "shadowLightPosition" -> componentOf(shadowLightPosition, component);
             case "upPosition" -> componentOf(upPosition, component);
             case "skyColor" -> componentOf(skyColor, component);
+            // Defaulted: no bolt, as the uniform itself serves.
+            case "lightningBoltPosition" -> 0.0;
+            case "gbufferModelView" -> elementOf(modelView, component);
+            case "gbufferModelViewInverse" -> elementOf(modelViewInverse, component);
+            case "gbufferPreviousModelView" -> elementOf(previousModelView, component);
+            case "gbufferProjection" -> elementOf(projection, component);
+            case "gbufferProjectionInverse" -> elementOf(projectionInverse, component);
+            case "dhProjection" -> elementOf(projection, component);
+            case "dhProjectionInverse" -> elementOf(projectionInverse, component);
+            case "dhPreviousProjection" -> elementOf(previousProjection, component);
+            case "gbufferPreviousProjection" -> elementOf(previousProjection, component);
+            case "shadowModelView" -> elementOf(shadowModelView, component);
+            case "shadowModelViewInverse" -> elementOf(shadowModelViewInverse, component);
+            case "shadowProjection" -> elementOf(shadowProjection, component);
+            case "shadowProjectionInverse" -> elementOf(shadowProjectionInverse, component);
             // Unreachable: the plan rejects a component of a name with no component source.
             default -> Double.NaN;
         };
+    }
+
+    /** One element of a matrix, numbered column-major as GLSL and Iris's accessors read it. */
+    private static double elementOf(Matrix4f matrix, int component) {
+        return component < 16 ? matrix.get(component / 4, component % 4) : Double.NaN;
     }
 
     private static double componentOf(int[] values, int component) {
@@ -762,6 +835,7 @@ final class PackFrameState {
             case "frameTime" -> frameTime;
             case "frameTimeCounter" -> frameTimeCounter;
             case "frameCounter" -> frameCounter;
+            case "renderStage" -> renderingPhase.ordinal();
             case "worldTime" -> worldTime;
             case "worldDay" -> worldDay;
             case "moonPhase" -> moonPhase;
@@ -795,6 +869,7 @@ final class PackFrameState {
             case "isElytraFlying" -> isElytraFlying;
             case "eyeAltitude" -> eyeAltitude;
             case "biome" -> biomeId;
+            case "biome_category" -> biomeCategory;
             case "biome_precipitation" -> biomePrecipitation;
             case "eyeBrightness" -> eyeBrightness[0];
             default -> 0.0;
@@ -927,6 +1002,7 @@ final class PackFrameState {
         rainfall = 0.0f;
         eyeAltitude = 0.0f;
         biomeId = 0;
+        biomeCategory = 0;
         biomePrecipitation = 0;
         sunPosition.set(0.0f, 1.0f, 0.0f);
         moonPosition.set(0.0f, -1.0f, 0.0f);
@@ -934,6 +1010,7 @@ final class PackFrameState {
         upPosition.set(0.0f, 1.0f, 0.0f);
         skyColor.set(0.0f, 0.0f, 0.0f);
         sunLightVector.set(0.0f, 1.0f, 0.0f);
+        shadowLightRotation.identity().rotateX((float) Math.toRadians(90.0));
     }
 
     private void resetTemporalState() {
@@ -1019,10 +1096,6 @@ final class PackFrameState {
         for (int i = 0; i < values.length; i++) {
             target.putInt(i * 4, values[i]);
         }
-    }
-
-    private static float wrapped(float value, float limit) {
-        return value >= limit ? value % limit : value;
     }
 
     private static void invertOrIdentity(Matrix4f source, Matrix4f destination) {

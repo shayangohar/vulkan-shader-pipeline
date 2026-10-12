@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -107,15 +108,26 @@ public final class PackResourcePlan {
             }
         }
 
+        Map<String, Set<Integer>> writtenEarlier = targetsWrittenEarlierInChain(plan);
         for (PackProgramPlan programPlan : plan.programs()) {
             if (programPlan == null || programPlan.interfacePlan() == null) continue;
             UniformRegistry.Stage stage = stageFor(programPlan.name());
             List<UniformRegistry.SamplerBinding> samplers = programPlan.interfacePlan()
                     .effective(stage).samplers();
+            Set<Integer> deactivatedOverrides = writtenEarlier.getOrDefault(programPlan.name(), Set.of());
             List<PackResourceBinding> programBindings = new ArrayList<>();
+            boolean waterShadow = declaresWaterShadow(samplers);
             for (UniformRegistry.SamplerBinding sampler : samplers) {
-                PackResourceBinding binding = resolve(programPlan.name(), sampler, declarations, shadersDir,
-                        settings == null ? Map.of() : settings.propertyValues());
+                PackProgramResolution resolved = plan.resolution().resolution(programPlan.name());
+                String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
+                        ? programPlan.name() : resolved.selectedProgram();
+                PackResourceBinding binding = resolve(sourceProgram, sampler, waterShadow, declarations,
+                        shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides);
+                if (!sourceProgram.equals(programPlan.name())) {
+                    binding = new PackResourceBinding(programPlan.name(), binding.sampler(), binding.resourceKey(),
+                            binding.kind(), binding.source(), binding.slot(), binding.filter(), binding.wrap(),
+                            binding.status(), binding.deviations());
+                }
                 programBindings.add(binding);
                 deviations.addAll(binding.deviations());
             }
@@ -138,8 +150,8 @@ public final class PackResourcePlan {
         java.util.Set<String> names = new TreeSet<>();
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
             if (!sampler.glslType().equals("sampler2D")) continue;
-            PackResourceBinding binding = resolve(program, sampler, resources.resourceDeclarations(),
-                    null, resources.propertyValues());
+            PackResourceBinding binding = resolve(program, sampler, declaresWaterShadow(iface.samplers()),
+                    resources.resourceDeclarations(), null, resources.propertyValues(), Set.of());
             boolean albedo = sampler.slot() == 0
                     && binding.kind() == PackResourceKind.TARGET
                     && binding.status() == PackResourceStatus.HOST_ALIAS
@@ -152,22 +164,33 @@ public final class PackResourcePlan {
     private static PackResourceBinding resolve(
             String program,
             UniformRegistry.SamplerBinding sampler,
+            boolean waterShadow,
             Map<String, PackResourceDeclaration> declarations,
             Path shadersDir,
-            Map<String, String> propertyValues
+            Map<String, String> propertyValues,
+            Set<Integer> deactivatedOverrides
     ) {
         String name = sampler.name();
-        String canonical = canonicalResource(name);
+        String canonical = programResource(name, waterShadow);
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
 
-        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name);
+        String samplerType = sampler.glslType();
+        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name, samplerType);
         String textureStage = textureStage(program);
         if (declaration == null && textureStage != null) {
-            declaration = textureDeclaration(declarations, textureStage, name);
+            declaration = textureDeclaration(declarations, textureStage, name, samplerType);
         }
-        if (declaration == null) declaration = textureDeclaration(declarations, "*", name);
-        if (declaration == null) declaration = declarations.get("customTexture." + name);
+        if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
+        Integer overriddenTarget = declaration == null ? null : targetIndex(name);
+        if (overriddenTarget != null && deactivatedOverrides.contains(overriddenTarget)) {
+            // An earlier pass of this chain wrote the target: it now samples the target.
+            deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
+            declaration = null;
+        }
+        if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
+            declaration = declarations.get("customTexture." + name);
+        }
         if (declaration == null && name.equals("tex") && stageFor(program) == UniformRegistry.Stage.POST) {
             declaration = declarations.get("customTexture.textureAtlas");
         }
@@ -177,6 +200,14 @@ public final class PackResourcePlan {
         // Pack declarations take precedence over canonical aliases. This is
         // important for a stage that deliberately replaces a logical target
         // with a sampled pack texture.
+        if (declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE) {
+            // Planned and matched by type, but no raw upload path serves it yet: the program
+            // must not sample something else in its place.
+            deviations.add("PACK_RAW_TEXTURE_UNSUPPORTED:" + declaration.key());
+            return new PackResourceBinding(program, name, declaration.key(),
+                    PackResourceKind.RAW_TEXTURE, declaration.source(), slot, "linear", "repeat",
+                    PackResourceStatus.UNSUPPORTED, deviations);
+        }
         if (declaration != null) {
             boolean game = isNamespacedSource(declaration.source());
             String key = name.equals("noisetex") ? "noisetex" : declaration.key();
@@ -212,8 +243,8 @@ public final class PackResourcePlan {
                     PackResourceStatus.UNAVAILABLE, deviations);
         }
 
-        if (name.equals("tex") || isHostTexture(name)) {
-            String hostResource = name.equals("tex") ? "texture" : name;
+        if (name.equals("tex") || name.equals("gtexture") || isHostTexture(name)) {
+            String hostResource = name.equals("tex") || name.equals("gtexture") ? "texture" : name;
             // The overlay is Chimera's own declaration, not a pack alias.
             if (!name.equals(OVERLAY_SAMPLER)) {
                 deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":" + hostResource);
@@ -300,6 +331,13 @@ public final class PackResourcePlan {
                 PackResourceStatus.UNSUPPORTED, deviations);
     }
 
+    private static boolean declaresWaterShadow(List<UniformRegistry.SamplerBinding> samplers) {
+        for (UniformRegistry.SamplerBinding sampler : samplers) {
+            if (sampler.name().equals("watershadow")) return true;
+        }
+        return false;
+    }
+
     public List<PackResourceBinding> bindings(String program) {
         return byProgram.getOrDefault(program, List.of());
     }
@@ -339,7 +377,7 @@ public final class PackResourcePlan {
 
     public static String canonicalResource(String sampler) {
         if (sampler == null) return "";
-        if (sampler.equals("tex")) return "texture";
+        if (sampler.equals("tex") || sampler.equals("gtexture")) return "texture";
         if (sampler.equals("gcolor")) return "colortex0";
         if (sampler.equals("gdepth")) return "colortex1";
         if (sampler.equals("gnormal")) return "colortex2";
@@ -354,6 +392,61 @@ public final class PackResourcePlan {
         return sampler.equals("noisetex") ? "noisetex" : sampler;
     }
 
+    /**
+     * Iris's per-program shadow aliases ({@code IrisSamplers.addShadowSamplers}): {@code shadow}
+     * is shadowtex0, unless the same program declares {@code watershadow}, which then takes
+     * shadowtex0 and leaves {@code shadow} the opaque casters, shadowtex1. {@code shadowcolor} is
+     * shadowcolor0. Every other name has one meaning everywhere: {@link #canonicalResource}.
+     */
+    public static String programResource(String sampler, boolean declaresWaterShadow) {
+        if (sampler == null) return "";
+        return switch (sampler) {
+            case "watershadow" -> "shadowtex0";
+            case "shadow" -> declaresWaterShadow ? "shadowtex1" : "shadowtex0";
+            case "shadowcolor" -> "shadowcolor0";
+            default -> canonicalResource(sampler);
+        };
+    }
+
+    /** The legacy shadow sampler names whose meaning {@link #programResource} decides. */
+    public static boolean isProgramShadowAlias(String sampler) {
+        return "shadow".equals(sampler) || "watershadow".equals(sampler) || "shadowcolor".equals(sampler);
+    }
+
+    /**
+     * Iris CompositeRenderer: in one post chain (begin, prepare, deferred, or
+     * composite with final) a stage texture override of colortexN applies only
+     * until an earlier pass of that chain has written colortexN; later passes
+     * sample the target. Draw buffers and explicit flips count as writes, _pre
+     * flips do not. Bliss replaces colortex6 with blue noise for its early
+     * composites and then blurs bloom tiles in colortex6.
+     */
+    private static Map<String, Set<Integer>> targetsWrittenEarlierInChain(PackPlan plan) {
+        Map<String, List<Integer>> flips = plan.config() == null ? Map.of() : plan.config().flips();
+        Map<String, Set<Integer>> writtenByChain = new TreeMap<>();
+        Map<String, Set<Integer>> result = new TreeMap<>();
+        List<PackProgramPlan> programs = plan.activePrograms().stream()
+                .filter(program -> program != null && program.targetPlan() != null
+                        && postChain(program.name()) != null)
+                .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
+                .toList();
+        for (PackProgramPlan program : programs) {
+            Set<Integer> written = writtenByChain.computeIfAbsent(postChain(program.name()), key -> new TreeSet<>());
+            result.put(program.name(), Set.copyOf(written));
+            written.addAll(program.targetPlan().targetSlots());
+            written.addAll(flips.getOrDefault(program.name(), List.of()));
+        }
+        return result;
+    }
+
+    private static String postChain(String program) {
+        if (program.equals("final") || program.matches("composite\\d*")) return "composite";
+        if (program.matches("deferred\\d*")) return "deferred";
+        if (program.matches("prepare\\d*")) return "prepare";
+        if (program.matches("begin\\d*")) return "begin";
+        return null;
+    }
+
     public static Integer targetIndex(String sampler) {
         Matcher matcher = COLOR_TARGET.matcher(canonicalResource(sampler));
         return matcher.matches() ? Integer.parseInt(matcher.group(1)) : null;
@@ -364,18 +457,41 @@ public final class PackResourcePlan {
      * same target: Iris overrides colortex7 and gaux4 together.
      */
     private static PackResourceDeclaration textureDeclaration(
-            Map<String, PackResourceDeclaration> declarations, String scope, String name) {
+            Map<String, PackResourceDeclaration> declarations, String scope, String name,
+            String samplerType) {
         String prefix = "texture." + scope + ".";
         PackResourceDeclaration exact = declarations.get(prefix + name);
-        if (exact != null) return exact;
+        if (exact != null && appliesTo(exact, samplerType)) return exact;
         String canonical = canonicalResource(name);
         for (PackResourceDeclaration declaration : declarations.values()) {
             if (declaration.key().startsWith(prefix)
-                    && canonicalResource(declaration.sampler()).equals(canonical)) {
+                    && canonicalResource(declaration.sampler()).equals(canonical)
+                    && appliesTo(declaration, samplerType)) {
                 return declaration;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a declaration replaces a sampler of this GLSL type. Iris patches a raw texture
+     * only into a sampler of its own dimensionality, so `sampler2D colortex0` stays the render
+     * target while `sampler3D colortex0` takes the declared volume; a PNG is always 2D.
+     */
+    static boolean appliesTo(PackResourceDeclaration declaration, String samplerType) {
+        if (declaration == null || declaration.kind() != PackResourceKind.RAW_TEXTURE) {
+            return declaration != null;
+        }
+        String[] parts = declaration.source().trim().split("\\s+");
+        String dimension = switch (parts[1].toUpperCase(java.util.Locale.ROOT)) {
+            case "TEXTURE_1D" -> "1D";
+            case "TEXTURE_2D", "TEXTURE_RECTANGLE" -> "2D";
+            case "TEXTURE_3D" -> "3D";
+            default -> "";
+        };
+        String type = samplerType == null ? "" : samplerType.replaceFirst("^[iu]", "");
+        return !dimension.isEmpty() && (type.equals("sampler" + dimension)
+                || (dimension.equals("2D") && type.equals("sampler2DRect")));
     }
 
     /**

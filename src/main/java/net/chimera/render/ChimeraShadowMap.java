@@ -17,7 +17,6 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import net.vulkanmod.vulkan.shader.Uniforms;
 import org.joml.Matrix4f;
-import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkImageCopy;
@@ -66,7 +65,6 @@ public class ChimeraShadowMap {
     private final Matrix4f packLightProjection = new Matrix4f();
     private final Matrix4f lightView = new Matrix4f();
     private final Matrix4f lightMVP = new Matrix4f();
-    private final Vector3f lightDir = new Vector3f();
     private final float[] matrixScratch = new float[16];
     private final Matrix4f receiverScratch = new Matrix4f();
     // Clip X that the fixed receiver maps to u = 1.5, outside the map.
@@ -86,6 +84,7 @@ public class ChimeraShadowMap {
 
     private int shadowMapSize = PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION;
     private float shadowDistance = PackConfig.DEFAULT_SHADOW_DISTANCE;
+    private float intervalSize = PackConfig.DEFAULT_SHADOW_INTERVAL_SIZE;
 
     private boolean initialized;
     /** True only until the newly created images receive their first read layout. */
@@ -104,6 +103,7 @@ public class ChimeraShadowMap {
 
         this.shadowMapSize = settings.resolution();
         this.shadowDistance = settings.distance();
+        this.intervalSize = settings.intervalSize();
         // The celestial frame derives the light direction from the pack's sun path, so the shadow
         // matrix follows the same numbers the pack reads instead of repeating the trigonometry.
         PackUniformProvider.installSunPath(settings.sunPathRotation(), settings.sunPathOffset());
@@ -161,20 +161,15 @@ public class ChimeraShadowMap {
     }
 
     /**
-     * Builds camera-relative light-space matrices from the frame's celestial light vector.
+     * Builds camera-relative light-space matrices from the frame's celestial shadow rotation.
      * Called each frame before the shadow pass.
      */
-    public void updateLight(Vector3f light) {
-        this.lightDir.set(light).normalize();
-
+    public void updateLight(Matrix4f lightRotation, double cameraX, double cameraY, double cameraZ) {
         // DrawBuffers already subtracts the render camera from terrain
-        // positions, so the light view is a rotation about that origin, as
-        // Iris's is; the ortho depth range reaches toward the sun instead.
-        this.lightView.setLookAt(
-                0.0F, 0.0F, 0.0F,
-                -this.lightDir.x, -this.lightDir.y, -this.lightDir.z,
-                0.0F, 1.0F, 0.0F
-        );
+        // positions, so the light view is Iris's rotation about that origin,
+        // snapped to its grid; the ortho depth range reaches toward the sun.
+        this.lightView.set(lightRotation);
+        snapToGrid(this.lightView, this.intervalSize, cameraX, cameraY, cameraZ);
 
         // Iris's halfPlaneLength is the pack's shadowDistance itself.
         createLightProjection(this.hostLightProjection, this.shadowDistance, true);
@@ -209,6 +204,24 @@ public class ChimeraShadowMap {
         return this.hostReadableMap
                 ? this.lightMVP
                 : this.receiverScratch.zero().m30(OUTSIDE_MAP_X).m33(1.0F);
+    }
+
+    /**
+     * Iris's {@code ShadowMatrices.snapModelViewToGrid}: shifts the camera-relative view to the
+     * centre of the grid cell the camera is in, so the shadow texels stay fixed in the world while
+     * the player moves. Without it every caster edge, and above all a thin one like a glass pane's
+     * frame, slides and changes width with the camera. Iris keeps Java's truncating remainder
+     * (negative for negative coordinates) and so does this; the remainder is taken in double
+     * because Iris's float cast loses the sub-block phase far from the origin.
+     */
+    static void snapToGrid(Matrix4f view, float intervalSize,
+            double cameraX, double cameraY, double cameraZ) {
+        if (Math.abs(intervalSize) == 0.0F) return;
+        float half = intervalSize / 2.0F;
+        view.translate(
+                (float) (cameraX % intervalSize) - half,
+                (float) (cameraY % intervalSize) - half,
+                (float) (cameraZ % intervalSize) - half);
     }
 
     static void createLightProjection(

@@ -31,9 +31,12 @@ public final class M66HotSwapHarness {
         Files.createDirectories(gameDirectory);
 
         Path simplex = Files.createDirectories(shaderpacks.resolve("Simplex"));
+        Files.createDirectories(simplex.resolve("shaders"));
         Path bsl = shaderpacks.resolve("BSL.zip");
         Files.writeString(bsl, "zip placeholder", StandardCharsets.UTF_8);
-        Files.createDirectories(shaderpacks.resolve("Other"));
+        Files.createDirectories(shaderpacks.resolve("Other").resolve("shaders"));
+        // Iris rule: a folder without a shaders folder is not a pack.
+        Files.createDirectories(shaderpacks.resolve("NotAPack"));
         Files.writeString(shaderpacks.resolve("ignored.txt"), "not a pack", StandardCharsets.UTF_8);
 
         assertEquals(List.of("BSL.zip", "Other", "Simplex"),
@@ -46,14 +49,14 @@ public final class M66HotSwapHarness {
                 "quoted named ZIP");
 
         Path explicit = gameDirectory.resolve("local pack");
-        Files.createDirectories(explicit);
+        Files.createDirectories(explicit.resolve("shaders"));
         assertPath(explicit, ChimeraCommands.resolvePackPath(
                         shaderpacks, gameDirectory, "\".\\local pack\""),
                 "quoted relative path");
         assertTrue(!ChimeraCommands.resolvePackPath(shaderpacks, gameDirectory, "missing").valid(),
                 "missing pack must fail");
 
-        Files.createDirectories(shaderpacks.resolve("Duplicate"));
+        Files.createDirectories(shaderpacks.resolve("Duplicate").resolve("shaders"));
         Files.writeString(shaderpacks.resolve("Duplicate.zip"), "zip placeholder", StandardCharsets.UTF_8);
         ChimeraCommands.Resolution ambiguous = ChimeraCommands.resolvePackPath(
                 shaderpacks, gameDirectory, "Duplicate");

@@ -26,6 +26,8 @@ public final class PackTargetGraphPlan {
     private final DepthGraphPlan depth;
     private final List<String> deviations;
     private final int maxAttachments;
+    /** Targets a world (gbuffers) program samples; the world draws before any post step. */
+    private final Set<Integer> geometryReads;
     private final String snapshot;
     private final String fingerprint;
 
@@ -34,10 +36,12 @@ public final class PackTargetGraphPlan {
             List<TargetStep> steps,
             DepthGraphPlan depth,
             List<String> deviations,
-            int maxAttachments
+            int maxAttachments,
+            Set<Integer> geometryReads
     ) {
         this.targets = targets.stream().sorted(Comparator.comparingInt(TargetSpec::index)).toList();
         this.steps = steps.stream().toList();
+        this.geometryReads = Set.copyOf(geometryReads);
         this.depth = depth == null ? DepthGraphPlan.empty() : depth;
         this.deviations = deviations == null ? List.of()
                 : deviations.stream().filter(value -> value != null && !value.isBlank())
@@ -85,6 +89,7 @@ public final class PackTargetGraphPlan {
         Set<Integer> unavailableFormatTargets = unavailableFormatTargets(config);
 
         Set<Integer> used = new TreeSet<>();
+        Set<Integer> geometryReads = new TreeSet<>();
         used.add(0);
         if (programs != null) {
             for (PackProgramPlan program : programs) {
@@ -115,6 +120,7 @@ public final class PackTargetGraphPlan {
                 for (String sampler : geometrySamplerNames(program)) {
                     Integer target = colorTarget(program, sampler, resourcePlan);
                     if (target != null && !unavailableFormatTargets.contains(target)) {
+                        geometryReads.add(target);
                         used.add(target);
                     }
                 }
@@ -150,13 +156,11 @@ public final class PackTargetGraphPlan {
                 format = PostTargetPlan.DEFAULT_FORMAT;
             }
             preliminary.put(target, new TargetSpec(target, format, width, height,
-                    setting.clear(), setting.clearColorCopy(), !setting.clear(), false,
+                    setting.clear(), setting.clearColorCopy(), !setting.clear(), false, false,
                     setting.deviations()));
             deviations.addAll(setting.deviations());
-            if (setting.mipmapped()) {
-                deviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:" + target);
-            }
         }
+        Set<Integer> mipmappedTargets = new TreeSet<>();
 
         for (PackProgramPlan program : sortedPrograms) {
             PostTargetPlan post = program.targetPlan();
@@ -193,14 +197,12 @@ public final class PackTargetGraphPlan {
                     stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
                     executable = false;
                 }
-                PackConfig.TargetSettings setting = settings.get(target);
-                if (setting != null && setting.mipmapped()) {
-                    // The resource owner currently has one mip level. Keep the
-                    // pass valid with an explicit base-level sampling fallback.
-                    stepDeviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:" + target);
-                    stepDeviations.add("POST_TARGET_MIPMAP_BASE_LEVEL_FALLBACK:" + target);
-                }
             }
+            // Iris generates mips for every directive whose target exists,
+            // read by this program or not; an unallocated target has nothing to mip.
+            List<Integer> mipmapTargets = post.mipmappedTargets().stream()
+                    .filter(preliminary::containsKey).toList();
+            if (executable) mipmappedTargets.addAll(mipmapTargets);
             if (outputs.size() > Math.min(LOGICAL_ATTACHMENT_LIMIT, Math.max(1, deviceMaxColorAttachments))) {
                 stepDeviations.add("POST_TARGET_ATTACHMENT_LIMIT:" + program.name());
                 executable = false;
@@ -246,7 +248,7 @@ public final class PackTargetGraphPlan {
             for (int target : reads) readSides.put(target, 0);
             for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
             steps.add(new TargetStep(post.programName(), reads, writes,
-                    post.outputFormats(), readSides, writeSides, stepWidth, stepHeight,
+                    post.outputFormats(), readSides, writeSides, mipmapTargets, stepWidth, stepHeight,
                     post.isFinal(), executable, stepDeviations));
             deviations.addAll(stepDeviations);
         }
@@ -266,7 +268,8 @@ public final class PackTargetGraphPlan {
             boolean persistent = source.index() != 0 && source.persistent();
             finalTargets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
                     source.clear(), source.clearColorCopy(), persistent,
-                    doubleTargets.getOrDefault(source.index(), false), source.deviations()));
+                    doubleTargets.getOrDefault(source.index(), false),
+                    mipmappedTargets.contains(source.index()), source.deviations()));
         }
         boolean depth0 = false;
         boolean depth1 = false;
@@ -304,7 +307,7 @@ public final class PackTargetGraphPlan {
         deviations.addAll(depthDeviations);
         return new PackTargetGraphPlan(finalTargets, steps,
                 new DepthGraphPlan(depth0, depth1, depth2, DepthGraphPlan.R32_SFLOAT, depthDeviations),
-                deviations, Math.max(1, deviceMaxColorAttachments));
+                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads);
     }
 
     private static Set<Integer> unavailableFormatTargets(PackConfig.PackConfigData config) {
@@ -444,15 +447,30 @@ public final class PackTargetGraphPlan {
      * uninitialized targets unavailable.
      */
     public boolean requiresInitialSeed(int target) {
-        return requiresInitialSeed(target(target), steps);
+        return requiresInitialSeed(target(target), steps, geometryReads);
+    }
+
+    /** Targets a world program samples. */
+    public Set<Integer> geometryReads() {
+        return geometryReads;
     }
 
     /** Pure form used by the target-owner tests. */
     public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps) {
+        return requiresInitialSeed(spec, steps, Set.of());
+    }
+
+    /**
+     * A persistent target needs a defined first frame when a post program reads
+     * it before any writes it, or when a world program reads it at all: the
+     * world draws before every post step (MakeUp's terrain reads last frame's
+     * fog from gaux4).
+     */
+    public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps, Set<Integer> geometryReads) {
         if (spec == null || !spec.persistent()) {
             return false;
         }
-        return hasReadBeforeWrite(spec.index(), steps, Set.of());
+        return geometryReads.contains(spec.index()) || hasReadBeforeWrite(spec.index(), steps, Set.of());
     }
 
     /**
@@ -504,14 +522,18 @@ public final class PackTargetGraphPlan {
                     .append(target.clear()).append(':').append(target.persistent()).append(':')
                     .append(target.doubled()).append(':');
             for (float value : target.clearColor()) result.append(value).append(',');
+            if (target.mipmapped()) result.append(":mips=").append(target.mipLevels());
             result.append(';');
         }
         result.append("steps=");
         for (TargetStep step : steps) {
             result.append(step.programName()).append(':').append(step.readTargets()).append("->")
                     .append(step.outputTargets()).append(':').append(step.width()).append('x')
-                    .append(step.height()).append(':').append(step.executable()).append(';');
+                    .append(step.height()).append(':').append(step.executable());
+            if (!step.mipmapTargets().isEmpty()) result.append(":mipmap=").append(step.mipmapTargets());
+            result.append(';');
         }
+        if (!geometryReads.isEmpty()) result.append("geometryReads=").append(new TreeSet<>(geometryReads)).append(';');
         result.append("depth=").append(depth.names()).append(':').append(depth.format())
                 .append(";deviations=").append(deviations);
         return result.toString();

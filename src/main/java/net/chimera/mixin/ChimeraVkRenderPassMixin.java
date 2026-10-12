@@ -1,5 +1,7 @@
 package net.chimera.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.render.shader.ChimeraEntityBridge;
@@ -33,6 +35,62 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
     @Shadow
     @Final
     protected java.util.Set<String> dirtyUniforms;
+
+    /** Sky has both indexed celestial/star draws and non-indexed sky fans. */
+    @WrapMethod(method = "draw")
+    private void chimera$skyAttachments(int firstVertex, int vertexCount, Operation<Void> original) {
+        var pass = net.chimera.render.ChimeraRenderer.getMainPass();
+        if (pass == null || !ChimeraSkyBridge.shouldUsePackPipeline(this.pipeline)) {
+            original.call(firstVertex, vertexCount);
+            return;
+        }
+        pass.prepareProgramImages(ChimeraSkyBridge.pipeline());
+        var outputs = ChimeraSkyBridge.outputPlan();
+        boolean window = false;
+        try {
+            if (outputs != null && outputs.requiresDynamicAttachments()) {
+                window = pass.beginPackFamilyWindow(outputs);
+                if (!window) return;
+                pass.rebindMainTarget();
+            }
+            original.call(firstVertex, vertexCount);
+        } finally {
+            if (window) pass.endPackFamilyWindow(outputs);
+        }
+    }
+
+    /** Native indexed sky/particle passes may switch authored outputs between draws. */
+    @WrapMethod(method = "drawIndexed")
+    private void chimera$familyAttachments(int vertexOffset, int firstIndex, int vertexCount,
+                                            int instanceCount, Operation<Void> original) {
+        var pass = net.chimera.render.ChimeraRenderer.getMainPass();
+        boolean sky = pass != null && ChimeraSkyBridge.shouldUsePackPipeline(this.pipeline);
+        if (pass == null || (!sky && (!ChimeraEntityBridge.isParticleDrawActive()
+                || !ChimeraEntityBridge.shouldUsePackPipeline(this.pipeline)))) {
+            original.call(vertexOffset, firstIndex, vertexCount, instanceCount);
+            return;
+        }
+        var family = sky ? null : pass.particlePipeline(ChimeraEntityBridge.activeFamily());
+        if (!sky && family == null) {
+            original.call(vertexOffset, firstIndex, vertexCount, instanceCount);
+            return;
+        }
+        pass.prepareProgramImages(sky ? ChimeraSkyBridge.pipeline() : ChimeraEntityBridge.pipeline());
+        var outputs = sky ? ChimeraSkyBridge.outputPlan() : family.outputPlan();
+        boolean window = false;
+        try {
+            if (outputs != null && outputs.requiresDynamicAttachments()) {
+                window = pass.beginPackFamilyWindow(outputs);
+                if (!window) return;
+                // This VkRenderPass already exists; no createRenderPass call
+                // will reopen Vulkan rendering after the attachment switch.
+                pass.rebindMainTarget();
+            }
+            original.call(vertexOffset, firstIndex, vertexCount, instanceCount);
+        } finally {
+            if (window) pass.endPackFamilyWindow(outputs);
+        }
+    }
 
     /**
      * VkRenderPass normally compiles the host pipeline from the format returned

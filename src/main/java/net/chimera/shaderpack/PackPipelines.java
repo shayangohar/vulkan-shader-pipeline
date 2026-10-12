@@ -43,8 +43,8 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
  * PipelineConfig JSON parsed by PipelineConfig.fromJson (sampler names and
  * order define the descriptor bindings, sequentially after any UBO blocks),
  * vertex stage = a chimera fixed source or the narrow terrain bridge, fragment stage = the converted
- * legacy GLSL. Any failure (parse, conversion, shaderc, supplier) returns
- * null and the caller falls back to the identity pipeline.
+ * legacy GLSL. Shader compilation failures return null for per-program
+ * fallback; typed descriptor/preparation/native failures abort the install.
  *
  * <p>Post build (buildPost): fullscreen triangle vertex, one optional generated
  * fragment UBO at binding 0, and samplers after it. No-uniform programs keep
@@ -184,7 +184,12 @@ public final class PackPipelines {
         }
     }
 
-    private static void logBuildFailure(String program, Exception failure) {
+    /** All build families share the same fallback boundary. Contract defects remain fatal. */
+    static void handleBuildFailure(String program, Exception failure) {
+        if (failure instanceof PreparationFailure typed
+                && !(typed.phase.equals("shader-compilation") && typed.reason.equals("SHADER_COMPILATION_FAILED"))) {
+            throw typed;
+        }
         String phase = failure instanceof PreparationFailure typed ? typed.phase : "source-projection";
         String reason = failure instanceof PreparationFailure typed ? typed.reason
                 : failure.getMessage() == null || failure.getMessage().isBlank()
@@ -224,7 +229,7 @@ public final class PackPipelines {
         public PackTerrain { java.util.Objects.requireNonNull(imageBindings); }
 
         public boolean requiresDynamicAttachments() {
-            return outputPlan != null && outputPlan.requiresMrt();
+            return outputPlan != null && outputPlan.requiresDynamicAttachments();
         }
     }
 
@@ -247,10 +252,22 @@ public final class PackPipelines {
             java.util.Objects.requireNonNull(imageBindings);
         }
 
-        /** True when the pipeline writes multiple authored color targets. */
+        /** True when the authored route differs from the host attachment [0]. */
         public boolean requiresDynamicAttachments() {
-            return outputPlan != null && outputPlan.executable() && outputPlan.requiresMrt();
+            return outputPlan != null && outputPlan.requiresDynamicAttachments();
         }
+    }
+
+    /** One authored hand program owns a pipeline for each native hand mesh shape. */
+    public record PackHand(Map<VertexFormat, PackEntity> variants) {
+        public PackHand { variants = Map.copyOf(variants); }
+        public PackEntity primary() { return variants.get(com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY); }
+        /** The variant for a native hand mesh shape, or null for any other layout (glint keeps its host draw). */
+        public PackEntity forFormat(VertexFormat format) {
+            VertexFormat host = ChimeraVertexFormats.handHostFormat(format);
+            return host == null ? null : variants.get(host);
+        }
+        public void cleanUp() { variants.values().forEach(value -> value.pipeline().cleanUp()); }
     }
 
     /** A successfully built host particle pipeline plus its sampler slots. */
@@ -259,9 +276,13 @@ public final class PackPipelines {
             int[] samplerSlots,
             String convertedVertex,
             String convertedFragment,
+            GeometryOutputPlan outputPlan,
             ProgramImageBindingManifest imageBindings
     ) {
         public PackParticle { java.util.Objects.requireNonNull(imageBindings); }
+        public boolean requiresDynamicAttachments() {
+            return outputPlan != null && outputPlan.requiresDynamicAttachments();
+        }
     }
 
     /** A sky or cloud pipeline that inherits the host pass state. */
@@ -271,31 +292,48 @@ public final class PackPipelines {
             String convertedVertex,
             String convertedFragment,
             VertexFormat vertexFormat,
+            GeometryOutputPlan outputPlan,
             ProgramImageBindingManifest imageBindings
     ) {
         public PackSky { java.util.Objects.requireNonNull(imageBindings); }
     }
 
-    public static PackSky buildSky(PackProgramPlan plan) {
-        return buildSkyLike(plan, UniformRegistry.Stage.SKY,
-                skyVertexFormat(plan),
-                "pack_" + (plan == null ? "sky" : plan.name()),
-                PackAdvancedResourcePlan.empty(), null);
+    public record PackSkyFamily(Map<VertexFormat, PackSky> variants) {
+        public PackSkyFamily { variants = Map.copyOf(variants); }
+        public PackSky forFormat(VertexFormat format) { return variants.get(format); }
+        public void cleanUp() { variants.values().forEach(value -> value.pipeline().cleanUp()); }
     }
 
-    public static PackSky buildSky(
+    public static PackSkyFamily buildSky(PackProgramPlan plan) {
+        return buildSky(plan, PackAdvancedResourcePlan.empty(), null);
+    }
+
+    public static PackSkyFamily buildSky(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return buildSkyLike(plan, UniformRegistry.Stage.SKY,
-                skyVertexFormat(plan),
-                "pack_" + (plan == null ? "sky" : plan.name()), advancedResources, storageOwner);
+        if (plan == null || !plan.executable()) return null;
+        Map<VertexFormat, PackSky> variants = new java.util.LinkedHashMap<>();
+        boolean complete = false;
+        try {
+            for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
+                PackSky sky = buildSkyLike(plan, UniformRegistry.Stage.SKY, skyVertexFormat(contract),
+                        "pack_" + plan.name() + "_" + variants.size(), advancedResources, storageOwner,
+                        LegacyGlslConverter.skyVertexForContract(plan.convertedVertex(), contract));
+                if (sky == null) return null;
+                variants.put(sky.vertexFormat(), sky);
+            }
+            complete = true;
+            return new PackSkyFamily(variants);
+        } finally {
+            if (!complete) variants.values().forEach(value -> value.pipeline().cleanUp());
+        }
     }
 
     public static PackSky buildCloud(PackProgramPlan plan) {
         return buildSkyLike(plan, UniformRegistry.Stage.CLOUD,
                 com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR,
                 "pack_" + (plan == null ? "clouds" : plan.name()),
-                PackAdvancedResourcePlan.empty(), null);
+                PackAdvancedResourcePlan.empty(), null, plan == null ? null : plan.convertedVertex());
     }
 
     public static PackSky buildCloud(
@@ -303,14 +341,12 @@ public final class PackPipelines {
     ) {
         return buildSkyLike(plan, UniformRegistry.Stage.CLOUD,
                 com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR,
-                "pack_" + (plan == null ? "clouds" : plan.name()), advancedResources, storageOwner);
+                "pack_" + (plan == null ? "clouds" : plan.name()), advancedResources, storageOwner,
+                plan == null ? null : plan.convertedVertex());
     }
 
-    private static VertexFormat skyVertexFormat(PackProgramPlan plan) {
-        if (plan == null || plan.familyAdapter() == null) {
-            return null;
-        }
-        return switch (plan.familyAdapter().vertexContract()) {
+    public static VertexFormat skyVertexFormat(FamilyAdapterPlan.VertexContract contract) {
+        return switch (contract) {
             case SKY_POSITION -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION;
             case SKY_POSITION_COLOR -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR;
             case SKY_POSITION_UV -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX;
@@ -322,7 +358,8 @@ public final class PackPipelines {
 
     private static PackSky buildSkyLike(
             PackProgramPlan plan, UniformRegistry.Stage stage, VertexFormat vertexFormat,
-            String pipelineName, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+            String pipelineName, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner,
+            String convertedVertex
     ) {
         if (plan == null || !plan.executable() || plan.convertedVertex() == null
                 || plan.convertedFragment() == null || plan.interfacePlan() == null
@@ -341,7 +378,7 @@ public final class PackPipelines {
                     ? PackAdvancedResourcePlan.empty() : advancedResources;
             ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
             String vertexSource = bindPackShader(
-                    plan.convertedVertex(), plan.name(), advancedResources, layout,
+                    convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
             String fragmentSource = bindPackShader(
                     plan.convertedFragment(), plan.name(), advancedResources, layout,
@@ -356,16 +393,31 @@ public final class PackPipelines {
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
             verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource, fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
-            GraphicsPipeline pipeline = createNative(builder, imageBindings);
+            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
+            boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
+            if (dynamicAttachments) {
+                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            }
+            GraphicsPipeline pipeline;
+            try {
+                pipeline = createNative(builder, imageBindings);
+            } finally {
+                if (dynamicAttachments) MrtPipelineContext.end();
+            }
+            if (dynamicAttachments) {
+                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            }
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
                     buffer.setUseGlobalBuffer(true);
                 }
             }
             return new PackSky(pipeline, slots, vertexSource, fragmentSource,
-                    vertexFormat, imageBindings);
+                    vertexFormat, outputPlan, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(pipelineName, e);
+            handleBuildFailure(pipelineName, e);
             return null;
         }
     }
@@ -404,10 +456,8 @@ public final class PackPipelines {
             GraphicsPipeline pipeline = createNative(builder, prepared.imageBindings());
             return new PackPost(plan.name(), pipeline, slots, samplerNames,
                     colorInputTargets(samplerNames), fragmentSource, plan.targetPlan(), prepared.imageBindings());
-        } catch (PreparationFailure failure) {
-            throw failure;
         } catch (Exception e) {
-            logBuildFailure(plan.name(), e);
+            handleBuildFailure(plan.name(), e);
             return null;
         }
     }
@@ -519,9 +569,9 @@ public final class PackPipelines {
             Pipeline.Builder builder = prepareBuilder(prepared, plan.name(), advancedResources,
                     ChimeraVertexFormats.terrainFormat(materialPlan), PackUniformProvider.shared()::supplier);
             verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource, fragmentSource, storageOwner);
-            MrtPipelineContext.begin(new int[] {37, 37}, deviceMaxColorAttachments());
+            MrtPipelineContext.begin(shadowAttachmentFormats(), deviceMaxColorAttachments());
             GraphicsPipeline pipeline = createNative(builder, prepared.imageBindings());
-            MrtPipelineContext.register(pipeline, new int[] {37, 37});
+            MrtPipelineContext.register(pipeline, shadowAttachmentFormats());
             MrtPipelineContext.end();
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
@@ -529,14 +579,27 @@ public final class PackPipelines {
                 }
             }
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
-        } catch (PreparationFailure failure) {
-            MrtPipelineContext.end();
-            throw failure;
         } catch (Exception e) {
             MrtPipelineContext.end();
-            logBuildFailure(plan.name(), e);
+            handleBuildFailure(plan.name(), e);
             return null;
         }
+    }
+
+    /** ChimeraShadowMap's colour attachments, shadowcolor0 and shadowcolor1: both VK_FORMAT_R8G8B8A8_UNORM. */
+    private static int[] shadowAttachmentFormats() {
+        return new int[] {37, 37};
+    }
+
+    /**
+     * Builds shadow_entities on EXTENDED_ENTITY for the shadow pass's entity lane, as Iris draws
+     * every entity and block-entity pipeline in the shadow pass with SHADOW_ENTITIES_CUTOUT.
+     */
+    public static PackEntity buildShadowEntities(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return plan == null ? null : buildEntityLike(plan, UniformRegistry.Stage.SHADOW_ENTITY, "pack_" + plan.name(),
+                ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
     }
 
     /** Builds the guarded world entity pipeline on the append-only entity format. */
@@ -570,7 +633,8 @@ public final class PackPipelines {
             default -> UniformRegistry.Stage.ENTITY;
         };
         VertexFormat format = switch (family) {
-            case HAND, HAND_WATER -> ChimeraVertexFormats.EXTENDED_PARTICLE;
+            case DAMAGED_BLOCK -> com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK;
+            case HAND, HAND_WATER -> ChimeraVertexFormats.EXTENDED_ENTITY;
             default -> ChimeraVertexFormats.EXTENDED_ENTITY;
         };
         return buildEntityLike(plan, stage, "pack_" + plan.name(), format, advancedResources, storageOwner);
@@ -589,17 +653,55 @@ public final class PackPipelines {
                 ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
     }
 
-    /** Builds the first-person hand adapter on the same append-only host format. */
-    public static PackEntity buildHand(PackProgramPlan plan) {
-        return buildEntityLike(plan, UniformRegistry.Stage.HAND, "pack_gbuffers_hand",
-                ChimeraVertexFormats.EXTENDED_PARTICLE, PackAdvancedResourcePlan.empty(), null);
+    /**
+     * The same entity or block program built for another native host layout, as Iris
+     * draws TEXT with IrisVertexFormats.GLYPH through gbuffers_entities_translucent and
+     * TEXT_BE through gbuffers_block_translucent (falling back to gbuffers_block).
+     */
+    public static PackEntity buildLayoutVariant(
+            PackProgramPlan plan, VertexFormat host,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        VertexFormat extended = host == null ? null : ChimeraVertexFormats.handFormats().get(host);
+        if (plan == null || !plan.executable() || extended == null) return null;
+        UniformRegistry.Stage stage = switch (plan.familyAdapter().family()) {
+            case BLOCK, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
+            default -> UniformRegistry.Stage.ENTITY;
+        };
+        try {
+            String vertex = LegacyGlslConverter.layoutVertexForFormat(plan.convertedVertex(), host);
+            return buildEntityLike(plan, stage, "pack_" + plan.name() + "_" + extended.getVertexSize(), extended,
+                    advancedResources, storageOwner, vertex);
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
     }
 
-    public static PackEntity buildHand(
+    /** Builds the first-person hand adapter on the same append-only host format. */
+    public static PackHand buildHand(PackProgramPlan plan) {
+        return buildHand(plan, PackAdvancedResourcePlan.empty(), null);
+    }
+
+    public static PackHand buildHand(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return buildEntityLike(plan, UniformRegistry.Stage.HAND, "pack_gbuffers_hand",
-                ChimeraVertexFormats.EXTENDED_PARTICLE, advancedResources, storageOwner);
+        if (plan == null || !plan.executable()) return null;
+        Map<VertexFormat, PackEntity> variants = new java.util.LinkedHashMap<>();
+        boolean complete = false;
+        try {
+            for (var entry : ChimeraVertexFormats.handFormats().entrySet()) {
+                String vertex = LegacyGlslConverter.handVertexForFormat(plan.convertedVertex(), entry.getKey());
+                PackEntity built = buildEntityLike(plan, UniformRegistry.Stage.HAND,
+                        "pack_" + plan.name() + "_" + variants.size(), entry.getValue(),
+                        advancedResources, storageOwner, vertex);
+                if (built == null) return null;
+                variants.put(entry.getKey(), built);
+            }
+            complete = true;
+            return new PackHand(variants);
+        } finally {
+            if (!complete) variants.values().forEach(value -> value.pipeline().cleanUp());
+        }
     }
 
     private static PackEntity buildEntityLike(
@@ -608,6 +710,14 @@ public final class PackPipelines {
             String pipelineName,
             VertexFormat vertexFormat,
             PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildEntityLike(plan, stage, pipelineName, vertexFormat, advancedResources, storageOwner,
+                plan == null ? null : plan.convertedVertex());
+    }
+
+    private static PackEntity buildEntityLike(
+            PackProgramPlan plan, UniformRegistry.Stage stage, String pipelineName, VertexFormat vertexFormat,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner, String convertedVertex
     ) {
         if (plan == null || !plan.executable() || plan.convertedVertex() == null
                 || plan.convertedFragment() == null
@@ -618,8 +728,9 @@ public final class PackPipelines {
         try {
             UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan()
                     .effective(stage);
-            int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
-                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
+            int[] declaredSlots = interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray();
+            int[] slots = stage.shadowPass() ? shadowSamplerSlots(declaredSlots) : entitySamplerSlots(declaredSlots);
             OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
             Pipeline.Builder builder = new MetadataBuilder(vertexFormat,
             pipelineName);
@@ -629,7 +740,7 @@ public final class PackPipelines {
                     ? PackAdvancedResourcePlan.empty() : advancedResources;
             ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
             String vertexSource = bindPackShader(
-                    plan.convertedVertex(), plan.name(), advancedResources, layout,
+                    convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
             String fragmentSource = bindPackShader(
                     plan.convertedFragment(), plan.name(), advancedResources, layout,
@@ -640,12 +751,17 @@ public final class PackPipelines {
             addStorageBufferDescriptors(builder, plan.name(), advancedResources);
             addStorageImageDescriptors(builder, plan.name(), advancedResources);
             addAdvancedSamplerDescriptors(builder, plan.name(), advancedResources);
-            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
-            boolean dynamicMrt = outputPlan != null && outputPlan.executable()
-                    && outputPlan.requiresMrt();
-            if (dynamicMrt) {
-                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments(),
-                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            // A shadow-lane program renders into the shadow map's colour attachments with
+            // blending off (Iris shadow programs: BlendModeOverride.OFF), never the gbuffers.
+            GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
+            int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats()
+                    : outputPlan != null && outputPlan.requiresDynamicAttachments()
+                    ? outputPlan.outputFormatsArray() : null;
+            PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
+                    ? new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF, PackBlendPlan.Mode.OFF}
+                    : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
+            if (attachmentFormats != null) {
+                MrtPipelineContext.begin(attachmentFormats, deviceMaxColorAttachments(), attachmentBlends);
             }
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
@@ -655,11 +771,10 @@ public final class PackPipelines {
             try {
                 pipeline = createNative(builder, imageBindings);
             } finally {
-                if (dynamicMrt) MrtPipelineContext.end();
+                if (attachmentFormats != null) MrtPipelineContext.end();
             }
-            if (dynamicMrt) {
-                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray(),
-                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            if (attachmentFormats != null) {
+                MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends);
             }
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
@@ -669,20 +784,21 @@ public final class PackPipelines {
             return new PackEntity(pipeline, slots, vertexSource, fragmentSource,
                     outputPlan, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(pipelineName, e);
+            handleBuildFailure(pipelineName, e);
             return null;
         }
     }
 
     /** Builds the particle family on the host DefaultVertexFormat.PARTICLE path. */
     public static PackParticle buildParticle(PackProgramPlan plan) {
-        return buildParticle(plan, "pack_gbuffers_particles", PackAdvancedResourcePlan.empty(), null);
+        return buildParticle(plan, PackAdvancedResourcePlan.empty(), null);
     }
 
     public static PackParticle buildParticle(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return buildParticle(plan, "pack_gbuffers_particles", advancedResources, storageOwner);
+        return buildParticle(plan, "pack_gbuffers_particles", com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE,
+                advancedResources, storageOwner);
     }
 
     /** Builds an independent opaque or translucent particle-family pipeline. */
@@ -693,13 +809,72 @@ public final class PackPipelines {
     public static PackParticle buildParticleFamily(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(), advancedResources, storageOwner);
+        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE, advancedResources, storageOwner);
+    }
+
+    /**
+     * Builds a host-layout lane on the host vertex format of its contract: in the main pass
+     * lines, glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING,
+     * BEACON and LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
+     * shadow map's attachments with blending off, as shadow_entities is built.
+     */
+    public static PackParticle buildHostLayout(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null) return null;
+        VertexFormat format = hostLayoutFormat(plan.familyAdapter().vertexContract());
+        if (!plan.familyAdapter().stage().shadowPass()) {
+            return buildParticle(plan, "pack_" + plan.name(), format, advancedResources, storageOwner);
+        }
+        PackEntity shadow = buildEntityLike(plan, UniformRegistry.Stage.SHADOW_ENTITY, "pack_" + plan.name(),
+                format, advancedResources, storageOwner);
+        return shadow == null ? null : new PackParticle(shadow.pipeline(), shadow.samplerSlots(),
+                shadow.convertedVertex(), shadow.convertedFragment(), shadow.outputPlan(), shadow.imageBindings());
+    }
+
+    /** The host vertex format a host-layout contract draws on. */
+    public static com.mojang.blaze3d.vertex.VertexFormat hostLayoutFormat(FamilyAdapterPlan.VertexContract contract) {
+        return switch (contract) {
+            case HOST_LINE -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
+            case HOST_GLINT -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX;
+            case HOST_LIGHTNING -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR;
+            case HOST_BEACON -> com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK;
+            case HOST_LEASH, HOST_TEXT_BACKGROUND -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
+            case HOST_TEXT -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
+            case HOST_WATER_MASK -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION;
+            default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
+        };
+    }
+
+    /** The same glint program for first-person glint, under the hand projection. */
+    public static PackParticle buildHandGlint(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || plan.convertedVertex() == null) return null;
+        String vertex;
+        try {
+            vertex = LegacyGlslConverter.handGlintVertex(plan.convertedVertex());
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
+        return buildParticle(plan, "pack_" + plan.name() + "_hand",
+                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, vertex, advancedResources, storageOwner);
     }
 
     private static PackParticle buildParticle(
-            PackProgramPlan plan, String pipelineName, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+            PackProgramPlan plan, String pipelineName, com.mojang.blaze3d.vertex.VertexFormat format,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        if (plan == null || !plan.executable() || plan.convertedVertex() == null
+        return buildParticle(plan, pipelineName, format, plan == null ? null : plan.convertedVertex(),
+                advancedResources, storageOwner);
+    }
+
+    private static PackParticle buildParticle(
+            PackProgramPlan plan, String pipelineName, com.mojang.blaze3d.vertex.VertexFormat format,
+            String convertedVertex, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || !plan.executable() || convertedVertex == null
                 || plan.convertedFragment() == null || plan.interfacePlan() == null
                 || plan.interfacePlan().effective(UniformRegistry.Stage.PARTICLE).stage()
                 != UniformRegistry.Stage.PARTICLE) {
@@ -711,15 +886,14 @@ public final class PackPipelines {
             int[] slots = entitySamplerSlots(interfacePlan.samplers().stream()
                     .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
             OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
-            Pipeline.Builder builder = new MetadataBuilder(com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE,
-            pipelineName);
+            Pipeline.Builder builder = new MetadataBuilder(format, pipelineName);
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             ordinary.apply(builder);
             advancedResources = advancedResources == null
                     ? PackAdvancedResourcePlan.empty() : advancedResources;
             ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
             String vertexSource = bindPackShader(
-                    plan.convertedVertex(), plan.name(), advancedResources, layout,
+                    convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, UniformRegistry.Stage.PARTICLE, VK_SHADER_STAGE_VERTEX_BIT);
             String fragmentSource = bindPackShader(
                     plan.convertedFragment(), plan.name(), advancedResources, layout,
@@ -734,15 +908,30 @@ public final class PackPipelines {
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
             verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource, fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
-            GraphicsPipeline pipeline = createNative(builder, imageBindings);
+            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
+            boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
+            if (dynamicAttachments) {
+                MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            }
+            GraphicsPipeline pipeline;
+            try {
+                pipeline = createNative(builder, imageBindings);
+            } finally {
+                if (dynamicAttachments) MrtPipelineContext.end();
+            }
+            if (dynamicAttachments) {
+                MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray(),
+                        plan.blendPlan().attachments(outputPlan.targetSlots()));
+            }
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
                     buffer.setUseGlobalBuffer(true);
                 }
             }
-            return new PackParticle(pipeline, slots, vertexSource, fragmentSource, imageBindings);
+            return new PackParticle(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
-            LOGGER.warn("[chimera] pack {}: planned particle build failed: {}", plan.name(), e.getMessage());
+            handleBuildFailure(plan.name(), e);
             return null;
         }
     }
@@ -814,7 +1003,7 @@ public final class PackPipelines {
             return new PackPost(program.name(), pipeline, slots, samplerNames,
                     requiredColorInputs, converted, targetPlan, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(program.name(), e);
+            handleBuildFailure(program.name(), e);
             return null;
         }
     }
@@ -862,8 +1051,8 @@ public final class PackPipelines {
             addStorageBufferDescriptors(builder, plan.name(), advancedResources);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex);
             GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
-            boolean dynamicMrt = outputPlan != null && outputPlan.requiresMrt();
-            if (dynamicMrt) {
+            boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
+            if (dynamicAttachments) {
                 MrtPipelineContext.begin(outputPlan.outputFormatsArray(), deviceMaxColorAttachments(),
                         plan.blendPlan().attachments(outputPlan.targetSlots()));
             } else if (coverage) {
@@ -876,7 +1065,7 @@ public final class PackPipelines {
             verifyAdvancedLayout(builder, plan.name(), advancedResources, vertex, fragment, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GraphicsPipeline pipeline = createNative(builder, imageBindings);
-            if (dynamicMrt) {
+            if (dynamicAttachments) {
                 MrtPipelineContext.register(pipeline, outputPlan.outputFormatsArray(),
                         plan.blendPlan().attachments(outputPlan.targetSlots()));
             } else if (coverage) {
@@ -884,7 +1073,7 @@ public final class PackPipelines {
                         targetFormat, org.lwjgl.vulkan.VK10.VK_FORMAT_R32_SFLOAT
                 });
             }
-            if (dynamicMrt || coverage) MrtPipelineContext.end();
+            if (dynamicAttachments || coverage) MrtPipelineContext.end();
             for (var buffer : pipeline.getBuffers()) {
                 if (!(buffer instanceof PackStorageBufferDescriptor)) {
                     buffer.setUseGlobalBuffer(true);
@@ -893,7 +1082,7 @@ public final class PackPipelines {
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             MrtPipelineContext.end();
-            logBuildFailure(plan.name(), e);
+            handleBuildFailure(plan.name(), e);
             return null;
         }
     }
@@ -991,7 +1180,7 @@ public final class PackPipelines {
             }
             return new PackShadow(pipeline, slots, converted, imageBindings);
         } catch (Exception e) {
-            logBuildFailure(program.name(), e);
+            handleBuildFailure(program.name(), e);
             return null;
         }
     }
@@ -1114,16 +1303,20 @@ public final class PackPipelines {
             boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
             if (!iface.executableUniforms().isEmpty()) {
                 // Entity-family vertex shaders may declare the same pack
-                // uniform block the fragment uses (live cameraPosition). The
-                // buffer is shared, so the binding must be visible to both
-                // stages whenever the converted vertex actually declares it.
+                // uniform block the fragment uses (live cameraPosition; a
+                // shadow vertex reads its shadow matrices). The buffer is
+                // shared, so the binding must be visible to both stages
+                // whenever the converted vertex actually declares it.
                 boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
-                        .contains("layout(binding = 2) uniform ChimeraEntityUniforms");
+                        .contains("layout(binding = 2) uniform ");
                 int uniformStages = vertexUniforms
                         ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
                         : VK_SHADER_STAGE_FRAGMENT_BIT;
                 var uniforms = PipelineConfig.UB.builder(2, uniformStages);
-                for (var uniform : iface.executableUniforms()) uniforms.addUniform(uniform.glslType(), uniform.name());
+                // std140 bool occupies an integer word; VulkanMod's native
+                // layout builder accepts int, not GLSL bool. Keep GLSL unchanged.
+                for (var uniform : iface.executableUniforms()) uniforms.addUniform(
+                        uniform.glslType().equals("bool") ? "int" : uniform.glslType(), uniform.name());
                 builder.addUB(uniforms.build());
             } else if (sky) {
                 builder.addUB(PipelineConfig.UB.builder(2, VK_SHADER_STAGE_FRAGMENT_BIT).setSize(16).build());
@@ -1189,11 +1382,9 @@ public final class PackPipelines {
                 .distinct()
                 .toArray();
         if (stage == UniformRegistry.Stage.POST) return declared;
-        if (stage == UniformRegistry.Stage.SHADOW) return shadowSamplerSlots(declared);
+        if (stage.shadowPass()) return shadowSamplerSlots(declared);
         if (stage == UniformRegistry.Stage.GEOMETRY
-                || stage == UniformRegistry.Stage.TRANSLUCENT
-                || stage == UniformRegistry.Stage.SKY
-                || stage == UniformRegistry.Stage.CLOUD) {
+                || stage == UniformRegistry.Stage.TRANSLUCENT) {
             return interleaveLightmap(declared);
         }
         return entitySamplerSlots(declared);
@@ -1204,6 +1395,10 @@ public final class PackPipelines {
     private static UniformRegistry.Stage stageForProgram(String name) {
         if (name != null && PostTargetPlan.isPostProgramName(name)) return UniformRegistry.Stage.POST;
         if ("shadow".equals(name)) return UniformRegistry.Stage.SHADOW;
+        // shadow_entities and the host-layout shadow lanes share the entity-layout shadow descriptors.
+        if (name != null && FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.SHADOW_ENTITY) {
+            return UniformRegistry.Stage.SHADOW_ENTITY;
+        }
         if ("gbuffers_terrain".equals(name)) return UniformRegistry.Stage.GEOMETRY;
         if ("gbuffers_water".equals(name)) return UniformRegistry.Stage.TRANSLUCENT;
         if (name != null && FamilyAdapterRegistry.isParticleLike(name)) return UniformRegistry.Stage.PARTICLE;

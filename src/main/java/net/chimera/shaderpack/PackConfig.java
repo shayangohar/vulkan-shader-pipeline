@@ -47,12 +47,9 @@ public final class PackConfig {
     private static final Pattern COLORTEX_CLEAR_COLOR_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+vec4\\s+" + TARGET_NAME
                     + "ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
-    private static final Pattern COLORTEX_MIPMAP_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+bool\\s+" + TARGET_NAME + "MipmapEnabled\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
-            Pattern.CASE_INSENSITIVE);
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
+                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|shadowIntervalSize|sunPathRotation|sunPathOffset|entityShadowDistanceMul|voxelDistance)"
                     + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
     private static final Pattern PACK_NUMERIC_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(int|float)\\s+"
@@ -71,15 +68,12 @@ public final class PackConfig {
             Pattern.compile("^" + TARGET_NAME + "Clear$");
     private static final Pattern TARGET_CLEAR_COLOR_PROPERTY_KEY =
             Pattern.compile("^" + TARGET_NAME + "ClearColor$");
-    private static final Pattern TARGET_MIPMAP_PROPERTY_KEY =
-            Pattern.compile("^" + TARGET_NAME + "MipmapEnabled$");
     private static final Pattern TARGET_FLIP_PROPERTY_KEY =
             Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
     /**
-     * Iris format token -> exact VkFormat. Every entry is a format Vulkan
-     * requires every device to support as a sampled colour attachment, so
-     * the target keeps the precision and channel count the pack declared.
+     * Iris format token -> exact VkFormat. Keep normalized and floating-point
+     * storage distinct; target allocation checks device support when required.
      */
     public static final Map<String, Integer> FMT_TO_VK = Map.ofEntries(
             Map.entry("R8", 9),          // VK_FORMAT_R8_UNORM
@@ -88,6 +82,7 @@ public final class PackConfig {
             Map.entry("RGB10_A2", 64),   // VK_FORMAT_A2B10G10R10_UNORM_PACK32 (GL_RGB10_A2 bit order)
             Map.entry("R16F", 76),       // VK_FORMAT_R16_SFLOAT
             Map.entry("RG16F", 83),      // VK_FORMAT_R16G16_SFLOAT
+            Map.entry("RGBA16", 91),     // VK_FORMAT_R16G16B16A16_UNORM (not RGBA16F)
             Map.entry("RGBA16F", 97),    // VK_FORMAT_R16G16B16A16_SFLOAT
             Map.entry("R32F", 100),      // VK_FORMAT_R32_SFLOAT
             Map.entry("RG32F", 103),     // VK_FORMAT_R32G32_SFLOAT
@@ -99,7 +94,6 @@ public final class PackConfig {
             "RGB8_SNORM", 97,
             "RGBA8_SNORM", 97,
             "RGB16F", 97,
-            "RGBA16", 97,
             "R11F_G11F_B10F", 97
     );
     private static final Map<Integer, String> VK_TO_NAME;
@@ -121,7 +115,7 @@ public final class PackConfig {
             case 9 -> 1;
             case 16, 76 -> 2;
             case 37, 64, 83, 100 -> 4;
-            case 97, 103 -> 8;
+            case 91, 97, 103 -> 8;
             case 109 -> 16;
             default -> 0;
         };
@@ -129,6 +123,8 @@ public final class PackConfig {
 
     public static final int DEFAULT_SHADOW_MAP_RESOLUTION = 2048;
     public static final float DEFAULT_SHADOW_DISTANCE = 128.0F;
+    /** Iris PackShadowDirectives default. */
+    public static final float DEFAULT_SHADOW_INTERVAL_SIZE = 2.0F;
     private static final int MIN_SHADOW_MAP_RESOLUTION = 128;
     private static final int MAX_SHADOW_MAP_RESOLUTION = 4096;
     private static final float MIN_SHADOW_DISTANCE = 16.0F;
@@ -158,6 +154,29 @@ public final class PackConfig {
             return finiteValue("sunPathOffset", 0.0F);
         }
 
+        /** Iris's shadow grid cell; the shadow view snaps to it so texels stay put in the world. */
+        public float intervalSize() {
+            return finiteValue("shadowIntervalSize", DEFAULT_SHADOW_INTERVAL_SIZE);
+        }
+
+        /** Iris entityShadowDistanceMul: the entity caster distance relative to terrain's. */
+        public float entityDistanceMultiplier() {
+            return finiteValue("entityShadowDistanceMul", 1.0F);
+        }
+
+        /**
+         * Iris shadowDistanceRenderMul as shadow culling reads it: -1, Iris's default, when the
+         * pack sets none (ShadowCullingPlan).
+         */
+        public float cullingRenderMultiplier() {
+            return rawValues.containsKey("shadowDistanceRenderMul") ? distanceRenderMultiplier() : -1.0F;
+        }
+
+        /** Iris voxelDistance: the half-size of the box safe-zone shadow culling always draws. */
+        public float voxelDistance() {
+            return finiteValue("voxelDistance", 0.0F);
+        }
+
         private float finiteValue(String name, float fallback) {
             try {
                 float value = Float.parseFloat(rawValues.getOrDefault(name, Float.toString(fallback)));
@@ -173,7 +192,6 @@ public final class PackConfig {
             String sizeExpression,
             boolean clear,
             float[] clearColor,
-            boolean mipmapped,
             List<String> deviations
     ) {
         public TargetSettings {
@@ -188,7 +206,7 @@ public final class PackConfig {
 
         public static TargetSettings defaults() {
             return new TargetSettings("", true,
-                    new float[] {0.0F, 0.0F, 0.0F, 0.0F}, false, List.of());
+                    new float[] {0.0F, 0.0F, 0.0F, 0.0F}, List.of());
         }
 
         public float[] clearColorCopy() {
@@ -339,20 +357,17 @@ public final class PackConfig {
                         Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
                         Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
                         Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
-                        Matcher mipmapKey = TARGET_MIPMAP_PROPERTY_KEY.matcher(key);
                         Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
                         if (sizeKey.matches()) {
                             int slot = parseTargetIndex(sizeKey.group(1), deviations);
                             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                                updateTargetSettings(targetSettings, slot, value, null, null,
-                                        null, null);
+                                updateTargetSettings(targetSettings, slot, value, null, null, null);
                             }
                         } else if (clearKey.matches()) {
                             int slot = parseTargetIndex(clearKey.group(1), deviations);
                             Boolean clear = parseBoolean(value);
                             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
-                                updateTargetSettings(targetSettings, slot, null, clear, null,
-                                        null, null);
+                                updateTargetSettings(targetSettings, slot, null, clear, null, null);
                             } else if (clear != null) {
                                 deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
                             }
@@ -360,19 +375,9 @@ public final class PackConfig {
                             int slot = parseTargetIndex(clearColorKey.group(1), deviations);
                             float[] color = parseColor(value);
                             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
-                                updateTargetSettings(targetSettings, slot, null, null, color,
-                                        null, null);
+                                updateTargetSettings(targetSettings, slot, null, null, color, null);
                             } else {
                                 deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-                            }
-                        } else if (mipmapKey.matches()) {
-                            int slot = parseTargetIndex(mipmapKey.group(1), deviations);
-                            Boolean mipmapped = parseBoolean(value);
-                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && mipmapped != null) {
-                                updateTargetSettings(targetSettings, slot, null, null, null,
-                                        mipmapped, null);
-                            } else {
-                                deviations.add("POST_TARGET_MIPMAP_UNSUPPORTED:colortex" + slot);
                             }
                         } else if (flipKey.matches()) {
                             int slot = parseTargetIndex(flipKey.group(2), deviations);
@@ -474,7 +479,7 @@ public final class PackConfig {
             int slot = parseTargetIndex(clear.group(1), deviations);
             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
                 updateTargetSettings(values, slot, null,
-                        Boolean.parseBoolean(clear.group(2)), null, null, null);
+                        Boolean.parseBoolean(clear.group(2)), null, null);
             }
         }
         Matcher color = COLORTEX_CLEAR_COLOR_CONST.matcher(text);
@@ -482,17 +487,9 @@ public final class PackConfig {
             int slot = parseTargetIndex(color.group(1), deviations);
             float[] parsed = parseColor(color.group(2));
             if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && parsed != null) {
-                updateTargetSettings(values, slot, null, null, parsed, null, null);
+                updateTargetSettings(values, slot, null, null, parsed, null);
             } else {
                 deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-            }
-        }
-        Matcher mipmap = COLORTEX_MIPMAP_CONST.matcher(text);
-        while (mipmap.find()) {
-            int slot = parseTargetIndex(mipmap.group(1), deviations);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                updateTargetSettings(values, slot, null, null, null,
-                        Boolean.parseBoolean(mipmap.group(2)), null);
             }
         }
     }
@@ -519,7 +516,6 @@ public final class PackConfig {
             String size,
             Boolean clear,
             float[] clearColor,
-            Boolean mipmapped,
             List<String> deviations
     ) {
         TargetSettings previous = values.getOrDefault(slot, TargetSettings.defaults());
@@ -527,7 +523,6 @@ public final class PackConfig {
                 size == null ? previous.sizeExpression() : size,
                 clear == null ? previous.clear() : clear,
                 clearColor == null ? previous.clearColorCopy() : clearColor,
-                mipmapped == null ? previous.mipmapped() : mipmapped,
                 deviations == null ? previous.deviations() : deviations));
     }
 
@@ -637,11 +632,15 @@ public final class PackConfig {
         validateFiniteShadowSetting(rawValues, deviations, "shadowDistanceRenderMul", 0.0F, 4.0F);
         validateFiniteShadowSetting(rawValues, deviations, "sunPathRotation", -360.0F, 360.0F);
         validateFiniteShadowSetting(rawValues, deviations, "sunPathOffset", -360.0F, 360.0F);
+        validateFiniteShadowSetting(rawValues, deviations, "shadowIntervalSize", 0.0F, 64.0F);
+        validateFiniteShadowSetting(rawValues, deviations, "entityShadowDistanceMul", -64.0F, 64.0F);
+        validateFiniteShadowSetting(rawValues, deviations, "voxelDistance", 0.0F, MAX_SHADOW_DISTANCE);
 
         for (String key : rawValues.keySet()) {
             if (!key.equals("shadowMapResolution") && !key.equals("shadowDistance")
-                    && !key.equals("shadowDistanceRenderMul")
-                    && !key.equals("sunPathRotation") && !key.equals("sunPathOffset")) {
+                    && !key.equals("shadowDistanceRenderMul") && !key.equals("shadowIntervalSize")
+                    && !key.equals("sunPathRotation") && !key.equals("sunPathOffset")
+                    && !key.equals("entityShadowDistanceMul") && !key.equals("voxelDistance")) {
                 deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
             }
         }

@@ -22,10 +22,11 @@ public class ChimeraMod implements ClientModInitializer {
     public void onInitializeClient() {
         LOGGER.info("Chimera {} initializing - shaderpack pipeline for VulkanMod", VERSION);
         ChimeraCommands.register();
+        net.chimera.gui.ChimeraKeybinds.register();
         ResourceLoader.get(PackType.CLIENT_RESOURCES).registerReloader(
                 ChimeraMaterialReloadListener.ID, ChimeraMaterialReloadListener.live());
         ResourceLoader.get(PackType.CLIENT_RESOURCES).addReloaderOrdering(
                 ResourceReloaderKeys.Client.TEXTURES, ChimeraMaterialReloadListener.ID);
-        LOGGER.info("Use /chimera pack list, load, reload, off, or status to change shaderpacks in-game");
+        LOGGER.info("Press O (or use /chimera pack) to choose a shader pack in-game");
     }
 }

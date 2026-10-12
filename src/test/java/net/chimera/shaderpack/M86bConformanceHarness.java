@@ -763,7 +763,7 @@ public final class M86bConformanceHarness {
         String fogSource = "#version 120\n"
                 + "void main() { float value = (gl_Fog.start + gl_Fog.end) * gl_Fog.scale;"
                 + " gl_FragColor = vec4(value); }\n";
-        LegacyShaderNormalizer.Result normalizedFog = LegacyShaderNormalizer.normalize(fogSource);
+        LegacyShaderNormalizer.Result normalizedFog = LegacyShaderNormalizer.normalize(fogSource, false);
         assertTrue(normalizedFog.successful()
                         && normalizedFog.source().contains("fogStart")
                         && normalizedFog.source().contains("fogEnd")
@@ -779,7 +779,7 @@ public final class M86bConformanceHarness {
                         && fogPlan.executable(),
                 "M8.6b normalized fog values did not enter the live interface");
         LegacyShaderNormalizer.Result unsupportedFog = LegacyShaderNormalizer.normalize(
-                "void main() { gl_FragColor = vec4(gl_Fog.density); }");
+                "void main() { gl_FragColor = vec4(gl_Fog.density); }", false);
         assertTrue(!unsupportedFog.successful()
                         && unsupportedFog.deviations().contains(
                         "LEGACY_FOG_FIELD_UNSUPPORTED:density"),

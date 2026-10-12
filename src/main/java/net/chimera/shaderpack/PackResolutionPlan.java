@@ -78,18 +78,19 @@ record PackResolutionPlan(
             PackProgram chosen = null;
             for (int index = 0; index < chain.size(); index++) {
                 PackProgram candidate = shipped.get(chain.get(index));
-                if (candidate != null) {
+                if (candidate != null && actualSettings.enabled(folder, chain.get(index))) {
                     selected = chain.get(index);
                     depth = index;
                     chosen = candidate;
                     break;
                 }
             }
-            boolean enabled = actualSettings.enabled(requested);
+            boolean authoredEnabled = actualSettings.enabled(folder, requested);
+            boolean enabled = authoredEnabled || (chosen != null && requested.startsWith("gbuffers_"));
             List<String> programDeviations = new ArrayList<>();
-            if (!enabled) {
+            if (!authoredEnabled) {
                 disabled.add(requested);
-                programDeviations.add("PROGRAM_DISABLED:" + requested);
+                if (!enabled) programDeviations.add("PROGRAM_DISABLED:" + requested);
             }
             if (chosen == null) {
                 missing.add(requested);
@@ -98,14 +99,13 @@ record PackResolutionPlan(
                 continue;
             }
             boolean exact = depth == 0 && requested.equals(selected);
-            boolean executable = exact && enabled && supportsCurrentAdapter(requested);
+            boolean executable = enabled && supportsCurrentAdapter(requested);
             if (!exact) {
                 String alias = requested + "->" + selected;
                 aliases.add(alias);
                 programDeviations.add("PROGRAM_ALIAS_RECORDED:" + alias);
-                programDeviations.add("PROGRAM_ALIAS_RUNTIME_FALLBACK:" + requested);
+                if (!executable) programDeviations.add("PROGRAM_ALIAS_RUNTIME_FALLBACK:" + requested);
                 deviations.add("PROGRAM_ALIAS_RECORDED:" + alias);
-                executable = false;
             }
             answers.put(requested, new PackProgramResolution(requested, selected,
                     relative(chosen.sourceRoot(), chosen.fragmentPath()), depth, enabled,
@@ -122,6 +122,26 @@ record PackResolutionPlan(
     boolean shouldAttempt(String name) {
         PackProgramResolution resolution = resolutions.get(name);
         return resolution == null || resolution.executable();
+    }
+
+    /** Materialize selected prepared sources under the requested adapter's name. */
+    List<PackProgram> executablePrograms(List<PackProgram> programs) {
+        Map<String, PackProgram> result = new TreeMap<>();
+        if (programs != null) {
+            programs.stream().filter(program -> !isShaderKey(program.name()))
+                    .forEach(program -> result.put(program.name(), program));
+        }
+        Map<String, PackProgram> shipped = new TreeMap<>(result);
+        for (PackProgramResolution resolved : resolutions.values()) {
+            if (!resolved.executable() || resolved.requestedProgram().equals(resolved.selectedProgram())) continue;
+            PackProgram source = shipped.get(resolved.selectedProgram());
+            if (source == null) continue;
+            result.put(resolved.requestedProgram(), new PackProgram(resolved.requestedProgram(),
+                    source.fragmentSource(), source.fragmentPath(), source.vertexSource(), source.vertexPath(),
+                    source.sourceRoot(), source.preparedFragmentSource(), source.preparedVertexSource(),
+                    source.preparationDeviations(), source.variantFolder(), source.preparedSources()));
+        }
+        return List.copyOf(result.values());
     }
 
     String snapshotJson() {
@@ -162,6 +182,13 @@ record PackResolutionPlan(
         addChain(result, "shadow_entities", "shadow");
         addChain(result, "shadow_lightning", "shadow_entities", "shadow");
         addChain(result, "shadow_block", "shadow");
+        // Iris shadow ShaderKeys drawn on host layouts: each runs the Iris program it names.
+        addKeyChain(result, "shadow_lines", "shadow");
+        addKeyChain(result, "shadow_leash", "shadow");
+        addKeyChain(result, "shadow_basic", "shadow");
+        addKeyChain(result, "shadow_glint", "shadow_entities", "shadow");
+        addKeyChain(result, "shadow_text", "shadow_entities", "shadow");
+        addKeyChain(result, "shadow_text_bg", "shadow_entities", "shadow");
         addChain(result, "gbuffers_basic");
         addChain(result, "gbuffers_line", "gbuffers_basic");
         addChain(result, "gbuffers_textured", "gbuffers_basic");
@@ -204,6 +231,20 @@ record PackResolutionPlan(
             Collections.addAll(chain, parents);
         }
         map.put(name, List.copyOf(chain));
+    }
+
+    /**
+     * A shader key that is not an Iris program name: it resolves only through the programs
+     * Iris uses for it, so a pack file of the same name is never selected.
+     */
+    private static void addKeyChain(Map<String, List<String>> map, String key, String... programs) {
+        map.put(key, List.of(programs));
+    }
+
+    /** True for a requested name that is a shader key, never an authorable program. */
+    static boolean isShaderKey(String name) {
+        List<String> chain = FALLBACKS.get(name);
+        return chain != null && !chain.get(0).equals(name);
     }
 
     private static boolean supportsCurrentAdapter(String name) {

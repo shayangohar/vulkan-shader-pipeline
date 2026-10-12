@@ -11,6 +11,10 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     private final int vertexSize;
     private int materialId = -1;
     private int renderType = -1;
+    private int blockEmission;
+    private int blockX;
+    private int blockY;
+    private int blockZ;
     private final long[] polygonPointers = new long[4];
     private final float[] polygonValues = new float[20];
     private final int[] polygonNormals = new int[4];
@@ -28,9 +32,19 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         this.vertexSize = this.materialPlan.stride();
     }
 
-    public void setMaterialData(int materialId, int renderType) {
+    /**
+     * The block whose quads follow, as Iris's BlockContextHolder.setBlockData: its material,
+     * render type, light emission and position within the section. at_midBlock points from
+     * each vertex to this block's centre.
+     */
+    public void setBlockData(int materialId, int renderType, int emission,
+                             int localX, int localY, int localZ) {
         this.materialId = materialId;
         this.renderType = renderType;
+        this.blockEmission = emission;
+        this.blockX = localX;
+        this.blockY = localY;
+        this.blockZ = localZ;
     }
 
     @Override
@@ -141,16 +155,20 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         return Math.max(0.0F, Math.min(1.0F, value));
     }
 
-    private static int encodeMidBlock(float x, float y, float z) {
-        int ix = signedMidBlockOffset(x);
-        int iy = signedMidBlockOffset(y);
-        int iz = signedMidBlockOffset(z);
-        return (ix & 0xFF) | ((iy & 0xFF) << 8) | ((iz & 0xFF) << 16);
+    /**
+     * Iris's ExtendedDataHelper.computeMidBlock from the current block's position, with its
+     * light emission in the fourth byte. A centre taken from the vertex instead names the
+     * neighbouring block for every vertex on a +X, +Y or +Z face; Solas's voxelization then
+     * raced neighbouring blocks into one voxel, and its light sources flickered.
+     */
+    private int encodeMidBlock(float x, float y, float z) {
+        return midBlockOffset(blockX + 0.5F - x)
+                | (midBlockOffset(blockY + 0.5F - y) << 8)
+                | (midBlockOffset(blockZ + 0.5F - z) << 16)
+                | ((blockEmission & 0xFF) << 24);
     }
 
-    private static int signedMidBlockOffset(float coordinate) {
-        float blockCenter = (float) Math.floor(coordinate) + 0.5F;
-        return Math.max(-128, Math.min(127,
-                (int) Math.floor((blockCenter - coordinate) * 64.0F)));
+    private static int midBlockOffset(float offset) {
+        return (int) (offset * 64.0F) & 0xFF;
     }
 }

@@ -46,6 +46,9 @@ public final class PackEngineDefines {
         result.put("MC_RENDER_QUALITY", "1.0");
         result.put("MC_SHADOW_QUALITY", "1.0");
         result.put("MC_HAND_DEPTH", "0.125");
+        for (var phase : PackRenderingPhase.values()) {
+            result.put("MC_RENDER_STAGE_" + phase.name(), Integer.toString(phase.ordinal()));
+        }
         return Collections.unmodifiableMap(result);
     }
 

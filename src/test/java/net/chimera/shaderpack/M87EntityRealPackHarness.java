@@ -48,6 +48,7 @@ public final class M87EntityRealPackHarness {
         }
         verifyAuthoredEmptyClouds(analysis, expectations.get(0).pack());
         verifyStageTextures(analysis, expectations.get(0).pack());
+        verifyWeatherAndSky(analysis, expectations.get(0).pack());
         for (Expectation expectation : expectations) {
             PackProgramPlan plan = analysis.plan().program(expectation.program());
             assertTrue(plan != null, expectation.pack + " " + expectation.program() + " has no plan");
@@ -76,6 +77,35 @@ public final class M87EntityRealPackHarness {
             compileStage(plan.convertedFragment(), false,
                     expectation.pack + " " + expectation.program() + " fragment");
             verifyManifest(analysis.plan().advancedResources(), expectation, plan);        }
+    }
+
+    /** These families must qualify under the same full option set as the runtime. */
+    private static void verifyWeatherAndSky(PackProbe.Analysis analysis, String pack) {
+        for (String name : List.of("gbuffers_weather", "gbuffers_skybasic", "gbuffers_skytextured")) {
+            var plan = analysis.plan().program(name);
+            assertTrue(plan != null && analysis.plan().shouldAttempt(name)
+                            && analysis.report().shouldAttempt(name), pack + " " + name + " runtime admission");
+            List<Integer> targets = pack.equals("complementary") && name.equals("gbuffers_weather")
+                    ? List.of(12) : List.of(0);
+            assertTrue(plan.geometryOutputPlan().targetSlots().equals(targets),
+                    pack + " " + name + " wrong targets: " + plan.geometryOutputPlan().targetSlots());
+            if (targets.equals(List.of(12))) {
+                assertTrue(PackBlendPlan.Mode.OFF.equals(plan.blendPlan().attachments(targets)[0]),
+                        "Complementary improved-rain data must not alpha-blend");
+            }
+            var stage = FamilyAdapterRegistry.stageFor(name);
+            var prepared = PackPipelines.prepare(plan, analysis.plan().advancedResources(), stage, plan.convertedVertex());
+            compileStage(prepared.vertex(), true, pack + " " + name + " vertex");
+            compileStage(prepared.fragment(), false, pack + " " + name + " fragment");
+            if (FamilyAdapterRegistry.isSkyFamily(name)) {
+                for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
+                    var variant = PackPipelines.prepare(plan, analysis.plan().advancedResources(), stage,
+                            LegacyGlslConverter.skyVertexForContract(plan.convertedVertex(), contract));
+                    compileStage(variant.vertex(), true, pack + " " + name + " " + contract);
+                }
+            }
+        }
+        System.out.println("[chimera] real-pack weather targets/blend and sky admission: " + pack + " PASS");
     }
 
     /**

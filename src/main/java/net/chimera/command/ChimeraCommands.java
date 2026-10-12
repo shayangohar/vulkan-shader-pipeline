@@ -1,8 +1,12 @@
 package net.chimera.command;
 
+import net.chimera.config.ChimeraConfig;
+import net.chimera.config.ShaderpackDirectory;
+
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.PackNanTripwire;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -35,7 +39,16 @@ public final class ChimeraCommands {
                                 .then(ClientCommandManager.literal("off")
                                         .executes(ChimeraCommands::turnPackOff))
                                 .then(ClientCommandManager.literal("status")
-                                        .executes(ChimeraCommands::packStatus)))));
+                                        .executes(ChimeraCommands::packStatus)))
+                        .then(ClientCommandManager.literal("debug")
+                                .then(ClientCommandManager.literal("nan")
+                                        .then(ClientCommandManager.literal("on")
+                                                .executes(context -> setNanTripwire(context, true)))
+                                        .then(ClientCommandManager.literal("off")
+                                                .executes(context -> setNanTripwire(context, false)))
+                                        .then(ClientCommandManager.literal("test")
+                                                .executes(ChimeraCommands::nanTripwireSelfTest))
+                                        .executes(ChimeraCommands::nanTripwireStatus)))));
     }
 
     private static int listPacks(CommandContext<FabricClientCommandSource> context) {
@@ -65,6 +78,9 @@ public final class ChimeraCommands {
             return -1;
         }
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.requestPack(resolution.path());
+        if (result != ChimeraRenderer.PackRequestResult.NOT_READY) {
+            rememberSelection(resolution.path(), true);
+        }
         return reportRequest(context, result, "pack " + resolution.path().getFileName());
     }
 
@@ -75,6 +91,10 @@ public final class ChimeraCommands {
 
     private static int turnPackOff(CommandContext<FabricClientCommandSource> context) {
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.disablePack();
+        if (result != ChimeraRenderer.PackRequestResult.NOT_READY) {
+            ChimeraConfig config = ChimeraConfig.get();
+            config.setSelection(config.shaderPack().orElse(null), false);
+        }
         switch (result) {
             case QUEUED -> context.getSource().sendFeedback(Component.literal(
                     "Chimera shader pack off queued; vanilla rendering resumes at the next safe frame boundary."));
@@ -86,9 +106,47 @@ public final class ChimeraCommands {
         return result == ChimeraRenderer.PackRequestResult.NOT_READY ? -1 : 0;
     }
 
+    /**
+     * Saves a pack loaded from the shaderpacks folder as the selection, as the selector screen
+     * does. A pack loaded by an explicit path outside that folder cannot be named in the config,
+     * so the saved selection is left as it was.
+     */
+    private static void rememberSelection(Path pack, boolean enabled) {
+        Path root = shaderpacksRoot();
+        try {
+            Path parent = pack.toRealPath().getParent();
+            if (parent != null && Files.isDirectory(root) && parent.equals(root.toRealPath())) {
+                ChimeraConfig.get().setSelection(pack.getFileName().toString(), enabled);
+            }
+        } catch (IOException failure) {
+            // Not in the shaderpacks folder: nothing to remember.
+        }
+    }
+
     private static int packStatus(CommandContext<FabricClientCommandSource> context) {
         context.getSource().sendFeedback(Component.literal(ChimeraRenderer.packStatus()));
         return 0;
+    }
+
+    private static int setNanTripwire(CommandContext<FabricClientCommandSource> context, boolean on) {
+        PackNanTripwire.setEnabled(on);
+        context.getSource().sendFeedback(Component.literal(on
+                ? "NaN tripwire on."
+                : "NaN tripwire off."));
+        return on ? 1 : 0;
+    }
+
+    private static int nanTripwireSelfTest(CommandContext<FabricClientCommandSource> context) {
+        PackNanTripwire.requestSelfTest();
+        context.getSource().sendFeedback(Component.literal(
+                "NaN tripwire self-test queued."));
+        return 1;
+    }
+
+    private static int nanTripwireStatus(CommandContext<FabricClientCommandSource> context) {
+        context.getSource().sendFeedback(Component.literal(
+                "NaN tripwire " + (PackNanTripwire.enabled() ? "on." : "off.")));
+        return PackNanTripwire.enabled() ? 1 : 0;
     }
 
     private static int reportRequest(
@@ -108,7 +166,7 @@ public final class ChimeraCommands {
     }
 
     static Path shaderpacksRoot(Path gameDirectory) {
-        return gameDirectory.resolve("shaderpacks").normalize();
+        return ShaderpackDirectory.root(gameDirectory);
     }
 
     private static Path shaderpacksRoot() {
@@ -120,16 +178,7 @@ public final class ChimeraCommands {
     }
 
     static List<String> listPackNames(Path root) throws IOException {
-        if (!Files.isDirectory(root)) {
-            return List.of();
-        }
-        try (var entries = Files.list(root)) {
-            return entries
-                    .filter(ChimeraCommands::isPackPath)
-                    .map(path -> path.getFileName().toString())
-                    .sorted(String.CASE_INSENSITIVE_ORDER)
-                    .toList();
-        }
+        return ShaderpackDirectory.list(root);
     }
 
     static Resolution resolvePackPath(Path shaderpacksRoot, Path gameDirectory, String raw) {
@@ -199,9 +248,7 @@ public final class ChimeraCommands {
     }
 
     private static boolean isPackPath(Path path) {
-        return Files.isDirectory(path)
-                || (Files.isRegularFile(path)
-                && path.getFileName().toString().toLowerCase().endsWith(".zip"));
+        return ShaderpackDirectory.isValidPack(path);
     }
 
     private static String stripQuotes(String raw) {

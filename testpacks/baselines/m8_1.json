@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "5385a95d8beacdc4450570afce85046910d94cac51edcb1c907b5d81e946aeb3",
+      "reportSha256": "55173a033dcbfacebe007531ffdf42a4ac2b8e9562a04dca296bdad82226648c",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -11,17 +11,30 @@
         "gbuffers_water.vsh": "069fc7daf92cdfa82e8625c95796be6406a37d96be031522c1853a2a69093abb"
       },
       "expectedExecutablePrograms": [
+        "gbuffers_block",
         "gbuffers_terrain",
         "gbuffers_water"
       ],
-      "expectedFallbackPrograms": [],
+      "expectedFallbackPrograms": [
+        "gbuffers_damagedblock"
+      ],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
         "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
         "ALPHA_TEST_DYNAMIC:gbuffers_water",
+        "BLOCK_ENTITY_ID_DEFAULTED",
+        "BLOCK_VERTEX_BRIDGE",
+        "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+        "BLOCK_VERTEX_CONVERSION_FAILED:crumbling BLOCK has no material mid-coordinate or tangent attribute",
+        "ENTITY_STATE_FIXED_TO_HOST",
+        "ENTITY_VERTEX_FORMAT_EXTENDED",
+        "FAMILY_ADAPTER_INSTALLED",
+        "FIXED_VERTEX_SUBSTITUTION",
         "MODERN_GLSL_TRANSLATED",
         "MODERN_TERRAIN_VERTEX_BRIDGE",
         "MODERN_WATER_VERTEX_BRIDGE",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
         "SEPARATE_AO_ATTRIBUTE",
         "SEPARATE_AO_HOST_COLOR_FALLBACK",
         "TERRAIN_NORMAL_AUTHORITATIVE",
@@ -30,22 +43,41 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "4512cb0dad1dbd24eb7ca6c4f75235bfced98e22e012e80974e71c91e2698944",
+      "reportSha256": "da0391b1625536be6449392f53fa202d50097f934375c7c4904af21cd87608ab",
       "sourceHashes": {
-        "gbuffers_terrain.fsh": "b975c6b21bc0196e572bbd83b8e826520805d60286f22dfe92e49e03825ed15d",
-        "gbuffers_terrain.vsh": "20d0a103fef28c0d9624ae1d372e9847f9aaafc0eb5570eb7447507e86288055"
+        "gbuffers_terrain.fsh": "d4b257c6f083b143879e04c04cd6eadbc1443615eff684a2ca527dfefbff60bb",
+        "gbuffers_terrain.vsh": "244c2f59bb81a169c09d178e2b50107035cc206db26e38ef087d0095629240e1"
       },
       "expectedExecutablePrograms": [],
       "expectedFallbackPrograms": [
-        "gbuffers_terrain"
+        "gbuffers_block",
+        "gbuffers_damagedblock",
+        "gbuffers_terrain",
+        "gbuffers_water"
       ],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
+        "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+        "BLOCK_VERTEX_CONVERSION_FAILED:entity vertex requires a desktop GLSL version from 110 to 460, not 300 es",
+        "FIXED_VERTEX_SUBSTITUTION",
+        "FRAGMENT_OUTPUT_DISCARDED:1",
+        "LIVE_UNIFORM_BRIDGE",
         "MODERN_GLSL_UNSUPPORTED",
-        "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
+        "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",
+        "TRANSLUCENT_STATE_FIXED_TO_HOST",
+        "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED"
       ]
     }
   },
-  "modernFamilies": ["gbuffers_terrain", "gbuffers_water"],
-  "supportedStrides": [36, 40]
+  "modernFamilies": [
+    "gbuffers_terrain",
+    "gbuffers_water"
+  ],
+  "supportedStrides": [
+    36,
+    40
+  ]
 }

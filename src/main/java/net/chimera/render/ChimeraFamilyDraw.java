@@ -33,10 +33,11 @@ public final class ChimeraFamilyDraw {
         ChimeraEntityBridge.Family selected = ChimeraEntityBridge.familyForRenderType(base, renderType);
         ChimeraEntityBridge.noteFamilyBatch(selected, 1);
         if (!ChimeraEntityBridge.beginDraw(selected)) {
+            ChimeraEntityBridge.noteFamilyHostFallback(selected, renderType);
             return false;
         }
         // The pipeline follows the selected family, not the base family:
-        // translucent and glowing draws need their own MRT windows.
+        // translucent and spider-eyes draws need their own MRT windows.
         ChimeraMainPass mainPass = ChimeraRenderer.getMainPass();
         PackPipelines.PackEntity selectedPipeline = mainPass == null
                 ? null : mainPass.familyPipeline(selected);
