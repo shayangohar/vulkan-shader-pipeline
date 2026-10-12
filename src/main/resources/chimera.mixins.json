@@ -24,6 +24,8 @@
     "FluidRendererMixin",
     "ChimeraBlockRendererMixin",
     "ChimeraClientLevelShadeMixin",
+    "ChimeraGuiVignetteMixin",
+    "ChimeraScreenEffectWaterMixin",
     "QuadSorterMixin",
     "GraphicsPipelineMrtMixin",
     "ChimeraBufferBuilderMixin",

@@ -291,6 +291,8 @@ public class ChimeraMainPass implements MainPass {
     private boolean shadowCastersFailed;
     /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
     private ShadowCullingPlan shadowCulling;
+    /** Which of Minecraft's screen overlays this pack session keeps (Iris vignette and underwaterOverlay). */
+    private net.chimera.shaderpack.ScreenOverlayDirectives screenOverlays;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
     /** Pack translucent world-entity program on the guarded delayed model batch. */
@@ -2267,6 +2269,7 @@ public class ChimeraMainPass implements MainPass {
         this.packConfig = null;
         this.packPlan = null;
         this.shadowCulling = null;
+        this.screenOverlays = null;
         this.packTargetGraph = null;
         this.packFrameSchedule = PackFrameSchedulePlan.empty();
         this.packPrograms = null;
@@ -2849,6 +2852,10 @@ public class ChimeraMainPass implements MainPass {
         LOGGER.info("[chimera] pack oldLighting: {}{}", lighting.oldLighting(),
                 lighting.deviations().isEmpty() ? "" : " " + lighting.deviations());
         ChimeraTerrainPipelines.setDirectionalShadingDisabled(lighting.disablesDirectionalShading());
+        this.screenOverlays = this.packPlan.screenOverlays();
+        LOGGER.info("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
+                this.screenOverlays.vignette(), this.screenOverlays.underwaterOverlay(),
+                this.screenOverlays.deviations().isEmpty() ? "" : " " + this.screenOverlays.deviations());
         PackUniformProvider.installRuntimeSettings(this.packPlan.runtimeSettings());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 this.packPlan.selectedDimension(),
@@ -3695,6 +3702,9 @@ public class ChimeraMainPass implements MainPass {
 
     /** True while a shader pack session is loaded (identity mode has none). */
     public boolean packLoaded() { return this.packPlan != null; }
+
+    /** The loaded pack's screen overlay switches, or null while no pack session is loaded. */
+    public net.chimera.shaderpack.ScreenOverlayDirectives screenOverlays() { return this.screenOverlays; }
 
     public void recordShadowDraw() {
         if (this.shadowPassActive && usePackShadowRuntime() && this.packStorageBufferOwner != null) {

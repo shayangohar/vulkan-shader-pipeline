@@ -50,15 +50,7 @@ public record ShadowCasterDirectives(
 
     private static boolean flag(Map<String, String> properties, String key, boolean fallback,
                                 List<String> deviations) {
-        String value = properties == null ? null : properties.get(key);
-        if (value == null) return fallback;
-        return switch (value.trim()) {
-            case "true", "1" -> true;
-            case "false", "0" -> false;
-            default -> {
-                deviations.add("SHADOW_DIRECTIVE_MALFORMED:" + key);
-                yield fallback;
-            }
-        };
+        return PackBooleanDirective.read(properties, key, fallback, deviations,
+                "SHADOW_DIRECTIVE_MALFORMED:" + key);
     }
 }

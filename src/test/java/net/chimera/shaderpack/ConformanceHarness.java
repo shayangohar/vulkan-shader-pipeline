@@ -48,6 +48,7 @@ public final class ConformanceHarness {
         verifyComputeUniformOffsets();
         verifyMidBlockInputs();
         verifyOldLighting();
+        verifyScreenOverlays();
         verifyIndentedProperties();
         PackPostTargetsHarness.run();
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
@@ -1765,10 +1766,7 @@ public final class ConformanceHarness {
             }
         }
         assertTrue(targetsClientLevel && shadeHook, "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
-        try (var config = ConformanceHarness.class.getClassLoader().getResourceAsStream("chimera.mixins.json")) {
-            assertTrue(config != null && new String(config.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-                    .contains("\"ChimeraClientLevelShadeMixin\""), "the shade mixin is registered");
-        }
+        assertMixinRegistered("ChimeraClientLevelShadeMixin");
         var pass = nativeClass("net/chimera/render/ChimeraMainPass");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
             var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
@@ -1784,6 +1782,110 @@ public final class ConformanceHarness {
             assertTrue(applies, "ChimeraMainPass." + name + " applies the directional shading state");
         }
         System.out.println("[chimera] oldLighting directional shading (directive, mixin, install): PASS");
+    }
+
+    /**
+     * Iris skips Minecraft's HUD vignette and underwater overlay while a pack is active unless
+     * shaders.properties keeps them (vignette, underwaterOverlay; both default off). Chimera drew
+     * the vignette over Solas's finished image, so a dark room's walls ended about a fifth darker.
+     */
+    private static void verifyScreenOverlays() throws IOException {
+        assertEquals(ScreenOverlayDirectives.DEFAULTS, ScreenOverlayDirectives.fromProperties(Map.of()),
+                "Iris's vignette and underwaterOverlay default to off");
+        for (String key : List.of("vignette", "underwaterOverlay")) {
+            for (String value : List.of("true", "1", " true ")) {
+                var directives = ScreenOverlayDirectives.fromProperties(Map.of(key, value));
+                assertTrue(screenOverlay(directives, key) && directives.deviations().isEmpty(),
+                        key + "=" + value + " keeps the overlay");
+            }
+            for (String value : List.of("false", "0")) {
+                var directives = ScreenOverlayDirectives.fromProperties(Map.of(key, value));
+                assertTrue(!screenOverlay(directives, key) && directives.deviations().isEmpty(),
+                        key + "=" + value + " skips the overlay");
+            }
+            var malformed = ScreenOverlayDirectives.fromProperties(Map.of(key, "yes"));
+            assertTrue(!screenOverlay(malformed, key)
+                            && malformed.deviations().contains("SCREEN_OVERLAY_DIRECTIVE_MALFORMED:" + key),
+                    "an unexpected " + key + " keeps Iris's default and is reported: " + malformed);
+        }
+
+        Path root = Files.createTempDirectory("chimera-screen-overlays-");
+        try {
+            Path shaders = Files.createDirectory(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("shaders.properties"), "vignette=true\nunderwaterOverlay=1\n");
+            Files.writeString(shaders.resolve("final.fsh"), """
+                    #version 120
+                    uniform sampler2D colortex0;
+                    void main() {
+                        gl_FragColor = texture2D(colortex0, vec2(0.5));
+                    }
+                    """);
+            var overlays = PackProbe.analyze(root).plan().screenOverlays();
+            assertTrue(overlays.vignette() && overlays.underwaterOverlay(),
+                    "the pack plan reads shaders.properties vignette and underwaterOverlay: " + overlays);
+        } finally {
+            deleteTree(root);
+        }
+
+        assertCancellingHeadInject("net/chimera/mixin/ChimeraGuiVignetteMixin",
+                "net/minecraft/client/gui/Gui", "renderVignette", false);
+        assertCancellingHeadInject("net/chimera/mixin/ChimeraScreenEffectWaterMixin",
+                "net/minecraft/client/renderer/ScreenEffectRenderer", "renderWater", true);
+        assertMixinRegistered("ChimeraGuiVignetteMixin");
+        assertMixinRegistered("ChimeraScreenEffectWaterMixin");
+
+        var pass = nativeClass("net/chimera/render/ChimeraMainPass");
+        boolean loads = false;
+        boolean clears = false;
+        for (var method : pass.methods) {
+            for (var instruction : method.instructions) {
+                if (method.name.equals("loadPackConfig") && instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                        && call.owner.equals("net/chimera/shaderpack/PackPlan") && call.name.equals("screenOverlays")) {
+                    loads = true;
+                }
+                if (method.name.equals("cleanUpPackVariant") && instruction instanceof org.objectweb.asm.tree.FieldInsnNode field
+                        && field.getOpcode() == org.objectweb.asm.Opcodes.PUTFIELD && field.name.equals("screenOverlays")) {
+                    clears = true;
+                }
+            }
+        }
+        assertTrue(loads && clears, "the main pass reads the overlay switches per pack session and drops them with it");
+        System.out.println("[chimera] screen overlays vignette/underwaterOverlay (directive, mixins, install): PASS");
+    }
+
+    private static boolean screenOverlay(ScreenOverlayDirectives directives, String key) {
+        return key.equals("vignette") ? directives.vignette() : directives.underwaterOverlay();
+    }
+
+    /** The mixin targets {@code target} and cancels {@code method} at its head. */
+    private static void assertCancellingHeadInject(String mixinName, String target, String method, boolean isStatic)
+            throws IOException {
+        var mixin = nativeClass(mixinName);
+        boolean targets = false;
+        for (var annotation : annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations)) {
+            if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")) continue;
+            targets = annotationValue(annotation, "value") instanceof List<?> list && list.stream().anyMatch(type ->
+                    ((org.objectweb.asm.Type) type).getInternalName().equals(target));
+        }
+        boolean cancels = false;
+        for (var handler : mixin.methods) {
+            for (var annotation : annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
+                if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
+                boolean head = annotationValue(annotation, "at") instanceof List<?> ats && ats.stream().anyMatch(at ->
+                        at instanceof org.objectweb.asm.tree.AnnotationNode node && "HEAD".equals(annotationValue(node, "value")));
+                cancels |= annotationValue(annotation, "method") instanceof List<?> names && names.contains(method)
+                        && Boolean.TRUE.equals(annotationValue(annotation, "cancellable")) && head
+                        && ((handler.access & org.objectweb.asm.Opcodes.ACC_STATIC) != 0) == isStatic;
+            }
+        }
+        assertTrue(targets && cancels, mixinName + " cancels " + target + "." + method + " at its head");
+    }
+
+    private static void assertMixinRegistered(String mixinName) throws IOException {
+        try (var config = ConformanceHarness.class.getClassLoader().getResourceAsStream("chimera.mixins.json")) {
+            assertTrue(config != null && new String(config.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                    .contains("\"" + mixinName + "\""), mixinName + " is registered");
+        }
     }
 
     private static List<org.objectweb.asm.tree.AnnotationNode> annotations(

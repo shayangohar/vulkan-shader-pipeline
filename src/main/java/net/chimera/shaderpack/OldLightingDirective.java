@@ -21,17 +21,10 @@ public record OldLightingDirective(boolean oldLighting, List<String> deviations)
     }
 
     static OldLightingDirective fromProperties(Map<String, String> properties) {
-        String value = properties == null ? null : properties.get("oldLighting");
-        if (value == null) return DEFAULT;
-        return switch (value.trim()) {
-            case "true", "1" -> new OldLightingDirective(true, List.of());
-            case "false", "0" -> DEFAULT;
-            default -> {
-                List<String> deviations = new ArrayList<>();
-                deviations.add("OLD_LIGHTING_DIRECTIVE_MALFORMED");
-                yield new OldLightingDirective(DEFAULT.oldLighting(), deviations);
-            }
-        };
+        List<String> deviations = new ArrayList<>();
+        boolean oldLighting = PackBooleanDirective.read(properties, "oldLighting", DEFAULT.oldLighting(),
+                deviations, "OLD_LIGHTING_DIRECTIVE_MALFORMED");
+        return new OldLightingDirective(oldLighting, deviations);
     }
 
     /** True when the pack lights faces itself, so the host's directional shade must not apply. */

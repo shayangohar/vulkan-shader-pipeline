@@ -192,6 +192,15 @@ public final class ChimeraRenderer {
     }
 
     /**
+     * The screen overlay switches of the pack rendering this frame's world, or null when the
+     * world is not pack-rendered and Minecraft's overlays draw as usual (Iris checks its active
+     * pipeline the same way in MixinGui and MixinScreenEffectRenderer).
+     */
+    public static net.chimera.shaderpack.ScreenOverlayDirectives packScreenOverlays() {
+        return packProjectionActive() ? chimeraPass.screenOverlays() : null;
+    }
+
+    /**
      * Opens Chimera's level segment only on a recording main command buffer.
      * A nested Minecraft.runTick (the respawn loading screen) makes VulkanMod
      * submit the outer frame before that frame renders its level. VulkanMod's

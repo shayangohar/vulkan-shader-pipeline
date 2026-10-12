@@ -176,6 +176,11 @@ public record PackPlan(
         return OldLightingDirective.fromProperties(settings.propertyValues());
     }
 
+    /** Which of Minecraft's screen overlays the pack keeps (Iris vignette and underwaterOverlay, default off). */
+    public ScreenOverlayDirectives screenOverlays() {
+        return ScreenOverlayDirectives.fromProperties(settings.propertyValues());
+    }
+
     /** How the shadow pass culls its casters (Iris shadow.culling and the shadow distances). */
     public ShadowCullingPlan shadowCulling() {
         PackConfig.ShadowSettings shadow = config != null ? config.shadowSettings()
