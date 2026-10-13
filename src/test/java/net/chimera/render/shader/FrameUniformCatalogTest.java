@@ -20,13 +20,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic M6.2 checks for the canonical uniform catalog and frame state. */
+/** The canonical uniform catalog and the frame state it serves. */
 final class FrameUniformCatalogTest {
     @Test
     void fixturePack() throws Exception {
@@ -38,52 +37,52 @@ final class FrameUniformCatalogTest {
         List<UniformRegistry.UniformDescriptor> catalog = UniformRegistry.catalog();
         List<String> names = catalog.stream().map(UniformRegistry.UniformDescriptor::name).toList();
         List<String> sorted = names.stream().sorted().toList();
-        assertEquals(sorted, names, "M6.2 catalog ordering");
+        assertEquals(sorted, names, "catalog ordering");
         assertEquals(List.of("vec3"), UniformRegistry.descriptor("cameraPosition").acceptedTypes(),
-                "M6.2 camera descriptor type");
+                "camera descriptor type");
         assertEquals(UniformRegistry.Availability.LIVE,
                 UniformRegistry.descriptor("eyeBrightness").availability(),
-                "M6.2 eye brightness status");
+                "eye brightness status");
         assertEquals(UniformRegistry.Availability.LIVE,
                 UniformRegistry.descriptor("wetness").availability(),
-                "M6.2 wetness status");
+                "wetness status");
         assertEquals(UniformRegistry.Availability.LIVE,
                 UniformRegistry.descriptor("eyeBrightnessSmooth").availability(),
-                "M6.2 eye smoothing status");
+                "eye smoothing status");
         assertTrue(UniformRegistry.descriptor("cameraPosition", "float") == null,
-                "M6.2 typed catalog accepted a conflicting declaration");
+                "typed catalog accepted a conflicting declaration");
         assertTrue(UniformRegistry.descriptor("cameraPosition", "vec3") != null,
-                "M6.2 typed catalog rejected the declared type");
+                "typed catalog rejected the declared type");
 
         UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
                 "uniform vec3 cameraPosition; uniform float cameraPosition;"
                         + "void main() { float x = cameraPosition.x; }",
                 UniformRegistry.Stage.POST);
         assertTrue(conflict.deviations().contains("UNIFORM_CONFLICT:cameraPosition"),
-                "M6.2 conflicting declaration was not reported");
-        assertTrue(!conflict.executable(), "M6.2 conflicting declaration remained executable");
+                "conflicting declaration was not reported");
+        assertTrue(!conflict.executable(), "conflicting declaration remained executable");
     }
 
     @Test
     void frameMath() {
         assertEquals(0, PackFrameState.wrapFrameCounter(PackFrameState.FRAME_COUNTER_WRAP),
-                "M6.2 frame counter wrap");
+                "frame counter wrap");
         assertEquals(0.0f, PackFrameState.wrapFrameTimeCounter(
-                PackFrameState.FRAME_TIME_COUNTER_WRAP + 0.5f), "M6.2 Iris time counter reset");
+                PackFrameState.FRAME_TIME_COUNTER_WRAP + 0.5f), "Iris time counter reset");
         assertEquals(-30000.0, PackFrameState.cameraShift(30001.0, 0.0),
-                "M6.2 camera origin shift");
+                "camera origin shift");
         assertEquals(0.0, PackFrameState.cameraShift(100.0, 0.0),
-                "M6.2 camera origin stability");
+                "camera origin stability");
         assertEquals(0.0f, PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.0f),
-                "M6.2 smoothing with zero delta");
+                "smoothing with zero delta");
         assertTrue(PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.1f) > 0.0f,
-                "M6.2 smoothing did not advance");
+                "smoothing did not advance");
 
         Matrix4f singular = new Matrix4f().zero();
         Matrix4f inverse = new Matrix4f().zero();
         PackFrameState.invertOrIdentityForTest(singular, inverse);
-        assertEquals(1.0f, inverse.m00(), "M6.2 singular matrix fallback");
-        assertEquals(1.0f, inverse.m33(), "M6.2 singular matrix identity fallback");
+        assertEquals(1.0f, inverse.m00(), "singular matrix fallback");
+        assertEquals(1.0f, inverse.m33(), "singular matrix identity fallback");
     }
 
     @Test
@@ -125,13 +124,13 @@ final class FrameUniformCatalogTest {
                 PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.320f),
                 1.0f, 600.0f, 200.0f, 0.320f);
         assertTrue(Math.abs(oneStep - twoSteps) < 1.0e-6f,
-                "M6.2 elapsed-time smoothing consistency");
+                "elapsed-time smoothing consistency");
     }
 
     private static void assertFrameFloat(PackFrameState state, MappedBuffer buffer,
                                          String name, float expected, String message) {
         state.write(UniformRegistry.descriptor(name), "float", buffer);
-        assertEquals(expected, buffer.getFloat(0), "M6.2 " + message);
+        assertEquals(expected, buffer.getFloat(0), message);
     }
 
     @Test
@@ -141,51 +140,51 @@ final class FrameUniformCatalogTest {
         Uniform.Info firstInfo = Uniform.createUniformInfo("float", "frameTimeCounter");
         MappedBuffer first = provider.supplier(firstInfo).get();
         MappedBuffer second = provider.supplier(firstInfo).get();
-        assertTrue(first == second, "M6.2 frame uniform buffer was recreated");
+        assertTrue(first == second, "frame uniform buffer was recreated");
 
         Uniform.Info vectorInfo = Uniform.createUniformInfo("vec3", "cameraPosition");
         Uniform.Info integerInfo = Uniform.createUniformInfo("ivec3", "cameraPositionInt");
         assertTrue(provider.supplier(vectorInfo).get() != provider.supplier(integerInfo).get(),
-                "M6.2 typed bindings reused an incompatible buffer");
+                "typed bindings reused an incompatible buffer");
     }
 
     private static void verifyFixture(Path fixture, Path baselinePath) throws IOException {
         PackProbe.Analysis first = PackProbe.analyze(fixture);
         PackProbe.Analysis second = PackProbe.analyze(fixture);
         assertEquals(first.report().toJson(), second.report().toJson(),
-                "M6.2 fixture report stability");
+                "fixture report stability");
 
         ConformanceReport report = first.report();
         ConformanceReport.ProgramReport composite = report.program("composite");
-        assertTrue(composite != null, "M6.2 live fixture composite is missing");
+        assertTrue(composite != null, "live fixture composite is missing");
         assertTrue(composite.support() == ConformanceReport.SupportStatus.SUPPORTED
                         || composite.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                "M6.2 live fixture composite is not executable");
+                "live fixture composite is not executable");
         assertTrue(!composite.deviations().contains("UNIFORM_DEFAULTED:wetness"),
-                "M6.2 live wetness remained defaulted");
+                "live wetness remained defaulted");
         assertTrue(!composite.deviations().contains("UNIFORM_DEFAULTED:eyeBrightnessSmooth"),
-                "M6.2 live smoothing remained defaulted");
+                "live smoothing remained defaulted");
         assertTrue(composite.uniforms().contains("cameraPosition"),
-                "M6.2 live camera uniform was not inventoried");
+                "live camera uniform was not inventoried");
 
         ConformanceReport.ProgramReport unsupported = report.program("composite1");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK, unsupported.support(),
-                "M6.2 unsupported uniform fallback");
+                "unsupported uniform fallback");
         assertTrue(unsupported.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
-                "M6.2 unsupported uniform deviation");
-        assertTrue(report.shouldAttempt("composite"), "M6.2 supported program was rejected");
-        assertTrue(!report.shouldAttempt("composite1"), "M6.2 unsupported program was accepted");
+                "unsupported uniform deviation");
+        assertTrue(report.shouldAttempt("composite"), "supported program was rejected");
+        assertTrue(!report.shouldAttempt("composite1"), "unsupported program was accepted");
 
         PackProgramPlan planned = first.plan().program("composite");
         assertTrue(planned != null && planned.executable(),
-                "M6.2 runtime plan disagrees with the report");
+                "runtime plan disagrees with the report");
         assertTrue(planned.interfacePlan().uniforms().stream()
                         .map(UniformRegistry.UniformDeclaration::name)
                         .toList().equals(planned.interfacePlan().uniforms().stream()
                                 .map(UniformRegistry.UniformDeclaration::name).sorted().toList()),
-                "M6.2 uniform interface ordering is not deterministic");
+                "uniform interface ordering is not deterministic");
         assertTrue(planned.convertedFragment() != null,
-                "M6.2 fixture did not produce converted post source");
+                "fixture did not produce converted post source");
 
         JsonObject baseline = JsonParser.parseString(
                 Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
@@ -196,22 +195,22 @@ final class FrameUniformCatalogTest {
             return;
         }
         assertEquals(baseline.get("reportSha256").getAsString(), report.sha256(),
-                "M6.2 fixture report hash");
+                "fixture report hash");
         assertEquals(expectedHashes(baseline), sourceHashes(report),
-                "M6.2 fixture source hashes");
+                "fixture source hashes");
         assertEquals(strings(baseline.getAsJsonArray("expectedExecutablePrograms")),
                 report.programs().stream()
                         .filter(value -> value.support() == ConformanceReport.SupportStatus.SUPPORTED
                                 || value.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION)
                         .map(ConformanceReport.ProgramReport::name).sorted().toList(),
-                "M6.2 executable program baseline");
+                "executable program baseline");
         assertEquals(strings(baseline.getAsJsonArray("expectedFallbackPrograms")),
                 report.programs().stream()
                         .filter(value -> value.support() == ConformanceReport.SupportStatus.IDENTITY_FALLBACK)
                         .map(ConformanceReport.ProgramReport::name).sorted().toList(),
-                "M6.2 fallback program baseline");
+                "fallback program baseline");
         assertEquals(strings(baseline.getAsJsonArray("expectedDeviations")),
-                allDeviations(report), "M6.2 deviation baseline");
+                allDeviations(report), "deviation baseline");
     }
 
     private static Map<String, String> sourceHashes(ConformanceReport report) {

@@ -35,7 +35,8 @@ public abstract class ChimeraShadowDecalMixin {
             method = "render",
             at = @At(
                     value = "INVOKE",
-                    target = "Lnet/minecraft/client/renderer/feature/ShadowFeatureRenderer;shadowVertex(Lorg/joml/Matrix4f;Lcom/mojang/blaze3d/vertex/VertexConsumer;IFFFFF)V"),
+                    target = "Lnet/minecraft/client/renderer/feature/ShadowFeatureRenderer;"
+                            + "shadowVertex(Lorg/joml/Matrix4f;Lcom/mojang/blaze3d/vertex/VertexConsumer;IFFFFF)V"),
             index = 4,
             require = 4)
     private float chimera$liftShadowDecal(float y) {

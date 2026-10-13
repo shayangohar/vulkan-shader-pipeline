@@ -76,7 +76,8 @@ final class PackCompileTest {
             if (FamilyAdapterRegistry.isHandFamily(program.name())) {
                 for (var host : ChimeraVertexFormats.handFormats().keySet()) {
                     String variant = EntityVertexBridge.handVertexForFormat(program.convertedVertex(), host);
-                    String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                    String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage,
+                            variant).vertex(), true);
                     if (error != null) {
                         failures.add(program.name() + " hand input variant: " + error);
                         vertexError = error;
@@ -87,7 +88,8 @@ final class PackCompileTest {
                 // Iris GLYPH text variant (TEXT and TEXT_BE).
                 String variant = EntityVertexBridge.layoutVertexForFormat(program.convertedVertex(),
                         DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
-                String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage,
+                        variant).vertex(), true);
                 if (error != null) {
                     failures.add(program.name() + " text input variant: " + error);
                     vertexError = error;
@@ -96,7 +98,8 @@ final class PackCompileTest {
             if (FamilyAdapterRegistry.isGlintFamily(program.name())) {
                 // First-person glint: the same program under the hand projection.
                 String variant = EntityVertexBridge.handGlintVertex(program.convertedVertex());
-                String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage,
+                        variant).vertex(), true);
                 if (error != null) {
                     failures.add(program.name() + " hand glint variant: " + error);
                     vertexError = error;
@@ -105,7 +108,8 @@ final class PackCompileTest {
             if (FamilyAdapterRegistry.isSkyFamily(program.name())) {
                 for (var contract : HostLayoutVertexBridge.SKY_CONTRACTS) {
                     String variant = HostLayoutVertexBridge.skyVertexForContract(program.convertedVertex(), contract);
-                    String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
+                    String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage,
+                            variant).vertex(), true);
                     if (error != null) {
                         failures.add(program.name() + " sky input variant " + contract + ": " + error);
                         vertexError = error;
@@ -361,7 +365,8 @@ final class PackCompileTest {
             }
             for (String program : expected) {
                 if (!rejected.contains(program)) {
-                    failures.add(key + " " + program + " is now admitted; record it with -Pchimera.packCompile.updateAdmission=true");
+                    failures.add(key + " " + program
+                            + " is now admitted; record it with -Pchimera.packCompile.updateAdmission=true");
                 }
             }
         }

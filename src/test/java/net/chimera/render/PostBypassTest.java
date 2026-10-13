@@ -11,10 +11,10 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Post bypass regression fixture (DOC-348 repair 3): when pack post cannot
+ * Post bypass regression fixture: when pack post cannot
  * run, presentation goes through the host identity pipeline, which never
  * requests pack auxiliary samplers. A missing mask-critical family now makes
- * the whole frame host-rendered (DOC-497 B), so the report carries every
+ * the whole frame host-rendered, so the report carries every
  * program as fallback, not just post.
  */
 final class PostBypassTest {
@@ -86,8 +86,8 @@ final class PostBypassTest {
             assertTrue(transaction.containsSlot(0), "identity resolve missed HDR slot 0");
         }
 
-        // A missing mask-critical family makes the whole frame host-rendered
-        // (DOC-497 B): installed geometry must not keep writing targets that
+        // A missing mask-critical family makes the whole frame host-rendered:
+        // installed geometry must not keep writing targets that
         // nothing presents, so every program is carried as fallback.
         ConformanceReport report = new ConformanceReport("bypass-fixture", false, List.of(),
                 Map.of(), List.of(), List.of());

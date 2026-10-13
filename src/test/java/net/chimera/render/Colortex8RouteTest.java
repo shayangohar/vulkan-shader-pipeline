@@ -26,7 +26,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -210,7 +209,7 @@ final class Colortex8RouteTest {
 
     /**
      * BSL's bloom (composite4) reads colortex0 through its mips; without them
-     * it point-samples sun sparkles on water and flashes (TASK-478).
+     * it point-samples sun sparkles on water and flashes.
      */
     private static void verifyBslMipmaps(PackProbe.Analysis analysis) {
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(

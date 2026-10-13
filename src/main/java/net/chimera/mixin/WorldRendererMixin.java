@@ -82,7 +82,8 @@ public abstract class WorldRendererMixin {
 
     @Inject(method = "renderSectionLayer",
             at = @At(value = "INVOKE",
-                    target = "Lnet/vulkanmod/vulkan/texture/VTextureSelector;bindShaderTextures(Lnet/vulkanmod/vulkan/shader/Pipeline;)V",
+                    target = "Lnet/vulkanmod/vulkan/texture/VTextureSelector;"
+                            + "bindShaderTextures(Lnet/vulkanmod/vulkan/shader/Pipeline;)V",
                     shift = At.Shift.AFTER),
             require = 1)
     private void chimera$bindActualTerrainAtlas(TerrainRenderType renderType, double camX, double camY,

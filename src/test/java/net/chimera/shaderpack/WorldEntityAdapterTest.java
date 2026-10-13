@@ -19,14 +19,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic M6.3 checks for the isolated world-entity adapter. */
+/** The isolated world-entity adapter. */
 final class WorldEntityAdapterTest {
     @Test
     void worldEntityAdapter() throws Exception {
@@ -44,51 +43,51 @@ final class WorldEntityAdapterTest {
     void extendedFormat() {
         var host = DefaultVertexFormat.NEW_ENTITY;
         var extended = ChimeraVertexFormats.EXTENDED_ENTITY;
-        assertEquals(36, host.getVertexSize(), "M6.3 host entity stride");
-        assertEquals(56, extended.getVertexSize(), "M6.3 extended entity stride");
-        assertEquals(9, extended.getElements().size(), "M6.3 extended entity attribute count");
+        assertEquals(36, host.getVertexSize(), "host entity stride");
+        assertEquals(56, extended.getVertexSize(), "extended entity stride");
+        assertEquals(9, extended.getElements().size(), "extended entity attribute count");
 
         List<String> expectedNames = List.of(
                 "Position", "Color", "UV0", "UV1", "UV2", "Normal",
                 "EntityIds", "MidTexCoord", "Tangent");
         assertEquals(expectedNames, extended.getElementAttributeNames(),
-                "M6.3 entity attribute names");
+                "entity attribute names");
         int[] expectedOffsets = {0, 12, 16, 24, 28, 32, 36, 44, 52};
         for (int index = 0; index < expectedOffsets.length; index++) {
             assertEquals(expectedOffsets[index], extended.getOffset(extended.getElements().get(index)),
-                    "M6.3 entity attribute offset " + expectedNames.get(index));
+                    "entity attribute offset " + expectedNames.get(index));
         }
         for (int index = 0; index < host.getElements().size(); index++) {
             assertTrue(extended.getElements().get(index) == host.getElements().get(index),
-                    "M6.3 host entity element was copied instead of preserved at " + index);
+                    "host entity element was copied instead of preserved at " + index);
             assertEquals(host.getOffset(host.getElements().get(index)),
                     extended.getOffset(extended.getElements().get(index)),
-                    "M6.3 host entity offset changed at " + index);
+                    "host entity offset changed at " + index);
         }
         assertEquals("SHORT", ChimeraVertexFormats.ENTITY_IDS.type().name(),
-                "M6.3 entity IDs translator-safe type");
+                "entity IDs translator-safe type");
         assertEquals(1, ChimeraVertexFormats.ENTITY_IDS.count(),
-                "M6.3 entity IDs translator-safe count");
+                "entity IDs translator-safe count");
         assertEquals("FLOAT", ChimeraVertexFormats.MID_TEX_COORD.type().name(),
-                "M6.3 mid UV translator-safe type");
+                "mid UV translator-safe type");
         assertEquals(1, ChimeraVertexFormats.MID_TEX_COORD.count(),
-                "M6.3 mid UV translator-safe count");
+                "mid UV translator-safe count");
         assertEquals("INT", ChimeraVertexFormats.TANGENT.type().name(),
-                "M6.3 tangent translator-safe type");
+                "tangent translator-safe type");
         assertEquals(1, ChimeraVertexFormats.TANGENT.count(),
-                "M6.3 tangent translator-safe count");
+                "tangent translator-safe count");
     }
 
     @Test
     void worldPipelineContract() {
         assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ENTITY_SOLID),
-                "M6.3 solid world entity lane was not supported");
+                "solid world entity lane was not supported");
         assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ENTITY_TRANSLUCENT),
-                "M6.3 living translucent world entity lane was not supported");
+                "living translucent world entity lane was not supported");
         assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL)
                         && RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL.getVertexFormat()
                         == RenderPipelines.ENTITY_TRANSLUCENT.getVertexFormat(),
-                "M6.3 flat item lane is not the translucent entity contract");
+                "flat item lane is not the translucent entity contract");
     }
 
     @Test
@@ -99,27 +98,27 @@ final class WorldEntityAdapterTest {
                         1.0f, 0.0f, 0.0f,
                         1.0f, 1.0f, 0.0f,
                         0.0f, 1.0f, 0.0f),
-                "M6.3 face normal rejected a valid quad");
-        assertNear(0.0f, normal[0], "M6.3 face normal x");
-        assertNear(0.0f, normal[1], "M6.3 face normal y");
-        assertNear(1.0f, normal[2], "M6.3 face normal z");
+                "face normal rejected a valid quad");
+        assertNear(0.0f, normal[0], "face normal x");
+        assertNear(0.0f, normal[1], "face normal y");
+        assertNear(1.0f, normal[2], "face normal z");
 
         int tangent = ChimeraEntityVertexData.tangent(0.0f, 0.0f, 1.0f, false,
                 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
                 0.0f, 1.0f, 1.0f, 1.0f, 1.0f);
         assertTrue(tangent != ChimeraEntityVertexData.FLAT_TANGENT,
-                "M6.3 tangent math used the flat fallback for a valid triangle");
+                "tangent math used the flat fallback for a valid triangle");
         int zeroUvZ = ChimeraEntityVertexData.tangent(0.0f, 0.0f, 1.0f, false,
                         0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                         1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                         0.0f, 1.0f, 0.0f, 0.0f, 0.0f);
         assertTangentFrame(zeroUvZ, 0.0f, 0.0f, 1.0f,
-                "M6.3 zero-UV Z-face fallback");
+                "zero-UV Z-face fallback");
         assertTangentFrame(ChimeraEntityVertexData.fallbackTangent(1.0f, 0.0f, 0.0f),
-                1.0f, 0.0f, 0.0f, "M6.3 X-face fallback");
+                1.0f, 0.0f, 0.0f, "X-face fallback");
         assertTangentFrame(ChimeraEntityVertexData.fallbackTangent(0.0f, 1.0f, 0.0f),
-                0.0f, 1.0f, 0.0f, "M6.3 Y-face fallback");
+                0.0f, 1.0f, 0.0f, "Y-face fallback");
     }
 
     @Test
@@ -146,20 +145,20 @@ final class WorldEntityAdapterTest {
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
                 EntityVertexBridge.convertEntityVertex(vertex, null, fragment,
                         Map.of("entityUv", 0));
-        assertTrue(plan.executable(), "M6.3 entityId uniform was not treated as vertex data");
-        assertTrue(convertedVertex != null, "M6.3 entityId uniform vertex bridge rejected the source");
+        assertTrue(plan.executable(), "entityId uniform was not treated as vertex data");
+        assertTrue(convertedVertex != null, "entityId uniform vertex bridge rejected the source");
         String convertedFragment = FragmentConverter.convertEntityFragment(
                 fragment, null, new int[0], convertedVertex.layout(),
                 plan.effective(UniformRegistry.Stage.ENTITY));
-        assertTrue(convertedFragment != null, "M6.3 entityId uniform fragment bridge rejected the source");
+        assertTrue(convertedFragment != null, "entityId uniform fragment bridge rejected the source");
         assertTrue(!convertedVertex.source().contains("uniform int entityId"),
-                "M6.3 entityId uniform remained in the vertex source");
+                "entityId uniform remained in the vertex source");
         assertTrue(!convertedFragment.contains("uniform int entityId"),
-                "M6.3 entityId uniform remained in the fragment source");
+                "entityId uniform remained in the fragment source");
         assertTrue(convertedVertex.source().contains("chimeraEntityId = EntityIds.x"),
-                "M6.3 entityId vertex data was not initialized");
+                "entityId vertex data was not initialized");
         assertTrue(convertedFragment.contains("flat in uint chimeraEntityId"),
-                "M6.3 entityId vertex data was not bridged to the fragment");
+                "entityId vertex data was not bridged to the fragment");
     }
 
     /**
@@ -189,26 +188,26 @@ final class WorldEntityAdapterTest {
                 """;
         UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
                 fragment, vertex, UniformRegistry.Stage.BLOCK, null, false);
-        assertTrue(plan.executable(), "M6.3 blockEntityId was not treated as vertex data");
+        assertTrue(plan.executable(), "blockEntityId was not treated as vertex data");
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
                 EntityVertexBridge.convertEntityVertex(vertex, null, fragment, Map.of("portal", 0));
-        assertTrue(convertedVertex != null, "M6.3 blockEntityId vertex bridge rejected the source");
+        assertTrue(convertedVertex != null, "blockEntityId vertex bridge rejected the source");
         String convertedFragment = FragmentConverter.convertEntityFragment(
                 fragment, null, new int[0], convertedVertex.layout(),
                 plan.effective(UniformRegistry.Stage.BLOCK));
-        assertTrue(convertedFragment != null, "M6.3 blockEntityId fragment bridge rejected the source");
+        assertTrue(convertedFragment != null, "blockEntityId fragment bridge rejected the source");
         String converted = convertedVertex.source();
         assertTrue(!converted.contains("attribute int blockEntityId") && !converted.contains("uniform int entityId")
                         && !convertedFragment.contains("uniform int blockEntityId"),
-                "M6.3 entity identity declarations remained");
+                "entity identity declarations remained");
         assertTrue(converted.contains("chimeraBlockEntityId = EntityIds.y")
                         && converted.contains("chimeraEntityId = EntityIds.x"),
-                "M6.3 block entity and entity ids must read EntityIds.y and .x");
+                "block entity and entity ids must read EntityIds.y and .x");
         assertTrue(convertedFragment.contains("flat in uint chimeraBlockEntityId")
                         && convertedFragment.contains("int(chimeraBlockEntityId)"),
-                "M6.3 blockEntityId was not bridged to the fragment");
+                "blockEntityId was not bridged to the fragment");
         assertTrue(!convertedFragment.contains("chimeraEntityId)"),
-                "M6.3 fragment must not reference an id it never declared");
+                "fragment must not reference an id it never declared");
 
         // Terrain has no iris_Entity: the same shared vertex source reads the unbound 0.
         String terrain = """
@@ -228,34 +227,34 @@ final class WorldEntityAdapterTest {
                 """;
         LegacyGlslConverter.TerrainVertexConversion convertedTerrain =
                 TerrainVertexBridge.convertTerrainVertex(terrain, null, terrainFragment);
-        assertTrue(convertedTerrain != null, "M6.3 terrain rejected an unbound blockEntityId attribute");
+        assertTrue(convertedTerrain != null, "terrain rejected an unbound blockEntityId attribute");
         assertTrue(convertedTerrain.source().contains("const int blockEntityId = 0;")
                         && !convertedTerrain.source().contains("EntityIds"),
-                "M6.3 terrain blockEntityId must read GL's unbound default, not entity data");
+                "terrain blockEntityId must read GL's unbound default, not entity data");
     }
 
     private static void verifyEntityIdResolver(Path shaders) throws IOException {
         PackEntityIdResolver.ParseResult parsed = PackEntityIdResolver.parse(shaders);
-        assertTrue(parsed.present(), "M6.3 entity.properties was not detected");
+        assertTrue(parsed.present(), "entity.properties was not detected");
         assertEquals(Map.of("minecraft:cow", 2, "minecraft:zombie", 1),
-                parsed.resolver().mappings(), "M6.3 entity map");
+                parsed.resolver().mappings(), "entity map");
         assertEquals(1, parsed.resolver().resolveName("zombie"),
-                "M6.3 unqualified entity name");
+                "unqualified entity name");
         assertEquals(2, parsed.resolver().resolveName("minecraft:cow"),
-                "M6.3 namespaced entity name");
+                "namespaced entity name");
         assertEquals(0xFFFF, parsed.resolver().resolveName("pig"),
-                "M6.3 unknown mapped entity sentinel");
+                "unknown mapped entity sentinel");
         assertEquals(0, PackEntityIdResolver.empty().resolveName("zombie"),
-                "M6.3 missing map default");
+                "missing map default");
 
         Path temporary = Files.createTempDirectory("chimera-m63-entity-");
         try {
             Files.writeString(temporary.resolve("entity.properties"), "# no usable mappings\n",
                     StandardCharsets.UTF_8);
             PackEntityIdResolver.ParseResult empty = PackEntityIdResolver.parse(temporary);
-            assertTrue(!empty.present(), "M6.3 empty entity map was treated as usable");
+            assertTrue(!empty.present(), "empty entity map was treated as usable");
             assertEquals(0, empty.resolver().resolveName("zombie"),
-                    "M6.3 empty entity map default");
+                    "empty entity map default");
 
             Files.writeString(temporary.resolve("entity.properties"),
                     "entity.1=zombie\nentity.2=zombie\nentity.70000=pig\nentity.bad=cat\n",
@@ -263,9 +262,9 @@ final class WorldEntityAdapterTest {
             PackEntityIdResolver.ParseResult malformed = PackEntityIdResolver.parse(temporary);
             assertTrue(malformed.deviations().stream()
                             .anyMatch(value -> value.startsWith("ENTITY_ID_UNSUPPORTED:")),
-                    "M6.3 malformed entity map was accepted silently");
+                    "malformed entity map was accepted silently");
             assertTrue(!malformed.resolver().mappings().containsKey("minecraft:zombie"),
-                    "M6.3 conflicting entity map entry remained active");
+                    "conflicting entity map entry remained active");
         } finally {
             try (var paths = Files.walk(temporary)) {
                 paths.sorted(Comparator.reverseOrder()).forEach(path -> {
@@ -284,70 +283,70 @@ final class WorldEntityAdapterTest {
         PackProbe.Analysis first = PackProbe.analyze(fixture);
         PackProbe.Analysis second = PackProbe.analyze(fixture);
         assertEquals(first.report().toJson(), second.report().toJson(),
-                "M6.3 supported report stability");
+                "supported report stability");
         assertEquals(first.plan().program("gbuffers_entities").convertedVertex(),
                 second.plan().program("gbuffers_entities").convertedVertex(),
-                "M6.3 supported converted vertex stability");
+                "supported converted vertex stability");
 
         ConformanceReport report = first.report();
         ConformanceReport.ProgramReport entity = report.program("gbuffers_entities");
-        assertTrue(entity != null, "M6.3 entity program was not discovered");
+        assertTrue(entity != null, "entity program was not discovered");
         assertEquals(List.of("fragment", "vertex"), entity.stages(),
-                "M6.3 entity stages");
+                "entity stages");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                entity.support(), "M6.3 entity support status");
+                entity.support(), "entity support status");
         assertTrue(report.shouldAttempt("gbuffers_entities"),
-                "M6.3 entity report rejected an executable program");
+                "entity report rejected an executable program");
         assertTrue(report.deviations().contains("ENTITY_ID_MAP_APPLIED"),
-                "M6.3 entity map application was not reported");
+                "entity map application was not reported");
         assertContains(entity.deviations(), "ENTITY_BATCH_ORIGIN_SPLIT",
-                "M6.3 entity batch split deviation");
+                "entity batch split deviation");
         assertContains(entity.deviations(), "ENTITY_STATE_FIXED_TO_HOST",
-                "M6.3 host state deviation");
+                "host state deviation");
         assertContains(entity.deviations(), "ENTITY_VERTEX_FORMAT_EXTENDED",
-                "M6.3 extended format deviation");
+                "extended format deviation");
         assertContains(entity.deviations(), "ENTITY_VERTEX_BRIDGE",
-                "M6.3 vertex bridge deviation");
+                "vertex bridge deviation");
         assertEquals(List.of("lightmap", "texture"), entity.samplers(),
-                "M6.3 entity sampler inventory");
+                "entity sampler inventory");
 
         PackProgramPlan plan = first.plan().program("gbuffers_entities");
-        assertTrue(plan != null && plan.executable(), "M6.3 entity runtime plan rejected");
+        assertTrue(plan != null && plan.executable(), "entity runtime plan rejected");
         assertEquals(UniformRegistry.Stage.ENTITY,
                 plan.interfacePlan().effective(UniformRegistry.Stage.ENTITY).stage(),
-                "M6.3 entity interface stage");
+                "entity interface stage");
         assertEquals(List.of(
                         new UniformRegistry.SamplerBinding("texture", 0),
                         new UniformRegistry.SamplerBinding("lightmap", 2)),
-                plan.interfacePlan().samplers(), "M6.3 entity sampler slots");
+                plan.interfacePlan().samplers(), "entity sampler slots");
         assertEquals(Map.of("entityColor", 0, "entityMarker", 1, "entityUv", 2),
-                plan.varyingLocations(), "M6.3 shared entity varying locations");
+                plan.varyingLocations(), "shared entity varying locations");
         assertTrue(plan.convertedVertex().contains("#version 460"),
-                "M6.3 entity vertex version");
+                "entity vertex version");
         assertTrue(plan.convertedVertex().contains("layout(location = 0) out vec4 entityColor"),
-                "M6.3 entity vertex varying output");
+                "entity vertex varying output");
         assertTrue(plan.convertedVertex().contains("EntityIds"),
-                "M6.3 entity ID input");
+                "entity ID input");
         assertTrue(plan.convertedVertex().contains("MidTexCoord"),
-                "M6.3 mid UV input");
+                "mid UV input");
         assertTrue(plan.convertedVertex().contains("Tangent"),
-                "M6.3 tangent input");
+                "tangent input");
         assertTrue(plan.convertedVertex().contains("entityMarker"),
-                "M6.3 entity marker varying");
+                "entity marker varying");
         assertTrue(!plan.convertedVertex().contains("attribute float entityId"),
-                "M6.3 legacy entity attribute declaration remained");
+                "legacy entity attribute declaration remained");
         // The host alpha-test reference gives the fragment a uniform block at
         // binding 2, so the samplers follow it, as in any entity program with uniforms.
         assertTrue(plan.convertedFragment().contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
-                "M6.3 entity atlas binding");
+                "entity atlas binding");
         assertTrue(plan.convertedFragment().contains("layout(binding = 4) uniform sampler2D lightmap"),
-                "M6.3 entity lightmap binding");
+                "entity lightmap binding");
         assertTrue(plan.convertedFragment().contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
-                "M6.3 entity program lacks the host alpha test");
+                "entity program lacks the host alpha test");
         assertTrue(plan.convertedFragment().contains("layout(location = 0) in vec4 entityColor"),
-                "M6.3 entity fragment varying input");
+                "entity fragment varying input");
         assertArrayEquals(new int[] {0, 2}, PackPipelines.entitySamplerSlots(new int[] {2, 0, 2}),
-                "M6.3 entity sampler slot ordering");
+                "entity sampler slot ordering");
 
         verifyBaseline(report, baselinePath, fixture, baselineName);
         assertNoAbsolutePaths(report, fixture);
@@ -356,17 +355,17 @@ final class WorldEntityAdapterTest {
     private static void verifyUnsupportedFixture(Path fixture, Path baselinePath) throws IOException {
         PackProbe.Analysis analysis = PackProbe.analyze(fixture);
         ConformanceReport.ProgramReport entity = analysis.report().program("gbuffers_entities");
-        assertTrue(entity != null, "M6.3 unsupported entity program was not discovered");
+        assertTrue(entity != null, "unsupported entity program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                entity.support(), "M6.3 unsupported entity support");
+                entity.support(), "unsupported entity support");
         assertTrue(entity.deviations().contains("ENTITY_SAMPLER_UNSUPPORTED:unknownEntityTexture"),
-                "M6.3 unsupported sampler deviation");
+                "unsupported sampler deviation");
         assertTrue(!analysis.report().shouldAttempt("gbuffers_entities"),
-                "M6.3 unsupported entity program remained eligible");
+                "unsupported entity program remained eligible");
         assertTrue(!analysis.plan().program("gbuffers_entities").executable(),
-                "M6.3 unsupported entity plan remained executable");
+                "unsupported entity plan remained executable");
         assertTrue(analysis.report().shouldAttempt("final"),
-                "M6.3 unsupported entity rejected unrelated final program");
+                "unsupported entity rejected unrelated final program");
         verifyBaseline(analysis.report(), baselinePath, fixture, "unsupported_entities");
     }
 
@@ -380,10 +379,10 @@ final class WorldEntityAdapterTest {
                 Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
         JsonObject entry = root.has("fixtures")
                 ? root.getAsJsonObject("fixtures").getAsJsonObject(baselineName) : root;
-        assertTrue(entry != null, "M6.3 entity baseline entry is missing");
+        assertTrue(entry != null, "entity baseline entry is missing");
         String expectedHash = entry.get("reportSha256").getAsString();
         if (!"TO_BE_FILLED".equals(expectedHash)) {
-            assertEquals(expectedHash, report.sha256(), "M6.3 entity report hash");
+            assertEquals(expectedHash, report.sha256(), "entity report hash");
         }
         if (entry.has("sourceHashes")) {
             Map<String, String> expected = new TreeMap<>();
@@ -391,7 +390,7 @@ final class WorldEntityAdapterTest {
                     : entry.getAsJsonObject("sourceHashes").entrySet()) {
                 expected.put(value.getKey(), value.getValue().getAsString());
             }
-            assertEquals(expected, sourceHashes(report), "M6.3 entity source hashes");
+            assertEquals(expected, sourceHashes(report), "entity source hashes");
         }
         if (entry.has("expectedExecutablePrograms")) {
             assertEquals(strings(entry.getAsJsonArray("expectedExecutablePrograms")),
@@ -399,18 +398,18 @@ final class WorldEntityAdapterTest {
                             .filter(value -> value.support() == ConformanceReport.SupportStatus.SUPPORTED
                                     || value.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION)
                             .map(ConformanceReport.ProgramReport::name).sorted().toList(),
-                    "M6.3 executable program baseline");
+                    "executable program baseline");
         }
         if (entry.has("expectedFallbackPrograms")) {
             assertEquals(strings(entry.getAsJsonArray("expectedFallbackPrograms")),
                     report.programs().stream()
                             .filter(value -> value.support() == ConformanceReport.SupportStatus.IDENTITY_FALLBACK)
                             .map(ConformanceReport.ProgramReport::name).sorted().toList(),
-                    "M6.3 fallback program baseline");
+                    "fallback program baseline");
         }
         if (entry.has("expectedDeviations")) {
             assertEquals(strings(entry.getAsJsonArray("expectedDeviations")),
-                    allDeviations(report), "M6.3 deviation baseline");
+                    allDeviations(report), "deviation baseline");
         }
     }
 
@@ -439,9 +438,9 @@ final class WorldEntityAdapterTest {
     private static void assertNoAbsolutePaths(ConformanceReport report, Path fixture) {
         String json = report.toJson();
         assertTrue(!json.contains(fixture.toAbsolutePath().toString()),
-                "M6.3 report contains an absolute fixture path");
+                "report contains an absolute fixture path");
         assertTrue(!json.matches("(?s).*\\b(?:timestamp|generatedAt)\\b.*"),
-                "M6.3 report contains a timestamp field");
+                "report contains a timestamp field");
     }
 
     private static void assertContains(List<String> values, String expected, String message) {

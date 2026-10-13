@@ -42,7 +42,8 @@ final class MixinBytecode {
         for (var handler : mixin.methods) {
             for (var annotation : annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
                 if (!annotation.desc.equals(desc)
-                        || !(annotationValue(annotation, "method") instanceof List<?> names && names.contains(method))) {
+                        || !(annotationValue(annotation, "method") instanceof List<?> names
+                                && names.contains(method))) {
                     continue;
                 }
                 Object at = annotationValue(annotation, "at");

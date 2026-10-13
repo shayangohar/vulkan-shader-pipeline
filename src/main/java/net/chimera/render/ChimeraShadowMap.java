@@ -110,7 +110,8 @@ public class ChimeraShadowMap {
         // matrix follows the same numbers the pack reads instead of repeating the trigonometry.
         PackUniformProvider.installSunPath(settings.sunPathRotation(), settings.sunPathOffset());
 
-        this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", this.shadowMapSize, this.shadowMapSize, 1, true)
+        this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", this.shadowMapSize, this.shadowMapSize, 1,
+                true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
                 .build();
         this.shadowColor1 = VulkanImage.builder(this.shadowMapSize, this.shadowMapSize)
@@ -132,7 +133,8 @@ public class ChimeraShadowMap {
         this.opaqueDepthCurrent = false;
 
         createRenderPass();
-        this.shadowPipeline = ChimeraPostPipelines.createTerrainPipeline("chimera_shadow", ChimeraTerrainPipelines.getTerrainVertexFormat());
+        this.shadowPipeline = ChimeraPostPipelines.createTerrainPipeline("chimera_shadow",
+                ChimeraTerrainPipelines.getTerrainVertexFormat());
         createSampler();
 
         // Register the light MVP supplier so the terrain pipeline's LightMVP

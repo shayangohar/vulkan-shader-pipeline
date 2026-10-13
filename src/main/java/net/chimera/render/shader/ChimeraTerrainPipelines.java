@@ -273,7 +273,8 @@ public final class ChimeraTerrainPipelines {
         String vertexSource = ChimeraShaderLoader.loadSource(vertexPath + ".vsh");
         builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
                 separateAo ? withSeparateAo(vertexSource) : vertexSource);
-        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
+        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER,
+                ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
 
         GraphicsPipeline pipeline = builder.createGraphicsPipeline();
 

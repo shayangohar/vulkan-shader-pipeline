@@ -508,7 +508,8 @@ final class PackSessionLifecycle {
         LOGGER.info("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
                 pass.shadowPass.shadowCulling.state(), pass.shadowPass.shadowCulling.terrain(renderDistance).describe(),
                 pass.shadowPass.shadowCulling.entities(renderDistance).describe(), renderDistance,
-                pass.shadowPass.shadowCulling.deviations().isEmpty() ? "" : " " + pass.shadowPass.shadowCulling.deviations());
+                pass.shadowPass.shadowCulling.deviations().isEmpty() ? "" : " "
+                        + pass.shadowPass.shadowCulling.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(pass.packPlan.terrainMaterial());
         TerrainShadingDirectives shading = pass.packPlan.terrainShading();
         LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}{}", shading.oldLighting(),
@@ -519,7 +520,8 @@ final class PackSessionLifecycle {
                 pass.screenOverlays.vignette(), pass.screenOverlays.underwaterOverlay(),
                 pass.screenOverlays.deviations().isEmpty() ? "" : " " + pass.screenOverlays.deviations());
         PackUniformProvider.installRuntimeSettings(pass.packPlan.runtimeSettings());
-        LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, missing={}, settingsFingerprint={}, resolutionFingerprint={}",
+        LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, "
+                + "missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 pass.packPlan.selectedDimension(),
                 pass.packPlan.selectedSourceFolder(),
                 pass.packPlan.aliasCount(),
@@ -527,7 +529,8 @@ final class PackSessionLifecycle {
                 pass.packPlan.missingProgramCount(),
                 pass.packPlan.settingsFingerprint(),
                 pass.packPlan.resolutionFingerprint());
-        LOGGER.info("[chimera] uniform runtime settings: custom={}, wetnessRise={}, wetnessFall={}, eyeBrightnessHalfLife={}",
+        LOGGER.info("[chimera] uniform runtime settings: custom={}, wetnessRise={}, wetnessFall={}, "
+                + "eyeBrightnessHalfLife={}",
                 pass.packPlan.runtimeSettings().customDescriptors().size(),
                 pass.packPlan.runtimeSettings().wetnessRiseHalfLife(),
                 pass.packPlan.runtimeSettings().wetnessFallHalfLife(),
@@ -580,7 +583,8 @@ final class PackSessionLifecycle {
                 pass.packPlan.resources().fingerprint(),
                 pass.packPlan.resources().declarations().size(),
                 pass.packPlan.resources().deviations().size());
-        LOGGER.info("[chimera] advanced resources: fingerprint={}, images={}, compute={}, capabilityPossible={}, planned={}, allocated={}, initialized={}, failed={}",
+        LOGGER.info("[chimera] advanced resources: fingerprint={}, images={}, compute={}, capabilityPossible={}, "
+                + "planned={}, allocated={}, initialized={}, failed={}",
                 pass.packPlan.advancedResources().fingerprint(),
                 pass.packPlan.advancedResources().images().size(),
                 pass.packPlan.advancedResources().computeStages().size(),

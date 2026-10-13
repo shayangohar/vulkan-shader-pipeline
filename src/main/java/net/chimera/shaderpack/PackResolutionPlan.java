@@ -197,25 +197,36 @@ record PackResolutionPlan(
         addChain(result, "gbuffers_skytextured", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_clouds", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_terrain_solid", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_terrain_cutout", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_damagedblock", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_block_translucent", "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_terrain_solid", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_terrain_cutout", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_damagedblock", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_block_translucent", "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit",
+                "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_beaconbeam", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_item", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_entities_translucent", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_entities_glowing", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_lightning", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_entities_translucent", "gbuffers_entities", "gbuffers_textured_lit",
+                "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_entities_glowing", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_lightning", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
         addChain(result, "gbuffers_particles", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_particles_translucent", "gbuffers_particles", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_particles_translucent", "gbuffers_particles", "gbuffers_textured_lit",
+                "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_armor_glint", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_spidereyes", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_hand", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_weather", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_water", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_hand_water", "gbuffers_hand", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_water", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_hand_water", "gbuffers_hand", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
         addChain(result, "dh_terrain");
         addChain(result, "dh_water", "dh_terrain");
         addChain(result, "dh_generic", "dh_terrain");

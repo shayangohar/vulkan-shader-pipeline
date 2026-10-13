@@ -117,7 +117,8 @@ final class EntityRealPackTest {
                         "Complementary improved-rain data must not alpha-blend");
             }
             var stage = FamilyAdapterRegistry.stageFor(name);
-            var prepared = PackPipelines.prepare(plan, analysis.plan().advancedResources(), stage, plan.convertedVertex());
+            var prepared = PackPipelines.prepare(plan, analysis.plan().advancedResources(), stage,
+                    plan.convertedVertex());
             compileStage(prepared.vertex(), true, pack + " " + name + " vertex");
             compileStage(prepared.fragment(), false, pack + " " + name + " fragment");
             if (FamilyAdapterRegistry.isSkyFamily(name)) {
@@ -198,7 +199,7 @@ final class EntityRealPackTest {
     }
 
     /**
-     * Descriptor-contract gate (DOC-348 repair 2): builds source
+     * Descriptor-contract gate: builds source
      * projection, ordinary descriptors, advanced descriptors, and the
      * image manifest through the runtime preparation seam, then proves
      * the bijection against the native layout inventory. Fails on
@@ -253,7 +254,7 @@ final class EntityRealPackTest {
     }
 
     /**
-     * DOC-375 item 1 on the real packs: the shadow vertex carries the one-time
+     * On the real packs, the shadow vertex carries the one-time
      * clip-range wrapper and still compiles, while the world-family vertices
      * keep the authored clip space because the host world raster owns their
      * depth convention.
@@ -293,7 +294,7 @@ final class EntityRealPackTest {
     }
 
     /**
-     * DOC-375 sampler identity: the descriptor sampler follows the declared
+     * Sampler identity: the descriptor sampler follows the declared
      * sampler type, because a {@code sampler2DShadow} lookup is a depth
      * comparison and a plain {@code sampler2D} lookup reads the value. Report
      * how each admitted program reads the shadow textures and reject any type
@@ -319,7 +320,7 @@ final class EntityRealPackTest {
     }
 
     /**
-     * DOC-365 descriptor identity on the real pack program: the built contract's
+     * Descriptor identity on the real pack program: the built contract's
      * transform blocks must answer to the semantic names the bridge looks up.
      * VulkanMod names config-declared blocks {@code "UBO: <binding>"} and
      * {@code Pipeline.getUBO(String)} compares names exactly, so a numeric block
@@ -340,7 +341,7 @@ final class EntityRealPackTest {
     }
 
     /**
-     * Canonical selector assertions (DOC-348 repair 1): a declared
+     * Canonical selector assertions: a declared
      * noisetex must ride fixed selector 7 as a pack texture, and declared
      * MCBL light volumes must survive as advanced sampled images.
      */
@@ -348,7 +349,7 @@ final class EntityRealPackTest {
             Expectation expectation, ProgramImageBindingManifest manifest) {
         var samplers = plan.interfacePlan().effective(expectation.stage()).samplers();
         boolean declaresNoise = samplers.stream().anyMatch(sampler -> sampler.name().equals("noisetex"));
-        // DOC-348 names BSL block explicitly: its manifest must carry the
+        // BSL's gbuffers_block must always carry the
         // canonical slot-7 pack-texture noise entry, not a bare declaration.
         boolean requireNoise = declaresNoise
                 || (expectation.pack().equals("bsl") && expectation.program().equals("gbuffers_block"));
@@ -411,7 +412,7 @@ final class EntityRealPackTest {
         long compiler = Shaderc.shaderc_compiler_initialize();
         // Heap buffers plus the native entry point directly. The CharSequence
         // overload stack-allocates UTF-8 and overflows LWJGL's thread-local
-        // MemoryStack on large MCBL sources (DOC-348 gate), while the
+        // MemoryStack on large MCBL sources, while the
         // ByteBuffer overload sizes by remaining() and feeds shaderc the
         // terminator as trailing garbage. Explicit sizes excluding the
         // terminator reproduce the CharSequence semantics without the stack.

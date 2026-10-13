@@ -123,7 +123,7 @@ final class GlslVertexPreambles {
 
             """;
 
-    /** The legacy prefix plus the M8.1 append-only material attributes. */
+    /** The legacy prefix plus the append-only material attributes. */
     static final String MODERN_TERRAIN_VERTEX_PREAMBLE = TERRAIN_VERTEX_PREAMBLE + """
             layout(location = 5) in uvec2 inMidTexCoord;
             layout(location = 6) in int inMidBlock;
@@ -616,7 +616,8 @@ final class GlslVertexPreambles {
             int location = host.getElementAttributeNames().indexOf(names[i]);
             String declaration = location < 0 ? "const " + types[i] + " " + names[i] + " = " + defaults[i] + ";"
                     : "layout(location = " + location + ") in " + types[i] + " " + names[i] + ";";
-            preamble = preamble.replace("layout(location = " + (i + 1) + ") in " + types[i] + " " + names[i] + ";", declaration);
+            preamble = preamble.replace("layout(location = " + (i + 1) + ") in " + types[i] + " " + names[i] + ";",
+                    declaration);
         }
         return preamble;
     }

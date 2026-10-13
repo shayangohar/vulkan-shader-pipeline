@@ -52,7 +52,9 @@ public abstract class GraphicsPipelineMrtMixin {
             method = "createGraphicsPipeline",
             at = @At(
                     value = "INVOKE",
-                    target = "Lorg/lwjgl/vulkan/VkPipelineRenderingCreateInfoKHR;pColorAttachmentFormats(Ljava/nio/IntBuffer;)Lorg/lwjgl/vulkan/VkPipelineRenderingCreateInfoKHR;"
+                    target = "Lorg/lwjgl/vulkan/VkPipelineRenderingCreateInfoKHR;"
+                            + "pColorAttachmentFormats(Ljava/nio/IntBuffer;"
+                            + ")Lorg/lwjgl/vulkan/VkPipelineRenderingCreateInfoKHR;"
             ),
             index = 0
     )
@@ -65,7 +67,9 @@ public abstract class GraphicsPipelineMrtMixin {
             method = "createGraphicsPipeline",
             at = @At(
                     value = "INVOKE",
-                    target = "Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState;calloc(ILorg/lwjgl/system/MemoryStack;)Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState$Buffer;"
+                    target = "Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState;"
+                            + "calloc(ILorg/lwjgl/system/MemoryStack;"
+                            + ")Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState$Buffer;"
             )
     )
     private static VkPipelineColorBlendAttachmentState.Buffer chimera$colorBlendAttachments(
@@ -80,7 +84,9 @@ public abstract class GraphicsPipelineMrtMixin {
             method = "createGraphicsPipeline",
             at = @At(
                     value = "INVOKE",
-                    target = "Lorg/lwjgl/vulkan/VkPipelineColorBlendStateCreateInfo;pAttachments(Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState$Buffer;)Lorg/lwjgl/vulkan/VkPipelineColorBlendStateCreateInfo;"
+                    target = "Lorg/lwjgl/vulkan/VkPipelineColorBlendStateCreateInfo;"
+                            + "pAttachments(Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState$Buffer;"
+                            + ")Lorg/lwjgl/vulkan/VkPipelineColorBlendStateCreateInfo;"
             ),
             index = 0
     )

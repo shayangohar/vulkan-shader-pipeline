@@ -17,9 +17,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * it goes null and a new one arrives). WorldRenderer.setLevel is the exact
  * teardown/swap point, so parity hands off to the host here and reinstalls
  * the moment a live level exists again.
- *
- * Crash context (hs_err_pid78880/92932/100460/111080): transition-crash
- * investigation - see TASK-63 round 3 for the trace/bisect design.
  */
 @Mixin(value = WorldRenderer.class, remap = false)
 public abstract class WorldRendererLevelMixin {

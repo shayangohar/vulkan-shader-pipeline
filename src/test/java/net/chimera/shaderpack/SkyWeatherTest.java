@@ -38,7 +38,8 @@ final class SkyWeatherTest {
             assertEquals(post.targetSlots(), geometry.targetSlots(), "geometry target grammar drift");
             assertEquals(List.of(0), geometry.outputLocations(), "rain must have one output");
             String canonical = "/* RENDERTARGETS:" + target + ",1 */\n" + source;
-            assertEquals(List.of(target), GeometryOutputPlan.parse("gbuffers_weather", canonical, Map.of()).targetSlots(),
+            assertEquals(List.of(target),
+                    GeometryOutputPlan.parse("gbuffers_weather", canonical, Map.of()).targetSlots(),
                     "geometry normalization lost singleton target");
         }
         assertEquals(List.of(1, 2), PostTargetPlan.parse("composite", "/* DRAWBUFFERS:12 */").plan().targetSlots(),
@@ -81,18 +82,23 @@ final class SkyWeatherTest {
             for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_weather")) {
                 var plan = analysis.plan().program(name);
                 assertTrue(analysis.plan().shouldAttempt(name), name + " plan rejected: " + plan.deviations());
-                assertTrue(analysis.report().shouldAttempt(name), name + " report rejected: " + analysis.report().program(name).deviations());
+                assertTrue(analysis.report().shouldAttempt(name),
+                        name + " report rejected: " + analysis.report().program(name).deviations());
                 assertTrue(PackCompileTest.compile(plan.convertedVertex(), true) == null, name + " vertex compile");
-                assertTrue(PackCompileTest.compile(plan.convertedFragment(), false) == null, name + " fragment compile");
+                assertTrue(PackCompileTest.compile(plan.convertedFragment(), false) == null,
+                        name + " fragment compile");
                 assertTrue(plan.convertedFragment().matches("(?s).*\\b(?:flat\\s+in|in\\s+flat)\\s+vec4\\b.*"),
                         name + " flat interpolation lost");
             }
             var weather = analysis.plan().program("gbuffers_weather");
             assertEquals(List.of(12), weather.geometryOutputPlan().targetSlots(), "rain data route");
-            assertEquals(PackBlendPlan.Mode.OFF, weather.blendPlan().attachments(List.of(12))[0], "rain data blend override");
+            assertEquals(PackBlendPlan.Mode.OFF, weather.blendPlan().attachments(List.of(12))[0],
+                    "rain data blend override");
             Files.writeString(shaders.resolve("gbuffers_skybasic.fsh"), "#version 130\n"
-                    + "uniform samplerCube unsupportedCube; void main(){gl_FragColor=texture(unsupportedCube,vec3(1));}");
-            assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"), "sky admission bypassed resource validation");
+                    + "uniform samplerCube unsupportedCube; void main(){gl_FragColor=texture(unsupportedCube,vec3(1));"
+                            + "}");
+            assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"),
+                    "sky admission bypassed resource validation");
         } finally {
             try (var files = Files.walk(root)) {
                 for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.delete(file);
@@ -149,14 +155,17 @@ final class SkyWeatherTest {
         assertTrue(custom, "end portal must submit custom geometry for the block-entity custom batch");
         for (String renderer : List.of("net/minecraft/client/renderer/blockentity/AbstractEndPortalRenderer",
                 "net/minecraft/client/renderer/blockentity/TheEndGatewayRenderer")) {
-            assertTrue(MixinBytecode.nativeClass(renderer).methods.stream().anyMatch(method -> method.name.equals("renderType")
+            assertTrue(MixinBytecode.nativeClass(renderer).methods.stream().anyMatch(method ->
+                    method.name.equals("renderType")
                             && method.desc.equals("()Lnet/minecraft/client/renderer/rendertype/RenderType;")),
                     renderer + " renderType seam changed");
         }
-        assertTrue(MixinBytecode.nativeClass("net/minecraft/client/renderer/feature/CustomFeatureRenderer$Storage").methods.stream()
-                        .anyMatch(method -> method.name.equals("add") && method.desc.equals(
-                                "(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/rendertype/RenderType;"
-                                        + "Lnet/minecraft/client/renderer/SubmitNodeCollector$CustomGeometryRenderer;)V")),
+        String storageAdd = "(Lcom/mojang/blaze3d/vertex/PoseStack;"
+                + "Lnet/minecraft/client/renderer/rendertype/RenderType;"
+                + "Lnet/minecraft/client/renderer/SubmitNodeCollector$CustomGeometryRenderer;)V";
+        var storage = MixinBytecode.nativeClass("net/minecraft/client/renderer/feature/CustomFeatureRenderer$Storage");
+        assertTrue(storage.methods.stream().anyMatch(method -> method.name.equals("add")
+                        && method.desc.equals(storageAdd)),
                 "custom geometry storage seam changed");
     }
 
@@ -197,7 +206,8 @@ final class SkyWeatherTest {
                             && source.contains("mat4 gbufferModelViewInverse;")
                             && source.contains("bool hasSkylight;")
                             && !source.contains("in uvec4 EntityIds")
-                            && source.contains("void main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
+                            && source.contains("void main() { chimeraSkyMain();"
+                                    + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
                     "sky live inputs, world matrices or early-return clip conversion changed");
             var format = PackPipelines.skyVertexFormat(contract);
             var nativeBuilder = new Pipeline.Builder(format, "test_sky");
@@ -269,7 +279,8 @@ final class SkyWeatherTest {
                     "sky phase hook no longer matches native method: " + signature);
         }
         var celestial = skyClass.methods.stream().filter(method -> method.name.equals("renderSunMoonAndStars")
-                && method.desc.equals("(Lcom/mojang/blaze3d/vertex/PoseStack;FFFLnet/minecraft/world/level/MoonPhase;FF)V"))
+                && method.desc.equals(
+                        "(Lcom/mojang/blaze3d/vertex/PoseStack;FFFLnet/minecraft/world/level/MoonPhase;FF)V"))
                 .findFirst().orElseThrow();
         boolean rotationSeam = false;
         for (var instruction : celestial.instructions) {
@@ -298,10 +309,12 @@ final class SkyWeatherTest {
         assertTrue(weather, "weather must own its actual immediate draw");
         var indexed = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraVkRenderPassMixin");
         for (String name : List.of("chimera$familyAttachments", "chimera$skyAttachments")) {
-            var method = indexed.methods.stream().filter(candidate -> candidate.name.equals(name)).findFirst().orElseThrow();
+            var method = indexed.methods.stream().filter(candidate ->
+                    candidate.name.equals(name)).findFirst().orElseThrow();
             boolean targets = false;
             for (var instruction : method.instructions) {
-                if (instruction instanceof MethodInsnNode call && call.name.equals("beginPackFamilyWindow")) targets = true;
+                if (instruction instanceof MethodInsnNode call
+                        && call.name.equals("beginPackFamilyWindow")) targets = true;
             }
             assertTrue(targets, "both native sky draw APIs must own attachments");
         }

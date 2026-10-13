@@ -622,7 +622,8 @@ public final class PackPlanBuilder {
             String label = FamilyAdapterRegistry.isWeatherFamily(name) ? "WEATHER" : "PARTICLE";
             LegacyGlslConverter.TerrainVertexConversion conversion = EntityVertexBridge.convertParticleVertexChecked(
                     vertex, vertexFile(), fragment, stageMatch.locations(), allowStorageBuffers,
-                    interfacePlan.effective(stage).executableUniforms(), vertexSamplerPlan(interfacePlan, stage, vertex));
+                    interfacePlan.effective(stage).executableUniforms(),
+                            vertexSamplerPlan(interfacePlan, stage, vertex));
             acceptVertex(conversion, null, label + "_VERTEX_BRIDGE_UNSUPPORTED");
             if (conversion != null) {
                 acceptFragment(FragmentConverter.convertParticleFragment(fragment, fragmentFile(), entitySlots(),

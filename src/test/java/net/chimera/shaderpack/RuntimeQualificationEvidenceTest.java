@@ -25,8 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The recorded M7.8 qualification of exact pack versions against Iris: static eligibility, runtime
- * installation, RenderDoc execution, and visual parity, kept separate. Needs
+ * The qualification against Iris recorded in testpacks/baselines/m7_8.json for exact pack
+ * versions: static eligibility, runtime installation, RenderDoc execution, and visual parity, kept
+ * separate. Needs
  * -Pchimera.pack.{complementary,bsl}Version and -Pchimera.evidence.{complementary,bsl}{Log,Capture};
  * the Iris reference logs and captures are -Pchimera.evidence.iris{Complementary,Bsl}{Log,Capture}.
  */
@@ -45,7 +46,7 @@ final class RuntimeQualificationEvidenceTest {
     void runtimeQualification() throws Exception {
         Path fixtureRoot = TestPacks.fixtures();
         Path baseline = TestPacks.baseline("m7_8");
-        JsonObject expected = readObject(baseline, "M7.8 baseline");
+        JsonObject expected = readObject(baseline, "baseline");
         verifyHeader(expected);
 
         List<PackSpec> packs = List.of(
@@ -62,7 +63,7 @@ final class RuntimeQualificationEvidenceTest {
                         optionalEvidence("chimera.evidence.irisBslCapture"),
                         optionalEvidence("chimera.evidence.irisBslLog")));
 
-        JsonObject expectedPacks = childObject(expected, "packs", "M7.8 packs");
+        JsonObject expectedPacks = childObject(expected, "packs", "packs");
         JsonObject actualRoot = new JsonObject();
         actualRoot.addProperty("formatVersion", 1);
         actualRoot.addProperty("milestone", "M7.8");
@@ -86,18 +87,18 @@ final class RuntimeQualificationEvidenceTest {
     private static PackSnapshot snapshot(
             PackSpec pack, Path fixtureRoot, JsonObject expected) throws IOException {
         assertTrue(Files.isDirectory(pack.path()) || Files.isRegularFile(pack.path()),
-                "M7.8 " + pack.label() + " pack path does not exist: " + pack.path());
+                pack.label() + " pack path does not exist: " + pack.path());
         String fingerprint = PackFingerprint.sha256(pack.path());
         assertEquals(fingerprint, PackFingerprint.sha256(pack.path()),
-                "M7.8 " + pack.label() + " fingerprint stability");
+                pack.label() + " fingerprint stability");
 
         PackProbe.Analysis analysis = PackProbe.analyze(pack.path());
         ConformanceReport report = analysis.report();
         ConformanceReport second = PackProbe.probe(pack.path());
         assertEquals(report.toJson(), second.toJson(),
-                "M7.8 " + pack.label() + " report stability");
+                pack.label() + " report stability");
         assertEquals(report.sha256(), second.sha256(),
-                "M7.8 " + pack.label() + " report hash stability");
+                pack.label() + " report hash stability");
         assertNoUnstableData(report, pack.path(), pack.label());
         verifyPlanEligibility(pack, analysis);
         verifyEquivalentDirectoryLoading(pack, fixtureRoot);
@@ -118,13 +119,13 @@ final class RuntimeQualificationEvidenceTest {
         fallback.sort(String::compareTo);
         unsupported.sort(String::compareTo);
         assertTrue(!eligible.isEmpty(),
-                "M7.8 " + pack.label() + " has no statically eligible program");
+                pack.label() + " has no statically eligible program");
 
         RuntimeEvidence runtime = readRuntime(pack, fixtureRoot, eligible);
         boolean requireReference = Boolean.getBoolean("chimera.evidence.requireReference");
         if (requireReference) {
             assertTrue(runtime.irisCaptureRecorded(),
-                    "M7.8 " + pack.label() + " Iris reference capture is missing");
+                    pack.label() + " Iris reference capture is missing");
         }
 
         JsonObject json = new JsonObject();
@@ -142,14 +143,14 @@ final class RuntimeQualificationEvidenceTest {
         json.addProperty("performanceStatus", "DEFERRED_TO_TASK-172");
 
         assertEquals(expected.get("version").getAsString(), pack.version(),
-                "M7.8 " + pack.label() + " version baseline");
+                pack.label() + " version baseline");
         assertEquals(expected.get("requireStaticEligibility").getAsBoolean(), true,
-                "M7.8 " + pack.label() + " static eligibility contract");
+                pack.label() + " static eligibility contract");
         assertEquals(expected.get("requireChimeraInstallation").getAsBoolean(),
                 !runtime.installed().isEmpty(),
-                "M7.8 " + pack.label() + " runtime installation");
+                pack.label() + " runtime installation");
         assertEquals(expected.get("visualParityClaim").getAsString(), "NOT_CLAIMED",
-                "M7.8 " + pack.label() + " visual claim");
+                pack.label() + " visual claim");
         return new PackSnapshot(json);
     }
 
@@ -168,13 +169,13 @@ final class RuntimeQualificationEvidenceTest {
         TreeSet<String> missing = new TreeSet<>(eligible);
         missing.removeAll(installed);
         assertTrue(missing.isEmpty(),
-                "M7.8 " + pack.label() + " statically eligible programs were not installed: " + missing);
+                pack.label() + " statically eligible programs were not installed: " + missing);
         assertTrue(!installed.isEmpty(),
-                "M7.8 " + pack.label() + " log has no installed program");
+                pack.label() + " log has no installed program");
         assertTrue(!fallback.isEmpty(),
-                "M7.8 " + pack.label() + " log has no fallback program");
+                pack.label() + " log has no fallback program");
         assertTrue(Files.size(pack.capture()) > 0,
-                "M7.8 " + pack.label() + " capture is empty");
+                pack.label() + " capture is empty");
 
         JsonObject json = new JsonObject();
         json.addProperty("chimeraLog", evidencePath(fixtureRoot, pack.log()));
@@ -206,18 +207,18 @@ final class RuntimeQualificationEvidenceTest {
         List<String> planNames = analysis.plan().programs().stream()
                 .map(PackProgramPlan::name).sorted().toList();
         assertTrue(reportNames.containsAll(planNames),
-                "M7.8 " + pack.label() + " plan contains an unreported program");
+                pack.label() + " plan contains an unreported program");
         for (ConformanceReport.ProgramReport program : analysis.report().programs()) {
             PackProgramPlan planned = analysis.plan().program(program.name());
             boolean eligible = isEligible(program);
             assertEquals(eligible, analysis.report().shouldAttempt(program.name()),
-                    "M7.8 " + pack.label() + " shouldAttempt: " + program.name());
+                    pack.label() + " shouldAttempt: " + program.name());
             if (planned == null) {
                 assertTrue(!eligible,
-                        "M7.8 " + pack.label() + " unplanned program is eligible: " + program.name());
+                        pack.label() + " unplanned program is eligible: " + program.name());
             } else {
                 assertEquals(planned.executable(), analysis.report().shouldAttempt(program.name()),
-                        "M7.8 " + pack.label() + " plan eligibility: " + program.name());
+                        pack.label() + " plan eligibility: " + program.name());
             }
         }
     }
@@ -236,11 +237,11 @@ final class RuntimeQualificationEvidenceTest {
                 extracted = loaded.shadersDir();
                 copyTree(extracted, destination);
             }
-            assertTrue(!Files.exists(extracted), "M7.8 ZIP extraction cleanup");
+            assertTrue(!Files.exists(extracted), "ZIP extraction cleanup");
             ConformanceReport archiveReport = PackProbe.probe(pack.path());
             ConformanceReport directoryReport = PackProbe.probe(directory);
             assertEquals(archiveReport.toJson(), directoryReport.toJson(),
-                    "M7.8 " + pack.label() + " ZIP/directory report");
+                    pack.label() + " ZIP/directory report");
         } finally {
             TestFiles.deleteTree(temporary);
         }
@@ -357,19 +358,19 @@ final class RuntimeQualificationEvidenceTest {
     }
 
     private static void verifyHeader(JsonObject root) {
-        assertEquals(root.get("formatVersion").getAsInt(), 1, "M7.8 baseline format");
-        assertEquals(root.get("milestone").getAsString(), "M7.8", "M7.8 baseline milestone");
+        assertEquals(root.get("formatVersion").getAsInt(), 1, "baseline format");
+        assertEquals(root.get("milestone").getAsString(), "M7.8", "baseline milestone");
         assertEquals(root.get("referenceBackend").getAsString(), "Sodium + Iris",
-                "M7.8 reference backend");
+                "reference backend");
     }
 
     private static void assertNoUnstableData(
             ConformanceReport report, Path pack, String label) {
         String json = report.toJson();
         assertTrue(!json.contains(pack.toAbsolutePath().normalize().toString()),
-                "M7.8 " + label + " report contains an absolute path");
+                label + " report contains an absolute path");
         assertTrue(!json.matches("(?s).*\\b(?:timestamp|createdAt|updatedAt)\\b.*"),
-                "M7.8 " + label + " report contains timestamp data");
+                label + " report contains timestamp data");
     }
 
     private record PackSpec(

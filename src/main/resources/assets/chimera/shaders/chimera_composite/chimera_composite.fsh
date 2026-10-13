@@ -1,7 +1,7 @@
 #version 460
 // World resolve: moves the GL-row-ordered world (HDR, pack targets or pack
 // final) into the host-ordered output. The world passes store GL row order
-// (ChimeraRasterOrientation, KNOW-414), so this is the frame's one flip.
+// (see ChimeraRasterOrientation), so this is the frame's one flip.
 
 layout(binding = 0) uniform sampler2D SceneColor;
 

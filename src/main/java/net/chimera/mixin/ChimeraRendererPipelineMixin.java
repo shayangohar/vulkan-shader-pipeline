@@ -39,7 +39,8 @@ public abstract class ChimeraRendererPipelineMixin {
 
     @SuppressWarnings("try") // the binding scope restores descriptor state on close
     @Redirect(method = "uploadAndBindUBOs", at = @At(value = "INVOKE",
-            target = "Lnet/vulkanmod/vulkan/shader/Pipeline;bindDescriptorSets(Lorg/lwjgl/vulkan/VkCommandBuffer;I)V"), require = 1)
+            target = "Lnet/vulkanmod/vulkan/shader/Pipeline;bindDescriptorSets(Lorg/lwjgl/vulkan/VkCommandBuffer;I)V"),
+                    require = 1)
     private void chimera$bindImages(Pipeline pipeline,
             VkCommandBuffer commandBuffer, int frame) {
         var pass = ChimeraRenderer.getMainPass();

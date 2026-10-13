@@ -43,8 +43,10 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     private final SubmitNodeStorage submits = new SubmitNodeStorage();
     private final FeatureRenderDispatcher dispatcher;
     // Separate buffers: a later upload must not overwrite an earlier draw's projection.
-    private final PerspectiveProjectionMatrixBuffer solidProjection = new PerspectiveProjectionMatrixBuffer("Chimera solid hand");
-    private final PerspectiveProjectionMatrixBuffer translucentProjection = new PerspectiveProjectionMatrixBuffer("Chimera translucent hand");
+    private final PerspectiveProjectionMatrixBuffer solidProjection = new PerspectiveProjectionMatrixBuffer(
+            "Chimera solid hand");
+    private final PerspectiveProjectionMatrixBuffer translucentProjection = new PerspectiveProjectionMatrixBuffer(
+            "Chimera translucent hand");
 
     private ChimeraHandRenderer(Minecraft minecraft) {
         dispatcher = new FeatureRenderDispatcher(submits, minecraft.getBlockRenderer(), buffers,
@@ -61,7 +63,8 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     }
     public static boolean translucent(ItemStack item) {
         return item.getItem() instanceof BlockItem block
-                && ItemBlockRenderTypes.getChunkRenderType(block.getBlock().defaultBlockState()) == ChunkSectionLayer.TRANSLUCENT;
+                && ItemBlockRenderTypes.getChunkRenderType(
+                        block.getBlock().defaultBlockState()) == ChunkSectionLayer.TRANSLUCENT;
     }
 
     /** Iris's depth squeeze expressed in VulkanMod's forward-Z [0,1] range. */
@@ -107,7 +110,8 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         translucentPhase = translucent;
         boolean draw = false;
         try {
-            RenderSystem.setProjectionMatrix((translucent ? translucentProjection : solidProjection).getBuffer(projection), ProjectionType.PERSPECTIVE);
+            RenderSystem.setProjectionMatrix((translucent ? translucentProjection
+                    : solidProjection).getBuffer(projection), ProjectionType.PERSPECTIVE);
             RenderSystem.getModelViewStack().set(bob.last().pose());
             draw = ChimeraEntityBridge.beginHandDraw(translucent);
             if (!draw) throw new IllegalStateException("installed hand schedule lost its family pipeline");

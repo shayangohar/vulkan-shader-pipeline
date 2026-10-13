@@ -13,12 +13,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic M7.7 schedule and temporal-state checks. */
+/** The frame schedule, the depth seam, and temporal state. */
 final class FrameScheduleTest {
     @Test
     void frameSchedule() throws Exception {
@@ -50,53 +49,53 @@ final class FrameScheduleTest {
             PackTargetGraphPlan graphAgain
     ) {
         assertEquals(schedule.snapshot(), scheduleAgain.snapshot(),
-                "M7.7 schedule snapshot stability");
+                "schedule snapshot stability");
         assertEquals(graph.fingerprint(), graphAgain.fingerprint(),
-                "M7.7 graph stability");
+                "graph stability");
         assertEquals(List.of("deferred"), names(schedule,
                 PackFrameSchedulePlan.PostWindow.EARLY),
-                "M7.7 early post order");
+                "early post order");
         assertEquals(List.of("composite", "composite1"), names(schedule,
                 PackFrameSchedulePlan.PostWindow.LATE),
-                "M7.7 late post order");
+                "late post order");
         assertEquals(List.of("final"), names(schedule,
                 PackFrameSchedulePlan.PostWindow.FINAL),
-                "M7.7 final post order");
-        assertTrue(schedule.requiresDepthtex1(), "M7.7 depthtex1 was not scheduled");
-        assertTrue(!schedule.requiresDepthtex0(), "M7.7 fixture unexpectedly requires depthtex0");
+                "final post order");
+        assertTrue(schedule.requiresDepthtex1(), "depthtex1 was not scheduled");
+        assertTrue(!schedule.requiresDepthtex0(), "fixture unexpectedly requires depthtex0");
         assertTrue(schedule.phaseIndex(PackFrameSchedulePlan.Phase.EARLY_POST)
                         < schedule.phaseIndex(PackFrameSchedulePlan.Phase.TRANSLUCENT),
-                "M7.7 early post is not before translucent terrain");
+                "early post is not before translucent terrain");
         assertTrue(schedule.phaseIndex(PackFrameSchedulePlan.Phase.LATE_POST)
                         < schedule.phaseIndex(PackFrameSchedulePlan.Phase.FINAL),
-                "M7.7 late post is not before final");
+                "late post is not before final");
         assertTrue(schedule.phaseIndex(PackFrameSchedulePlan.Phase.FINAL)
                         < schedule.phaseIndex(PackFrameSchedulePlan.Phase.GUI),
-                "M7.7 final is not before GUI");
+                "final is not before GUI");
         assertTrue(!schedule.handBeforeEarlyPost()
                         && schedule.deviations().contains("HAND_PHASE_HOST_BOUNDARY"),
-                "M7.7 hand boundary was reported as fully relocated");
+                "hand boundary was reported as fully relocated");
     }
 
     @Test
     void temporalState() {
         PackTemporalState state = new PackTemporalState();
         state.beginFrame(true);
-        assertTrue(state.currentAvailable(0), "M7.7 HDR identity is unavailable");
-        assertTrue(!state.currentAvailable(3), "M7.7 unwritten target is available");
+        assertTrue(state.currentAvailable(0), "HDR identity is unavailable");
+        assertTrue(!state.currentAvailable(3), "unwritten target is available");
         state.stageWrite(3);
-        assertTrue(state.commit(), "M7.7 first temporal commit failed");
-        assertTrue(state.currentAvailable(3), "M7.7 committed target is unavailable");
-        assertTrue(state.previousAvailable(3), "M7.7 previous target was not retained");
+        assertTrue(state.commit(), "first temporal commit failed");
+        assertTrue(state.currentAvailable(3), "committed target is unavailable");
+        assertTrue(state.previousAvailable(3), "previous target was not retained");
 
         state.beginFrame(true);
-        assertTrue(state.previousAvailable(3), "M7.7 previous target was lost at frame start");
+        assertTrue(state.previousAvailable(3), "previous target was lost at frame start");
         state.stageWrite(2);
         state.abort();
-        assertTrue(!state.currentAvailable(2), "M7.7 aborted target became available");
+        assertTrue(!state.currentAvailable(2), "aborted target became available");
         state.reset();
         assertTrue(state.firstFrame() && !state.previousAvailable(3),
-                "M7.7 temporal reset did not clear history");
+                "temporal reset did not clear history");
 
         verifyTwoFrameHistory();
     }
@@ -113,25 +112,25 @@ final class FrameScheduleTest {
         frames.beginFrame(true);
         frames.seedCurrent(2);
         frames.stageWrite(2);
-        assertTrue(frames.commit(), "M7.7 first history commit failed");
-        assertTrue(frames.previousAvailable(2), "M7.7 first frame produced no history");
+        assertTrue(frames.commit(), "first history commit failed");
+        assertTrue(frames.previousAvailable(2), "first frame produced no history");
 
         frames.beginFrame(true);
-        assertTrue(frames.previousAvailable(2), "M7.7 history was lost between frames");
-        assertTrue(!frames.currentAvailable(2), "M7.7 new frame kept stale current state");
+        assertTrue(frames.previousAvailable(2), "history was lost between frames");
+        assertTrue(!frames.currentAvailable(2), "new frame kept stale current state");
         frames.seedCurrent(2);
         frames.stageWrite(2);
-        assertTrue(frames.commit(), "M7.7 second history commit failed");
-        assertTrue(frames.previousAvailable(2), "M7.7 second frame produced no history");
+        assertTrue(frames.commit(), "second history commit failed");
+        assertTrue(frames.previousAvailable(2), "second frame produced no history");
 
         // Skipped writer: the runtime still seeds a valid persistent
         // target at frame start, so the previous frame stays available
         // instead of degrading to unseeded history.
         frames.beginFrame(true);
         frames.seedCurrent(2);
-        assertTrue(frames.commit(), "M7.7 skipped-writer commit failed");
+        assertTrue(frames.commit(), "skipped-writer commit failed");
         assertTrue(frames.previousAvailable(2),
-                "M7.7 skipped writer must retain the last committed history");
+                "skipped writer must retain the last committed history");
 
         // Failed writer: abort drops the pending write and the commit is
         // refused, so the last good history survives untouched.
@@ -140,43 +139,43 @@ final class FrameScheduleTest {
         frames.stageWrite(2);
         frames.abort();
         assertTrue(frames.previousAvailable(2),
-                "M7.7 aborted frame must keep the last committed history");
+                "aborted frame must keep the last committed history");
 
         // Resize/reload restarts the sequence with no stale previous frame.
         frames.reset();
-        assertTrue(frames.firstFrame(), "M7.7 reset did not restart the frame sequence");
+        assertTrue(frames.firstFrame(), "reset did not restart the frame sequence");
         frames.beginFrame(true);
         assertTrue(!frames.previousAvailable(2) && !frames.currentAvailable(2),
-                "M7.7 reloaded session exposed stale temporal state");
+                "reloaded session exposed stale temporal state");
     }
 
     @Test
     void staticAvailability() {
         boolean[] written = new boolean[PackTargetGraphPlan.MAX_TARGET + 1];
         assertTrue(PackPostTargets.isTargetAvailable(0, true, written),
-                "M7.7 target 0 HDR identity is unavailable");
+                "target 0 HDR identity is unavailable");
         assertTrue(!PackPostTargets.isTargetAvailable(1, true, written),
-                "M7.7 target 1 is available before a write");
+                "target 1 is available before a write");
         written[1] = true;
         assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, written),
-                "M7.7 committed target set was rejected");
+                "committed target set was rejected");
         PackPostTargets.invalidateWrittenTargets(written, List.of(1));
         assertTrue(!PackPostTargets.areTargetsAvailable(List.of(1), true, written),
-                "M7.7 invalidated target remained available");
+                "invalidated target remained available");
         assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, written),
-                "M7.7 HDR identity was lost after target invalidation");
+                "HDR identity was lost after target invalidation");
     }
 
     private static void verifyUnsupported(Path path) {
         PackProbe.Analysis analysis = PackProbe.analyze(path);
         PackProgramPlan composite = analysis.plan().program("composite");
         assertTrue(composite != null && !composite.executable(),
-                "M7.7 unsupported post stage remained executable");
+                "unsupported post stage remained executable");
         assertTrue(!analysis.report().shouldAttempt("composite"),
-                "M7.7 unsupported post stage remained eligible");
+                "unsupported post stage remained eligible");
         PackProgramPlan finalPlan = analysis.plan().program("final");
         assertTrue(finalPlan != null && finalPlan.executable(),
-                "M7.7 unrelated final stage was rejected");
+                "unrelated final stage was rejected");
     }
 
     private static List<String> names(PackFrameSchedulePlan schedule,
@@ -198,10 +197,10 @@ final class FrameScheduleTest {
             System.out.println("[chimera] M7.7 scheduleFingerprint=" + schedule.fingerprint());
         }
         if (!"TO_BE_FILLED".equals(report)) {
-            assertEquals(report, analysis.report().sha256(), "M7.7 report baseline");
+            assertEquals(report, analysis.report().sha256(), "report baseline");
         }
         if (!"TO_BE_FILLED".equals(scheduleHash)) {
-            assertEquals(scheduleHash, schedule.fingerprint(), "M7.7 schedule baseline");
+            assertEquals(scheduleHash, schedule.fingerprint(), "schedule baseline");
         }
     }
 }

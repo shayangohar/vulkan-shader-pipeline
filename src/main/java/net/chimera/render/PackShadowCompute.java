@@ -398,7 +398,8 @@ public final class PackShadowCompute implements AutoCloseable {
             VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.calloc(stack)
                     .sType$Default().pSetLayouts(stack.longs(setLayout));
             LongBuffer pipelineLayout = stack.mallocLong(1);
-            if (vkCreatePipelineLayout(Vulkan.getVkDevice(), pipelineLayoutInfo, null, pipelineLayout) != VK_SUCCESS) return;
+            if (vkCreatePipelineLayout(Vulkan.getVkDevice(), pipelineLayoutInfo, null,
+                    pipelineLayout) != VK_SUCCESS) return;
             this.pipelineLayout = pipelineLayout.get(0);
             VkPipelineShaderStageCreateInfo stage = VkPipelineShaderStageCreateInfo.calloc(stack)
                     .sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT)

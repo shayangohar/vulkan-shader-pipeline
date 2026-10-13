@@ -631,7 +631,8 @@ public final class PackPipelines {
             Pipeline.Builder builder = prepareBuilder(prepared, plan.name(), advancedResources,
                     ChimeraVertexFormats.terrainFormat(materialPlan), PackUniformProvider.shared()::supplier);
             verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource, fragmentSource, storageOwner);
-            GraphicsPipeline pipeline = createRouted(builder, prepared.imageBindings(), shadowAttachmentFormats(), null);
+            GraphicsPipeline pipeline = createRouted(builder, prepared.imageBindings(), shadowAttachmentFormats(),
+                    null);
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -978,7 +979,8 @@ public final class PackPipelines {
             if (vertex == null) {
                 throw new IllegalStateException("advanced terrain vertex image declaration rejected");
             }
-            Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.terrainFormat(materialPlan), "pack_" + plan.name());
+            Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.terrainFormat(materialPlan),
+                    "pack_" + plan.name());
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             ordinary.apply(builder);
             addStorageBufferDescriptors(builder, plan.name(), advancedResources);
@@ -1010,7 +1012,7 @@ public final class PackPipelines {
                 .chimera$properties().limits().maxColorAttachments();
     }
 
-    /** One generated fragment UBO, or an empty array for the M4 no-uniform path. */
+    /** One generated fragment UBO, or an empty array for a program without uniforms. */
     private static JsonArray uniformUboArray(UniformRegistry.ProgramInterface interfacePlan) {
         return uniformUboArray(interfacePlan, 0, "fragment");
     }
@@ -1083,7 +1085,8 @@ public final class PackPipelines {
             json.add("samplers", samplerArray(slots));
 
             PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
-            Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, "pack_" + program.name());
+            Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN,
+                    "pack_" + program.name());
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
             builder.applyConfig(config);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex.source());
@@ -1350,7 +1353,8 @@ public final class PackPipelines {
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding
                 : advancedResources.bindingLayout(program).storageImages()) {
             builder.addImageDescriptor(new ImageDescriptor(
-                    advancedResources.bindingLayout(program).imageBase() + index++, "image3D", "Sampler" + binding.selectorSlot(),
+                    advancedResources.bindingLayout(program).imageBase() + index++, "image3D",
+                            "Sampler" + binding.selectorSlot(),
                     binding.selectorSlot(), VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));
         }
     }

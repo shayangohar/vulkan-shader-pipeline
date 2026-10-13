@@ -789,7 +789,7 @@ public final class PackProbe {
     }
 
     /**
-     * M8.6 advanced image declarations are not an old generic-resource
+     * Advanced image declarations are not an old generic-resource
      * failure when the shared plan has admitted the program. The runtime
      * still performs the final pipeline/resource checks, so an individual
      * build failure remains an explicit identity fallback.
@@ -1003,7 +1003,8 @@ public final class PackProbe {
                 settings.add(key);
                 boolean colortexFormat = COLORTEX_FORMAT.matcher(key).matches();
                 boolean shadowSetting = SHADOW_SETTING.matcher(key).matches();
-                boolean customValue = key.matches("(?:uniform|variable)\\.(?:float|int|bool|vec2|vec3|vec4)\\.[A-Za-z_]\\w*");
+                boolean customValue = key.matches(
+                        "(?:uniform|variable)\\.(?:float|int|bool|vec2|vec3|vec4)\\.[A-Za-z_]\\w*");
                 boolean alphaTest = key.equals("alphaTest.gbuffers_terrain")
                         || key.equals("alphaTest.gbuffers_water");
                 if (shadowSetting) {

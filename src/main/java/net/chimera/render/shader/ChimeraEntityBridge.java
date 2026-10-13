@@ -520,7 +520,8 @@ public final class ChimeraEntityBridge {
         textureSnapshot = true;
         drawActive = true;
         if (drawTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} {}", family.name().toLowerCase(), kind);
+            ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} {}", family.name().toLowerCase(),
+                    kind);
         }
     }
 

@@ -10,7 +10,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Broadening step 1 (TASK-455): the pack front end reads the Iris/GLSL formats in full rather
+ * The pack front end reads the Iris/GLSL formats in full rather
  * than the subset the baseline packs needed. Each check is the spec behaviour, not a pack's usage.
  */
 final class PackFrontEndTest {
@@ -86,7 +86,7 @@ final class PackFrontEndTest {
                 "#version 120\nvoid main() {\n\t/// --- STUFF --- \\\\\r\n\tint count = 1;\n}", false).source();
         assertTrue(!continued.contains("\\") && continued.contains("int count = 1;"),
                 "a pre-4.20 comment must end at its line: " + continued);
-        // Bliss deferred.fsh: parameter qualifiers are not stage interfaces (KNOW-498).
+        // Bliss deferred.fsh: parameter qualifiers are not stage interfaces.
         String parameters = String.join("\n",
                 "#version 400",
                 "in vec2 texcoord;",
@@ -96,7 +96,8 @@ final class PackFrontEndTest {
                 "void blend(inout vec3 color, in highp vec3 other, out float weight) { weight = 1.0; }",
                 "void main() {}");
         GlslInterfaceScanner.StageInterface fragment = GlslInterfaceScanner.scan(parameters, false);
-        assertTrue(fragment.deviations().isEmpty(), "parameter qualifiers read as interfaces: " + fragment.deviations());
+        assertTrue(fragment.deviations().isEmpty(),
+                "parameter qualifiers read as interfaces: " + fragment.deviations());
         assertTrue(fragment.inputs().size() == 1 && fragment.input("texcoord") != null && fragment.outputs().isEmpty(),
                 "only the file-scope input is an interface: " + fragment.inputs() + " " + fragment.outputs());
     }
@@ -296,7 +297,8 @@ final class PackFrontEndTest {
                 "uniform mat4 dhProjection;", "uniform float dhFarPlane;", "uniform int dhRenderDistance;",
                 "uniform ivec3 currentDate;", "uniform vec3 playerBodyVector;",
                 "void main() { gl_FragColor = vec4(currentPlayerHealth + float(hideGUI) + float(isRightHanded)",
-                "    + dhProjection[0][0] + dhFarPlane + float(dhRenderDistance + currentDate.x) + playerBodyVector.x); }"),
+                "    + dhProjection[0][0] + dhFarPlane + float(dhRenderDistance + currentDate.x) + "
+                        + "playerBodyVector.x); }"),
                 UniformRegistry.Stage.POST);
         assertTrue(served.executable(), "Iris player/DH uniforms must plan: " + served.deviations());
         assertTrue(served.deviations().stream().noneMatch(d -> d.startsWith("UNIFORM_UNSET_ZERO")),

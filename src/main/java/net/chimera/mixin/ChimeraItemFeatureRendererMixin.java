@@ -33,7 +33,11 @@ import java.util.List;
 @Mixin(ItemFeatureRenderer.class)
 public abstract class ChimeraItemFeatureRendererMixin {
     @WrapOperation(method = "render", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/entity/ItemRenderer;renderItem(Lnet/minecraft/world/item/ItemDisplayContext;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;II[ILjava/util/List;Lnet/minecraft/client/renderer/rendertype/RenderType;Lnet/minecraft/client/renderer/item/ItemStackRenderState$FoilType;)V"),
+            target = "Lnet/minecraft/client/renderer/entity/ItemRenderer;"
+                    + "renderItem(Lnet/minecraft/world/item/ItemDisplayContext;Lcom/mojang/blaze3d/vertex/PoseStack;"
+                    + "Lnet/minecraft/client/renderer/MultiBufferSource;II[ILjava/util/List;"
+                    + "Lnet/minecraft/client/renderer/rendertype/RenderType;"
+                    + "Lnet/minecraft/client/renderer/item/ItemStackRenderState$FoilType;)V"),
             require = 1)
     private void chimera$packItem(
             ItemDisplayContext displayContext,
@@ -70,7 +74,8 @@ public abstract class ChimeraItemFeatureRendererMixin {
         }
         if (foilType != ItemStackRenderState.FoilType.NONE) {
             // Re-emit for the glint layers only; the item layer is already drawn.
-            MultiBufferSource glintOnly = type -> type == renderType ? ChimeraFamilyDraw.DISCARD : buffers.getBuffer(type);
+            MultiBufferSource glintOnly = type -> type == renderType ? ChimeraFamilyDraw.DISCARD
+                    : buffers.getBuffer(type);
             original.call(displayContext, poseStack, glintOnly, lightCoords, overlayCoords,
                     tintLayers, quads, renderType, foilType);
         }

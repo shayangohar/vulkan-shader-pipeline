@@ -79,7 +79,7 @@ import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
 /**
- * Render-thread executor for the immutable M7.4 target graph. Logical
+ * Render-thread executor for the immutable target graph. Logical
  * validity and physical image ownership are kept separate so a skipped pass
  * cannot make a cleared or stale image visible to a later pass.
  */
@@ -210,7 +210,8 @@ public final class PackPostTargets {
                     | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
                     | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
             if ((properties.optimalTilingFeatures() & required) != required) {
-                throw new IllegalArgumentException("RGBA16 target format lacks sampled/linear/attachment/blend/transfer support"
+                throw new IllegalArgumentException("RGBA16 target format lacks "
+                        + "sampled/linear/attachment/blend/transfer support"
                         + " (required=0x" + Integer.toHexString(required)
                         + ", supported=0x" + Integer.toHexString(properties.optimalTilingFeatures()) + ")");
             }
@@ -719,7 +720,8 @@ public final class PackPostTargets {
 
     static void invalidateWrittenTargets(boolean[] written, List<Integer> targets) {
         if (written == null || targets == null) return;
-        for (int target : targets) if (target >= 0 && target < TARGET_COUNT && target < written.length) written[target] = false;
+        for (int target : targets) if (target >= 0 && target < TARGET_COUNT
+                && target < written.length) written[target] = false;
     }
 
     static int bankAfterFinish(int activeBank, int destinationBank, boolean committed) {

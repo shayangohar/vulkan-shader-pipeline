@@ -21,7 +21,10 @@ import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** What terrain programs read: legacy host vertex semantics, mid-block inputs, shading directives and output targets. */
+/**
+ * What terrain programs read: legacy host vertex semantics, mid-block inputs, shading directives
+ * and output targets.
+ */
 final class TerrainInputsTest {
     @Test
     void legacyHostVertexSemantics() {
@@ -65,10 +68,12 @@ final class TerrainInputsTest {
             assertTrue(compileError == null, family + " typed legacy matrices: " + compileError);
             String projectionName = family.equals("hand") ? "chimeraHandProjection()" : "ProjMat";
             assertTrue(source.contains("mat4 mvp = (" + projectionName + " * ModelViewMat);")
-                            && source.contains("vec4 direct = (" + projectionName + " * ModelViewMat) * chimeraEntityVertexValue();")
+                            && source.contains("vec4 direct = (" + projectionName
+                                    + " * ModelViewMat) * chimeraEntityVertexValue();")
                             && source.contains("vec4 typed = mvp * chimeraEntityVertexValue();")
                             && source.contains("vec4 helper = chimeraEntityFtransform();")
-                            && source.contains("return " + projectionName + " * ModelViewMat * chimeraEntityVertexValue();"),
+                            && source.contains("return " + projectionName
+                                    + " * ModelViewMat * chimeraEntityVertexValue();"),
                     family + " explicit MVP and ftransform disagree");
             boolean offset = family.equals("block") || family.equals("crumbling");
             assertTrue(source.contains(offset ? "return vec4(Position + ModelOffset, 1.0);"
@@ -172,7 +177,8 @@ final class TerrainInputsTest {
      */
     @Test
     void terrainShading(@TempDir Path root) throws IOException {
-        assertEquals(new TerrainShadingDirectives(false, false, List.of()), TerrainShadingDirectives.fromProperties(Map.of()),
+        assertEquals(new TerrainShadingDirectives(false, false, List.of()),
+                TerrainShadingDirectives.fromProperties(Map.of()),
                 "Iris's oldLighting and separateAo default to off");
         assertTrue(TerrainShadingDirectives.DEFAULTS.disablesDirectionalShading()
                         && !TerrainShadingDirectives.VANILLA.disablesDirectionalShading()
@@ -181,11 +187,13 @@ final class TerrainInputsTest {
         for (String key : List.of("oldLighting", "separateAo")) {
             for (String value : List.of("true", "1", " true ")) {
                 var directives = TerrainShadingDirectives.fromProperties(Map.of(key, value));
-                assertTrue(terrainShading(directives, key) && directives.deviations().isEmpty(), key + "=" + value + " switches on");
+                assertTrue(terrainShading(directives, key) && directives.deviations().isEmpty(),
+                        key + "=" + value + " switches on");
             }
             for (String value : List.of("false", "0")) {
                 var directives = TerrainShadingDirectives.fromProperties(Map.of(key, value));
-                assertTrue(!terrainShading(directives, key) && directives.deviations().isEmpty(), key + "=" + value + " switches off");
+                assertTrue(!terrainShading(directives, key) && directives.deviations().isEmpty(),
+                        key + "=" + value + " switches off");
             }
         }
         var malformed = TerrainShadingDirectives.fromProperties(Map.of("oldLighting", "yes", "separateAo", "maybe"));
@@ -217,7 +225,8 @@ final class TerrainInputsTest {
         String fixedVertex = MixinBytecode.resourceText("assets/chimera/shaders/chimera_terrain/chimera_terrain.vsh");
         String separateAoVertex = ChimeraTerrainPipelines.withSeparateAo(fixedVertex);
         assertTrue(fixedVertex.contains("#ifdef CHIMERA_SEPARATE_AO")
-                        && separateAoVertex.replace("\r\n", "\n").startsWith("#version 460\n#define CHIMERA_SEPARATE_AO\n"),
+                        && separateAoVertex.replace("\r\n",
+                                "\n").startsWith("#version 460\n#define CHIMERA_SEPARATE_AO\n"),
                 "Chimera's own terrain pipeline folds the alpha brightness back into RGB under separateAo");
         compileVertex(separateAoVertex, "chimera_terrain_separate_ao.vsh");
 
@@ -226,23 +235,29 @@ final class TerrainInputsTest {
         for (var method : shadeMixin.methods) {
             for (var annotation : MixinBytecode.annotations(method.visibleAnnotations, method.invisibleAnnotations)) {
                 if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/ModifyVariable;")) continue;
-                shadeArgument = MixinBytecode.annotationValue(annotation, "method") instanceof List<?> names && names.contains("getShade")
+                shadeArgument = MixinBytecode.annotationValue(annotation, "method") instanceof List<?> names
+                        && names.contains("getShade")
                         && Boolean.TRUE.equals(MixinBytecode.annotationValue(annotation, "argsOnly"))
                         && method.desc.equals("(Z)Z");
             }
         }
-        assertTrue(MixinBytecode.mixinTargets(shadeMixin, "net/minecraft/client/multiplayer/ClientLevel") && shadeArgument,
+        assertTrue(MixinBytecode.mixinTargets(shadeMixin, "net/minecraft/client/multiplayer/ClientLevel")
+                && shadeArgument,
                 "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
         var blockMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraBlockSeparateAoMixin");
-        assertTrue(MixinBytecode.mixinTargets(blockMixin, "net/vulkanmod/render/chunk/build/frapi/render/AbstractBlockRenderContext")
-                        && MixinBytecode.injects(blockMixin, "Lorg/spongepowered/asm/mixin/injection/Redirect;", "shadeQuad",
+        assertTrue(MixinBytecode.mixinTargets(blockMixin,
+                "net/vulkanmod/render/chunk/build/frapi/render/AbstractBlockRenderContext")
+                        && MixinBytecode.injects(blockMixin, "Lorg/spongepowered/asm/mixin/injection/Redirect;",
+                                "shadeQuad",
                         "Lnet/vulkanmod/render/chunk/build/frapi/helper/ColorHelper;multiplyRGB(IF)I"),
                 "block quads route VulkanMod's brightness multiply through separateAo");
         var fluidMixin = MixinBytecode.nativeClass("net/chimera/mixin/FluidRendererMixin");
         assertTrue(MixinBytecode.mixinTargets(fluidMixin, "net/vulkanmod/render/chunk/build/renderer/FluidRenderer")
-                        && MixinBytecode.injects(fluidMixin, "Lorg/spongepowered/asm/mixin/injection/Inject;", "updateColor", null),
+                        && MixinBytecode.injects(fluidMixin, "Lorg/spongepowered/asm/mixin/injection/Inject;",
+                                "updateColor", null),
                 "fluid colours apply separateAo after VulkanMod computes them");
-        for (String name : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin", "FluidRendererMixin")) {
+        for (String name
+                : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin", "FluidRendererMixin")) {
             MixinBytecode.assertMixinRegistered(name);
         }
 

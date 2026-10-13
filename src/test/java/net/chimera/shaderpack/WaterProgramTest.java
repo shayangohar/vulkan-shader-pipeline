@@ -216,7 +216,8 @@ final class WaterProgramTest {
                             && !deviation.startsWith("ALPHA_TEST_PLANNED_NOT_INSTALLED:"),
                     name + " gbuffers_water blocked: " + deviation);
         }
-        assertTrue(water.deviations().stream().anyMatch(value -> value.startsWith("ALPHA_TEST_APPLIED:gbuffers_water:")),
+        assertTrue(water.deviations().stream().anyMatch(value ->
+                value.startsWith("ALPHA_TEST_APPLIED:gbuffers_water:")),
                 name + " gbuffers_water does not carry the pack alpha test: " + water.deviations());
         EntityRealPackTest.compileStage(water.convertedVertex(), true, name + " gbuffers_water vertex");
         EntityRealPackTest.compileStage(water.convertedFragment(), false, name + " gbuffers_water fragment");

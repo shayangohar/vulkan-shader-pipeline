@@ -47,9 +47,11 @@ public final class ChimeraHorizonRenderer implements AutoCloseable {
             close();
             var builder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_FAN, DefaultVertexFormat.POSITION);
             float[] vertices = vertices(distance);
-            for (int i = 0; i < vertices.length; i += 3) builder.addVertex(vertices[i], vertices[i + 1], vertices[i + 2]);
+            for (int i = 0; i < vertices.length; i += 3) builder.addVertex(vertices[i], vertices[i + 1],
+                    vertices[i + 2]);
             try (var mesh = builder.buildOrThrow()) {
-                buffer = RenderSystem.getDevice().createBuffer(() -> "Chimera horizon", GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, mesh.vertexBuffer());
+                buffer = RenderSystem.getDevice().createBuffer(() -> "Chimera horizon",
+                        GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, mesh.vertexBuffer());
             }
             Tesselator.getInstance().clear();
             radius = nextRadius;
@@ -60,7 +62,8 @@ public final class ChimeraHorizonRenderer implements AutoCloseable {
                 new Vector4f(fog.getFloat(0), fog.getFloat(4), fog.getFloat(8), 1), new Vector3f(), new Matrix4f());
         var target = minecraft.getMainRenderTarget();
         try (var pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Chimera horizon",
-                target.getColorTextureView(), OptionalInt.empty(), target.getDepthTextureView(), OptionalDouble.empty())) {
+                target.getColorTextureView(), OptionalInt.empty(), target.getDepthTextureView(),
+                        OptionalDouble.empty())) {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", transform);
             pass.setPipeline(RenderPipelines.SKY);

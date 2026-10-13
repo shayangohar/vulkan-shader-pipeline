@@ -192,7 +192,8 @@ public final class PackResourcePlan {
         if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
             declaration = declarations.get("customTexture." + name);
         }
-        if (declaration == null && name.equals("tex") && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
+        if (declaration == null && name.equals("tex")
+                && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
             declaration = declarations.get("customTexture.textureAtlas");
         }
         if (declaration == null && name.equals("noisetex")) {

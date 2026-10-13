@@ -24,8 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The recorded M6.5 qualification of exact Complementary and BSL versions (evidence: needs
- * -Pchimera.pack.complementaryVersion and -Pchimera.pack.bslVersion).
+ * The qualification of exact Complementary and BSL versions recorded in
+ * testpacks/baselines/m6_5.json (evidence: needs -Pchimera.pack.complementaryVersion and
+ * -Pchimera.pack.bslVersion).
  */
 @Tag("evidence")
 final class PackQualificationEvidenceTest {
@@ -39,7 +40,7 @@ final class PackQualificationEvidenceTest {
 
     @Test
     void packQualification() throws Exception {
-        JsonObject baselineRoot = readObject(TestPacks.baseline("m6_5"), "M6.5 baseline");
+        JsonObject baselineRoot = readObject(TestPacks.baseline("m6_5"), "baseline");
         verifyBaselineHeader(baselineRoot);
         verifyM61Fixture(TestPacks.fixtures());
 
@@ -52,10 +53,10 @@ final class PackQualificationEvidenceTest {
             emitBaseline(packs);
             return;
         }
-        JsonObject baselinePacks = childObject(baselineRoot, "packs", "M6.5 baseline packs");
+        JsonObject baselinePacks = childObject(baselineRoot, "packs", "baseline packs");
         for (PackSpec pack : packs) {
             verifyPack(pack, childObject(baselinePacks, pack.label(),
-                    "M6.5 baseline entry for " + pack.label()));
+                    "baseline entry for " + pack.label()));
         }
     }
 
@@ -63,21 +64,21 @@ final class PackQualificationEvidenceTest {
         JsonObject actual = snapshot(spec, true);
         for (String key : STATIC_KEYS) {
             assertEquals(expected.get(key).toString(), actual.get(key).toString(),
-                    "M6.5 " + spec.label() + " " + key);
+                    spec.label() + " " + key);
         }
         for (String key : EVIDENCE_KEYS) {
             assertNonEmptyRelativeArray(expected, key,
-                    "M6.5 " + spec.label() + " " + key);
+                    spec.label() + " " + key);
         }
         verifyEquivalentDirectoryLoading(spec, actual);
     }
 
     private static JsonObject snapshot(PackSpec spec, boolean requireExecutable) throws IOException {
         assertTrue(Files.isDirectory(spec.path()) || Files.isRegularFile(spec.path()),
-                "M6.5 " + spec.label() + " path does not exist: " + spec.path());
+                spec.label() + " path does not exist: " + spec.path());
         String fingerprint = PackFingerprint.sha256(spec.path());
         assertEquals(fingerprint, PackFingerprint.sha256(spec.path()),
-                "M6.5 " + spec.label() + " fingerprint stability");
+                spec.label() + " fingerprint stability");
 
         PackProbe.Analysis analysis;
         Path extracted = null;
@@ -85,22 +86,22 @@ final class PackQualificationEvidenceTest {
             List<String> loadedNames = loaded.programs().stream()
                     .map(PackProgram::name).toList();
             assertEquals(loadedNames.stream().distinct().count(), (long) loadedNames.size(),
-                    "M6.5 " + spec.label() + " duplicate runtime programs");
+                    spec.label() + " duplicate runtime programs");
             extracted = Files.isRegularFile(spec.path()) ? loaded.shadersDir() : null;
             analysis = PackProbe.analyze(spec.path(), loaded);
             verifyPlanEligibility(spec, analysis);
         }
         if (extracted != null) {
             assertTrue(!Files.exists(extracted),
-                    "M6.5 " + spec.label() + " ZIP extraction was not cleaned up");
+                    spec.label() + " ZIP extraction was not cleaned up");
         }
 
         ConformanceReport report = analysis.report();
         ConformanceReport second = PackProbe.probe(spec.path());
         assertEquals(report.toJson(), second.toJson(),
-                "M6.5 " + spec.label() + " report stability");
+                spec.label() + " report stability");
         assertEquals(report.sha256(), second.sha256(),
-                "M6.5 " + spec.label() + " report hash stability");
+                spec.label() + " report hash stability");
         assertNoUnstableReportData(report, spec.path(), spec.label());
 
         List<String> executable = new ArrayList<>();
@@ -111,9 +112,9 @@ final class PackQualificationEvidenceTest {
             boolean eligible = program.support() == ConformanceReport.SupportStatus.SUPPORTED
                     || program.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
             assertEquals(eligible, report.shouldAttempt(program.name()),
-                    "M6.5 " + spec.label() + " eligibility: " + program.name());
+                    spec.label() + " eligibility: " + program.name());
             assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
-                    program.runtime(), "M6.5 " + spec.label() + " static runtime: " + program.name());
+                    program.runtime(), spec.label() + " static runtime: " + program.name());
             deviations.addAll(program.deviations());
             if (eligible) {
                 executable.add(program.name());
@@ -124,7 +125,7 @@ final class PackQualificationEvidenceTest {
             }
         }
         if (requireExecutable) {
-            assertTrue(!executable.isEmpty(), "M6.5 " + spec.label()
+            assertTrue(!executable.isEmpty(), spec.label()
                     + " has no executable program in the Chimera subset");
         }
 
@@ -158,16 +159,16 @@ final class PackQualificationEvidenceTest {
         List<String> planNames = analysis.plan().programs().stream()
                 .map(PackProgramPlan::name).sorted().toList();
         assertTrue(reportNames.containsAll(planNames),
-                "M6.5 " + spec.label() + " plan contains an unreported program");
+                spec.label() + " plan contains an unreported program");
         for (ConformanceReport.ProgramReport program : analysis.report().programs()) {
             PackProgramPlan planned = analysis.plan().program(program.name());
             if (planned == null) {
                 assertTrue(!analysis.report().shouldAttempt(program.name()),
-                        "M6.5 " + spec.label() + " unplanned program was executable: "
+                        spec.label() + " unplanned program was executable: "
                                 + program.name());
             } else {
                 assertEquals(planned.executable(), analysis.report().shouldAttempt(program.name()),
-                        "M6.5 " + spec.label() + " plan eligibility: " + program.name());
+                        spec.label() + " plan eligibility: " + program.name());
             }
         }
     }
@@ -175,24 +176,24 @@ final class PackQualificationEvidenceTest {
     private static void verifyM61Fixture(Path fixtureRoot) throws IOException {
         Path fixture = fixtureRoot.resolve("m6_1/program_plan");
         Path baselinePath = fixtureRoot.resolve("baselines/m6_1.json");
-        JsonObject baseline = readObject(baselinePath, "M6.1 baseline");
+        JsonObject baseline = readObject(baselinePath, "baseline");
         ConformanceReport report = PackProbe.probe(fixture);
         assertEquals(baseline.get("reportSha256").getAsString(), report.sha256(),
-                "M6.5 M6.1 fixture report hash");
+                "M6.1 fixture report hash");
         assertEquals(jsonStrings(baseline.getAsJsonArray("expectedExecutablePrograms")),
                 names(report, ConformanceReport.SupportStatus.SUPPORTED,
                         ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION),
-                "M6.5 M6.1 executable baseline");
+                "M6.1 executable baseline");
         assertEquals(jsonStrings(baseline.getAsJsonArray("expectedFallbackPrograms")),
                 names(report, ConformanceReport.SupportStatus.IDENTITY_FALLBACK),
-                "M6.5 M6.1 fallback baseline");
+                "M6.1 fallback baseline");
         assertEquals(jsonStrings(baseline.getAsJsonArray("expectedDeviations")),
-                allDeviations(report), "M6.5 M6.1 deviation baseline");
+                allDeviations(report), "M6.1 deviation baseline");
         Map<String, String> expectedSources = new TreeMap<>();
         for (Map.Entry<String, JsonElement> entry : baseline.getAsJsonObject("sourceHashes").entrySet()) {
             expectedSources.put(entry.getKey(), entry.getValue().getAsString());
         }
-        assertEquals(expectedSources, sourceHashes(report), "M6.5 M6.1 source hashes");
+        assertEquals(expectedSources, sourceHashes(report), "M6.1 source hashes");
     }
 
     private static List<String> names(
@@ -236,13 +237,13 @@ final class PackQualificationEvidenceTest {
                 copyTree(extracted, destination);
             }
             assertTrue(!Files.exists(extracted),
-                    "M6.5 " + spec.label() + " archive extraction cleanup");
+                    spec.label() + " archive extraction cleanup");
             JsonObject directorySnapshot = snapshotFromReport(
                     PackProbe.probe(packDirectory), spec);
             for (String key : List.of("logicalName", "reportSha256", "executablePrograms",
                     "fallbackPrograms", "unsupportedPrograms", "deviationCodes", "sourceHashes")) {
                 assertEquals(archiveSnapshot.get(key).toString(), directorySnapshot.get(key).toString(),
-                        "M6.5 " + spec.label() + " ZIP/directory " + key);
+                        spec.label() + " ZIP/directory " + key);
             }
         } finally {
             TestFiles.deleteTree(root);
@@ -293,13 +294,13 @@ final class PackQualificationEvidenceTest {
 
     private static void verifyBaselineHeader(JsonObject baseline) {
         assertEquals("1", baseline.get("formatVersion").toString(),
-                "M6.5 baseline format version");
+                "baseline format version");
         assertEquals("\"Sodium + Iris\"", baseline.get("referenceBackend").toString(),
-                "M6.5 baseline reference backend");
+                "baseline reference backend");
         assertEquals("\"FPS_PLUS_RENDERDOC_COUNTS\"", baseline.get("performanceMethod").toString(),
-                "M6.5 baseline performance method");
+                "baseline performance method");
         assertEquals("\"captures\"", baseline.get("captureDirectory").toString(),
-                "M6.5 baseline capture directory");
+                "baseline capture directory");
     }
 
     private static void assertNonEmptyRelativeArray(JsonObject object, String key, String message) {
@@ -317,9 +318,9 @@ final class PackQualificationEvidenceTest {
             ConformanceReport report, Path pack, String label) {
         String json = report.toJson();
         assertTrue(!json.contains(pack.toAbsolutePath().normalize().toString()),
-                "M6.5 " + label + " report contains an absolute pack path");
+                label + " report contains an absolute pack path");
         assertTrue(!json.matches("(?s).*\\b(?:timestamp|createdAt|updatedAt)\\b.*"),
-                "M6.5 " + label + " report contains timestamp data");
+                label + " report contains timestamp data");
     }
 
     private static void copyTree(Path source, Path destination) throws IOException {

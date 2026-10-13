@@ -3,27 +3,25 @@ package net.chimera.shaderpack;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic M8.5b sky and cloud adapter checks. */
+/** The sky and cloud adapters. */
 final class SkyCloudAdapterTest {
     @Test
     void skyCloudAdapters() throws Exception {
         Path root = TestPacks.fixtures();
         Path fixture = root.resolve("m8_5/sky_clouds");
         if (!Files.isDirectory(fixture)) {
-            throw new AssertionError("M8.5b fixture is missing: " + fixture);
+            throw new AssertionError("fixture is missing: " + fixture);
         }
         PackProbe.Analysis first = PackProbe.analyze(fixture);
         PackProbe.Analysis second = PackProbe.analyze(fixture);
         assertEquals(first.report().toJson(), second.report().toJson(),
-                "M8.5b report is not deterministic");
+                "report is not deterministic");
 
         assertProgram(first.plan(), "gbuffers_skybasic", UniformRegistry.Stage.SKY,
                 "SKY_VERTEX_BRIDGE", FamilyAdapterPlan.VertexContract.SKY_POSITION);
@@ -43,13 +41,13 @@ final class SkyCloudAdapterTest {
                 "textured sky sampler did not use the geometry binding lane");
         assertNoUnstable(first.report().toJson(), fixture);
         assertTrue(Files.isRegularFile(root.resolve("baselines/m8_5b.json")),
-                "M8.5b baseline is missing");
+                "baseline is missing");
     }
 
     private static void assertProgram(PackPlan plan, String name, UniformRegistry.Stage stage,
                                       String deviation, FamilyAdapterPlan.VertexContract contract) {
         PackProgramPlan program = plan == null ? null : plan.program(name);
-        assertTrue(program != null, "M8.5b program is missing: " + name);
+        assertTrue(program != null, "program is missing: " + name);
         assertTrue(program.executable(), name + " is not executable: " + program.deviations());
         assertEquals(stage, program.interfacePlan().effective(stage).stage(),
                 name + " stage");
@@ -63,8 +61,8 @@ final class SkyCloudAdapterTest {
 
     private static void assertNoUnstable(String text, Path fixture) {
         assertTrue(!text.contains(fixture.toAbsolutePath().toString()),
-                "M8.5b report contains an absolute path");
+                "report contains an absolute path");
         assertTrue(!text.matches("(?s).*\\b(?:timestamp|generatedAt)\\b.*"),
-                "M8.5b report contains a timestamp");
+                "report contains a timestamp");
     }
 }

@@ -108,8 +108,10 @@ final class PackShadowPass {
             // The receiver keeps sampling the previously committed map until
             // this pass finishes. Only the pack caster uses the legacy range.
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                ChimeraMainPass.trace("shadowPre", "shadowColor", shadowColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                ChimeraMainPass.trace("shadowPre", "shadowDepth", shadowDepth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+                ChimeraMainPass.trace("shadowPre", "shadowColor", shadowColor,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                ChimeraMainPass.trace("shadowPre", "shadowDepth", shadowDepth,
+                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
                 shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 shadowDepth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
             }
@@ -197,8 +199,10 @@ final class PackShadowPass {
             }
 
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                ChimeraMainPass.trace("shadowPost", "shadowColor", shadowColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                ChimeraMainPass.trace("shadowPost", "shadowDepth", shadowDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                ChimeraMainPass.trace("shadowPost", "shadowColor", shadowColor,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                ChimeraMainPass.trace("shadowPost", "shadowDepth", shadowDepth,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 if (packShadow) {
                     this.shadowMap.shadowColor(1).transitionImageLayout(stack, cmd,
@@ -467,7 +471,8 @@ final class PackShadowPass {
      * compatible depth semantics, so retain VulkanMod's fixed shadow path.
      */
     boolean usePackShadowRuntime() {
-        return !pass.packPostChainRejected && pass.pipelines.shadowPipeline != null && pass.pipelines.terrainPipeline != null;
+        return !pass.packPostChainRejected && pass.pipelines.shadowPipeline != null
+                && pass.pipelines.terrainPipeline != null;
     }
 
     /**

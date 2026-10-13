@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 
-/** Small deterministic checks for the bounded M6.4 target bridge. */
+/** The bounded post target bridge: target directives, device MRT limits and target banks. */
 final class PostTargetBridgeTest {
     @Test
     void targetBridge() {

@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Pure matrix and snapshot-state checks for the M8.7 pack shadow contract. */
+/** Matrix and snapshot-state checks for the pack shadow contract. */
 final class ShadowMapMatrixTest {
     @Test
     void projectionRanges() {

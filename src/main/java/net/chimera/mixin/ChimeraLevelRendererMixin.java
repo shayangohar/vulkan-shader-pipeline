@@ -43,14 +43,16 @@ public abstract class ChimeraLevelRendererMixin {
     private boolean chimera$particleDrawActive;
 
     @Inject(method = "method_62214", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;endBatch()V", ordinal = 1), require = 1)
+            target = "Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;endBatch()V", ordinal = 1),
+                    require = 1)
     private void chimera$solidHandBeforeDeferred(CallbackInfo callback) {
         ChimeraHandRenderer.drawSolid();
     }
 
     @Inject(method = "method_62214",
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/renderer/LevelRenderer;prepareChunkRenders(Lorg/joml/Matrix4fc;DDD)Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;"),
+                    target = "Lnet/minecraft/client/renderer/LevelRenderer;prepareChunkRenders(Lorg/joml/Matrix4fc;"
+                            + "DDD)Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;"),
             require = 1)
     private void chimera$captureChunkSampler(
             GpuBufferSlice gpuBufferSlice,

@@ -17,7 +17,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
@@ -25,7 +24,7 @@ import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic checks for the M8.1 terrain and water material bridge. */
+/** The terrain and water material bridge. */
 final class TerrainMaterialBridgeTest {
     @Test
     void terrainMaterialBridge() throws Exception {
@@ -33,7 +32,7 @@ final class TerrainMaterialBridgeTest {
         Path supportedRoot = root.resolve("m8_1/terrain_water");
         PackProbe.Analysis analysis = PackProbe.analyze(supportedRoot);
         PackPlan plan = analysis.plan();
-        assertTrue(plan != null, "M8.1 fixture plan is missing");
+        assertTrue(plan != null, "fixture plan is missing");
         assertTrue(plan.terrainMaterial().modern(), "modern terrain material plan was not selected");
         // Iris carries separateAo in the colour's alpha, so it does not widen the layout.
         assertTrue(plan.terrainShading().separateAo(), "the fixture's separateAo was not read");
@@ -67,36 +66,36 @@ final class TerrainMaterialBridgeTest {
 
     private static void verifyBaseline(
             PackProbe.Analysis analysis, Path baselinePath, String fixtureName) throws IOException {
-        assertTrue(Files.isRegularFile(baselinePath), "M8.1 baseline is missing");
+        assertTrue(Files.isRegularFile(baselinePath), "baseline is missing");
         JsonObject root = JsonParser.parseString(
                 Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
         JsonObject fixtures = root.getAsJsonObject("fixtures");
         assertTrue(fixtures != null && fixtures.has(fixtureName),
-                "M8.1 baseline entry is missing: " + fixtureName);
+                "baseline entry is missing: " + fixtureName);
         JsonObject entry = fixtures.getAsJsonObject(fixtureName);
         String reportHash = entry.get("reportSha256").getAsString();
         assertEquals(reportHash, analysis.report().sha256(),
-                "M8.1 report hash: " + fixtureName);
+                "report hash: " + fixtureName);
         Map<String, String> expectedSources = new TreeMap<>();
         for (Map.Entry<String, JsonElement> value
                 : entry.getAsJsonObject("sourceHashes").entrySet()) {
             expectedSources.put(value.getKey(), value.getValue().getAsString());
         }
         assertEquals(expectedSources, sourceHashes(analysis.report()),
-                "M8.1 source hashes: " + fixtureName);
+                "source hashes: " + fixtureName);
         assertEquals(strings(entry.getAsJsonArray("expectedExecutablePrograms")),
                 programsWithStatus(analysis.report(), ConformanceReport.SupportStatus.SUPPORTED,
                         ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION),
-                "M8.1 executable programs: " + fixtureName);
+                "executable programs: " + fixtureName);
         assertEquals(strings(entry.getAsJsonArray("expectedFallbackPrograms")),
                 programsWithStatus(analysis.report(), ConformanceReport.SupportStatus.IDENTITY_FALLBACK),
-                "M8.1 fallback programs: " + fixtureName);
+                "fallback programs: " + fixtureName);
         assertEquals(strings(entry.getAsJsonArray("expectedUnsupportedPrograms")),
                 programsWithStatus(analysis.report(), ConformanceReport.SupportStatus.UNSUPPORTED),
-                "M8.1 unsupported programs: " + fixtureName);
+                "unsupported programs: " + fixtureName);
         assertEquals(strings(entry.getAsJsonArray("expectedDeviations")),
                 allDeviations(analysis.report()),
-                "M8.1 deviations: " + fixtureName);
+                "deviations: " + fixtureName);
     }
 
     private static Map<String, String> sourceHashes(ConformanceReport report) {
@@ -212,7 +211,7 @@ final class TerrainMaterialBridgeTest {
     private static PackProgramPlan require(PackPlan plan, String name) {
         PackProgramPlan value = plan == null ? null : plan.program(name);
         if (value == null) {
-            throw new AssertionError("M8.1 missing program: " + name);
+            throw new AssertionError("missing program: " + name);
         }
         return value;
     }

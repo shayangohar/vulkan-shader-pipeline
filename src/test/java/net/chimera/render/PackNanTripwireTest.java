@@ -75,7 +75,8 @@ final class PackNanTripwireTest {
         private VkQueue queue;
         private VkCommandBuffer command;
         private int family;
-        private long pool, fence, image, imageMemory, view, sampler, shader, setLayout, layout, pipeline, descriptors, set;
+        private long pool, fence, image, imageMemory, view, sampler, shader, setLayout, layout, pipeline, descriptors,
+                set;
         private long resultBuffer, resultMemory, hostBuffer, hostMemory;
         private ByteBuffer mapped;
         private int imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -87,7 +88,8 @@ final class PackNanTripwireTest {
                 PointerBuffer pointer = stack.mallocPointer(1);
                 VkInstanceCreateInfo create = VkInstanceCreateInfo.calloc(stack).sType$Default()
                         .pApplicationInfo(VkApplicationInfo.calloc(stack).sType$Default()
-                                .pApplicationName(stack.UTF8("Chimera NaN scan test")).apiVersion(VK_MAKE_VERSION(1, 2, 0)));
+                                .pApplicationName(stack.UTF8("Chimera NaN scan test"))
+                                        .apiVersion(VK_MAKE_VERSION(1, 2, 0)));
                 ok(vkCreateInstance(create, null, pointer));
                 instance = new VkInstance(pointer.get(0), create);
                 var count = stack.mallocInt(1);
@@ -106,14 +108,16 @@ final class PackNanTripwireTest {
                 assertTrue(family >= 0, "no compute queue");
                 VkDeviceQueueCreateInfo.Buffer queueCreate = VkDeviceQueueCreateInfo.calloc(1, stack)
                         .sType$Default().queueFamilyIndex(family).pQueuePriorities(stack.floats(1));
-                VkDeviceCreateInfo deviceCreate = VkDeviceCreateInfo.calloc(stack).sType$Default().pQueueCreateInfos(queueCreate);
+                VkDeviceCreateInfo deviceCreate = VkDeviceCreateInfo.calloc(stack).sType$Default()
+                        .pQueueCreateInfos(queueCreate);
                 ok(vkCreateDevice(physical, deviceCreate, null, pointer));
                 device = new VkDevice(pointer.get(0), physical, deviceCreate);
                 vkGetDeviceQueue(device, family, 0, pointer);
                 queue = new VkQueue(pointer.get(0), device);
                 LongBuffer handle = stack.mallocLong(1);
                 ok(vkCreateCommandPool(device, VkCommandPoolCreateInfo.calloc(stack).sType$Default()
-                        .queueFamilyIndex(family).flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT), null, handle));
+                        .queueFamilyIndex(family).flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT), null,
+                                handle));
                 pool = handle.get(0);
                 ok(vkAllocateCommandBuffers(device, VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
                         .commandPool(pool).level(VK_COMMAND_BUFFER_LEVEL_PRIMARY).commandBufferCount(1), pointer));
@@ -146,7 +150,8 @@ final class PackNanTripwireTest {
             view = handle.get(0);
             ok(vkCreateSampler(device, VkSamplerCreateInfo.calloc(stack).sType$Default()
                     .magFilter(VK_FILTER_NEAREST).minFilter(VK_FILTER_NEAREST)
-                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE).addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                            .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE), null, handle));
             sampler = handle.get(0);
             long[] result = buffer(stack, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
@@ -159,25 +164,33 @@ final class PackNanTripwireTest {
             ok(vkMapMemory(device, hostMemory, 0, PackNanTripwire.RESULT_BYTES, 0, pointer));
             mapped = MemoryUtil.memByteBuffer(pointer.get(0), PackNanTripwire.RESULT_BYTES);
 
-            ok(vkCreateShaderModule(device, VkShaderModuleCreateInfo.calloc(stack).sType$Default().pCode(code), null, handle));
+            ok(vkCreateShaderModule(device, VkShaderModuleCreateInfo.calloc(stack).sType$Default().pCode(code), null,
+                    handle));
             shader = handle.get(0);
             VkDescriptorSetLayoutBinding.Buffer bindings = VkDescriptorSetLayoutBinding.calloc(2, stack);
-            bindings.get(0).binding(0).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            bindings.get(1).binding(1).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            ok(vkCreateDescriptorSetLayout(device, VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default().pBindings(bindings), null, handle));
+            bindings.get(0).binding(0).descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            bindings.get(1).binding(1).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            ok(vkCreateDescriptorSetLayout(device,
+                    VkDescriptorSetLayoutCreateInfo.calloc(stack).sType$Default().pBindings(bindings), null, handle));
             setLayout = handle.get(0);
-            VkPushConstantRange.Buffer push = VkPushConstantRange.calloc(1, stack).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT).size(4);
+            VkPushConstantRange.Buffer push = VkPushConstantRange.calloc(1, stack)
+                    .stageFlags(VK_SHADER_STAGE_COMPUTE_BIT).size(4);
             ok(vkCreatePipelineLayout(device, VkPipelineLayoutCreateInfo.calloc(stack).sType$Default()
                     .pSetLayouts(stack.longs(setLayout)).pPushConstantRanges(push), null, handle));
             layout = handle.get(0);
-            VkComputePipelineCreateInfo.Buffer info = VkComputePipelineCreateInfo.calloc(1, stack).sType$Default().layout(layout);
+            VkComputePipelineCreateInfo.Buffer info = VkComputePipelineCreateInfo.calloc(1, stack).sType$Default()
+                    .layout(layout);
             info.stage().sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT).module(shader).pName(stack.UTF8("main"));
             ok(vkCreateComputePipelines(device, VK_NULL_HANDLE, info, null, handle));
             pipeline = handle.get(0);
             VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(2, stack);
             sizes.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(1);
             sizes.get(1).type(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1);
-            ok(vkCreateDescriptorPool(device, VkDescriptorPoolCreateInfo.calloc(stack).sType$Default().maxSets(1).pPoolSizes(sizes), null, handle));
+            ok(vkCreateDescriptorPool(device,
+                    VkDescriptorPoolCreateInfo.calloc(stack).sType$Default().maxSets(1).pPoolSizes(sizes), null,
+                    handle));
             descriptors = handle.get(0);
             ok(vkAllocateDescriptorSets(device, VkDescriptorSetAllocateInfo.calloc(stack).sType$Default()
                     .descriptorPool(descriptors).pSetLayouts(stack.longs(setLayout)), handle));
@@ -197,7 +210,8 @@ final class PackNanTripwireTest {
         private long[] buffer(MemoryStack stack, int usage, int flags) {
             LongBuffer handle = stack.mallocLong(1);
             ok(vkCreateBuffer(device, VkBufferCreateInfo.calloc(stack).sType$Default()
-                    .size(PackNanTripwire.RESULT_BYTES).usage(usage).sharingMode(VK_SHARING_MODE_EXCLUSIVE), null, handle));
+                    .size(PackNanTripwire.RESULT_BYTES).usage(usage).sharingMode(VK_SHARING_MODE_EXCLUSIVE), null,
+                            handle));
             long buffer = handle.get(0);
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetBufferMemoryRequirements(device, buffer, requirements);
@@ -269,8 +283,10 @@ final class PackNanTripwireTest {
                 vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, stack.longs(set), null);
                 for (int check = 0; check < checks; check++) {
                     // Single-check tests also verify that a nonzero slot leaves its neighbor untouched.
-                    vkCmdPushConstants(command, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, stack.ints(checks == 1 ? 1 : check));
-                    vkCmdDispatch(command, PackNanTripwire.dispatchGroups(WIDTH), PackNanTripwire.dispatchGroups(HEIGHT), 1);
+                    vkCmdPushConstants(command, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                            stack.ints(checks == 1 ? 1 : check));
+                    vkCmdDispatch(command, PackNanTripwire.dispatchGroups(WIDTH),
+                            PackNanTripwire.dispatchGroups(HEIGHT), 1);
                 }
                 memoryBarrier(stack, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -285,19 +301,22 @@ final class PackNanTripwireTest {
                         .pCommandBuffers(stack.pointers(command.address())), fence));
                 ok(vkWaitForFences(device, fence, true, 10_000_000_000L));
                 long elapsed = System.nanoTime() - start;
-                if (checks == 1) assertTrue(mapped.getInt(0) == 0 && mapped.getInt(8) == -1, "neighbor slot overwritten");
+                if (checks == 1) assertTrue(mapped.getInt(0) == 0 && mapped.getInt(8) == -1,
+                        "neighbor slot overwritten");
                 for (int check = 0; check < checks; check++) {
                     int at = (checks == 1 ? 1 : check) * 16;
                     assertTrue(mapped.getInt(at) == nan && mapped.getInt(at + 4) == inf
                                     && mapped.getInt(at + 8) == first && mapped.getInt(at + 12) == bits,
                             "GPU counts/coordinate/channel mismatch at slot " + check);
                 }
-                if (checks > 1) System.out.printf("[chimera] %d %dx%d RGBA32F %s scans + clear/copy/submit/fence: %.2f ms%n",
+                if (checks > 1) System.out.printf(
+                        "[chimera] %d %dx%d RGBA32F %s scans + clear/copy/submit/fence: %.2f ms%n",
                         checks, WIDTH, HEIGHT, nan == 0 ? "clean" : "fully NaN", elapsed / 1_000_000.0);
             }
         }
 
-        private void transition(MemoryStack stack, int next, int sourceStage, int sourceAccess, int destinationStage, int destinationAccess) {
+        private void transition(MemoryStack stack, int next, int sourceStage, int sourceAccess, int destinationStage,
+                int destinationAccess) {
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack).sType$Default()
                     .image(image).oldLayout(imageLayout).newLayout(next)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
@@ -307,7 +326,8 @@ final class PackNanTripwireTest {
             imageLayout = next;
         }
 
-        private void memoryBarrier(MemoryStack stack, int sourceStage, int sourceAccess, int destinationStage, int destinationAccess) {
+        private void memoryBarrier(MemoryStack stack, int sourceStage, int sourceAccess, int destinationStage,
+                int destinationAccess) {
             vkCmdPipelineBarrier(command, sourceStage, destinationStage, 0,
                     PackVulkanBarriers.createMemoryBarrier(stack, sourceAccess, destinationAccess), null, null);
         }

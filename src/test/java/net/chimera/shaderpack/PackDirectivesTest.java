@@ -26,7 +26,8 @@ final class PackDirectivesTest {
     void glslBreadth(@TempDir Path root) throws IOException {
         for (String accepted : List.of("#version 110", "#version 120e", "#version 150", "#version 330 core",
                 "#version 400 compatibility", "#version 430 compatibility", "#version 460")) {
-            assertTrue(GlslVersion.declaredAndSupported(accepted + "\nvoid main() {}"), accepted + " is a desktop version");
+            assertTrue(GlslVersion.declaredAndSupported(accepted + "\nvoid main() {}"),
+                    accepted + " is a desktop version");
         }
         for (String refused : List.of("#version 300 es", "#version 100", "#version 470", "#version 200")) {
             assertTrue(!GlslVersion.declaredAndSupported(refused + "\nvoid main() {}"), refused + " is not");

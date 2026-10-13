@@ -26,7 +26,8 @@ public abstract class ChimeraShadowSectionsMixin implements ChimeraSectionGridAc
     private SectionGrid sectionGrid;
 
     @Redirect(method = "renderSectionLayer", at = @At(value = "INVOKE",
-            target = "Lnet/vulkanmod/render/chunk/graph/SectionGraph;getChunkAreaQueue()Lnet/vulkanmod/render/chunk/util/AreaSetQueue;"),
+            target = "Lnet/vulkanmod/render/chunk/graph/SectionGraph;"
+                    + "getChunkAreaQueue()Lnet/vulkanmod/render/chunk/util/AreaSetQueue;"),
             require = 1)
     private AreaSetQueue chimera$shadowAreas(SectionGraph graph) {
         return ShadowSectionQueue.active() ? ShadowSectionQueue.areas() : graph.getChunkAreaQueue();

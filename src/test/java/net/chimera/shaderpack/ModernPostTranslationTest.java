@@ -13,7 +13,7 @@ import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic checks for the measured M8.0 modern post translation subset. */
+/** The measured modern post translation subset. */
 final class ModernPostTranslationTest {
     @Test
     void modernPostTranslation() {
@@ -23,38 +23,38 @@ final class ModernPostTranslationTest {
         PackProgramPlan composite1 = require(analysis.plan(), "composite1");
         PackProgramPlan unsupported = require(analysis.plan(), "composite2");
 
-        assertTrue(composite.executable(), "M8.0 modern 330 post was rejected: " + composite.deviations()
+        assertTrue(composite.executable(), "modern 330 post was rejected: " + composite.deviations()
                 + " interface=" + composite.interfacePlan().deviations()
                 + " target=" + (composite.targetPlan() == null ? "null" : composite.targetPlan().deviations()));
         assertTrue(composite.deviations().contains("MODERN_GLSL_TRANSLATED"),
-                "M8.0 translation deviation is missing");
+                "translation deviation is missing");
         assertTrue(composite.convertedFragment().startsWith("#version 460"),
-                "M8.0 generated version is missing");
+                "generated version is missing");
         assertTrue(!composite.convertedFragment().contains("layout(location = 0) out vec4 fragColor"),
-                "M8.0 source output declaration was not replaced");
+                "source output declaration was not replaced");
         assertTrue(composite.convertedFragment().contains("chimeraFragColor0"),
-                "M8.0 generated output is missing");
+                "generated output is missing");
         assertTrue(composite.convertedFragment().contains("texture(colortex0"),
-                "M8.0 modern texture call was not retained safely");
+                "modern texture call was not retained safely");
         assertTrue(composite.interfacePlan().samplers().stream()
                         .anyMatch(value -> value.name().equals("colortex0")),
-                "M8.0 sampler interface is missing");
+                "sampler interface is missing");
 
-        assertTrue(composite1.executable(), "M8.0 modern 400 post was rejected");
+        assertTrue(composite1.executable(), "modern 400 post was rejected");
         assertTrue(!composite1.convertedFragment().contains("#version 400"),
-                "M8.0 old version directive remains");
+                "old version directive remains");
 
         // Any desktop version converts (GlslVersion); GLSL ES is not one.
-        assertTrue(!unsupported.executable(), "M8.0 GLSL ES post was not rejected");
+        assertTrue(!unsupported.executable(), "GLSL ES post was not rejected");
         assertTrue(unsupported.deviations().stream()
                         .anyMatch(value -> value.startsWith("TRANSLATION_UNSUPPORTED:")
                                 || value.equals("POST_CONVERTER_UNSUPPORTED")),
-                "M8.0 GLSL ES post has no named fallback");
+                "GLSL ES post has no named fallback");
         assertTrue(PostVertexBridge.supportsModernPost("#version 330\nvoid main(){}")
                         && PostVertexBridge.supportsModernPost("#version 450 core\nvoid main(){}"),
-                "M8.0 version capability check failed");
+                "version capability check failed");
         assertTrue(!PostVertexBridge.supportsModernPost("#version 300 es\nvoid main(){}"),
-                "M8.0 GLSL ES post was accepted");
+                "GLSL ES post was accepted");
         verifyPerTargetFallback(root);
         verifyOrientationFixture(root);
     }
@@ -245,7 +245,7 @@ final class ModernPostTranslationTest {
         for (String name : executable) {
             PackProgramPlan plan = require(analysis.plan(), name);
             assertTrue(plan.executable() && plan.convertedVertex() != null,
-                    "M8.0 orientation stage is not executable: " + name
+                    "orientation stage is not executable: " + name
                             + " deviations=" + plan.deviations()
                             + " interface=" + plan.interfacePlan().deviations()
                             + " target=" + (plan.targetPlan() == null
@@ -254,7 +254,7 @@ final class ModernPostTranslationTest {
 
         PackProgramPlan fallback = require(analysis.plan(), "composite2");
         assertTrue(!fallback.executable(),
-                "M8.0 orientation middle fallback unexpectedly executes");
+                "orientation middle fallback unexpectedly executes");
     }
 
     private static void verifyPerTargetFallback(Path root) {
@@ -272,9 +272,9 @@ final class ModernPostTranslationTest {
         TargetStep unrelated = graph.step("final");
         assertTrue(dependent != null && !dependent.executable()
                         && dependent.deviations().contains("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:4"),
-                "M8.0 unsupported target format did not reject only its dependent stage");
+                "unsupported target format did not reject only its dependent stage");
         assertTrue(unrelated != null && unrelated.executable(),
-                "M8.0 unsupported target format rejected an unrelated stage");
+                "unsupported target format rejected an unrelated stage");
 
         verifyMipmapDirectives(root);
     }
@@ -291,7 +291,7 @@ final class ModernPostTranslationTest {
                 /* RENDERTARGETS: 0 */
                 """).plan();
         assertTrue(directives.mipmappedTargets().equals(List.of(0, 5)),
-                "M8.0 mipmap directives: " + directives.mipmappedTargets());
+                "mipmap directives: " + directives.mipmappedTargets());
 
         PackProbe.Analysis targetGraph = PackProbe.analyze(root.resolve("m7_4/target_graph"));
         String source = readFixture(
@@ -307,17 +307,17 @@ final class ModernPostTranslationTest {
         TargetStep mipStep = mipGraph.step("composite1");
         assertTrue(mipStep != null && mipStep.executable()
                         && mipStep.mipmapTargets().equals(List.of(0)),
-                "M8.0 mipmap step must regenerate allocated colortex0 only: " + mipStep);
+                "mipmap step must regenerate allocated colortex0 only: " + mipStep);
         TargetSpec scene = mipGraph.targets().stream().filter(spec -> spec.index() == 0).findFirst().orElseThrow();
         assertTrue(scene.mipmapped() && scene.mipLevels() == 11,
-                "M8.0 mipmapped colortex0 needs a full 1920x1080 chain");
+                "mipmapped colortex0 needs a full 1920x1080 chain");
         assertTrue(mipGraph.targets().stream().noneMatch(spec -> spec.index() != 0 && spec.mipmapped()),
-                "M8.0 only directed targets carry a mip chain");
+                "only directed targets carry a mip chain");
         assertTrue(mipGraph.deviations().stream().noneMatch(value -> value.contains("MIPMAP")),
-                "M8.0 mipmapping must not report a fallback");
+                "mipmapping must not report a fallback");
         assertTrue(!mipGraph.fingerprint().equals(PackTargetGraphPlan.build(targetGraph.plan().programs(),
                         targetGraph.config(), targetGraph.plan().resources(), 1920, 1080, 8, 16384).fingerprint()),
-                "M8.0 mip schedule must change the graph fingerprint");
+                "mip schedule must change the graph fingerprint");
     }
 
     private static PackProgramPlan withTargetPlan(PackProgramPlan plan, PostTargetPlan targetPlan) {
@@ -339,7 +339,7 @@ final class ModernPostTranslationTest {
     private static PackProgramPlan require(PackPlan plan, String name) {
         PackProgramPlan value = plan.program(name);
         if (value == null) {
-            throw new AssertionError("M8.0 missing program: " + name);
+            throw new AssertionError("missing program: " + name);
         }
         return value;
     }

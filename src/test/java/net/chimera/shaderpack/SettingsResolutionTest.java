@@ -13,7 +13,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -200,11 +199,11 @@ final class SettingsResolutionTest {
             Snapshot end,
             Snapshot custom
     ) throws IOException {
-        assertTrue(Files.isRegularFile(baseline), "M7.1 baseline is missing: " + baseline);
+        assertTrue(Files.isRegularFile(baseline), "baseline is missing: " + baseline);
         JsonObject root = JsonParser.parseString(Files.readString(baseline, StandardCharsets.UTF_8))
                 .getAsJsonObject();
         assertEquals("m7_1/resolution", root.get("fixture").getAsString(),
-                "M7.1 baseline fixture");
+                "baseline fixture");
         verifySnapshot(root.getAsJsonObject("overworld"), overworld, "overworld");
         verifySnapshot(root.getAsJsonObject("nether"), nether, "nether");
         verifySnapshot(root.getAsJsonObject("end"), end, "end");

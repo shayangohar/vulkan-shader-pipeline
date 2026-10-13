@@ -177,50 +177,51 @@ final class FixturePackTest {
 
     private static void verifyMaterial(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
-        verifyRequiredPrograms(report, "m5.2 material");
+        verifyRequiredPrograms(report, "material");
         ConformanceReport.ProgramReport terrain = report.program("gbuffers_terrain");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                terrain.support(), "m5.2 material terrain support");
-        assertEquals(List.of("fragment", "vertex"), terrain.stages(), "m5.2 material terrain stages");
+                terrain.support(), "material terrain support");
+        assertEquals(List.of("fragment", "vertex"), terrain.stages(), "material terrain stages");
         assertEquals(List.of("ALPHA_TEST_DYNAMIC:gbuffers_terrain",
                         "LEGACY_TERRAIN_VERTEX_BRIDGE"), terrain.deviations(),
-                "m5.2 material terrain deviations");
-        assertTrue(report.shouldAttempt("gbuffers_terrain"), "m5.2 material terrain was rejected");
+                "material terrain deviations");
+        assertTrue(report.shouldAttempt("gbuffers_terrain"), "material terrain was rejected");
         assertTrue(metadataHashes(report).containsKey("block.properties"),
-                "m5.2 material block.properties hash is missing");
+                "material block.properties hash is missing");
 
         PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(pack.resolve("shaders"));
-        assertTrue(material.present(), "m5.2 material properties are missing");
+        assertTrue(material.present(), "material properties are missing");
         assertEquals(1, material.resolver().resolveName("minecraft:stone"), "stone material id");
         assertEquals(2, material.resolver().resolveName("dirt"), "unqualified dirt material id");
         assertEquals(2, material.resolver().resolveName("minecraft:grass_block"), "grass material id");
         assertEquals(-1, material.resolver().resolveName("minecraft:diamond_block"), "unmapped material id");
-        assertEquals(List.of(), material.deviations(), "m5.2 material parser deviations");
+        assertEquals(List.of(), material.deviations(), "material parser deviations");
 
         PackSource.LoadResult loaded = PackSource.loadResult(pack);
         PackProgram terrainProgram = loaded.programs().stream()
                 .filter(program -> program.name().equals("gbuffers_terrain"))
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("m5.2 material terrain source is missing"));
-        assertTrue(terrainProgram.vertexSource() != null, "m5.2 material vertex source was not retained");
+                .orElseThrow(() -> new AssertionError("material terrain source is missing"));
+        assertTrue(terrainProgram.vertexSource() != null, "material vertex source was not retained");
         LegacyGlslConverter.TerrainVertexConversion converted = TerrainVertexBridge.convertTerrainVertex(
                 terrainProgram.vertexSource(), terrainProgram.vertexPath(), terrainProgram.fragmentSource());
-        assertTrue(converted != null, "m5.2 material vertex conversion failed");
+        assertTrue(converted != null, "material vertex conversion failed");
         assertTrue(converted.source().contains("layout(location = 0) out"),
-                "m5.2 material varying layout was not emitted");
+                "material varying layout was not emitted");
         assertTrue(converted.source().contains("inMaterialId"),
-                "m5.2 material input attribute was not emitted");
+                "material input attribute was not emitted");
         String convertedFragment = FragmentConverter.FragmentConversionRequest.withAutoPlan(
                 terrainProgram.fragmentSource(), terrainProgram.fragmentPath(), true,
                 new int[] {0, 2}, converted.layout()).convert();
         assertTrue(convertedFragment != null && convertedFragment.contains("layout(location = 0) in"),
-                "m5.2 material fragment varying bridge failed");
+                "material fragment varying bridge failed");
 
         assertExtendedFormat();
         // The version number no longer gates (GlslVersion); the legacy converter still refuses
         // modern syntax, which the modern terrain path converts, and GLSL ES.
         assertTrue(TerrainVertexBridge.convertTerrainVertex(
-                "#version 330\nin vec3 Position;\nvoid main() { gl_Position = vec4(Position, 1.0); }", null, "") == null,
+                "#version 330\nin vec3 Position;\nvoid main() { gl_Position = vec4(Position, 1.0); }", null,
+                        "") == null,
                 "modern terrain vertex syntax was accepted by the legacy converter");
         assertTrue(TerrainVertexBridge.convertTerrainVertex(
                 "#version 300 es\nvoid main() { gl_Position = vec4(0.0); }", null, "") == null,
@@ -236,35 +237,35 @@ final class FixturePackTest {
         ConformanceReport report = probe(pack);
         ConformanceReport.ProgramReport terrain = report.program("gbuffers_terrain");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                terrain.support(), "m5.2 unsupported vertex support");
+                terrain.support(), "unsupported vertex support");
         assertTrue(terrain.deviations().contains("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"),
-                "m5.2 unsupported vertex deviation");
+                "unsupported vertex deviation");
         assertTrue(!report.shouldAttempt("gbuffers_terrain"),
-                "m5.2 unsupported vertex must not execute");
+                "unsupported vertex must not execute");
         assertTrue(metadataHashes(report).containsKey("block.properties"),
-                "m5.2 unsupported block.properties hash is missing");
+                "unsupported block.properties hash is missing");
         verifyFixtureBaseline(report, baselinePath, "unsupported_vertex");
     }
 
     private static void verifyLiveUniforms(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
-        verifyRequiredPrograms(report, "m5.3 live uniforms");
+        verifyRequiredPrograms(report, "live uniforms");
         ConformanceReport.ProgramReport composite = report.program("composite");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                composite.support(), "m5.3 live composite support");
-        assertTrue(report.shouldAttempt("composite"), "m5.3 live composite was rejected");
+                composite.support(), "live composite support");
+        assertTrue(report.shouldAttempt("composite"), "live composite was rejected");
         assertEquals(List.of("colortex0", "depthtex0"), composite.samplers(),
-                "m5.3 live composite samplers");
+                "live composite samplers");
         assertEquals(List.of(
                         "cameraPosition", "colortex0", "depthtex0", "fogColor",
                         "frameTimeCounter", "sunPosition", "viewHeight", "viewWidth",
                         "wetness", "worldTime"), composite.uniforms(),
-                "m5.3 live composite declarations");
+                "live composite declarations");
         assertEquals(List.of(
                         "DEPTH_INPUT_FIXED_TO_HDR",
                         "LIVE_UNIFORM_BRIDGE"), composite.deviations(),
-                "m5.3 live composite deviations");
-        assertEquals(List.of(), report.deviations(), "m5.3 live global deviations");
+                "live composite deviations");
+        assertEquals(List.of(), report.deviations(), "live global deviations");
 
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
@@ -278,34 +279,34 @@ final class FixturePackTest {
                         new UniformRegistry.UniformDeclaration("viewWidth", "float"),
                         new UniformRegistry.UniformDeclaration("wetness", "float"),
                         new UniformRegistry.UniformDeclaration("worldTime", "int")),
-                interfacePlan.uniforms(), "m5.3 uniform ordering");
+                interfacePlan.uniforms(), "uniform ordering");
         assertEquals(List.of(
                         new UniformRegistry.SamplerBinding("colortex0", 0),
                         new UniformRegistry.SamplerBinding("depthtex0", 6)),
-                interfacePlan.samplers(), "m5.3 sampler ordering");
-        assertTrue(interfacePlan.executable(), "m5.3 live interface is not executable");
-        assertEquals("float", UniformRegistry.pipelineType("vec3"), "m5.3 vec3 pipeline type");
-        assertEquals(3, UniformRegistry.pipelineCount("vec3"), "m5.3 vec3 pipeline count");
-        assertEquals("int", UniformRegistry.pipelineType("int"), "m5.3 int pipeline type");
-        assertEquals(16, UniformRegistry.pipelineCount("mat4"), "m5.3 mat4 pipeline count");
+                interfacePlan.samplers(), "sampler ordering");
+        assertTrue(interfacePlan.executable(), "live interface is not executable");
+        assertEquals("float", UniformRegistry.pipelineType("vec3"), "vec3 pipeline type");
+        assertEquals(3, UniformRegistry.pipelineCount("vec3"), "vec3 pipeline count");
+        assertEquals("int", UniformRegistry.pipelineType("int"), "int pipeline type");
+        assertEquals(16, UniformRegistry.pipelineCount("mat4"), "mat4 pipeline count");
 
         PackProgram compositeProgram = PackSource.loadResult(pack).programs().stream()
                 .filter(program -> program.name().equals("composite"))
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("m5.3 live composite source is missing"));
+                .orElseThrow(() -> new AssertionError("live composite source is missing"));
         String converted = FragmentConverter.FragmentConversionRequest
                 .of(compositeProgram.fragmentSource(), compositeProgram.fragmentPath(), false, null)
                 .withInterfacePlan(interfacePlan)
                 .convert();
-        assertTrue(converted != null, "m5.3 live composite conversion failed");
+        assertTrue(converted != null, "live composite conversion failed");
         assertTrue(converted.contains("layout(binding = 0) uniform ChimeraPackUniforms"),
-                "m5.3 generated UBO is missing");
+                "generated UBO is missing");
         assertTrue(converted.contains("layout(binding = 1) uniform sampler2D colortex0"),
-                "m5.3 colortex0 binding is not after the UBO");
+                "colortex0 binding is not after the UBO");
         assertTrue(converted.contains("layout(binding = 2) uniform sampler2D depthtex0"),
-                "m5.3 depthtex0 binding is not after the UBO");
+                "depthtex0 binding is not after the UBO");
         assertTrue(!converted.contains("uniform vec3 cameraPosition"),
-                "m5.3 source uniform was not removed");
+                "source uniform was not removed");
         verifyFixtureBaseline(report, baselinePath, "live_uniforms");
     }
 
@@ -313,42 +314,42 @@ final class FixturePackTest {
     void uniformInterfaceEdgeCases() {
         UniformRegistry.ProgramInterface array = UniformRegistry.plan(
                 "uniform float wetness[2];", UniformRegistry.Stage.POST);
-        assertTrue(!array.executable(), "m5.3 uniform arrays were accepted");
+        assertTrue(!array.executable(), "uniform arrays were accepted");
         assertTrue(array.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:wetness"),
-                "m5.3 array deviation is missing");
+                "array deviation is missing");
 
         UniformRegistry.ProgramInterface struct = UniformRegistry.plan(
                 "uniform PackValues { float wetness; };", UniformRegistry.Stage.POST);
-        assertTrue(!struct.executable(), "m5.3 uniform blocks were accepted");
+        assertTrue(!struct.executable(), "uniform blocks were accepted");
         assertTrue(struct.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:PackValues"),
-                "m5.3 uniform block deviation is missing");
+                "uniform block deviation is missing");
 
         // Iris leaves a uniform it does not provide unset, so GL reads zero and the program runs.
         UniformRegistry.ProgramInterface unknown = UniformRegistry.plan(
                 "uniform float arbitraryValue; void main() { gl_FragColor = vec4(arbitraryValue); }",
                 UniformRegistry.Stage.POST);
-        assertTrue(unknown.executable(), "m5.3 a name Iris does not serve must run on zero");
+        assertTrue(unknown.executable(), "a name Iris does not serve must run on zero");
         assertTrue(unknown.deviations().contains("UNIFORM_UNSET_ZERO:arbitraryValue"),
-                "m5.3 unset uniform deviation is missing");
+                "unset uniform deviation is missing");
         // An Iris name Chimera does not serve yet must not run on a zero Iris would never give.
         UniformRegistry.ProgramInterface unserved = UniformRegistry.plan(
                 "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
                 UniformRegistry.Stage.POST);
-        assertTrue(!unserved.executable(), "m5.3 unserved Iris uniform was accepted");
+        assertTrue(!unserved.executable(), "unserved Iris uniform was accepted");
         assertTrue(unserved.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
-                "m5.3 unserved Iris uniform deviation is missing");
+                "unserved Iris uniform deviation is missing");
 
         UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
                 "uniform float wetness; uniform int wetness;", UniformRegistry.Stage.POST);
-        assertTrue(!conflict.executable(), "m5.3 conflicting uniform declarations were accepted");
+        assertTrue(!conflict.executable(), "conflicting uniform declarations were accepted");
         assertTrue(conflict.deviations().contains("UNIFORM_CONFLICT:wetness"),
-                "m5.3 conflicting uniform deviation is missing");
+                "conflicting uniform deviation is missing");
 
         UniformRegistry.ProgramInterface alias = UniformRegistry.plan(
                 "uniform sampler2D colortex1;", UniformRegistry.Stage.POST);
-        assertTrue(alias.hasSampler("colortex1"), "m5.3 colortex1 alias was not mapped");
+        assertTrue(alias.hasSampler("colortex1"), "colortex1 alias was not mapped");
         assertTrue(alias.deviations().contains("COLORTEX_ALIAS_TO_SEAM"),
-                "m5.3 colortex alias deviation is missing");
+                "colortex alias deviation is missing");
 
         UniformRegistry.ProgramInterface distinctResources = UniformRegistry.plan(
                 "uniform sampler2D colortex3; uniform sampler2D shadowcolor0;",
@@ -363,68 +364,68 @@ final class FixturePackTest {
         ConformanceReport report = probe(pack);
         ConformanceReport.ProgramReport composite = report.program("composite");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                composite.support(), "m5.3 unsupported composite support");
+                composite.support(), "unsupported composite support");
         assertTrue(composite.deviations().contains("SAMPLER_NOT_MAPPED:unknownTexture"),
-                "m5.3 unknown sampler deviation is missing");
+                "unknown sampler deviation is missing");
         assertTrue(composite.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"),
-                "m5.3 unsupported uniform type deviation is missing");
-        assertTrue(!report.shouldAttempt("composite"), "m5.3 unsupported composite must not execute");
+                "unsupported uniform type deviation is missing");
+        assertTrue(!report.shouldAttempt("composite"), "unsupported composite must not execute");
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.POST);
-        assertTrue(!interfacePlan.executable(), "m5.3 unsupported interface was accepted");
+        assertTrue(!interfacePlan.executable(), "unsupported interface was accepted");
         assertTrue(FragmentConverter.FragmentConversionRequest.withAutoPlan(
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
                 pack.resolve("shaders/composite.fsh"), false, null, null).convert() == null,
-                "m5.3 unsupported source converted");
+                "unsupported source converted");
         verifyFixtureBaseline(report, baselinePath, "unsupported_uniform");
     }
 
     private static void verifyPostChain(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
         assertEquals(List.of("composite", "final"), report.passInventory(),
-                "m5.6 post pass inventory must preserve shaders.json order");
+                "post pass inventory must preserve shaders.json order");
         for (String name : List.of("deferred", "composite", "composite1", "final")) {
             ConformanceReport.ProgramReport program = report.program(name);
-            assertTrue(program != null, "m5.6 post program was not discovered: " + name);
+            assertTrue(program != null, "post program was not discovered: " + name);
             assertEquals(List.of("fragment"), program.stages(),
-                    "m5.6 post stages: " + name);
+                    "post stages: " + name);
             assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
-                    program.runtime(), "m5.6 static post runtime: " + name);
-            assertTrue(report.shouldAttempt(name), "m5.6 post program was rejected: " + name);
+                    program.runtime(), "static post runtime: " + name);
+            assertTrue(report.shouldAttempt(name), "post program was rejected: " + name);
         }
         assertEquals(List.of(0, 1), report.program("deferred").targets(),
-                "m5.6 deferred targets");
+                "deferred targets");
         assertEquals(List.of(0, 1), report.program("composite").targets(),
-                "m5.6 composite targets");
+                "composite targets");
         assertEquals(List.of(0), report.program("composite1").targets(),
-                "m5.6 numbered composite targets");
+                "numbered composite targets");
         assertEquals(List.of(0), report.program("final").targets(),
-                "m5.6 final target");
+                "final target");
         assertEquals(List.of("MRT_POST_BRIDGE", "POST_TARGET_ROUTE_APPLIED"),
-                report.program("deferred").deviations(), "m5.6 deferred deviations");
+                report.program("deferred").deviations(), "deferred deviations");
         assertEquals(List.of("MRT_POST_BRIDGE", "POST_TARGET_ROUTE_APPLIED"),
-                report.program("composite").deviations(), "m5.6 composite deviations");
+                report.program("composite").deviations(), "composite deviations");
         assertEquals(List.of(),
-                report.program("composite1").deviations(), "m5.6 numbered composite deviations");
-        assertEquals(List.of(), report.program("final").deviations(), "m5.6 final deviations");
+                report.program("composite1").deviations(), "numbered composite deviations");
+        assertEquals(List.of(), report.program("final").deviations(), "final deviations");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                report.program("deferred").support(), "m5.6 deferred support");
+                report.program("deferred").support(), "deferred support");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                report.program("composite").support(), "m5.6 composite support");
+                report.program("composite").support(), "composite support");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
-                report.program("composite1").support(), "m5.6 numbered composite support");
+                report.program("composite1").support(), "numbered composite support");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
-                report.program("final").support(), "m5.6 final support");
+                report.program("final").support(), "final support");
 
         PackSource.LoadResult loaded = PackSource.loadResult(pack);
         List<String> loadedNames = loaded.programs().stream().map(PackProgram::name)
                 .distinct().sorted(PostTargetPlan.programComparator()).toList();
         assertEquals(List.of("deferred", "composite", "composite1", "final"), loadedNames,
-                "m5.6 discovered post order");
+                "discovered post order");
         assertEquals(4L, loaded.programs().stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name())).count(),
-                "m5.6 duplicate post programs");
+                "duplicate post programs");
 
         String deferred = Files.readString(pack.resolve("shaders/deferred.fsh"), StandardCharsets.UTF_8);
         String composite = Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8);
@@ -432,20 +433,20 @@ final class FixturePackTest {
                 Map.of(0, 97, 1, 37)).plan();
         PostTargetPlan compositePlan = PostTargetPlan.parse("composite", composite,
                 Map.of(0, 97, 1, 37)).plan();
-        assertEquals(List.of(0, 1), deferredPlan.targetSlots(), "m5.6 deferred route");
-        assertEquals(List.of(0, 1), compositePlan.targetSlots(), "m5.6 composite route");
-        assertEquals(List.of(97, 37), compositePlan.outputFormats(), "m5.6 target formats");
-        assertTrue(compositePlan.requiresMrt(), "m5.6 composite must require MRT");
+        assertEquals(List.of(0, 1), deferredPlan.targetSlots(), "deferred route");
+        assertEquals(List.of(0, 1), compositePlan.targetSlots(), "composite route");
+        assertEquals(List.of(97, 37), compositePlan.outputFormats(), "target formats");
+        assertTrue(compositePlan.requiresMrt(), "composite must require MRT");
         String converted = FragmentConverter.convertPostFragment(
                 composite, pack.resolve("shaders/composite.fsh"),
                 UniformRegistry.planPost(composite, compositePlan), compositePlan);
-        assertTrue(converted != null, "m5.6 multi-target conversion failed");
+        assertTrue(converted != null, "multi-target conversion failed");
         assertTrue(converted.contains("layout(location = 0) out vec4 chimeraFragColor0"),
-                "m5.6 output location 0 is missing");
+                "output location 0 is missing");
         assertTrue(converted.contains("layout(location = 1) out vec4 chimeraFragColor1"),
-                "m5.6 output location 1 is missing");
+                "output location 1 is missing");
         assertTrue(!converted.contains("DRAWBUFFERS01"),
-                "m5.6 DRAWBUFFERS directive was not removed");
+                "DRAWBUFFERS directive was not removed");
         verifyFixtureBaseline(report, baselinePath, "post_chain");
     }
 
@@ -454,122 +455,122 @@ final class FixturePackTest {
         PostTargetPlan drawBuffers = PostTargetPlan.parse(
                 "composite", "#version 120\n#define DRAWBUFFERS0123\n").plan();
         assertEquals(List.of(0, 1, 2, 3), drawBuffers.targetSlots(),
-                "m5.6 DRAWBUFFERS digits are target slots");
+                "DRAWBUFFERS digits are target slots");
 
         PostTargetPlan renderTargets = PostTargetPlan.parse(
                 "composite", "/* RENDERTARGETS: 0, 2, 3 */").plan();
         assertEquals(List.of(0, 2, 3), renderTargets.targetSlots(),
-                "m5.6 RENDERTARGETS route");
+                "RENDERTARGETS route");
 
         PostTargetPlan malformed = PostTargetPlan.parse(
                 "composite", "/* RENDERTARGETS: 0, nope */").plan();
-        assertTrue(!malformed.executable(), "m5.6 malformed target directive was accepted");
+        assertTrue(!malformed.executable(), "malformed target directive was accepted");
         assertTrue(malformed.deviations().contains("POST_TARGET_DIRECTIVE_MALFORMED"),
-                "m5.6 malformed target deviation is missing");
+                "malformed target deviation is missing");
 
         PostTargetPlan conflict = PostTargetPlan.parse(
                 "composite", "#define DRAWBUFFERS01\n/* RENDERTARGETS: 0,2 */").plan();
-        assertTrue(!conflict.executable(), "m5.6 conflicting target directives were accepted");
+        assertTrue(!conflict.executable(), "conflicting target directives were accepted");
         assertTrue(conflict.deviations().contains("POST_TARGET_DIRECTIVE_CONFLICT"),
-                "m5.6 target conflict deviation is missing");
+                "target conflict deviation is missing");
 
         PostTargetPlan unsupported = PostTargetPlan.parse(
                 "composite", "/* RENDERTARGETS: 0,16 */").plan();
-        assertTrue(!unsupported.executable(), "m5.6 unsupported target was accepted");
+        assertTrue(!unsupported.executable(), "unsupported target was accepted");
         assertTrue(unsupported.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
-                "m5.6 unsupported target deviation is missing");
+                "unsupported target deviation is missing");
 
         PostTargetPlan finalMrt = PostTargetPlan.parse(
                 "final", "/* RENDERTARGETS: 0,1 */ gl_FragData[0] = vec4(1.0);").plan();
-        assertTrue(!finalMrt.executable(), "m5.6 final MRT was accepted");
+        assertTrue(!finalMrt.executable(), "final MRT was accepted");
         assertTrue(finalMrt.deviations().contains("FINAL_MRT_UNSUPPORTED"),
-                "m5.6 final MRT deviation is missing");
+                "final MRT deviation is missing");
     }
 
     private static void verifyUnsupportedTargets(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
         ConformanceReport.ProgramReport composite = report.program("composite");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                composite.support(), "m5.6 unsupported target support");
+                composite.support(), "unsupported target support");
         assertTrue(composite.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
-                "m5.6 unsupported target deviation is missing");
+                "unsupported target deviation is missing");
         assertTrue(!report.shouldAttempt("composite"),
-                "m5.6 unsupported target must not execute");
+                "unsupported target must not execute");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
-                report.program("final").support(), "m5.6 unsupported fixture final probe");
+                report.program("final").support(), "unsupported fixture final probe");
         verifyFixtureBaseline(report, baselinePath, "unsupported_targets");
     }
 
     private static void verifyWater(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
-        assertTrue(report.program("composite") != null, "m5.5 water is missing program composite");
-        assertTrue(report.program("final") != null, "m5.5 water is missing program final");
+        assertTrue(report.program("composite") != null, "water is missing program composite");
+        assertTrue(report.program("final") != null, "water is missing program final");
         ConformanceReport.ProgramReport water = report.program("gbuffers_water");
-        assertTrue(water != null, "m5.5 water program was not discovered");
+        assertTrue(water != null, "water program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                water.support(), "m5.5 water support");
-        assertEquals(List.of("fragment", "vertex"), water.stages(), "m5.5 water stages");
+                water.support(), "water support");
+        assertEquals(List.of("fragment", "vertex"), water.stages(), "water stages");
         assertTrue(water.deviations().contains("TRANSLUCENT_VERTEX_BRIDGE"),
-                "m5.5 water vertex bridge deviation is missing");
+                "water vertex bridge deviation is missing");
         assertTrue(water.deviations().contains("TRANSLUCENT_STATE_FIXED_TO_HOST"),
-                "m5.5 host translucent state deviation is missing");
+                "host translucent state deviation is missing");
         assertEquals(List.of("lightmap", "shadowtex0", "texture"), water.samplers(),
-                "m5.5 water sampler inventory");
+                "water sampler inventory");
         assertEquals(List.of("composite", "final"), report.passInventory(),
-                "m5.5 water must be discovered outside shaders.json");
+                "water must be discovered outside shaders.json");
         assertTrue(report.programs().stream().filter(program -> program.name().equals("gbuffers_water")).count() == 1,
-                "m5.5 water program was duplicated");
-        assertPostPassThrough(pack, "m5.5 water");
+                "water program was duplicated");
+        assertPostPassThrough(pack, "water");
 
         PackSource.LoadResult loaded = PackSource.loadResult(pack);
         PackProgram waterProgram = loaded.programs().stream()
                 .filter(program -> program.name().equals("gbuffers_water"))
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("m5.5 water source is missing"));
-        assertTrue(waterProgram.vertexSource() != null, "m5.5 water vertex source is missing");
+                .orElseThrow(() -> new AssertionError("water source is missing"));
+        assertTrue(waterProgram.vertexSource() != null, "water vertex source is missing");
 
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
                 waterProgram.fragmentSource(), UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(interfacePlan.executable(), "m5.5 water interface is not executable");
-        // M8.8: water plans on the terrain contract, so its uniforms are the
+        assertTrue(interfacePlan.executable(), "water interface is not executable");
+        // Water plans on the terrain contract, so its uniforms are the
         // live Iris catalog (atlasSize, fogStart), not host UBO field aliases.
         assertEquals(List.of(
                         new UniformRegistry.UniformDeclaration("atlasSize", "ivec2"),
                         new UniformRegistry.UniformDeclaration("fogColor", "vec4"),
                         new UniformRegistry.UniformDeclaration("fogEnd", "float"),
                         new UniformRegistry.UniformDeclaration("fogStart", "float")),
-                interfacePlan.uniforms(), "m5.5 water uniform ordering");
+                interfacePlan.uniforms(), "water uniform ordering");
         assertEquals(List.of(
                         new UniformRegistry.SamplerBinding("texture", 0),
                         new UniformRegistry.SamplerBinding("lightmap", 2),
                         new UniformRegistry.SamplerBinding("shadowtex0", 5)),
-                interfacePlan.samplers(), "m5.5 water sampler bindings");
+                interfacePlan.samplers(), "water sampler bindings");
         assertTrue(interfacePlan.deviations().contains("LIVE_UNIFORM_BRIDGE"),
-                "m5.5 water live uniform bridge deviation is missing");
+                "water live uniform bridge deviation is missing");
 
         LegacyGlslConverter.TerrainVertexConversion vertex = TerrainVertexBridge.convertTerrainVertex(
                 waterProgram.vertexSource(), waterProgram.vertexPath(), waterProgram.fragmentSource());
-        assertTrue(vertex != null, "m5.5 water vertex conversion failed");
+        assertTrue(vertex != null, "water vertex conversion failed");
         String convertedFragment = FragmentConverter.FragmentConversionRequest
                 .of(waterProgram.fragmentSource(), waterProgram.fragmentPath(), true,
                         new int[] {0, 2, 5})
                 .withTerrainLayout(vertex.layout())
                 .withInterfacePlan(interfacePlan)
                 .convert();
-        assertTrue(convertedFragment != null, "m5.5 water fragment conversion failed");
+        assertTrue(convertedFragment != null, "water fragment conversion failed");
         assertTrue(convertedFragment.contains("layout(binding = 3) uniform ChimeraTerrainPackUniforms"),
-                "m5.5 terrain pack uniform block is missing");
+                "terrain pack uniform block is missing");
         assertTrue(!convertedFragment.contains("uniform float fogStart"),
-                "m5.5 fogStart declaration was not removed");
+                "fogStart declaration was not removed");
         assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D chimeraTexture"),
-                "m5.5 water atlas binding is missing");
+                "water atlas binding is missing");
         assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D lightmap"),
-                "m5.5 water lightmap binding is missing");
+                "water lightmap binding is missing");
         assertTrue(convertedFragment.contains("layout(binding = 6) uniform sampler2D shadowtex0"),
-                "m5.5 water shadow binding is missing");
+                "water shadow binding is missing");
         assertTrue(convertedFragment.contains("layout(location = " + vertex.layout().location("renderType")
                         + ") in float renderType"),
-                "m5.5 water varying location was not shared");
+                "water varying location was not shared");
 
         assertExtendedFormat();
         verifyFixtureBaseline(report, baselinePath, "water");
@@ -580,53 +581,53 @@ final class FixturePackTest {
         UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
                 "uniform sampler2D texture; uniform sampler2D depthtex0;",
                 UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!depth.executable(), "m5.5 depth input was accepted");
+        assertTrue(!depth.executable(), "depth input was accepted");
         assertTrue(depth.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "m5.5 depth input deviation is missing");
+                "depth input deviation is missing");
 
         UniformRegistry.ProgramInterface unknownSampler = UniformRegistry.plan(
                 "uniform sampler2D noise;", UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!unknownSampler.executable(), "m5.5 unknown water sampler was accepted");
+        assertTrue(!unknownSampler.executable(), "unknown water sampler was accepted");
         assertTrue(unknownSampler.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:noise"),
-                "m5.5 unknown water sampler deviation is missing");
+                "unknown water sampler deviation is missing");
 
         UniformRegistry.ProgramInterface unknownUniform = UniformRegistry.plan(
                 "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
                 UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!unknownUniform.executable(), "m5.5 unserved Iris water uniform was accepted");
+        assertTrue(!unknownUniform.executable(), "unserved Iris water uniform was accepted");
         assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
-                "m5.5 unknown water uniform deviation is missing");
+                "unknown water uniform deviation is missing");
     }
 
     private static void verifyUnsupportedWater(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
         ConformanceReport.ProgramReport water = report.program("gbuffers_water");
-        assertTrue(water != null, "m5.5 unsupported water program was not discovered");
+        assertTrue(water != null, "unsupported water program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                water.support(), "m5.5 unsupported water support");
+                water.support(), "unsupported water support");
         assertTrue(water.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "m5.5 unsupported water depth deviation is missing");
+                "unsupported water depth deviation is missing");
         assertTrue(!report.shouldAttempt("gbuffers_water"),
-                "m5.5 unsupported water must not execute");
+                "unsupported water must not execute");
 
         ConformanceReport.ProgramReport entities = report.program("gbuffers_entities");
-        assertTrue(entities != null, "m5.5 unsupported entity family was not inventoried");
+        assertTrue(entities != null, "unsupported entity family was not inventoried");
         assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED,
-                entities.support(), "m5.5 entity family support");
+                entities.support(), "entity family support");
         assertTrue(!report.shouldAttempt("gbuffers_entities"),
-                "m5.5 entity family must not execute");
-        assertPostPassThrough(pack, "m5.5 unsupported water");
+                "entity family must not execute");
+        assertPostPassThrough(pack, "unsupported water");
 
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
                 Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!interfacePlan.executable(), "m5.5 unsupported water interface was accepted");
+        assertTrue(!interfacePlan.executable(), "unsupported water interface was accepted");
         assertTrue(FragmentConverter.FragmentConversionRequest
                 .of(Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
                         pack.resolve("shaders/gbuffers_water.fsh"), true, new int[] {0, 2})
                 .withInterfacePlan(interfacePlan)
                 .convert() == null,
-                "m5.5 unsupported water source converted");
+                "unsupported water source converted");
         verifyFixtureBaseline(report, baselinePath, "unsupported_water");
     }
 
@@ -643,53 +644,53 @@ final class FixturePackTest {
     private static void verifyShadow(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
         ConformanceReport.ProgramReport shadow = report.program("shadow");
-        assertTrue(shadow != null, "m5.4 shadow program was not discovered");
-        assertEquals(List.of("fragment", "vertex"), shadow.stages(), "m5.4 shadow stages");
+        assertTrue(shadow != null, "shadow program was not discovered");
+        assertEquals(List.of("fragment", "vertex"), shadow.stages(), "shadow stages");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                shadow.support(), "m5.4 shadow support");
+                shadow.support(), "shadow support");
         // LIVE_UNIFORM_BRIDGE: the per-layer shadow alpha-test reference.
         assertEquals(List.of("LIVE_UNIFORM_BRIDGE", "SHADOW_VERTEX_BRIDGE"), shadow.deviations(),
-                "m5.4 shadow deviations");
+                "shadow deviations");
         assertEquals(List.of("lightmap", "texture"), shadow.samplers(),
-                "m5.4 shadow sampler inventory");
+                "shadow sampler inventory");
         assertTrue(report.passInventory().equals(List.of("composite", "final")),
-                "m5.4 shadow must be discovered outside shaders.json");
+                "shadow must be discovered outside shaders.json");
         assertTrue(report.programs().stream().filter(program -> program.name().equals("shadow")).count() == 1,
-                "m5.4 shadow program was duplicated");
+                "shadow program was duplicated");
         assertTrue(report.deviations().contains("SHADOW_SETTING_APPLIED:shadowDistance"),
-                "m5.4 shadow distance application is missing");
+                "shadow distance application is missing");
         assertTrue(report.deviations().contains("SHADOW_SETTING_APPLIED:shadowMapResolution"),
-                "m5.4 shadow resolution application is missing");
+                "shadow resolution application is missing");
 
         PackSource.LoadResult loaded = PackSource.loadResult(pack);
         PackProgram shadowProgram = loaded.programs().stream()
                 .filter(program -> program.name().equals("shadow"))
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("m5.4 shadow source is missing"));
-        assertTrue(shadowProgram.vertexSource() != null, "m5.4 shadow vertex source is missing");
+                .orElseThrow(() -> new AssertionError("shadow source is missing"));
+        assertTrue(shadowProgram.vertexSource() != null, "shadow vertex source is missing");
 
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
                 shadowProgram.fragmentSource(), UniformRegistry.Stage.SHADOW);
         assertEquals(List.of(
                         new UniformRegistry.SamplerBinding("texture", 0),
                         new UniformRegistry.SamplerBinding("lightmap", 2)),
-                interfacePlan.samplers(), "m5.4 shadow sampler bindings");
-        assertTrue(interfacePlan.executable(), "m5.4 shadow interface is not executable");
+                interfacePlan.samplers(), "shadow sampler bindings");
+        assertTrue(interfacePlan.executable(), "shadow interface is not executable");
 
         LegacyGlslConverter.TerrainVertexConversion vertex = TerrainVertexBridge.convertShadowVertex(
                 shadowProgram.vertexSource(), shadowProgram.vertexPath(), shadowProgram.fragmentSource());
-        assertTrue(vertex != null, "m5.4 shadow vertex conversion failed");
+        assertTrue(vertex != null, "shadow vertex conversion failed");
         assertTrue(vertex.source().contains("layout(binding = 0) uniform ViewUBO"),
-                "m5.4 shadow MVP UBO is missing");
-        assertTrue(vertex.source().contains("mat4 MVP;"), "m5.4 shadow MVP field is missing");
+                "shadow MVP UBO is missing");
+        assertTrue(vertex.source().contains("mat4 MVP;"), "shadow MVP field is missing");
         assertTrue(!vertex.source().contains("LightMVP"),
-                "m5.4 pack shadow bridge retained the fixed LightMVP name");
+                "pack shadow bridge retained the fixed LightMVP name");
         assertTrue(vertex.source().contains("layout(binding = 2) uniform SectionData"),
-                "m5.4 shadow section UBO is missing");
+                "shadow section UBO is missing");
         assertTrue(vertex.source().contains("layout(location = 3) in int inMaterialId"),
-                "m5.4 shadow material input is missing");
+                "shadow material input is missing");
         assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
-                "m5.4 shadow render-type input is missing");
+                "shadow render-type input is missing");
 
         String convertedFragment = FragmentConverter.FragmentConversionRequest
                 .of(shadowProgram.fragmentSource(), shadowProgram.fragmentPath(), true,
@@ -697,67 +698,67 @@ final class FixturePackTest {
                 .withTerrainLayout(vertex.layout())
                 .withInterfacePlan(interfacePlan)
                 .convert();
-        assertTrue(convertedFragment != null, "m5.4 shadow fragment conversion failed");
+        assertTrue(convertedFragment != null, "shadow fragment conversion failed");
         assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
-                "m5.4 shadow atlas binding is missing");
+                "shadow atlas binding is missing");
         assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
-                "m5.4 shadow lightmap binding is missing");
+                "shadow lightmap binding is missing");
         assertTrue(convertedFragment.contains("layout(location = "),
-                "m5.4 shadow varying locations are missing");
+                "shadow varying locations are missing");
 
         JsonObject shadowConfig = PackPipelines.shadowPipelineJson();
         JsonArray shadowUbos = shadowConfig.getAsJsonArray("UBOs");
         assertTrue(shadowUbos != null && shadowUbos.toString().contains("\"binding\":2"),
-                "m5.4 shadow section UBO binding was not preserved");
+                "shadow section UBO binding was not preserved");
         assertTrue(shadowUbos.toString().contains("\"name\":\"MVP\""),
-                "m5.4 shadow pack config MVP field is missing");
+                "shadow pack config MVP field is missing");
         assertEquals(List.of(0, 2), toList(PackPipelines.shadowSamplerSlots(new int[] {2})),
-                "m5.4 shadow lightmap descriptor reservation");
+                "shadow lightmap descriptor reservation");
         assertEquals(List.of(0), toList(PackPipelines.shadowSamplerSlots(new int[] {0})),
-                "m5.4 shadow atlas descriptor ordering");
+                "shadow atlas descriptor ordering");
 
         PackConfig.PackConfigData config = PackConfig.parse(loaded.programs(), loaded.shadersDir());
         assertEquals(1024, config.shadowSettings().resolution(),
-                "m5.4 shaders.properties resolution precedence");
+                "shaders.properties resolution precedence");
         assertEquals(256.0F, config.shadowSettings().distance(),
-                "m5.4 shaders.properties distance precedence");
+                "shaders.properties distance precedence");
         assertTrue(config.shadowSettings().rawValues().get("shadowMapResolution").equals("1024"),
-                "m5.4 resolution raw value");
+                "resolution raw value");
         assertTrue(config.shadowSettings().rawValues().get("shadowDistance").equals("256"),
-                "m5.4 distance raw value");
+                "distance raw value");
         verifyFixtureBaseline(report, baselinePath, "shadow");
     }
 
     private static void verifyUnsupportedShadow(Path pack, Path baselinePath) throws IOException {
         ConformanceReport report = probe(pack);
         ConformanceReport.ProgramReport shadow = report.program("shadow");
-        assertTrue(shadow != null, "m5.4 unsupported shadow program was not discovered");
+        assertTrue(shadow != null, "unsupported shadow program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                shadow.support(), "m5.4 unsupported shadow support");
+                shadow.support(), "unsupported shadow support");
         assertTrue(shadow.deviations().contains("SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"),
-                "m5.4 unsupported shadow sampler deviation is missing");
+                "unsupported shadow sampler deviation is missing");
         assertTrue(!report.shouldAttempt("shadow"),
-                "m5.4 unsupported shadow must not execute");
+                "unsupported shadow must not execute");
         assertTrue(report.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
-                "m5.4 invalid distance default is missing");
+                "invalid distance default is missing");
         assertTrue(report.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
-                "m5.4 invalid resolution default is missing");
+                "invalid resolution default is missing");
 
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
                 Files.readString(pack.resolve("shaders/shadow.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.SHADOW);
-        assertTrue(!interfacePlan.executable(), "m5.4 unsupported shadow interface was accepted");
+        assertTrue(!interfacePlan.executable(), "unsupported shadow interface was accepted");
         UniformRegistry.ProgramInterface colorInput = UniformRegistry.plan(
                 "uniform sampler2D texture; uniform sampler2D shadowcolor0;",
                 UniformRegistry.Stage.SHADOW);
         assertTrue(colorInput.deviations().contains("SHADOW_COLOR_INPUT_UNSUPPORTED"),
-                "m5.4 shadow color input deviation is missing");
-        assertTrue(!colorInput.executable(), "m5.4 shadow color input was accepted");
+                "shadow color input deviation is missing");
+        assertTrue(!colorInput.executable(), "shadow color input was accepted");
         assertTrue(TerrainVertexBridge.convertShadowVertex(
                 Files.readString(pack.resolve("shaders/shadow.vsh"), StandardCharsets.UTF_8),
                 pack.resolve("shaders/shadow.vsh"),
                 Files.readString(pack.resolve("shaders/shadow.fsh"), StandardCharsets.UTF_8)) != null,
-                "m5.4 unsupported fixture vertex was rejected for the wrong reason");
+                "unsupported fixture vertex was rejected for the wrong reason");
         verifyFixtureBaseline(report, baselinePath, "unsupported_shadow");
     }
 
@@ -770,28 +771,28 @@ final class FixturePackTest {
                 new PackProgram("shadow", "#version 120\nconst int shadowMapResolution = 2048;",
                         shaders.resolve("shadow.fsh"), null, null)), shaders).shadowSettings();
         assertEquals(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, settings.resolution(),
-                "m5.4 invalid resolution default");
+                "invalid resolution default");
         assertEquals(PackConfig.DEFAULT_SHADOW_DISTANCE, settings.distance(),
-                "m5.4 invalid distance default");
+                "invalid distance default");
         assertTrue(settings.deviations().contains("SHADOW_SETTING_UNSUPPORTED:shadowMapFov"),
-                "m5.4 unsupported shadow setting");
+                "unsupported shadow setting");
         assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
-                "m5.4 invalid resolution deviation");
+                "invalid resolution deviation");
         assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
-                "m5.4 invalid distance deviation");
+                "invalid distance deviation");
     }
 
     private static void assertExtendedFormat() {
         var format = ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
-        assertEquals(24, format.getVertexSize(), "m5.2 terrain stride");
-        assertEquals(5, format.getElements().size(), "m5.2 terrain attribute count");
+        assertEquals(24, format.getVertexSize(), "terrain stride");
+        assertEquals(5, format.getElements().size(), "terrain attribute count");
         for (int i = 3; i < 5; i++) {
             var element = format.getElements().get(i);
             assertEquals(VertexFormatElement.Type.INT,
-                    element.type(), "m5.2 generic attribute type " + i);
+                    element.type(), "generic attribute type " + i);
             assertEquals(VertexFormatElement.Usage.GENERIC,
-                    element.usage(), "m5.2 generic attribute usage " + i);
-            assertEquals(1, element.count(), "m5.2 generic attribute count " + i);
+                    element.usage(), "generic attribute usage " + i);
+            assertEquals(1, element.count(), "generic attribute count " + i);
         }
     }
 

@@ -347,8 +347,8 @@ public final class MaterialMapOwner implements AutoCloseable {
     /**
      * Resolves one material sampler to its current image. Atlas companions
      * build beside this path, but descriptors keep answering the flat
-     * fallbacks until Slice C joins the transaction on exact albedo
-     * identity (see {@link #companionFor}). Unknown names fail loudly so
+     * fallbacks; draws that know their albedo image resolve the companion
+     * by exact identity (see {@link #companionFor}). Unknown names fail loudly so
      * a bad manifest entry can never silently bind the wrong map.
      */
     public VulkanImage image(String sampler) {
@@ -661,7 +661,7 @@ public final class MaterialMapOwner implements AutoCloseable {
         return simpleCompanions.containsKey(base);
     }
 
-    /** Slice C seam: the companion for an exact albedo image, or null when it has none. */
+    /** The companion for an exact albedo image, or null when it has none. */
     public ChimeraTextureBindingState.Snapshot companionFor(VulkanImage baseImage, String sampler) {
         MaterialMapKind kind = MaterialMapKind.forSampler(sampler);
         if (kind == null) {

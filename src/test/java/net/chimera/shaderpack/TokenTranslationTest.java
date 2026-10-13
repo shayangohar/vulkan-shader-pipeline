@@ -9,7 +9,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic checks for the bounded M7.2 token translation boundary. */
+/** The bounded token translation boundary. */
 final class TokenTranslationTest {
     @Test
     void localCatalogNameDoesNotBecomeUniform() {
@@ -134,8 +134,8 @@ final class TokenTranslationTest {
     @Test
     void fixtureSources() throws Exception {
         Path root = Path.of("testpacks/m7_2/translation");
-        assertTrue(Files.isRegularFile(root.resolve("composite.fsh")), "M7.2 fixture is missing");
-        assertTrue(Files.isRegularFile(root.resolve("unsupported.fsh")), "M7.2 fallback fixture is missing");
+        assertTrue(Files.isRegularFile(root.resolve("composite.fsh")), "fixture is missing");
+        assertTrue(Files.isRegularFile(root.resolve("unsupported.fsh")), "fallback fixture is missing");
     }
 
     private static int count(String value, String needle) {

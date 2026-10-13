@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Vulkan-free checks for M8.2 coverage and scene-seed state. */
+/** Coverage and scene-seed state, without Vulkan. */
 final class SceneCoverageTest {
     @Test
     void run() {

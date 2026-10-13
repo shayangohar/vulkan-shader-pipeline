@@ -1322,7 +1322,8 @@ public final class PackAdvancedResourcePlan {
     public List<String> customImageFeaturePrograms() { return customImageFeaturePrograms; }
     public List<String> dependentPrograms() { return dependentPrograms; }
     public List<String> deviations() { return deviations; }
-    public boolean hasSupportedImages() { return !images.isEmpty() && images.values().stream().allMatch(ImageSpec::supported); }
+    public boolean hasSupportedImages() { return !images.isEmpty()
+            && images.values().stream().allMatch(ImageSpec::supported); }
     public boolean hasSupportedCompute() {
         ComputeSpec shadowCompute = computeStages.get("shadowcomp");
         return shadowCompute != null && shadowCompute.supported()

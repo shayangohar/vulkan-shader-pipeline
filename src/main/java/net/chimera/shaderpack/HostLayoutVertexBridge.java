@@ -73,9 +73,11 @@ final class HostLayoutVertexBridge {
             boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
     ) {
         try {
-            String live = stripComments(EntityVertexBridge.removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
+            String live = stripComments(
+                    EntityVertexBridge.removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
                     LegacyGlslConverter.prepareSource(source, sourceFile, true))));
-            if (LegacyGlslConverter.containsIdentifier(live, "mc_midTexCoord") || LegacyGlslConverter.containsIdentifier(live, "at_tangent")
+            if (LegacyGlslConverter.containsIdentifier(live, "mc_midTexCoord")
+                    || LegacyGlslConverter.containsIdentifier(live, "at_tangent")
                     || LegacyGlslConverter.containsIdentifier(live, "Tangent")) {
                 throw new IllegalArgumentException("sky format has no material mid-coordinate or tangent attribute");
             }
@@ -101,7 +103,8 @@ final class HostLayoutVertexBridge {
     public static LegacyGlslConverter.TerrainVertexConversion convertCloudVertex(
             String source, Path sourceFile, String fragmentSource
     ) {
-        return TerrainVertexBridge.convertLegacyVertex(source, sourceFile, fragmentSource, GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE);
+        return TerrainVertexBridge.convertLegacyVertex(source, sourceFile, fragmentSource,
+                GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE);
     }
 
     /**
@@ -127,7 +130,8 @@ final class HostLayoutVertexBridge {
     }
 
     static final Pattern MATERIAL_ATTRIBUTE_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:attribute|in)[ \\t]+(float|vec2|vec3|vec4)[ \\t]+(mc_midTexCoord|at_tangent)[ \\t]*;[ \\t]*$");
+            "(?m)^[ \\t]*(?:attribute|in)[ \\t]+(float|vec2|vec3|vec4)[ \\t]+(mc_midTexCoord|at_tangent)[ \\t]*;"
+                    + "[ \\t]*$");
 
     /**
      * A host layout without mid-coordinates or tangents leaves those attributes unbound in

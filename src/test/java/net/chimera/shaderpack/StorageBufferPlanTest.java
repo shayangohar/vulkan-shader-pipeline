@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic M8.6b bounded storage-buffer plan and descriptor checks. */
+/** The bounded storage-buffer plan and its descriptors. */
 final class StorageBufferPlanTest {
     private static final int VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC = 9;
     private static final int VK_SHADER_STAGE_VERTEX_BIT = 1;
@@ -58,8 +58,8 @@ final class StorageBufferPlanTest {
         Path root = TestPacks.fixtures();
         Path supportedPath = root.resolve("m8_6b/ssbo_supported");
         Path unsupportedPath = root.resolve("m8_6b/unsupported_ssbo");
-        assertTrue(Files.isDirectory(supportedPath), "M8.6b supported fixture is missing");
-        assertTrue(Files.isDirectory(unsupportedPath), "M8.6b unsupported fixture is missing");
+        assertTrue(Files.isDirectory(supportedPath), "supported fixture is missing");
+        assertTrue(Files.isDirectory(unsupportedPath), "unsupported fixture is missing");
 
         PackProbe.Analysis supported = PackProbe.analyze(supportedPath);
         PackProbe.Analysis supportedAgain = PackProbe.analyze(supportedPath);
@@ -71,64 +71,64 @@ final class StorageBufferPlanTest {
         PackAdvancedResourcePlan.BufferSpec upper = plan.buffers().get(12);
         assertTrue(named != null && named.supported() && named.size() == 64
                         && named.requestedName().equals("blockDataBuffer"),
-                "M8.6b named absolute buffer was not parsed");
+                "named absolute buffer was not parsed");
         assertTrue(unnamed != null && unnamed.supported() && unnamed.size() == 32,
-                "M8.6b unnamed absolute buffer was not parsed");
+                "unnamed absolute buffer was not parsed");
         assertTrue(upper != null && upper.supported(),
-                "M8.6b logical buffer index 12 was not accepted");
+                "logical buffer index 12 was not accepted");
 
         PackProgramPlan shadow = supported.plan().program("shadow");
         PackProgramPlan composite = supported.plan().program("composite");
         assertTrue(shadow != null && shadow.executable() && supported.plan().shouldAttempt("shadow"),
-                "M8.6b shadow program is not executable: "
+                "shadow program is not executable: "
                         + (shadow == null ? "missing" : shadow.deviations())
                         + " advanced=" + plan.snapshot());
         assertTrue(composite != null && composite.executable()
                         && supported.plan().shouldAttempt("composite"),
-                "M8.6b composite program is not executable");
+                "composite program is not executable");
         ConformanceReport.ProgramReport supportedShadowReport = supported.report().program("shadow");
         assertTrue(supportedShadowReport != null
                         && supportedShadowReport.support()
                         == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
-                "M8.6b supported storage program was reported as generic fallback: "
+                "supported storage program was reported as generic fallback: "
                         + (supportedShadowReport == null ? "missing"
                         : supportedShadowReport.support() + " " + supportedShadowReport.deviations()));
 
         List<PackAdvancedResourcePlan.StorageBufferBinding> shadowBindings = plan.storageBuffers("shadow");
-        assertTrue(shadowBindings.size() == 1, "M8.6b shadow binding count");
+        assertTrue(shadowBindings.size() == 1, "shadow binding count");
         PackAdvancedResourcePlan.StorageBufferBinding shadowBinding = shadowBindings.get(0);
         assertTrue(shadowBinding.supported() && shadowBinding.logicalIndex() == 0
                         && shadowBinding.originalBinding() == 0
                         && shadowBinding.stageMask() == (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT),
-                "M8.6b shadow name/binding or stage merge is incorrect");
+                "shadow name/binding or stage merge is incorrect");
         int shadowBase = PackPipelines.storageBufferBindingBase(shadow);
         assertTrue(shadowBinding.rewrittenBinding() == shadowBase,
-                "M8.6b shadow binding is not compact after generated descriptors");
+                "shadow binding is not compact after generated descriptors");
 
         List<PackAdvancedResourcePlan.StorageBufferBinding> compositeBindings = plan.storageBuffers("composite");
         assertTrue(compositeBindings.size() == 1 && compositeBindings.get(0).supported()
                         && compositeBindings.get(0).logicalIndex() == 1
                         && compositeBindings.get(0).originalBinding() == 1,
-                "M8.6b unnamed binding did not resolve by authored binding");
+                "unnamed binding did not resolve by authored binding");
         String rewritten = plan.rewriteStorageBuffers("shadow", shadow.stageSource("fragment"));
         assertTrue(rewritten != null
                         && rewritten.contains("layout(std430, binding = "
                         + shadowBinding.rewrittenBinding() + ") buffer blockDataBuffer")
                         && rewritten.contains("uint values[]")
                         && rewritten.contains("blockDataBuffer;"),
-                "M8.6b storage block rewrite lost std430 members or instance");
+                "storage block rewrite lost std430 members or instance");
 
         PackStorageBufferDescriptor descriptor = new PackStorageBufferDescriptor(
                 "test", shadowBinding.rewrittenBinding(), shadowBinding.stageMask(), 64);
         assertTrue(descriptor.getType() == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
-                "M8.6b descriptor is not dynamic storage-buffer type");
+                "descriptor is not dynamic storage-buffer type");
         assertTrue(descriptor.getSize() == 64 && !descriptor.useGlobalBuffer(),
-                "M8.6b descriptor range or global-buffer policy is incorrect");
+                "descriptor range or global-buffer policy is incorrect");
 
         verifyMixedBindingAgreement(supportedPath);
         assertTrue(PackStorageBufferOwner.unsignedStorageBufferRange(-1)
                         == 4_294_967_295L,
-                "M8.6b unsigned Vulkan storage range conversion is incorrect");
+                "unsigned Vulkan storage range conversion is incorrect");
 
         PackProbe.Analysis unsupported = PackProbe.analyze(unsupportedPath);
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
@@ -137,28 +137,28 @@ final class StorageBufferPlanTest {
         assertTrue(invalidZero != null && !invalidZero.supported()
                         && invalidZero.deviations().stream()
                         .anyMatch(value -> value.startsWith("STORAGE_BUFFER_SIZE_UNSUPPORTED:")),
-                "M8.6b zero-size rejection is missing");
+                "zero-size rejection is missing");
         assertTrue(invalidIndex != null && !invalidIndex.supported()
                         && invalidIndex.deviations().contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:13"),
-                "M8.6b index-13 rejection is missing");
+                "index-13 rejection is missing");
         PackProgramPlan unsupportedShadow = unsupported.plan().program("shadow");
         assertTrue(unsupportedShadow != null && !unsupportedShadow.executable()
                         && !unsupported.plan().shouldAttempt("shadow"),
-                "M8.6b unmapped storage block did not scope fallback to the program");
+                "unmapped storage block did not scope fallback to the program");
         assertTrue(unsupported.report().program("shadow") != null
                         && unsupported.report().program("shadow").support()
                         == ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                "M8.6b unsupported storage program was not reported as identity fallback");
+                "unsupported storage program was not reported as identity fallback");
         assertTrue(!unsupportedPlan.storageBufferCapabilityPossible()
                         && !unsupportedPlan.storageBufferProgramSupported("shadow"),
-                "M8.6b invalid storage did not remain scoped to its dependent program");
+                "invalid storage did not remain scoped to its dependent program");
         PackProgramPlan unrelatedFinal = unsupported.plan().program("final");
         assertTrue(unrelatedFinal != null && unrelatedFinal.executable()
                         && unsupported.plan().shouldAttempt("final"),
-                "M8.6b unrelated final program was disabled by storage fallback");
+                "unrelated final program was disabled by storage fallback");
 
-        assertEquals(plan.snapshot(), repeatPlan.snapshot(), "M8.6b plan is not deterministic");
-        assertEquals(plan.fingerprint(), repeatPlan.fingerprint(), "M8.6b fingerprint is not deterministic");
+        assertEquals(plan.snapshot(), repeatPlan.snapshot(), "plan is not deterministic");
+        assertEquals(plan.fingerprint(), repeatPlan.fingerprint(), "fingerprint is not deterministic");
         assertNoAbsolutePaths(plan.snapshot());
     }
 
@@ -312,7 +312,8 @@ final class StorageBufferPlanTest {
         for (var method : List.of(read, bound, name, bind)) method.setAccessible(true);
         var backing = mixin.getDeclaredField("chimera$extendedTextures");
         backing.setAccessible(true);
-        assertEquals(SelectorNamespace.EXTENDED_CAPACITY, Array.getLength(backing.get(null)), "Backing must cover 8..26");
+        assertEquals(SelectorNamespace.EXTENDED_CAPACITY, Array.getLength(backing.get(null)),
+                "Backing must cover 8..26");
         // CPU-only image metadata constructor: no image allocation, views, or Vulkan device.
         var constructor = VulkanImage.class.getDeclaredConstructor(
                 VulkanImage.Builder.class);
@@ -337,7 +338,8 @@ final class StorageBufferPlanTest {
             try { selectorBind(bind, slot, null, host); cleared.set(slot); }
             catch (Exception failure) { throw new AssertionError(failure); }
         });
-        assertEquals(SelectorNamespace.LAST_RESERVED + 1, cleared.cardinality(), "Teardown did not clear full owned range");
+        assertEquals(SelectorNamespace.LAST_RESERVED + 1, cleared.cardinality(),
+                "Teardown did not clear full owned range");
         for (int slot = 0; slot <= SelectorNamespace.LAST_RESERVED; slot++) {
             assertTrue(selectorRead(read, slot, host) == null, "Teardown retained image: " + slot);
         }
@@ -347,7 +349,8 @@ final class StorageBufferPlanTest {
         var layout = new PackAdvancedResourcePlan.ProgramBindingLayout(1, 1, 1,
                 List.of(), List.of(), List.of(), List.of(descriptor), List.of(descriptor));
         try {
-            PackPipelines.prepareBuilder(new PackPipelines.PreparedPipeline(null, "", "", layout, new ProgramImageBindingManifest(List.of())),
+            PackPipelines.prepareBuilder(new PackPipelines.PreparedPipeline(null, "", "", layout,
+                    new ProgramImageBindingManifest(List.of())),
                     "future", PackAdvancedResourcePlan.empty(), null, info -> () -> null);
             throw new AssertionError("Future selector reached builder creation");
         } catch (PackPipelines.PreparationFailure failure) {
@@ -370,7 +373,7 @@ final class StorageBufferPlanTest {
     }
 
     /**
-     * R4 exact gate: real pack planning, real shared preparation, real
+     * Exact-pack gate: real pack planning, real shared preparation, real
      * applyConfig metadata, real layoutMismatch. No predicted layout echo.
      */
     @Test
@@ -440,7 +443,8 @@ final class StorageBufferPlanTest {
                             prepared.vertex(), prepared.fragment(), actual), label + " " + post.name());
                     prepared.imageBindings().verify(actual);
                     assertEquals(actual.stream().filter(d -> d.type() == 1 || d.type() == 3).count(),
-                            (long) prepared.imageBindings().entries().size(), label + " image bijection " + post.name());
+                            (long) prepared.imageBindings().entries().size(),
+                                    label + " image bijection " + post.name());
                     if (configured[0].equals("Complementary") && post.name().equals("composite")) {
                         var descriptor = actual.stream().filter(d -> d.symbol().equals("Sampler18") && d.type() == 1)
                                 .findFirst().orElseThrow();
@@ -449,7 +453,8 @@ final class StorageBufferPlanTest {
                         assertEquals(descriptor.binding(), entry.binding(), "voxel descriptor binding");
                         assertEquals("voxel_sampler", entry.sourceSymbol(), "voxel source sampler");
                         assertEquals("voxel_img", entry.resourceKey(), "voxel allocated image resolver");
-                        assertEquals(ProgramImageBindingManifest.Kind.ADVANCED_IMAGE, entry.kind(), "voxel resolver kind");
+                        assertEquals(ProgramImageBindingManifest.Kind.ADVANCED_IMAGE, entry.kind(),
+                                "voxel resolver kind");
                         verifyImageTransaction(prepared.imageBindings());
                     }
                     int extraBinding = actual.stream().mapToInt(PackAdvancedResourcePlan.DescriptorBinding::binding)
@@ -461,7 +466,8 @@ final class StorageBufferPlanTest {
                         throw new AssertionError("Unresolved actual builder descriptor reached native creation");
                     } catch (PackPipelines.PreparationFailure failure) {
                         assertEquals("descriptor-contract", failure.phase, "unresolved descriptor phase");
-                        assertEquals("IMAGE_RESOLVER_MISSING:Sampler24", failure.reason, "unresolved descriptor reason");
+                        assertEquals("IMAGE_RESOLVER_MISSING:Sampler24", failure.reason,
+                                "unresolved descriptor reason");
                     }
                 }
             } catch (AssertionError | Exception failure) {
@@ -567,11 +573,13 @@ final class StorageBufferPlanTest {
                     + "image.voxel_img=voxel_sampler red_integer r8ui unsigned_int true false 8 4 8\n"
                     + "image.light_img=light_sampler rgba rgba16f half_float false false 8 4 8\n");
             Files.writeString(shaders.resolve("shadow.vsh"),
-                    "#version 120\nlayout(std430, binding=0) buffer blockDataBuffer { uint values[]; } blockDataBuffer;\n"
+                    "#version 120\nlayout(std430, binding=0) buffer blockDataBuffer { uint values[];"
+                            + " } blockDataBuffer;\n"
                     + "uniform uimage3D voxel_img;\nuniform image3D light_img;\nuniform usampler3D voxel_sampler;\n"
                     + "uniform sampler3D light_sampler;\n"
                     + "vec4 GetComplexLightVolume(vec3 pos, sampler3D ff_sampler);\n"
-                    + "vec4 GetComplexLightVolume(vec3 pos, sampler3D ff_sampler) { return texture(ff_sampler, pos); }\n"
+                    + "vec4 GetComplexLightVolume(vec3 pos, sampler3D ff_sampler) { return texture(ff_sampler, pos);"
+                            + " }\n"
                     + "void main() { imageStore(voxel_img, ivec3(0), uvec4(blockDataBuffer.values[0]));"
                     + "imageStore(light_img, ivec3(0), GetComplexLightVolume(vec3(0), light_sampler)"
                     + " + vec4(texture(voxel_sampler, vec3(0)))); gl_Position=ftransform(); }\n");
@@ -615,13 +623,15 @@ final class StorageBufferPlanTest {
                 assertTrue(owner.layoutVerified("shadow"), "Matching layout was not admitted");
                 var light = layout.descriptors().stream().filter(value -> value.symbol().equals("light_sampler"))
                         .findFirst().orElseThrow();
-                String samplerCollision = vertex.replace("binding = " + light.binding() + ") uniform sampler3D light_sampler",
+                String samplerCollision = vertex.replace("binding = " + light.binding()
+                        + ") uniform sampler3D light_sampler",
                         "binding = " + layout.storageBase() + ") uniform sampler3D light_sampler");
                 assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
                         owner.verifyLayout("shadow", samplerCollision, fragment, descriptors),
                         "Real sampler/SSBO collision was not rejected by sampler name");
                 assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:ff_sampler",
-                        owner.verifyLayout("shadow", vertex + "\nuniform sampler3D ff_sampler;\n", fragment, descriptors),
+                        owner.verifyLayout("shadow", vertex + "\nuniform sampler3D ff_sampler;\n", fragment,
+                                descriptors),
                         "Unplanned global sampler sharing a helper parameter name escaped verification");
                 var wrongSamplerType = new ArrayList<>(descriptors);
                 wrongSamplerType.replaceAll(value -> value.binding() == light.binding()
@@ -645,7 +655,8 @@ final class StorageBufferPlanTest {
                         owner.verifyLayout("shadow", broken, fragment, descriptors),
                         "SSBO/image collision was not rejected by shader symbol");
                 assertTrue(!owner.layoutVerified("shadow") && !owner.storagePathReady("shadow", "shadow")
-                                && owner.storagePathStatus("shadow", "shadow").contains("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img"),
+                                && owner.storagePathStatus("shadow",
+                                        "shadow").contains("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img"),
                         "Rejected layout remained ready or lost its named reason");
                 assertEquals(null, owner.verifyLayout("shadow", vertex, fragment, descriptors),
                         "Corrected layout failed to recover");
@@ -660,7 +671,7 @@ final class StorageBufferPlanTest {
 
     private static void assertNoAbsolutePaths(String value) {
         assertTrue(!value.contains("C:\\") && !value.contains("/Users/"),
-                "M8.6b snapshot contains an absolute path");
+                "snapshot contains an absolute path");
     }
 
     @Test
@@ -678,12 +689,12 @@ final class StorageBufferPlanTest {
                         && blocks.get(0).qualifierMacro().equals("SSBO_QUALIFIER")
                         && blocks.get(1).std430()
                         && blocks.get(1).originalBinding() == 1,
-                "M8.6b qualifier-macro storage parsing is not line ordered");
+                "qualifier-macro storage parsing is not line ordered");
         String rewritten = GlslStorageBufferParser.rewrite(source,
                 Map.of(GlslStorageBufferParser.key(blocks.get(0)), 7));
         assertTrue(rewritten.contains("binding = 7")
                         && rewritten.contains("#define SSBO_QUALIFIER\n"),
-                "M8.6b token storage rewrite changed the authored declaration");
+                "token storage rewrite changed the authored declaration");
 
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(
                 "uniform sampler3D liveSampler; uniform sampler3D unusedSampler;\n"
@@ -691,14 +702,14 @@ final class StorageBufferPlanTest {
                         + "void main() { vec4 value = readValue(); }\n");
         assertTrue(usage.successful() && usage.liveSamplers().contains("liveSampler")
                         && !usage.liveSamplers().contains("unusedSampler"),
-                "M8.6b live resource analysis did not follow the reachable helper");
+                "live resource analysis did not follow the reachable helper");
         GlslResourceUsage.Analysis helperUsage = GlslResourceUsage.analyze(
                 "uniform sampler2D helperSampler;\n"
                         + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
                         + "void main() { gl_FragColor = vec4(1.0); }\n");
         assertTrue(helperUsage.referencedSamplers().contains("helperSampler")
                         && !helperUsage.liveSamplers().contains("helperSampler"),
-                "M8.6b sampler references in unreachable helpers were lost");
+                "sampler references in unreachable helpers were lost");
         PostTargetPlan.ParseResult targetResult = PostTargetPlan.parse("composite",
                 "#version 120\n/* DRAWBUFFERS:0 */\n"
                         + "uniform sampler2D helperSampler;\n"
@@ -721,7 +732,7 @@ final class StorageBufferPlanTest {
                         && deadPlan.samplers().isEmpty()
                         && deadPlan.deviations().contains("SAMPLER_DECLARATION_UNUSED:helperSampler")
                         && !deadPlan.deviations().contains("SAMPLER_NOT_MAPPED:helperSampler"),
-                "M8.6b dead helper sampler was not removed before conversion");
+                "dead helper sampler was not removed before conversion");
 
         String liveHelperSource = "#version 120\n/* DRAWBUFFERS:0 */\n"
                 + "uniform sampler2D helperSampler;\n"
@@ -730,7 +741,7 @@ final class StorageBufferPlanTest {
         UniformRegistry.ProgramInterface livePlan = UniformRegistry.planPreparedPost(
                 liveHelperSource, PostTargetPlan.parse("composite", liveHelperSource).plan());
         assertTrue(livePlan.deviations().contains("SAMPLER_NOT_MAPPED:helperSampler"),
-                "M8.6b reachable unmapped sampler did not fail closed");
+                "reachable unmapped sampler did not fail closed");
 
         String overloadSource = "uniform sampler2D overloadedSampler;\n"
                 + "vec4 read(int value) { return texture2D(overloadedSampler, vec2(0.0)); }\n"
@@ -739,14 +750,15 @@ final class StorageBufferPlanTest {
         GlslResourceUsage.Analysis overloadUsage = GlslResourceUsage.analyze(overloadSource);
         assertTrue(overloadUsage.liveSamplers().contains("overloadedSampler")
                         && overloadUsage.unreachableFunctions().isEmpty(),
-                "M8.6b overloaded helper reachability was not conservative");
+                "overloaded helper reachability was not conservative");
 
         String recursiveSource = "uniform sampler2D recursiveSampler;\n"
-                + "vec4 recur(int value) { if (value == 0) return texture2D(recursiveSampler, vec2(0.0)); return recur(value - 1); }\n"
+                + "vec4 recur(int value) { if (value == 0) return texture2D(recursiveSampler, vec2(0.0));"
+                        + " return recur(value - 1); }\n"
                 + "void main() { gl_FragColor = recur(1); }\n";
         assertTrue(GlslResourceUsage.analyze(recursiveSource).liveSamplers()
                         .contains("recursiveSampler"),
-                "M8.6b recursive helper reachability was not retained");
+                "recursive helper reachability was not retained");
 
         String macroSource = "float Bayer2(vec2 value) { return value.x; }\n"
                 + "#define Bayer4(value) (Bayer2(value * 0.5))\n"
@@ -764,7 +776,7 @@ final class StorageBufferPlanTest {
                         && macroConverted.contains("#define Bayer4")
                         && macroConverted.contains("#define Bayer8")
                         && !macroConverted.contains("BayerCloud2"),
-                "M8.6b function-like macro dependencies were pruned");
+                "function-like macro dependencies were pruned");
 
         Set<String> callableUniforms = GlslResourceUsage.referencedValueIdentifiers(
                 "uniform sampler2D textureAtlas; void main() {"
@@ -772,12 +784,12 @@ final class StorageBufferPlanTest {
                 Set.of("textureSize", "textureAtlas"));
         assertTrue(!callableUniforms.contains("textureSize")
                         && callableUniforms.contains("textureAtlas"),
-                "M8.6b callable builtin was inferred as a uniform value");
+                "callable builtin was inferred as a uniform value");
         assertTrue(GlslResourceUsage.referencedValueIdentifiers(
                         "#define SIZE_OF \\" + "\n"
                                 + "textureSize(textureAtlas, 0)\nvoid main() {}",
                         Set.of("textureSize", "textureAtlas")).isEmpty(),
-                "M8.6b continued preprocessor text was treated as executable uniform use");
+                "continued preprocessor text was treated as executable uniform use");
         UniformRegistry.ProgramInterface callablePlan = UniformRegistry.planPreparedPost(
                 "#version 120\nuniform sampler2D textureAtlas;\n"
                         + "void main() { ivec2 size = textureSize(textureAtlas, 0); "
@@ -785,7 +797,7 @@ final class StorageBufferPlanTest {
                 PostTargetPlan.parse("composite", "#version 120\nDRAWBUFFERS:0").plan());
         assertTrue(callablePlan.deviations().stream().noneMatch(value ->
                         value.equals("UNIFORM_IMPLICIT_DECLARATION:textureSize")),
-                "M8.6b textureSize was added to the generated UBO");
+                "textureSize was added to the generated UBO");
 
         String fogSource = "#version 120\n"
                 + "void main() { float value = (gl_Fog.start + gl_Fog.end) * gl_Fog.scale;"
@@ -797,37 +809,37 @@ final class StorageBufferPlanTest {
                         && normalizedFog.source().contains("1.0 / (fogEnd - fogStart)")
                         && normalizedFog.source().contains("uniform float fogStart;")
                         && normalizedFog.source().contains("uniform float fogEnd;"),
-                "M8.6b legacy gl_Fog fields were not normalized");
+                "legacy gl_Fog fields were not normalized");
         UniformRegistry.ProgramInterface fogPlan = UniformRegistry.planPreparedPost(
                 normalizedFog.source(),
                 PostTargetPlan.parse("composite", fogSource).plan());
         assertTrue(fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogStart"))
                         && fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogEnd"))
                         && fogPlan.executable(),
-                "M8.6b normalized fog values did not enter the live interface");
+                "normalized fog values did not enter the live interface");
         LegacyShaderNormalizer.Result unsupportedFog = LegacyShaderNormalizer.normalize(
                 "void main() { gl_FragColor = vec4(gl_Fog.density); }", false);
         assertTrue(!unsupportedFog.successful()
                         && unsupportedFog.deviations().contains(
                         "LEGACY_FOG_FIELD_UNSUPPORTED:density"),
-                "M8.6b unsupported gl_Fog field did not fail closed");
+                "unsupported gl_Fog field did not fail closed");
 
         String shadowedSource = "uniform sampler2D shadowedSampler;\n"
                 + "vec4 local() { float shadowedSampler = 1.0; return vec4(shadowedSampler); }\n"
                 + "void main() { gl_FragColor = local(); }\n";
         assertTrue(!GlslResourceUsage.analyze(shadowedSource).liveSamplers()
                         .contains("shadowedSampler"),
-                "M8.6b local resource shadowing was misclassified");
+                "local resource shadowing was misclassified");
 
         String snippetSource = "uniform sampler2D snippetSampler;\n"
                 + "vec4 snippet() { return texture2D(snippetSampler, vec2(0.0)); }\n";
         GlslResourceUsage.Analysis snippetUsage = GlslResourceUsage.analyze(snippetSource);
         assertTrue(snippetUsage.liveSamplers().contains("snippetSampler")
                         && snippetUsage.unreachableFunctions().isEmpty(),
-                "M8.6b no-main source was pruned instead of retained conservatively");
+                "no-main source was pruned instead of retained conservatively");
         UniformRegistry.UniformDescriptor blindness =
                 UniformRegistry.descriptor("blindness", "float");
         assertTrue(blindness != null && blindness.sourceKey().equals("blindness"),
-                "M8.6b blindness uniform alias is not in the live catalog");
+                "blindness uniform alias is not in the live catalog");
     }
 }

@@ -61,7 +61,8 @@ public final class PackStorageBufferOwner implements AutoCloseable {
             } else if (stage == VK10.VK_SHADER_STAGE_FRAGMENT_BIT
                     && drawnWriters.containsKey(index) && synchronizedWrites.contains(index)
                     && reportedReaders.add(program + ":" + index)) {
-                ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
+                ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},"
+                        + "writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
                         drawnWriters.get(index), program, binding.size(), dispatchCount);
             }
         }

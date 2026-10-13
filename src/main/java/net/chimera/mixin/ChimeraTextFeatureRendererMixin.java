@@ -35,7 +35,9 @@ import java.util.Set;
 @Mixin(TextFeatureRenderer.class)
 public abstract class ChimeraTextFeatureRendererMixin {
     @WrapOperation(method = "render", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/util/FormattedCharSequence;FFIZLorg/joml/Matrix4f;Lnet/minecraft/client/renderer/MultiBufferSource;Lnet/minecraft/client/gui/Font$DisplayMode;II)V"),
+            target = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/util/FormattedCharSequence;"
+                    + "FFIZLorg/joml/Matrix4f;Lnet/minecraft/client/renderer/MultiBufferSource;"
+                    + "Lnet/minecraft/client/gui/Font$DisplayMode;II)V"),
             require = 1)
     private void chimera$packText(
             Font font,

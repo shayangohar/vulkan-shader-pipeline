@@ -234,10 +234,12 @@ final class ShadowPassTest {
         for (var instruction : flames.instructions) {
             if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("flameEntityId")) flameId = true;
-                if (call.name.equals("emit") && call.owner.equals("net/chimera/render/ChimeraFamilyDraw")) family = true;
+                if (call.name.equals("emit")
+                        && call.owner.equals("net/chimera/render/ChimeraFamilyDraw")) family = true;
             }
         }
-        assertTrue(flameId && family, "burning-entity fire must draw through the entity family with Iris's entity_flame id");
+        assertTrue(flameId && family,
+                "burning-entity fire must draw through the entity family with Iris's entity_flame id");
     }
 
     /**
@@ -274,7 +276,8 @@ final class ShadowPassTest {
         ShadowCullingPlan distance = plan.apply(Map.of("shadow.culling", "false"), unitRender);
         assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.DISTANCE, 128.0, 0.0),
                 distance.terrain(renderDistance), "false culls by distance only");
-        assertEquals(ShadowCullingPlan.Culler.NONE, distance.terrain(96), "a distance past the render distance culls nothing");
+        assertEquals(ShadowCullingPlan.Culler.NONE, distance.terrain(96),
+                "a distance past the render distance culls nothing");
         assertEquals(ShadowCullingPlan.Culler.NONE,
                 plan.apply(Map.of("shadow.culling", "false"), Map.of()).terrain(renderDistance),
                 "a negative distance culls nothing");
@@ -284,7 +287,8 @@ final class ShadowPassTest {
                 safeZone.terrain(renderDistance),
                 "reversed: voxelDistance box always drawn, outer box shadowDistance (renderMul -1 taken as 1)");
         assertEquals(safeZone.terrain(renderDistance),
-                plan.apply(Map.of("shadow.culling", "safe_zone"), Map.of("voxelDistance", "32.0")).terrain(renderDistance),
+                plan.apply(Map.of("shadow.culling", "safe_zone"),
+                        Map.of("voxelDistance", "32.0")).terrain(renderDistance),
                 "safe_zone is reversed");
 
         assertEquals(new ShadowCullingPlan.Culler(advanced, 32.0, 0.0),
@@ -306,7 +310,8 @@ final class ShadowPassTest {
                 new Vector3f(0.0F, 1.0F, 0.0F));
         assertTrue(cube(overhead, 0, 0, -20), "a visible caster is kept");
         assertTrue(cube(overhead, 0, 50, -20), "a caster above the view shadows what the camera sees");
-        assertTrue(!cube(overhead, 0, 50, 20), "with the sun overhead, a caster behind the camera shadows nothing seen");
+        assertTrue(!cube(overhead, 0, 50, 20),
+                "with the sun overhead, a caster behind the camera shadows nothing seen");
         assertTrue(!cube(overhead, 0, -100, -20), "a caster below the view shadows nothing seen");
         var side = new ShadowCullingFrustum(open, camera,
                 new Vector3f(1.0F, 0.0F, 0.0F));

@@ -111,7 +111,7 @@ public final class ChimeraMainPass implements MainPass {
     static record HandBoundaryPolicy(boolean loadColor, boolean clearDepth) {}
 
     /**
-     * The M8.2 coverage path remains load-time inventory until every host
+     * The coverage path remains load-time inventory until every host
      * family can share the same coverage contract. Keeping the gate explicit
      * prevents the deferred path from allocating live images or pipelines.
      */
@@ -386,7 +386,8 @@ public final class ChimeraMainPass implements MainPass {
             VulkanImage hdrColor = this.targets.hdrFramebuffer.getColorAttachment();
             this.packPostTargets.beginFrame(commandBuffer, hdrColor);
             this.packPostFrameStarted = true;
-            this.postChain.nanTripwire.beginFrame(commandBuffer, this.sessions.packPath == null ? "?" : String.valueOf(this.sessions.packPath.getFileName()));
+            this.postChain.nanTripwire.beginFrame(commandBuffer,
+                    this.sessions.packPath == null ? "?" : String.valueOf(this.sessions.packPath.getFileName()));
             if (packCoverageRuntimeEnabled() && this.packPostChainActive) {
                 this.packPostTargets.prepareGeometryTarget(commandBuffer);
                 this.packCoverageOwner.beginFrame(commandBuffer);
@@ -421,7 +422,8 @@ public final class ChimeraMainPass implements MainPass {
             VulkanImage hdrColor = this.targets.hdrFramebuffer.getColorAttachment();
             trace("openHdr", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             Renderer.getInstance().beginRenderPass(this.targets.hdrRenderPass, this.targets.hdrFramebuffer);
-            Renderer.setViewport(0, 0, this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight(), stack);
+            Renderer.setViewport(0, 0, this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight(),
+                    stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, this.targets.hdrFramebuffer.scissor(stack));
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             this.levelPhase = true;
@@ -516,7 +518,7 @@ public final class ChimeraMainPass implements MainPass {
                 this.packPostTargets.commitFrame();
                 this.packPostFrameStarted = false;
             }
-            // Mask-critical bypass (DOC-348 repair 3): this branch runs when
+            // Mask-critical bypass: this branch runs when
             // the post chain is blocked or unconfigured. Installed pack
             // objects stay untouched for deterministic cleanup and reload,
             // but the pack composite must not execute here: it requires
@@ -546,7 +548,8 @@ public final class ChimeraMainPass implements MainPass {
             this.packTranslucentSuspended = true;
             if (!this.packTranslucentSuspendLogged) {
                 this.packTranslucentSuspendLogged = true;
-                LOGGER.warn("[chimera] pack gbuffers_water: inputs unavailable this frame, fixed translucent pipeline used");
+                LOGGER.warn("[chimera] pack gbuffers_water: inputs unavailable this frame, "
+                        + "fixed translucent pipeline used");
             }
             return;
         }
@@ -801,8 +804,10 @@ public final class ChimeraMainPass implements MainPass {
 
             SwapChain swapChain = Renderer.getInstance().getSwapChain();
             if (swapChain.hasImages()) {
-                trace("presentSwap", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                trace("presentSwap", "swapchain", swapChain.getColorAttachment(),
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 Renderer.getInstance().beginRenderPass(this.targets.presentRenderPass, swapChain);
                 // The present draw otherwise inherits the GUI's last viewport and
                 // scissor, leaving the swapchain on its clear color; pin the full
@@ -839,7 +844,8 @@ public final class ChimeraMainPass implements MainPass {
                 Renderer.getInstance().endRenderPass(commandBuffer);
 
                 trace("presentSrc", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-                swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+                swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer,
+                        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
             }
         }
 
@@ -1063,7 +1069,8 @@ public final class ChimeraMainPass implements MainPass {
             pass = forceDepthClear ? this.targets.hdrAuxClearDepthRenderPass : this.targets.hdrAuxRenderPass;
             imageName = "hdrColor";
         } else {
-            pass = forceDepthClear ? this.targets.compositeAuxClearDepthRenderPass : this.targets.compositeAuxRenderPass;
+            pass = forceDepthClear ? this.targets.compositeAuxClearDepthRenderPass
+                    : this.targets.compositeAuxRenderPass;
             imageName = "outputColor";
         }
 
@@ -1508,7 +1515,7 @@ public final class ChimeraMainPass implements MainPass {
                 }
             };
     /**
-     * Mask-critical family contract (DOC-338 repair 4, DOC-497 B). Entity and
+     * Mask-critical family contract. Entity and
      * block draws cover world pixels the pack's post passes classify by
      * material metadata, and pack geometry writes authored targets only post
      * presents. A frame missing either family therefore has no coherent pack
@@ -1575,7 +1582,8 @@ public final class ChimeraMainPass implements MainPass {
         shadowPass.recordShadowDraw();
     }
 
-    public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindDescriptorImages(GraphicsPipeline pipeline) {
+    public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindDescriptorImages(
+            GraphicsPipeline pipeline) {
         ProgramImages program = this.programImages.get(pipeline);
         // Fullscreen and terrain seams already hold a transaction with their exact graph inputs.
         if (program == null || PostTargetPlan.isPostProgramName(program.name())
@@ -1606,18 +1614,23 @@ public final class ChimeraMainPass implements MainPass {
                 return this.materialMapOwner.resolveDrawMaterial(drawContext, entry.resourceKey());
             }
             VulkanImage image = switch (entry.kind()) {
-                case COLOR_TARGET -> PackPostChain.resolvePackColorInput(PackResourcePlan.targetIndex(entry.resourceKey()), colors, fallback);
+                case COLOR_TARGET -> PackPostChain.resolvePackColorInput(
+                        PackResourcePlan.targetIndex(entry.resourceKey()), colors, fallback);
                 case DEPTH_TARGET -> {
                     VulkanImage depth = this.packDepthTargets.image(entry.resourceKey());
-                    yield depth == null && entry.resourceKey().equals("depthtex0") && this.targets.hdrFramebuffer != null
+                    yield depth == null && entry.resourceKey().equals("depthtex0")
+                            && this.targets.hdrFramebuffer != null
                             ? this.targets.hdrFramebuffer.getDepthAttachment() : depth;
                 }
                 case SHADOW_DEPTH -> this.shadowPass.shadowMap.getShadowFramebuffer() == null ? null
                         : entry.resourceKey().equals("shadowtex1") ? this.shadowPass.shadowMap.opaqueDepth()
                         : this.shadowPass.shadowMap.getShadowFramebuffer().getDepthAttachment();
-                case SHADOW_COLOR -> this.shadowPass.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
-                case PACK_TEXTURE -> this.packResourceOwner == null ? null : this.packResourceOwner.image(entry.resourceKey());
-                case ADVANCED_IMAGE -> this.packAdvancedImageOwner == null ? null : this.packAdvancedImageOwner.image(entry.resourceKey());
+                case SHADOW_COLOR ->
+                        this.shadowPass.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
+                case PACK_TEXTURE -> this.packResourceOwner == null ? null
+                        : this.packResourceOwner.image(entry.resourceKey());
+                case ADVANCED_IMAGE -> this.packAdvancedImageOwner == null ? null
+                        : this.packAdvancedImageOwner.image(entry.resourceKey());
                 case MATERIAL_MAP -> throw new AssertionError();
                 case HOST_TEXTURE -> throw new AssertionError();
             };
@@ -1626,7 +1639,8 @@ public final class ChimeraMainPass implements MainPass {
         });
     }
 
-    public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindProgramImages(GraphicsPipeline pipeline) {
+    public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindProgramImages(
+            GraphicsPipeline pipeline) {
         return bindProgramImages(pipeline, this.packPostTargets.sourceImages(),
                 this.targets.hdrFramebuffer == null ? null : this.targets.hdrFramebuffer.getColorAttachment(),
                 DrawMaterialContext.captureLive());
@@ -1747,7 +1761,8 @@ public final class ChimeraMainPass implements MainPass {
     private void recreateWorldAttachments() {
         Framebuffer output = this.targets.compositeFramebuffer;
         int width = output != null ? output.getWidth() : Math.max(Renderer.getInstance().getSwapChain().getWidth(), 1);
-        int height = output != null ? output.getHeight() : Math.max(Renderer.getInstance().getSwapChain().getHeight(), 1);
+        int height = output != null ? output.getHeight()
+                : Math.max(Renderer.getInstance().getSwapChain().getHeight(), 1);
         targets.createHdrFramebuffer(width, height);
         targets.createHdrInteropTextures();
         this.hdrDepthReadable = false;

@@ -42,7 +42,8 @@ public abstract class ChimeraDrawBuffersMixin {
     }
 
     @Redirect(method = "buildDrawBatchesIndirect", at = @At(value = "INVOKE",
-            target = "Lorg/lwjgl/vulkan/VK10;vkCmdDrawIndexedIndirect(Lorg/lwjgl/vulkan/VkCommandBuffer;JJII)V"), require = 1)
+            target = "Lorg/lwjgl/vulkan/VK10;vkCmdDrawIndexedIndirect(Lorg/lwjgl/vulkan/VkCommandBuffer;JJII)V"),
+                    require = 1)
     private void chimera$indirect(VkCommandBuffer cmd, long buffer, long offset, int count, int stride) {
         VK10.vkCmdDrawIndexedIndirect(cmd, buffer, offset, count, stride);
         if (count > 0 && ChimeraRenderer.getMainPass() != null)

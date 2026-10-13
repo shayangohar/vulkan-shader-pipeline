@@ -83,11 +83,13 @@ final class IrisCoreProfile {
         for (Map.Entry<String, String> entry : declared.entrySet()) {
             String type = entry.getValue();
             replacements.put(entry.getKey(), switch (entry.getKey()) {
-                case "vaPosition" -> type.equals("vec4") ? "gl_Vertex" : TerrainVertexBridge.adaptModernTerrainType(type, "gl_Vertex.xyz", "vec3");
+                case "vaPosition" -> type.equals("vec4") ? "gl_Vertex"
+                        : TerrainVertexBridge.adaptModernTerrainType(type, "gl_Vertex.xyz", "vec3");
                 case "vaColor" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_Color", "vec4");
                 case "vaNormal" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_Normal", "vec3");
                 case "vaUV0" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_MultiTexCoord0.xy", "vec2");
-                case "vaUV1" -> type.equals("ivec2") ? overlay : TerrainVertexBridge.adaptModernTerrainType(type, "vec2(" + overlay + ")", "vec2");
+                case "vaUV1" -> type.equals("ivec2") ? overlay
+                        : TerrainVertexBridge.adaptModernTerrainType(type, "vec2(" + overlay + ")", "vec2");
                 case "vaUV2" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_MultiTexCoord1.xy", "vec2");
                 case "modelViewMatrix" -> "gl_ModelViewMatrix";
                 case "modelViewMatrixInverse" -> "inverse(gl_ModelViewMatrix)";

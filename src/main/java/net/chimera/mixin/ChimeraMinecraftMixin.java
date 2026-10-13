@@ -15,8 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * shaded behind every screen over a live level, including the pause-menu
  * blur chain. Level-less screens (loading/transition) hand the frame to
  * the host (legacyUnhand) because the teardown/swap churn around them
- * crashed the segmented frame's image transitions (TASK-63 round 4 bisect,
- * KNOW-47).
+ * crashed the segmented frame's image transitions.
  *
  * Level teardown during an open screen additionally hands off to the host
  * via WorldRendererLevelMixin until a live level returns.

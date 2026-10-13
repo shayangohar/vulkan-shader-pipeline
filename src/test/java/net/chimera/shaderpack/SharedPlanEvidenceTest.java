@@ -23,9 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The recorded M6.1 qualification of the shared program plan and translation core, on its
- * fixture and on two exact pack versions (evidence: needs -Pchimera.pack.complementaryVersion and
- * -Pchimera.pack.bslVersion). Its eligible-program baseline predates later planner work.
+ * The qualification of the shared program plan and translation core recorded in
+ * testpacks/baselines/m6_1.json, on its fixture and on two exact pack versions (evidence: needs
+ * -Pchimera.pack.complementaryVersion and -Pchimera.pack.bslVersion). Its eligible-program
+ * baseline predates later planner work.
  */
 final class SharedPlanEvidenceTest {
     @Test
@@ -52,50 +53,50 @@ final class SharedPlanEvidenceTest {
         PackProbe.Analysis first = PackProbe.analyze(fixture);
         PackProbe.Analysis second = PackProbe.analyze(fixture);
         ConformanceReport report = first.report();
-        assertEquals(report.toJson(), second.report().toJson(), "M6.1 fixture report stability");
+        assertEquals(report.toJson(), second.report().toJson(), "fixture report stability");
         assertEquals(planFingerprint(first.plan()), planFingerprint(second.plan()),
-                "M6.1 fixture plan stability");
+                "fixture plan stability");
 
         PackProgramPlan composite = requirePlan(first.plan(), "composite");
         PreparedShaderSource compositeSource = composite.stages().get("fragment");
-        assertTrue(compositeSource != null, "M6.1 composite prepared source is missing");
+        assertTrue(compositeSource != null, "composite prepared source is missing");
         assertTrue(compositeSource.dependencies().contains("lib/common.glsl"),
-                "M6.1 root-relative include was not recorded");
+                "root-relative include was not recorded");
         assertTrue(compositeSource.deviations().contains("PREPROCESSOR_MACRO_REDEFINED:M61_FEATURE"),
-                "M6.1 macro redefinition was not recorded");
+                "macro redefinition was not recorded");
         assertEquals(List.of(new UniformRegistry.UniformDeclaration("frameTimeCounter", "float")),
-                composite.interfacePlan().uniforms(), "M6.1 uniform union ordering");
+                composite.interfacePlan().uniforms(), "uniform union ordering");
         assertEquals(List.of(new UniformRegistry.SamplerBinding("colortex0", 0)),
-                composite.interfacePlan().samplers(), "M6.1 sampler ordering");
+                composite.interfacePlan().samplers(), "sampler ordering");
         assertEquals(Map.of("texcoord", 0), composite.varyingLocations(),
-                "M6.1 post varying location");
-        assertConvertedPost(composite.convertedFragment(), "M6.1 composite conversion");
+                "post varying location");
+        assertConvertedPost(composite.convertedFragment(), "composite conversion");
 
         PackProgramPlan numbered = requirePlan(first.plan(), "composite1");
-        assertTrue(numbered.executable(), "M6.1 GLSL 130 pass was rejected");
-        assertConvertedPost(numbered.convertedFragment(), "M6.1 GLSL 130 conversion");
+        assertTrue(numbered.executable(), "GLSL 130 pass was rejected");
+        assertConvertedPost(numbered.convertedFragment(), "GLSL 130 conversion");
         assertTrue(!numbered.convertedFragment().contains("GL_ARB_shader_texture_lod"),
-                "M6.1 legacy texture extension was retained");
+                "legacy texture extension was retained");
         assertTrue(!numbered.convertedFragment().contains("texture2D")
                         && !numbered.convertedFragment().contains("texture2DLod"),
-                "M6.1 texture calls were not rewritten");
+                "texture calls were not rewritten");
 
         PackProgramPlan terrain = requirePlan(first.plan(), "gbuffers_terrain");
-        assertTrue(terrain.executable(), "M6.1 paired terrain plan was rejected");
+        assertTrue(terrain.executable(), "paired terrain plan was rejected");
         assertEquals(Set.of("vertexColor", "texcoord"), terrain.varyingLocations().keySet(),
-                "M6.1 terrain varying union");
+                "terrain varying union");
         assertEquals(0, terrain.varyingLocations().get("texcoord"),
-                "M6.1 deterministic terrain varying location");
+                "deterministic terrain varying location");
         assertTrue(terrain.convertedVertex() != null && terrain.convertedFragment() != null,
-                "M6.1 paired terrain conversion is incomplete");
+                "paired terrain conversion is incomplete");
 
         PackProgramPlan modern = requirePlan(first.plan(), "composite2");
-        assertTrue(modern.executable(), "M6.1 modern post compatibility regression");
+        assertTrue(modern.executable(), "modern post compatibility regression");
         assertTrue(modern.deviations().contains("MODERN_GLSL_TRANSLATED"),
-                "M6.1 modern post translation deviation is missing");
+                "modern post translation deviation is missing");
         assertFallback(first, "composite3", "POST_VARYING_UNSUPPORTED:unsupportedUv");
         assertEquals(List.of("composite", "composite1", "composite2", "final", "gbuffers_terrain"),
-                eligibleNames(report), "M6.1 eligible program set");
+                eligibleNames(report), "eligible program set");
 
         JsonElementChecks.verifyBaseline(report, baseline, fixture);
     }
@@ -107,14 +108,14 @@ final class SharedPlanEvidenceTest {
                 + "vec4 value = texture2D(colortex0, texture2D(colortex0, uv).xy);\n";
         String rewritten = GlslTokenRewriter.rewriteTextureCalls(source);
         assertTrue(rewritten.contains("texture(colortex0, texture(colortex0, uv).xy)"),
-                "M6.1 nested texture rewrite failed");
+                "nested texture rewrite failed");
         assertTrue(rewritten.contains("// texture2D(gl_FragColor)"),
-                "M6.1 comment was rewritten");
+                "comment was rewritten");
         assertTrue(rewritten.contains("\"texture2D gl_FragColor\""),
-                "M6.1 literal was rewritten");
+                "literal was rewritten");
         assertEquals(6L, GlslLexer.lex("1+2 1e-2 3.5 4.0e+1").stream()
                         .filter(GlslLexer.Token::significant).count(),
-                "M6.1 numeric token boundary");
+                "numeric token boundary");
     }
 
     @Test
@@ -131,7 +132,7 @@ final class SharedPlanEvidenceTest {
         ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(
                 Path.of("."), null, nested.toString());
         assertTrue(result.deviations().contains("PREPROCESSOR_CONDITION_UNSUPPORTED"),
-                "M6.1 expression recursion budget was not enforced");
+                "expression recursion budget was not enforced");
     }
 
     private static void verifyExternalPack(String label, Path path, String version, JsonObject m57Baseline)
@@ -197,18 +198,18 @@ final class SharedPlanEvidenceTest {
             String expectedDeviation
     ) {
         ConformanceReport.ProgramReport report = analysis.report().program(name);
-        assertTrue(report != null, "M6.1 fallback program is missing: " + name);
+        assertTrue(report != null, "fallback program is missing: " + name);
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
-                report.support(), "M6.1 fallback status: " + name);
+                report.support(), "fallback status: " + name);
         assertTrue(report.deviations().contains(expectedDeviation),
-                "M6.1 fallback deviation is missing: " + name);
+                "fallback deviation is missing: " + name);
         assertTrue(!analysis.report().shouldAttempt(name),
-                "M6.1 fallback was marked executable: " + name);
+                "fallback was marked executable: " + name);
     }
 
     private static PackProgramPlan requirePlan(PackPlan plan, String name) {
         PackProgramPlan result = plan.program(name);
-        assertTrue(result != null, "M6.1 plan is missing: " + name);
+        assertTrue(result != null, "plan is missing: " + name);
         return result;
     }
 
@@ -224,9 +225,9 @@ final class SharedPlanEvidenceTest {
     private static void assertNoUnstableReportData(ConformanceReport report, Path pack) {
         String json = report.toJson();
         assertTrue(!json.contains(pack.toAbsolutePath().normalize().toString()),
-                "M6.1 report contains an absolute pack path");
+                "report contains an absolute pack path");
         assertTrue(!json.matches("(?s).*\\b(?:timestamp|createdAt|updatedAt)\\b.*"),
-                "M6.1 report contains timestamp data");
+                "report contains timestamp data");
     }
 
     private static int count(String source, String value) {
@@ -270,25 +271,25 @@ final class SharedPlanEvidenceTest {
                 System.out.println("[chimera] M6.1 fixture deviations: " + allDeviations(report));
                 return;
             }
-            assertEquals(expectedHash, report.sha256(), "M6.1 fixture report hash");
+            assertEquals(expectedHash, report.sha256(), "fixture report hash");
             Map<String, String> expectedSources = new TreeMap<>();
             baseline.getAsJsonObject("sourceHashes").entrySet()
                     .forEach(entry -> expectedSources.put(entry.getKey(), entry.getValue().getAsString()));
-            assertEquals(expectedSources, sourceHashes(report), "M6.1 fixture source hashes");
+            assertEquals(expectedSources, sourceHashes(report), "fixture source hashes");
             assertEquals(jsonArrayStrings(baseline.getAsJsonArray("expectedExecutablePrograms")),
                     report.programs().stream()
                             .filter(value -> value.support() == ConformanceReport.SupportStatus.SUPPORTED
                                     || value.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION)
                             .map(ConformanceReport.ProgramReport::name).sorted().toList(),
-                    "M6.1 executable baseline");
+                    "executable baseline");
             assertEquals(jsonArrayStrings(baseline.getAsJsonArray("expectedFallbackPrograms")),
                     report.programs().stream()
                             .filter(value -> value.support() == ConformanceReport.SupportStatus.IDENTITY_FALLBACK)
                             .map(ConformanceReport.ProgramReport::name).sorted().toList(),
-                    "M6.1 fallback baseline");
+                    "fallback baseline");
             assertEquals(jsonArrayStrings(baseline.getAsJsonArray("expectedDeviations")),
-                    allDeviations(report), "M6.1 deviation baseline");
-            assertTrue(Files.isDirectory(fixture), "M6.1 fixture disappeared during baseline check");
+                    allDeviations(report), "deviation baseline");
+            assertTrue(Files.isDirectory(fixture), "fixture disappeared during baseline check");
         }
 
         private static Map<String, String> sourceHashes(ConformanceReport report) {

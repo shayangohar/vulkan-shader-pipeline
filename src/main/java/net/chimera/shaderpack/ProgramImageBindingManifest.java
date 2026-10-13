@@ -66,7 +66,8 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
                         && value.binding() == descriptor.binding()).findFirst().orElse(null);
                 if (entry == null || entry.slot() != selector(descriptor) || entry.descriptorType() != descriptor.type()
                         || (entry.stageMask() & descriptor.stages()) != descriptor.stages()
-                        || !(entry.symbol().equals(descriptor.symbol()) || entry.sourceSymbol().equals(descriptor.symbol())))
+                        || !(entry.symbol().equals(descriptor.symbol())
+                                || entry.sourceSymbol().equals(descriptor.symbol())))
                     throw failure("IMAGE_MANIFEST_MISMATCH:" + descriptor.symbol());
             }
         }
@@ -78,7 +79,8 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
         Map<String, Entry> remaining = new HashMap<>();
         Map<Integer, Entry> slots = new HashMap<>();
         for (Entry entry : entries) {
-            if (!SelectorNamespace.isAddressable(entry.slot())) throw failure("SELECTOR_SLOT_UNSUPPORTED:" + entry.slot());
+            if (!SelectorNamespace.isAddressable(entry.slot())) throw failure("SELECTOR_SLOT_UNSUPPORTED:"
+                    + entry.slot());
             Entry previous = slots.putIfAbsent(entry.slot(), entry);
             if (previous != null && (previous.kind() != entry.kind()
                     || !previous.resourceKey().equals(entry.resourceKey())))
@@ -94,7 +96,8 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
                     || entry.descriptorType() != descriptor.type() || entry.stageMask() != descriptor.stages())
                 throw failure("IMAGE_MANIFEST_MISMATCH:" + descriptor.symbol());
         }
-        if (!remaining.isEmpty()) throw failure("IMAGE_DESCRIPTOR_MISSING:" + remaining.values().iterator().next().symbol());
+        if (!remaining.isEmpty()) throw failure("IMAGE_DESCRIPTOR_MISSING:"
+                + remaining.values().iterator().next().symbol());
     }
 
     private static int selector(PackAdvancedResourcePlan.DescriptorBinding descriptor) {

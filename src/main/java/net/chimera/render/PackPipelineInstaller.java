@@ -103,7 +103,8 @@ final class PackPipelineInstaller {
             if (plan != null && !plan.resources().programAllowed(name)) {
                 return plan.resources().unavailableReason(name);
             }
-            return programPlan != null && !programPlan.executable() ? "PLAN_INELIGIBLE:" + name : "CONTRACT_UNSUPPORTED";
+            return programPlan != null && !programPlan.executable() ? "PLAN_INELIGIBLE:" + name
+                    : "CONTRACT_UNSUPPORTED";
         }
         PackAdvancedResourcePlan advanced = advancedResources();
         boolean advancedProducer = plan != null && !advanced.graphicsImages(name).isEmpty();

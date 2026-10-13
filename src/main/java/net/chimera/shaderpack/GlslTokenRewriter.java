@@ -11,6 +11,29 @@ import java.util.regex.Pattern;
 
 /** Token-safe rewrites for the small legacy-to-Vulkan GLSL bridge. */
 public final class GlslTokenRewriter {
+    /**
+     * The explicit-gradient atlas helper: it samples the texel center the gradients select, so a
+     * tile edge never bleeds into its neighbour. {@code {grad}} is its name and {@code {p}} the
+     * prefix that keeps its locals clear of the pack's names.
+     */
+    private static final String ATLAS_GRADIENT_HELPER = """
+            vec4 {grad}(sampler2D {p}Tex, vec2 {p}Uv, vec2 {p}Du, vec2 {p}Dv) {
+            vec2 {p}Pixel = 1.0 / vec2(textureSize({p}Tex, 0));
+            vec2 {p}Screen = max(sqrt({p}Du * {p}Du + {p}Dv * {p}Dv), vec2(1e-20));
+            vec2 {p}Coord = {p}Uv / {p}Pixel;
+            vec2 {p}Center = round({p}Coord) - 0.5;
+            vec2 {p}Offset = clamp(({p}Coord - {p}Center - 0.5) * {p}Pixel / {p}Screen + 0.5, 0.0, 1.0);
+            return textureGrad({p}Tex, ({p}Center + {p}Offset) * {p}Pixel, {p}Du, {p}Dv);
+            }
+            """;
+
+    /** The plain atlas helper, {@code {plain}}, which takes its gradients from the derivatives. */
+    private static final String ATLAS_PLAIN_HELPER = """
+            vec4 {plain}(sampler2D {p}Tex, vec2 {p}Uv) {
+            return {grad}({p}Tex, {p}Uv, dFdx({p}Uv), dFdy({p}Uv));
+            }
+            """;
+
     private GlslTokenRewriter() {}
 
     /** Load-time bridge for resolved terrain atlas samples; ambiguous scopes stay authored. */
@@ -75,23 +98,13 @@ public final class GlslTokenRewriter {
             }
         }
         if (!changed && !changedGrad) return source;
-        int insertion = functions.stream().mapToInt(GlslResourceUsage.FunctionDefinition::definitionStart).min().orElseThrow();
-        String p = prefix;
-        StringBuilder definitions = new StringBuilder();
-        definitions.append("vec4 ").append(gradHelper).append("(sampler2D ").append(p).append("Tex, vec2 ").append(p).append("Uv, vec2 ").append(p).append("Du, vec2 ").append(p).append("Dv) {\n")
-                .append("vec2 ").append(p).append("Pixel = 1.0 / vec2(textureSize(").append(p).append("Tex, 0));\n")
-                .append("vec2 ").append(p).append("Screen = max(sqrt(").append(p).append("Du * ").append(p).append("Du + ").append(p).append("Dv * ").append(p).append("Dv), vec2(1e-20));\n")
-                .append("vec2 ").append(p).append("Coord = ").append(p).append("Uv / ").append(p).append("Pixel;\n")
-                .append("vec2 ").append(p).append("Center = round(").append(p).append("Coord) - 0.5;\n")
-                .append("vec2 ").append(p).append("Offset = clamp((").append(p).append("Coord - ").append(p).append("Center - 0.5) * ").append(p).append("Pixel / ").append(p).append("Screen + 0.5, 0.0, 1.0);\n")
-                .append("return textureGrad(").append(p).append("Tex, (").append(p).append("Center + ").append(p).append("Offset) * ").append(p).append("Pixel, ").append(p).append("Du, ").append(p).append("Dv);\n}\n");
+        int insertion = functions.stream().mapToInt(
+                GlslResourceUsage.FunctionDefinition::definitionStart).min().orElseThrow();
         // The plain helper delegates so both call shapes share one
         // pixel-center correction; it is always emitted with its target.
-        if (changed) {
-            definitions.append("vec4 ").append(helper).append("(sampler2D ").append(p).append("Tex, vec2 ").append(p).append("Uv) {\n")
-                    .append("return ").append(gradHelper).append("(").append(p).append("Tex, ").append(p).append("Uv, dFdx(").append(p).append("Uv), dFdy(").append(p).append("Uv));\n}\n");
-        }
-        tokens.add(insertion, raw(definitions.toString()));
+        String definitions = (changed ? ATLAS_GRADIENT_HELPER + ATLAS_PLAIN_HELPER : ATLAS_GRADIENT_HELPER)
+                .replace("{grad}", gradHelper).replace("{plain}", helper).replace("{p}", prefix);
+        tokens.add(insertion, raw(definitions));
         return GlslLexer.render(tokens);
     }
 

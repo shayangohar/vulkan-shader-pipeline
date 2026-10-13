@@ -50,7 +50,8 @@ public abstract class ChimeraEntityRenderDispatcherMixin {
      * pass the decal stays.
      */
     @WrapWithCondition(method = "submit", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitShadow(Lcom/mojang/blaze3d/vertex/PoseStack;FLjava/util/List;)V"),
+            target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;"
+                    + "submitShadow(Lcom/mojang/blaze3d/vertex/PoseStack;FLjava/util/List;)V"),
             require = 1)
     private boolean chimera$vanillaEntityShadow(
             SubmitNodeCollector collector,

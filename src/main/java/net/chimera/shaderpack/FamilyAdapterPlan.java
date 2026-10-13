@@ -91,7 +91,7 @@ public record FamilyAdapterPlan(
         SKY_POSITION_UV,
         SKY_POSITION_COLOR_UV,
         CLOUD_POSITION_COLOR,
-        /** @deprecated retained for reports produced by older M8.5b builds. */
+        /** @deprecated retained so reports from older builds still parse. */
         @Deprecated
         CLOUD_GENERATED,
         FULLSCREEN,

@@ -427,7 +427,7 @@ public final class UniformRegistry {
             // post, geometry, and shadow tables and the resource plan. A
             // custom pack-selector allocation here leaves the ordinary
             // descriptor without a same-slot manifest resource and rejects
-            // the pipeline (DOC-348 repair 1).
+            // the pipeline.
             Map.entry("noisetex", 7)
     );
     /**
@@ -482,7 +482,7 @@ public final class UniformRegistry {
     }
 
     /**
-     * Plans a post program whose colortex bindings are backed by M5.6 target
+     * Plans a post program whose colortex bindings are backed by post target
      * images rather than the older single-image seam aliases.
      */
     public static ProgramInterface planPost(String source, PostTargetPlan targetPlan) {

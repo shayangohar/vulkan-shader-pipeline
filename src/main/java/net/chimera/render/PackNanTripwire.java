@@ -284,7 +284,8 @@ public final class PackNanTripwire {
         if (frame == null || image == null || !isFloatFormat(image.format)) return;
         int slot = frame.labels.size();
         if (slot >= MAX_CHECKS) {
-            if (!frame.truncated) LOGGER.warn("[chimera] NaN tripwire: check limit reached; frame {} is incomplete", frame.number);
+            if (!frame.truncated) LOGGER.warn("[chimera] NaN tripwire: check limit reached; frame {} is incomplete",
+                    frame.number);
             frame.truncated = true;
             return;
         }
@@ -310,7 +311,8 @@ public final class PackNanTripwire {
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image.getId())
-                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT
+                            | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
             readable.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
             vkCmdPipelineBarrier(commandBuffer, IMAGE_WRITE_STAGES, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -579,7 +581,8 @@ public final class PackNanTripwire {
         try {
             Shaderc.shaderc_compile_options_set_target_env(options,
                     Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
-            Shaderc.shaderc_compile_options_set_optimization_level(options, Shaderc.shaderc_optimization_level_performance);
+            Shaderc.shaderc_compile_options_set_optimization_level(options,
+                    Shaderc.shaderc_optimization_level_performance);
             result = Shaderc.shaderc_compile_into_spv(compiler, SHADER,
                     Shaderc.shaderc_glsl_compute_shader, "chimera_nan_tripwire.csh", "main", options);
             if (result == 0L || Shaderc.shaderc_result_get_compilation_status(result)
@@ -606,8 +609,10 @@ public final class PackNanTripwire {
 
     private static void destroyFrame(Frame frame) {
         if (frame == null) return;
-        if (frame.readbackBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.readbackBuffer, frame.readbackAllocation);
-        if (frame.resultBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.resultBuffer, frame.resultAllocation);
+        if (frame.readbackBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.readbackBuffer,
+                frame.readbackAllocation);
+        if (frame.resultBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.resultBuffer,
+                frame.resultAllocation);
     }
 
     /** Releases everything; the device must be idle. */

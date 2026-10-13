@@ -26,8 +26,8 @@ import java.util.regex.Pattern;
  * shaders.properties file next to the pass list overrides same-key entries.
  *
  * <p>Honored: colortex formats drive the HDR buffer format (any VK-code
- * mapping in FMT_TO_VK; other tokens skip to the default). The narrow M5.4
- * shadow resolution and distance settings are validated here before the
+ * mapping in FMT_TO_VK; other tokens skip to the default). The shadow
+ * resolution and distance settings are validated here before the
  * shadow framebuffer is created. Draw-buffer counts beyond 1 remain visible
  * to the caller but are not applied.
  */
@@ -50,7 +50,8 @@ public final class PackConfig {
                     + "ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
     private static final Pattern SHADOW_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(?:int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|shadowIntervalSize|sunPathRotation|sunPathOffset|entityShadowDistanceMul|voxelDistance)"
+                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul"
+                    + "|shadowIntervalSize|sunPathRotation|sunPathOffset|entityShadowDistanceMul|voxelDistance)"
                     + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
     private static final Pattern PACK_NUMERIC_CONST = Pattern.compile(
             "(?m)^\\s*const\\s+(int|float)\\s+"
@@ -131,7 +132,7 @@ public final class PackConfig {
     private static final float MIN_SHADOW_DISTANCE = 16.0F;
     private static final float MAX_SHADOW_DISTANCE = 2048.0F;
 
-    /** Validated M5.4 settings. The raw values remain available for logs. */
+    /** Validated shadow settings. The raw values remain available for logs. */
     public record ShadowSettings(
             int resolution,
             float distance,
@@ -188,7 +189,7 @@ public final class PackConfig {
         }
     }
 
-    /** Load-time target directives. Runtime image allocation is done by M7.4. */
+    /** Load-time target directives; the target graph allocates the images at runtime. */
     public record TargetSettings(
             String sizeExpression,
             boolean clear,
@@ -311,7 +312,8 @@ public final class PackConfig {
                 }
                 Integer previous = colortexFormats.put(slot, code);
                 if (previous != null && !previous.equals(code)) {
-                    LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program.name(), slot, previous, code);
+                    LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program.name(), slot, previous,
+                            code);
                 }
             }
             collectShadowConstants(src, shadowValues);

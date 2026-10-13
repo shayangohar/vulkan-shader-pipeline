@@ -53,7 +53,10 @@ import java.util.function.Consumer;
 @Mixin(BlockFeatureRenderer.class)
 public abstract class ChimeraBlockFeatureRendererMixin {
     @WrapOperation(method = "render", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/block/ModelBlockRenderer;renderModel(Lcom/mojang/blaze3d/vertex/PoseStack$Pose;Lcom/mojang/blaze3d/vertex/VertexConsumer;Lnet/minecraft/client/renderer/block/model/BlockStateModel;FFFII)V",
+            target = "Lnet/minecraft/client/renderer/block/ModelBlockRenderer;"
+                    + "renderModel(Lcom/mojang/blaze3d/vertex/PoseStack$Pose;"
+                    + "Lcom/mojang/blaze3d/vertex/VertexConsumer;"
+                    + "Lnet/minecraft/client/renderer/block/model/BlockStateModel;FFFII)V",
             ordinal = 0), require = 1)
     private void chimera$packBlockModel(
             PoseStack.Pose pose,
@@ -75,7 +78,9 @@ public abstract class ChimeraBlockFeatureRendererMixin {
     }
 
     @WrapOperation(method = "render", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/block/BlockRenderDispatcher;renderSingleBlock(Lnet/minecraft/world/level/block/state/BlockState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;II)V",
+            target = "Lnet/minecraft/client/renderer/block/BlockRenderDispatcher;"
+                    + "renderSingleBlock(Lnet/minecraft/world/level/block/state/BlockState;"
+                    + "Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;II)V",
             ordinal = 0), require = 1)
     private void chimera$packBlock(
             BlockRenderDispatcher dispatcher,
@@ -141,7 +146,8 @@ public abstract class ChimeraBlockFeatureRendererMixin {
         }
         for (RenderType type : types) {
             if (!chimera$packed(command, type, source -> chimera$renderFabric(command,
-                    layer -> command.renderLayerFunction().apply(layer) == type ? source.getBuffer(type) : ChimeraFamilyDraw.DISCARD))) {
+                    layer -> command.renderLayerFunction().apply(layer) == type ? source.getBuffer(type)
+                            : ChimeraFamilyDraw.DISCARD))) {
                 // The family refused this batch; draw this render type as Fabric would.
                 chimera$renderFabric(command, layer -> command.renderLayerFunction().apply(layer) == type
                         ? hostSource.getBuffer(type) : ChimeraFamilyDraw.DISCARD);

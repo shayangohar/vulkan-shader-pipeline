@@ -79,7 +79,7 @@ final class MainPassTargets {
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.hdrAuxClearDepthRenderPass = b.build();
-        // The world keeps GL row order for pack screen-space math (KNOW-414).
+        // The world keeps GL row order for pack screen-space math.
         ChimeraRasterOrientation.markGlOriented(this.hdrRenderPass);
         ChimeraRasterOrientation.markGlOriented(this.hdrAuxRenderPass);
         ChimeraRasterOrientation.markGlOriented(this.hdrAuxClearDepthRenderPass);

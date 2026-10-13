@@ -345,7 +345,7 @@ public final class PackRuntimeSettings {
                 if (!Double.isFinite(result)) {
                     // Diagnosis over substitution: name the declaration, its expression and the
                     // inputs that produced it, and hold the last finite result rather than
-                    // inventing a number. A silent zero here is what DOC-400 item 4 objects to.
+                    // inventing a number. A silent zero would hide the failure.
                     session.failures.putIfAbsent(value.name(),
                             "expression=" + value.program().source()
                                     + " lane=" + lane

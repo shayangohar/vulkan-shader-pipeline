@@ -116,8 +116,10 @@ public final class ChimeraVertexFormats {
      * normal, computed per glyph quad, ahead of the pack-visible attributes. World text,
      * sign text and text drawn in the hand (maps) all use it.
      */
-    public static final VertexFormat EXTENDED_GLYPH = appendMaterialInputs(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, true);
-    private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(DefaultVertexFormat.POSITION_TEX_COLOR);
+    public static final VertexFormat EXTENDED_GLYPH = appendMaterialInputs(
+            DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, true);
+    private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(
+            DefaultVertexFormat.POSITION_TEX_COLOR);
     private static final Map<VertexFormat, VertexFormat> HAND_FORMATS = Map.of(
             DefaultVertexFormat.NEW_ENTITY, EXTENDED_ENTITY,
             DefaultVertexFormat.PARTICLE, EXTENDED_PARTICLE,

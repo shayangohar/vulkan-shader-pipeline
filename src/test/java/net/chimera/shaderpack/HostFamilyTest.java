@@ -53,12 +53,14 @@ final class HostFamilyTest {
             assertEquals(host.getVertexSize() + (computedNormal ? 24 : 20), extended.getVertexSize(),
                     "hand prefix plus 20-byte material inputs (and a 4-byte GLYPH normal)");
             for (int i = 0; i < host.getElements().size(); i++) {
-                assertEquals(host.getOffset(host.getElements().get(i)), extended.getOffset(host.getElements().get(i)), "hand native attribute offset");
+                assertEquals(host.getOffset(host.getElements().get(i)), extended.getOffset(host.getElements().get(i)),
+                        "hand native attribute offset");
             }
             String source = EntityVertexBridge.handVertexForFormat(hand.source(), host);
             assertTrue(PackCompileTest.compile(source, true) == null, "hand layout fails compilation: " + host);
             assertTrue(source.contains("void chimeraHandMain()")
-                            && source.contains("void main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
+                            && source.contains("void main() { chimeraHandMain();"
+                                    + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
                     "authored hand returns must still reach exactly one Vulkan clip conversion");
             if (computedNormal) {
                 // Iris GLYPH: text has a per-quad normal, ahead of the material inputs.
@@ -67,7 +69,8 @@ final class HostFamilyTest {
                                 && source.contains("const ivec2 UV1 = ivec2(0);"), "GLYPH text inputs");
             } else if (host != DefaultVertexFormat.NEW_ENTITY) {
                 assertTrue(source.contains("const vec3 Normal = vec3(0.0, 0.0, 1.0);")
-                                && source.contains("const ivec2 UV1 = ivec2(0);"), "Iris missing normal/overlay defaults");
+                                && source.contains("const ivec2 UV1 = ivec2(0);"),
+                                        "Iris missing normal/overlay defaults");
             }
         }
         // World and sign text: the entity and block programs take the same GLYPH layout.
@@ -78,7 +81,8 @@ final class HostFamilyTest {
                     DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
             assertTrue(PackCompileTest.compile(glyph, true) == null, "entity-family GLYPH layout fails compilation");
             assertTrue(glyph.contains("layout(location = 4) in vec3 Normal;")
-                    && glyph.contains("layout(location = 7) in vec4 ChimeraPackedTangent;"), "entity-family GLYPH inputs");
+                    && glyph.contains("layout(location = 7) in vec4 ChimeraPackedTangent;"),
+                            "entity-family GLYPH inputs");
         }
         var raster = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, true);
         var snapshot = new Matrix4f(raster);
@@ -93,7 +97,8 @@ final class HostFamilyTest {
             assertTrue(Math.abs(depth - (0.5F * (expected.z / expected.w + 1))) < 1.0e-6F,
                     "hand Vulkan depth must equal Iris window depth at z=" + z);
             assertTrue(depth >= 0.43749F && depth <= 0.56251F, "hand depth squeeze range");
-            assertTrue(Math.abs(actual.x - expected.x) < 1.0e-6F && Math.abs(actual.y - expected.y) < 1.0e-6F, "hand projection must not change screen placement");
+            assertTrue(Math.abs(actual.x - expected.x) < 1.0e-6F && Math.abs(actual.y - expected.y) < 1.0e-6F,
+                    "hand projection must not change screen placement");
         }
         assertEquals(snapshot, raster, "hand projection must not mutate world matrices");
     }
@@ -101,7 +106,8 @@ final class HostFamilyTest {
     @Test
     void handNativeHooks() throws IOException {
         var level = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer");
-        var opaque = level.methods.stream().filter(method -> method.name.equals("method_62214")).findFirst().orElseThrow();
+        var opaque = level.methods.stream().filter(method ->
+                method.name.equals("method_62214")).findFirst().orElseThrow();
         int flushes = 0;
         boolean translucentAfterSolidHand = false;
         for (var instruction : opaque.instructions) {
@@ -113,17 +119,24 @@ final class HostFamilyTest {
         }
         assertTrue(flushes >= 2 && translucentAfterSolidHand, "opaque hand seam must precede terrain translucency");
         var game = MixinBytecode.nativeClass("net/minecraft/client/renderer/GameRenderer");
-        var late = game.methods.stream().filter(method -> method.name.equals("renderItemInHand")).findFirst().orElseThrow();
+        var late = game.methods.stream().filter(method ->
+                method.name.equals("renderItemInHand")).findFirst().orElseThrow();
         int calls = 0;
         for (var instruction : late.instructions) {
             if (instruction instanceof MethodInsnNode call
                     && call.name.equals("renderHandsWithItems")
-                    && call.desc.equals("(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/player/LocalPlayer;I)V")) calls++;
+                    && call.desc.equals("(FLcom/mojang/blaze3d/vertex/PoseStack;"
+                            + "Lnet/minecraft/client/renderer/SubmitNodeCollector;"
+                            + "Lnet/minecraft/client/player/LocalPlayer;I)V")) calls++;
         }
         assertEquals(1, calls, "native late-hand redirect must have exactly one target");
-        assertTrue(MixinBytecode.nativeClass("net/minecraft/client/renderer/ItemInHandRenderer").methods.stream().anyMatch(method ->
+        assertTrue(MixinBytecode.nativeClass("net/minecraft/client/renderer/"
+                + "ItemInHandRenderer").methods.stream().anyMatch(method ->
                         method.name.equals("renderArmWithItem")
-                                && method.desc.equals("(Lnet/minecraft/client/player/AbstractClientPlayer;FFLnet/minecraft/world/InteractionHand;FLnet/minecraft/world/item/ItemStack;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V")),
+                                && method.desc.equals("(Lnet/minecraft/client/player/AbstractClientPlayer;"
+                                        + "FFLnet/minecraft/world/InteractionHand;"
+                                        + "FLnet/minecraft/world/item/ItemStack;FLcom/mojang/blaze3d/vertex/PoseStack;"
+                                        + "Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V")),
                 "hand partition hook must match the native arm submission API");
         // Check the installed renderer's overwrite, not just vanilla bytecode.
         var immediate = MixinBytecode.nativeClass("net/vulkanmod/mixin/render/RenderTypeM").methods.stream()
@@ -142,7 +155,8 @@ final class HostFamilyTest {
         boolean attachments = false;
         for (var instruction : owner.instructions) {
             if (instruction instanceof MethodInsnNode call) {
-                if (call.owner.equals("net/chimera/render/ChimeraHandRenderer") && call.name.equals("active")) handScope = true;
+                if (call.owner.equals("net/chimera/render/ChimeraHandRenderer")
+                        && call.name.equals("active")) handScope = true;
                 if (call.name.equals("beginPackFamilyWindow")) attachments = true;
             }
         }

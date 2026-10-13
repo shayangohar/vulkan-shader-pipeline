@@ -112,7 +112,8 @@ final class PostVertexBridge {
                     nextLocation += output.slots();
                 }
             }
-            converted = GlslInterfaceScanner.rewrite(LegacyGlslConverter.VERSION_LINE.matcher(converted).replaceAll(""), true,
+            converted = GlslInterfaceScanner.rewrite(LegacyGlslConverter.VERSION_LINE.matcher(converted).replaceAll(""),
+                    true,
                     declaration -> {
                         Integer location = locations.get(declaration.name());
                         if (declaration.input() || location == null) {
@@ -156,7 +157,8 @@ final class PostVertexBridge {
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)", "chimeraFullscreenPosition()");
             for (GlslLexer.Token token : GlslLexer.lex(converted)) {
                 if (token.text().startsWith("gl_") && !Set.of("gl_Position", "gl_VertexIndex",
-                        "gl_InstanceIndex", "gl_PointSize", "gl_ClipDistance", "gl_CullDistance").contains(token.text())) {
+                        "gl_InstanceIndex", "gl_PointSize", "gl_ClipDistance",
+                                "gl_CullDistance").contains(token.text())) {
                     throw new IllegalArgumentException("POST_VERTEX_BUILTIN_UNSUPPORTED:" + token.text());
                 }
             }
@@ -168,7 +170,8 @@ final class PostVertexBridge {
             converted += "\nvoid main() { chimeraPostMain(); gl_Position.y = -gl_Position.y; }\n";
             String uniforms = interfacePlan.executableUniforms().isEmpty() ? ""
                     : FragmentConverter.generatedUniformBlock(interfacePlan.executableUniforms(), converted);
-            return new PostVertexConversion("#version 460\n" + uniforms + GlslVertexPreambles.FULLSCREEN_VERTEX_INPUTS + converted,
+            return new PostVertexConversion("#version 460\n" + uniforms + GlslVertexPreambles.FULLSCREEN_VERTEX_INPUTS
+                    + converted,
                     List.of("POST_VERTEX_AUTHORED_TRANSLATED"));
         } catch (RuntimeException failure) {
             return new PostVertexConversion(null, List.of(failure.getMessage() == null

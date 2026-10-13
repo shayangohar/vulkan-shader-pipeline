@@ -80,7 +80,7 @@ final class TextureBindingStateTest {
         assertTrue(handPolicy.loadColor() && handPolicy.clearDepth(),
                 "hand continuation must load color and clear depth");
 
-        // DOC-375: the converted shadow image needs a compare-enabled sampler for
+        // The converted shadow image needs a compare-enabled sampler for
         // sampler2DShadow lookups, and only for those: a program that declares the
         // same texture as sampler2D keeps the image's non-compare sampler.
         assertTrue(PackShadowDepth.requiresCompareSampler("sampler2DShadow"),

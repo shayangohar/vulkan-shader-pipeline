@@ -55,7 +55,8 @@ public final class ChimeraShadowCasters implements AutoCloseable {
     private final OutlineBufferSource outlines = new OutlineBufferSource();
     private final SubmitNodeStorage submits = new SubmitNodeStorage();
     private final FeatureRenderDispatcher dispatcher;
-    private final PerspectiveProjectionMatrixBuffer projection = new PerspectiveProjectionMatrixBuffer("Chimera shadow casters");
+    private final PerspectiveProjectionMatrixBuffer projection = new PerspectiveProjectionMatrixBuffer(
+            "Chimera shadow casters");
     private final List<EntityRenderState> entities = new ArrayList<>();
     private final List<BlockEntityRenderState> blockEntities = new ArrayList<>();
 

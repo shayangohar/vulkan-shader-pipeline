@@ -93,7 +93,7 @@ tasks.named('test', Test) {
 
 tasks.register('packTest', Test) {
     group = 'verification'
-    description = 'Runs the tests against the locked packs: -Pchimera.pack.complementary=<zip> -Pchimera.pack.bsl=<zip>.'
+    description = 'Runs the tests that read the locked packs: -Pchimera.pack.complementary, -Pchimera.pack.bsl.'
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform {
@@ -103,10 +103,10 @@ tasks.register('packTest', Test) {
 }
 
 // Recorded runtime evidence (logs, captures, exact pack versions) for past parity milestones.
-// Not part of check: its baselines predate later planner work (KNOW-388).
+// Not part of check: its baselines predate later planner work, and re-recording them is a review step.
 tasks.register('evidenceTest', Test) {
     group = 'verification'
-    description = 'Checks recorded runtime evidence for exact pack versions; each test names the -Pchimera.* paths it needs.'
+    description = 'Checks recorded runtime evidence; each test names the -Pchimera.* values it needs.'
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform {
@@ -114,8 +114,30 @@ tasks.register('evidenceTest', Test) {
     }
 }
 
+// The metrics ratchet: tools/metrics/baseline.txt records each method over complexity 15 or 80
+// lines, each file over 1,000 lines with its reason, duplication, inline qualified names and lines
+// over 120 characters. check fails when any of them grows; metricsRecord rewrites the baseline.
+sourceSets {
+    metrics {
+        java.srcDir 'tools/metrics'
+    }
+}
+
+def metricsTask = { String name, String mode, String text ->
+    tasks.register(name, JavaExec) {
+        group = 'verification'
+        description = text
+        classpath = sourceSets.metrics.runtimeClasspath
+        mainClass = 'CodeMetrics'
+        args mode, 'tools/metrics/baseline.txt', 'src/main/java', 'src/test/java', 'tools/metrics'
+    }
+}
+metricsTask('metricsCheck', 'check', 'Fails when the sources regress past tools/metrics/baseline.txt.')
+metricsTask('metricsRecord', 'record', 'Rewrites tools/metrics/baseline.txt from the sources, keeping file reasons.')
+
 tasks.named('check') {
     dependsOn tasks.named('packTest')
+    dependsOn tasks.named('metricsCheck')
 }
 
 java {

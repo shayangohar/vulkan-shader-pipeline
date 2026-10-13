@@ -9,7 +9,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 
-/** Enables only supported core features needed by the bounded M8.6a image path. */
+/** Enables only the supported core features the pack image path needs. */
 @Mixin(value = DeviceManager.class, remap = false)
 public abstract class ChimeraDeviceFeaturesMixin {
     private static final Logger LOGGER =

@@ -31,7 +31,11 @@ public final class LegacyGlslConverter {
                     + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)+)\\s*;");
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
     private static final Pattern CONSUMED_CONSTS =
-            Pattern.compile("(?m)^\\s*(?:const\\s+)?(?:int|float|bool|vec4)\\s+(colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)\\s*=\\s*[A-Za-z0-9+_.(), /-]+\\s*;\\s*(?://.*)?$");
+            Pattern.compile("(?m)^\\s*(?:const\\s+)?(?:int|float|bool|vec4)\\s+"
+                    + "(colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)"
+                    + "|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov"
+                    + "|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
+                    + "\\s*=\\s*[A-Za-z0-9+_.(), /-]+\\s*;\\s*(?://.*)?$");
 
     /**
      * Removes consumed metadata constants unless something reads them
@@ -183,7 +187,8 @@ public final class LegacyGlslConverter {
             // `type name =|;|[` opening a file-scope statement without uniform/in/out/varying/attribute.
             int next = GlslLexer.nextSignificant(tokens, index);
             if (token.kind() != GlslLexer.Kind.IDENTIFIER || next < 0
-                    || !(tokens.get(next).symbol("=") || tokens.get(next).symbol(";") || tokens.get(next).symbol("["))) {
+                    || !(tokens.get(next).symbol("=") || tokens.get(next).symbol(";")
+                            || tokens.get(next).symbol("["))) {
                 continue;
             }
             int type = GlslLexer.previousSignificant(tokens, index);
@@ -191,7 +196,8 @@ public final class LegacyGlslConverter {
             boolean qualified = false;
             for (int prior = statementStart; prior < type; prior++) {
                 String text = tokens.get(prior).text();
-                if (Set.of("uniform", "in", "out", "varying", "attribute", "buffer", "shared").contains(text)) qualified = true;
+                if (Set.of("uniform", "in", "out", "varying", "attribute", "buffer",
+                        "shared").contains(text)) qualified = true;
             }
             if (!qualified) names.add(token.text());
         }
@@ -296,7 +302,8 @@ public final class LegacyGlslConverter {
                 location = 0;
             }
             out.append(src, last, matcher.start());
-            out.append("layout(location = ").append(location).append(") in ").append(type).append(' ').append(name).append(';');
+            out.append("layout(location = ").append(location).append(") "
+                    + "in ").append(type).append(' ').append(name).append(';');
             last = matcher.end();
         }
         out.append(src, last, src.length());

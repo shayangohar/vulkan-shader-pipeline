@@ -27,7 +27,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 
@@ -35,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * M8.7 material-map gates from the checked-in mini resource pack: pixel
+ * Material maps from the checked-in mini resource pack: pixel
  * policies, exact layout and padding, sibling mapping, labPBR detection,
  * per-sprite failure isolation, descriptor resolution and rollback, simple
  * entity textures, reload generations, and animated maps (schedule,
@@ -314,9 +313,9 @@ final class MaterialMapsTest {
             assertEquals(pack(255, 10, 225, 25), s1[24], "lab specular linear mip");
             assertEquals(pack(191, 98, 236, 6), s1[32 + 25], "lab specular linear far quad");
 
-            // Descriptors still answer flat fallbacks in Slice B.
+            // Descriptors still answer flat fallbacks.
             assertTrue(owner.snapshot("normals").image() != null, "flat dispatch alive");
-            // The Slice C seam answers by exact albedo identity.
+            // The companion lookup answers by exact albedo identity.
             assertTrue(owner.companionFor(base, "normals").image() == normals.image,
                     "companion by identity");
             assertTrue(owner.companionFor(markerImage(), "normals") == null,
@@ -445,7 +444,7 @@ final class MaterialMapsTest {
                 MaterialMapOwner.withImages(flatNormals, flatSpecular, factory, samplers);
         VulkanImage base = markerImage();
         try {
-            // Pre-pump draws answer flat fallbacks, exactly like Slice B.
+            // Pre-pump draws answer flat fallbacks, exactly like descriptors.
             var flat = owner.resolveDrawMaterial(contextFor(base, 0x7777L), "normals");
             assertTrue(flat.image() == flatNormals, "unresolved base is not flat");
             assertEquals(0x7777L, flat.samplerOverride(), "context sampler lost");

@@ -633,7 +633,7 @@ record PackSettingsPlan(
                     continue;
                 }
                 if (key.startsWith("bufferObject.")) {
-                    // M8.6b admits bounded bufferObject.N declarations. The
+                    // Bounded bufferObject.N declarations are admitted. The
                     // source plan remains responsible for proving that a
                     // matching std430 block and supported schedule exist.
                     deviations.add("STORAGE_BUFFER_DECLARED:" + key);

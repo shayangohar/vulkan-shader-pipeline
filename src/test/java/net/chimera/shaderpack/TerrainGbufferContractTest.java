@@ -13,14 +13,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic M8.5a terrain and G-buffer contract checks. */
+/** The terrain and G-buffer contract. */
 final class TerrainGbufferContractTest {
     @Test
     void fixture() throws Exception {
@@ -30,35 +29,35 @@ final class TerrainGbufferContractTest {
         PackProbe.Analysis first = PackProbe.analyze(fixture);
         PackProbe.Analysis second = PackProbe.analyze(fixture);
         assertEquals(first.report().toJson(), second.report().toJson(),
-                "M8.5 report is not deterministic");
+                "report is not deterministic");
 
         PackProgramPlan terrain = require(first.plan(), "gbuffers_terrain");
-        assertTrue(terrain.executable(), "M8.5 terrain plan is not executable: " + terrain.deviations());
+        assertTrue(terrain.executable(), "terrain plan is not executable: " + terrain.deviations());
         assertTrue(first.report().shouldAttempt("gbuffers_terrain"),
-                "M8.5 terrain report rejected the executable plan");
+                "terrain report rejected the executable plan");
         assertTrue(terrain.geometryOutputPlan() != null,
-                "M8.5 geometry output plan is missing");
+                "geometry output plan is missing");
         assertEquals(List.of(0, 6), terrain.geometryOutputPlan().targetSlots(),
-                "M8.5 terrain target route");
+                "terrain target route");
         assertTrue(terrain.convertedVertex() != null
                         && countVersions(terrain.convertedVertex()) == 1,
-                "M8.5 terrain vertex conversion is not a single generated version");
+                "terrain vertex conversion is not a single generated version");
         assertTrue(terrain.convertedFragment() != null
                         && countVersions(terrain.convertedFragment()) == 1
                         && terrain.convertedFragment().contains("chimeraFragColor0")
                         && terrain.convertedFragment().contains("chimeraFragColor1"),
-                "M8.5 terrain MRT output conversion is incomplete");
+                "terrain MRT output conversion is incomplete");
         assertTrue(terrain.convertedVertex().contains("layout(location = ")
                         && terrain.convertedFragment().contains("layout(location = "),
-                "M8.5 shared varying locations are missing");
+                "shared varying locations are missing");
 
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                 first.plan().programs(), first.config(), first.plan().resources(),
                 2560, 1440, 8, 16384);
         assertTrue(graph.targets().stream().anyMatch(value -> value.index() == 6),
-                "M8.5 target graph did not allocate colortex6 for geometry output");
+                "target graph did not allocate colortex6 for geometry output");
         assertTrue(graph.steps().stream().noneMatch(value -> value.programName().equals("gbuffers_terrain")),
-                "M8.5 geometry was incorrectly added to post ordering");
+                "geometry was incorrectly added to post ordering");
         assertNoUnstableFields(graph.snapshot(), fixture);
         verifyBaseline(first, baseline);
     }
@@ -101,19 +100,19 @@ final class TerrainGbufferContractTest {
     }
 
     private static void verifyBaseline(PackProbe.Analysis analysis, Path baseline) throws IOException {
-        assertTrue(Files.isRegularFile(baseline), "M8.5 baseline is missing");
+        assertTrue(Files.isRegularFile(baseline), "baseline is missing");
         JsonObject root = JsonParser.parseString(
                 Files.readString(baseline, StandardCharsets.UTF_8)).getAsJsonObject();
         JsonObject entry = root.getAsJsonObject("fixtures").getAsJsonObject("terrain_gbuffers");
-        assertTrue(entry != null, "M8.5 terrain baseline entry is missing");
+        assertTrue(entry != null, "terrain baseline entry is missing");
         String expectedReport = entry.get("reportSha256").getAsString();
-        assertEquals(expectedReport, analysis.report().sha256(), "M8.5 report hash");
+        assertEquals(expectedReport, analysis.report().sha256(), "report hash");
         Map<String, String> expectedSources = new TreeMap<>();
         for (Map.Entry<String, JsonElement> value
                 : entry.getAsJsonObject("sourceHashes").entrySet()) {
             expectedSources.put(value.getKey(), value.getValue().getAsString());
         }
-        assertEquals(expectedSources, sourceHashes(analysis.report()), "M8.5 source hashes");
+        assertEquals(expectedSources, sourceHashes(analysis.report()), "source hashes");
     }
 
     private static Map<String, String> sourceHashes(ConformanceReport report) {
@@ -124,9 +123,9 @@ final class TerrainGbufferContractTest {
 
     private static void assertNoUnstableFields(String text, Path fixture) {
         assertTrue(!text.contains(fixture.toAbsolutePath().toString()),
-                "M8.5 graph snapshot contains an absolute path");
+                "graph snapshot contains an absolute path");
         assertTrue(!text.matches("(?s).*\\b(?:timestamp|generatedAt)\\b.*"),
-                "M8.5 graph snapshot contains a timestamp");
+                "graph snapshot contains a timestamp");
     }
 
     private static int countVersions(String source) {
@@ -154,7 +153,7 @@ final class TerrainGbufferContractTest {
 
     private static PackProgramPlan require(PackPlan plan, String name) {
         PackProgramPlan result = plan == null ? null : plan.program(name);
-        if (result == null) throw new AssertionError("M8.5 missing program: " + name);
+        if (result == null) throw new AssertionError("missing program: " + name);
         return result;
     }
 }

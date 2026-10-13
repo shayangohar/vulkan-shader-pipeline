@@ -36,7 +36,7 @@ final class TerrainVertexBridge {
                     + "(?:in|varying)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
 
     /**
-     * Converts the strict M5.2 terrain vertex subset. A null result means that
+     * Converts the strict terrain vertex subset. A null result means that
      * the source must use the identity terrain pipeline.
      */
     public static LegacyGlslConverter.TerrainVertexConversion convertTerrainVertex(
@@ -146,8 +146,12 @@ final class TerrainVertexBridge {
     ) {
             boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
             String vertex = shadowStage
-                    ? normalizeShadowTerrain(EntityVertexBridge.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source, sourceFile, true)))
-                    : normalizeModernTerrain(EntityVertexBridge.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source, sourceFile, true)));
+                    ? normalizeShadowTerrain(
+                            EntityVertexBridge.defaultUnboundIdentityAttributes(
+                            LegacyGlslConverter.prepareSource(source, sourceFile, true)))
+                    : normalizeModernTerrain(
+                            EntityVertexBridge.defaultUnboundIdentityAttributes(
+                            LegacyGlslConverter.prepareSource(source, sourceFile, true)));
             String fragment = fragmentSource == null ? "" : fragmentSource;
             if (shadowStage && hasShadowTerrainVersion(fragment)) {
                 fragment = normalizeShadowTerrain(fragment);
@@ -183,15 +187,18 @@ final class TerrainVertexBridge {
             }
             if ((!allowStorageBuffers && stripped.matches("(?s).*\\bbuffer\\b.*"))
                     || stripped.matches("(?s).*\\b(?:geometry|tessellation|compute)\\b.*")
-                    || stripped.matches("(?s).*\\buniform\\s+(?!(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)))\\w+.*")) {
+                    || stripped.matches(
+                            "(?s).*\\buniform\\s+(?!(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)))\\w+.*")) {
                 throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
             }
 
             // The shared typed scanner keeps integral, matrix and array varyings (Photon:
             // flat uint material_mask, flat mat3 tbn) and their location widths.
-            EntityVertexBridge.EntityVaryingDeclarations vertexVaryings = EntityVertexBridge.parseEntityVaryingDeclarations(vertex, true);
+            EntityVertexBridge.EntityVaryingDeclarations vertexVaryings =
+                    EntityVertexBridge.parseEntityVaryingDeclarations(vertex, true);
             Map<String, String> vertexTypes = vertexVaryings.types();
-            Map<String, String> fragmentTypes = EntityVertexBridge.parseEntityVaryingDeclarations(fragment, false).types();
+            Map<String, String> fragmentTypes =
+                    EntityVertexBridge.parseEntityVaryingDeclarations(fragment, false).types();
             for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
                 if (!entry.getValue().equals(vertexTypes.get(entry.getKey()))) {
                     throw new IllegalArgumentException("modern terrain varying mismatch: " + entry.getKey());
@@ -210,20 +217,23 @@ final class TerrainVertexBridge {
                     vertexTypes.put(EntityVertexBridge.entityIdVarying(id.getKey()), id.getValue());
                 }
             }
-            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes, locations, vertexVaryings.qualifiers());
+            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
+                    locations, vertexVaryings.qualifiers());
 
             // The prepared source keeps one version directive so the shared
             // plan can inspect it. The generated bridge owns the final
             // directive, so remove the prepared copy before composing the
             // executable vertex shader.
             String converted = LegacyGlslConverter.VERSION_LINE.matcher(removeShadowAttributes(
-                            removeTerrainAttributes(removeModernTerrainInputs(vertex, layout), shadowStage), shadowStage))
+                            removeTerrainAttributes(removeModernTerrainInputs(vertex, layout), shadowStage),
+                                    shadowStage))
                     .replaceAll("");
             Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
             if (shadowStage) {
                 inputReplacements.putAll(shadowAttributeInputReplacements(vertex));
                 inputReplacements.putAll(entityInputs
-                        ? EntityVertexBridge.entityShadowMatrixBuiltinReplacements() : shadowMatrixBuiltinReplacements());
+                        ? EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
+                                : shadowMatrixBuiltinReplacements());
             }
             for (String name : entityIdTypes.keySet()) {
                 inputReplacements.put(name, EntityVertexBridge.entityIdExpression(layout, name));
@@ -258,7 +268,8 @@ final class TerrainVertexBridge {
             String chimeraVaryings = "";
             for (String name : entityIdTypes.keySet()) {
                 converted = LegacyGlslConverter.injectMainPrologue(converted,
-                        EntityVertexBridge.entityIdVarying(name) + " = EntityIds." + EntityVertexBridge.entityIdComponent(name) + ";");
+                        EntityVertexBridge.entityIdVarying(name) + " = EntityIds."
+                                + EntityVertexBridge.entityIdComponent(name) + ";");
                 chimeraVaryings += "layout(location = " + layout.location(EntityVertexBridge.entityIdVarying(name))
                         + ") flat out uint " + EntityVertexBridge.entityIdVarying(name) + ";\n";
             }
@@ -344,7 +355,8 @@ final class TerrainVertexBridge {
             boolean allowStorageBuffers
     ) {
         try {
-            String src = EntityVertexBridge.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source, sourceFile, true));
+            String src = EntityVertexBridge.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source,
+                    sourceFile, true));
             String stripped = stripComments(src);
             GlslVersion.requireSupported(stripped, "legacy vertex", true);
             if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
@@ -367,7 +379,8 @@ final class TerrainVertexBridge {
             for (String name : vertexTypes.keySet().stream().sorted().toList()) {
                 locations.put(name, location++);
             }
-            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes, locations);
+            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
+                    locations);
 
             String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceFirst("");
             converted = converted.replaceAll(

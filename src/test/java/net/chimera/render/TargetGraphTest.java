@@ -13,12 +13,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic M7.4 target and depth graph checks. */
+/** The target and depth graph a pack's post programs plan. */
 final class TargetGraphTest {
     @Test
     void targetGraph() throws Exception {
@@ -32,28 +31,28 @@ final class TargetGraphTest {
         PackTargetGraphPlan graphAgain = PackTargetGraphPlan.build(
                 second.plan().programs(), second.config(), 1920, 1080, 8, 16384);
 
-        assertEquals(graph.fingerprint(), graphAgain.fingerprint(), "M7.4 graph fingerprint stability");
-        assertTrue(graph.target(0) != null, "M7.4 target 0 missing");
-        assertTrue(graph.target(1) != null, "M7.4 target 1 missing");
+        assertEquals(graph.fingerprint(), graphAgain.fingerprint(), "graph fingerprint stability");
+        assertTrue(graph.target(0) != null, "target 0 missing");
+        assertTrue(graph.target(1) != null, "target 1 missing");
         assertTrue(graph.target(1).width() == 960 && graph.target(1).height() == 540,
-                "M7.4 relative target size was not resolved");
-        assertTrue(graph.target(1).format() == 37, "M7.4 target format was not applied");
-        assertTrue(graph.target(1).doubled(), "M7.4 flip did not require a doubled target");
+                "relative target size was not resolved");
+        assertTrue(graph.target(1).format() == 37, "target format was not applied");
+        assertTrue(graph.target(1).doubled(), "flip did not require a doubled target");
         assertTrue(graph.target(2) != null && graph.target(2).persistent(),
-                "M7.4 persistent target was not planned");
-        assertTrue(graph.depth().depthtex0(), "M7.4 depthtex0 was not planned");
+                "persistent target was not planned");
+        assertTrue(graph.depth().depthtex0(), "depthtex0 was not planned");
         assertTrue(graph.depth().deviations().contains("DEPTH_COPY_FORWARD_Z_PRESERVED"),
-                "M8.7 forward-Z depth semantics were not recorded");
+                "forward-Z depth semantics were not recorded");
         assertTrue(!graph.depth().deviations().contains("DEPTH_COPY_REVERSED_Z_CONVERTED"),
-                "M8.7 stale reversed-Z depth claim remains active");
+                "stale reversed-Z depth claim remains active");
         assertTrue(graph.depth().slot("depthtex0") == 6,
-                "M7.4 depthtex0 slot changed");
+                "depthtex0 slot changed");
         assertTrue(graph.depth().slot("depthtex1") == 12,
-                "M7.4 depthtex1 slot was not separated");
-        assertTrue(graph.maxAttachments() == 8, "M7.4 logical MRT limit was not retained");
+                "depthtex1 slot was not separated");
+        assertTrue(graph.maxAttachments() == 8, "logical MRT limit was not retained");
         MrtPipelineContext.begin(new int[] {37, 97, 97, 37, 109}, 8);
         assertTrue(MrtPipelineContext.attachmentCount(1) == 5,
-                "M7.4 dynamic MRT bridge still uses the old four-attachment cap");
+                "dynamic MRT bridge still uses the old four-attachment cap");
         MrtPipelineContext.end();
         boolean rejectedNine = false;
         try {
@@ -63,29 +62,29 @@ final class TargetGraphTest {
         } finally {
             MrtPipelineContext.end();
         }
-        assertTrue(rejectedNine, "M7.4 logical MRT bridge accepted more than eight outputs");
+        assertTrue(rejectedNine, "logical MRT bridge accepted more than eight outputs");
 
         TargetStep composite = graph.step("composite");
         TargetStep composite1 = graph.step("composite1");
         TargetStep finalStep = graph.step("final");
-        assertTrue(composite != null && composite.executable(), "M7.4 composite step rejected");
+        assertTrue(composite != null && composite.executable(), "composite step rejected");
         assertTrue(composite1 != null && composite1.outputTargets().equals(List.of(1)),
-                "M7.4 sparse target route was not preserved");
+                "sparse target route was not preserved");
         assertTrue(finalStep != null && finalStep.finalStage() && finalStep.outputTargets().equals(List.of(0)),
-                "M7.4 final route was not constrained to target 0");
+                "final route was not constrained to target 0");
         assertTrue(first.report().toJson().equals(second.report().toJson()),
-                "M7.4 report is not deterministic");
+                "report is not deterministic");
 
         PackProbe.Analysis rejected = PackProbe.analyze(unsupported);
         PackTargetGraphPlan rejectedGraph = PackTargetGraphPlan.build(
                 rejected.plan().programs(), rejected.config(), 1920, 1080, 4, 16384);
         assertTrue(rejectedGraph.steps().stream().anyMatch(step -> !step.executable()),
-                "M7.4 unsupported graph did not produce a rejected step");
+                "unsupported graph did not produce a rejected step");
         assertTrue(rejectedGraph.deviations().stream().anyMatch(value ->
                         value.startsWith("POST_TARGET_SIZE_CONFLICT")
                                 || value.startsWith("POST_TARGET_ATTACHMENT_LIMIT")
                                 || value.equals("FINAL_MRT_UNSUPPORTED")),
-                "M7.4 unsupported graph did not name its unsafe layout");
+                "unsupported graph did not name its unsafe layout");
 
         Path baseline = TestPacks.baseline("m7_4");
         String expected = Files.readString(baseline, StandardCharsets.UTF_8).trim();
@@ -94,8 +93,8 @@ final class TargetGraphTest {
             System.out.println("[chimera] M7.4 graphFingerprint=" + graph.fingerprint());
             System.out.println("[chimera] M7.4 graphSnapshot=" + graph.snapshot());
         } else {
-            assertTrue(expected.contains(first.report().sha256()), "M7.4 report baseline mismatch");
-            assertTrue(expected.contains(graph.fingerprint()), "M7.4 graph baseline mismatch");
+            assertTrue(expected.contains(first.report().sha256()), "report baseline mismatch");
+            assertTrue(expected.contains(graph.fingerprint()), "graph baseline mismatch");
         }
     }
 

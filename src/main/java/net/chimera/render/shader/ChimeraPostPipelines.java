@@ -33,7 +33,8 @@ public final class ChimeraPostPipelines {
         String vertexPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.VERTEX_SHADER);
         String fragmentPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.FRAGMENT_SHADER);
         builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, ChimeraShaderLoader.loadSource(vertexPath + ".vsh"));
-        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
+        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER,
+                ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
 
         return builder.createGraphicsPipeline();
     }
@@ -43,7 +44,7 @@ public final class ChimeraPostPipelines {
         return create("chimera_depth");
     }
 
-    /** Creates the M8.2 host-to-pack scene seed pipeline. */
+    /** Creates the host-to-pack scene seed pipeline. */
     public static GraphicsPipeline createSceneSeedPipeline() {
         return create("chimera_scene_seed");
     }
@@ -59,7 +60,8 @@ public final class ChimeraPostPipelines {
         String vertexPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.VERTEX_SHADER);
         String fragmentPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.FRAGMENT_SHADER);
         builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, ChimeraShaderLoader.loadSource(vertexPath + ".vsh"));
-        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
+        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER,
+                ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
 
         GraphicsPipeline pipeline = builder.createGraphicsPipeline();
 

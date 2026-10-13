@@ -77,7 +77,8 @@ public final class FragmentConverter {
 
         /** Minimal request with the interface plan derived from the source, as the old shims did. */
         public static FragmentConversionRequest withAutoPlan(String source, Path sourceFile,
-                boolean geometryStage, int[] geometrySamplerSlots, LegacyGlslConverter.TerrainVaryingLayout terrainLayout) {
+                boolean geometryStage, int[] geometrySamplerSlots,
+                        LegacyGlslConverter.TerrainVaryingLayout terrainLayout) {
             return of(source, sourceFile, geometryStage, geometrySamplerSlots)
                     .withTerrainLayout(terrainLayout)
                     .withInterfacePlan(UniformRegistry.plan(source, LegacyGlslConverter.stageOf(geometryStage)));
@@ -137,7 +138,7 @@ public final class FragmentConverter {
         }
     }
 
-    /** Converts a post fragment with the M5.6 output target plan. */
+    /** Converts a post fragment with its output target plan. */
     public static String convertPostFragment(
             String source,
             Path sourceFile,
@@ -602,7 +603,7 @@ public final class FragmentConverter {
                 .convert();
     }
 
-    /** Adds the M8.2 coverage output to a converted geometry fragment. */
+    /** Adds the coverage output to a converted geometry fragment. */
     public static String withCoverageOutput(String source) {
         if (source == null || source.contains("gl_FragDepth")
                 || source.matches("(?s).*\\bchimeraCoverage\\b.*")) {

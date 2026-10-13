@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -225,7 +224,7 @@ final class MaterialPlanTest {
     }
 
     // ------------------------------------------------------------------
-    // TASK-332: compact directive parsing, entity output plans, slots,
+    // Compact directive parsing, entity output plans, slots,
     // and the isElytraFlying int bridge.
     // ------------------------------------------------------------------
 
@@ -281,7 +280,7 @@ final class MaterialPlanTest {
     }
 
     /**
-     * DOC-365 descriptor identity: the guarded family contract must carry the
+     * Descriptor identity: the guarded family contract must carry the
      * host transform blocks at bindings 0/1 with the converted preambles'
      * fields, and the applied builder must expose them under their semantic
      * names. VulkanMod names config-declared blocks "UBO: &lt;binding&gt;" and

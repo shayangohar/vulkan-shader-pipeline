@@ -34,7 +34,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class GameRendererDepthMixin {
 
     @Redirect(method = "renderItemInHand", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/player/LocalPlayer;I)V"), require = 1)
+            target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;"
+                    + "renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;"
+                    + "Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/player/LocalPlayer;"
+                    + "I)V"), require = 1)
     private void chimera$skipLateHand(ItemInHandRenderer renderer, float tick, PoseStack poses,
                                     SubmitNodeCollector submits, LocalPlayer player, int light) {
         if (!ChimeraHandRenderer.diverted()) renderer.renderHandsWithItems(tick, poses, submits, player, light);
@@ -50,7 +53,8 @@ public abstract class GameRendererDepthMixin {
             method = "renderLevel",
             at = @At(
                     value = "INVOKE",
-                    target = "Lcom/mojang/blaze3d/systems/CommandEncoder;clearDepthTexture(Lcom/mojang/blaze3d/textures/GpuTexture;D)V"
+                    target = "Lcom/mojang/blaze3d/systems/CommandEncoder;"
+                            + "clearDepthTexture(Lcom/mojang/blaze3d/textures/GpuTexture;D)V"
             )
     )
     private void chimera$clearDepthInPass(CommandEncoder instance, GpuTexture depthTexture, double clearDepth) {

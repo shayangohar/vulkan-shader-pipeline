@@ -28,8 +28,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Pack archive and prepared-source edges, and the recorded M5.7 qualification of two exact pack
- * versions (evidence: needs -Pchimera.pack.complementaryVersion and -Pchimera.pack.bslVersion).
+ * Pack archive and prepared-source edges, and the qualification of two exact pack versions
+ * recorded in testpacks/baselines/m5_7.json (evidence: needs -Pchimera.pack.complementaryVersion
+ * and -Pchimera.pack.bslVersion).
  */
 final class ExternalPackEvidenceTest {
     @Test
@@ -43,7 +44,7 @@ final class ExternalPackEvidenceTest {
             emitBaseline(packs);
             return;
         }
-        JsonObject baselineRoot = readObject(TestPacks.baseline("m5_7"), "M5.7 baseline");
+        JsonObject baselineRoot = readObject(TestPacks.baseline("m5_7"), "baseline");
         for (PackSpec pack : packs) {
             verifyExternalPack(pack, baselineRoot);
         }
@@ -52,14 +53,14 @@ final class ExternalPackEvidenceTest {
     private static void verifyExternalPack(PackSpec spec, JsonObject baselineRoot) throws IOException {
         JsonObject actual = snapshot(spec, true);
         verifyEquivalentDirectoryLoading(spec, actual);
-        JsonObject packs = childObject(baselineRoot, "packs", "M5.7 baseline packs");
+        JsonObject packs = childObject(baselineRoot, "packs", "baseline packs");
         JsonObject expected = childObject(packs, spec.label(),
-                "M5.7 baseline entry for " + spec.label());
+                "baseline entry for " + spec.label());
         for (String key : List.of("logicalName", "version", "fullPackFingerprint", "reportSha256",
                 "executablePrograms", "fallbackPrograms", "unsupportedPrograms", "deviations",
                 "programDeviations")) {
             assertEquals(expected.get(key).toString(), actual.get(key).toString(),
-                    "M5.7 " + spec.label() + " " + key);
+                    spec.label() + " " + key);
         }
         assertNonEmptyArray(expected, "expectedCaptures", spec.label() + " capture references");
         assertNonEmptyArray(expected, "runtimeEvidence", spec.label() + " runtime evidence references");
@@ -67,18 +68,18 @@ final class ExternalPackEvidenceTest {
 
     private static JsonObject snapshot(PackSpec spec, boolean requireExecutable) throws IOException {
         assertTrue(Files.isDirectory(spec.path()) || Files.isRegularFile(spec.path()),
-                "M5.7 " + spec.label() + " path does not exist: " + spec.path());
+                spec.label() + " path does not exist: " + spec.path());
         String fingerprint = PackFingerprint.sha256(spec.path());
         assertEquals(fingerprint, PackFingerprint.sha256(spec.path()),
-                "M5.7 " + spec.label() + " fingerprint stability");
+                spec.label() + " fingerprint stability");
 
         PackProbe.Analysis analysis = PackProbe.analyze(spec.path());
         ConformanceReport report = analysis.report();
         ConformanceReport secondReport = PackProbe.probe(spec.path());
         assertEquals(report.toJson(), secondReport.toJson(),
-                "M5.7 " + spec.label() + " report stability");
+                spec.label() + " report stability");
         assertEquals(report.sha256(), secondReport.sha256(),
-                "M5.7 " + spec.label() + " report hash stability");
+                spec.label() + " report hash stability");
         assertNoUnstableReportData(report, spec.path());
 
         try (PackSource.LoadResult loaded = PackSource.loadResult(spec.path())) {
@@ -86,7 +87,7 @@ final class ExternalPackEvidenceTest {
                     .map(PackProgram::name)
                     .toList();
             assertEquals(loadedNames.stream().distinct().count(), (long) loadedNames.size(),
-                    "M5.7 " + spec.label() + " duplicate runtime programs");
+                    spec.label() + " duplicate runtime programs");
             verifyConversionBoundary(spec, report, analysis.plan());
         }
 
@@ -99,15 +100,15 @@ final class ExternalPackEvidenceTest {
             boolean eligible = program.support() == ConformanceReport.SupportStatus.SUPPORTED
                     || program.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
             assertEquals(eligible, report.shouldAttempt(program.name()),
-                    "M5.7 " + spec.label() + " static eligibility: " + program.name());
+                    spec.label() + " static eligibility: " + program.name());
             if (eligible) {
                 assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
-                        program.runtime(), "M5.7 " + spec.label()
+                        program.runtime(), spec.label()
                                 + " eligible static runtime: " + program.name());
             } else {
                 assertTrue(program.runtime() == ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED
                                 || program.runtime() == ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                        "M5.7 " + spec.label() + " fallback static runtime: " + program.name());
+                        spec.label() + " fallback static runtime: " + program.name());
             }
             deviations.addAll(program.deviations());
             if (!program.deviations().isEmpty()) {
@@ -128,7 +129,7 @@ final class ExternalPackEvidenceTest {
                 .toString();
         if (requireExecutable) {
             assertTrue(!executable.isEmpty(),
-                    "M5.7 " + spec.label() + " has no executable program in the Chimera subset; programs="
+                    spec.label() + " has no executable program in the Chimera subset; programs="
                             + statusSummary + ", deviations=" + deviations);
         }
 
@@ -159,13 +160,13 @@ final class ExternalPackEvidenceTest {
                 continue;
             }
             PackProgramPlan planned = plan.program(reportProgram.name());
-            assertTrue(planned != null && planned.executable(), "M5.7 " + spec.label()
+            assertTrue(planned != null && planned.executable(), spec.label()
                     + " eligible source failed shared planning: " + reportProgram.name());
             String converted = planned.convertedFragment();
-            assertTrue(converted != null, "M5.7 " + spec.label()
+            assertTrue(converted != null, spec.label()
                     + " eligible source failed conversion: " + reportProgram.name());
             assertTrue(!converted.contains("#version 120") && !converted.contains("#version 130"),
-                    "M5.7 " + spec.label() + " converted source retained a legacy version: "
+                    spec.label() + " converted source retained a legacy version: "
                             + reportProgram.name());
         }
     }
@@ -187,7 +188,7 @@ final class ExternalPackEvidenceTest {
             for (String key : List.of("logicalName", "reportSha256", "executablePrograms",
                     "fallbackPrograms", "unsupportedPrograms", "deviations", "programDeviations")) {
                 assertEquals(zipSnapshot.get(key).toString(), directorySnapshot.get(key).toString(),
-                        "M5.7 " + spec.label() + " ZIP/directory " + key);
+                        spec.label() + " ZIP/directory " + key);
             }
         } finally {
             TestFiles.deleteTree(root);
@@ -245,31 +246,34 @@ final class ExternalPackEvidenceTest {
     void archiveEdges(@TempDir Path root) throws IOException {
         Path validZip = root.resolve("valid.zip");
         writeZip(validZip, Map.of(
-                "Example/shaders/shaders.json", "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"}]}\n",
+                "Example/shaders/shaders.json",
+                        "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"}]}\n",
                 "Example/shaders/composite.fsh", "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }\n"));
         Path extracted;
         try (PackSource.LoadResult loaded = PackSource.loadResult(validZip)) {
             extracted = loaded.shadersDir();
             assertTrue(Files.isRegularFile(extracted.resolve("composite.fsh")),
-                    "M5.7 ZIP shader source was not extracted");
+                    "ZIP shader source was not extracted");
             assertEquals(1L, loaded.programs().stream().map(PackProgram::name).distinct().count(),
-                    "M5.7 ZIP program count");
+                    "ZIP program count");
         }
-        assertTrue(!Files.exists(extracted), "M5.7 ZIP extraction was not cleaned up");
+        assertTrue(!Files.exists(extracted), "ZIP extraction was not cleaned up");
 
         Path duplicateZip = root.resolve("duplicate.zip");
         writeZip(duplicateZip, Map.of(
-                "shaders/shaders.json", "{\"programs\":[{\"name\":\"duplicate\",\"fragment\":\"b.fsh\"},{\"name\":\"duplicate\",\"fragment\":\"a.fsh\"}]}\n",
+                "shaders/shaders.json",
+                        "{\"programs\":[{\"name\":\"duplicate\",\"fragment\":\"b.fsh\"},{\"name\":\"duplicate\","
+                        + "\"fragment\":\"a.fsh\"}]}\n",
                 "shaders/a.fsh", "a\n",
                 "shaders/b.fsh", "b\n"));
         try (PackSource.LoadResult loaded = PackSource.loadResult(duplicateZip)) {
-            assertEquals(1, loaded.programs().size(), "M5.7 duplicate program selection");
+            assertEquals(1, loaded.programs().size(), "duplicate program selection");
             assertTrue(loaded.deviations().contains("DUPLICATE_PROGRAM:duplicate"),
-                    "M5.7 duplicate program deviation");
+                    "duplicate program deviation");
             assertEquals("a.fsh",
                     loaded.shadersDir().relativize(loaded.programs().get(0).fragmentPath())
                             .toString().replace('\\', '/'),
-                    "M5.7 duplicate deterministic source");
+                    "duplicate deterministic source");
         }
 
         Path unsafeZip = root.resolve("unsafe.zip");
@@ -277,9 +281,9 @@ final class ExternalPackEvidenceTest {
                 "../outside.fsh", "bad\n",
                 "shaders/composite.fsh", "good\n"));
         try (PackSource.LoadResult loaded = PackSource.loadResult(unsafeZip)) {
-            assertTrue(loaded.programs().isEmpty(), "M5.7 unsafe ZIP was accepted");
+            assertTrue(loaded.programs().isEmpty(), "unsafe ZIP was accepted");
             assertTrue(loaded.deviations().contains("PACK_ARCHIVE_UNSAFE_PATH"),
-                    "M5.7 unsafe ZIP deviation");
+                    "unsafe ZIP deviation");
         }
     }
 
@@ -314,30 +318,30 @@ final class ExternalPackEvidenceTest {
 
         try (PackSource.LoadResult loaded = PackSource.loadResult(root)) {
             assertEquals("world0", loaded.selectedVariantFolder(),
-                    "M5.7 prepared directory dimension selection");
+                    "prepared directory dimension selection");
             assertEquals("minecraft:overworld", loaded.selectedDimension(),
-                    "M5.7 prepared directory dimension name");
+                    "prepared directory dimension name");
             PackProgram finalProgram = loaded.programs().stream()
                     .filter(programEntry -> programEntry.name().equals("final"))
                     .findFirst()
-                    .orElseThrow(() -> new AssertionError("M5.7 prepared final source is missing"));
+                    .orElseThrow(() -> new AssertionError("prepared final source is missing"));
             String prepared = finalProgram.executableFragmentSource();
             assertTrue(prepared != null && prepared.contains("uniform sampler2D colortex0"),
-                    "M5.7 root-relative include was not expanded");
+                    "root-relative include was not expanded");
             assertTrue(prepared.contains("uniform sampler2D noisetex"),
-                    "M5.7 active conditional declaration was removed");
+                    "active conditional declaration was removed");
             assertTrue(!prepared.contains("inactiveSampler"),
-                    "M5.7 inactive conditional declaration was retained");
+                    "inactive conditional declaration was retained");
             assertEquals(shaders.resolve("tex/noise.png").toAbsolutePath().normalize(),
                     loaded.findNoiseTexture().toAbsolutePath().normalize(),
-                    "M5.7 pack noise resource resolution");
+                    "pack noise resource resolution");
 
             loaded.selectDimension("custom:moon");
             assertEquals("world0", loaded.selectedVariantFolder(),
-                    "M5.7 custom dimension source fallback");
+                    "custom dimension source fallback");
             assertTrue(loaded.deviations().contains(
                             "DIMENSION_SOURCE_FALLBACK_TO_WORLD0:custom:moon"),
-                    "M5.7 custom dimension fallback deviation");
+                    "custom dimension fallback deviation");
         }
 
         String simple130 = """
@@ -353,13 +357,13 @@ final class ExternalPackEvidenceTest {
                 simple130, targetPlan);
         String converted = FragmentConverter.convertPostFragment(
                 simple130, null, interfacePlan, targetPlan);
-        assertTrue(converted != null, "M5.7 GLSL 130 post conversion failed");
+        assertTrue(converted != null, "GLSL 130 post conversion failed");
         assertTrue(converted.contains("layout(location = 0) out vec4 chimeraFragColor0"),
-                "M5.7 GLSL 130 output declaration is missing");
+                "GLSL 130 output declaration is missing");
         assertTrue(converted.contains("layout(location = 0) in vec2 texCoord"),
-                "M5.7 GLSL 130 input varying bridge is missing");
+                "GLSL 130 input varying bridge is missing");
         assertTrue(converted.contains("texture(colortex0"),
-                "M5.7 texture2D conversion is missing");
+                "texture2D conversion is missing");
 
         Path zip = root.resolve("prepared.zip");
         writeZip(zip, Map.of(
@@ -372,15 +376,15 @@ final class ExternalPackEvidenceTest {
         try (PackSource.LoadResult loaded = PackSource.loadResult(zip)) {
             extracted = loaded.shadersDir();
             assertEquals("world0", loaded.selectedVariantFolder(),
-                    "M5.7 prepared ZIP dimension selection");
+                    "prepared ZIP dimension selection");
             assertTrue(loaded.programs().stream().anyMatch(
                             programEntry -> programEntry.name().equals("final")
                                     && programEntry.executableFragmentSource().contains("colortex0")),
-                    "M5.7 prepared ZIP source was not expanded");
+                    "prepared ZIP source was not expanded");
             assertTrue(loaded.findNoiseTexture() != null,
-                    "M5.7 prepared ZIP noise resource is missing");
+                    "prepared ZIP noise resource is missing");
         }
-        assertTrue(!Files.exists(extracted), "M5.7 prepared ZIP extraction was not cleaned up");
+        assertTrue(!Files.exists(extracted), "prepared ZIP extraction was not cleaned up");
 
         verifyMacroNormalization(shaders);
         verifyConverterEdges(shaders);
@@ -398,15 +402,15 @@ final class ExternalPackEvidenceTest {
         Files.writeString(sourcePath, source, StandardCharsets.UTF_8);
         ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
                 shaders, sourcePath, source);
-        assertTrue(prepared.successful(), "M5.7 macro normalization failed");
+        assertTrue(prepared.successful(), "macro normalization failed");
         assertTrue(prepared.source().contains("#undef MODE"),
-                "M5.7 changed macro did not emit an undefinition");
+                "changed macro did not emit an undefinition");
         assertEquals(1, count(prepared.source(), "#define MODE 1"),
-                "M5.7 identical macro redefinition was not omitted");
+                "identical macro redefinition was not omitted");
         assertEquals(1, count(prepared.source(), "#define MODE 2"),
-                "M5.7 changed macro definition was not retained");
+                "changed macro definition was not retained");
         assertTrue(prepared.deviations().contains("PREPROCESSOR_MACRO_REDEFINED:MODE"),
-                "M5.7 macro redefinition deviation is missing");
+                "macro redefinition deviation is missing");
     }
 
     private static void verifyConverterEdges(Path shaders) {
@@ -427,19 +431,19 @@ final class ExternalPackEvidenceTest {
         String converted = FragmentConverter.convertPostFragment(
                 simple130, shaders.resolve("final.fsh"), plan, target,
                 Map.of("shadowDistance", "192.0"));
-        assertTrue(converted != null, "M5.7 metadata and constant conversion failed");
+        assertTrue(converted != null, "metadata and constant conversion failed");
         assertEquals(1, count(converted, "#version 460"),
-                "M5.7 converter emitted duplicate version directives");
+                "converter emitted duplicate version directives");
         assertTrue(!converted.contains("#version 130"),
-                "M5.7 converter retained a legacy version directive");
+                "converter retained a legacy version directive");
         assertTrue(!converted.contains("GL_ARB_shader_texture_lod"),
-                "M5.7 converter retained the legacy texture-lod extension");
+                "converter retained the legacy texture-lod extension");
         assertTrue(!converted.contains("colortex0Format") && !converted.contains("gaux0Format"),
-                "M5.7 converter retained pack metadata declarations");
+                "converter retained pack metadata declarations");
         assertTrue(converted.contains("const float shadowDistance = 192.0;"),
-                "M5.7 converter did not inject the parsed pack constant");
+                "converter did not inject the parsed pack constant");
         assertTrue(converted.contains("layout(location = 0) in vec2 texCoord"),
-                "M5.7 fixed fullscreen varying was not accepted");
+                "fixed fullscreen varying was not accepted");
 
         String unsupported = """
                 #version 120
@@ -453,18 +457,18 @@ final class ExternalPackEvidenceTest {
                 unsupported, unsupportedTarget);
         assertTrue(FragmentConverter.convertPostFragment(
                         unsupported, shaders.resolve("final.fsh"), unsupportedPlan, unsupportedTarget) == null,
-                "M5.7 unsupported fullscreen varying was converted");
+                "unsupported fullscreen varying was converted");
         assertTrue(PostVertexBridge.postVaryingDeviations(unsupported).contains(
                         "POST_VARYING_UNSUPPORTED:sunVec"),
-                "M5.7 unsupported varying deviation is missing");
+                "unsupported varying deviation is missing");
         assertTrue(PostVertexBridge.postVaryingDeviations(unsupported).contains(
                         "POST_VARYING_UNSUPPORTED:upVec"),
-                "M5.7 second unsupported varying deviation is missing");
+                "second unsupported varying deviation is missing");
 
         PackConfig.PackConfigData defaulted = PackConfig.parse(List.of(new PackProgram(
                 "final", "const float shadowDistance = 9999.0;\n", shaders.resolve("final.fsh"))), shaders);
         assertEquals("128.0", defaulted.shaderConstants().get("shadowDistance"),
-                "M5.7 invalid shadow constant did not use the validated default");
+                "invalid shadow constant did not use the validated default");
     }
 
     private static int count(String source, String needle) {
@@ -505,10 +509,10 @@ final class ExternalPackEvidenceTest {
 
     private static void assertNoUnstableReportData(ConformanceReport report, Path packPath) {
         String json = report.toJson();
-        assertTrue(!json.contains(packPath.toAbsolutePath().toString()), "M5.7 report contains an absolute path");
-        assertTrue(!json.contains("chimera-pack-"), "M5.7 report contains a temporary path");
+        assertTrue(!json.contains(packPath.toAbsolutePath().toString()), "report contains an absolute path");
+        assertTrue(!json.contains("chimera-pack-"), "report contains a temporary path");
         assertTrue(!json.contains("timestamp") && !json.contains("Timestamp"),
-                "M5.7 report contains a timestamp field");
+                "report contains a timestamp field");
     }
 
     private static List<String> names(List<ConformanceReport.ProgramReport> programs) {
@@ -532,11 +536,11 @@ final class ExternalPackEvidenceTest {
     private static void assertNonEmptyArray(JsonObject object, String key, String label) {
         JsonElement value = object.get(key);
         assertTrue(value != null && value.isJsonArray() && !value.getAsJsonArray().isEmpty(),
-                "M5.7 " + label + " are missing");
+                label + " are missing");
     }
 
     private static void copyTree(Path source, Path destination) throws IOException {
-        assertTrue(Files.isDirectory(source), "M5.7 source tree is missing: " + source);
+        assertTrue(Files.isDirectory(source), "source tree is missing: " + source);
         try (var paths = Files.walk(source)) {
             for (Path path : paths.toList()) {
                 Path relative = source.relativize(path);

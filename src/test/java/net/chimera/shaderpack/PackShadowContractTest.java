@@ -9,36 +9,36 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Deterministic checks for the bounded M8.3 pack shadow contract. */
+/** The bounded pack shadow contract: clip range, settings and the shadow vertex wrapper. */
 final class PackShadowContractTest {
     @Test
     void shadowContract() {
         Path root = TestPacks.fixtures();
         PackProbe.Analysis analysis = PackProbe.analyze(root.resolve("m8_3/shadow"));
         PackProgramPlan shadow = analysis.plan().program("shadow");
-        assertTrue(shadow != null, "M8.3 shadow program was not discovered");
-        assertTrue(shadow.executable(), "M8.3 modern shadow was rejected: " + shadow.deviations()
+        assertTrue(shadow != null, "shadow program was not discovered");
+        assertTrue(shadow.executable(), "modern shadow was rejected: " + shadow.deviations()
                 + " interface=" + shadow.interfacePlan().deviations());
         assertTrue(shadow.convertedVertex() != null
                         && shadow.convertedVertex().startsWith("#version 460"),
-                "M8.3 modern shadow vertex was not translated");
+                "modern shadow vertex was not translated");
         assertTrue(shadow.convertedFragment() != null
                         && shadow.convertedFragment().contains("ChimeraShadowUniforms")
                         && shadow.convertedFragment().startsWith("#version 460"),
-                "M8.3 shadow fragment UBO was not generated");
+                "shadow fragment UBO was not generated");
         assertTrue(shadow.deviations().contains("MODERN_SHADOW_VERTEX_BRIDGE"),
-                "M8.3 modern shadow bridge deviation is missing");
+                "modern shadow bridge deviation is missing");
         assertTrue(shadow.deviations().contains("CUSTOM_UNIFORM_BRIDGE:shadowFade"),
-                "M8.3 pack-authored shadow fade was not served by its own declaration");
+                "pack-authored shadow fade was not served by its own declaration");
 
         PackConfig.ShadowSettings settings = analysis.config().shadowSettings();
-        assertTrue(settings.resolution() == 1024, "M8.3 resolution was not applied");
-        assertTrue(settings.distance() == 192.0F, "M8.3 distance was not applied");
+        assertTrue(settings.resolution() == 1024, "resolution was not applied");
+        assertTrue(settings.distance() == 192.0F, "distance was not applied");
         assertTrue(settings.distanceRenderMultiplier() == 1.25F,
-                "M8.3 distance multiplier was not applied");
+                "distance multiplier was not applied");
         assertTrue(settings.sunPathRotation() == 35.0F
                         && settings.sunPathOffset() == 4.0F,
-                "M8.3 sun-path settings were not applied");
+                "sun-path settings were not applied");
 
         String legacy = "#version 120\nvoid main(){gl_Position=ftransform();}\n";
         assertTrue(TerrainVertexBridge.supportsShadowVertex(legacy,
@@ -58,7 +58,7 @@ final class PackShadowContractTest {
                 TerrainVertexBridge.convertShadowVertex(shadow.stageSource("vertex"), null,
                         shadow.stageSource("fragment"));
         assertTrue(fixtureShadow != null, "fixture shadow vertex was rejected");
-        verifyShadowClipRange("M8.3 fixture", fixtureShadow.source());
+        verifyShadowClipRange("fixture", fixtureShadow.source());
 
         String legacyShadow = "#version 120\n"
                 + "void main() {\n"

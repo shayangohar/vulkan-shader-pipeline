@@ -265,7 +265,8 @@ public final class EntityVertexBridge {
     ) {
         String liveInputs = stripComments(removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
                 LegacyGlslConverter.prepareSource(source, sourceFile, true))));
-        if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord") || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")) {
+        if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord")
+                || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")) {
             throw new IllegalArgumentException("crumbling BLOCK has no material mid-coordinate or tangent attribute");
         }
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
@@ -368,13 +369,15 @@ public final class EntityVertexBridge {
                 locations.put(entityIdVarying(id.getKey()), location++);
                 vertexTypes.put(entityIdVarying(id.getKey()), id.getValue());
             }
-            boolean overlayUv = LegacyGlslConverter.containsIdentifier(stripComments(fragmentSource == null ? "" : fragmentSource),
+            boolean overlayUv = LegacyGlslConverter.containsIdentifier(stripComments(fragmentSource == null ? ""
+                    : fragmentSource),
                     EntityOverlayColor.UV_VARYING);
             if (overlayUv) {
                 locations.put(EntityOverlayColor.UV_VARYING, location++);
                 vertexTypes.put(EntityOverlayColor.UV_VARYING, "ivec2");
             }
-            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes, locations, vertexQualifiers);
+            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
+                    locations, vertexQualifiers);
 
             String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
             converted = removeEntityIdDeclarations(converted);
@@ -455,7 +458,8 @@ public final class EntityVertexBridge {
                         entityIdVarying(name) + " = EntityIds." + entityIdComponent(name) + ";");
             }
             if (overlayUv) {
-                converted = LegacyGlslConverter.injectMainPrologue(converted, EntityOverlayColor.UV_VARYING + " = UV1;");
+                converted = LegacyGlslConverter.injectMainPrologue(converted,
+                        EntityOverlayColor.UV_VARYING + " = UV1;");
             }
             Matcher leftoverDeclaration = Pattern.compile("(?m)^\\s*(?:attribute|varying|in|out)\\s+.*$")
                     .matcher(stripComments(converted));
@@ -475,12 +479,16 @@ public final class EntityVertexBridge {
             }
             String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
             if (vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE) {
-                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraHandMain()");
-                converted += "\nvoid main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
+                        "void chimeraHandMain()");
+                converted += "\nvoid main() { chimeraHandMain();"
+                        + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
             }
             if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
-                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraSkyMain()");
-                converted += "\nvoid main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
+                        "void chimeraSkyMain()");
+                converted += "\nvoid main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"
+                        + " }\n";
             }
             return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n" + vertexPreamble
                     + chimeraVaryings + cameraBlock + converted,
@@ -532,7 +540,8 @@ public final class EntityVertexBridge {
     ) {
         String liveInputs = stripComments(removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
                 LegacyGlslConverter.prepareSource(source, sourceFile, true))));
-        if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord") || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")
+        if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord")
+                || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")
                 || LegacyGlslConverter.containsIdentifier(liveInputs, "Tangent")) {
             throw new IllegalArgumentException("particle format has no material mid-coordinate or tangent attribute");
         }
@@ -665,7 +674,8 @@ public final class EntityVertexBridge {
         String declared = declaredEntityIdType(vertex, name);
         if (declared == null) declared = declaredEntityIdType(fragment, name);
         if (declared != null) return declared;
-        if (LegacyGlslConverter.containsIdentifier(vertex, name) || LegacyGlslConverter.containsIdentifier(fragment, name)) {
+        if (LegacyGlslConverter.containsIdentifier(vertex, name)
+                || LegacyGlslConverter.containsIdentifier(fragment, name)) {
             return "int";
         }
         return null;
@@ -733,7 +743,8 @@ public final class EntityVertexBridge {
         Map<String, String> result = new TreeMap<>();
         Map<String, String> qualifiers = new TreeMap<>();
         Map<String, Integer> slots = new TreeMap<>();
-        GlslInterfaceScanner.StageInterface stage = GlslInterfaceScanner.scan(source == null ? "" : source, vertexStage);
+        GlslInterfaceScanner.StageInterface stage = GlslInterfaceScanner.scan(source == null ? "" : source,
+                vertexStage);
         if (!stage.deviations().isEmpty()) {
             throw new IllegalArgumentException("entity varying declarations unsupported: " + stage.deviations());
         }
@@ -903,9 +914,12 @@ public final class EntityVertexBridge {
     public static String layoutVertexForFormat(String converted, VertexFormat host) {
         if (host == DefaultVertexFormat.NEW_ENTITY) return converted;
         String contract = converted == null ? null
-                : converted.contains(GlslVertexPreambles.HAND_VERTEX_PREAMBLE) ? GlslVertexPreambles.HAND_VERTEX_PREAMBLE
-                : converted.contains(GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE) ? GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE
-                : converted.contains(GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE) ? GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE : null;
+                : converted.contains(GlslVertexPreambles.HAND_VERTEX_PREAMBLE)
+                        ? GlslVertexPreambles.HAND_VERTEX_PREAMBLE
+                : converted.contains(GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE)
+                        ? GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE
+                : converted.contains(GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE)
+                        ? GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE : null;
         if (contract == null) {
             throw new IllegalArgumentException("program lacks the entity input contract");
         }
@@ -925,7 +939,8 @@ public final class EntityVertexBridge {
             String declaration = location < 0
                     ? "const " + types[i] + " " + attributes[i] + " = " + defaults[i] + ";"
                     : "layout(location = " + location + ") in " + types[i] + " " + attributes[i] + ";";
-            preamble = preamble.replace("layout(location = " + i + ") in " + types[i] + " " + attributes[i] + ";", declaration);
+            preamble = preamble.replace("layout(location = " + i + ") in " + types[i] + " " + attributes[i] + ";",
+                    declaration);
         }
         preamble = preamble.replace("layout(location = 6) in uvec4 EntityIds;",
                         "layout(location = " + names.indexOf("EntityIds") + ") in uvec4 EntityIds;")
