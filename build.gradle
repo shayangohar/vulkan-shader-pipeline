@@ -117,8 +117,9 @@ tasks.register('evidenceTest', Test) {
 }
 
 // The metrics ratchet: tools/metrics/baseline.txt records each method over complexity 15 or 80
-// lines, each file over 1,000 lines with its reason, duplication, inline qualified names and lines
-// over 120 characters. check fails when any of them grows; metricsRecord rewrites the baseline.
+// lines and each file over 1,000 lines, each with its reason to stay, plus duplication, inline
+// qualified names and lines over 120 characters. check fails when any of them grows or a listed
+// method or file has no reason; metricsRecord rewrites the baseline and keeps the reasons.
 sourceSets {
     metrics {
         java.srcDir 'tools/metrics'
@@ -135,7 +136,7 @@ def metricsTask = { String name, String mode, String text ->
     }
 }
 metricsTask('metricsCheck', 'check', 'Fails when the sources regress past tools/metrics/baseline.txt.')
-metricsTask('metricsRecord', 'record', 'Rewrites tools/metrics/baseline.txt from the sources, keeping file reasons.')
+metricsTask('metricsRecord', 'record', 'Rewrites tools/metrics/baseline.txt from the sources, keeping reasons.')
 
 tasks.named('check') {
     dependsOn tasks.named('packTest')

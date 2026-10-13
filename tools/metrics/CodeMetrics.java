@@ -42,8 +42,9 @@ import java.util.stream.Stream;
  * Measures the Java sources and fails when they regress past the recorded baseline. A regression
  * is a method newly over the complexity or length limit, or worse than recorded; a file newly over
  * the length limit, or longer than recorded; more inline qualified names or lines over 120
- * characters; or more duplicated code. {@code record} rewrites the baseline from the sources and
- * keeps each long file's recorded reason.
+ * characters; or more duplicated code. Every method and file the baseline lists must also carry a
+ * reason to stay over its limit. {@code record} rewrites the baseline from the sources and keeps
+ * each recorded reason.
  *
  * <p>Usage: {@code CodeMetrics check|record <baseline> <source root>...}
  */
@@ -78,8 +79,11 @@ public final class CodeMetrics {
         Path baselinePath = Path.of(args[1]);
         Baseline recorded = Files.exists(baselinePath) ? Baseline.read(baselinePath) : new Baseline();
         if (args[0].equals("record")) {
-            current.fileReasons.putAll(recorded.fileReasons);
-            current.fileReasons.keySet().retainAll(current.fileLines.keySet());
+            recorded.reasons.forEach((key, reason) -> {
+                if (current.fileLines.containsKey(key) || current.methods.containsKey(key)) {
+                    current.reasons.put(key, reason);
+                }
+            });
             current.write(baselinePath);
             System.out.println("Recorded " + baselinePath + ": " + current.summary());
             return;
@@ -89,7 +93,8 @@ public final class CodeMetrics {
         if (!regressions.isEmpty()) {
             regressions.forEach(regression -> System.err.println("  " + regression));
             System.err.println(regressions.size() + " metric regressions: fix them, or run metricsRecord after a"
-                    + " deliberate change and give each new long file a reason in tools/metrics/baseline.txt");
+                    + " deliberate change and give each new long method or file a reason in"
+                    + " tools/metrics/baseline.txt");
             System.exit(1);
         }
     }
@@ -330,23 +335,26 @@ public final class CodeMetrics {
         int longLines;
         final Map<String, int[]> methods = new TreeMap<>();
         final Map<String, Integer> fileLines = new TreeMap<>();
-        final Map<String, String> fileReasons = new TreeMap<>();
+        /** Why each listed method or file stays over its limit, keyed like {@link #methods} and {@link #fileLines}. */
+        final Map<String, String> reasons = new TreeMap<>();
 
         static Baseline read(Path path) throws IOException {
             Baseline baseline = new Baseline();
             for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {
-                String[] words = line.strip().split("\\s+", 5);
+                String[] words = line.strip().split("\\s+");
                 switch (words[0]) {
                     case "main-duplication-percent" -> baseline.mainDuplication = Double.parseDouble(words[1]);
                     case "test-duplication-percent" -> baseline.testDuplication = Double.parseDouble(words[1]);
                     case "qualified-names" -> baseline.qualifiedNames = Integer.parseInt(words[1]);
                     case "lines-over-120" -> baseline.longLines = Integer.parseInt(words[1]);
-                    case "method" -> baseline.methods.put(words[1] + " " + words[2],
-                            new int[] {Integer.parseInt(words[3]), Integer.parseInt(words[4])});
+                    case "method" -> {
+                        String key = words[1] + " " + words[2];
+                        baseline.methods.put(key, new int[] {Integer.parseInt(words[3]), Integer.parseInt(words[4])});
+                        baseline.putReason(key, words, 5);
+                    }
                     case "file" -> {
                         baseline.fileLines.put(words[1], Integer.parseInt(words[2]));
-                        if (words.length > 3) baseline.fileReasons.put(words[1], String.join(" ",
-                                List.of(words).subList(3, words.length)));
+                        baseline.putReason(words[1], words, 3);
                     }
                     default -> { }
                 }
@@ -354,21 +362,26 @@ public final class CodeMetrics {
             return baseline;
         }
 
+        private void putReason(String key, String[] words, int from) {
+            if (words.length > from) reasons.put(key, String.join(" ", List.of(words).subList(from, words.length)));
+        }
+
         void write(Path path) throws IOException {
             StringBuilder text = new StringBuilder();
             text.append("# Limits the sources may not regress past; check fails on a regression.\n");
             text.append("# A listed method or file may shrink, not grow. Rewrite with gradlew metricsRecord.\n");
-            text.append("# method <file> <Type.method/arity> <complexity> <lines>: over ").append(MAX_COMPLEXITY)
-                    .append(" complexity or ").append(MAX_METHOD_LINES).append(" lines\n");
+            text.append("# method <file> <Type.method/arity> <complexity> <lines> <reason>: over ")
+                    .append(MAX_COMPLEXITY).append(" complexity or ").append(MAX_METHOD_LINES).append(" lines\n");
             text.append("# file <file> <lines> <reason>: over ").append(MAX_FILE_LINES).append(" lines\n");
             text.append("main-duplication-percent ").append(mainDuplication).append('\n');
             text.append("test-duplication-percent ").append(testDuplication).append('\n');
             text.append("qualified-names ").append(qualifiedNames).append('\n');
             text.append("lines-over-120 ").append(longLines).append('\n');
             fileLines.forEach((file, lines) -> text.append("file ").append(file).append(' ').append(lines)
-                    .append(' ').append(fileReasons.getOrDefault(file, "TODO: why this file is long")).append('\n'));
+                    .append(' ').append(reasons.getOrDefault(file, "TODO: why this file is long")).append('\n'));
             methods.forEach((method, values) -> text.append("method ").append(method).append(' ')
-                    .append(values[0]).append(' ').append(values[1]).append('\n'));
+                    .append(values[0]).append(' ').append(values[1]).append(' ')
+                    .append(reasons.getOrDefault(method, "TODO: why this method stays")).append('\n'));
             Files.writeString(path, text.toString(), StandardCharsets.UTF_8);
         }
 
@@ -410,9 +423,10 @@ public final class CodeMetrics {
                     regressions.add(file + " grew to " + lines + " lines from " + limit);
                 }
             });
-            recorded.fileReasons.forEach((file, reason) -> {
-                if (reason.startsWith("TODO")) regressions.add(file + " has no recorded reason to be long");
-            });
+            Stream.concat(methods.keySet().stream(), fileLines.keySet().stream())
+                    .filter(key -> recorded.methods.containsKey(key) || recorded.fileLines.containsKey(key))
+                    .filter(key -> recorded.reasons.getOrDefault(key, "TODO").startsWith("TODO"))
+                    .forEach(key -> regressions.add(key + " has no recorded reason to stay over its limit"));
             return regressions;
         }
 
