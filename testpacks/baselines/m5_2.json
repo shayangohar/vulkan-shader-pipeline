@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "material": {
-      "reportSha256": "cb952f8903b07c2b1b03b0991ff95aca319043665d5ae71050d5b8e03e86fdf5",
+      "reportSha256": "08a48511d1d94416d3d1f96e2c233fc85e0ab24c57fb8a5eb5b36b8ed432cf68",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -16,6 +16,10 @@
           "fragment"
         ],
         "gbuffers_block": [
+          "fragment",
+          "vertex"
+        ],
+        "gbuffers_block_translucent": [
           "fragment",
           "vertex"
         ],
@@ -46,6 +50,14 @@
           "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
+        ],
+        "gbuffers_block_translucent": [
+          "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
+          "BLOCK_VERTEX_BRIDGE",
+          "ENTITY_STATE_FIXED_TO_HOST",
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"
         ],
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE",
@@ -76,7 +88,7 @@
       }
     },
     "unsupported_vertex": {
-      "reportSha256": "97e4e0debd675cd6f8851d039c85135da5f1671f5a32bf377c8208da86e70cb1",
+      "reportSha256": "6314fd93771171f9ea9113b81848e0a954ad0772cf5adbc9a58e14e45bbd9e07",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -90,6 +102,10 @@
           "fragment"
         ],
         "gbuffers_block": [
+          "fragment",
+          "vertex"
+        ],
+        "gbuffers_block_translucent": [
           "fragment",
           "vertex"
         ],
@@ -120,6 +136,14 @@
           "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
+        ],
+        "gbuffers_block_translucent": [
+          "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
+          "BLOCK_VERTEX_BRIDGE",
+          "ENTITY_STATE_FIXED_TO_HOST",
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"
         ],
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE",

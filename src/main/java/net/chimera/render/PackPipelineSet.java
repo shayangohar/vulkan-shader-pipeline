@@ -64,9 +64,9 @@ final class PackPipelineSet {
     /** Pack damaged-block program on the guarded block draw lane. */
     PackPipelines.PackEntity damagedBlock;
 
-    /** The translucent-entity and block programs on Iris's GLYPH text layout (TEXT, TEXT_BE). */
+    /** The translucent-entity and block-translucent programs on Iris's GLYPH text layout (TEXT, TEXT_BE). */
     PackPipelines.PackEntity translucentEntityText;
-    PackPipelines.PackEntity blockText;
+    PackPipelines.PackEntity blockTranslucentText;
 
     /** Pack first-person hand program on the guarded hand draw window. */
     PackPipelines.PackHand hand;
@@ -107,7 +107,7 @@ final class PackPipelineSet {
         waterRoute = null;
         if (shadowPipeline != null) shadowPipeline.cleanUp();
         Stream.of(shadowEntities, entity, translucentEntity, spiderEyes, block, damagedBlock,
-                        translucentEntityText, blockText)
+                        translucentEntityText, blockTranslucentText)
                 .filter(Objects::nonNull).forEach(value -> value.pipeline().cleanUp());
         if (hand != null) hand.cleanUp();
         if (handWater != null) handWater.cleanUp();
@@ -144,7 +144,7 @@ final class PackPipelineSet {
         block = null;
         damagedBlock = null;
         translucentEntityText = null;
-        blockText = null;
+        blockTranslucentText = null;
         hand = null;
         handWater = null;
         particle = null;
@@ -164,6 +164,8 @@ final class PackPipelineSet {
             case ENTITY_TRANSLUCENT -> this.translucentEntity;
             case SPIDER_EYES -> this.spiderEyes;
             case BLOCK -> this.block;
+            // Block-entity text draws in gbuffers_block_translucent's own target window.
+            case BLOCK_TRANSLUCENT -> this.blockTranslucentText;
             case DAMAGED_BLOCK -> this.damagedBlock;
             case HAND -> this.hand == null ? null : this.hand.primary();
             case HAND_WATER -> this.handWater == null ? null : this.handWater.primary();

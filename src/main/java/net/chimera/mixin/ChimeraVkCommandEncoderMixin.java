@@ -164,7 +164,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
         return switch (family) {
             // Iris keeps the ENTITIES phase for every entity and block-entity shadow caster.
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, SHADOW_ENTITIES -> PackRenderingPhase.ENTITIES;
-            case BLOCK -> PackRenderingPhase.BLOCK_ENTITIES;
+            case BLOCK, BLOCK_TRANSLUCENT -> PackRenderingPhase.BLOCK_ENTITIES;
             case DAMAGED_BLOCK -> PackRenderingPhase.DESTROY;
             case HAND -> PackRenderingPhase.HAND_SOLID;
             case HAND_WATER -> PackRenderingPhase.HAND_TRANSLUCENT;

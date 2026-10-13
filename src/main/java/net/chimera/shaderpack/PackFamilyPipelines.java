@@ -28,7 +28,7 @@ public final class PackFamilyPipelines {
         }
         FamilyAdapterPlan.Family family = plan.familyAdapter().family();
         UniformRegistry.Stage stage = switch (family) {
-            case BLOCK, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
+            case BLOCK, BLOCK_TRANSLUCENT, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
             case HAND, HAND_WATER -> UniformRegistry.Stage.HAND;
             default -> UniformRegistry.Stage.ENTITY;
         };
@@ -65,7 +65,7 @@ public final class PackFamilyPipelines {
         VertexFormat extended = host == null ? null : ChimeraVertexFormats.handFormats().get(host);
         if (plan == null || !plan.executable() || extended == null) return null;
         UniformRegistry.Stage stage = switch (plan.familyAdapter().family()) {
-            case BLOCK, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
+            case BLOCK, BLOCK_TRANSLUCENT, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
             default -> UniformRegistry.Stage.ENTITY;
         };
         try {

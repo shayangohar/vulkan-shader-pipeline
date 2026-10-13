@@ -99,7 +99,8 @@ final class PackPipelineLoad {
                 pass.pipelines.hand, pass.pipelines.handWater, pass.pipelines.particle,
                 pass.pipelines.translucentParticle,
                 pass.packPlan == null ? null : pass.packPlan.entityIds());
-        ChimeraEntityBridge.installTextVariants(pass.pipelines.translucentEntityText, pass.pipelines.blockText);
+        ChimeraEntityBridge.installTextVariants(pass.pipelines.translucentEntityText,
+                pass.pipelines.blockTranslucentText);
         ChimeraEntityBridge.installHostLayout(pass.pipelines.hostLayout);
         ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",

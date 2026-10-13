@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "397148750352fef9db452c29a2aec8682287573b15bd75f5957ed3df4cfbd6fa",
+      "reportSha256": "3559be1009794821624298315f970c6d488ee95549cad191632ac2ce498e8304",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -12,6 +12,7 @@
       },
       "expectedExecutablePrograms": [
         "gbuffers_block",
+        "gbuffers_block_translucent",
         "gbuffers_terrain",
         "gbuffers_water"
       ],
@@ -23,6 +24,7 @@
         "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
         "ALPHA_TEST_DYNAMIC:gbuffers_water",
         "BLOCK_ENTITY_ID_DEFAULTED",
+        "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
         "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
         "BLOCK_VERTEX_CONVERSION_FAILED:crumbling BLOCK has no material mid-coordinate or tangent attribute",
@@ -34,6 +36,7 @@
         "MODERN_TERRAIN_VERTEX_BRIDGE",
         "MODERN_WATER_VERTEX_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain",
         "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
         "TERRAIN_NORMAL_AUTHORITATIVE",
         "TERRAIN_TANGENT_DERIVED_FALLBACK",
@@ -41,7 +44,7 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "da0391b1625536be6449392f53fa202d50097f934375c7c4904af21cd87608ab",
+      "reportSha256": "080024a929eb64704ab59f567be4da878a4c1312198b4e905590ecb24a23f71a",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "d4b257c6f083b143879e04c04cd6eadbc1443615eff684a2ca527dfefbff60bb",
         "gbuffers_terrain.vsh": "244c2f59bb81a169c09d178e2b50107035cc206db26e38ef087d0095629240e1"
@@ -49,6 +52,7 @@
       "expectedExecutablePrograms": [],
       "expectedFallbackPrograms": [
         "gbuffers_block",
+        "gbuffers_block_translucent",
         "gbuffers_damagedblock",
         "gbuffers_terrain",
         "gbuffers_water"
@@ -62,6 +66,7 @@
         "LIVE_UNIFORM_BRIDGE",
         "MODERN_GLSL_UNSUPPORTED",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain",
         "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
         "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
         "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",

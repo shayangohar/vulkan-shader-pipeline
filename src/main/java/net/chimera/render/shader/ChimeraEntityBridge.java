@@ -30,6 +30,8 @@ public final class ChimeraEntityBridge {
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,
         BLOCK,
+        /** A block entity's text (signs), drawn with gbuffers_block_translucent (Iris TEXT_BE). */
+        BLOCK_TRANSLUCENT,
         DAMAGED_BLOCK,
         HAND,
         HAND_WATER,
@@ -66,9 +68,9 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline handWaterPipeline;
     private static PackPipelines.PackHand handVariants;
     private static PackPipelines.PackHand handWaterVariants;
-    /** The translucent-entity and block programs built for Iris's GLYPH text layout. */
+    /** The translucent-entity and block-translucent programs built for Iris's GLYPH text layout. */
     private static GraphicsPipeline translucentEntityTextPipeline;
-    private static GraphicsPipeline blockTextPipeline;
+    private static GraphicsPipeline blockTranslucentTextPipeline;
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
     /** The installed lanes of {@link HostLayoutLane}, keyed by their family. */
@@ -122,21 +124,6 @@ public final class ChimeraEntityBridge {
             // gbuffer data, and deferred lighting erased them to a ghost.
             RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
     );
-    /** Fixed core particle/weather, item and crumbling discard threshold. */
-    private static final float FIXED_ALPHA_CUTOUT = 0.1F;
-    /** Host pipelines tested at {@link #FIXED_ALPHA_CUTOUT} (Iris ONE_TENTH_ALPHA). */
-    private static final Set<RenderPipeline> FIXED_CUTOUT_PIPELINES = Set.of(
-            RenderPipelines.CRUMBLING,
-            RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL,
-            RenderPipelines.OPAQUE_PARTICLE,
-            RenderPipelines.TRANSLUCENT_PARTICLE,
-            RenderPipelines.WEATHER_DEPTH_WRITE,
-            RenderPipelines.WEATHER_NO_DEPTH_WRITE,
-            // Iris ENTITIES_EYES_TRANS: ONE_TENTH_ALPHA.
-            RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE
-    );
-    /** Iris AlphaTests.NON_ZERO_ALPHA: GREATER 0.0001. */
-    private static final float NON_ZERO_ALPHA = 0.0001F;
     private ChimeraEntityBridge() {}
 
     public static void install(PackPipelines.PackEntity entity,
@@ -176,7 +163,7 @@ public final class ChimeraEntityBridge {
         handVariants = hand;
         handWaterVariants = handWater;
         translucentEntityTextPipeline = null;
-        blockTextPipeline = null;
+        blockTranslucentTextPipeline = null;
         handPipeline = hand == null ? null : hand.primary().pipeline();
         handWaterPipeline = handWater == null ? null : handWater.primary().pipeline();
         particlePipeline = particle == null ? null : particle.pipeline();
@@ -308,7 +295,7 @@ public final class ChimeraEntityBridge {
         handVariants = null;
         handWaterVariants = null;
         translucentEntityTextPipeline = null;
-        blockTextPipeline = null;
+        blockTranslucentTextPipeline = null;
         particlePipeline = null;
         translucentParticlePipeline = null;
         hostLayoutPipelines.clear();
@@ -645,44 +632,15 @@ public final class ChimeraEntityBridge {
     }
 
     /**
-     * The host pipeline's discard threshold (fixed core value or ALPHA_CUTOUT
-     * define), or 0 for a pipeline that never discards. The pack program tests
-     * against it per draw, as Iris does with iris_currentAlphaTest.
-     *
-     * <p>The item pipeline declares no define: its core shader discards below
-     * a fixed 0.1, and Iris tests held items against 0.1 too. Without it the
-     * transparent texels of a flat item wrote depth and gbuffer data across
-     * the whole quad, and its glint lit that box.</p>
+     * The discard threshold the pack program tests this draw against, as Iris does with
+     * iris_currentAlphaTest: a host-layout lane's own Iris ShaderKey test, else the host
+     * pipeline's ({@link HostAlphaTest}).
      */
     public static float alphaReference(RenderPipeline pipeline) {
-        // A host-layout lane tests at its Iris ShaderKey's alpha test.
         HostLayoutLane lane = isDrawActive() ? HostLayoutLane.of(activeFamily) : null;
         if (lane != null) return lane.alphaReference();
-        // Iris SHADOW_ENTITIES_CUTOUT tests every entity caster at ONE_TENTH_ALPHA.
-        if (isShadowCasterPass()) return FIXED_ALPHA_CUTOUT;
-        if (pipeline != null && FIXED_CUTOUT_PIPELINES.contains(pipeline)) return FIXED_ALPHA_CUTOUT;
-        // Iris ENTITIES_EYES and GLINT: NON_ZERO_ALPHA.
-        if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.GLINT) return NON_ZERO_ALPHA;
-        // Iris TEXT and TEXT_BE: ONE_TENTH_ALPHA; HAND_TEXT: NON_ZERO_ALPHA. The core
-        // text shader discards below 0.1 without a define; untested, every glyph
-        // quad wrote its transparent texels.
-        if (isTextPipeline(pipeline)) {
-            return activeFamily == Family.HAND || activeFamily == Family.HAND_WATER
-                    ? NON_ZERO_ALPHA : FIXED_ALPHA_CUTOUT;
-        }
-        return definedAlphaCutout(pipeline);
-    }
-
-    /** The pipeline's positive ALPHA_CUTOUT define, or 0 when it is absent or malformed. */
-    private static float definedAlphaCutout(RenderPipeline pipeline) {
-        String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
-        if (cutout == null) return 0.0F;
-        try {
-            float value = Float.parseFloat(cutout.trim().replaceFirst("[fF]$", ""));
-            return Float.isFinite(value) && value > 0.0F ? value : 0.0F;
-        } catch (NumberFormatException malformed) {
-            return 0.0F;
-        }
+        return HostAlphaTest.reference(pipeline, isShadowCasterPass(),
+                activeFamily == Family.HAND || activeFamily == Family.HAND_WATER);
     }
 
     public static boolean supportsWorldPipeline(RenderPipeline pipeline) {
@@ -695,12 +653,12 @@ public final class ChimeraEntityBridge {
 
     /**
      * Installs the text layout variants after {@link #install}: Iris draws TEXT with
-     * gbuffers_entities_translucent and a block entity's TEXT_BE with its block program.
+     * gbuffers_entities_translucent and a block entity's TEXT_BE with gbuffers_block_translucent.
      */
     public static void installTextVariants(PackPipelines.PackEntity translucentEntityText,
-                                           PackPipelines.PackEntity blockText) {
+                                           PackPipelines.PackEntity blockTranslucentText) {
         translucentEntityTextPipeline = translucentEntityText == null ? null : translucentEntityText.pipeline();
-        blockTextPipeline = blockText == null ? null : blockText.pipeline();
+        blockTranslucentTextPipeline = blockTranslucentText == null ? null : blockTranslucentText.pipeline();
     }
 
     /** World and sign text pipelines Iris routes through getText (see-through and intensity stay host). */
@@ -717,7 +675,7 @@ public final class ChimeraEntityBridge {
         if (family == null) return null;
         return switch (family) {
             case ENTITY_TRANSLUCENT -> translucentEntityTextPipeline;
-            case BLOCK -> blockTextPipeline;
+            case BLOCK_TRANSLUCENT -> blockTranslucentTextPipeline;
             default -> null;
         };
     }
@@ -731,9 +689,9 @@ public final class ChimeraEntityBridge {
                     ? Family.SHADOW_ENTITIES : Family.HOST_FALLBACK;
         }
         if (renderType != null && isTextPipeline(renderType.pipeline())) {
-            // Iris IrisPipelines.getText: TEXT_BE (block program) inside a block entity,
-            // TEXT (gbuffers_entities_translucent) otherwise.
-            Family text = base == Family.BLOCK ? Family.BLOCK : Family.ENTITY_TRANSLUCENT;
+            // Iris IrisPipelines.getText: TEXT_BE (gbuffers_block_translucent) inside a block entity,
+            // TEXT (gbuffers_entities_translucent) otherwise. Each draws in its program's own targets.
+            Family text = base == Family.BLOCK ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
             return textPipelineFor(text) != null ? text : Family.HOST_FALLBACK;
         }
         if (base == Family.ENTITY && renderType != null) {
@@ -772,8 +730,8 @@ public final class ChimeraEntityBridge {
         if (activePipeline == null) return false;
         VertexFormat format = pipeline.getVertexFormat();
         if (isGlyphFormat(format) && isTextPipeline(pipeline)
-                && (activeFamily == Family.ENTITY_TRANSLUCENT || activeFamily == Family.BLOCK)) {
-            // Text keeps its family window and outputs; only its native layout differs.
+                && (activeFamily == Family.ENTITY_TRANSLUCENT || activeFamily == Family.BLOCK_TRANSLUCENT)) {
+            // Text draws in its family's window and outputs; only its native layout differs.
             GraphicsPipeline text = textPipelineFor(activeFamily);
             if (text == null) return false;
             activePipeline = text;
@@ -795,7 +753,8 @@ public final class ChimeraEntityBridge {
             case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH,
                  SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG,
                  SHADOW_BASIC -> HostLayoutLane.of(activeFamily).serves(pipeline);
-            case HOST_FALLBACK -> false;
+            // Block-entity text is the only draw of its family, admitted above.
+            case BLOCK_TRANSLUCENT, HOST_FALLBACK -> false;
         };
     }
 
@@ -818,7 +777,8 @@ public final class ChimeraEntityBridge {
     /** Families that append pack inputs to the host format instead of drawing it directly. */
     private static boolean widensVertexFormat(Family family) {
         return switch (family) {
-            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, HAND, HAND_WATER, SHADOW_ENTITIES -> true;
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, BLOCK_TRANSLUCENT, HAND, HAND_WATER,
+                 SHADOW_ENTITIES -> true;
             case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
                  LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
                  SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC, HOST_FALLBACK -> false;
@@ -842,9 +802,9 @@ public final class ChimeraEntityBridge {
                     format == DefaultVertexFormat.NEW_ENTITY
                     ? ChimeraVertexFormats.EXTENDED_ENTITY : format;
             case HAND, HAND_WATER -> ChimeraVertexFormats.handFormats().getOrDefault(format, format);
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
-                 LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
-                 SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC -> format;
+            case BLOCK_TRANSLUCENT, DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT,
+                 HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING,
+                 SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC -> format;
             case HOST_FALLBACK -> format;
         };
     }
@@ -947,6 +907,7 @@ public final class ChimeraEntityBridge {
             case ENTITY_TRANSLUCENT -> translucentEntityPipeline;
             case SPIDER_EYES -> spiderEyesPipeline;
             case BLOCK -> blockPipeline;
+            case BLOCK_TRANSLUCENT -> blockTranslucentTextPipeline;
             case DAMAGED_BLOCK -> damagedBlockPipeline;
             case HAND -> handPipeline;
             case HAND_WATER -> handWaterPipeline;

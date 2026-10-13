@@ -47,6 +47,10 @@ public final class FamilyAdapterRegistry {
                     FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             plan("gbuffers_block", FamilyAdapterPlan.Family.BLOCK,
                     UniformRegistry.Stage.BLOCK, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
+            // Iris TEXT_BE: a block entity's text, planned on the entity layout and installed only
+            // as its GLYPH layout variant.
+            plan("gbuffers_block_translucent", FamilyAdapterPlan.Family.BLOCK_TRANSLUCENT,
+                    UniformRegistry.Stage.BLOCK, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             plan("gbuffers_damagedblock",
                     FamilyAdapterPlan.Family.DAMAGED_BLOCK, UniformRegistry.Stage.BLOCK,
                     FamilyAdapterPlan.VertexContract.HOST_BLOCK),
@@ -132,6 +136,7 @@ public final class FamilyAdapterRegistry {
                 || family == FamilyAdapterPlan.Family.ENTITY_TRANSLUCENT
                 || family == FamilyAdapterPlan.Family.SPIDER_EYES
                 || family == FamilyAdapterPlan.Family.BLOCK
+                || family == FamilyAdapterPlan.Family.BLOCK_TRANSLUCENT
                 || family == FamilyAdapterPlan.Family.DAMAGED_BLOCK
                 || family == FamilyAdapterPlan.Family.HAND
                 || family == FamilyAdapterPlan.Family.HAND_WATER;
@@ -218,6 +223,7 @@ public final class FamilyAdapterRegistry {
     public static boolean isBlockFamily(String name) {
         FamilyAdapterPlan.Family family = forProgram(name).family();
         return family == FamilyAdapterPlan.Family.BLOCK
+                || family == FamilyAdapterPlan.Family.BLOCK_TRANSLUCENT
                 || family == FamilyAdapterPlan.Family.DAMAGED_BLOCK;
     }
 

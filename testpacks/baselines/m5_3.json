@@ -1,7 +1,7 @@
 {
   "fixtures": {
     "live_uniforms": {
-      "reportSha256": "5f22e73da07e17a2089df8c5e1618e7b8b6b29258d9180b2811daf4b2737ef9f",
+      "reportSha256": "c6d36f95654cb9465cd5cf42bff181706a29ed41c155eeb21ca71ee62b4d57be",
       "sourceHashes": {
         "composite.fsh": "4d39ca56718762ecb0f5ee347039243cbf07009ca70befad1f507776842f3db2",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
@@ -22,6 +22,9 @@
           "fragment"
         ],
         "gbuffers_block": [
+          "fragment"
+        ],
+        "gbuffers_block_translucent": [
           "fragment"
         ],
         "gbuffers_damagedblock": [
@@ -45,6 +48,10 @@
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
         ],
+        "gbuffers_block_translucent": [
+          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"
+        ],
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
@@ -58,7 +65,7 @@
       }
     },
     "unsupported_uniform": {
-      "reportSha256": "e17dc1231ba574715fcfb5b59a2934a822ea4495518be2ebce1e6f0955701223",
+      "reportSha256": "1e14ce70cca74de81fa29791b142a1f0887614dbccb4603418ce0675521544f3",
       "sourceHashes": {
         "composite.fsh": "398fcc335a0ed8520929824c9696fa04202a2573500a634ad1f0f7c5635e6b38",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
@@ -78,6 +85,9 @@
           "fragment"
         ],
         "gbuffers_block": [
+          "fragment"
+        ],
+        "gbuffers_block_translucent": [
           "fragment"
         ],
         "gbuffers_damagedblock": [
@@ -100,6 +110,10 @@
         "gbuffers_block": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
+        ],
+        "gbuffers_block_translucent": [
+          "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"
         ],
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",

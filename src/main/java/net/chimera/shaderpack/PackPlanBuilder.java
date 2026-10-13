@@ -796,7 +796,7 @@ public final class PackPlanBuilder {
             case "gbuffers_water" -> "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_particles", "gbuffers_particles_translucent"
                     -> "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_block", "gbuffers_damagedblock"
+            case "gbuffers_block", "gbuffers_block_translucent", "gbuffers_damagedblock"
                     -> "BLOCK_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_hand", "gbuffers_hand_water"
                     -> "HAND_VERTEX_BRIDGE_UNSUPPORTED";
@@ -808,7 +808,7 @@ public final class PackPlanBuilder {
 
     private static String entityBridgeDeviation(String name, boolean unsupported) {
         return switch (name) {
-            case "gbuffers_block", "gbuffers_damagedblock" -> unsupported
+            case "gbuffers_block", "gbuffers_block_translucent", "gbuffers_damagedblock" -> unsupported
                     ? "BLOCK_VERTEX_BRIDGE_UNSUPPORTED" : "BLOCK_VERTEX_BRIDGE";
             case "gbuffers_hand", "gbuffers_hand_water" -> unsupported
                     ? "HAND_VERTEX_BRIDGE_UNSUPPORTED" : "HAND_VERTEX_BRIDGE";
@@ -827,7 +827,7 @@ public final class PackPlanBuilder {
         String reason = failure.getMessage() == null ? "unknown" : failure.getMessage();
         int cut = Math.min(reason.length(), 120);
         return switch (name) {
-            case "gbuffers_block", "gbuffers_damagedblock" ->
+            case "gbuffers_block", "gbuffers_block_translucent", "gbuffers_damagedblock" ->
                     "BLOCK_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);
             case "gbuffers_hand", "gbuffers_hand_water" ->
                     "HAND_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);

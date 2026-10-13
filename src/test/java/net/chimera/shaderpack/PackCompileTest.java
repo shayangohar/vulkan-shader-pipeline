@@ -130,8 +130,8 @@ final class PackCompileTest {
                             EntityVertexBridge.handVertexForFormat(vertex, host));
                 }
             }
-            if (name.equals("gbuffers_entities_translucent") || name.equals("gbuffers_block")) {
-                // Iris GLYPH text variant (TEXT and TEXT_BE).
+            if (name.equals("gbuffers_entities_translucent") || name.equals("gbuffers_block_translucent")) {
+                // Iris GLYPH text variant (TEXT and TEXT_BE); gbuffers_block_translucent is built only as this.
                 compileVariant(program, stage, "text input variant", EntityVertexBridge.layoutVertexForFormat(vertex,
                         DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP));
             }

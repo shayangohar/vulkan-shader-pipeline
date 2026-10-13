@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +47,12 @@ final class CoreFamilyAdapterTest {
                 "sky stage");
         assertEquals(UniformRegistry.Stage.BLOCK,
                 FamilyAdapterRegistry.stageFor("gbuffers_block"), "block stage");
+        // Iris TEXT_BE: a block entity's text draws with ProgramId.BlockTrans.
+        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_block_translucent")
+                        && FamilyAdapterRegistry.isBlockFamily("gbuffers_block_translucent"),
+                "block-entity text program is not an executable block family");
+        assertEquals(UniformRegistry.Stage.BLOCK,
+                FamilyAdapterRegistry.stageFor("gbuffers_block_translucent"), "block-translucent stage");
         assertEquals(UniformRegistry.Stage.HAND,
                 FamilyAdapterRegistry.stageFor("gbuffers_hand"), "hand stage");
         assertEquals(UniformRegistry.Stage.PARTICLE,
@@ -65,6 +72,31 @@ final class CoreFamilyAdapterTest {
                 "entity format stride");
     }
 
+    /** A pack's own gbuffers_block_translucent plans from its own file, into its own targets. */
+    @Test
+    void blockTranslucentOwnTargets(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Path families = TestPacks.fixture("m7_6/families/shaders");
+        Files.copy(families.resolve("gbuffers_block.vsh"), shaders.resolve("gbuffers_block.vsh"));
+        Files.copy(families.resolve("gbuffers_block.fsh"), shaders.resolve("gbuffers_block.fsh"));
+        Files.copy(families.resolve("gbuffers_block.vsh"), shaders.resolve("gbuffers_block_translucent.vsh"));
+        Files.writeString(shaders.resolve("gbuffers_block_translucent.fsh"), """
+                #version 120
+                uniform sampler2D texture;
+                varying vec4 familyColor;
+                varying vec2 familyUv;
+                /* RENDERTARGETS:3 */
+                void main() { gl_FragData[0] = texture2D(texture, familyUv) * familyColor; }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackProgramPlan block = analysis.plan().program("gbuffers_block");
+        PackProgramPlan text = analysis.plan().program("gbuffers_block_translucent");
+        assertTrue(text != null && text.executable(), "own block-translucent program is not executable: "
+                + (text == null ? "missing" : text.deviations()));
+        assertEquals(List.of(3), text.geometryOutputPlan().targetPlan().targetSlots(), "block-entity text targets");
+        assertEquals(List.of(0), block.geometryOutputPlan().targetPlan().targetSlots(), "block model targets");
+    }
+
     private static void verifySupported(Path fixture, Path baseline) throws IOException {
         PackProbe.Analysis first = PackProbe.analyze(fixture);
         PackProbe.Analysis second = PackProbe.analyze(fixture);
@@ -81,6 +113,10 @@ final class CoreFamilyAdapterTest {
         assertTrue(blockPlan.convertedVertex() != null
                         && blockPlan.convertedVertex().contains("Position + ModelOffset"),
                 "block bridge omitted the host ModelOffset");
+        PackProgramPlan blockText = first.plan().program("gbuffers_block_translucent");
+        assertTrue(blockText != null && blockText.executable()
+                        && blockText.convertedVertex().contains("Position + ModelOffset"),
+                "without its own file, block-entity text plans from gbuffers_block (Iris BlockTrans -> Block)");
 
         PackProgramPlan particles = first.plan().program("gbuffers_particles");
         assertTrue(particles != null && particles.executable(),

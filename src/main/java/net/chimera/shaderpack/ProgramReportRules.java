@@ -350,7 +350,8 @@ final class ProgramReportRules {
                 case "shadow" -> bridge("SHADOW", TerrainVertexBridge.supportsModernShadow(vertex, fragment)
                         || TerrainVertexBridge.supportsShadowVertex(vertex, fragment));
                 case "gbuffers_entities" -> bridge("ENTITY", EntityVertexBridge.supportsEntityVertex(vertex, fragment));
-                case "gbuffers_block" -> bridge("BLOCK", EntityVertexBridge.supportsEntityVertex(vertex, fragment));
+                case "gbuffers_block", "gbuffers_block_translucent" ->
+                        bridge("BLOCK", EntityVertexBridge.supportsEntityVertex(vertex, fragment));
                 case "gbuffers_hand" -> bridge("HAND", EntityVertexBridge.supportsHandVertex(vertex, fragment));
                 default -> unplannedLaneBridge(name, vertex, fragment);
             };
@@ -384,7 +385,7 @@ final class ProgramReportRules {
     static String vertexBridgeLabel(String name) {
         if (name.equals("shadow")) return "SHADOW";
         if (name.equals("gbuffers_entities")) return "ENTITY";
-        if (name.equals("gbuffers_block")) return "BLOCK";
+        if (name.equals("gbuffers_block") || name.equals("gbuffers_block_translucent")) return "BLOCK";
         if (name.equals("gbuffers_hand")) return "HAND";
         if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY";
         if (FamilyAdapterRegistry.isParticleLike(name)) return "PARTICLE";
@@ -415,6 +416,9 @@ final class ProgramReportRules {
             case ENTITY_TRANSLUCENT, SPIDER_EYES -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_STATE_FIXED_TO_HOST");
             case BLOCK -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
                     "BLOCK_ENTITY_ID_DEFAULTED", "ENTITY_STATE_FIXED_TO_HOST");
+            // Installed only as Iris's GLYPH text layout; its host state follows the text draw.
+            case BLOCK_TRANSLUCENT -> List.of("FAMILY_ADAPTER_INSTALLED", "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
+                    "ENTITY_STATE_FIXED_TO_HOST");
             case DAMAGED_BLOCK -> List.of("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
             case HAND -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
                     "HAND_ITEM_ID_DEFAULTED", "HAND_STATE_FIXED_TO_HOST");

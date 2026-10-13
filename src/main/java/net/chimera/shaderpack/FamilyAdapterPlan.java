@@ -41,6 +41,11 @@ public record FamilyAdapterPlan(
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,
         BLOCK,
+        /**
+         * gbuffers_block_translucent: text drawn by block entities, such as signs (Iris TEXT_BE,
+         * ProgramId.BlockTrans). Iris 1.21.11 assigns it no block-entity model draws.
+         */
+        BLOCK_TRANSLUCENT,
         DAMAGED_BLOCK,
         HAND,
         HAND_WATER,

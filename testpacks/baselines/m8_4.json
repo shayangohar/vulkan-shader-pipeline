@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "16e414bc13907e690d2c578f00baa402f29d727a5a57dd93a6b143e5468463eb",
+      "reportSha256": "5ed692ab4646b7ddde2fe8c51f072e11a13c5a4d95f30dfa2a046041d62ef102",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -31,6 +31,7 @@
       "expectedExecutablePrograms": [
         "final",
         "gbuffers_block",
+        "gbuffers_block_translucent",
         "gbuffers_damagedblock",
         "gbuffers_entities",
         "gbuffers_entities_translucent",
@@ -49,6 +50,7 @@
       "expectedDeviations": [
         "BLEND_PROGRAM_DEFAULT:gbuffers_spidereyes",
         "BLOCK_ENTITY_ID_DEFAULTED",
+        "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
         "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
         "ENTITY_BATCH_ORIGIN_SPLIT",
@@ -69,6 +71,7 @@
         "PARTICLE_STATE_FIXED_TO_HOST",
         "PARTICLE_TRANSLUCENT_INSTALLED",
         "PARTICLE_VERTEX_BRIDGE",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_block",
         "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
         "WEATHER_STATE_FIXED_TO_HOST",
         "WEATHER_VERTEX_BRIDGE"

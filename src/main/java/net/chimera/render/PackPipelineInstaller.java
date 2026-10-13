@@ -186,6 +186,8 @@ final class PackPipelineInstaller {
             installWorldEntity(name, programPlan);
         } else if (name.equals("gbuffers_block")) {
             installBlock(name, programPlan);
+        } else if (name.equals("gbuffers_block_translucent")) {
+            installBlockTranslucent(name, programPlan);
         } else if (FamilyAdapterRegistry.isBlockFamily(name)) {
             installDamagedBlock(name, programPlan);
         } else if (name.equals("gbuffers_hand") || FamilyAdapterRegistry.isHandFamily(name)) {
@@ -515,7 +517,7 @@ final class PackPipelineInstaller {
         }
     }
 
-    /** gbuffers_block, with its text layout for block-entity text. */
+    /** gbuffers_block: block-entity models. Their text draws with gbuffers_block_translucent. */
     void installBlock(String name, PackProgramPlan programPlan) {
         PackPipelines.PackEntity block = PackFamilyPipelines.buildBlock(programPlan,
                 advancedResources(), storage);
@@ -553,7 +555,20 @@ final class PackPipelineInstaller {
                 + "stride={}, samplers={})",
                 ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                 Arrays.toString(block.samplerSlots()));
-        pipelines.blockText = buildTextVariant(name, programPlan);
+    }
+
+    /**
+     * gbuffers_block_translucent, built only on Iris's GLYPH text layout: Iris 1.21.11 draws a block
+     * entity's text with it (TEXT_BE) and none of its models. Without it that text keeps its host draw.
+     */
+    void installBlockTranslucent(String name, PackProgramPlan programPlan) {
+        PackPipelines.PackEntity text = buildTextVariant(name, programPlan);
+        if (text == null) {
+            markFamilyPipelineFallback(name, "BLOCK_TEXT_PIPELINE_BUILD_FAILED");
+            return;
+        }
+        pipelines.blockTranslucentText = text;
+        markFamilyPipelineInstalled(name, "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED");
     }
 
     /** gbuffers_damagedblock on the host block format. */

@@ -4,10 +4,10 @@
   "overworld": {
     "dimension": "minecraft:overworld",
     "folder": "overworld",
-    "reportSha256": "39298be55722bda537fdef1619267661a9095d920bedc81b97c0739cbf7ef476",
-    "sourceHashDigest": "2fa955c822f0c5b0ededa40fafd55a310ffc44237211b3de1c9fa10d4b130a9e",
+    "reportSha256": "e1302904dafc4811e3e397da3940cc902dbe79fdfb5deb17cf3752f05f1cc5fa",
+    "sourceHashDigest": "1897bdc8bf09ae511e10ecda1c7735dae6dfdd6f7267bcd0d7e0ee4ed9d9dbce",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "079b27ab36257cce49e41b6c2815b99bb88166efa7c901289f421e5ada7ca187",
+    "resolutionFingerprint": "96d48b7521ac2f99b72812a8f69e49fd21e0b3961584a662f38151e437763b71",
     "aliases": ["gbuffers_block->gbuffers_terrain","gbuffers_block_translucent->gbuffers_terrain","gbuffers_damagedblock->gbuffers_terrain","gbuffers_terrain_cutout->gbuffers_terrain","gbuffers_terrain_solid->gbuffers_terrain","gbuffers_water->gbuffers_terrain"],
     "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
     "disabledPrograms": ["final"]
@@ -15,10 +15,10 @@
   "nether": {
     "dimension": "minecraft:the_nether",
     "folder": "nether",
-    "reportSha256": "ecca3a521a9ac8653e6789b03978b4a4c860825c82b57f0feca505b0ec980f4f",
-    "sourceHashDigest": "8fd2de54c73fe1abaf36f9af33ba724fd9fe084b14fec278bd9e4f39a988a901",
+    "reportSha256": "be5ca0aad84fd29247b4c0354f1c349713afb5ce767f55a24087583520675825",
+    "sourceHashDigest": "b4537d15c75fcb420b968e929ee708ce55c42dbc4bf081c9cd65ef3854e30829",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "7e5acfbc15257f806d110eb3c2d2ace1bb43aa1c8c4ced677bc817e488f5259d",
+    "resolutionFingerprint": "32fe3e7de7d2bd5623f8ce172e737c261b01b9d77487f0fbdc83aadb7273ea78",
     "aliases": ["gbuffers_block->gbuffers_textured_lit","gbuffers_block_translucent->gbuffers_textured_lit","gbuffers_damagedblock->gbuffers_textured_lit","gbuffers_entities->gbuffers_textured_lit","gbuffers_entities_glowing->gbuffers_textured_lit","gbuffers_entities_translucent->gbuffers_textured_lit","gbuffers_hand->gbuffers_textured_lit","gbuffers_hand_water->gbuffers_textured_lit","gbuffers_item->gbuffers_textured_lit","gbuffers_lightning->gbuffers_textured_lit","gbuffers_particles->gbuffers_textured_lit","gbuffers_particles_translucent->gbuffers_textured_lit","gbuffers_terrain->gbuffers_textured_lit","gbuffers_terrain_cutout->gbuffers_textured_lit","gbuffers_terrain_solid->gbuffers_textured_lit","gbuffers_water->gbuffers_textured_lit","gbuffers_weather->gbuffers_textured_lit"],
     "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_line","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
     "disabledPrograms": ["final"]
@@ -26,10 +26,10 @@
   "end": {
     "dimension": "minecraft:the_end",
     "folder": "end",
-    "reportSha256": "158c1b292f7e465e087e647cc184e7fd27f931e9f040b04756bb0a0983a18cde",
-    "sourceHashDigest": "59f0aaf3f181cb1fc5fb9b814a241762372ae0a21bc2ec53be866976e39c79c9",
+    "reportSha256": "ce8dde50f1a4d660a047ffd13bacfe4d98981139b6a383b9aef1d439bb163f4d",
+    "sourceHashDigest": "1a6a5bae0fc8bd1635e86e702d27e7c0a1f560291c0eee75052bc7487decbac6",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "358cc4de1c368e3fcbddcd1e3188d2f67e55be2f8aa58581d7b9b728abdd30c2",
+    "resolutionFingerprint": "cac0811a797cc706e99bd6412f07cee851c1d010b4c8b9315cb5753bcfa59b86",
     "aliases": ["gbuffers_block->gbuffers_terrain","gbuffers_block_translucent->gbuffers_terrain","gbuffers_damagedblock->gbuffers_terrain","gbuffers_terrain_cutout->gbuffers_terrain","gbuffers_terrain_solid->gbuffers_terrain","gbuffers_water->gbuffers_terrain"],
     "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
     "disabledPrograms": ["final"]
@@ -37,10 +37,10 @@
   "custom": {
     "dimension": "custom:moon",
     "folder": "overworld",
-    "reportSha256": "8afaccea48fdd830218a665e3a2a6bc1b71fbc7b6be5e0f652c9c511f0a083fa",
-    "sourceHashDigest": "2fa955c822f0c5b0ededa40fafd55a310ffc44237211b3de1c9fa10d4b130a9e",
+    "reportSha256": "fecb887053a32ca7a0dabe66fd875ceafa89d56afe03ea63db4fbfe444abc977",
+    "sourceHashDigest": "1897bdc8bf09ae511e10ecda1c7735dae6dfdd6f7267bcd0d7e0ee4ed9d9dbce",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "78a02c1faef3b8c714e6497a6393fecbceb76ee3a3d6d96ef44e4cb09cc34cac",
+    "resolutionFingerprint": "2d94d2c303647b4792e1ff9a76cab71e2d475a827bf0c54b1a5355e216ab07e3",
     "aliases": ["gbuffers_block->gbuffers_terrain","gbuffers_block_translucent->gbuffers_terrain","gbuffers_damagedblock->gbuffers_terrain","gbuffers_terrain_cutout->gbuffers_terrain","gbuffers_terrain_solid->gbuffers_terrain","gbuffers_water->gbuffers_terrain"],
     "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
     "disabledPrograms": ["final"]
