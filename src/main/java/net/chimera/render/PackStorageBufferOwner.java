@@ -245,7 +245,6 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return true;
     }
 
-
     /** Records shader/layout agreement before native pipeline creation. */
     public String verifyLayout(String program, String vertex, String fragment,
             List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {

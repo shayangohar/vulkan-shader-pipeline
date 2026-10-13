@@ -67,15 +67,42 @@ public final class SpirvLocalInitializer {
 
     static int[] apply(int[] words) {
         if (words.length < HEADER_WORDS || words[0] != MAGIC) return words;
-        Map<Integer, int[]> types = new HashMap<>();
-        Map<Integer, Integer> functionPointee = new HashMap<>();
-        Map<Integer, Integer> nulls = new HashMap<>();
-        int firstFunction = -1;
-        boolean needed = false;
-        for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
-            int opcode = words[at] & 0xFFFF;
-            int count = words[at] >>> 16;
-            if (count == 0) return words;
+        Module module = new Module(words);
+        if (!module.scan() || !module.needed || module.firstFunction < 0) return words;
+        List<Integer> body = module.initializedBody();
+        int[] result = new int[HEADER_WORDS + body.size()];
+        System.arraycopy(words, 0, result, 0, HEADER_WORDS);
+        result[3] = module.bound;
+        for (int i = 0; i < body.size(); i++) result[HEADER_WORDS + i] = body.get(i);
+        return result;
+    }
+
+    /** The types, function-storage pointers and null constants of one module, and the rewrite they allow. */
+    private static final class Module {
+        private final int[] words;
+        private final Map<Integer, int[]> types = new HashMap<>();
+        private final Map<Integer, Integer> functionPointee = new HashMap<>();
+        private final Map<Integer, Integer> nulls = new HashMap<>();
+        private int firstFunction = -1;
+        private boolean needed;
+        private int bound;
+
+        private Module(int[] words) {
+            this.words = words;
+            this.bound = words[3];
+        }
+
+        /** Records every instruction; false when one has a word count of zero. */
+        private boolean scan() {
+            for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
+                int count = words[at] >>> 16;
+                if (count == 0) return false;
+                record(words[at] & 0xFFFF, at, count);
+            }
+            return true;
+        }
+
+        private void record(int opcode, int at, int count) {
             switch (opcode) {
                 case OP_TYPE_BOOL, OP_TYPE_INT, OP_TYPE_FLOAT, OP_TYPE_VECTOR, OP_TYPE_MATRIX,
                         OP_TYPE_ARRAY, OP_TYPE_STRUCT ->
@@ -92,45 +119,48 @@ public final class SpirvLocalInitializer {
                 default -> { }
             }
         }
-        if (!needed || firstFunction < 0) return words;
 
-        int bound = words[3];
-        List<Integer> inserted = new ArrayList<>();
-        List<Integer> body = new ArrayList<>(words.length + 16);
-        for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
-            int opcode = words[at] & 0xFFFF;
-            int count = words[at] >>> 16;
-            if (opcode == OP_VARIABLE && count == 4 && words[at + 3] == STORAGE_FUNCTION) {
-                Integer pointee = functionPointee.get(words[at + 1]);
+        /**
+         * Every word after the header, with each plain function-scope variable given a null
+         * initializer and any null constant that needed placed before the first function.
+         */
+        private List<Integer> initializedBody() {
+            List<Integer> inserted = new ArrayList<>();
+            List<Integer> body = new ArrayList<>(words.length + 16);
+            for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
+                int opcode = words[at] & 0xFFFF;
+                int count = words[at] >>> 16;
+                Integer pointee = opcode == OP_VARIABLE && count == 4 && words[at + 3] == STORAGE_FUNCTION
+                        ? functionPointee.get(words[at + 1]) : null;
                 if (plainData(types, pointee)) {
-                    Integer nullId = nulls.get(pointee);
-                    if (nullId == null) {
-                        nullId = bound++;
-                        nulls.put(pointee, nullId);
-                        inserted.add((3 << 16) | OP_CONSTANT_NULL);
-                        inserted.add(pointee);
-                        inserted.add(nullId);
-                    }
                     body.add((5 << 16) | OP_VARIABLE);
                     body.add(words[at + 1]);
                     body.add(words[at + 2]);
                     body.add(STORAGE_FUNCTION);
-                    body.add(nullId);
+                    body.add(nullConstant(pointee, inserted));
                     continue;
                 }
+                for (int i = 0; i < count; i++) body.add(words[at + i]);
             }
-            for (int i = 0; i < count; i++) body.add(words[at + i]);
+            // Null constants are module-level: place them before the first function.
+            // Function-storage variables only occur inside functions, so every
+            // word before it is unchanged.
+            body.addAll(firstFunction - HEADER_WORDS, inserted);
+            return body;
         }
-        // Null constants are module-level: place them before the first function.
-        // Function-storage variables only occur inside functions, so every
-        // word before it is unchanged.
-        body.addAll(firstFunction - HEADER_WORDS, inserted);
 
-        int[] result = new int[HEADER_WORDS + body.size()];
-        System.arraycopy(words, 0, result, 0, HEADER_WORDS);
-        result[3] = bound;
-        for (int i = 0; i < body.size(); i++) result[HEADER_WORDS + i] = body.get(i);
-        return result;
+        /** The null constant of {@code type}, declaring a new one into {@code inserted} when the module has none. */
+        private int nullConstant(int type, List<Integer> inserted) {
+            Integer nullId = nulls.get(type);
+            if (nullId == null) {
+                nullId = bound++;
+                nulls.put(type, nullId);
+                inserted.add((3 << 16) | OP_CONSTANT_NULL);
+                inserted.add(type);
+                inserted.add(nullId);
+            }
+            return nullId;
+        }
     }
 
     private static boolean plainData(Map<Integer, int[]> types, Integer id) {

@@ -47,8 +47,7 @@ final class GlslMacroAliases {
         Map<String, String> aliases = new HashMap<>();
         boolean changed = false;
         for (int line = 0; line < lines.length; line++) {
-            String body = lines[line].endsWith("\r")
-                    ? lines[line].substring(0, lines[line].length() - 1) : lines[line];
+            String body = withoutCarriageReturn(lines[line]);
             Matcher define = STORAGE_ALIAS_DEFINE.matcher(body);
             Matcher undef = UNDEF.matcher(body);
             if (define.matches()) {
@@ -63,6 +62,12 @@ final class GlslMacroAliases {
             active.add(Map.copyOf(aliases));
         }
         if (!changed) return source;
+        return applyStorageAliases(source, active, drop, directive);
+    }
+
+    /** The source with each line's live aliases applied outside directives and the dropped lines blanked. */
+    private static String applyStorageAliases(String source, List<Map<String, String>> active, boolean[] drop,
+                                              boolean[] directive) {
         StringBuilder result = new StringBuilder(source.length());
         int line = 0;
         for (GlslLexer.Token token : GlslLexer.lex(source)) {
@@ -75,9 +80,19 @@ final class GlslMacroAliases {
             } else {
                 result.append(text);
             }
-            for (int at = 0; at < text.length(); at++) if (text.charAt(at) == '\n') line++;
+            line += newlines(text);
         }
         return result.toString();
+    }
+
+    private static String withoutCarriageReturn(String line) {
+        return line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
+    }
+
+    private static int newlines(String text) {
+        int count = 0;
+        for (int at = 0; at < text.length(); at++) if (text.charAt(at) == '\n') count++;
+        return count;
     }
 
     /**
@@ -102,8 +117,7 @@ final class GlslMacroAliases {
         Map<String, String> aliases = new HashMap<>();
         boolean changed = false;
         for (int line = 0; line < lines.length; line++) {
-            String body = lines[line].endsWith("\r")
-                    ? lines[line].substring(0, lines[line].length() - 1) : lines[line];
+            String body = withoutCarriageReturn(lines[line]);
             Matcher define = ALIAS_DEFINE.matcher(body);
             Matcher undef = UNDEF.matcher(body);
             Matcher named = MACRO_DEFINE.matcher(body);
@@ -128,6 +142,15 @@ final class GlslMacroAliases {
             active.add(Map.copyOf(aliases));
         }
         if (!changed) return source;
+        return applySamplerAliases(source, active, drop, macro);
+    }
+
+    /**
+     * The source with each line's live aliases applied and the dropped lines blanked. A member
+     * access and the name a #define defines are never replaced.
+     */
+    private static String applySamplerAliases(String source, List<Map<String, String>> active, boolean[] drop,
+                                              boolean[] macro) {
         StringBuilder result = new StringBuilder(source.length());
         int line = 0;
         int previous = -1;
@@ -146,7 +169,7 @@ final class GlslMacroAliases {
                 result.append(text);
             }
             if (token.significant()) previous = index;
-            for (int at = 0; at < text.length(); at++) if (text.charAt(at) == '\n') line++;
+            line += newlines(text);
         }
         return result.toString();
     }

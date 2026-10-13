@@ -34,95 +34,115 @@ final class GlslLexer {
         List<Token> tokens = new ArrayList<>();
         int index = 0;
         while (index < input.length()) {
-            char current = input.charAt(index);
-            if (Character.isWhitespace(current)) {
-                int start = index++;
-                while (index < input.length() && Character.isWhitespace(input.charAt(index))) {
-                    index++;
-                }
-                tokens.add(new Token(Kind.TRIVIA, input.substring(start, index)));
-                continue;
-            }
-            if (current == '/' && index + 1 < input.length()
-                    && input.charAt(index + 1) == '/') {
-                int start = index;
-                index += 2;
-                while (index < input.length() && input.charAt(index) != '\n') {
-                    index++;
-                }
-                tokens.add(new Token(Kind.TRIVIA, input.substring(start, index)));
-                continue;
-            }
-            if (current == '/' && index + 1 < input.length()
-                    && input.charAt(index + 1) == '*') {
-                int start = index;
-                index += 2;
-                int end = input.indexOf("*/", index);
-                if (end < 0) {
-                    throw new IllegalArgumentException("unterminated GLSL comment");
-                }
-                index = end + 2;
-                tokens.add(new Token(Kind.TRIVIA, input.substring(start, index)));
-                continue;
-            }
-            if (current == '"' || current == '\'') {
-                int start = index++;
-                boolean escaped = false;
-                while (index < input.length()) {
-                    char value = input.charAt(index++);
-                    if (escaped) {
-                        escaped = false;
-                    } else if (value == '\\') {
-                        escaped = true;
-                    } else if (value == current) {
-                        break;
-                    }
-                }
-                if (index > input.length() || input.charAt(index - 1) != current) {
-                    throw new IllegalArgumentException("unterminated GLSL literal");
-                }
-                tokens.add(new Token(Kind.LITERAL, input.substring(start, index)));
-                continue;
-            }
-            if (Character.isLetter(current) || current == '_') {
-                int start = index++;
-                while (index < input.length()) {
-                    char value = input.charAt(index);
-                    if (!Character.isLetterOrDigit(value) && value != '_') {
-                        break;
-                    }
-                    index++;
-                }
-                tokens.add(new Token(Kind.IDENTIFIER, input.substring(start, index)));
-                continue;
-            }
-            if (Character.isDigit(current)
-                    || (current == '.' && index + 1 < input.length()
-                    && Character.isDigit(input.charAt(index + 1)))) {
-                int start = index++;
-                boolean exponent = false;
-                while (index < input.length()) {
-                    char value = input.charAt(index);
-                    if (Character.isLetterOrDigit(value) || value == '.') {
-                        exponent = value == 'e' || value == 'E';
-                        index++;
-                        continue;
-                    }
-                    if ((value == '+' || value == '-') && index > start && exponent) {
-                        index++;
-                        exponent = false;
-                        continue;
-                    }
-                    break;
-                }
-                tokens.add(new Token(Kind.NUMBER, input.substring(start, index)));
-                continue;
-            }
-            String operator = operatorAt(input, index);
-            tokens.add(new Token(Kind.SYMBOL, operator));
-            index += operator.length();
+            Token token = tokenAt(input, index);
+            tokens.add(token);
+            index += token.text().length();
         }
         return List.copyOf(tokens);
+    }
+
+    /** The one token that starts at {@code index}, classified by its first characters. */
+    private static Token tokenAt(String input, int index) {
+        char current = input.charAt(index);
+        if (Character.isWhitespace(current)) {
+            return new Token(Kind.TRIVIA, input.substring(index, whitespaceEnd(input, index)));
+        }
+        if (input.startsWith("//", index)) {
+            return new Token(Kind.TRIVIA, input.substring(index, lineCommentEnd(input, index)));
+        }
+        if (input.startsWith("/*", index)) {
+            return new Token(Kind.TRIVIA, input.substring(index, blockCommentEnd(input, index)));
+        }
+        if (current == '"' || current == '\'') {
+            return new Token(Kind.LITERAL, input.substring(index, literalEnd(input, index)));
+        }
+        if (Character.isLetter(current) || current == '_') {
+            return new Token(Kind.IDENTIFIER, input.substring(index, identifierEnd(input, index)));
+        }
+        if (Character.isDigit(current)
+                || (current == '.' && index + 1 < input.length()
+                && Character.isDigit(input.charAt(index + 1)))) {
+            return new Token(Kind.NUMBER, input.substring(index, numberEnd(input, index)));
+        }
+        return new Token(Kind.SYMBOL, operatorAt(input, index));
+    }
+
+    private static int whitespaceEnd(String input, int start) {
+        int index = start + 1;
+        while (index < input.length() && Character.isWhitespace(input.charAt(index))) {
+            index++;
+        }
+        return index;
+    }
+
+    private static int lineCommentEnd(String input, int start) {
+        int index = start + 2;
+        while (index < input.length() && input.charAt(index) != '\n') {
+            index++;
+        }
+        return index;
+    }
+
+    private static int blockCommentEnd(String input, int start) {
+        int end = input.indexOf("*/", start + 2);
+        if (end < 0) {
+            throw new IllegalArgumentException("unterminated GLSL comment");
+        }
+        return end + 2;
+    }
+
+    /** The end of a quoted literal, past its closing quote; a backslash escapes the next character. */
+    private static int literalEnd(String input, int start) {
+        char quote = input.charAt(start);
+        int index = start + 1;
+        boolean escaped = false;
+        while (index < input.length()) {
+            char value = input.charAt(index++);
+            if (escaped) {
+                escaped = false;
+            } else if (value == '\\') {
+                escaped = true;
+            } else if (value == quote) {
+                break;
+            }
+        }
+        if (index > input.length() || input.charAt(index - 1) != quote) {
+            throw new IllegalArgumentException("unterminated GLSL literal");
+        }
+        return index;
+    }
+
+    private static int identifierEnd(String input, int start) {
+        int index = start + 1;
+        while (index < input.length()) {
+            char value = input.charAt(index);
+            if (!Character.isLetterOrDigit(value) && value != '_') {
+                break;
+            }
+            index++;
+        }
+        return index;
+    }
+
+    /** The end of a number: digits, letters and dots, and a sign right after an exponent letter. */
+    private static int numberEnd(String input, int start) {
+        int index = start + 1;
+        boolean exponent = false;
+        while (index < input.length()) {
+            char value = input.charAt(index);
+            if (Character.isLetterOrDigit(value) || value == '.') {
+                exponent = value == 'e' || value == 'E';
+                index++;
+                continue;
+            }
+            if ((value == '+' || value == '-') && index > start && exponent) {
+                index++;
+                exponent = false;
+                continue;
+            }
+            break;
+        }
+        return index;
     }
 
     /**

@@ -204,33 +204,40 @@ public final class ShaderSourcePreprocessor {
                 case "else" -> switchElse();
                 case "endif" -> popCondition();
                 case "define" -> define(argument);
-                case "undef" -> {
-                    if (active()) {
-                        if (!argument.matches("[A-Za-z_]\\w*")) {
-                            throw new PreparationFailure("PREPROCESSOR_DEFINE_UNSUPPORTED");
-                        }
-                        if (lockedMacros.containsKey(argument)) {
-                            emitLockedDefinitions();
-                            return;
-                        }
-                        conditionState.undefine(argument);
-                        emit("#undef " + argument);
-                    }
-                }
+                case "undef" -> undefine(argument);
                 case "include" -> include(argument, sourceFile, depth);
-                case "version", "extension", "pragma", "line" -> {
-                    if (active()) {
-                        emit(line);
-                        if (directive.equals("version")) {
-                            emitLockedDefinitions();
-                        }
-                    }
-                }
+                case "version", "extension", "pragma", "line" -> passThrough(directive, line);
                 default -> {
                     if (active()) {
                         throw new PreparationFailure("PREPROCESSOR_DIRECTIVE_UNSUPPORTED:" + directive);
                     }
                 }
+            }
+        }
+
+        private void undefine(String argument) {
+            if (!active()) {
+                return;
+            }
+            if (!argument.matches("[A-Za-z_]\\w*")) {
+                throw new PreparationFailure("PREPROCESSOR_DEFINE_UNSUPPORTED");
+            }
+            if (lockedMacros.containsKey(argument)) {
+                emitLockedDefinitions();
+                return;
+            }
+            conditionState.undefine(argument);
+            emit("#undef " + argument);
+        }
+
+        /** Keeps a version, extension, pragma or line directive as written; locked macros follow #version. */
+        private void passThrough(String directive, String line) {
+            if (!active()) {
+                return;
+            }
+            emit(line);
+            if (directive.equals("version")) {
+                emitLockedDefinitions();
             }
         }
 

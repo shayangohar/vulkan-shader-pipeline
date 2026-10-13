@@ -245,62 +245,89 @@ public final class GlslInterfaceScanner {
             if (braceDepth != 0 || parenDepth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER) {
                 continue;
             }
-            int qualifierIndex = index;
-            if (token.identifier("layout")) {
-                int open = GlslLexer.nextSignificant(tokens, index);
-                int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
-                if (open < 0 || close < 0) {
-                    deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
-                    continue;
-                }
-                qualifierIndex = GlslLexer.nextSignificant(tokens, close);
-                if (qualifierIndex < 0) {
-                    continue;
-                }
+            Statement statement = statementAt(tokens, index, vertexStage, structSlots, deviations);
+            if (statement != null) {
+                statements.add(statement);
+                index = statement.end() - 1;
             }
-            String interpolation = null;
-            if (isInterpolation(tokens.get(qualifierIndex).text())) {
-                interpolation = tokens.get(qualifierIndex).text();
-                qualifierIndex = GlslLexer.nextSignificant(tokens, qualifierIndex);
-                if (qualifierIndex < 0) {
-                    continue;
-                }
-            }
-            GlslLexer.Token qualifierToken = tokens.get(qualifierIndex);
-            if (!qualifierToken.identifier("varying")
-                    && !qualifierToken.identifier("in")
-                    && !qualifierToken.identifier("out")) {
-                continue;
-            }
-            int typeIndex = GlslLexer.nextSignificant(tokens, qualifierIndex);
-            while (typeIndex >= 0 && isPrecision(tokens.get(typeIndex).text())) {
-                typeIndex = GlslLexer.nextSignificant(tokens, typeIndex);
-            }
-            if (typeIndex < 0 || tokens.get(typeIndex).kind() != GlslLexer.Kind.IDENTIFIER) {
-                deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
-                continue;
-            }
-            String type = tokens.get(typeIndex).text();
-            Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structSlots.get(type);
-            if (typeSlots == null) {
-                deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + type);
-                continue;
-            }
-            int statementEnd = findStatementEnd(tokens, typeIndex);
-            boolean input = qualifierToken.identifier("in")
-                    || (qualifierToken.identifier("varying") && !vertexStage);
-            boolean output = qualifierToken.identifier("out")
-                    || (qualifierToken.identifier("varying") && vertexStage);
-            List<Declaration> declared = declarators(tokens, index, typeIndex, statementEnd,
-                    new InterfaceType(type, interpolation, input, output, typeSlots));
-            if (declared == null || declared.isEmpty()) {
-                deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
-                continue;
-            }
-            statements.add(new Statement(index, statementEnd, declared));
-            index = statementEnd - 1;
         }
         return new Parse(tokens, statements, deviations);
+    }
+
+    /**
+     * The interface statement starting at {@code start}, or null when the tokens there declare
+     * none. A declaration this cannot read adds its deviation and also yields null.
+     */
+    private static Statement statementAt(List<GlslLexer.Token> tokens, int start, boolean vertexStage,
+                                         Map<String, Integer> structSlots, List<String> deviations) {
+        Qualifier qualifier = storageQualifier(tokens, start, deviations);
+        if (qualifier == null) {
+            return null;
+        }
+        int typeIndex = GlslLexer.nextSignificant(tokens, qualifier.index());
+        while (typeIndex >= 0 && isPrecision(tokens.get(typeIndex).text())) {
+            typeIndex = GlslLexer.nextSignificant(tokens, typeIndex);
+        }
+        if (typeIndex < 0 || tokens.get(typeIndex).kind() != GlslLexer.Kind.IDENTIFIER) {
+            deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
+            return null;
+        }
+        String type = tokens.get(typeIndex).text();
+        Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structSlots.get(type);
+        if (typeSlots == null) {
+            deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + type);
+            return null;
+        }
+        int statementEnd = findStatementEnd(tokens, typeIndex);
+        GlslLexer.Token storage = tokens.get(qualifier.index());
+        boolean varying = storage.identifier("varying");
+        boolean input = storage.identifier("in") || (varying && !vertexStage);
+        boolean output = storage.identifier("out") || (varying && vertexStage);
+        List<Declaration> declared = declarators(tokens, start, typeIndex, statementEnd,
+                new InterfaceType(type, qualifier.interpolation(), input, output, typeSlots));
+        if (declared == null || declared.isEmpty()) {
+            deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
+            return null;
+        }
+        return new Statement(start, statementEnd, declared);
+    }
+
+    /** Where a declaration's storage qualifier sits, and the interpolation qualifier written before it. */
+    private record Qualifier(int index, String interpolation) {}
+
+    /**
+     * The {@code in}, {@code out} or {@code varying} of a declaration starting at {@code start},
+     * past any layout(...) and interpolation qualifier, or null when there is none.
+     */
+    private static Qualifier storageQualifier(List<GlslLexer.Token> tokens, int start, List<String> deviations) {
+        int qualifierIndex = start;
+        if (tokens.get(start).identifier("layout")) {
+            int open = GlslLexer.nextSignificant(tokens, start);
+            int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
+            if (open < 0 || close < 0) {
+                deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
+                return null;
+            }
+            qualifierIndex = GlslLexer.nextSignificant(tokens, close);
+            if (qualifierIndex < 0) {
+                return null;
+            }
+        }
+        String interpolation = null;
+        if (isInterpolation(tokens.get(qualifierIndex).text())) {
+            interpolation = tokens.get(qualifierIndex).text();
+            qualifierIndex = GlslLexer.nextSignificant(tokens, qualifierIndex);
+            if (qualifierIndex < 0) {
+                return null;
+            }
+        }
+        GlslLexer.Token qualifierToken = tokens.get(qualifierIndex);
+        if (!qualifierToken.identifier("varying")
+                && !qualifierToken.identifier("in")
+                && !qualifierToken.identifier("out")) {
+            return null;
+        }
+        return new Qualifier(qualifierIndex, interpolation);
     }
 
     /** What one interface statement's declarators share: type, interpolation, direction and size. */
@@ -317,24 +344,39 @@ public final class GlslInterfaceScanner {
         while (nameIndex >= 0 && nameIndex < statementEnd - 1) {
             if (tokens.get(nameIndex).kind() != GlslLexer.Kind.IDENTIFIER) return null;
             String name = tokens.get(nameIndex).text();
-            int separator = GlslLexer.nextSignificant(tokens, nameIndex);
-            int arraySize = 0;
-            if (separator >= 0 && tokens.get(separator).symbol("[")) {
-                int size = GlslLexer.nextSignificant(tokens, separator);
-                int close = size < 0 ? -1 : GlslLexer.nextSignificant(tokens, size);
-                arraySize = size < 0 ? -1 : arraySize(tokens.get(size));
-                if (arraySize <= 0 || close < 0 || !tokens.get(close).symbol("]")) return null;
-                separator = GlslLexer.nextSignificant(tokens, close);
-            }
+            ArraySuffix array = arraySuffix(tokens, nameIndex);
+            if (array == null) return null;
+            int separator = array.next();
             if (separator < 0 || separator >= statementEnd
                     || (!tokens.get(separator).symbol(",") && !tokens.get(separator).symbol(";"))) return null;
             boolean referenced = referencedOutsideDeclaration(tokens, name, statementStart, statementEnd);
             declared.add(new Declaration(name, kind.type(), kind.interpolation(), kind.input(), kind.output(),
-                    referenced, arraySize, kind.slots() * Math.max(arraySize, 1)));
+                    referenced, array.length(), kind.slots() * Math.max(array.length(), 1)));
             if (tokens.get(separator).symbol(";")) break;
             nameIndex = GlslLexer.nextSignificant(tokens, separator);
         }
         return List.copyOf(declared);
+    }
+
+    /** A declarator's array length, 0 when it has none, and the next significant token after it. */
+    private record ArraySuffix(int length, int next) {}
+
+    /**
+     * The optional {@code [N]} after the name at {@code nameIndex}, or null when the length is not
+     * a positive literal or the bracket does not close right after it.
+     */
+    private static ArraySuffix arraySuffix(List<GlslLexer.Token> tokens, int nameIndex) {
+        int separator = GlslLexer.nextSignificant(tokens, nameIndex);
+        if (separator < 0 || !tokens.get(separator).symbol("[")) {
+            return new ArraySuffix(0, separator);
+        }
+        int size = GlslLexer.nextSignificant(tokens, separator);
+        int close = size < 0 ? -1 : GlslLexer.nextSignificant(tokens, size);
+        int length = size < 0 ? -1 : arraySize(tokens.get(size));
+        if (length <= 0 || close < 0 || !tokens.get(close).symbol("]")) {
+            return null;
+        }
+        return new ArraySuffix(length, GlslLexer.nextSignificant(tokens, close));
     }
 
     /**
@@ -395,35 +437,43 @@ public final class GlslInterfaceScanner {
             if (typeSlots == null) {
                 return null;
             }
-            int cursor = GlslLexer.nextSignificant(tokens, typeIndex);
-            while (true) {
-                if (cursor < 0 || cursor >= end || tokens.get(cursor).kind() != GlslLexer.Kind.IDENTIFIER) {
-                    return null;
-                }
-                int separator = GlslLexer.nextSignificant(tokens, cursor);
-                int length = 1;
-                if (separator >= 0 && tokens.get(separator).symbol("[")) {
-                    int size = GlslLexer.nextSignificant(tokens, separator);
-                    int close = size < 0 ? -1 : GlslLexer.nextSignificant(tokens, size);
-                    length = size < 0 ? -1 : arraySize(tokens.get(size));
-                    if (length <= 0 || close < 0 || !tokens.get(close).symbol("]")) {
-                        return null;
-                    }
-                    separator = GlslLexer.nextSignificant(tokens, close);
-                }
-                if (separator < 0 || separator >= end) {
-                    return null;
-                }
-                total += typeSlots * length;
-                if (tokens.get(separator).symbol(";")) {
-                    index = separator + 1;
-                    break;
-                }
-                if (!tokens.get(separator).symbol(",")) {
-                    return null;
-                }
-                cursor = GlslLexer.nextSignificant(tokens, separator);
+            MemberStatement member = memberStatement(tokens, typeIndex, end, typeSlots);
+            if (member == null) {
+                return null;
             }
+            total += member.slots();
+            index = member.next();
+        }
+    }
+
+    /** The locations one member statement's names take, and the index just past its semicolon. */
+    private record MemberStatement(int slots, int next) {}
+
+    /**
+     * The names one member statement declares after its type, each taking {@code typeSlots} times
+     * its array length, or null when a declarator is malformed or cannot be sized.
+     */
+    private static MemberStatement memberStatement(List<GlslLexer.Token> tokens, int typeIndex, int end,
+                                                   int typeSlots) {
+        int slots = 0;
+        int cursor = GlslLexer.nextSignificant(tokens, typeIndex);
+        while (true) {
+            if (cursor < 0 || cursor >= end || tokens.get(cursor).kind() != GlslLexer.Kind.IDENTIFIER) {
+                return null;
+            }
+            ArraySuffix array = arraySuffix(tokens, cursor);
+            if (array == null || array.next() < 0 || array.next() >= end) {
+                return null;
+            }
+            int separator = array.next();
+            slots += typeSlots * Math.max(array.length(), 1);
+            if (tokens.get(separator).symbol(";")) {
+                return new MemberStatement(slots, separator + 1);
+            }
+            if (!tokens.get(separator).symbol(",")) {
+                return null;
+            }
+            cursor = GlslLexer.nextSignificant(tokens, separator);
         }
     }
 
