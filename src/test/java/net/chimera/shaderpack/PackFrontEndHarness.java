@@ -508,7 +508,7 @@ public final class PackFrontEndHarness {
                 "implicit gbufferModelView: " + legacyMatrix.uniforms());
 
         // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
-        String entity = LegacyGlslConverter.removeEntityAttributes(
+        String entity = EntityVertexBridge.removeEntityAttributes(
                 "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
         check(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
                         && !entity.contains("mc_midTexCoord"),

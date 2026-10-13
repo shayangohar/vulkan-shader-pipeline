@@ -430,11 +430,11 @@ public final class PackProbe {
                 && targetResult.executable() && interfacePlan.executable()) {
             Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
                     ? null : inventory.sourcePaths.get("fragment");
-            String converted = LegacyGlslConverter.convertPostFragment(
+            String converted = FragmentConverter.convertPostFragment(
                     fragment, sourcePath, interfacePlan, targetResult.plan(),
                     packConfig.shaderConstants());
             if (converted == null) {
-                deviations.addAll(LegacyGlslConverter.postVaryingDeviations(fragment));
+                deviations.addAll(PostVertexBridge.postVaryingDeviations(fragment));
                 deviations.add("POST_CONVERTER_UNSUPPORTED");
             }
         }
@@ -634,25 +634,25 @@ public final class PackProbe {
                 return PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT;
             }
             String bridge = switch (name) {
-                case "gbuffers_terrain" -> LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)
+                case "gbuffers_terrain" -> TerrainVertexBridge.supportsTerrainVertex(vertex, fragment)
                         ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
-                case "gbuffers_water" -> LegacyGlslConverter.supportsModernTerrain(vertex, fragment)
+                case "gbuffers_water" -> TerrainVertexBridge.supportsModernTerrain(vertex, fragment)
                         ? "MODERN_WATER_VERTEX_BRIDGE"
-                        : LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)
+                        : TerrainVertexBridge.supportsTerrainVertex(vertex, fragment)
                         ? "TRANSLUCENT_VERTEX_BRIDGE" : "MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED";
-                case "shadow" -> bridge("SHADOW", LegacyGlslConverter.supportsModernShadow(vertex, fragment)
-                        || LegacyGlslConverter.supportsShadowVertex(vertex, fragment));
-                case "gbuffers_entities" -> bridge("ENTITY", LegacyGlslConverter.supportsEntityVertex(vertex, fragment));
-                case "gbuffers_block" -> bridge("BLOCK", LegacyGlslConverter.supportsEntityVertex(vertex, fragment));
-                case "gbuffers_hand" -> bridge("HAND", LegacyGlslConverter.supportsHandVertex(vertex, fragment));
+                case "shadow" -> bridge("SHADOW", TerrainVertexBridge.supportsModernShadow(vertex, fragment)
+                        || TerrainVertexBridge.supportsShadowVertex(vertex, fragment));
+                case "gbuffers_entities" -> bridge("ENTITY", EntityVertexBridge.supportsEntityVertex(vertex, fragment));
+                case "gbuffers_block" -> bridge("BLOCK", EntityVertexBridge.supportsEntityVertex(vertex, fragment));
+                case "gbuffers_hand" -> bridge("HAND", EntityVertexBridge.supportsHandVertex(vertex, fragment));
                 default -> FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
                         ? bridge(vertexBridgeLabel(name),
-                        LegacyGlslConverter.convertParticleVertex(vertex, null, fragment, Map.of()) != null)
+                        EntityVertexBridge.convertParticleVertex(vertex, null, fragment, Map.of()) != null)
                         : FamilyAdapterRegistry.isSkyFamily(name)
-                        ? bridge("SKY", LegacyGlslConverter.convertSkyVertex(vertex, null, fragment,
+                        ? bridge("SKY", HostLayoutVertexBridge.convertSkyVertex(vertex, null, fragment,
                         name.equals("gbuffers_skytextured")) != null)
                         : FamilyAdapterRegistry.isCloudFamily(name)
-                        ? bridge("CLOUD", LegacyGlslConverter.convertCloudVertex(vertex, null, fragment) != null)
+                        ? bridge("CLOUD", HostLayoutVertexBridge.convertCloudVertex(vertex, null, fragment) != null)
                         : null;
             };
             if (bridge != null) {

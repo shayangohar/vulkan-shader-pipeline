@@ -37,21 +37,21 @@ public final class M83ConformanceHarness {
                 "M8.3 sun-path settings were not applied");
 
         String legacy = "#version 120\nvoid main(){gl_Position=ftransform();}\n";
-        assertTrue(LegacyGlslConverter.supportsShadowVertex(legacy,
+        assertTrue(TerrainVertexBridge.supportsShadowVertex(legacy,
                         "#version 120\nvoid main(){gl_FragColor=vec4(1.0);}"),
                 "legacy shadow compatibility regressed");
         // Any desktop version converts (GlslVersion); GLSL ES is not one.
-        assertTrue(LegacyGlslConverter.supportsModernShadow(
+        assertTrue(TerrainVertexBridge.supportsModernShadow(
                 "#version 450\nvoid main(){gl_Position=vec4(0.0);}", ""),
                 "a desktop 450 shadow was refused");
-        assertTrue(!LegacyGlslConverter.supportsModernShadow(
+        assertTrue(!TerrainVertexBridge.supportsModernShadow(
                 "#version 300 es\nvoid main(){gl_Position=vec4(0.0);}", ""),
                 "a GLSL ES shadow was accepted");
 
         // The generated epilogue must be generic. Pack-authored Z compression
         // remains in the renamed source entry point and is never duplicated.
         LegacyGlslConverter.TerrainVertexConversion fixtureShadow =
-                LegacyGlslConverter.convertShadowVertex(shadow.stageSource("vertex"), null,
+                TerrainVertexBridge.convertShadowVertex(shadow.stageSource("vertex"), null,
                         shadow.stageSource("fragment"));
         assertTrue(fixtureShadow != null, "fixture shadow vertex was rejected");
         verifyShadowClipRange("M8.3 fixture", fixtureShadow.source());
@@ -63,7 +63,7 @@ public final class M83ConformanceHarness {
                 + "    gl_Position.z += 0.0;\n"
                 + "}\n";
         LegacyGlslConverter.TerrainVertexConversion legacyShadowConversion =
-                LegacyGlslConverter.convertShadowVertex(legacyShadow, null,
+                TerrainVertexBridge.convertShadowVertex(legacyShadow, null,
                         "#version 120\nvoid main(){gl_FragColor=vec4(1.0);}");
         assertTrue(legacyShadowConversion != null, "legacy shadow vertex was rejected");
         verifyShadowClipRange("legacy shadow", legacyShadowConversion.source());
@@ -176,7 +176,7 @@ public final class M83ConformanceHarness {
                         && vertexInterface.executableUniforms().stream()
                         .anyMatch(value -> value.name().equals("shadowProjection")),
                 "shadow matrix built-ins did not synthesize the matching live UBO fields");
-        LegacyGlslConverter.TerrainVertexConversion converted = LegacyGlslConverter.convertShadowVertex(
+        LegacyGlslConverter.TerrainVertexConversion converted = TerrainVertexBridge.convertShadowVertex(
                 vertex, null, fragment, vertexInterface);
         assertTrue(converted != null, "shadow matrix built-in fixture did not convert");
         String source = converted.source();

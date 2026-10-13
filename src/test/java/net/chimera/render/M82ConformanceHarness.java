@@ -1,6 +1,6 @@
 package net.chimera.render;
 
-import net.chimera.shaderpack.LegacyGlslConverter;
+import net.chimera.shaderpack.FragmentConverter;
 
 /** Vulkan-free checks for M8.2 coverage and scene-seed state. */
 public final class M82ConformanceHarness {
@@ -28,7 +28,7 @@ public final class M82ConformanceHarness {
         assertTrue(!PackCoverageState.seedPreservesCoverage(
                 PackCoverageOwner.EMPTY_SENTINEL, PackCoverageOwner.EMPTY_SENTINEL),
                 "empty coverage must be seedable");
-        String converted = LegacyGlslConverter.withCoverageOutput(
+        String converted = FragmentConverter.withCoverageOutput(
                 "#version 460\nlayout(location = 0) out vec4 color;\n"
                         + "void main() { color = vec4(1.0); }\n");
         assertTrue(converted.contains("layout(location = 1) out float chimeraCoverage"),

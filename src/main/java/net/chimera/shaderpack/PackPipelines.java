@@ -330,10 +330,10 @@ public final class PackPipelines {
         Map<VertexFormat, PackSky> variants = new LinkedHashMap<>();
         boolean complete = false;
         try {
-            for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
+            for (var contract : HostLayoutVertexBridge.SKY_CONTRACTS) {
                 PackSky sky = buildSkyLike(plan, UniformRegistry.Stage.SKY, skyVertexFormat(contract),
                         "pack_" + plan.name() + "_" + variants.size(), advancedResources, storageOwner,
-                        LegacyGlslConverter.skyVertexForContract(plan.convertedVertex(), contract));
+                        HostLayoutVertexBridge.skyVertexForContract(plan.convertedVertex(), contract));
                 if (sky == null) return null;
                 variants.put(sky.vertexFormat(), sky);
             }
@@ -722,7 +722,7 @@ public final class PackPipelines {
             default -> UniformRegistry.Stage.ENTITY;
         };
         try {
-            String vertex = LegacyGlslConverter.layoutVertexForFormat(plan.convertedVertex(), host);
+            String vertex = EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), host);
             return buildEntityLike(plan, stage, "pack_" + plan.name() + "_" + extended.getVertexSize(), extended,
                     advancedResources, storageOwner, vertex);
         } catch (IllegalArgumentException unsupported) {
@@ -743,7 +743,7 @@ public final class PackPipelines {
         boolean complete = false;
         try {
             for (var entry : ChimeraVertexFormats.handFormats().entrySet()) {
-                String vertex = LegacyGlslConverter.handVertexForFormat(plan.convertedVertex(), entry.getKey());
+                String vertex = EntityVertexBridge.handVertexForFormat(plan.convertedVertex(), entry.getKey());
                 PackEntity built = buildEntityLike(plan, UniformRegistry.Stage.HAND,
                         "pack_" + plan.name() + "_" + variants.size(), entry.getValue(),
                         advancedResources, storageOwner, vertex);
@@ -843,7 +843,7 @@ public final class PackPipelines {
         if (plan == null || plan.convertedVertex() == null) return null;
         String vertex;
         try {
-            vertex = LegacyGlslConverter.handGlintVertex(plan.convertedVertex());
+            vertex = EntityVertexBridge.handGlintVertex(plan.convertedVertex());
         } catch (IllegalArgumentException unsupported) {
             return null;
         }
@@ -901,7 +901,7 @@ public final class PackPipelines {
             if (!interfacePlan.executable()) {
                 throw new IllegalStateException("pack interface is unsupported: " + interfacePlan.deviations());
             }
-            String converted = LegacyGlslConverter.convertPostFragment(
+            String converted = FragmentConverter.convertPostFragment(
                     fragmentSource, sourcePath, interfacePlan, targetPlan, packConstants);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
@@ -964,7 +964,7 @@ public final class PackPipelines {
                 throw new IllegalStateException("advanced terrain image declaration rejected");
             }
             String fragment = coverage
-                    ? LegacyGlslConverter.withCoverageOutput(plan.convertedFragment())
+                    ? FragmentConverter.withCoverageOutput(plan.convertedFragment())
                     : plan.convertedFragment();
             fragment = bindPackShader(fragment, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1058,7 +1058,7 @@ public final class PackPipelines {
                 throw new IllegalStateException("pack shadow interface is unsupported: " + interfacePlan.deviations());
             }
             LegacyGlslConverter.TerrainVertexConversion vertex =
-                    LegacyGlslConverter.convertShadowVertex(
+                    TerrainVertexBridge.convertShadowVertex(
                         vertexSourceText, prepared ? null : program.vertexPath(), fragmentSource,
                         interfacePlan);
             if (vertex == null) {
@@ -1069,7 +1069,7 @@ public final class PackPipelines {
                     .mapToInt(UniformRegistry.SamplerBinding::slot)
                     .toArray();
             int[] slots = shadowSamplerSlots(declaredSlots);
-            String converted = LegacyGlslConverter.FragmentConversionRequest
+            String converted = FragmentConverter.FragmentConversionRequest
                     .of(fragmentSource, prepared ? null : program.fragmentPath(), true, slots)
                     .withTerrainLayout(vertex.layout())
                     .withInterfacePlan(interfacePlan)

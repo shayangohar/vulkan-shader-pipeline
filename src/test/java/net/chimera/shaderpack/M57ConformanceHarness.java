@@ -360,7 +360,7 @@ public final class M57ConformanceHarness {
             PostTargetPlan targetPlan = PostTargetPlan.parse("final", simple130).plan();
             UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planPreparedPost(
                     simple130, targetPlan);
-            String converted = LegacyGlslConverter.convertPostFragment(
+            String converted = FragmentConverter.convertPostFragment(
                     simple130, null, interfacePlan, targetPlan);
             assertTrue(converted != null, "M5.7 GLSL 130 post conversion failed");
             assertTrue(converted.contains("layout(location = 0) out vec4 chimeraFragColor0"),
@@ -436,7 +436,7 @@ public final class M57ConformanceHarness {
                 """;
         PostTargetPlan target = PostTargetPlan.parse("final", simple130).plan();
         UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(simple130, target);
-        String converted = LegacyGlslConverter.convertPostFragment(
+        String converted = FragmentConverter.convertPostFragment(
                 simple130, shaders.resolve("final.fsh"), plan, target,
                 Map.of("shadowDistance", "192.0"));
         assertTrue(converted != null, "M5.7 metadata and constant conversion failed");
@@ -463,13 +463,13 @@ public final class M57ConformanceHarness {
         PostTargetPlan unsupportedTarget = PostTargetPlan.parse("final", unsupported).plan();
         UniformRegistry.ProgramInterface unsupportedPlan = UniformRegistry.planPreparedPost(
                 unsupported, unsupportedTarget);
-        assertTrue(LegacyGlslConverter.convertPostFragment(
+        assertTrue(FragmentConverter.convertPostFragment(
                         unsupported, shaders.resolve("final.fsh"), unsupportedPlan, unsupportedTarget) == null,
                 "M5.7 unsupported fullscreen varying was converted");
-        assertTrue(LegacyGlslConverter.postVaryingDeviations(unsupported).contains(
+        assertTrue(PostVertexBridge.postVaryingDeviations(unsupported).contains(
                         "POST_VARYING_UNSUPPORTED:sunVec"),
                 "M5.7 unsupported varying deviation is missing");
-        assertTrue(LegacyGlslConverter.postVaryingDeviations(unsupported).contains(
+        assertTrue(PostVertexBridge.postVaryingDeviations(unsupported).contains(
                         "POST_VARYING_UNSUPPORTED:upVec"),
                 "M5.7 second unsupported varying deviation is missing");
 

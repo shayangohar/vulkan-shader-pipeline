@@ -142,11 +142,11 @@ public final class M63ConformanceHarness {
         UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
                 fragment, vertex, UniformRegistry.Stage.ENTITY, null, false);
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
-                LegacyGlslConverter.convertEntityVertex(vertex, null, fragment,
+                EntityVertexBridge.convertEntityVertex(vertex, null, fragment,
                         Map.of("entityUv", 0));
         assertTrue(plan.executable(), "M6.3 entityId uniform was not treated as vertex data");
         assertTrue(convertedVertex != null, "M6.3 entityId uniform vertex bridge rejected the source");
-        String convertedFragment = LegacyGlslConverter.convertEntityFragment(
+        String convertedFragment = FragmentConverter.convertEntityFragment(
                 fragment, null, new int[0], convertedVertex.layout(),
                 plan.effective(UniformRegistry.Stage.ENTITY));
         assertTrue(convertedFragment != null, "M6.3 entityId uniform fragment bridge rejected the source");
@@ -188,9 +188,9 @@ public final class M63ConformanceHarness {
                 fragment, vertex, UniformRegistry.Stage.BLOCK, null, false);
         assertTrue(plan.executable(), "M6.3 blockEntityId was not treated as vertex data");
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
-                LegacyGlslConverter.convertEntityVertex(vertex, null, fragment, Map.of("portal", 0));
+                EntityVertexBridge.convertEntityVertex(vertex, null, fragment, Map.of("portal", 0));
         assertTrue(convertedVertex != null, "M6.3 blockEntityId vertex bridge rejected the source");
-        String convertedFragment = LegacyGlslConverter.convertEntityFragment(
+        String convertedFragment = FragmentConverter.convertEntityFragment(
                 fragment, null, new int[0], convertedVertex.layout(),
                 plan.effective(UniformRegistry.Stage.BLOCK));
         assertTrue(convertedFragment != null, "M6.3 blockEntityId fragment bridge rejected the source");
@@ -224,7 +224,7 @@ public final class M63ConformanceHarness {
                 void main() { gl_FragColor = vec4(portal); }
                 """;
         LegacyGlslConverter.TerrainVertexConversion convertedTerrain =
-                LegacyGlslConverter.convertTerrainVertex(terrain, null, terrainFragment);
+                TerrainVertexBridge.convertTerrainVertex(terrain, null, terrainFragment);
         assertTrue(convertedTerrain != null, "M6.3 terrain rejected an unbound blockEntityId attribute");
         assertTrue(convertedTerrain.source().contains("const int blockEntityId = 0;")
                         && !convertedTerrain.source().contains("EntityIds"),

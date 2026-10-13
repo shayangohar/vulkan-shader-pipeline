@@ -704,7 +704,7 @@ public final class M86bConformanceHarness {
                         + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
                         + "void main() { gl_FragColor = vec4(1.0); }\n",
                 targetResult.plan());
-        String deadConverted = LegacyGlslConverter.convertPostFragment(
+        String deadConverted = FragmentConverter.convertPostFragment(
                 "#version 120\n/* DRAWBUFFERS:0 */\n"
                         + "uniform sampler2D helperSampler;\n"
                         + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"

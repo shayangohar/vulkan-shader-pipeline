@@ -46,10 +46,10 @@ public final class M80ConformanceHarness {
                         .anyMatch(value -> value.startsWith("TRANSLATION_UNSUPPORTED:")
                                 || value.equals("POST_CONVERTER_UNSUPPORTED")),
                 "M8.0 GLSL ES post has no named fallback");
-        assertTrue(LegacyGlslConverter.supportsModernPost("#version 330\nvoid main(){}")
-                        && LegacyGlslConverter.supportsModernPost("#version 450 core\nvoid main(){}"),
+        assertTrue(PostVertexBridge.supportsModernPost("#version 330\nvoid main(){}")
+                        && PostVertexBridge.supportsModernPost("#version 450 core\nvoid main(){}"),
                 "M8.0 version capability check failed");
-        assertTrue(!LegacyGlslConverter.supportsModernPost("#version 300 es\nvoid main(){}"),
+        assertTrue(!PostVertexBridge.supportsModernPost("#version 300 es\nvoid main(){}"),
                 "M8.0 GLSL ES post was accepted");
         verifyAuthoredFullscreenVertex();
         verifyAuthoredPostConstants();
@@ -96,7 +96,7 @@ public final class M80ConformanceHarness {
                 UniformRegistry.Stage.POST, null, true).effective(UniformRegistry.Stage.POST);
         GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
         GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
-        LegacyGlslConverter.PostVertexConversion conversion = LegacyGlslConverter.convertPostVertex(
+        PostVertexBridge.PostVertexConversion conversion = PostVertexBridge.convertPostVertex(
                 vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, Map.of());
         assertTrue(conversion.source() != null, "Authored post vertex rejected: " + conversion.deviations());
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(conversion.source());
@@ -112,7 +112,7 @@ public final class M80ConformanceHarness {
         }
         assertTrue(GlslInterfaceScanner.match(GlslInterfaceScanner.scan(conversion.source(), true), fs)
                         .executable(), "Translated vertex no longer provides its fragment inputs");
-        String convertedFragment = LegacyGlslConverter.convertPostFragment(fragment, null, plan,
+        String convertedFragment = FragmentConverter.convertPostFragment(fragment, null, plan,
                 PostTargetPlan.parse("composite", fragment).plan(), Map.of(),
                 GlslInterfaceScanner.match(vs, fs).locations(),
                 Map.of("texCoord", "vec2", "upVec", "vec3", "sunVec", "vec3", "vlFactor", "float"));
@@ -121,7 +121,7 @@ public final class M80ConformanceHarness {
         assertTrue(fragmentUsage.successful() && fragmentUsage.liveSamplers().contains("colortex0"),
                 "Paired fragment lost its authored color input");
         String unsupported = vertex.replace("ftransform()", "gl_ModelViewMatrixInverse * gl_Vertex");
-        LegacyGlslConverter.PostVertexConversion rejected = LegacyGlslConverter.convertPostVertex(
+        PostVertexBridge.PostVertexConversion rejected = PostVertexBridge.convertPostVertex(
                 unsupported, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, Map.of());
         assertTrue(rejected.source() == null && rejected.deviations().contains(
                         "POST_VERTEX_BUILTIN_UNSUPPORTED:gl_ModelViewMatrixInverse"),
@@ -156,7 +156,7 @@ public final class M80ConformanceHarness {
                     UniformRegistry.Stage.POST, null, true).effective(UniformRegistry.Stage.POST);
             GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
             GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
-            LegacyGlslConverter.PostVertexConversion conversion = LegacyGlslConverter.convertPostVertex(
+            PostVertexBridge.PostVertexConversion conversion = PostVertexBridge.convertPostVertex(
                     vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, constants);
             assertTrue(conversion.source() != null,
                     "Post constants prevented authored vertex conversion: " + conversion.deviations());
@@ -220,7 +220,7 @@ public final class M80ConformanceHarness {
                     gl_FragData[1] = vec4(0.6, 0.7, 0.8, 0.9);
                 }
                 """;
-        String converted = LegacyGlslConverter.FragmentConversionRequest
+        String converted = FragmentConverter.FragmentConversionRequest
                 .of(source, null, true, new int[0])
                 .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
                 .convert();
@@ -228,7 +228,7 @@ public final class M80ConformanceHarness {
                         "chimeraShadowColor1 = vec4(0.2, 0.3, 0.4, 0.5)")
                         && converted.contains("chimeraShadowColor0 = vec4(0.6, 0.7, 0.8, 0.9)"),
                 "Authored shadow drawbuffer routing or tint expression was lost");
-        assertTrue(LegacyGlslConverter.FragmentConversionRequest
+        assertTrue(FragmentConverter.FragmentConversionRequest
                         .of(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:20"),
                                 null, true, new int[0])
                         .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))

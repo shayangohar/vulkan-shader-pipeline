@@ -106,9 +106,9 @@ public final class M87EntityRealPackHarness {
             compileStage(prepared.vertex(), true, pack + " " + name + " vertex");
             compileStage(prepared.fragment(), false, pack + " " + name + " fragment");
             if (FamilyAdapterRegistry.isSkyFamily(name)) {
-                for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
+                for (var contract : HostLayoutVertexBridge.SKY_CONTRACTS) {
                     var variant = PackPipelines.prepare(plan, analysis.plan().advancedResources(), stage,
-                            LegacyGlslConverter.skyVertexForContract(plan.convertedVertex(), contract));
+                            HostLayoutVertexBridge.skyVertexForContract(plan.convertedVertex(), contract));
                     compileStage(variant.vertex(), true, pack + " " + name + " " + contract);
                 }
             }

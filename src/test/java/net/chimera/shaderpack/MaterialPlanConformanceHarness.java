@@ -451,7 +451,7 @@ public final class MaterialPlanConformanceHarness {
                 "cameraPosition not executable for entity fixtures");
         LegacyGlslConverter.TerrainVertexConversion vertex;
         try {
-            vertex = LegacyGlslConverter.convertEntityVertexChecked(ENTITY_VERTEX_SNIPPET, null,
+            vertex = EntityVertexBridge.convertEntityVertexChecked(ENTITY_VERTEX_SNIPPET, null,
                     ENTITY_FRAGMENT_SNIPPET, Map.of(), false, uniforms);
         } catch (IllegalArgumentException failure) {
             throw new AssertionError("entity vertex conversion failed: " + failure.getMessage());
@@ -474,7 +474,7 @@ public final class MaterialPlanConformanceHarness {
                 "authored tangent bypassed the generated sanitizer: " + source);
         assertTrue(!source.contains("uniform vec3 cameraPosition;"),
                 "authored camera declaration collides with the block: " + source);
-        String convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+        String convertedFragment = FragmentConverter.FragmentConversionRequest
                 .of(ENTITY_FRAGMENT_SNIPPET, null, true, new int[]{0, 25, 26})
                 .withTerrainLayout(vertex.layout())
                 .withInterfacePlan(fragment)
@@ -538,10 +538,10 @@ public final class MaterialPlanConformanceHarness {
         assertTrue(fragment.executableUniforms().stream()
                         .anyMatch(uniform -> uniform.name().equals("isElytraFlying")),
                 "isElytraFlying did not land in executable uniforms");
-        LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertEntityVertex(
+        LegacyGlslConverter.TerrainVertexConversion vertex = EntityVertexBridge.convertEntityVertex(
                 ELYTRA_VERTEX_SNIPPET, null, ELYTRA_SNIPPET, Map.of());
         assertTrue(vertex != null, "elytra vertex bridge failed");
-        String converted = LegacyGlslConverter.FragmentConversionRequest
+        String converted = FragmentConverter.FragmentConversionRequest
                 .of(ELYTRA_SNIPPET, null, true, new int[0])
                 .withTerrainLayout(vertex.layout())
                 .withInterfacePlan(fragment)

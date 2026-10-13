@@ -74,7 +74,7 @@ final class PackCompileCheck {
             String fragmentError = compile(prepared.fragment(), false);
             if (FamilyAdapterRegistry.isHandFamily(program.name())) {
                 for (var host : ChimeraVertexFormats.handFormats().keySet()) {
-                    String variant = LegacyGlslConverter.handVertexForFormat(program.convertedVertex(), host);
+                    String variant = EntityVertexBridge.handVertexForFormat(program.convertedVertex(), host);
                     String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
                     if (error != null) {
                         failures.add(program.name() + " hand input variant: " + error);
@@ -84,7 +84,7 @@ final class PackCompileCheck {
             }
             if (program.name().equals("gbuffers_entities_translucent") || program.name().equals("gbuffers_block")) {
                 // Iris GLYPH text variant (TEXT and TEXT_BE).
-                String variant = LegacyGlslConverter.layoutVertexForFormat(program.convertedVertex(),
+                String variant = EntityVertexBridge.layoutVertexForFormat(program.convertedVertex(),
                         DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
                 String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
                 if (error != null) {
@@ -94,7 +94,7 @@ final class PackCompileCheck {
             }
             if (FamilyAdapterRegistry.isGlintFamily(program.name())) {
                 // First-person glint: the same program under the hand projection.
-                String variant = LegacyGlslConverter.handGlintVertex(program.convertedVertex());
+                String variant = EntityVertexBridge.handGlintVertex(program.convertedVertex());
                 String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
                 if (error != null) {
                     failures.add(program.name() + " hand glint variant: " + error);
@@ -102,8 +102,8 @@ final class PackCompileCheck {
                 }
             }
             if (FamilyAdapterRegistry.isSkyFamily(program.name())) {
-                for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
-                    String variant = LegacyGlslConverter.skyVertexForContract(program.convertedVertex(), contract);
+                for (var contract : HostLayoutVertexBridge.SKY_CONTRACTS) {
+                    String variant = HostLayoutVertexBridge.skyVertexForContract(program.convertedVertex(), contract);
                     String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
                     if (error != null) {
                         failures.add(program.name() + " sky input variant " + contract + ": " + error);

@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.chimera.shaderpack.BiomeIds;
 import net.chimera.shaderpack.ConformanceReport;
+import net.chimera.shaderpack.EntityVertexBridge;
 import net.chimera.shaderpack.LegacyGlslConverter;
 import net.chimera.shaderpack.PackExpression;
 import net.chimera.shaderpack.PackProbe;
@@ -575,7 +576,7 @@ public final class M73ConformanceHarness {
                 new UniformRegistry.UniformDeclaration("gbufferProjection", "mat4"),
                 new UniformRegistry.UniformDeclaration("gbufferProjectionInverse", "mat4"));
         LegacyGlslConverter.TerrainVertexConversion converted =
-                LegacyGlslConverter.convertEntityVertexChecked(
+                EntityVertexBridge.convertEntityVertexChecked(
                         vertex, null, fragment, Map.of(), false, uniforms);
         assertTrue(converted != null, "M7.3 entity projection bridge was rejected");
         assertTrue(converted.source().contains("mat4 gbufferProjection;"),

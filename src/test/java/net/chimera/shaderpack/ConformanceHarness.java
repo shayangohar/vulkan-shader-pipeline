@@ -214,15 +214,15 @@ public final class ConformanceHarness {
                 + "varying vec2 light2;\nvoid main() { gl_FragColor = vec4(uv + light1 + light2, 0, 1); }\n";
         for (String family : List.of("entity", "block", "crumbling", "hand", "particle")) {
             var conversion = switch (family) {
-                case "block" -> LegacyGlslConverter.convertBlockVertexChecked(
+                case "block" -> EntityVertexBridge.convertBlockVertexChecked(
                         vertex, null, fragment, Map.of(), false, List.of());
-                case "crumbling" -> LegacyGlslConverter.convertCrumblingVertexChecked(
+                case "crumbling" -> EntityVertexBridge.convertCrumblingVertexChecked(
                         vertex, null, fragment, Map.of(), false, List.of());
-                case "hand" -> LegacyGlslConverter.convertHandVertexChecked(
+                case "hand" -> EntityVertexBridge.convertHandVertexChecked(
                         vertex, null, fragment, Map.of(), false, List.of());
-                case "particle" -> LegacyGlslConverter.convertParticleVertex(
+                case "particle" -> EntityVertexBridge.convertParticleVertex(
                         vertex, null, fragment, Map.of(), false);
-                default -> LegacyGlslConverter.convertEntityVertexChecked(
+                default -> EntityVertexBridge.convertEntityVertexChecked(
                         vertex, null, fragment, Map.of(), false, List.of());
             };
             assertTrue(conversion != null, family + " typed legacy matrices rejected");
@@ -262,11 +262,11 @@ public final class ConformanceHarness {
         }
         String overlayFragment = EntityOverlayColor.inject("#version 120\n"
                 + "uniform vec4 entityColor;\nvoid main() { gl_FragColor = entityColor; }\n");
-        String overlayVertex = LegacyGlslConverter.convertEntityVertexChecked(vertex, null,
+        String overlayVertex = EntityVertexBridge.convertEntityVertexChecked(vertex, null,
                 overlayFragment, Map.of(), false, List.of()).source();
         assertTrue(overlayVertex.contains(EntityOverlayColor.UV_VARYING + " = UV1;"),
                 "lightmap repair must not replace the entity overlay attribute");
-        assertTrue(LegacyGlslConverter.convertHandVertex(vertex.replace("void main() {",
+        assertTrue(EntityVertexBridge.convertHandVertex(vertex.replace("void main() {",
                         "void main() { vec3 available = gl_Normal;"), null, fragment, Map.of()) != null,
                 "hand arm must serve its actual NEW_ENTITY normal");
         // Nontrivial position and transforms distinguish a matrix product from the old vec4 product.
@@ -299,7 +299,7 @@ public final class ConformanceHarness {
                 """;
         String fragment = "#version 120\nvarying vec2 uv;\nvarying vec3 normal;\n"
                 + "void main() { gl_FragColor = vec4(uv, normal.z, 1); }\n";
-        var hand = LegacyGlslConverter.convertHandVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        var hand = EntityVertexBridge.convertHandVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
         for (var entry : ChimeraVertexFormats.handFormats().entrySet()) {
             var host = entry.getKey();
             var extended = entry.getValue();
@@ -310,7 +310,7 @@ public final class ConformanceHarness {
             for (int i = 0; i < host.getElements().size(); i++) {
                 assertEquals(host.getOffset(host.getElements().get(i)), extended.getOffset(host.getElements().get(i)), "hand native attribute offset");
             }
-            String source = LegacyGlslConverter.handVertexForFormat(hand.source(), host);
+            String source = EntityVertexBridge.handVertexForFormat(hand.source(), host);
             assertTrue(PackCompileCheck.compile(source, true) == null, "hand layout fails compilation: " + host);
             assertTrue(source.contains("void chimeraHandMain()")
                             && source.contains("void main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
@@ -326,10 +326,10 @@ public final class ConformanceHarness {
             }
         }
         // World and sign text: the entity and block programs take the same GLYPH layout.
-        var entity = LegacyGlslConverter.convertEntityVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
-        var block = LegacyGlslConverter.convertBlockVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        var entity = EntityVertexBridge.convertEntityVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        var block = EntityVertexBridge.convertBlockVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
         for (var program : List.of(entity, block)) {
-            String glyph = LegacyGlslConverter.layoutVertexForFormat(program.source(),
+            String glyph = EntityVertexBridge.layoutVertexForFormat(program.source(),
                     DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
             assertTrue(PackCompileCheck.compile(glyph, true) == null, "entity-family GLYPH layout fails compilation");
             assertTrue(glyph.contains("layout(location = 4) in vec3 Normal;")
@@ -498,8 +498,8 @@ public final class ConformanceHarness {
         assertTrue(plan.executable(), "live sky uniforms/legacy matrices rejected: " + plan.deviations());
         assertEquals(List.of(1, 4), plan.geometryOutputPlan().targetSlots(), "sky authored outputs lost");
         var variants = new LinkedHashMap<VertexFormat, PackPipelines.PackSky>();
-        for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
-            String source = LegacyGlslConverter.skyVertexForContract(plan.convertedVertex(), contract);
+        for (var contract : HostLayoutVertexBridge.SKY_CONTRACTS) {
+            String source = HostLayoutVertexBridge.skyVertexForContract(plan.convertedVertex(), contract);
             assertTrue(PackCompileCheck.compile(source, true) == null, "sky native variant failed: " + contract);
             assertTrue(source.contains("mat4 mvp = (chimeraSkyProjection() * ModelViewMat);")
                             && source.contains("(Color * ColorModulator)")
@@ -869,7 +869,7 @@ public final class ConformanceHarness {
                     "glint lost Iris input semantics: " + converted);
             assertTrue(plan.alphaTestPlan().perDrawReference() && plan.convertedFragment().contains("discard;"),
                     "glint lost its per-draw alpha test");
-            String hand = LegacyGlslConverter.handGlintVertex(converted);
+            String hand = EntityVertexBridge.handGlintVertex(converted);
             assertTrue(hand.contains("void chimeraHandMain()")
                             && hand.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w)")
                             && hand.contains("chimeraHandProjection() * ModelViewMat")
@@ -2251,18 +2251,18 @@ public final class ConformanceHarness {
             assertTrue(compiled.failures().isEmpty(), "particle alias compilation: " + compiled.failures());
             var uniforms = analysis.plan().program("gbuffers_particles").interfacePlan()
                     .effective(UniformRegistry.Stage.PARTICLE).executableUniforms();
-            assertTrue(LegacyGlslConverter.convertParticleVertex(source.replace("void main() {",
+            assertTrue(EntityVertexBridge.convertParticleVertex(source.replace("void main() {",
                             "attribute vec2 mc_midTexCoord;\nvoid main() {\nuv = mc_midTexCoord;"),
                             null, "", Map.of()) == null,
                     "particle material attributes must not be fabricated");
             try {
-                LegacyGlslConverter.convertParticleVertexChecked(source.replace("frameTimeCounter", "unknownTime"),
+                EntityVertexBridge.convertParticleVertexChecked(source.replace("frameTimeCounter", "unknownTime"),
                         null, Files.readString(fragment), Map.of(), false, uniforms);
                 throw new AssertionError("referenced unknown particle uniform was admitted");
             } catch (IllegalArgumentException expected) {
                 assertTrue(expected.getMessage().contains("unknownTime"), "particle rejection lost concrete symbol");
             }
-            assertTrue(LegacyGlslConverter.convertTerrainVertex(source, null, "") == null,
+            assertTrue(TerrainVertexBridge.convertTerrainVertex(source, null, "") == null,
                     "particle repair weakened terrain admission");
         } finally {
             Files.deleteIfExists(properties);
@@ -2523,14 +2523,14 @@ public final class ConformanceHarness {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("m5.2 material terrain source is missing"));
         assertTrue(terrainProgram.vertexSource() != null, "m5.2 material vertex source was not retained");
-        LegacyGlslConverter.TerrainVertexConversion converted = LegacyGlslConverter.convertTerrainVertex(
+        LegacyGlslConverter.TerrainVertexConversion converted = TerrainVertexBridge.convertTerrainVertex(
                 terrainProgram.vertexSource(), terrainProgram.vertexPath(), terrainProgram.fragmentSource());
         assertTrue(converted != null, "m5.2 material vertex conversion failed");
         assertTrue(converted.source().contains("layout(location = 0) out"),
                 "m5.2 material varying layout was not emitted");
         assertTrue(converted.source().contains("inMaterialId"),
                 "m5.2 material input attribute was not emitted");
-        String convertedFragment = LegacyGlslConverter.FragmentConversionRequest.withAutoPlan(
+        String convertedFragment = FragmentConverter.FragmentConversionRequest.withAutoPlan(
                 terrainProgram.fragmentSource(), terrainProgram.fragmentPath(), true,
                 new int[] {0, 2}, converted.layout()).convert();
         assertTrue(convertedFragment != null && convertedFragment.contains("layout(location = 0) in"),
@@ -2540,13 +2540,13 @@ public final class ConformanceHarness {
         verifyMaterialParserEdgeCases();
         // The version number no longer gates (GlslVersion); the legacy converter still refuses
         // modern syntax, which the modern terrain path converts, and GLSL ES.
-        assertTrue(LegacyGlslConverter.convertTerrainVertex(
+        assertTrue(TerrainVertexBridge.convertTerrainVertex(
                 "#version 330\nin vec3 Position;\nvoid main() { gl_Position = vec4(Position, 1.0); }", null, "") == null,
                 "modern terrain vertex syntax was accepted by the legacy converter");
-        assertTrue(LegacyGlslConverter.convertTerrainVertex(
+        assertTrue(TerrainVertexBridge.convertTerrainVertex(
                 "#version 300 es\nvoid main() { gl_Position = vec4(0.0); }", null, "") == null,
                 "GLSL ES terrain vertex source was accepted");
-        assertTrue(LegacyGlslConverter.convertTerrainVertex(
+        assertTrue(TerrainVertexBridge.convertTerrainVertex(
                 "#version 120\nvoid main() { gl_Position = ftransform(); float n = gl_Normal.x; }",
                 null, "") == null,
                 "unsupported terrain normal was accepted");
@@ -2615,7 +2615,7 @@ public final class ConformanceHarness {
                 .filter(program -> program.name().equals("composite"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("m5.3 live composite source is missing"));
-        String converted = LegacyGlslConverter.FragmentConversionRequest
+        String converted = FragmentConverter.FragmentConversionRequest
                 .of(compositeProgram.fragmentSource(), compositeProgram.fragmentPath(), false, null)
                 .withInterfacePlan(interfacePlan)
                 .convert();
@@ -2694,7 +2694,7 @@ public final class ConformanceHarness {
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.POST);
         assertTrue(!interfacePlan.executable(), "m5.3 unsupported interface was accepted");
-        assertTrue(LegacyGlslConverter.FragmentConversionRequest.withAutoPlan(
+        assertTrue(FragmentConverter.FragmentConversionRequest.withAutoPlan(
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
                 pack.resolve("shaders/composite.fsh"), false, null, null).convert() == null,
                 "m5.3 unsupported source converted");
@@ -2757,7 +2757,7 @@ public final class ConformanceHarness {
         assertEquals(List.of(0, 1), compositePlan.targetSlots(), "m5.6 composite route");
         assertEquals(List.of(97, 37), compositePlan.outputFormats(), "m5.6 target formats");
         assertTrue(compositePlan.requiresMrt(), "m5.6 composite must require MRT");
-        String converted = LegacyGlslConverter.convertPostFragment(
+        String converted = FragmentConverter.convertPostFragment(
                 composite, pack.resolve("shaders/composite.fsh"),
                 UniformRegistry.planPost(composite, compositePlan), compositePlan);
         assertTrue(converted != null, "m5.6 multi-target conversion failed");
@@ -2868,10 +2868,10 @@ public final class ConformanceHarness {
         assertTrue(interfacePlan.deviations().contains("LIVE_UNIFORM_BRIDGE"),
                 "m5.5 water live uniform bridge deviation is missing");
 
-        LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertTerrainVertex(
+        LegacyGlslConverter.TerrainVertexConversion vertex = TerrainVertexBridge.convertTerrainVertex(
                 waterProgram.vertexSource(), waterProgram.vertexPath(), waterProgram.fragmentSource());
         assertTrue(vertex != null, "m5.5 water vertex conversion failed");
-        String convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+        String convertedFragment = FragmentConverter.FragmentConversionRequest
                 .of(waterProgram.fragmentSource(), waterProgram.fragmentPath(), true,
                         new int[] {0, 2, 5})
                 .withTerrainLayout(vertex.layout())
@@ -2942,7 +2942,7 @@ public final class ConformanceHarness {
                 Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!interfacePlan.executable(), "m5.5 unsupported water interface was accepted");
-        assertTrue(LegacyGlslConverter.FragmentConversionRequest
+        assertTrue(FragmentConverter.FragmentConversionRequest
                 .of(Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
                         pack.resolve("shaders/gbuffers_water.fsh"), true, new int[] {0, 2})
                 .withInterfacePlan(interfacePlan)
@@ -2997,7 +2997,7 @@ public final class ConformanceHarness {
                 interfacePlan.samplers(), "m5.4 shadow sampler bindings");
         assertTrue(interfacePlan.executable(), "m5.4 shadow interface is not executable");
 
-        LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertShadowVertex(
+        LegacyGlslConverter.TerrainVertexConversion vertex = TerrainVertexBridge.convertShadowVertex(
                 shadowProgram.vertexSource(), shadowProgram.vertexPath(), shadowProgram.fragmentSource());
         assertTrue(vertex != null, "m5.4 shadow vertex conversion failed");
         assertTrue(vertex.source().contains("layout(binding = 0) uniform ViewUBO"),
@@ -3012,7 +3012,7 @@ public final class ConformanceHarness {
         assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
                 "m5.4 shadow render-type input is missing");
 
-        String convertedFragment = LegacyGlslConverter.FragmentConversionRequest
+        String convertedFragment = FragmentConverter.FragmentConversionRequest
                 .of(shadowProgram.fragmentSource(), shadowProgram.fragmentPath(), true,
                         new int[] {0, 2})
                 .withTerrainLayout(vertex.layout())
@@ -3075,7 +3075,7 @@ public final class ConformanceHarness {
         assertTrue(colorInput.deviations().contains("SHADOW_COLOR_INPUT_UNSUPPORTED"),
                 "m5.4 shadow color input deviation is missing");
         assertTrue(!colorInput.executable(), "m5.4 shadow color input was accepted");
-        assertTrue(LegacyGlslConverter.convertShadowVertex(
+        assertTrue(TerrainVertexBridge.convertShadowVertex(
                 Files.readString(pack.resolve("shaders/shadow.vsh"), StandardCharsets.UTF_8),
                 pack.resolve("shaders/shadow.vsh"),
                 Files.readString(pack.resolve("shaders/shadow.fsh"), StandardCharsets.UTF_8)) != null,

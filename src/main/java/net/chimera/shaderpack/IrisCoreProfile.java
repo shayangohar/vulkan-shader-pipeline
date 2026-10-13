@@ -1,0 +1,235 @@
+package net.chimera.shaderpack;
+
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static net.chimera.shaderpack.GlslLexer.stripComments;
+
+/**
+ * Prepares pack sources the way Iris's TransformPatcher does before any conversion: the
+ * core-profile names, widened lines, the glint layer and the host-layout identities.
+ */
+final class IrisCoreProfile {
+    private IrisCoreProfile() {}
+
+    /** Iris core-profile vertex inputs, as a pack declares them. */
+    static final Pattern CORE_INPUT_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*(?:layout[ \\t]*\\([^;{}()]*\\)[ \\t]*)?(?:in|attribute)[ \\t]+(\\w+)[ \\t]+"
+                    + "(vaPosition|vaColor|vaNormal|vaUV0|vaUV1|vaUV2)[ \\t]*;[ \\t]*$");
+
+    /** Iris core-profile uniforms: the host matrices, the chunk offset. */
+    static final Pattern CORE_UNIFORM_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*uniform[ \\t]+(\\w+)[ \\t]+(modelViewMatrix|modelViewMatrixInverse|projectionMatrix"
+                    + "|projectionMatrixInverse|normalMatrix|textureMatrix|chunkOffset)[ \\t]*;[ \\t]*$");
+
+    /** Iris SodiumCoreTransformer's overlay for a format without one: no hurt flash, no white flash. */
+    public static final String NO_OVERLAY = "ivec2(0, 10)";
+
+    /** The type Iris gives a core name a stage reads without declaring it (VanillaCoreTransformer). */
+    static final Map<String, String> CORE_NAME_TYPES = Map.ofEntries(
+            Map.entry("vaPosition", "vec3"), Map.entry("vaColor", "vec4"), Map.entry("vaNormal", "vec3"),
+            Map.entry("vaUV0", "vec2"), Map.entry("vaUV1", "vec2"), Map.entry("vaUV2", "vec2"),
+            Map.entry("modelViewMatrix", "mat4"), Map.entry("modelViewMatrixInverse", "mat4"),
+            Map.entry("projectionMatrix", "mat4"), Map.entry("projectionMatrixInverse", "mat4"),
+            Map.entry("normalMatrix", "mat3"), Map.entry("textureMatrix", "mat4"), Map.entry("chunkOffset", "vec3"));
+
+    /**
+     * Iris's core-profile mode (TransformPatcher: a core profile, 150 and above with no
+     * profile, or any program drawn on the line layout) names the host inputs and matrices
+     * itself: vaPosition and the other core inputs, modelViewMatrix and the other matrices, and
+     * chunkOffset. Each converter already serves the compatibility built-ins with the same
+     * values (VanillaCoreTransformer maps both spellings to one input), so the stage is
+     * rewritten to those before its interface is planned. In core mode Iris serves the names
+     * whether or not the stage declares them; elsewhere it leaves a declared core input
+     * unbound, which only a driver's attribute order made meaningful (Photon's compatibility
+     * gbuffers_basic reads vaColor), so a declared one gets its intended value.
+     *
+     * <p>chunkOffset is zero: Chimera's positions are already camera-relative, which Iris's
+     * vaPosition plus chunkOffset is. overlay is the stage's overlay coordinates: the host
+     * input on the entity layouts, {@link #NO_OVERLAY} elsewhere. On a format without UVs, Iris
+     * leaves vaUV0 and vaUV2 unbound (zero) where the compatibility inputs read (0.5, 0.5) and
+     * full light; a pack's own gbuffers_line keeps Iris's zeros ({@link #prepareLineVertex}).</p>
+     */
+    public static String prepareIrisCoreProfile(String source, Path sourceFile, boolean vertexStage,
+                                                String overlay, boolean coreMode) {
+        if (source == null) return null;
+        Map<String, String> declared = new TreeMap<>();
+        String result = expandIncludes(source, sourceFile);
+        if (vertexStage) {
+            Matcher inputs = CORE_INPUT_DECLARATION.matcher(result);
+            while (inputs.find()) declared.put(inputs.group(2), inputs.group(1));
+            result = inputs.replaceAll("");
+        }
+        Matcher uniforms = CORE_UNIFORM_DECLARATION.matcher(result);
+        while (uniforms.find()) declared.put(uniforms.group(2), uniforms.group(1));
+        result = uniforms.replaceAll("");
+        if (coreMode) {
+            String stripped = stripComments(result);
+            for (Map.Entry<String, String> name : CORE_NAME_TYPES.entrySet()) {
+                boolean input = name.getKey().startsWith("va");
+                if ((vertexStage || !input) && LegacyGlslConverter.containsIdentifier(stripped, name.getKey())) {
+                    declared.putIfAbsent(name.getKey(), name.getValue());
+                }
+            }
+        }
+        if (declared.isEmpty()) return source;
+        Map<String, String> replacements = new TreeMap<>();
+        for (Map.Entry<String, String> entry : declared.entrySet()) {
+            String type = entry.getValue();
+            replacements.put(entry.getKey(), switch (entry.getKey()) {
+                case "vaPosition" -> type.equals("vec4") ? "gl_Vertex" : TerrainVertexBridge.adaptModernTerrainType(type, "gl_Vertex.xyz", "vec3");
+                case "vaColor" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_Color", "vec4");
+                case "vaNormal" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_Normal", "vec3");
+                case "vaUV0" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_MultiTexCoord0.xy", "vec2");
+                case "vaUV1" -> type.equals("ivec2") ? overlay : TerrainVertexBridge.adaptModernTerrainType(type, "vec2(" + overlay + ")", "vec2");
+                case "vaUV2" -> TerrainVertexBridge.adaptModernTerrainType(type, "gl_MultiTexCoord1.xy", "vec2");
+                case "modelViewMatrix" -> "gl_ModelViewMatrix";
+                case "modelViewMatrixInverse" -> "inverse(gl_ModelViewMatrix)";
+                case "projectionMatrix" -> "gl_ProjectionMatrix";
+                case "projectionMatrixInverse" -> "inverse(gl_ProjectionMatrix)";
+                case "normalMatrix" -> "gl_NormalMatrix";
+                case "textureMatrix" -> "gl_TextureMatrix[0]";
+                default -> "vec3(0.0)"; // chunkOffset
+            });
+        }
+        return GlslTokenRewriter.replaceIdentifiers(result, replacements);
+    }
+
+    static final Pattern LINE_CORE_INPUT_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*(?:in|attribute)[ \\t]+\\w+[ \\t]+(?:vaPosition|vaColor|vaNormal|vaUV0|vaUV1|vaUV2)"
+                    + "[ \\t]*;[ \\t]*$");
+
+    static final Pattern LINE_CORE_MATRIX_DECLARATION = Pattern.compile(
+            "(?m)^[ \\t]*uniform[ \\t]+mat[34][ \\t]+(?:modelViewMatrix|modelViewMatrixInverse|projectionMatrix"
+                    + "|projectionMatrixInverse|normalMatrix|textureMatrix)[ \\t]*;[ \\t]*$");
+
+    /**
+     * Applies Iris's line handling to an authored vertex source before its interface is
+     * planned. Iris compiles the pack's own gbuffers_line through VanillaCoreTransformer
+     * (IrisRenderingPipeline: isLines when the pack has the program): the core inputs
+     * and matrices name the host values, and the program widens its own line. A fallback
+     * program (gbuffers_basic) is widened by Iris instead (VanillaTransformer, new lines):
+     * its main runs twice and gl_ModelViewMatrix carries VIEW_SHRINK.
+     */
+    public static String prepareLineVertex(String source, Path sourceFile, boolean packLineProgram) {
+        if (source == null) return null;
+        String src = expandIncludes(source, sourceFile);
+        src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("gl_VertexID", "chimeraLineVertexIndex"));
+        if (packLineProgram) {
+            src = LINE_CORE_INPUT_DECLARATION.matcher(src).replaceAll("");
+            src = LINE_CORE_MATRIX_DECLARATION.matcher(src).replaceAll("");
+            return GlslTokenRewriter.replaceIdentifiers(src, Map.ofEntries(
+                    Map.entry("vaPosition", "gl_Vertex.xyz"),
+                    Map.entry("vaColor", "gl_Color"),
+                    Map.entry("vaNormal", "gl_Normal"),
+                    Map.entry("vaUV0", "vec2(0.0)"),
+                    Map.entry("vaUV1", "vec2(0.0)"),
+                    Map.entry("vaUV2", "vec2(0.0)"),
+                    Map.entry("modelViewMatrix", "gl_ModelViewMatrix"),
+                    Map.entry("modelViewMatrixInverse", "inverse(gl_ModelViewMatrix)"),
+                    Map.entry("projectionMatrix", "gl_ProjectionMatrix"),
+                    Map.entry("projectionMatrixInverse", "inverse(gl_ProjectionMatrix)"),
+                    Map.entry("normalMatrix", "gl_NormalMatrix"),
+                    Map.entry("textureMatrix", "gl_TextureMatrix[0]")));
+        }
+        src = src.replaceAll("\\bftransform\\s*\\(\\s*\\)", "(gl_ModelViewProjectionMatrix * gl_Vertex)");
+        src = GlslTokenRewriter.replaceIdentifiers(src, Map.of(
+                "gl_Vertex", "(gl_Vertex + vec4(chimeraLineOffset, 0.0))",
+                "gl_ModelViewMatrix", "(chimeraLineViewScale * gl_ModelViewMatrix)",
+                "gl_ModelViewProjectionMatrix", "(gl_ProjectionMatrix * chimeraLineViewScale * gl_ModelViewMatrix)",
+                // Iris feeds a widened program +Z; only the wrapper reads the line direction.
+                "gl_Normal", "vec3(0.0, 0.0, 1.0)"));
+        Matcher main = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)").matcher(src);
+        if (!main.find()) {
+            throw new IllegalArgumentException("line vertex requires main");
+        }
+        src = src.substring(0, main.start()) + "void chimeraLineMain()" + src.substring(main.end());
+        String globals = GlslVertexPreambles.LINE_WIDEN_GLOBALS;
+        Set<String> declared = new HashSet<>();
+        UniformRegistry.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
+        if (!declared.contains("viewWidth")) globals += "uniform float viewWidth;\n";
+        if (!declared.contains("viewHeight")) globals += "uniform float viewHeight;\n";
+        return insertAfterHeader(src, globals) + GlslVertexPreambles.LINE_WIDEN_MAIN;
+    }
+
+    /**
+     * Iris VanillaTransformer for GLINT (isGlint): gl_Color is
+     * vec4(ColorModulator.rgb, ColorModulator.a * GlintAlpha). Applied to the authored vertex
+     * before its interface is planned, so the glint strength is an ordinary planned uniform.
+     */
+    public static String prepareGlintVertex(String source, Path sourceFile) {
+        if (source == null) return null;
+        String src = expandIncludes(source, sourceFile);
+        src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("gl_Color",
+                "vec4(gl_Color.rgb, gl_Color.a * " + UniformRegistry.GLINT_ALPHA + ")"));
+        return insertAfterHeader(src, "uniform float " + UniformRegistry.GLINT_ALPHA + ";\n");
+    }
+
+    /**
+     * Expands a host-layout stage's includes before its interface is planned; the line and
+     * glint vertices do this in {@link #prepareLineVertex} and {@link #prepareGlintVertex}.
+     */
+    public static String prepareHostLayoutSource(String source, Path sourceFile) {
+        return source == null ? null : expandIncludes(source, sourceFile);
+    }
+
+    /**
+     * Iris applies EntityPatcher only to entity and text formats. On any other host layout
+     * entityId and blockEntityId stay uniforms (CommonUniforms). blockEntityId is the constant
+     * -1. entityId is Iris's fallback "for when entityId via attributes cannot be used
+     * (lightning)", read from CapturedRenderingState when the batch draws. Iris 1.21.11 never
+     * sets it for these draws: its lightning override is commented out, and a custom-geometry
+     * batch flushes after CustomFeatureRenderer has reset the entity to 0. Complementary's
+     * shadow program cuts entity shadows past 26 blocks, so a bolt drawn with its own id lost
+     * most of its shadow. Applied to both stages of a host-layout program before planning.
+     */
+    public static String prepareHostLayoutIdentity(String source) {
+        if (source == null) return null;
+        Map<String, String> types = new HashMap<>();
+        Matcher declaration = EntityVertexBridge.ENTITY_ID_DECLARATION.matcher(stripComments(source));
+        while (declaration.find()) {
+            for (String declarator : declaration.group(3).split(",")) {
+                String value = declarator.trim();
+                int equals = value.indexOf('=');
+                String name = equals < 0 ? value : value.substring(0, equals).trim();
+                if (EntityVertexBridge.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.group(2));
+            }
+        }
+        if (types.isEmpty()) return source;
+        String src = EntityVertexBridge.removeEntityIdDeclarations(source);
+        Map<String, String> replacements = new HashMap<>();
+        if (types.containsKey("entityId")) {
+            replacements.put("entityId", "float".equals(types.get("entityId")) ? "(0.0)" : "(0)");
+        }
+        if (types.containsKey("blockEntityId")) {
+            replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
+        }
+        return GlslTokenRewriter.replaceIdentifiers(src, replacements);
+    }
+
+    static String expandIncludes(String source, Path sourceFile) {
+        if (sourceFile == null) return source;
+        ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
+                sourceFile.getParent(), sourceFile, source,
+                PackEngineDefines.forPack(Map.of()),
+                PackEngineDefines.lockedNames(Set.of(), false, false));
+        if (!prepared.successful()) {
+            throw new IllegalArgumentException(prepared.deviations().toString());
+        }
+        return prepared.source();
+    }
+
+    /** Inserts declarations after the #version and #extension lines that must lead the source. */
+    static String insertAfterHeader(String source, String declarations) {
+        Matcher header = Pattern.compile("\\A(?:[ \\t]*(?:#version|#extension)[^\\n]*\\n|[ \\t]*\\r?\\n)*")
+                .matcher(source);
+        int insert = header.find() ? header.end() : 0;
+        return source.substring(0, insert) + declarations + source.substring(insert);
+    }
+}

@@ -188,7 +188,7 @@ public final class AlphaTestConformanceHarness {
         check(authored >= 0 && rejection > authored,
                 "alpha test was not appended after the authored main");
         compile(fragment);
-        String covered = LegacyGlslConverter.withCoverageOutput(fragment);
+        String covered = FragmentConverter.withCoverageOutput(fragment);
         check(covered.indexOf("discard;") < covered.lastIndexOf("chimeraCoverage ="),
                 "coverage was written before alpha rejection");
     }
