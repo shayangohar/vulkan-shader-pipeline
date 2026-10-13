@@ -199,6 +199,14 @@ public final class PackUniformProvider {
     }
 
     /** Installs the immutable runtime settings for the active pack session. */
+    /**
+     * The pack's item.properties ids and oldHandLight for the held-item uniforms; an empty
+     * resolver when no pack is installed.
+     */
+    public static void installHeldItems(net.chimera.shaderpack.PackItemIdResolver items, boolean oldHandLight) {
+        INSTANCE.frameState.installHeldItems(items, oldHandLight);
+    }
+
     public static void installRuntimeSettings(PackRuntimeSettings settings) {
         INSTANCE.runtimeSettings = settings == null ? PackRuntimeSettings.empty() : settings;
         INSTANCE.loggedValueFailures.clear();

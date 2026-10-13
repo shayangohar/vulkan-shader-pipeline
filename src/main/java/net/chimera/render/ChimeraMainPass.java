@@ -2280,6 +2280,7 @@ public class ChimeraMainPass implements MainPass {
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
         ChimeraTerrainPipelines.setTerrainShading(net.chimera.shaderpack.TerrainShadingDirectives.VANILLA);
+        PackUniformProvider.installHeldItems(net.chimera.shaderpack.PackItemIdResolver.empty(), true);
         PackUniformProvider.resetSession();
     }
 
@@ -2822,6 +2823,7 @@ public class ChimeraMainPass implements MainPass {
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             ChimeraTerrainPipelines.setTerrainShading(net.chimera.shaderpack.TerrainShadingDirectives.VANILLA);
+            PackUniformProvider.installHeldItems(net.chimera.shaderpack.PackItemIdResolver.empty(), true);
             PackUniformProvider.installRuntimeSettings(null);
             this.packNeedsHdrDepth = false;
             return;
@@ -2878,6 +2880,15 @@ public class ChimeraMainPass implements MainPass {
         PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir(),
                 net.chimera.shaderpack.PackEngineDefines.forPack(this.packPlan.settingsPreprocessorDefines()));
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
+        net.chimera.shaderpack.PackItemIdResolver.ParseResult items = net.chimera.shaderpack.PackItemIdResolver.parse(
+                result.shadersDir(),
+                net.chimera.shaderpack.PackEngineDefines.forPack(this.packPlan.settingsPreprocessorDefines()));
+        net.chimera.shaderpack.HandLightDirectives handLight = this.packPlan.handLight();
+        LOGGER.info("[chimera] pack held items: item ids={}, oldHandLight={}{}",
+                items.resolver().mappings().size(), handLight.oldHandLight(),
+                items.deviations().isEmpty() && handLight.deviations().isEmpty() ? ""
+                        : " " + items.deviations() + handLight.deviations());
+        PackUniformProvider.installHeldItems(items.resolver(), handLight.oldHandLight());
         this.packHdrFormat = this.packConfig.colortexFormats().getOrDefault(0, 97);
         this.packResourceOwner = PackResourceOwner.load(this.packPlan.resources(), result.shadersDir());
         ensureMaterialMapOwner();

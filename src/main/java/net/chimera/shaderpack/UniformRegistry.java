@@ -858,7 +858,7 @@ public final class UniformRegistry {
     private static final Set<String> IRIS_UNSERVED = Set.of(
             "alphaTestRef", "blendFunc", "gtextureId", "gtextureSize", "textureReloadCount",
             "vehicleId", "currentSelectedBlockId", "currentSelectedBlockPos",
-            "heldBlockLightColor", "heldBlockLightColor2", "fogDensity", "fogMode", "fogShape",
+            "fogDensity", "fogMode", "fogShape",
             "cloudTime", "constantMood",
             "modelViewMatrix", "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse",
             "normalMatrix", "textureMatrix", "chunkOffset");
@@ -1252,10 +1252,13 @@ public final class UniformRegistry {
         addDefault(specs, "blockEntityId", "int");
         addDefault(specs, "currentRenderedItemId", "int");
         addDefault(specs, "entityId", "int");
-        addDefault(specs, "heldBlockLightValue", "int");
-        addDefault(specs, "heldBlockLightValue2", "int");
-        addDefault(specs, "heldItemId", "int");
-        addDefault(specs, "heldItemId2", "int");
+        // IdMapUniforms: each hand's item.properties id, its light and that light's colour.
+        addLive(specs, "heldBlockLightValue", "int");
+        addLive(specs, "heldBlockLightValue2", "int");
+        addLive(specs, "heldItemId", "int");
+        addLive(specs, "heldItemId2", "int");
+        addLive(specs, "heldBlockLightColor", "vec3");
+        addLive(specs, "heldBlockLightColor2", "vec3");
         addLive(specs, "gbufferModelView", "mat4");
         addLive(specs, "gbufferModelViewInverse", "mat4");
         addLive(specs, "gbufferPreviousModelView", "mat4");

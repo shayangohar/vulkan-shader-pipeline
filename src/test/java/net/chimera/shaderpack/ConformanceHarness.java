@@ -48,6 +48,7 @@ public final class ConformanceHarness {
         verifyComputeUniformOffsets();
         verifyMidBlockInputs();
         verifyTerrainShading();
+        verifyHeldItems();
         verifyScreenOverlays();
         verifyIndentedProperties();
         PackPostTargetsHarness.run();
@@ -1812,6 +1813,85 @@ public final class ConformanceHarness {
             assertTrue(applies, "ChimeraMainPass." + name + " applies the terrain shading state");
         }
         System.out.println("[chimera] terrain shading oldLighting/separateAo (directives, encoding, mixins, install): PASS");
+    }
+
+    /**
+     * Iris serves heldItemId, heldBlockLightValue and heldBlockLightColor (and their 2 variants)
+     * from the pack's item.properties and the held stacks (IdMapUniforms). Chimera served 0, so
+     * a held torch never lit anything: Solas's hand light only runs for heldItemId 1..83, and
+     * BSL and Complementary read heldBlockLightValue.
+     */
+    private static void verifyHeldItems() throws IOException {
+        Path root = Files.createTempDirectory("chimera-held-items-");
+        try {
+            Path shaders = Files.createDirectories(root.resolve("shaders"));
+            Files.writeString(shaders.resolve("item.properties"), """
+                    # Item ids
+                    item.5=torchflower torch \\
+                        minecraft:lantern
+                    item.6=soul_torch leaves:waterlogged=false
+                    #if MC_VERSION >= 12100
+                    item.44028=soul_lantern
+                    #else
+                    item.9=soul_lantern
+                    #endif
+                    item.7=end_rod
+                    item.7=glowstone
+                    item.40008=air
+                    """);
+            var parsed = PackItemIdResolver.parse(shaders, PackEngineDefines.standard());
+            var items = parsed.resolver();
+            assertTrue(parsed.present() && parsed.deviations().isEmpty(), "item.properties parses: " + parsed.deviations());
+            assertEquals(5, items.resolve("minecraft:torch"), "a bare name is in minecraft");
+            assertEquals(5, items.resolve("minecraft:lantern"), "a continuation line joins its key's list");
+            assertEquals(6, items.resolve("soul_torch"), "a lookup without a namespace means minecraft");
+            assertEquals(44028, items.resolve("minecraft:soul_lantern"), "#if branches follow the engine macros");
+            assertEquals(7, items.resolve("minecraft:glowstone"), "a later line for a key replaces it");
+            assertEquals(PackItemIdResolver.UNMAPPED, items.resolve("minecraft:end_rod"),
+                    "the replaced line's names are gone, as java.util.Properties keeps one value per key");
+            assertEquals(40008, items.resolve("minecraft:air"), "an empty hand looks up minecraft:air");
+            assertEquals(PackItemIdResolver.UNMAPPED, items.resolve("minecraft:stone"), "an unlisted item is -1");
+            assertTrue(items.mappings().keySet().stream().noneMatch(name -> name.contains("=")),
+                    "state selectors are skipped, as Iris does for items");
+        } finally {
+            deleteTree(root);
+        }
+        assertTrue(!PackItemIdResolver.parse(root, PackEngineDefines.standard()).present()
+                        && PackItemIdResolver.empty().resolve("minecraft:torch") == PackItemIdResolver.UNMAPPED,
+                "without item.properties every held item is -1");
+
+        assertTrue(HandLightDirectives.fromProperties(Map.of()).oldHandLight(), "Iris's oldHandLight defaults to on");
+        assertTrue(!HandLightDirectives.fromProperties(Map.of("oldHandLight", "false")).oldHandLight(),
+                "oldHandLight=false lights each hand separately");
+        assertTrue(HandLightDirectives.fromProperties(Map.of("oldHandLight", "nope")).deviations()
+                        .contains("OLD_HAND_LIGHT_DIRECTIVE_MALFORMED"), "an unexpected oldHandLight is reported");
+
+        for (String name : List.of("heldItemId", "heldItemId2", "heldBlockLightValue", "heldBlockLightValue2")) {
+            var descriptor = UniformRegistry.descriptor(name, "int");
+            assertTrue(descriptor != null && descriptor.availability() == UniformRegistry.Availability.LIVE,
+                    name + " is served live");
+        }
+        for (String name : List.of("heldBlockLightColor", "heldBlockLightColor2")) {
+            var descriptor = UniformRegistry.descriptor(name, "vec3");
+            assertTrue(descriptor != null && descriptor.availability() == UniformRegistry.Availability.LIVE,
+                    name + " is served live");
+        }
+
+        var pass = nativeClass("net/chimera/render/ChimeraMainPass");
+        for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
+            var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
+                    .orElseThrow(() -> new AssertionError("ChimeraMainPass." + name + " is missing"));
+            boolean installs = false;
+            for (var instruction : method.instructions) {
+                if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                        && call.owner.equals("net/chimera/render/shader/PackUniformProvider")
+                        && call.name.equals("installHeldItems")) {
+                    installs = true;
+                }
+            }
+            assertTrue(installs, "ChimeraMainPass." + name + " installs the held-item map");
+        }
+        System.out.println("[chimera] held-item uniforms (item.properties, oldHandLight, live catalog, install): PASS");
     }
 
     private static boolean terrainShading(TerrainShadingDirectives directives, String key) {

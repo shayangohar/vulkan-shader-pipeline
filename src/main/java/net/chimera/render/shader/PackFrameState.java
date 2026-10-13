@@ -62,6 +62,7 @@ final class PackFrameState {
     private final Vector3f skyColor = new Vector3f(0.0f, 0.0f, 0.0f);
     private final Vector3f sunLightVector = new Vector3f(0.0f, 1.0f, 0.0f);
     private final IrisPlayerState irisPlayer = new IrisPlayerState();
+    private final HeldItemState heldItems = new HeldItemState();
     /** The shadow caster rotation for the same light, as Iris builds it; its Z is sunLightVector. */
     private final Matrix4f shadowLightRotation = new Matrix4f().rotateX((float) Math.toRadians(90.0));
     private final float[] fogColor = new float[4];
@@ -167,6 +168,10 @@ final class PackFrameState {
         this.session = this.runtimeSettings.newSession();
     }
 
+    void installHeldItems(net.chimera.shaderpack.PackItemIdResolver items, boolean oldHandLight) {
+        heldItems.install(items, oldHandLight);
+    }
+
     void begin(Minecraft minecraft, Camera camera, float partialTick,
                Matrix4f capturedModelView, Matrix4f capturedProjection, float deltaSeconds) {
         advanceFrameTime(deltaSeconds);
@@ -181,6 +186,7 @@ final class PackFrameState {
         if (camera == null || minecraft == null) {
             clearCameraState();
             irisPlayer.clear();
+            heldItems.clear();
             clearWorldState();
             evaluateCustomValues();
             return;
@@ -189,6 +195,7 @@ final class PackFrameState {
         var position = camera.position();
         advanceCamera(position.x, position.y, position.z, viewportChanged);
         irisPlayer.capture(minecraft, partialTick, position.x, position.y, position.z, frameTime);
+        heldItems.capture(minecraft);
 
         Entity cameraEntity = minecraft.getCameraEntity();
         if (cameraEntity == null) {
@@ -274,6 +281,10 @@ final class PackFrameState {
         }
         if (IrisPlayerState.NAMES.contains(descriptor.sourceKey())) {
             irisPlayer.write(descriptor.sourceKey(), type, target);
+            return;
+        }
+        if (HeldItemState.NAMES.contains(descriptor.sourceKey())) {
+            heldItems.write(descriptor.sourceKey(), type, target);
             return;
         }
         switch (descriptor.sourceKey()) {
@@ -765,6 +776,9 @@ final class PackFrameState {
     private double engineValue(String name, int component) {
         if (IrisPlayerState.NAMES.contains(name)) {
             return irisPlayer.value(name, component);
+        }
+        if (HeldItemState.NAMES.contains(name)) {
+            return heldItems.value(name, component);
         }
         if (component < 0) {
             return scalarValue(name);

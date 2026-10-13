@@ -176,6 +176,11 @@ public record PackPlan(
         return TerrainShadingDirectives.fromProperties(settings.propertyValues());
     }
 
+    /** Whether heldBlockLightValue takes the brighter hand (Iris oldHandLight, default on). */
+    public HandLightDirectives handLight() {
+        return HandLightDirectives.fromProperties(settings.propertyValues());
+    }
+
     /** Which of Minecraft's screen overlays the pack keeps (Iris vignette and underwaterOverlay, default off). */
     public ScreenOverlayDirectives screenOverlays() {
         return ScreenOverlayDirectives.fromProperties(settings.propertyValues());
