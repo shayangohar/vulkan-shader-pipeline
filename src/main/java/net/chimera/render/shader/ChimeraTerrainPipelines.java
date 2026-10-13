@@ -10,6 +10,7 @@ import net.chimera.shaderpack.PackMaterialResolver;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.TerrainShadingDirectives;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.level.block.state.BlockState;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
@@ -179,7 +180,7 @@ public final class ChimeraTerrainPipelines {
     }
 
     /** The pack block.properties id of a block state, or -1 when unmapped (Iris BlockMaterialMapping). */
-    public static int blockStateId(net.minecraft.world.level.block.state.BlockState state) {
+    public static int blockStateId(BlockState state) {
         return materialResolver.resolve(state);
     }
 

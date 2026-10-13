@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.vertex.ChimeraEntityVertexData;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 /** Deterministic M6.3 checks for the isolated world-entity adapter. */
@@ -41,7 +43,7 @@ public final class M63ConformanceHarness {
     }
 
     private static void verifyExtendedFormat() {
-        var host = com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY;
+        var host = DefaultVertexFormat.NEW_ENTITY;
         var extended = ChimeraVertexFormats.EXTENDED_ENTITY;
         assertEquals(36, host.getVertexSize(), "M6.3 host entity stride");
         assertEquals(56, extended.getVertexSize(), "M6.3 extended entity stride");
@@ -470,7 +472,7 @@ public final class M63ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.deepEquals(expected, actual)) {
+        if (!Objects.deepEquals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

@@ -160,7 +160,6 @@ public final class PackFrameSchedulePlan {
     public List<PostStage> postStages() { return postStages; }
     public boolean requiresDepthtex0() { return depthtex0; }
     public boolean requiresDepthtex1() { return depthtex1; }
-    public boolean requiresDepthtex2() { return depthtex2; }
     /** An early (deferred) pass reads depthtex0, the opaque depth at that seam. */
     public boolean earlyReadsDepthtex0() { return earlyDepthtex0; }
     public boolean handBeforeEarlyPost() { return handBeforeEarlyPost; }
@@ -187,10 +186,6 @@ public final class PackFrameSchedulePlan {
 
     public int phaseIndex(Phase phase) {
         return phases.indexOf(phase);
-    }
-
-    public boolean hasPhase(Phase phase) {
-        return phases.contains(phase);
     }
 
     public String snapshot() {

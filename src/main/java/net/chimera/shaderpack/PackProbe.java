@@ -21,6 +21,9 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /** Read-only, deterministic inventory of the Chimera pack boundary. */
 public final class PackProbe {
@@ -114,17 +117,7 @@ public final class PackProbe {
         }
 
         Map<String, Inventory> inventories = new TreeMap<>();
-        for (PackProgram program : loaded.programs()) {
-            Inventory inventory = inventories.computeIfAbsent(program.name(), Inventory::new);
-            inventory.variantFolder = program.variantFolder();
-            addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
-                    program.preparedFragmentSource(), shadersDir);
-            if (program.vertexSource() != null) {
-                addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
-                        program.preparedVertexSource(), shadersDir);
-            }
-            inventory.deviations.addAll(program.preparationDeviations());
-        }
+        addInventories(loaded.programs(), inventories, shadersDir);
         scanSelectedStageFiles(loaded, inventories);
 
         if (!passListPresent) {
@@ -188,17 +181,7 @@ public final class PackProbe {
                 inventory.preparedSources.clear();
                 inventory.deviations.clear();
             });
-            for (PackProgram program : loaded.programs()) {
-                Inventory inventory = inventories.computeIfAbsent(program.name(), Inventory::new);
-                inventory.variantFolder = program.variantFolder();
-                addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
-                        program.preparedFragmentSource(), shadersDir);
-                if (program.vertexSource() != null) {
-                    addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
-                            program.preparedVertexSource(), shadersDir);
-                }
-                inventory.deviations.addAll(program.preparationDeviations());
-            }
+            addInventories(loaded.programs(), inventories, shadersDir);
             packConfig = PackConfig.parse(loaded.programs(), shadersDir, settingsPlan);
             resolution = PackResolutionPlan.build(
                     loaded.selectedDimension(), loaded.selectedVariantFolder(),
@@ -308,6 +291,22 @@ public final class PackProbe {
             }
         } catch (IOException ignored) {
             // The load result already carries the path failure. The report remains deterministic.
+        }
+    }
+
+    /** Records each program's fragment and vertex sources, and its preparation deviations. */
+    private static void addInventories(List<PackProgram> programs, Map<String, Inventory> inventories,
+                                       Path shadersDir) {
+        for (PackProgram program : programs) {
+            Inventory inventory = inventories.computeIfAbsent(program.name(), Inventory::new);
+            inventory.variantFolder = program.variantFolder();
+            addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
+                    program.preparedFragmentSource(), shadersDir);
+            if (program.vertexSource() != null) {
+                addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
+                        program.preparedVertexSource(), shadersDir);
+            }
+            inventory.deviations.addAll(program.preparationDeviations());
         }
     }
 
@@ -865,7 +864,7 @@ public final class PackProbe {
     /** A host-layout lane (LINE, GLINT, LIGHTNING, ...) whose vertex could not be bridged. */
     private static final Set<String> HOST_LAYOUT_BRIDGE_FAILURES = FamilyAdapterRegistry.hostLayoutLanes().stream()
             .map(lane -> lane + "_VERTEX_BRIDGE_UNSUPPORTED")
-            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            .collect(Collectors.toUnmodifiableSet());
 
     private static boolean hasSevereDeviation(Collection<String> deviations) {
         for (String deviation : deviations) {
@@ -1192,10 +1191,6 @@ public final class PackProbe {
 
     private static String relativePath(Path root, Path file) {
         return root.relativize(file.normalize()).toString().replace('\\', '/');
-    }
-
-    private static String stripComments(String source) {
-        return GlslLexer.stripComments(source);
     }
 
     private static List<String> sorted(Collection<String> values) {

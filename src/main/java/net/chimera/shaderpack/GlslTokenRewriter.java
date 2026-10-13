@@ -1,9 +1,13 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Token-safe rewrites for the small legacy-to-Vulkan GLSL bridge. */
 public final class GlslTokenRewriter {
@@ -18,14 +22,14 @@ public final class GlslTokenRewriter {
         List<GlslResourceUsage.FunctionDefinition> functions = new ArrayList<>(analysis.reachableFunctions());
         functions.addAll(analysis.unreachableFunctions());
         if (functions.isEmpty()) return source;
-        Set<String> identifiers = new java.util.HashSet<>();
+        Set<String> identifiers = new HashSet<>();
         for (var token : tokens) if (token.kind() == GlslLexer.Kind.IDENTIFIER) identifiers.add(token.text());
         String prefix = "chimeraAtlas";
         while (atlasPrefixUsed(identifiers, prefix)) prefix += "_";
         String helper = prefix + "Sample";
         String gradHelper = prefix + "SampleGrad";
         boolean[] directive = atlasDirectiveTokens(tokens);
-        Set<String> callableShadows = new java.util.HashSet<>();
+        Set<String> callableShadows = new HashSet<>();
         for (var function : functions) callableShadows.add(function.name());
         // A macro with one of these names is not a known GLSL sampling operation.
         for (int i = 0; i < tokens.size(); i++) {
@@ -37,7 +41,7 @@ public final class GlslTokenRewriter {
         boolean changed = false;
         boolean changedGrad = false;
         for (var function : functions) {
-            Set<String> eligible = new java.util.HashSet<>(atlasSamplers);
+            Set<String> eligible = new HashSet<>(atlasSamplers);
             for (int i = function.definitionStart(); i < function.bodyEnd(); i++) {
                 if (directive[i] || !eligible.contains(tokens.get(i).text())) continue;
                 int previous = GlslLexer.previousSignificant(tokens, i);
@@ -223,7 +227,7 @@ public final class GlslTokenRewriter {
         var usage = GlslResourceUsage.analyze(source);
         if (!usage.successful()) return source;
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        Set<String> names = new java.util.HashSet<>();
+        Set<String> names = new HashSet<>();
         for (var token : tokens) if (token.kind() == GlslLexer.Kind.IDENTIFIER) names.add(token.text());
         String replacement = "chimeraSamplerParameter";
         while (names.contains(replacement)) replacement += "_";
@@ -460,18 +464,18 @@ public final class GlslTokenRewriter {
     private static final Set<String> MEMORY_QUALIFIERS = Set.of(
             "writeonly", "readonly", "coherent", "volatile", "restrict");
 
-    private static final java.util.regex.Pattern ALIAS_DEFINE = java.util.regex.Pattern.compile(
+    private static final Pattern ALIAS_DEFINE = Pattern.compile(
             "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*(?://.*)?$");
     /** Group 1 is the directive through the macro name; group 2 is the name. */
-    private static final java.util.regex.Pattern MACRO_DEFINE = java.util.regex.Pattern.compile(
+    private static final Pattern MACRO_DEFINE = Pattern.compile(
             "(\\s*#\\s*define\\s+([A-Za-z_]\\w*))");
-    private static final java.util.regex.Pattern UNDEF = java.util.regex.Pattern.compile(
+    private static final Pattern UNDEF = Pattern.compile(
             "^\\s*#\\s*undef\\s+([A-Za-z_]\\w*)\\s*$");
-    private static final java.util.regex.Pattern SAMPLER_DECLARATION = java.util.regex.Pattern.compile(
+    private static final Pattern SAMPLER_DECLARATION = Pattern.compile(
             "\\buniform\\s+(?:(?:lowp|mediump|highp)\\s+)?[iu]?sampler\\w*\\s+([A-Za-z_]\\w*)");
 
     /** {@code #define attribute in}: a macro renaming one storage qualifier to another. */
-    private static final java.util.regex.Pattern STORAGE_ALIAS_DEFINE = java.util.regex.Pattern.compile(
+    private static final Pattern STORAGE_ALIAS_DEFINE = Pattern.compile(
             "^\\s*#\\s*define\\s+(attribute|varying)\\s+(in|out|attribute|varying)\\s*(?://.*)?$");
 
     /**
@@ -488,13 +492,13 @@ public final class GlslTokenRewriter {
         List<Map<String, String>> active = new ArrayList<>(lines.length);
         boolean[] drop = new boolean[lines.length];
         boolean[] directive = new boolean[lines.length];
-        Map<String, String> aliases = new java.util.HashMap<>();
+        Map<String, String> aliases = new HashMap<>();
         boolean changed = false;
         for (int line = 0; line < lines.length; line++) {
             String body = lines[line].endsWith("\r")
                     ? lines[line].substring(0, lines[line].length() - 1) : lines[line];
-            java.util.regex.Matcher define = STORAGE_ALIAS_DEFINE.matcher(body);
-            java.util.regex.Matcher undef = UNDEF.matcher(body);
+            Matcher define = STORAGE_ALIAS_DEFINE.matcher(body);
+            Matcher undef = UNDEF.matcher(body);
             if (define.matches()) {
                 aliases.put(define.group(1), define.group(2));
                 drop[line] = true;
@@ -533,8 +537,8 @@ public final class GlslTokenRewriter {
      */
     static String expandSamplerAliases(String source) {
         if (source == null || !source.contains("#")) return source;
-        Set<String> samplers = new java.util.HashSet<>();
-        java.util.regex.Matcher declared = SAMPLER_DECLARATION.matcher(source);
+        Set<String> samplers = new HashSet<>();
+        Matcher declared = SAMPLER_DECLARATION.matcher(source);
         while (declared.find()) samplers.add(declared.group(1));
         if (samplers.isEmpty()) return source;
         // Directives are read line by line; substitution runs over one token
@@ -543,14 +547,14 @@ public final class GlslTokenRewriter {
         List<Map<String, String>> active = new ArrayList<>(lines.length);
         boolean[] drop = new boolean[lines.length];
         boolean[] macro = new boolean[lines.length];
-        Map<String, String> aliases = new java.util.HashMap<>();
+        Map<String, String> aliases = new HashMap<>();
         boolean changed = false;
         for (int line = 0; line < lines.length; line++) {
             String body = lines[line].endsWith("\r")
                     ? lines[line].substring(0, lines[line].length() - 1) : lines[line];
-            java.util.regex.Matcher define = ALIAS_DEFINE.matcher(body);
-            java.util.regex.Matcher undef = UNDEF.matcher(body);
-            java.util.regex.Matcher named = MACRO_DEFINE.matcher(body);
+            Matcher define = ALIAS_DEFINE.matcher(body);
+            Matcher undef = UNDEF.matcher(body);
+            Matcher named = MACRO_DEFINE.matcher(body);
             if (define.matches()) {
                 String target = aliases.getOrDefault(define.group(2), define.group(2));
                 aliases.remove(define.group(1));
@@ -625,7 +629,7 @@ public final class GlslTokenRewriter {
             }
             previous = index;
         }
-        Set<String> constant = new java.util.HashSet<>();
+        Set<String> constant = new HashSet<>();
         declarations.forEach(declaration -> constant.addAll(declaration.names()));
         boolean changed = true;
         while (changed) {
@@ -738,7 +742,7 @@ public final class GlslTokenRewriter {
 
     /** Names of functions defined or declared at global scope. */
     private static Set<String> globalFunctionNames(List<GlslLexer.Token> tokens) {
-        Set<String> names = new java.util.HashSet<>();
+        Set<String> names = new HashSet<>();
         int depth = 0;
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
@@ -835,7 +839,7 @@ public final class GlslTokenRewriter {
     /** Returns a source-safe identifier that is absent from the token stream. */
     static String uniqueIdentifier(String source, String base) {
         String candidate = base == null || base.isBlank() ? "chimeraGenerated" : base;
-        Set<String> identifiers = new java.util.HashSet<>();
+        Set<String> identifiers = new HashSet<>();
         for (GlslLexer.Token token : GlslLexer.lex(source == null ? "" : source)) {
             if (token.kind() == GlslLexer.Kind.IDENTIFIER) identifiers.add(token.text());
         }
@@ -887,7 +891,7 @@ public final class GlslTokenRewriter {
      * type, the name, a parameter list, then a body or a semicolon.
      */
     static Set<String> userDefinedFunctions(List<GlslLexer.Token> tokens, Set<String> candidates) {
-        Set<String> defined = new java.util.HashSet<>();
+        Set<String> defined = new HashSet<>();
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
             if (token.kind() != GlslLexer.Kind.IDENTIFIER || !candidates.contains(token.text())) {

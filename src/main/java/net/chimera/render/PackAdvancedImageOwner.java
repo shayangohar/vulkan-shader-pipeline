@@ -1,8 +1,10 @@
 package net.chimera.render;
 
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
+import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 import java.util.Map;
@@ -88,41 +90,24 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         if (plan.hasSupportedCompute() && resourcesAvailable()) computeInstalled = true;
     }
 
-    public boolean needsGraphicsTransition(net.chimera.shaderpack.ProgramImageBindingManifest manifest) {
+    public boolean needsGraphicsTransition(ProgramImageBindingManifest manifest) {
         for (var entry : manifest.entries()) {
-            if (entry.kind() != net.chimera.shaderpack.ProgramImageBindingManifest.Kind.ADVANCED_IMAGE) continue;
+            if (entry.kind() != ProgramImageBindingManifest.Kind.ADVANCED_IMAGE) continue;
             PackStorageImage image = images.get(entry.resourceKey());
-            if (image != null && image.getCurrentLayout() != org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL) return true;
+            if (image != null && image.getCurrentLayout() != VK10.VK_IMAGE_LAYOUT_GENERAL) return true;
         }
         return false;
     }
 
     public void prepareGraphicsImages(VkCommandBuffer commandBuffer,
-            net.chimera.shaderpack.ProgramImageBindingManifest manifest) {
+            ProgramImageBindingManifest manifest) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (var entry : manifest.entries()) {
-                if (entry.kind() != net.chimera.shaderpack.ProgramImageBindingManifest.Kind.ADVANCED_IMAGE) continue;
+                if (entry.kind() != ProgramImageBindingManifest.Kind.ADVANCED_IMAGE) continue;
                 PackStorageImage image = images.get(entry.resourceKey());
                 if (image != null) image.transitionToGeneral(stack, commandBuffer);
             }
         }
-    }
-
-    /** Transitions the images written by one guarded graphics program to GENERAL. */
-    public void prepareGraphicsWrites(VkCommandBuffer commandBuffer, String program) {
-        if (commandBuffer == null || !installedGraphicsPrograms.contains(program)) return;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.graphicsImages(program)) {
-                PackStorageImage image = imageForSymbol(binding.symbol());
-                if (image != null) image.transitionToGeneral(stack, commandBuffer);
-            }
-        }
-    }
-
-    /** True when this program will transition pack-owned images for a graphics write. */
-    public boolean hasGraphicsWrites(String program) {
-        return program != null && installedGraphicsPrograms.contains(program)
-                && !plan.graphicsImages(program).isEmpty();
     }
 
     /**

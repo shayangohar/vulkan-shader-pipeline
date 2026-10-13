@@ -7,9 +7,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -282,7 +283,7 @@ public final class PackConfig {
         List<String> deviations = new ArrayList<>();
 
         for (PackProgram program : programs.stream()
-                .sorted(java.util.Comparator.comparing(PackProgram::name)).toList()) {
+                .sorted(Comparator.comparing(PackProgram::name)).toList()) {
             String src = program.executableFragmentSource();
             if (src == null) {
                 src = "";

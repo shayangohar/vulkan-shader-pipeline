@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -21,6 +21,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /** Immutable defaults-only interpretation of shaders.properties and pack options. */
 record PackSettingsPlan(
@@ -80,43 +81,6 @@ record PackSettingsPlan(
                 ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(resourceDeclarations));
         samplerSlots = samplerSlots == null
                 ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(samplerSlots));
-    }
-
-    /** Compatibility constructor for the M7.1 settings shape. */
-    PackSettingsPlan(
-            Map<String, Option> options,
-            Map<String, String> defaults,
-            Map<String, Profile> profiles,
-            Map<String, String> propertyValues,
-            Map<String, Boolean> programEnabled,
-            Set<String> requiredFeatures,
-            Set<String> optionalFeatures,
-            Set<String> unsupportedRequiredFeatures,
-            List<String> deviations,
-            String activeProfile
-    ) {
-        this(options, defaults, profiles, propertyValues, programEnabled,
-                requiredFeatures, optionalFeatures, unsupportedRequiredFeatures,
-                deviations, activeProfile, PackRuntimeSettings.empty(), Map.of(), Map.of(), false);
-    }
-
-    /** Compatibility constructor for callers using the M7.2 settings shape. */
-    PackSettingsPlan(
-            Map<String, Option> options,
-            Map<String, String> defaults,
-            Map<String, Profile> profiles,
-            Map<String, String> propertyValues,
-            Map<String, Boolean> programEnabled,
-            Set<String> requiredFeatures,
-            Set<String> optionalFeatures,
-            Set<String> unsupportedRequiredFeatures,
-            List<String> deviations,
-            String activeProfile,
-            PackRuntimeSettings runtimeSettings
-    ) {
-        this(options, defaults, profiles, propertyValues, programEnabled,
-                requiredFeatures, optionalFeatures, unsupportedRequiredFeatures,
-                deviations, activeProfile, runtimeSettings, Map.of(), Map.of(), false);
     }
 
     static PackSettingsPlan empty() {
@@ -315,7 +279,7 @@ record PackSettingsPlan(
         return options.entrySet().stream()
                 .filter(entry -> "chimera.option".equals(entry.getValue().source()))
                 .map(Map.Entry::getKey)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     boolean enabled(String name) {
@@ -634,7 +598,7 @@ record PackSettingsPlan(
                         // Iris evaluates the switch against the pack's option values: a toggle
                         // the pack declares but leaves off (`//#define DOF`) is false. Only a
                         // name that is no option at all keeps the program enabled.
-                        Map<String, String> switches = new java.util.HashMap<>(conditions.macros());
+                        Map<String, String> switches = new HashMap<>(conditions.macros());
                         for (String toggle : toggleOptions) {
                             switches.putIfAbsent(toggle, "0");
                         }

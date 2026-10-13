@@ -82,11 +82,6 @@ public final class PackSource {
             return programs;
         }
 
-        /** Raw selected sources used to build the settings plan before preparation. */
-        public List<PackProgram> rawPrograms() {
-            return rawVariants.getOrDefault(selectedVariantFolder, List.of());
-        }
-
         /** Raw executable entry files from every discovered dimension variant. */
         public List<PackProgram> rawProgramsAllVariants() {
             return rawVariants.values().stream()
@@ -801,7 +796,8 @@ public final class PackSource {
         return name.replace('\\', '/');
     }
 
-    private static boolean unsafeZipName(String name) {
+    /** True for an absolute, drive-qualified or parent-escaping ZIP entry name. */
+    static boolean unsafeZipName(String name) {
         if (name.isBlank() || name.startsWith("/")
                 || (name.length() >= 3 && Character.isLetter(name.charAt(0))
                 && name.charAt(1) == ':' && name.charAt(2) == '/')) {

@@ -1,8 +1,16 @@
 package net.chimera.shaderpack;
 
+import net.chimera.render.vertex.ChimeraVertexFormats;
+import net.vulkanmod.vulkan.shader.Pipeline;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.util.shaderc.Shaderc;
+
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Real-pack entity and block qualification: the locked Complementary and
@@ -125,7 +133,7 @@ public final class M87EntityRealPackHarness {
         assertTrue(fragment.contains("flat in ivec2 " + EntityOverlayColor.UV_VARYING)
                         && fragment.contains("texelFetch(" + PackResourcePlan.OVERLAY_SAMPLER),
                 what + " fragment does not fetch entityColor from the overlay");
-        long declarations = java.util.regex.Pattern.compile("\\bvec4\\s+entityColor\\s*;")
+        long declarations = Pattern.compile("\\bvec4\\s+entityColor\\s*;")
                 .matcher(fragment).results().count();
         assertTrue(declarations == 1 && !fragment.contains("uniform vec4 entityColor"),
                 what + " fragment still reads entityColor from a uniform (" + declarations + " declarations)");
@@ -203,9 +211,9 @@ public final class M87EntityRealPackHarness {
         // (layout mismatch plus manifest bijection). Uniform suppliers
         // never run headless; the dummy is never invoked.
         try {
-            net.vulkanmod.vulkan.shader.Pipeline.Builder builder =
+            Pipeline.Builder builder =
                     PackPipelines.prepareBuilder(prepared, plan.name(), advanced,
-                            net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY,
+                            ChimeraVertexFormats.EXTENDED_ENTITY,
                             info -> () -> null);
             assertTransformBlocks(what, builder);
         } catch (PackPipelines.PreparationFailure failure) {
@@ -280,7 +288,7 @@ public final class M87EntityRealPackHarness {
     private static void verifyShadowSamplerTypes(PackProbe.Analysis analysis, String pack) {
         for (PackProgramPlan plan : analysis.plan().programs()) {
             if (!plan.executable() || plan.interfacePlan() == null) continue;
-            List<String> declared = new java.util.ArrayList<>();
+            List<String> declared = new ArrayList<>();
             for (var sampler : plan.interfacePlan().samplers()) {
                 if (!sampler.name().startsWith("shadowtex")) continue;
                 declared.add(sampler.name() + "=" + sampler.glslType());
@@ -304,7 +312,7 @@ public final class M87EntityRealPackHarness {
      * would make every host per-draw transform binding miss.
      */
     private static void assertTransformBlocks(String what,
-            net.vulkanmod.vulkan.shader.Pipeline.Builder builder) {
+            Pipeline.Builder builder) {
         for (int binding : List.of(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
                 UniformRegistry.PROJECTION_BINDING)) {
             String expected = binding == UniformRegistry.DYNAMIC_TRANSFORMS_BINDING
@@ -386,47 +394,47 @@ public final class M87EntityRealPackHarness {
     }
 
     static void compileStage(String source, boolean vertex, String what) {
-        long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
+        long compiler = Shaderc.shaderc_compiler_initialize();
         // Heap buffers plus the native entry point directly. The CharSequence
         // overload stack-allocates UTF-8 and overflows LWJGL's thread-local
         // MemoryStack on large MCBL sources (DOC-348 gate), while the
         // ByteBuffer overload sizes by remaining() and feeds shaderc the
         // terminator as trailing garbage. Explicit sizes excluding the
         // terminator reproduce the CharSequence semantics without the stack.
-        java.nio.ByteBuffer text = org.lwjgl.system.MemoryUtil.memUTF8(source);
-        java.nio.ByteBuffer name = org.lwjgl.system.MemoryUtil.memUTF8(
+        ByteBuffer text = MemoryUtil.memUTF8(source);
+        ByteBuffer name = MemoryUtil.memUTF8(
                 vertex ? "entity.vsh" : "entity.fsh");
-        java.nio.ByteBuffer entry = org.lwjgl.system.MemoryUtil.memASCII("main");
+        ByteBuffer entry = MemoryUtil.memASCII("main");
         long result = 0;
         try {
-            result = org.lwjgl.util.shaderc.Shaderc.nshaderc_compile_into_spv(compiler,
-                    org.lwjgl.system.MemoryUtil.memAddress(text), text.remaining() - 1,
-                    vertex ? org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_vertex_shader
-                            : org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_fragment_shader,
-                    org.lwjgl.system.MemoryUtil.memAddress(name),
-                    org.lwjgl.system.MemoryUtil.memAddress(entry), 0);
+            result = Shaderc.nshaderc_compile_into_spv(compiler,
+                    MemoryUtil.memAddress(text), text.remaining() - 1,
+                    vertex ? Shaderc.shaderc_glsl_vertex_shader
+                            : Shaderc.shaderc_glsl_fragment_shader,
+                    MemoryUtil.memAddress(name),
+                    MemoryUtil.memAddress(entry), 0);
             assertTrue(result != 0
-                            && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)
-                            == org.lwjgl.util.shaderc.Shaderc.shaderc_compilation_status_success,
+                            && Shaderc.shaderc_result_get_compilation_status(result)
+                            == Shaderc.shaderc_compilation_status_success,
                     what + " did not compile: " + (result == 0 ? "no result"
-                            : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result))
+                            : Shaderc.shaderc_result_get_error_message(result))
                             + " [source dumped to " + dumpSource(source, what) + "]");
         } finally {
-            if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
-            org.lwjgl.system.MemoryUtil.memFree(entry);
-            org.lwjgl.system.MemoryUtil.memFree(name);
-            org.lwjgl.system.MemoryUtil.memFree(text);
-            org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
+            if (result != 0) Shaderc.shaderc_result_release(result);
+            MemoryUtil.memFree(entry);
+            MemoryUtil.memFree(name);
+            MemoryUtil.memFree(text);
+            Shaderc.shaderc_compiler_release(compiler);
         }
     }
 
     private static String dumpSource(String source, String what) {
         try {
             Path dir = Path.of("build", "m87-fail");
-            java.nio.file.Files.createDirectories(dir);
+            Files.createDirectories(dir);
             String name = what.replaceAll("[^a-zA-Z0-9]+", "_") + ".glsl";
             Path file = dir.resolve(name);
-            java.nio.file.Files.writeString(file, source);
+            Files.writeString(file, source);
             return file.toString();
         } catch (Exception failure) {
             return "dump failed: " + failure.getMessage();

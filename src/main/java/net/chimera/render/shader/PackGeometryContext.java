@@ -2,13 +2,14 @@ package net.chimera.render.shader;
 
 import net.chimera.render.PackPostTargets;
 import net.vulkanmod.vulkan.texture.VulkanImage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -124,7 +125,7 @@ public final class PackGeometryContext {
         }
 
         VkRenderingInfo rendering = VkRenderingInfo.calloc(stack);
-        org.lwjgl.vulkan.VkRect2D renderArea = org.lwjgl.vulkan.VkRect2D.calloc(stack);
+        VkRect2D renderArea = VkRect2D.calloc(stack);
         renderArea.offset().set(0, 0);
         renderArea.extent().set(colors.get(0).width, colors.get(0).height);
         rendering.sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR)

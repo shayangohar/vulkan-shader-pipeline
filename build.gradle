@@ -1049,3 +1049,11 @@ java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }
+
+// Every lint is an error, so warnings cannot accumulate. Three lints stay off because they are
+// not about this code: classfile (gson's classes cite error-prone annotations that are not on
+// the classpath), processing (Mixin's annotation processor) and serial (internal exceptions
+// are never serialized).
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['-Xlint:all', '-Xlint:-classfile', '-Xlint:-processing', '-Xlint:-serial', '-Werror']
+}

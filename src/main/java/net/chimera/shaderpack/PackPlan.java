@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,29 +27,6 @@ public record PackPlan(
     public PackPlan(
             PackConfig.PackConfigData config,
             List<PackProgramPlan> programs,
-            PackEntityIdResolver entityIds
-    ) {
-        this(config, programs, entityIds, PackSettingsPlan.empty(),
-                PackResolutionPlan.empty(), PackResourcePlan.empty(), null,
-                PackAdvancedResourcePlan.empty());
-    }
-
-    /** Compatibility constructor for the pre-M8.1 resource-plan shape. */
-    public PackPlan(
-            PackConfig.PackConfigData config,
-            List<PackProgramPlan> programs,
-            PackEntityIdResolver entityIds,
-            PackSettingsPlan settings,
-            PackResolutionPlan resolution,
-            PackResourcePlan resources
-    ) {
-        this(config, programs, entityIds, settings, resolution, resources, null,
-                PackAdvancedResourcePlan.empty());
-    }
-
-    public PackPlan(
-            PackConfig.PackConfigData config,
-            List<PackProgramPlan> programs,
             PackEntityIdResolver entityIds,
             PackSettingsPlan settings,
             PackResolutionPlan resolution,
@@ -61,7 +39,7 @@ public record PackPlan(
     public PackPlan {
         programs = programs == null ? List.of() : programs.stream()
                 .filter(value -> value != null)
-                .sorted(java.util.Comparator.comparing(PackProgramPlan::name))
+                .sorted(Comparator.comparing(PackProgramPlan::name))
                 .toList();
         entityIds = entityIds == null ? PackEntityIdResolver.empty() : entityIds;
         settings = settings == null ? PackSettingsPlan.empty() : settings;

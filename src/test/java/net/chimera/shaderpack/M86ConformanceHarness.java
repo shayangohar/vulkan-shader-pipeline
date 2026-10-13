@@ -1,12 +1,18 @@
 package net.chimera.shaderpack;
 
 import net.chimera.render.ChimeraTextureBindingStateHarness;
+import net.chimera.render.PackAdvancedImageOwner;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /** Deterministic M8.6a advanced image and shadow-compute plan checks. */
 public final class M86ConformanceHarness {
@@ -41,11 +47,11 @@ public final class M86ConformanceHarness {
         assertTrue(supportedPlan.hasSupportedImages(), "M8.6 supported images rejected");
         assertTrue(supportedPlan.hasSupportedCompute(), "M8.6 shadow compute rejected");
         assertTrue(supportedPlan.capabilityPossible(), "M8.6 capability was not planned");
-        assertTrue(net.chimera.render.PackAdvancedImageOwner.shouldInitializeImage(false, false),
+        assertTrue(PackAdvancedImageOwner.shouldInitializeImage(false, false),
                 "M8.6 persistent images must be seeded on first use");
-        assertTrue(!net.chimera.render.PackAdvancedImageOwner.shouldInitializeImage(false, true),
+        assertTrue(!PackAdvancedImageOwner.shouldInitializeImage(false, true),
                 "M8.6 persistent images must not be cleared every frame");
-        assertTrue(net.chimera.render.PackAdvancedImageOwner.shouldInitializeImage(true, true),
+        assertTrue(PackAdvancedImageOwner.shouldInitializeImage(true, true),
                 "M8.6 per-frame clear policy was lost");
         assertEquals(2, supportedPlan.computeStages().get("shadowcomp").localSizeX(),
                 "M8.6 workgroup X");
@@ -301,7 +307,7 @@ public final class M86ConformanceHarness {
         Path path = Path.of(rawPath);
         assertTrue(Files.isDirectory(path) || Files.isRegularFile(path),
                 "M8.6 " + label + " path is missing");
-        Map<String, String> previous = new java.util.TreeMap<>();
+        Map<String, String> previous = new TreeMap<>();
         for (String name : overrides.keySet()) {
             String property = "chimera.option." + name;
             previous.put(name, System.getProperty(property));
@@ -358,7 +364,7 @@ public final class M86ConformanceHarness {
             assertTrue(!plan.computeStages().get("shadowcomp").samplerNames().isEmpty(),
                     "M8.6 " + label + " 3D sampler dependencies were not planned");
             if (plan.graphicsImages().containsKey("shadow")) {
-                assertTrue(plan.graphicsImageNames(java.util.Set.of("shadow"))
+                assertTrue(plan.graphicsImageNames(Set.of("shadow"))
                                 .containsAll(plan.requiredGraphicsImageNames()),
                         "M8.6 " + label
                                 + " optional graphics producers incorrectly block image coverage");
@@ -389,7 +395,7 @@ public final class M86ConformanceHarness {
                         "M8.6 Complementary WSR image producer was not admitted");
                 Set<String> shadowReaders = plan.graphicsImageReaders("shadow").stream()
                         .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
-                        .collect(java.util.stream.Collectors.toSet());
+                        .collect(Collectors.toSet());
                 assertTrue(shadowReaders.containsAll(Set.of(
                                 "voxel_sampler", "floodfill_sampler", "floodfill_sampler_copy")),
                         "M8.6 Complementary shadow helper samplers were not declared: "
@@ -435,7 +441,7 @@ public final class M86ConformanceHarness {
                 assertTrue(!analysis.settings().customSamplerSlots().containsKey("tex"),
                         "M8.6 Complementary source-only tex consumed a custom sampler slot");
                 PackResourceBinding blockAtlas = packPlan.resources().bindings().values().stream()
-                        .flatMap(java.util.Collection::stream)
+                        .flatMap(Collection::stream)
                         .filter(value -> value.source().equals("minecraft:textures/atlas/blocks.png"))
                         .findFirst().orElse(null);
                 assertTrue(blockAtlas != null
@@ -497,13 +503,13 @@ public final class M86ConformanceHarness {
         PackAdvancedResourcePlan.ProgramBindingLayout layout = resources.bindingLayout("composite");
         Set<String> advanced = layout.advancedSamplers().stream()
                 .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         assertTrue(!advanced.isEmpty(),
                 "M8.6 " + label + " composite has no planned advanced sampled resources");
         Set<String> ordinaryIdentities = layout.ordinaryDescriptors().stream()
                 .map(PackAdvancedResourcePlan.DescriptorBinding::identity)
-                .collect(java.util.stream.Collectors.toSet());
-        Set<String> descriptorIdentities = new java.util.HashSet<>();
+                .collect(Collectors.toSet());
+        Set<String> descriptorIdentities = new HashSet<>();
         for (PackAdvancedResourcePlan.DescriptorBinding descriptor : layout.descriptors()) {
             if (!descriptorIdentities.add(descriptor.identity())) {
                 throw new AssertionError("M8.6 " + label
@@ -571,7 +577,7 @@ public final class M86ConformanceHarness {
             if (vertexBindings.isEmpty()) continue;
             Set<String> advancedSamplerNames = resources.bindingLayout(program.name()).advancedSamplers().stream()
                     .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
-                    .collect(java.util.stream.Collectors.toSet());
+                    .collect(Collectors.toSet());
             List<PackAdvancedResourcePlan.DescriptorBinding> ordinary =
                     resources.bindingLayout(program.name()).ordinaryDescriptors();
             PackAdvancedResourcePlan.DescriptorBinding vertexUbo = vertexBindings.stream()
@@ -590,7 +596,7 @@ public final class M86ConformanceHarness {
             Set<String> vertexSamplerNames = vertexBindings.stream()
                     .filter(value -> value.type() == 1)
                     .map(PackAdvancedResourcePlan.DescriptorBinding::symbol)
-                    .collect(java.util.stream.Collectors.toSet());
+                    .collect(Collectors.toSet());
             for (UniformRegistry.SamplerBinding sampler : program.interfacePlan().samplers()) {
                 if (!vertexSamplerNames.contains(sampler.name())
                         || advancedSamplerNames.contains(sampler.name())) {
@@ -615,7 +621,7 @@ public final class M86ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected=" + expected + " actual=" + actual);
         }
     }

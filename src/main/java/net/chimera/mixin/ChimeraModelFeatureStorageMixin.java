@@ -1,9 +1,9 @@
 package net.chimera.mixin;
 
+import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraEntityStorage;
-import net.chimera.render.shader.ChimeraEntitySubmission;
-import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.shader.SubmissionIdentity;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -22,33 +22,32 @@ import java.util.Map;
 @Mixin(ModelFeatureRenderer.Storage.class)
 public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntityStorage {
     @Unique
-    private final Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$entitySubmits =
+    private final Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> chimera$entitySubmits =
             new LinkedHashMap<>();
     @Unique
-    private final Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$blockSubmits =
+    private final Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> chimera$blockSubmits =
             new LinkedHashMap<>();
 
     @Inject(method = "add", at = @At("HEAD"), cancellable = true, require = 1)
     private void chimera$separate(
             RenderType renderType,
-            SubmitNodeStorage.ModelSubmit submit,
+            SubmitNodeStorage.ModelSubmit<?> submit,
             CallbackInfo callback
     ) {
         if (ChimeraRenderer.segmentsActive()
                 && ChimeraEntityBridge.isInstalled()
                 && ChimeraEntityBridge.isWorldSubmissionWindow()
                 && ChimeraEntityBridge.isEntityBufferReady()
-                && (Object) submit instanceof ChimeraEntitySubmission entity
-                && entity.chimera$isWorldEntity()
-                && ChimeraEntityBridge.supportsSubmissionFamily(entity.chimera$family())
+                && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity
+                && ChimeraEntityBridge.supportsSubmissionFamily(entity.family())
                 // Outlined submissions are consumed by the host outline
                 // buffer. Keep them out of the temporary extended-format
                 // batch so that buffer is never flushed with a host pipeline
                 // and an entity-only stride.
                 && submit.outlineColor() == 0
                 && ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
-            Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> destination =
-                    entity.chimera$family() == ChimeraEntitySubmission.FAMILY_BLOCK
+            Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> destination =
+                    entity.family() == SubmissionIdentity.FAMILY_BLOCK
                             ? chimera$blockSubmits : chimera$entitySubmits;
             destination.computeIfAbsent(renderType, ignored -> new ArrayList<>()).add(submit);
             ChimeraEntityBridge.noteSeparatedBatch(renderType,
@@ -57,8 +56,7 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
         } else if (ChimeraRenderer.segmentsActive()
                 && ChimeraEntityBridge.isInstalled()
                 && ChimeraEntityBridge.isWorldSubmissionWindow()
-                && (Object) submit instanceof ChimeraEntitySubmission entity
-                && entity.chimera$isWorldEntity()
+                && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity
                 && submit.outlineColor() == 0
                 && !ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
             ChimeraEntityBridge.noteUnsupportedWorldPipeline(renderType);
@@ -78,12 +76,12 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
     }
 
     @Override
-    public Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$entitySubmits() {
+    public Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> chimera$entitySubmits() {
         return chimera$entitySubmits;
     }
 
     @Override
-    public Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$blockSubmits() {
+    public Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> chimera$blockSubmits() {
         return chimera$blockSubmits;
     }
 

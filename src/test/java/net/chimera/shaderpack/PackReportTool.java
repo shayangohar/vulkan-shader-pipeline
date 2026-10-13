@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +31,7 @@ public final class PackReportTool {
             throw new IllegalArgumentException("set -Dchimera.packReport.packs=<pack>[;<pack>...]");
         }
         boolean verbose = Boolean.getBoolean("chimera.packReport.verbose");
-        for (String pack : packs.split(java.io.File.pathSeparator)) {
+        for (String pack : packs.split(File.pathSeparator)) {
             report(Path.of(pack.trim()), verbose);
         }
     }

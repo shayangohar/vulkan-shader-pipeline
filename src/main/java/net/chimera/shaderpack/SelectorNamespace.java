@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.List;
+import java.util.function.IntConsumer;
 
 /** Pure selector-address contract shared by planning and the runtime backing array. */
 public final class SelectorNamespace {
@@ -53,7 +54,7 @@ public final class SelectorNamespace {
     }
 
     /** Clears every selector that can retain an image from a retired pack. */
-    public static void clearOwned(java.util.function.IntConsumer clearSlot) {
+    public static void clearOwned(IntConsumer clearSlot) {
         for (int slot = 0; slot <= LAST_RESERVED; slot++) clearSlot.accept(slot);
     }
 }

@@ -3,9 +3,12 @@ package net.chimera.shaderpack;
 import org.lwjgl.util.shaderc.Shaderc;
 
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Pure checks for the M8.6b terrain alpha-test contract. */
 public final class AlphaTestConformanceHarness {
@@ -275,7 +278,7 @@ public final class AlphaTestConformanceHarness {
             check(terrain.convertedFragment().contains("textureGrad("),
                     "BSL material terrain lost its explicit gradients");
             String bslFragment = terrain.convertedFragment();
-            java.util.regex.Matcher gradPrefix = java.util.regex.Pattern.compile(
+            Matcher gradPrefix = Pattern.compile(
                             "(\\w*Atlas\\w*)SampleGrad\\(chimeraTexture, newCoord, dcdx, dcdy\\)")
                     .matcher(bslFragment);
             check(gradPrefix.find(),
@@ -287,7 +290,7 @@ public final class AlphaTestConformanceHarness {
             check(!bslFragment.contains("SampleGrad(normals")
                             && !bslFragment.contains("SampleGrad(specular"),
                     "material maps entered the atlas helper");
-            java.util.Set<Integer> bslSlots = new java.util.HashSet<>();
+            Set<Integer> bslSlots = new HashSet<>();
             for (UniformRegistry.SamplerBinding binding : terrain.interfacePlan().samplers()) {
                 bslSlots.add(binding.slot());
             }
@@ -317,7 +320,8 @@ public final class AlphaTestConformanceHarness {
 
     private static PackSettingsPlan settings(Map<String, String> properties) {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), properties, Map.of(),
-                Set.of(), Set.of(), Set.of(), List.of(), "default");
+                Set.of(), Set.of(), Set.of(), List.of(), "default",
+                PackRuntimeSettings.empty(), Map.of(), Map.of(), false);
     }
 
     private static void expectFailure(Runnable action, String message) {

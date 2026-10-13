@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -10,8 +11,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -93,7 +94,7 @@ public final class PackResourcePlan {
             TreeSet<String> activeSamplers = new TreeSet<>();
             for (PackProgramPlan programPlan : plan.programs()) {
                 if (programPlan == null || programPlan.interfacePlan() == null) continue;
-                UniformRegistry.Stage stage = stageFor(programPlan.name());
+                UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(programPlan.name());
                 programPlan.interfacePlan().effective(stage).samplers().stream()
                         .map(UniformRegistry.SamplerBinding::name)
                         .forEach(activeSamplers::add);
@@ -111,7 +112,7 @@ public final class PackResourcePlan {
         Map<String, Set<Integer>> writtenEarlier = targetsWrittenEarlierInChain(plan);
         for (PackProgramPlan programPlan : plan.programs()) {
             if (programPlan == null || programPlan.interfacePlan() == null) continue;
-            UniformRegistry.Stage stage = stageFor(programPlan.name());
+            UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(programPlan.name());
             List<UniformRegistry.SamplerBinding> samplers = programPlan.interfacePlan()
                     .effective(stage).samplers();
             Set<Integer> deactivatedOverrides = writtenEarlier.getOrDefault(programPlan.name(), Set.of());
@@ -142,12 +143,12 @@ public final class PackResourcePlan {
      * atlas texel topology and UVs, so they take the same magnification
      * reconstruction as the albedo (Iris samples all three nearest).
      */
-    static java.util.Set<String> terrainAtlasSamplers(String program,
+    static Set<String> terrainAtlasSamplers(String program,
             UniformRegistry.ProgramInterface iface, PackSettingsPlan settings) {
         if (iface == null || (iface.stage() != UniformRegistry.Stage.GEOMETRY
-                && iface.stage() != UniformRegistry.Stage.TRANSLUCENT)) return java.util.Set.of();
+                && iface.stage() != UniformRegistry.Stage.TRANSLUCENT)) return Set.of();
         PackSettingsPlan resources = settings == null ? PackSettingsPlan.empty() : settings;
-        java.util.Set<String> names = new TreeSet<>();
+        Set<String> names = new TreeSet<>();
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
             if (!sampler.glslType().equals("sampler2D")) continue;
             PackResourceBinding binding = resolve(program, sampler, declaresWaterShadow(iface.samplers()),
@@ -158,7 +159,7 @@ public final class PackResourcePlan {
                     && binding.resourceKey().equals("texture");
             if (albedo || binding.status() == PackResourceStatus.MATERIAL_MAP) names.add(sampler.name());
         }
-        return java.util.Set.copyOf(names);
+        return Set.copyOf(names);
     }
 
     private static PackResourceBinding resolve(
@@ -191,7 +192,7 @@ public final class PackResourcePlan {
         if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
             declaration = declarations.get("customTexture." + name);
         }
-        if (declaration == null && name.equals("tex") && stageFor(program) == UniformRegistry.Stage.POST) {
+        if (declaration == null && name.equals("tex") && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
             declaration = declarations.get("customTexture.textureAtlas");
         }
         if (declaration == null && name.equals("noisetex")) {
@@ -483,7 +484,7 @@ public final class PackResourcePlan {
             return declaration != null;
         }
         String[] parts = declaration.source().trim().split("\\s+");
-        String dimension = switch (parts[1].toUpperCase(java.util.Locale.ROOT)) {
+        String dimension = switch (parts[1].toUpperCase(Locale.ROOT)) {
             case "TEXTURE_1D" -> "1D";
             case "TEXTURE_2D", "TEXTURE_RECTANGLE" -> "2D";
             case "TEXTURE_3D" -> "3D";
@@ -510,10 +511,6 @@ public final class PackResourcePlan {
         if (program.startsWith("gbuffers_") || program.startsWith("dh_")
                 || program.equals("shadow") || program.startsWith("shadow_")) return "gbuffers";
         return null;
-    }
-
-    private static UniformRegistry.Stage stageFor(String name) {
-        return FamilyAdapterRegistry.stageFor(name);
     }
 
     private String snapshotJson() {
@@ -588,7 +585,7 @@ public final class PackResourcePlan {
         Path meta = file == null ? null : file.resolveSibling(file.getFileName() + ".mcmeta");
         if (meta == null || !Files.isRegularFile(meta)) return null;
         try {
-            JsonObject root = com.google.gson.JsonParser.parseString(
+            JsonObject root = JsonParser.parseString(
                     Files.readString(meta, StandardCharsets.UTF_8)).getAsJsonObject();
             JsonObject texture = root.has("texture") && root.get("texture").isJsonObject()
                     ? root.getAsJsonObject("texture") : null;

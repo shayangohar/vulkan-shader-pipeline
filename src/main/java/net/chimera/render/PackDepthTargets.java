@@ -9,11 +9,18 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
 
+import java.util.Arrays;
+
+import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
+import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_CLEAR;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -22,10 +29,6 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.vkCmdDraw;
-import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
-import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
 
 /** Owns converted pack-visible depth snapshots for one pack variant. */
 public final class PackDepthTargets {
@@ -41,8 +44,8 @@ public final class PackDepthTargets {
         cleanUp();
         this.plan = plan == null ? DepthGraphPlan.empty() : plan;
         if (!this.plan.any()) return false;
-        java.util.Arrays.fill(this.valid, false);
-        java.util.Arrays.fill(this.previousValid, false);
+        Arrays.fill(this.valid, false);
+        Arrays.fill(this.previousValid, false);
         MrtPipelineContext.begin(new int[] {this.plan.format()}, 1);
         try {
             this.conversionPipeline = ChimeraPostPipelines.createDepthPipeline();
@@ -93,7 +96,7 @@ public final class PackDepthTargets {
     /** Starts a new world frame while retaining the previous capture validity. */
     public void beginFrame() {
         System.arraycopy(this.valid, 0, this.previousValid, 0, this.valid.length);
-        java.util.Arrays.fill(this.valid, false);
+        Arrays.fill(this.valid, false);
     }
 
     /** Publishes the captures made during the current world frame. */
@@ -142,7 +145,7 @@ public final class PackDepthTargets {
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             ChimeraDepthViewOverride.bind(rawDepth, depthView);
             VTextureSelector.bindTexture(6, rawDepth);
-            org.lwjgl.vulkan.VkClearValue clear = org.lwjgl.vulkan.VkClearValue.calloc(stack);
+            VkClearValue clear = VkClearValue.calloc(stack);
             clear.color().float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
             VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
             attachments.get(0)
@@ -241,9 +244,9 @@ public final class PackDepthTargets {
         // VulkanImage.free() is deferred by VulkanMod, but this view is a raw
         // handle owned by Chimera; destroy() waits for idle first.
         this.depthSampleView.destroy();
-        java.util.Arrays.fill(images, null);
-        java.util.Arrays.fill(valid, false);
-        java.util.Arrays.fill(previousValid, false);
+        Arrays.fill(images, null);
+        Arrays.fill(valid, false);
+        Arrays.fill(previousValid, false);
         conversionPipeline = null;
         configured = false;
         plan = DepthGraphPlan.empty();

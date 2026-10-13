@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.joml.Vector4f;
 
 /** Pure matrix and snapshot-state checks for the M8.7 pack shadow contract. */
 public final class ShadowMapMatrixHarness {
@@ -177,8 +178,8 @@ public final class ShadowMapMatrixHarness {
         map.commitRenderedMap(0.0, 64.0, 0.0);
         for (Vector3f point : new Vector3f[] {new Vector3f(), new Vector3f(40f, -12f, 7f),
                 new Vector3f(-300f, 90f, 512f)}) {
-            org.joml.Vector4f clip = map.hostReceiverMatrix().transform(
-                    new org.joml.Vector4f(point, 1.0f));
+            Vector4f clip = map.hostReceiverMatrix().transform(
+                    new Vector4f(point, 1.0f));
             float u = clip.x / clip.w * 0.5f + 0.5f;
             assertTrue(clip.w == 1.0f && u > 1.0f, "pack-written map must read as outside for the fixed receiver");
         }

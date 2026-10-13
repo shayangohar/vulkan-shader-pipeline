@@ -2,6 +2,9 @@ package net.chimera.shaderpack;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /** Table-driven standard family registry. Unknown families remain host-only. */
 public final class FamilyAdapterRegistry {
@@ -190,10 +193,10 @@ public final class FamilyAdapterRegistry {
     }
 
     /** Every host-layout lane label. */
-    public static java.util.Set<String> hostLayoutLanes() {
+    public static Set<String> hostLayoutLanes() {
         return CONTRACTS.values().stream().filter(plan -> plan.vertexContract().hostLayout())
                 .map(plan -> plan.family().name())
-                .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+                .collect(Collectors.toCollection(TreeSet::new));
     }
 
     public static boolean isSkyFamily(String name) {

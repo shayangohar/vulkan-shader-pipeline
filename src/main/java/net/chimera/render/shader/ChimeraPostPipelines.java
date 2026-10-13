@@ -27,7 +27,7 @@ public final class ChimeraPostPipelines {
         JsonObject json = ChimeraShaderLoader.loadJson(name + ".json");
         PipelineConfig config = PipelineConfig.fromJson(name, json);
 
-        Pipeline.Builder builder = new Pipeline.Builder((VertexFormat) CustomVertexFormat.NONE, name);
+        Pipeline.Builder builder = new Pipeline.Builder(CustomVertexFormat.NONE, name);
         builder.applyConfig(config);
 
         String vertexPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.VERTEX_SHADER);

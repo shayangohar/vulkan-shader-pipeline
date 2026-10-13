@@ -5,7 +5,9 @@ import org.lwjgl.util.shaderc.Shaderc;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Pack modules must read zero from locals the authored GLSL never wrote
@@ -73,10 +75,10 @@ public final class SpirvLocalInitializerHarness {
         int[] original = words(compile(source));
         int[] decorated = SpirvTrigPrecision.apply(original);
         require(decorated != original, "the hash arithmetic was left contractible");
-        java.util.Set<Integer> arithmetic = new java.util.HashSet<>();
-        java.util.Set<Integer> dots = new java.util.HashSet<>();
-        java.util.Set<Integer> vectorAdds = new java.util.HashSet<>();
-        java.util.Set<Integer> noContraction = new java.util.HashSet<>();
+        Set<Integer> arithmetic = new HashSet<>();
+        Set<Integer> dots = new HashSet<>();
+        Set<Integer> vectorAdds = new HashSet<>();
+        Set<Integer> noContraction = new HashSet<>();
         int vec2Type = -1;
         int floatType = -1;
         int firstType = -1;

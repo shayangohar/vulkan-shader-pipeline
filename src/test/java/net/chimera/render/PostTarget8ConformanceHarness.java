@@ -4,11 +4,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.ConformanceReport;
+import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
+import net.chimera.shaderpack.SelectorNamespace;
 import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TargetStep;
 import net.chimera.shaderpack.UniformRegistry;
@@ -16,7 +18,10 @@ import net.chimera.shaderpack.UniformRegistry;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /** Focused logical-colortex8 and Complementary producer-chain checks. */
 public final class PostTarget8ConformanceHarness {
@@ -102,26 +107,26 @@ public final class PostTarget8ConformanceHarness {
                 "Iris targets colortex9..15 were rejected: " + high.deviations());
         // Every Iris colour target owns one addressable selector, distinct from
         // every other target and from the fixed depth, shadow and material slots.
-        java.util.Set<Integer> reserved = java.util.Set.of(5, 6, 7, 12, 13,
-                net.chimera.shaderpack.SelectorNamespace.COVERAGE_SLOT,
-                net.chimera.shaderpack.SelectorNamespace.SHADOW_TEX1_SLOT,
-                net.chimera.shaderpack.SelectorNamespace.SHADOW_COLOR0_SLOT,
-                net.chimera.shaderpack.SelectorNamespace.SHADOW_COLOR1_SLOT,
-                net.chimera.shaderpack.SelectorNamespace.NORMALS_SLOT,
-                net.chimera.shaderpack.SelectorNamespace.SPECULAR_SLOT);
-        java.util.Set<Integer> seen = new java.util.HashSet<>();
+        Set<Integer> reserved = Set.of(5, 6, 7, 12, 13,
+                SelectorNamespace.COVERAGE_SLOT,
+                SelectorNamespace.SHADOW_TEX1_SLOT,
+                SelectorNamespace.SHADOW_COLOR0_SLOT,
+                SelectorNamespace.SHADOW_COLOR1_SLOT,
+                SelectorNamespace.NORMALS_SLOT,
+                SelectorNamespace.SPECULAR_SLOT);
+        Set<Integer> seen = new HashSet<>();
         for (int target = 0; target <= PostTargetPlan.MAX_TARGET; target++) {
-            int slot = net.chimera.shaderpack.SelectorNamespace.colorTargetSlot(target);
-            assertTrue(net.chimera.shaderpack.SelectorNamespace.isAddressable(slot)
+            int slot = SelectorNamespace.colorTargetSlot(target);
+            assertTrue(SelectorNamespace.isAddressable(slot)
                             && !reserved.contains(slot) && seen.add(slot),
                     "colortex" + target + " selector " + slot + " is shared or unaddressable");
         }
-        assertEquals(-1, net.chimera.shaderpack.SelectorNamespace.colorTargetSlot(16),
+        assertEquals(-1, SelectorNamespace.colorTargetSlot(16),
                 "colortex16 gained a selector");
         // Post targets are built through VulkanMod's image builder, which
         // throws for any format it cannot size (BSL's RGB10_A2 gaux2 did).
-        net.chimera.shaderpack.PackConfig.FMT_TO_VK.forEach((token, format) ->
-                assertTrue(net.chimera.shaderpack.PackConfig.formatBytes(format) > 0,
+        PackConfig.FMT_TO_VK.forEach((token, format) ->
+                assertTrue(PackConfig.formatBytes(format) > 0,
                         "exact target format " + token + " has no texel size"));
 
         MrtPipelineContext.begin(new int[8], 8);
@@ -271,7 +276,7 @@ public final class PostTarget8ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

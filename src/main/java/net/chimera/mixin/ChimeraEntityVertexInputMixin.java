@@ -1,5 +1,6 @@
 package net.chimera.mixin;
 
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription;
 import org.lwjgl.vulkan.VkVertexInputBindingDescription;
@@ -10,8 +11,6 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
-import com.mojang.blaze3d.vertex.VertexFormat;
 
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UINT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_SINT;

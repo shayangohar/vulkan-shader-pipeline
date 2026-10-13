@@ -22,6 +22,10 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 import org.joml.Matrix4f;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.SequencedMap;
+
 /** Iris's solid-before-deferred and translucent-before-composite hand schedule. */
 public final class ChimeraHandRenderer implements AutoCloseable {
     public static final float DEPTH = 0.125F;
@@ -34,7 +38,7 @@ public final class ChimeraHandRenderer implements AutoCloseable {
      * and its own layer at once (VertexMultiConsumer); in one shared buffer, opening
      * the second ends the first ("Not building!").
      */
-    private final java.util.SequencedMap<RenderType, ByteBufferBuilder> fixed = fixedBuffers();
+    private final SequencedMap<RenderType, ByteBufferBuilder> fixed = fixedBuffers();
     private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediateWithBuffers(fixed, vertices);
     private final SubmitNodeStorage submits = new SubmitNodeStorage();
     private final FeatureRenderDispatcher dispatcher;
@@ -137,9 +141,9 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         translucentPhase = null;
     }
     /** Vanilla RenderBuffers' fixed buffers, for any Chimera-owned source a foil item may write to. */
-    static java.util.SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
-        var result = new java.util.LinkedHashMap<RenderType, ByteBufferBuilder>();
-        for (RenderType type : java.util.List.of(Sheets.solidBlockSheet(), Sheets.cutoutBlockSheet(),
+    static SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
+        var result = new LinkedHashMap<RenderType, ByteBufferBuilder>();
+        for (RenderType type : List.of(Sheets.solidBlockSheet(), Sheets.cutoutBlockSheet(),
                 Sheets.translucentItemSheet(), Sheets.translucentBlockItemSheet(), Sheets.shieldSheet(),
                 Sheets.bedSheet(), Sheets.shulkerBoxSheet(), Sheets.signSheet(), Sheets.hangingSignSheet(),
                 Sheets.chestSheet(), RenderTypes.armorEntityGlint(), RenderTypes.glint(),

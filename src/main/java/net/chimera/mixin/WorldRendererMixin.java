@@ -1,18 +1,19 @@
 package net.chimera.mixin;
 
-import net.chimera.render.ChimeraMainPass;
-import net.chimera.render.ChimeraRenderer;
-import net.vulkanmod.render.chunk.WorldRenderer;
-import net.vulkanmod.render.vertex.TerrainRenderType;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import net.chimera.render.ChimeraMainPass;
+import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackRenderingPhase;
+import net.vulkanmod.render.chunk.WorldRenderer;
+import net.vulkanmod.render.vertex.TerrainRenderType;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
 /**
  * Positions chimera's shadow segment deterministically inside the frame:
  * it renders at the HEAD of VulkanMod's effective opaque section layer

@@ -4,7 +4,6 @@ import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import net.chimera.mixin.ChimeraSamplerAccessor;
-import net.vulkanmod.render.engine.VkSampler;
 
 import java.util.Objects;
 import java.util.OptionalDouble;

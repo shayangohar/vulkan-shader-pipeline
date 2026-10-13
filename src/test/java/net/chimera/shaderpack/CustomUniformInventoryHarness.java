@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -28,7 +29,7 @@ public final class CustomUniformInventoryHarness {
                 {"Complementary", "chimera.customUniform.complementary"},
                 {"BSL", "chimera.customUniform.bsl"}}) {
             String value = System.getProperty(configured[1],
-                    System.getenv(configured[1].replace('.', '_').toUpperCase(java.util.Locale.ROOT)));
+                    System.getenv(configured[1].replace('.', '_').toUpperCase(Locale.ROOT)));
             try {
                 assertTrue(value != null && !value.isBlank(), configured[1] + " pack path not provided");
                 Path packPath = Path.of(value);

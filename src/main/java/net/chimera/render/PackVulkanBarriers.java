@@ -1,10 +1,10 @@
 package net.chimera.render;
 
-import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkBufferMemoryBarrier;
-import org.lwjgl.vulkan.VkMemoryBarrier;
 import net.vulkanmod.vulkan.memory.buffer.Buffer;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkBufferMemoryBarrier;
+import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkMemoryBarrier;
 
 import java.util.Collection;
 

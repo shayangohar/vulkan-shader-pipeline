@@ -12,6 +12,8 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -30,8 +32,8 @@ public final class PackResourceOwner implements AutoCloseable {
     public static PackResourceOwner load(PackResourcePlan plan, Path shadersDir) {
         PackResourceOwner owner = new PackResourceOwner(plan);
         for (PackResourceBinding binding : plan.bindings().values().stream()
-                .flatMap(java.util.Collection::stream)
-                .sorted(java.util.Comparator.comparing(PackResourceBinding::resourceKey))
+                .flatMap(Collection::stream)
+                .sorted(Comparator.comparing(PackResourceBinding::resourceKey))
                 .toList()) {
             if (binding.status() != PackResourceStatus.PACK_FILE
                     && binding.status() != PackResourceStatus.GAME_RESOURCE) {

@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -361,7 +362,7 @@ public final class M78ParityQualificationHarness {
         if (!Files.isRegularFile(path)) {
             throw new HarnessFailure(label + " does not exist: " + path);
         }
-        return com.google.gson.JsonParser.parseString(
+        return JsonParser.parseString(
                 Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
     }
 

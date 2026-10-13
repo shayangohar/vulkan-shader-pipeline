@@ -3,11 +3,10 @@ package net.chimera.mixin;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.chimera.render.ChimeraFamilyDraw;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
-import net.chimera.render.shader.ChimeraEntitySubmission;
+import net.chimera.render.shader.SubmissionIdentity;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.SubmitNodeStorage;
@@ -35,17 +34,6 @@ import java.util.Set;
  */
 @Mixin(TextFeatureRenderer.class)
 public abstract class ChimeraTextFeatureRendererMixin {
-    private static final VertexConsumer DISCARD = new VertexConsumer() {
-        @Override public VertexConsumer addVertex(float x, float y, float z) { return this; }
-        @Override public VertexConsumer setColor(int r, int g, int b, int a) { return this; }
-        @Override public VertexConsumer setColor(int argb) { return this; }
-        @Override public VertexConsumer setUv(float u, float v) { return this; }
-        @Override public VertexConsumer setUv1(int u, int v) { return this; }
-        @Override public VertexConsumer setUv2(int u, int v) { return this; }
-        @Override public VertexConsumer setNormal(float x, float y, float z) { return this; }
-        @Override public VertexConsumer setLineWidth(float width) { return this; }
-    };
-
     @WrapOperation(method = "render", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/util/FormattedCharSequence;FFIZLorg/joml/Matrix4f;Lnet/minecraft/client/renderer/MultiBufferSource;Lnet/minecraft/client/gui/Font$DisplayMode;II)V"),
             require = 1)
@@ -64,8 +52,8 @@ public abstract class ChimeraTextFeatureRendererMixin {
             Operation<Void> original,
             @Local SubmitNodeStorage.TextSubmit submit
     ) {
-        if (!((Object) submit instanceof ChimeraEntitySubmission text)
-                || !text.chimera$isWorldEntity()
+        SubmissionIdentity identity = SubmissionIdentity.ofWorldNode(submit);
+        if (identity == null
                 || !ChimeraRenderer.segmentsActive()
                 || !ChimeraEntityBridge.isInstalled()
                 || ChimeraEntityBridge.isDrawActive()) {
@@ -77,23 +65,15 @@ public abstract class ChimeraTextFeatureRendererMixin {
         original.call(font, string, x, y, color, dropShadow, pose,
                 (MultiBufferSource) type -> {
                     types.add(type);
-                    return DISCARD;
+                    return ChimeraFamilyDraw.DISCARD;
                 }, displayMode, backgroundColor, lightCoords);
-        ChimeraEntityBridge.Family base = text.chimera$family() == ChimeraEntitySubmission.FAMILY_BLOCK
-                ? ChimeraEntityBridge.Family.BLOCK : ChimeraEntityBridge.Family.ENTITY;
         for (RenderType renderType : types) {
-            boolean packed = ChimeraEntityBridge.familyForRenderType(base, renderType)
+            boolean packed = ChimeraEntityBridge.familyForRenderType(identity.baseFamily(), renderType)
                     != ChimeraEntityBridge.Family.HOST_FALLBACK
                     && ChimeraEntityBridge.isTextPipeline(renderType.pipeline())
-                    && ChimeraFamilyDraw.emit(base, renderType, source -> {
-                        ChimeraEntityBridge.beginModelEntity(text.chimera$entityId(), text.chimera$blockEntityId());
-                        try {
+                    && ChimeraFamilyDraw.emitSubmission(identity, renderType, source ->
                             original.call(font, string, x, y, color, dropShadow, pose,
-                                    only(renderType, source), displayMode, backgroundColor, lightCoords);
-                        } finally {
-                            ChimeraEntityBridge.endModelEntity();
-                        }
-                    });
+                                    only(renderType, source), displayMode, backgroundColor, lightCoords));
             if (!packed) {
                 original.call(font, string, x, y, color, dropShadow, pose,
                         only(renderType, buffers), displayMode, backgroundColor, lightCoords);
@@ -102,6 +82,6 @@ public abstract class ChimeraTextFeatureRendererMixin {
     }
 
     private static MultiBufferSource only(RenderType renderType, MultiBufferSource buffers) {
-        return type -> type == renderType ? buffers.getBuffer(type) : DISCARD;
+        return type -> type == renderType ? buffers.getBuffer(type) : ChimeraFamilyDraw.DISCARD;
     }
 }

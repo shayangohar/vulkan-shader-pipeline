@@ -1,8 +1,13 @@
 package net.chimera.render.vertex;
 
-import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormatElement;
+import net.chimera.shaderpack.TerrainMaterialPlan;
+import net.vulkanmod.render.vertex.CustomVertexFormat;
+
+import java.util.List;
+import java.util.Map;
 
 /** Vertex formats owned by Chimera rather than by the host renderer. */
 public final class ChimeraVertexFormats {
@@ -45,9 +50,9 @@ public final class ChimeraVertexFormats {
 
     public static final VertexFormat EXTENDED_COMPRESSED_TERRAIN =
             VertexFormat.builder()
-                    .add("Position", net.vulkanmod.render.vertex.CustomVertexFormat.ELEMENT_POSITION_INT16)
-                    .add("UV0", net.vulkanmod.render.vertex.CustomVertexFormat.ELEMENT_UV0_UINT16)
-                    .add("Color", net.vulkanmod.render.vertex.CustomVertexFormat.ELEMENT_COLOR_UINT)
+                    .add("Position", CustomVertexFormat.ELEMENT_POSITION_INT16)
+                    .add("UV0", CustomVertexFormat.ELEMENT_UV0_UINT16)
+                    .add("Color", CustomVertexFormat.ELEMENT_COLOR_UINT)
                     .add("MaterialId", MATERIAL_ID)
                     .add("RenderType", RENDER_TYPE)
                     .build();
@@ -58,9 +63,9 @@ public final class ChimeraVertexFormats {
      */
     public static final VertexFormat MODERN_COMPRESSED_TERRAIN =
             VertexFormat.builder()
-                    .add("Position", net.vulkanmod.render.vertex.CustomVertexFormat.ELEMENT_POSITION_INT16)
-                    .add("UV0", net.vulkanmod.render.vertex.CustomVertexFormat.ELEMENT_UV0_UINT16)
-                    .add("Color", net.vulkanmod.render.vertex.CustomVertexFormat.ELEMENT_COLOR_UINT)
+                    .add("Position", CustomVertexFormat.ELEMENT_POSITION_INT16)
+                    .add("UV0", CustomVertexFormat.ELEMENT_UV0_UINT16)
+                    .add("Color", CustomVertexFormat.ELEMENT_COLOR_UINT)
                     .add("MaterialId", MATERIAL_ID)
                     .add("RenderType", RENDER_TYPE)
                     .add("MidTexCoord", TERRAIN_MID_TEX_COORD)
@@ -74,7 +79,7 @@ public final class ChimeraVertexFormats {
     /** Host PARTICLE followed by the same pack-visible Iris attributes. */
     public static final VertexFormat EXTENDED_PARTICLE = extendedParticleFormat();
 
-    public static VertexFormat terrainFormat(net.chimera.shaderpack.TerrainMaterialPlan plan) {
+    public static VertexFormat terrainFormat(TerrainMaterialPlan plan) {
         return plan != null && plan.modern() ? MODERN_COMPRESSED_TERRAIN : EXTENDED_COMPRESSED_TERRAIN;
     }
 
@@ -84,8 +89,8 @@ public final class ChimeraVertexFormats {
 
     private static VertexFormat extendedEntityFormat() {
         VertexFormat.Builder builder = VertexFormat.builder();
-        java.util.List<VertexFormatElement> elements = DefaultVertexFormat.NEW_ENTITY.getElements();
-        java.util.List<String> names = DefaultVertexFormat.NEW_ENTITY.getElementAttributeNames();
+        List<VertexFormatElement> elements = DefaultVertexFormat.NEW_ENTITY.getElements();
+        List<String> names = DefaultVertexFormat.NEW_ENTITY.getElementAttributeNames();
         int hostElementBytes = 0;
         for (int index = 0; index < elements.size(); index++) {
             builder.add(names.get(index), elements.get(index));
@@ -113,14 +118,14 @@ public final class ChimeraVertexFormats {
      */
     public static final VertexFormat EXTENDED_GLYPH = appendMaterialInputs(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, true);
     private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(DefaultVertexFormat.POSITION_TEX_COLOR);
-    private static final java.util.Map<VertexFormat, VertexFormat> HAND_FORMATS = java.util.Map.of(
+    private static final Map<VertexFormat, VertexFormat> HAND_FORMATS = Map.of(
             DefaultVertexFormat.NEW_ENTITY, EXTENDED_ENTITY,
             DefaultVertexFormat.PARTICLE, EXTENDED_PARTICLE,
             DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, EXTENDED_GLYPH,
             DefaultVertexFormat.POSITION_TEX_COLOR, EXTENDED_HAND_MAP_BACKGROUND);
 
     /** Native hand models, item quads, map text and map background keep distinct prefixes. */
-    public static java.util.Map<VertexFormat, VertexFormat> handFormats() {
+    public static Map<VertexFormat, VertexFormat> handFormats() {
         return HAND_FORMATS;
     }
 
@@ -142,8 +147,8 @@ public final class ChimeraVertexFormats {
 
     private static VertexFormat appendMaterialInputs(VertexFormat host, boolean computedNormal) {
         VertexFormat.Builder builder = VertexFormat.builder();
-        java.util.List<VertexFormatElement> elements = host.getElements();
-        java.util.List<String> names = host.getElementAttributeNames();
+        List<VertexFormatElement> elements = host.getElements();
+        List<String> names = host.getElementAttributeNames();
         int hostElementBytes = 0;
         for (int index = 0; index < elements.size(); index++) {
             builder.add(names.get(index), elements.get(index));

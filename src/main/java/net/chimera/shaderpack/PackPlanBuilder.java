@@ -83,7 +83,7 @@ public final class PackPlanBuilder {
         }
 
         Map<String, PreparedShaderSource> stages = preparedStages(program);
-        if (stageFor(program.name()) == UniformRegistry.Stage.POST) {
+        if (FamilyAdapterRegistry.stageFor(program.name()) == UniformRegistry.Stage.POST) {
             stages = normalizeModernPostStages(stages);
         } else if (isTerrainMaterialFamily(program.name())) {
             stages = normalizeModernTerrainStages(stages);
@@ -98,7 +98,7 @@ public final class PackPlanBuilder {
         boolean prepared = !program.variantFolder().isBlank();
         boolean preparedSnapshot = !program.preparedSources().isEmpty();
         boolean allowUnusedDeclarations = prepared;
-        UniformRegistry.Stage stage = stageFor(program.name());
+        UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(program.name());
         PostTargetPlan targetPlan = PostTargetPlan.isPostProgramName(program.name())
                 ? PostTargetPlan.parse(program.name(), fragment,
                 config == null ? Map.of() : config.colortexFormats()).plan()
@@ -217,7 +217,7 @@ public final class PackPlanBuilder {
             allowStorageBuffers = advancedResources.buffers().values().stream()
                     .anyMatch(PackAdvancedResourcePlan.BufferSpec::supported);
         }
-        boolean executable = isExecutableFamily(program.name())
+        boolean executable = FamilyAdapterRegistry.isExecutableFamily(program.name())
                 && fragment != null
                 && (!FamilyAdapterRegistry.isEntityLike(program.name())
                 && !FamilyAdapterRegistry.isShadowEntityFamily(program.name())
@@ -404,7 +404,7 @@ public final class PackPlanBuilder {
             if (executable && FamilyAdapterRegistry.isEntityLike(program.name()) && vertex != null) {
                 LegacyGlslConverter.TerrainVertexConversion conversion = null;
                 try {
-                    java.util.List<UniformRegistry.UniformDeclaration> fragmentUniforms =
+                    List<UniformRegistry.UniformDeclaration> fragmentUniforms =
                             interfacePlan.project("fragment", stage).executableUniforms();
                     LegacyGlslConverter.VertexSamplerPlan vertexSamplers = vertexSamplerPlan(interfacePlan, stage, vertex);
                     conversion = program.name().equals("gbuffers_damagedblock")
@@ -471,23 +471,8 @@ public final class PackPlanBuilder {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
                     executable = false;
                 }
-            } else if (executable && program.name().equals("gbuffers_terrain")) {
-                int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
-                convertedFragment = LegacyGlslConverter.FragmentConversionRequest
-                        .of(fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots)
-                        .withTerrainLayout(vertexLayout)
-                        .withInterfacePlan(interfacePlan.project("fragment", stage))
-                        .withGeometryOutputPlan(geometryOutputPlan)
-                        .withPackConstants(config == null ? Map.of() : config.shaderConstants())
-                        .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(program.name(),
-                                interfacePlan.project("fragment", stage), config == null ? null : config.settings()))
-                        .withAlphaTestPlan(vertex != null ? alphaTestPlan : PackAlphaTestPlan.disabled())
-                        .convert();
-                if (convertedFragment == null) {
-                    deviations.add("POST_CONVERTER_UNSUPPORTED");
-                    executable = false;
-                }
-            } else if (executable && program.name().equals("gbuffers_water")) {
+            } else if (executable && (program.name().equals("gbuffers_terrain")
+                    || program.name().equals("gbuffers_water"))) {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 convertedFragment = LegacyGlslConverter.FragmentConversionRequest
                         .of(fragment, preparedSnapshot ? null : program.fragmentPath(), true, slots)
@@ -865,14 +850,6 @@ public final class PackPlanBuilder {
         } catch (RuntimeException ignored) {
             return "";
         }
-    }
-
-    private static UniformRegistry.Stage stageFor(String name) {
-        return FamilyAdapterRegistry.stageFor(name);
-    }
-
-    private static boolean isExecutableFamily(String name) {
-        return FamilyAdapterRegistry.isExecutableFamily(name);
     }
 
     private static String safeReason(RuntimeException failure) {

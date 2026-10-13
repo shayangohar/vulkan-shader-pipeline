@@ -1,18 +1,22 @@
 package net.chimera.render;
 
+import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.memory.MemoryTypes;
 import net.vulkanmod.vulkan.memory.buffer.Buffer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.HashMap;
 
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -54,10 +58,10 @@ public final class PackStorageBufferOwner implements AutoCloseable {
             if (stage == VK_SHADER_STAGE_VERTEX_BIT) {
                 drawnWriters.put(index, program);
                 synchronizedWrites.remove(index);
-            } else if (stage == org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT
+            } else if (stage == VK10.VK_SHADER_STAGE_FRAGMENT_BIT
                     && drawnWriters.containsKey(index) && synchronizedWrites.contains(index)
                     && reportedReaders.add(program + ":" + index)) {
-                net.chimera.ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
+                ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
                         drawnWriters.get(index), program, binding.size(), dispatchCount);
             }
         }
@@ -72,7 +76,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
                 .distinct()
                 .map(this.plan.buffers()::get)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
                 .sum();
     }
@@ -114,10 +118,6 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /** Vulkan exposes this limit as an unsigned 32-bit value. */
     public static long unsignedStorageBufferRange(int rawValue) {
         return Integer.toUnsignedLong(rawValue);
-    }
-
-    public boolean hasBuffers() {
-        return !buffers.isEmpty();
     }
 
     /** Returns the session-owned buffer for an admitted logical index. */
@@ -209,7 +209,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     public long failedBytes() {
         return failures.keySet().stream()
                 .map(plan.buffers()::get)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
                 .sum();
     }
@@ -247,7 +247,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
 
     /** Records shader/layout agreement before native pipeline creation. */
     public String verifyLayout(String program, String vertex, String fragment,
-            java.util.List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
+            List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
         String mismatch = PackAdvancedResourcePlan.layoutMismatch(
                 plan.bindingLayout(program), vertex, fragment, descriptors);
         if (mismatch == null) {

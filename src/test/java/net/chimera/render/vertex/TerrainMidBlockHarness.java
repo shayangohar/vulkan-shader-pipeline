@@ -1,5 +1,11 @@
 package net.chimera.render.vertex;
 
+import net.chimera.shaderpack.TerrainMaterialPlan;
+import org.lwjgl.system.MemoryUtil;
+
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * Terrain at_midBlock must be Iris's: for every vertex, the offset to the centre of the block
  * being rendered in 1/64 blocks, then the block's light emission. A centre taken from the
@@ -11,8 +17,8 @@ public final class TerrainMidBlockHarness {
     private TerrainMidBlockHarness() {}
 
     public static void main(String[] args) {
-        net.chimera.shaderpack.TerrainMaterialPlan plan = new net.chimera.shaderpack.TerrainMaterialPlan(
-                true, true, true, true, java.util.List.of());
+        TerrainMaterialPlan plan = new TerrainMaterialPlan(
+                true, true, true, true, List.of());
         ChimeraExtVertexBuilder builder = new ChimeraExtVertexBuilder(plan);
         // A glowstone-like block at section position (4, 7, 9), emission 15.
         builder.setBlockData(7, -1, 15, 4, 7, 9);
@@ -34,13 +40,13 @@ public final class TerrainMidBlockHarness {
                 {4.5625F, 7, 9.5625F}, {4.5625F, 7.625F, 9.5625F}};
         int[][] postWords = write(builder, plan.stride(), post);
         require(postWords[0][0] == 4 && postWords[0][1] == -8 && postWords[0][2] == 4 && postWords[0][3] == 7,
-                "inner model offset differs from Iris: " + java.util.Arrays.toString(postWords[0]));
+                "inner model offset differs from Iris: " + Arrays.toString(postWords[0]));
         System.out.println("[chimera] terrain at_midBlock: PASS");
     }
 
     /** Writes one quad and returns each vertex's at_midBlock bytes, signed as the shader reads them. */
     private static int[][] write(ChimeraExtVertexBuilder builder, int stride, float[][] corners) {
-        long base = org.lwjgl.system.MemoryUtil.nmemCalloc(4, stride);
+        long base = MemoryUtil.nmemCalloc(4, stride);
         try {
             for (int index = 0; index < 4; index++) {
                 float[] c = corners[index];
@@ -50,12 +56,12 @@ public final class TerrainMidBlockHarness {
             }
             int[][] result = new int[4][4];
             for (int index = 0; index < 4; index++) {
-                int word = org.lwjgl.system.MemoryUtil.memGetInt(base + (long) index * stride + 28);
+                int word = MemoryUtil.memGetInt(base + (long) index * stride + 28);
                 for (int lane = 0; lane < 4; lane++) result[index][lane] = (byte) (word >>> (lane * 8));
             }
             return result;
         } finally {
-            org.lwjgl.system.MemoryUtil.nmemFree(base);
+            MemoryUtil.nmemFree(base);
         }
     }
 

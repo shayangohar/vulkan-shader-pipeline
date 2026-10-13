@@ -1,14 +1,15 @@
 package net.chimera.render;
 
-import net.chimera.shaderpack.TargetSpec;
-import net.chimera.shaderpack.TargetStep;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.TargetSpec;
+import net.chimera.shaderpack.TargetStep;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /** Deterministic, Vulkan-free checks for pack post target availability. */
 public final class PackPostTargetsHarness {
@@ -177,7 +178,7 @@ public final class PackPostTargetsHarness {
 
     private static void deleteTree(Path root) throws Exception {
         try (var paths = Files.walk(root)) {
-            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
                 Files.delete(path);
             }
         }

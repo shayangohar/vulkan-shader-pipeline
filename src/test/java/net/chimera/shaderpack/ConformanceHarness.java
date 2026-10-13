@@ -4,17 +4,55 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
+import net.chimera.render.ChimeraHandRenderer;
+import net.chimera.render.ChimeraHorizonRenderer;
+import net.chimera.render.PackPostTargetsHarness;
+import net.chimera.render.PackShadowCompute;
+import net.chimera.render.ShadowCullingFrustum;
+import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraSkyBridge;
+import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.render.shader.HostLayoutLane;
+import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.render.vertex.ChimeraVertexFormats;
+import net.chimera.render.vertex.SeparateAoColor;
+import net.minecraft.client.CloudStatus;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.vulkanmod.vulkan.memory.buffer.index.AutoIndexBuffer;
+import net.vulkanmod.vulkan.shader.Pipeline;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
+import org.joml.Vector4f;
+import org.lwjgl.util.shaderc.Shaderc;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AnnotationNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
-
-import net.chimera.render.PackPostTargetsHarness;
+import java.util.function.BiFunction;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Small dependency-free conformance check for the locked M5.1 through M5.7 fixtures
@@ -99,7 +137,7 @@ public final class ConformanceHarness {
                     "normalization concealed malformed target: " + malformed);
         }
 
-        float[] cone = net.chimera.render.ChimeraHorizonRenderer.vertices(32);
+        float[] cone = ChimeraHorizonRenderer.vertices(32);
         assertEquals(30, cone.length, "Iris fan must have ten POSITION vertices");
         assertTrue(cone[0] == 0 && cone[1] == -16 && cone[2] == 0, "horizon apex must be below camera");
         for (int i = 1; i < 10; i++) {
@@ -110,7 +148,7 @@ public final class ConformanceHarness {
         assertTrue(cone[8] < 0, "horizon must use inward Iris winding");
         assertTrue(Math.abs(cone[3] - cone[27]) < 0.001 && Math.abs(cone[5] - cone[29]) < 0.001,
                 "horizon rim must close");
-        assertTrue(net.chimera.render.ChimeraHorizonRenderer.vertices(8)[3] == 128, "horizon must track render distance");
+        assertTrue(ChimeraHorizonRenderer.vertices(8)[3] == 128, "horizon must track render distance");
         verifyHorizonSubmission();
         verifyEndPortalHooks();
 
@@ -146,7 +184,7 @@ public final class ConformanceHarness {
             assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"), "sky admission bypassed resource validation");
         } finally {
             try (var files = Files.walk(root)) {
-                for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(file);
+                for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.delete(file);
             }
         }
         System.out.println("[chimera] rain target grammar, sky admission and Iris horizon geometry: PASS");
@@ -206,15 +244,15 @@ public final class ConformanceHarness {
                             && source.contains("light2 = (lightAliasMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
                             && !source.contains("vec2(UV2) / 256.0"),
                     family + " texture/lightmap contract");
-            var matrix = java.util.regex.Pattern.compile("mat4 lightMatrix = mat4\\(([^)]+)\\);")
+            var matrix = Pattern.compile("mat4 lightMatrix = mat4\\(([^)]+)\\);")
                     .matcher(source);
             assertTrue(matrix.find(), family + " missing Iris light matrix");
             String[] coefficients = matrix.group(1).split(",");
             float[] values = new float[coefficients.length];
             for (int i = 0; i < values.length; i++) values[i] = Float.parseFloat(coefficients[i].trim());
             assertEquals(16, values.length, family + " light matrix dimensions");
-            var actual = new org.joml.Matrix4f().set(values)
-                    .transform(new org.joml.Vector4f(80, 240, 0, 1));
+            var actual = new Matrix4f().set(values)
+                    .transform(new Vector4f(80, 240, 0, 1));
             assertTrue(Math.abs(actual.x - 0.34375F) < 1.0e-7F
                             && Math.abs(actual.y - 0.96875F) < 1.0e-7F
                             && actual.z == 0.03125F && actual.w == 1.0F,
@@ -232,14 +270,14 @@ public final class ConformanceHarness {
                         "void main() { vec3 available = gl_Normal;"), null, fragment, Map.of()) != null,
                 "hand arm must serve its actual NEW_ENTITY normal");
         // Nontrivial position and transforms distinguish a matrix product from the old vec4 product.
-        var position = new org.joml.Vector4f(-3.5F, -1.5F, 0.7F, 1);
-        var modelView = new org.joml.Matrix4f().translate(1, 2, -6).rotateY(0.4F);
-        var projection = new org.joml.Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128);
-        var sequential = projection.transform(modelView.transform(new org.joml.Vector4f(position)));
-        var matrixProduct = new org.joml.Matrix4f(projection).mul(modelView)
-                .transform(new org.joml.Vector4f(position));
+        var position = new Vector4f(-3.5F, -1.5F, 0.7F, 1);
+        var modelView = new Matrix4f().translate(1, 2, -6).rotateY(0.4F);
+        var projection = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128);
+        var sequential = projection.transform(modelView.transform(new Vector4f(position)));
+        var matrixProduct = new Matrix4f(projection).mul(modelView)
+                .transform(new Vector4f(position));
         assertTrue(sequential.distance(matrixProduct) < 1.0e-5F
-                        && new org.joml.Vector4f(sequential).mul(position).distance(matrixProduct) > 1,
+                        && new Vector4f(sequential).mul(position).distance(matrixProduct) > 1,
                 "projection fixture must expose component-wise vertex multiplication");
         System.out.println("[chimera] legacy host vertex semantics: PASS");
     }
@@ -262,11 +300,11 @@ public final class ConformanceHarness {
         String fragment = "#version 120\nvarying vec2 uv;\nvarying vec3 normal;\n"
                 + "void main() { gl_FragColor = vec4(uv, normal.z, 1); }\n";
         var hand = LegacyGlslConverter.convertHandVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
-        for (var entry : net.chimera.render.vertex.ChimeraVertexFormats.handFormats().entrySet()) {
+        for (var entry : ChimeraVertexFormats.handFormats().entrySet()) {
             var host = entry.getKey();
             var extended = entry.getValue();
-            assertEquals(host, net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(extended), "hand variant host lookup");
-            boolean computedNormal = net.chimera.render.vertex.ChimeraVertexFormats.computesNormal(extended);
+            assertEquals(host, ChimeraVertexFormats.handHostFormat(extended), "hand variant host lookup");
+            boolean computedNormal = ChimeraVertexFormats.computesNormal(extended);
             assertEquals(host.getVertexSize() + (computedNormal ? 24 : 20), extended.getVertexSize(),
                     "hand prefix plus 20-byte material inputs (and a 4-byte GLYPH normal)");
             for (int i = 0; i < host.getElements().size(); i++) {
@@ -282,7 +320,7 @@ public final class ConformanceHarness {
                 assertTrue(source.contains("layout(location = 4) in vec3 Normal;")
                                 && source.contains("layout(location = 5) in uvec4 EntityIds;")
                                 && source.contains("const ivec2 UV1 = ivec2(0);"), "GLYPH text inputs");
-            } else if (host != com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY) {
+            } else if (host != DefaultVertexFormat.NEW_ENTITY) {
                 assertTrue(source.contains("const vec3 Normal = vec3(0.0, 0.0, 1.0);")
                                 && source.contains("const ivec2 UV1 = ivec2(0);"), "Iris missing normal/overlay defaults");
             }
@@ -292,20 +330,20 @@ public final class ConformanceHarness {
         var block = LegacyGlslConverter.convertBlockVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
         for (var program : List.of(entity, block)) {
             String glyph = LegacyGlslConverter.layoutVertexForFormat(program.source(),
-                    com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+                    DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
             assertTrue(PackCompileCheck.compile(glyph, true) == null, "entity-family GLYPH layout fails compilation");
             assertTrue(glyph.contains("layout(location = 4) in vec3 Normal;")
                     && glyph.contains("layout(location = 7) in vec4 ChimeraPackedTangent;"), "entity-family GLYPH inputs");
         }
-        var raster = new org.joml.Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, true);
-        var snapshot = new org.joml.Matrix4f(raster);
-        var drawn = net.chimera.render.ChimeraHandRenderer.projection(raster);
-        var iris = new org.joml.Matrix4f().scale(1, 1, net.chimera.render.ChimeraHandRenderer.DEPTH)
-                .mul(new org.joml.Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, false));
+        var raster = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, true);
+        var snapshot = new Matrix4f(raster);
+        var drawn = ChimeraHandRenderer.projection(raster);
+        var iris = new Matrix4f().scale(1, 1, ChimeraHandRenderer.DEPTH)
+                .mul(new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, false));
         for (float z : new float[]{-0.05F, -0.5F, -1.0F, -128F}) {
-            var point = new org.joml.Vector4f(0.02F, -0.03F, z, 1);
-            var actual = drawn.transform(new org.joml.Vector4f(point));
-            var expected = iris.transform(new org.joml.Vector4f(point));
+            var point = new Vector4f(0.02F, -0.03F, z, 1);
+            var actual = drawn.transform(new Vector4f(point));
+            var expected = iris.transform(new Vector4f(point));
             float depth = actual.z / actual.w;
             assertTrue(Math.abs(depth - (0.5F * (expected.z / expected.w + 1))) < 1.0e-6F,
                     "hand Vulkan depth must equal Iris window depth at z=" + z);
@@ -322,7 +360,7 @@ public final class ConformanceHarness {
         int flushes = 0;
         boolean translucentAfterSolidHand = false;
         for (var instruction : opaque.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+            if (instruction instanceof MethodInsnNode call) {
                 if (call.owner.equals("net/minecraft/client/renderer/MultiBufferSource$BufferSource")
                         && call.name.equals("endBatch") && call.desc.equals("()V")) flushes++;
                 if (call.name.equals("renderGroup") && flushes >= 2) translucentAfterSolidHand = true;
@@ -333,7 +371,7 @@ public final class ConformanceHarness {
         var late = game.methods.stream().filter(method -> method.name.equals("renderItemInHand")).findFirst().orElseThrow();
         int calls = 0;
         for (var instruction : late.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+            if (instruction instanceof MethodInsnNode call
                     && call.name.equals("renderHandsWithItems")
                     && call.desc.equals("(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/player/LocalPlayer;I)V")) calls++;
         }
@@ -347,7 +385,7 @@ public final class ConformanceHarness {
                 .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
         boolean directDrawer = false;
         for (var instruction : immediate.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+            if (instruction instanceof MethodInsnNode call) {
                 assertTrue(!call.name.equals("drawIndexed"), "re-audit native immediate attachment ownership");
                 if (call.owner.equals("net/vulkanmod/vulkan/Drawer") && call.name.equals("draw")) directDrawer = true;
             }
@@ -358,7 +396,7 @@ public final class ConformanceHarness {
         boolean handScope = false;
         boolean attachments = false;
         for (var instruction : owner.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+            if (instruction instanceof MethodInsnNode call) {
                 if (call.owner.equals("net/chimera/render/ChimeraHandRenderer") && call.name.equals("active")) handScope = true;
                 if (call.name.equals("beginPackFamilyWindow")) attachments = true;
             }
@@ -371,18 +409,18 @@ public final class ConformanceHarness {
      * so the 10-vertex horizon must be submitted non-indexed to get the native 24-index expansion.
      */
     private static void verifyHorizonSubmission() throws IOException {
-        int vertices = net.chimera.render.ChimeraHorizonRenderer.VERTEX_COUNT;
-        assertEquals(com.mojang.blaze3d.vertex.VertexFormat.Mode.TRIANGLE_FAN,
-                net.minecraft.client.renderer.RenderPipelines.SKY.getVertexFormatMode(),
+        int vertices = ChimeraHorizonRenderer.VERTEX_COUNT;
+        assertEquals(VertexFormat.Mode.TRIANGLE_FAN,
+                RenderPipelines.SKY.getVertexFormatMode(),
                 "horizon relies on the SKY pipeline's fan auto-index path");
-        assertEquals(24, net.vulkanmod.vulkan.memory.buffer.index.AutoIndexBuffer.getIndexCount(
-                        net.vulkanmod.vulkan.memory.buffer.index.AutoIndexBuffer.DrawType.TRIANGLE_FAN, vertices),
+        assertEquals(24, AutoIndexBuffer.getIndexCount(
+                        AutoIndexBuffer.DrawType.TRIANGLE_FAN, vertices),
                 "horizon fan must expand to eight triangles");
         var draw = nativeClass("net/chimera/render/ChimeraHorizonRenderer").methods.stream()
                 .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
         int nonIndexed = 0;
         for (var instruction : draw.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+            if (instruction instanceof MethodInsnNode call
                     && call.owner.equals("com/mojang/blaze3d/systems/RenderPass")) {
                 assertTrue(!call.name.equals("drawIndexed") && !call.name.equals("setIndexBuffer"),
                         "indexed horizon submission bypasses VulkanMod's fan expansion");
@@ -407,7 +445,7 @@ public final class ConformanceHarness {
                 .findFirst().orElseThrow();
         boolean custom = false;
         for (var instruction : submit.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+            if (instruction instanceof MethodInsnNode call
                     && call.name.equals("submitCustomGeometry")) custom = true;
         }
         assertTrue(custom, "end portal must submit custom geometry for the block-entity custom batch");
@@ -424,11 +462,11 @@ public final class ConformanceHarness {
                 "custom geometry storage seam changed");
     }
 
-    private static org.objectweb.asm.tree.ClassNode nativeClass(String name) throws IOException {
+    private static ClassNode nativeClass(String name) throws IOException {
         try (var input = ConformanceHarness.class.getClassLoader().getResourceAsStream(name + ".class")) {
             if (input == null) throw new IOException("missing native class " + name);
-            var result = new org.objectweb.asm.tree.ClassNode();
-            new org.objectweb.asm.ClassReader(input).accept(result, 0);
+            var result = new ClassNode();
+            new ClassReader(input).accept(result, 0);
             return result;
         }
     }
@@ -459,7 +497,7 @@ public final class ConformanceHarness {
         var plan = PackPlanBuilder.build(new PackProgram("gbuffers_skytextured", fragment, null, vertex, null), null);
         assertTrue(plan.executable(), "live sky uniforms/legacy matrices rejected: " + plan.deviations());
         assertEquals(List.of(1, 4), plan.geometryOutputPlan().targetSlots(), "sky authored outputs lost");
-        var variants = new java.util.LinkedHashMap<com.mojang.blaze3d.vertex.VertexFormat, PackPipelines.PackSky>();
+        var variants = new LinkedHashMap<VertexFormat, PackPipelines.PackSky>();
         for (var contract : LegacyGlslConverter.SKY_CONTRACTS) {
             String source = LegacyGlslConverter.skyVertexForContract(plan.convertedVertex(), contract);
             assertTrue(PackCompileCheck.compile(source, true) == null, "sky native variant failed: " + contract);
@@ -472,56 +510,56 @@ public final class ConformanceHarness {
                             && source.contains("void main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
                     "sky live inputs, world matrices or early-return clip conversion changed");
             var format = PackPipelines.skyVertexFormat(contract);
-            var nativeBuilder = new net.vulkanmod.vulkan.shader.Pipeline.Builder(format, "test_sky");
+            var nativeBuilder = new Pipeline.Builder(format, "test_sky");
             nativeBuilder.setUniformSupplierGetter(info -> () -> null);
-            PackPipelines.ordinaryDescriptorContract(plan, java.util.Set.of()).apply(nativeBuilder);
+            PackPipelines.ordinaryDescriptorContract(plan, Set.of()).apply(nativeBuilder);
             var stageInfo = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
                     .filter(field -> field.getName().equals("renderStage")).findFirst().orElseThrow().getInfo();
-            var supplier = net.chimera.render.shader.PackUniformProvider.shared().supplier(stageInfo);
-            var previousPhase = net.chimera.render.shader.PackUniformProvider.setRenderingPhase(PackRenderingPhase.SUN);
+            var supplier = PackUniformProvider.shared().supplier(stageInfo);
+            var previousPhase = PackUniformProvider.setRenderingPhase(PackRenderingPhase.SUN);
             assertEquals(4, supplier.get().getInt(0), "sun stage UBO value");
-            var enclosing = net.chimera.render.shader.PackUniformProvider.setRenderingPhase(PackRenderingPhase.MOON);
+            var enclosing = PackUniformProvider.setRenderingPhase(PackRenderingPhase.MOON);
             assertEquals(5, supplier.get().getInt(0), "moon stage UBO value");
-            net.chimera.render.shader.PackUniformProvider.setRenderingPhase(enclosing);
+            PackUniformProvider.setRenderingPhase(enclosing);
             assertEquals(4, supplier.get().getInt(0), "nested stage restore");
-            net.chimera.render.shader.PackUniformProvider.setRenderingPhase(previousPhase);
+            PackUniformProvider.setRenderingPhase(previousPhase);
             variants.put(format, new PackPipelines.PackSky(null, new int[0], source, plan.convertedFragment(),
                     format, plan.geometryOutputPlan(), new ProgramImageBindingManifest(List.of())));
         }
         String fragmentError = PackCompileCheck.compile(plan.convertedFragment(), false);
         assertTrue(fragmentError == null, "sky MRT fragment failed: " + fragmentError);
         var basic = new PackPipelines.PackSkyFamily(variants);
-        var textured = new PackPipelines.PackSkyFamily(variants.entrySet().stream().collect(java.util.stream.Collectors.toMap(
-                java.util.Map.Entry::getKey, entry -> new PackPipelines.PackSky(null, new int[0], "", "", entry.getKey(),
+        var textured = new PackPipelines.PackSkyFamily(variants.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey, entry -> new PackPipelines.PackSky(null, new int[0], "", "", entry.getKey(),
                         GeometryOutputPlan.empty("textured"), new ProgramImageBindingManifest(List.of())))));
-        net.chimera.render.shader.ChimeraSkyBridge.install(basic, textured, null, true, "off");
-        net.chimera.render.shader.ChimeraSkyBridge.setEnabled(true);
+        ChimeraSkyBridge.install(basic, textured, null, true, "off");
+        ChimeraSkyBridge.setEnabled(true);
         try {
-            for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.SKY,
-                    net.minecraft.client.renderer.RenderPipelines.SUNRISE_SUNSET,
-                    net.minecraft.client.renderer.RenderPipelines.STARS)) {
-                assertTrue(net.chimera.render.shader.ChimeraSkyBridge.shouldUsePackPipeline(host), "missing basic sky shape");
-                assertEquals(plan.geometryOutputPlan(), net.chimera.render.shader.ChimeraSkyBridge.outputPlan(), "wrong sky family");
+            for (var host : List.of(RenderPipelines.SKY,
+                    RenderPipelines.SUNRISE_SUNSET,
+                    RenderPipelines.STARS)) {
+                assertTrue(ChimeraSkyBridge.shouldUsePackPipeline(host), "missing basic sky shape");
+                assertEquals(plan.geometryOutputPlan(), ChimeraSkyBridge.outputPlan(), "wrong sky family");
             }
-            for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.CELESTIAL,
-                    net.minecraft.client.renderer.RenderPipelines.END_SKY)) {
-                assertTrue(net.chimera.render.shader.ChimeraSkyBridge.shouldUsePackPipeline(host), "missing textured sky shape");
-                assertEquals("textured", net.chimera.render.shader.ChimeraSkyBridge.outputPlan().programName(), "wrong textured family");
+            for (var host : List.of(RenderPipelines.CELESTIAL,
+                    RenderPipelines.END_SKY)) {
+                assertTrue(ChimeraSkyBridge.shouldUsePackPipeline(host), "missing textured sky shape");
+                assertEquals("textured", ChimeraSkyBridge.outputPlan().programName(), "wrong textured family");
             }
-            assertTrue(net.chimera.render.shader.ChimeraSkyBridge.skipHostClouds(), "authored empty clouds changed");
-            assertEquals(net.minecraft.client.CloudStatus.OFF, net.chimera.render.shader.ChimeraSkyBridge.packCloudStatus(),
+            assertTrue(ChimeraSkyBridge.skipHostClouds(), "authored empty clouds changed");
+            assertEquals(CloudStatus.OFF, ChimeraSkyBridge.packCloudStatus(),
                     "pack clouds directive not applied");
-            assertTrue(!net.chimera.render.shader.ChimeraSkyBridge.shouldUsePackPipeline(net.minecraft.client.renderer.RenderPipelines.GUI)
-                            && !net.chimera.render.shader.ChimeraSkyBridge.isDrawActive(), "sky selection leaked to GUI");
+            assertTrue(!ChimeraSkyBridge.shouldUsePackPipeline(RenderPipelines.GUI)
+                            && !ChimeraSkyBridge.isDrawActive(), "sky selection leaked to GUI");
         } finally {
-            net.chimera.render.shader.ChimeraSkyBridge.disable();
+            ChimeraSkyBridge.disable();
         }
         var level = nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
                 .filter(method -> method.name.equals("method_62216")).findFirst().orElseThrow();
         boolean submitted = false;
         boolean delayedFlush = false;
         for (var instruction : level.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+            if (instruction instanceof MethodInsnNode call) {
                 if (call.owner.endsWith("/WeatherEffectRenderer") && call.name.equals("render")) submitted = true;
                 if (submitted && call.name.equals("endBatch")) delayedFlush = true;
             }
@@ -545,7 +583,7 @@ public final class ConformanceHarness {
                 .findFirst().orElseThrow();
         boolean rotationSeam = false;
         for (var instruction : celestial.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+            if (instruction instanceof MethodInsnNode call
                     && call.owner.equals("com/mojang/blaze3d/vertex/PoseStack")
                     && call.name.equals("mulPose") && call.desc.equals("(Lorg/joml/Quaternionfc;)V")) {
                 rotationSeam = true;
@@ -553,19 +591,19 @@ public final class ConformanceHarness {
             }
         }
         assertTrue(rotationSeam, "re-audit the Iris celestial sun-path rotation seam");
-        float previousRotation = net.chimera.render.shader.PackUniformProvider.currentSunPathRotation();
+        float previousRotation = PackUniformProvider.currentSunPathRotation();
         try {
-            net.chimera.render.shader.PackUniformProvider.installSunPath(17.5F, 0.0F);
-            assertTrue(net.chimera.render.shader.PackUniformProvider.currentSunPathRotation() == 17.5F,
+            PackUniformProvider.installSunPath(17.5F, 0.0F);
+            assertTrue(PackUniformProvider.currentSunPathRotation() == 17.5F,
                     "native celestial geometry must use the pack sun-path rotation");
         } finally {
-            net.chimera.render.shader.PackUniformProvider.installSunPath(previousRotation, 0.0F);
+            PackUniformProvider.installSunPath(previousRotation, 0.0F);
         }
         var immediate = nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
                 .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
         boolean weather = false;
         for (var instruction : immediate.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call && call.name.equals("beginHostLayoutDraw")) weather = true;
+            if (instruction instanceof MethodInsnNode call && call.name.equals("beginHostLayoutDraw")) weather = true;
         }
         assertTrue(weather, "weather must own its actual immediate draw");
         var indexed = nativeClass("net/chimera/mixin/ChimeraVkRenderPassMixin");
@@ -573,7 +611,7 @@ public final class ConformanceHarness {
             var method = indexed.methods.stream().filter(candidate -> candidate.name.equals(name)).findFirst().orElseThrow();
             boolean targets = false;
             for (var instruction : method.instructions) {
-                if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call && call.name.equals("beginPackFamilyWindow")) targets = true;
+                if (instruction instanceof MethodInsnNode call && call.name.equals("beginPackFamilyWindow")) targets = true;
             }
             assertTrue(targets, "both native sky draw APIs must own attachments");
         }
@@ -581,8 +619,8 @@ public final class ConformanceHarness {
     }
 
     private static void verifyRequestedFamilyFallbackAndCrumbling() throws IOException {
-        var host = net.minecraft.client.renderer.RenderPipelines.CRUMBLING;
-        assertEquals(com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK, host.getVertexFormat(),
+        var host = RenderPipelines.CRUMBLING;
+        assertEquals(DefaultVertexFormat.BLOCK, host.getVertexFormat(),
                 "crumbling host format changed");
         assertTrue(!host.isWriteDepth() && host.getBlendFunction().isPresent()
                         && host.getDepthBiasConstant() == -10.0F && host.getDepthBiasScaleFactor() == -1.0F,
@@ -622,9 +660,9 @@ public final class ConformanceHarness {
             for (String name : List.of("gbuffers_hand", "gbuffers_hand_water")) {
                 var handPlan = analysis.plan().program(name);
                 assertTrue(handPlan.convertedFragment().contains("bool hasSkylight;"), "GLSL bool semantics changed");
-                var ordinary = PackPipelines.ordinaryDescriptorContract(handPlan, java.util.Set.of());
-                var nativeBuilder = new net.vulkanmod.vulkan.shader.Pipeline.Builder(
-                        net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
+                var ordinary = PackPipelines.ordinaryDescriptorContract(handPlan, Set.of());
+                var nativeBuilder = new Pipeline.Builder(
+                        ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
                 nativeBuilder.setUniformSupplierGetter(info -> () -> null);
                 ordinary.apply(nativeBuilder); // Regression used to throw "not admitted type: bool".
                 var boolField = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
@@ -685,14 +723,14 @@ public final class ConformanceHarness {
      * both segment ends, VIEW_SHRINK, +Z normal). Both compile on the host line layout.
      */
     private static void verifyLineLane() throws IOException {
-        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LINES,
-                net.minecraft.client.renderer.RenderPipelines.LINES_TRANSLUCENT,
-                net.minecraft.client.renderer.RenderPipelines.SECONDARY_BLOCK_OUTLINE)) {
-            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, host.getVertexFormat(),
-                            net.chimera.render.shader.HostLayoutLane.Pass.WORLD)
-                            == net.chimera.render.shader.HostLayoutLane.LINE,
+        for (var host : List.of(RenderPipelines.LINES,
+                RenderPipelines.LINES_TRANSLUCENT,
+                RenderPipelines.SECONDARY_BLOCK_OUTLINE)) {
+            assertTrue(HostLayoutLane.forDraw(host, host.getVertexFormat(),
+                            HostLayoutLane.Pass.WORLD)
+                            == HostLayoutLane.LINE,
                     host.getLocation() + " must route to gbuffers_line");
-            assertEquals(0.0F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+            assertEquals(0.0F, ChimeraEntityBridge.alphaReference(host),
                     "Iris LINES uses AlphaTests.OFF");
         }
         String fragment = """
@@ -780,14 +818,14 @@ public final class ConformanceHarness {
      * glint strength in gl_Color's alpha, NON_ZERO_ALPHA, and unbound material attributes.
      */
     private static void verifyGlintLane() throws IOException {
-        var host = net.minecraft.client.renderer.RenderPipelines.GLINT;
-        assertEquals(com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX, host.getVertexFormat(),
+        var host = RenderPipelines.GLINT;
+        assertEquals(DefaultVertexFormat.POSITION_TEX, host.getVertexFormat(),
                 "glint host format changed");
-        assertEquals(0.0001F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+        assertEquals(0.0001F, ChimeraEntityBridge.alphaReference(host),
                 "Iris GLINT uses AlphaTests.NON_ZERO_ALPHA");
         // A held foil item flushes its glint inside the hand scope; the hand lane has no
         // POSITION_TEX variant, so the lookup must answer host fallback, not throw.
-        assertTrue(new PackPipelines.PackHand(java.util.Map.of()).forFormat(host.getVertexFormat()) == null,
+        assertTrue(new PackPipelines.PackHand(Map.of()).forFormat(host.getVertexFormat()) == null,
                 "hand glint must fall back to its host draw");
         Path root = Files.createTempDirectory("chimera-glint-");
         try {
@@ -851,18 +889,18 @@ public final class ConformanceHarness {
      * Iris's host-layout inputs and identity: entityId per draw, blockEntityId -1.
      */
     private static void verifyHostLayoutLanes() throws IOException {
-        var lanes = net.chimera.render.shader.HostLayoutLane.values();
-        java.util.Set<String> servedPrograms = new java.util.HashSet<>();
+        var lanes = HostLayoutLane.values();
+        Set<String> servedPrograms = new HashSet<>();
         for (var lane : lanes) {
-            assertTrue(net.chimera.render.shader.HostLayoutLane.of(lane.family()) == lane,
+            assertTrue(HostLayoutLane.of(lane.family()) == lane,
                     lane + " family must name its lane");
             for (var host : lane.pipelines()) {
                 assertEquals(lane.format(), host.getVertexFormat(), host.getLocation() + " host format changed");
-                assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, lane.format(), lane.pass()) == lane
+                assertTrue(HostLayoutLane.forDraw(host, lane.format(), lane.pass()) == lane
                         && lane.serves(host), host.getLocation() + " must route to " + lane);
             }
             FamilyAdapterPlan adapter = FamilyAdapterRegistry.forProgram(lane.program());
-            if (lane == net.chimera.render.shader.HostLayoutLane.WEATHER) {
+            if (lane == HostLayoutLane.WEATHER) {
                 assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE, adapter.vertexContract(),
                         "weather keeps the particle conversion");
             } else {
@@ -879,27 +917,27 @@ public final class ConformanceHarness {
         }
         assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size(),
                 "every host-layout program needs a lane");
-        var table = net.chimera.render.shader.HostLayoutLane.class;
-        assertTrue(net.chimera.render.shader.HostLayoutLane.LINE.whiteAlbedo()
-                        && net.chimera.render.shader.HostLayoutLane.LIGHTNING.whiteAlbedo()
-                        && net.chimera.render.shader.HostLayoutLane.LEASH.whiteAlbedo()
-                        && net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT_BG.whiteAlbedo()
-                        && net.chimera.render.shader.HostLayoutLane.SHADOW_BASIC.whiteAlbedo()
-                        && !net.chimera.render.shader.HostLayoutLane.GLINT.whiteAlbedo()
-                        && !net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT.whiteAlbedo()
-                        && !net.chimera.render.shader.HostLayoutLane.BEACON_BEAM.whiteAlbedo(),
+        var table = HostLayoutLane.class;
+        assertTrue(HostLayoutLane.LINE.whiteAlbedo()
+                        && HostLayoutLane.LIGHTNING.whiteAlbedo()
+                        && HostLayoutLane.LEASH.whiteAlbedo()
+                        && HostLayoutLane.SHADOW_TEXT_BG.whiteAlbedo()
+                        && HostLayoutLane.SHADOW_BASIC.whiteAlbedo()
+                        && !HostLayoutLane.GLINT.whiteAlbedo()
+                        && !HostLayoutLane.SHADOW_TEXT.whiteAlbedo()
+                        && !HostLayoutLane.BEACON_BEAM.whiteAlbedo(),
                 "Iris binds white to unit 0 exactly for host formats without UV0: " + table.getSimpleName());
-        assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(
-                        net.minecraft.client.renderer.RenderPipelines.LINES,
-                        net.minecraft.client.renderer.RenderPipelines.LINES.getVertexFormat(),
-                        net.chimera.render.shader.HostLayoutLane.Pass.HAND) == null,
+        assertTrue(HostLayoutLane.forDraw(
+                        RenderPipelines.LINES,
+                        RenderPipelines.LINES.getVertexFormat(),
+                        HostLayoutLane.Pass.HAND) == null,
                 "a world-only lane must not take a first-person draw");
-        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LIGHTNING,
-                net.minecraft.client.renderer.RenderPipelines.DRAGON_RAYS,
-                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_OPAQUE,
-                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_TRANSLUCENT,
-                net.minecraft.client.renderer.RenderPipelines.LEASH)) {
-            assertEquals(0.0F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+        for (var host : List.of(RenderPipelines.LIGHTNING,
+                RenderPipelines.DRAGON_RAYS,
+                RenderPipelines.BEACON_BEAM_OPAQUE,
+                RenderPipelines.BEACON_BEAM_TRANSLUCENT,
+                RenderPipelines.LEASH)) {
+            assertEquals(0.0F, ChimeraEntityBridge.alphaReference(host),
                     "Iris LIGHTNING, BEACON and LEASH use AlphaTests.OFF");
         }
 
@@ -1051,7 +1089,7 @@ public final class ConformanceHarness {
         boolean casters = false;
         boolean snapshotAfterCasters = false;
         for (var instruction : shadowMap.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+            if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("renderShadowCasters")) casters = true;
                 if (casters && call.name.equals("captureOpaqueDepth")) snapshotAfterCasters = true;
             }
@@ -1063,7 +1101,7 @@ public final class ConformanceHarness {
         boolean guard = false;
         boolean dropped = false;
         for (var instruction : draw.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+            if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("beginHostLayoutDraw")) lane = true;
                 if (lane && call.name.equals("isShadowCasterPass")) guard = true;
                 if (guard && call.name.equals("close") && call.owner.equals("com/mojang/blaze3d/vertex/MeshData")) {
@@ -1084,45 +1122,45 @@ public final class ConformanceHarness {
      * Lines are widened. Every lane tests alpha per draw and compiles.
      */
     private static void verifyShadowLanes() throws IOException {
-        var shadowPass = net.chimera.render.shader.HostLayoutLane.Pass.SHADOW;
-        Map<com.mojang.blaze3d.pipeline.RenderPipeline, net.chimera.render.shader.HostLayoutLane> routes = Map.of(
-                net.minecraft.client.renderer.RenderPipelines.LINES, net.chimera.render.shader.HostLayoutLane.SHADOW_LINES,
-                net.minecraft.client.renderer.RenderPipelines.SECONDARY_BLOCK_OUTLINE,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_LINES,
-                net.minecraft.client.renderer.RenderPipelines.LEASH, net.chimera.render.shader.HostLayoutLane.SHADOW_LEASH,
-                net.minecraft.client.renderer.RenderPipelines.LIGHTNING,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_LIGHTNING,
-                net.minecraft.client.renderer.RenderPipelines.GLINT, net.chimera.render.shader.HostLayoutLane.SHADOW_GLINT,
-                net.minecraft.client.renderer.RenderPipelines.TEXT, net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT,
-                net.minecraft.client.renderer.RenderPipelines.TEXT_SEE_THROUGH,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT,
-                net.minecraft.client.renderer.RenderPipelines.TEXT_BACKGROUND,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT_BG,
-                net.minecraft.client.renderer.RenderPipelines.WATER_MASK,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_BASIC);
+        var shadowPass = HostLayoutLane.Pass.SHADOW;
+        Map<RenderPipeline, HostLayoutLane> routes = Map.of(
+                RenderPipelines.LINES, HostLayoutLane.SHADOW_LINES,
+                RenderPipelines.SECONDARY_BLOCK_OUTLINE,
+                HostLayoutLane.SHADOW_LINES,
+                RenderPipelines.LEASH, HostLayoutLane.SHADOW_LEASH,
+                RenderPipelines.LIGHTNING,
+                HostLayoutLane.SHADOW_LIGHTNING,
+                RenderPipelines.GLINT, HostLayoutLane.SHADOW_GLINT,
+                RenderPipelines.TEXT, HostLayoutLane.SHADOW_TEXT,
+                RenderPipelines.TEXT_SEE_THROUGH,
+                HostLayoutLane.SHADOW_TEXT,
+                RenderPipelines.TEXT_BACKGROUND,
+                HostLayoutLane.SHADOW_TEXT_BG,
+                RenderPipelines.WATER_MASK,
+                HostLayoutLane.SHADOW_BASIC);
         for (var route : routes.entrySet()) {
-            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(route.getKey(),
+            assertTrue(HostLayoutLane.forDraw(route.getKey(),
                             route.getKey().getVertexFormat(), shadowPass) == route.getValue(),
                     route.getKey().getLocation() + " must route to " + route.getValue() + " in the shadow pass");
         }
         // Iris assigns no shadow key to these (or cancels them): they stay out of the map.
-        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.LINES_TRANSLUCENT,
-                net.minecraft.client.renderer.RenderPipelines.DRAGON_RAYS,
-                net.minecraft.client.renderer.RenderPipelines.TEXT_INTENSITY,
-                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_OPAQUE)) {
-            assertTrue(net.chimera.render.shader.HostLayoutLane.forDraw(host, host.getVertexFormat(), shadowPass) == null,
+        for (var host : List.of(RenderPipelines.LINES_TRANSLUCENT,
+                RenderPipelines.DRAGON_RAYS,
+                RenderPipelines.TEXT_INTENSITY,
+                RenderPipelines.BEACON_BEAM_OPAQUE)) {
+            assertTrue(HostLayoutLane.forDraw(host, host.getVertexFormat(), shadowPass) == null,
                     host.getLocation() + " has no Iris shadow key");
         }
-        assertEquals(0.0001F, net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT.alphaReference(),
+        assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT.alphaReference(),
                 "Iris SHADOW_TEXT: NON_ZERO_ALPHA");
-        assertEquals(0.0001F, net.chimera.render.shader.HostLayoutLane.SHADOW_TEXT_BG.alphaReference(),
+        assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT_BG.alphaReference(),
                 "Iris SHADOW_TEXT_BG: NON_ZERO_ALPHA");
-        assertEquals(0.1F, net.chimera.render.shader.HostLayoutLane.SHADOW_GLINT.alphaReference(),
+        assertEquals(0.1F, HostLayoutLane.SHADOW_GLINT.alphaReference(),
                 "Iris GLINT in the shadow pass: SHADOW_ENTITIES_CUTOUT, ONE_TENTH_ALPHA");
-        for (var lane : List.of(net.chimera.render.shader.HostLayoutLane.SHADOW_LINES,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_LEASH,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_LIGHTNING,
-                net.chimera.render.shader.HostLayoutLane.SHADOW_BASIC)) {
+        for (var lane : List.of(HostLayoutLane.SHADOW_LINES,
+                HostLayoutLane.SHADOW_LEASH,
+                HostLayoutLane.SHADOW_LIGHTNING,
+                HostLayoutLane.SHADOW_BASIC)) {
             assertEquals(0.0F, lane.alphaReference(), lane + ": Iris AlphaTests.OFF");
         }
 
@@ -1203,7 +1241,7 @@ public final class ConformanceHarness {
         boolean flameId = false;
         boolean family = false;
         for (var instruction : flames.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+            if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("flameEntityId")) flameId = true;
                 if (call.name.equals("emit") && call.owner.equals("net/chimera/render/ChimeraFamilyDraw")) family = true;
             }
@@ -1218,7 +1256,7 @@ public final class ConformanceHarness {
      */
     private static void verifyShadowCulling() {
         int renderDistance = 192;
-        java.util.function.BiFunction<Map<String, String>, Map<String, String>, ShadowCullingPlan> plan =
+        BiFunction<Map<String, String>, Map<String, String>, ShadowCullingPlan> plan =
                 (properties, constants) -> ShadowCullingPlan.of(properties,
                         new PackConfig.ShadowSettings(2048, 128.0F, constants, List.of()));
         Map<String, String> unitRender = Map.of("shadowDistanceRenderMul", "1.0");
@@ -1270,40 +1308,40 @@ public final class ConformanceHarness {
                 "Iris keeps the default for an unrecognized value: " + malformed);
 
         // A camera at the origin looking down -Z, 70 degree vertical field, 16:9; planes only.
-        org.joml.Matrix4f camera = new org.joml.Matrix4f()
+        Matrix4f camera = new Matrix4f()
                 .perspective((float) Math.toRadians(70.0), 16.0F / 9.0F, 0.05F, 1000.0F);
         var open = new ShadowCullingPlan.Culler(advanced, none, 0.0);
-        var overhead = new net.chimera.render.ShadowCullingFrustum(open, camera,
-                new org.joml.Vector3f(0.0F, 1.0F, 0.0F));
+        var overhead = new ShadowCullingFrustum(open, camera,
+                new Vector3f(0.0F, 1.0F, 0.0F));
         assertTrue(cube(overhead, 0, 0, -20), "a visible caster is kept");
         assertTrue(cube(overhead, 0, 50, -20), "a caster above the view shadows what the camera sees");
         assertTrue(!cube(overhead, 0, 50, 20), "with the sun overhead, a caster behind the camera shadows nothing seen");
         assertTrue(!cube(overhead, 0, -100, -20), "a caster below the view shadows nothing seen");
-        var side = new net.chimera.render.ShadowCullingFrustum(open, camera,
-                new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        var side = new ShadowCullingFrustum(open, camera,
+                new Vector3f(1.0F, 0.0F, 0.0F));
         assertTrue(cube(side, 200, 0, -20), "a caster on the light's side shadows into the view");
         assertTrue(!cube(side, -200, 0, -20), "a caster on the far side of the view shadows nothing seen");
-        var oblique = new net.chimera.render.ShadowCullingFrustum(open, camera,
-                new org.joml.Vector3f(1.0F, 1.0F, 0.0F).normalize());
+        var oblique = new ShadowCullingFrustum(open, camera,
+                new Vector3f(1.0F, 1.0F, 0.0F).normalize());
         assertTrue(cube(oblique, 30, 30, -20), "the light's ray from this caster crosses the view");
         assertTrue(!cube(oblique, -30, -30, -20), "the light's ray from this caster leaves the view");
-        var boxed = new net.chimera.render.ShadowCullingFrustum(
-                new ShadowCullingPlan.Culler(advanced, 64.0, 0.0), camera, new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        var boxed = new ShadowCullingFrustum(
+                new ShadowCullingPlan.Culler(advanced, 64.0, 0.0), camera, new Vector3f(1.0F, 0.0F, 0.0F));
         assertTrue(!cube(boxed, 100, 0, -20), "the BoxCuller still bounds the advanced frustum");
-        var zone = new net.chimera.render.ShadowCullingFrustum(safeZone.terrain(1024), camera,
-                new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        var zone = new ShadowCullingFrustum(safeZone.terrain(1024), camera,
+                new Vector3f(1.0F, 0.0F, 0.0F));
         assertTrue(cube(zone, -20, 0, -20) && zone.forced(-20, 0, -20, -19, 1, -19),
                 "a caster in the safe zone is drawn whatever the view");
         assertTrue(!cube(zone, -60, 0, -20) && !zone.forced(-60, 0, -20, -59, 1, -19),
                 "outside the safe zone the advanced planes decide");
         assertTrue(!cube(zone, 200, 0, -20), "the outer box bounds the safe zone frustum");
-        var off = new net.chimera.render.ShadowCullingFrustum(ShadowCullingPlan.Culler.NONE, camera,
-                new org.joml.Vector3f(1.0F, 0.0F, 0.0F));
+        var off = new ShadowCullingFrustum(ShadowCullingPlan.Culler.NONE, camera,
+                new Vector3f(1.0F, 0.0F, 0.0F));
         assertTrue(cube(off, -200, 0, -20) && !off.forced(0, 0, 0, 1, 1, 1), "no culling keeps everything");
         System.out.println("[chimera] Iris shadow culling (advanced, safe zone, distance): PASS");
     }
 
-    private static boolean cube(net.chimera.render.ShadowCullingFrustum frustum, float x, float y, float z) {
+    private static boolean cube(ShadowCullingFrustum frustum, float x, float y, float z) {
         return frustum.visible(x, y, z, x + 1.0F, y + 1.0F, z + 1.0F);
     }
 
@@ -1495,7 +1533,7 @@ public final class ConformanceHarness {
                     "the plan records every image of a declaration list");
             assertEquals(List.of("floodfillSampler", "floodfillSamplerCopy"), compute.samplerNames(),
                     "the plan records every sampler of a declaration list");
-            String translated = net.chimera.render.PackShadowCompute.translatedModule(plan.advancedResources(),
+            String translated = PackShadowCompute.translatedModule(plan.advancedResources(),
                     shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames()).source();
             assertTrue(translated.contains("layout(rgba16f, binding = 1) uniform image3D floodfill_img_copy;")
                             && translated.contains("layout(binding = 3) uniform sampler3D floodfillSamplerCopy;"),
@@ -1519,7 +1557,7 @@ public final class ConformanceHarness {
                 .findFirst().orElseThrow(() -> new AssertionError("PackShadowCompute.dispatch is missing"));
         boolean frameSlot = false;
         for (var instruction : dispatch.instructions) {
-            if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+            if (instruction instanceof MethodInsnNode call
                     && call.owner.equals("net/vulkanmod/vulkan/Renderer") && call.name.equals("getCurrentFrame")) {
                 frameSlot = true;
             }
@@ -1574,7 +1612,7 @@ public final class ConformanceHarness {
                     }
                     """);
             PackPlan plan = PackProbe.analyze(root).plan();
-            var module = net.chimera.render.PackShadowCompute.translatedModule(plan.advancedResources(),
+            var module = PackShadowCompute.translatedModule(plan.advancedResources(),
                     shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
             assertEquals(List.of("cameraPosition", "frameCounter", "frameTimeCounter", "previousCameraPosition",
                             "wetness"), module.uniforms().stream().map(uniform -> uniform.name()).toList(),
@@ -1596,7 +1634,7 @@ public final class ConformanceHarness {
                     }
                     """;
             String mismatch = PackCompileCheck.compileComputeValues(implicit,
-                    java.util.Map.of("cameraPosition", 0, "frameCounter", 16));
+                    Map.of("cameraPosition", 0, "frameCounter", 16));
             assertTrue(mismatch != null && mismatch.contains("frameCounter"),
                     "the offset check reports the implicit layout's frameCounter: " + mismatch);
         } finally {
@@ -1635,7 +1673,7 @@ public final class ConformanceHarness {
         var hook = nativeClass("net/chimera/mixin/WorldRendererMixin").methods.stream()
                 .filter(method -> {
                     for (var instruction : method.instructions) {
-                        if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                        if (instruction instanceof MethodInsnNode call
                                 && call.name.equals("renderShadowSegment")) {
                             return true;
                         }
@@ -1644,11 +1682,11 @@ public final class ConformanceHarness {
                 }).findFirst().orElseThrow(() -> new AssertionError("no mixin method starts the shadow segment"));
         String point = null;
         for (var annotation : hook.visibleAnnotations == null
-                ? List.<org.objectweb.asm.tree.AnnotationNode>of() : hook.visibleAnnotations) {
+                ? List.<AnnotationNode>of() : hook.visibleAnnotations) {
             if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
             for (int i = 0; i < annotation.values.size(); i += 2) {
                 if (!annotation.values.get(i).equals("at")) continue;
-                var at = (org.objectweb.asm.tree.AnnotationNode) ((List<?>) annotation.values.get(i + 1)).get(0);
+                var at = (AnnotationNode) ((List<?>) annotation.values.get(i + 1)).get(0);
                 for (int j = 0; j < at.values.size(); j += 2) {
                     if (at.values.get(j).equals("value")) point = (String) at.values.get(j + 1);
                 }
@@ -1760,14 +1798,14 @@ public final class ConformanceHarness {
         }
 
         // Iris XHFPTerrainVertex: ColorABGR.withAlpha(tint, brightness) instead of mulRGB.
-        assertEquals(0x7F336699, net.chimera.render.vertex.SeparateAoColor.argb(0xFF336699, 0.5F),
+        assertEquals(0x7F336699, SeparateAoColor.argb(0xFF336699, 0.5F),
                 "a block quad keeps its tint and carries the brightness in alpha");
-        assertEquals(0xFF336699, net.chimera.render.vertex.SeparateAoColor.argb(0x00336699, 1.0004F),
+        assertEquals(0xFF336699, SeparateAoColor.argb(0x00336699, 1.0004F),
                 "a brightness rounding just above 1 stays opaque instead of wrapping to 0");
-        assertEquals(0xCC3F7FFF, net.chimera.render.vertex.SeparateAoColor.rgba(1.0F, 0.5F, 0.25F, 0.8F),
+        assertEquals(0xCC3F7FFF, SeparateAoColor.rgba(1.0F, 0.5F, 0.25F, 0.8F),
                 "a fluid vertex keeps its tint and carries brightness times shade in alpha");
         String fixedVertex = resourceText("assets/chimera/shaders/chimera_terrain/chimera_terrain.vsh");
-        String separateAoVertex = net.chimera.render.shader.ChimeraTerrainPipelines.withSeparateAo(fixedVertex);
+        String separateAoVertex = ChimeraTerrainPipelines.withSeparateAo(fixedVertex);
         assertTrue(fixedVertex.contains("#ifdef CHIMERA_SEPARATE_AO")
                         && separateAoVertex.replace("\r\n", "\n").startsWith("#version 460\n#define CHIMERA_SEPARATE_AO\n"),
                 "Chimera's own terrain pipeline folds the alpha brightness back into RGB under separateAo");
@@ -1804,7 +1842,7 @@ public final class ConformanceHarness {
                     .orElseThrow(() -> new AssertionError("ChimeraMainPass." + name + " is missing"));
             boolean applies = false;
             for (var instruction : method.instructions) {
-                if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                if (instruction instanceof MethodInsnNode call
                         && call.owner.equals("net/chimera/render/shader/ChimeraTerrainPipelines")
                         && call.name.equals("setTerrainShading")) {
                     applies = true;
@@ -1883,7 +1921,7 @@ public final class ConformanceHarness {
                     .orElseThrow(() -> new AssertionError("ChimeraMainPass." + name + " is missing"));
             boolean installs = false;
             for (var instruction : method.instructions) {
-                if (instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                if (instruction instanceof MethodInsnNode call
                         && call.owner.equals("net/chimera/render/shader/PackUniformProvider")
                         && call.name.equals("installHeldItems")) {
                     installs = true;
@@ -1898,11 +1936,11 @@ public final class ConformanceHarness {
         return key.equals("oldLighting") ? directives.oldLighting() : directives.separateAo();
     }
 
-    private static boolean mixinTargets(org.objectweb.asm.tree.ClassNode mixin, String target) {
+    private static boolean mixinTargets(ClassNode mixin, String target) {
         for (var annotation : annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations)) {
             if (annotation.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")
                     && annotationValue(annotation, "value") instanceof List<?> list && list.stream().anyMatch(type ->
-                    ((org.objectweb.asm.Type) type).getInternalName().equals(target))) {
+                    ((Type) type).getInternalName().equals(target))) {
                 return true;
             }
         }
@@ -1910,7 +1948,7 @@ public final class ConformanceHarness {
     }
 
     /** True when an injector of {@code desc} names {@code method} and, if given, an @At {@code target}. */
-    private static boolean injects(org.objectweb.asm.tree.ClassNode mixin, String desc, String method, String target) {
+    private static boolean injects(ClassNode mixin, String desc, String method, String target) {
         for (var handler : mixin.methods) {
             for (var annotation : annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
                 if (!annotation.desc.equals(desc)
@@ -1920,7 +1958,7 @@ public final class ConformanceHarness {
                 Object at = annotationValue(annotation, "at");
                 List<?> ats = at instanceof List<?> list ? list : at == null ? List.of() : List.of(at);
                 if (target == null || ats.stream().anyMatch(value ->
-                        value instanceof org.objectweb.asm.tree.AnnotationNode node && target.equals(annotationValue(node, "target")))) {
+                        value instanceof AnnotationNode node && target.equals(annotationValue(node, "target")))) {
                     return true;
                 }
             }
@@ -1931,22 +1969,22 @@ public final class ConformanceHarness {
     private static String resourceText(String path) throws IOException {
         try (var input = ConformanceHarness.class.getClassLoader().getResourceAsStream(path)) {
             if (input == null) throw new IOException("missing resource " + path);
-            return new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 
     private static void compileVertex(String source, String name) {
-        long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
-        long result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_spv(compiler, source,
-                org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_vertex_shader, name, "main", 0L);
+        long compiler = Shaderc.shaderc_compiler_initialize();
+        long result = Shaderc.shaderc_compile_into_spv(compiler, source,
+                Shaderc.shaderc_glsl_vertex_shader, name, "main", 0L);
         try {
-            assertTrue(result != 0 && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)
-                            == org.lwjgl.util.shaderc.Shaderc.shaderc_compilation_status_success,
+            assertTrue(result != 0 && Shaderc.shaderc_result_get_compilation_status(result)
+                            == Shaderc.shaderc_compilation_status_success,
                     name + " compiles: " + (result == 0 ? "no shader result"
-                            : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result)));
+                            : Shaderc.shaderc_result_get_error_message(result)));
         } finally {
-            if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
-            org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
+            if (result != 0) Shaderc.shaderc_result_release(result);
+            Shaderc.shaderc_compiler_release(compiler);
         }
     }
 
@@ -2005,12 +2043,12 @@ public final class ConformanceHarness {
         boolean clears = false;
         for (var method : pass.methods) {
             for (var instruction : method.instructions) {
-                if (method.name.equals("loadPackConfig") && instruction instanceof org.objectweb.asm.tree.MethodInsnNode call
+                if (method.name.equals("loadPackConfig") && instruction instanceof MethodInsnNode call
                         && call.owner.equals("net/chimera/shaderpack/PackPlan") && call.name.equals("screenOverlays")) {
                     loads = true;
                 }
-                if (method.name.equals("cleanUpPackVariant") && instruction instanceof org.objectweb.asm.tree.FieldInsnNode field
-                        && field.getOpcode() == org.objectweb.asm.Opcodes.PUTFIELD && field.name.equals("screenOverlays")) {
+                if (method.name.equals("cleanUpPackVariant") && instruction instanceof FieldInsnNode field
+                        && field.getOpcode() == Opcodes.PUTFIELD && field.name.equals("screenOverlays")) {
                     clears = true;
                 }
             }
@@ -2031,17 +2069,17 @@ public final class ConformanceHarness {
         for (var annotation : annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations)) {
             if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")) continue;
             targets = annotationValue(annotation, "value") instanceof List<?> list && list.stream().anyMatch(type ->
-                    ((org.objectweb.asm.Type) type).getInternalName().equals(target));
+                    ((Type) type).getInternalName().equals(target));
         }
         boolean cancels = false;
         for (var handler : mixin.methods) {
             for (var annotation : annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
                 if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
                 boolean head = annotationValue(annotation, "at") instanceof List<?> ats && ats.stream().anyMatch(at ->
-                        at instanceof org.objectweb.asm.tree.AnnotationNode node && "HEAD".equals(annotationValue(node, "value")));
+                        at instanceof AnnotationNode node && "HEAD".equals(annotationValue(node, "value")));
                 cancels |= annotationValue(annotation, "method") instanceof List<?> names && names.contains(method)
                         && Boolean.TRUE.equals(annotationValue(annotation, "cancellable")) && head
-                        && ((handler.access & org.objectweb.asm.Opcodes.ACC_STATIC) != 0) == isStatic;
+                        && ((handler.access & Opcodes.ACC_STATIC) != 0) == isStatic;
             }
         }
         assertTrue(targets && cancels, mixinName + " cancels " + target + "." + method + " at its head");
@@ -2049,20 +2087,20 @@ public final class ConformanceHarness {
 
     private static void assertMixinRegistered(String mixinName) throws IOException {
         try (var config = ConformanceHarness.class.getClassLoader().getResourceAsStream("chimera.mixins.json")) {
-            assertTrue(config != null && new String(config.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+            assertTrue(config != null && new String(config.readAllBytes(), StandardCharsets.UTF_8)
                     .contains("\"" + mixinName + "\""), mixinName + " is registered");
         }
     }
 
-    private static List<org.objectweb.asm.tree.AnnotationNode> annotations(
-            List<org.objectweb.asm.tree.AnnotationNode> visible, List<org.objectweb.asm.tree.AnnotationNode> invisible) {
-        List<org.objectweb.asm.tree.AnnotationNode> all = new java.util.ArrayList<>();
+    private static List<AnnotationNode> annotations(
+            List<AnnotationNode> visible, List<AnnotationNode> invisible) {
+        List<AnnotationNode> all = new ArrayList<>();
         if (visible != null) all.addAll(visible);
         if (invisible != null) all.addAll(invisible);
         return all;
     }
 
-    private static Object annotationValue(org.objectweb.asm.tree.AnnotationNode annotation, String key) {
+    private static Object annotationValue(AnnotationNode annotation, String key) {
         if (annotation.values == null) return null;
         for (int index = 0; index + 1 < annotation.values.size(); index += 2) {
             if (annotation.values.get(index).equals(key)) return annotation.values.get(index + 1);
@@ -2117,23 +2155,23 @@ public final class ConformanceHarness {
     private static void deleteTree(Path root) throws IOException {
         if (!Files.exists(root)) return;
         try (var paths = Files.walk(root)) {
-            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
                 Files.deleteIfExists(path);
             }
         }
     }
 
     private static void verifyParticleFallbackAndTargets() throws IOException {
-        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.OPAQUE_PARTICLE,
-                net.minecraft.client.renderer.RenderPipelines.TRANSLUCENT_PARTICLE,
-                net.minecraft.client.renderer.RenderPipelines.WEATHER_DEPTH_WRITE,
-                net.minecraft.client.renderer.RenderPipelines.WEATHER_NO_DEPTH_WRITE)) {
-            assertEquals(0.1F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+        for (var host : List.of(RenderPipelines.OPAQUE_PARTICLE,
+                RenderPipelines.TRANSLUCENT_PARTICLE,
+                RenderPipelines.WEATHER_DEPTH_WRITE,
+                RenderPipelines.WEATHER_NO_DEPTH_WRITE)) {
+            assertEquals(0.1F, ChimeraEntityBridge.alphaReference(host),
                     "particle/weather fixed core cutout must not depend on an absent ALPHA_CUTOUT define");
         }
-        for (var host : List.of(net.minecraft.client.renderer.RenderPipelines.TEXT,
-                net.minecraft.client.renderer.RenderPipelines.TEXT_POLYGON_OFFSET)) {
-            assertEquals(0.1F, net.chimera.render.shader.ChimeraEntityBridge.alphaReference(host),
+        for (var host : List.of(RenderPipelines.TEXT,
+                RenderPipelines.TEXT_POLYGON_OFFSET)) {
+            assertEquals(0.1F, ChimeraEntityBridge.alphaReference(host),
                     "world text tests ONE_TENTH_ALPHA as Iris TEXT/TEXT_BE; untested glyph quads fill solid");
         }
         Path root = Files.createTempDirectory("chimera-particle-contract-");
@@ -2304,23 +2342,23 @@ public final class ConformanceHarness {
                             .requiresDynamicAttachments() == custom,
                     "entity route disagrees with geometry plan " + targets);
             PackBlendPlan blends = new PackBlendPlan(null, Map.of(1, PackBlendPlan.Mode.OFF), List.of());
-            net.chimera.render.shader.MrtPipelineContext.begin(route.outputFormatsArray(), 8,
+            MrtPipelineContext.begin(route.outputFormatsArray(), 8,
                     blends.attachments(route.targetSlots()));
             try {
-                assertEquals(count, net.chimera.render.shader.MrtPipelineContext.attachmentCount(0),
+                assertEquals(count, MrtPipelineContext.attachmentCount(0),
                         "native attachment count " + targets);
                 for (int location = 0; location < count; location++) {
                     int target = targets.charAt(location) - '0';
                     assertEquals(target, route.targetForOutput(location), "logical output mapping");
                     assertEquals(Map.of(0, 97, 1, 9, 4, 76).get(target),
-                            net.chimera.render.shader.MrtPipelineContext.colorFormats()[location],
+                            MrtPipelineContext.colorFormats()[location],
                             "native format mapping");
-                    assertTrue(java.util.Objects.equals(target == 1 ? PackBlendPlan.Mode.OFF : null,
-                            net.chimera.render.shader.MrtPipelineContext.attachmentBlends()[location]),
+                    assertTrue(Objects.equals(target == 1 ? PackBlendPlan.Mode.OFF : null,
+                            MrtPipelineContext.attachmentBlends()[location]),
                             "logical blend mapping");
                 }
             } finally {
-                net.chimera.render.shader.MrtPipelineContext.end();
+                MrtPipelineContext.end();
             }
         }
 
@@ -3074,14 +3112,14 @@ public final class ConformanceHarness {
     }
 
     private static void assertExtendedFormat() {
-        var format = net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
+        var format = ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
         assertEquals(24, format.getVertexSize(), "m5.2 terrain stride");
         assertEquals(5, format.getElements().size(), "m5.2 terrain attribute count");
         for (int i = 3; i < 5; i++) {
             var element = format.getElements().get(i);
-            assertEquals(com.mojang.blaze3d.vertex.VertexFormatElement.Type.INT,
+            assertEquals(VertexFormatElement.Type.INT,
                     element.type(), "m5.2 generic attribute type " + i);
-            assertEquals(com.mojang.blaze3d.vertex.VertexFormatElement.Usage.GENERIC,
+            assertEquals(VertexFormatElement.Usage.GENERIC,
                     element.usage(), "m5.2 generic attribute usage " + i);
             assertEquals(1, element.count(), "m5.2 generic attribute count " + i);
         }

@@ -8,6 +8,7 @@ import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.renderer.RenderPipelines;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -192,6 +193,6 @@ public enum HostLayoutLane {
 
     /** The lanes one pack program serves, world lane first. */
     public static List<HostLayoutLane> forProgram(String program) {
-        return java.util.Arrays.stream(values()).filter(lane -> lane.program.equals(program)).toList();
+        return Arrays.stream(values()).filter(lane -> lane.program.equals(program)).toList();
     }
 }

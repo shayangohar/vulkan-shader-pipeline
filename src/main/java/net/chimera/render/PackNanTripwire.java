@@ -16,9 +16,10 @@ import org.lwjgl.util.shaderc.Shaderc;
 import org.lwjgl.util.vma.Vma;
 import org.lwjgl.util.vma.VmaAllocationCreateInfo;
 import org.lwjgl.util.vma.VmaAllocationInfo;
-import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkBufferCopy;
+import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkBufferMemoryBarrier;
+import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkComputePipelineCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
@@ -29,11 +30,14 @@ import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
+import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkPipelineLayoutCreateInfo;
 import org.lwjgl.vulkan.VkPushConstantRange;
 import org.lwjgl.vulkan.VkSamplerCreateInfo;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 import org.lwjgl.vulkan.VkWriteDescriptorSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
@@ -55,7 +59,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * then accumulate into device-local memory. Only one small summary is copied to the host per frame.
  */
 public final class PackNanTripwire {
-    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final int MAX_CHECKS = 96;
     /** Per check: NaN texels, infinite texels, first bad texel (y << 16 | x), NaN/Inf channel bits. */
     private static final int WORDS_PER_CHECK = 4;
@@ -181,10 +185,10 @@ public final class PackNanTripwire {
                         .setLinearFiltering(false).setClamp(true).createVulkanImage();
             }
             this.selfTestImage.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-            org.lwjgl.vulkan.VkClearColorValue nan = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+            VkClearColorValue nan = VkClearColorValue.calloc(stack);
             nan.float32(0, Float.NaN).float32(1, 0.0f).float32(2, 0.0f).float32(3, 1.0f);
-            org.lwjgl.vulkan.VkImageSubresourceRange.Buffer range =
-                    org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
+            VkImageSubresourceRange.Buffer range =
+                    VkImageSubresourceRange.calloc(1, stack);
             range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
             vkCmdClearColorImage(commandBuffer, this.selfTestImage.getId(),
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, nan, range);

@@ -1,5 +1,17 @@
 package net.chimera.render;
 
+import com.mojang.blaze3d.textures.AddressMode;
+import com.mojang.blaze3d.textures.FilterMode;
+import net.chimera.shaderpack.PackProbe;
+import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackResourceBinding;
+import net.chimera.shaderpack.PackResourceKind;
+import net.chimera.shaderpack.PackResourceStatus;
+import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.chimera.shaderpack.UniformRegistry;
+import net.vulkanmod.vulkan.texture.VulkanImage;
+
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -8,14 +20,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
-
-import javax.imageio.ImageIO;
-
-import net.vulkanmod.vulkan.texture.VulkanImage;
+import java.util.TreeMap;
 
 /**
  * M8.7 material-map gates from the checked-in mini resource pack: pixel
@@ -66,26 +78,26 @@ public final class M87MaterialMapsHarness {
 
     private static void verifyEntityFixturePlan() throws Exception {
         Path root = Path.of(System.getProperty("chimera.fixtureRoot", "testpacks"));
-        net.chimera.shaderpack.PackProbe.Analysis analysis =
-                net.chimera.shaderpack.PackProbe.analyze(root.resolve("m87_entity"));
-        net.chimera.shaderpack.PackProgramPlan entities =
+        PackProbe.Analysis analysis =
+                PackProbe.analyze(root.resolve("m87_entity"));
+        PackProgramPlan entities =
                 analysis.plan().program("gbuffers_entities");
         assertTrue(entities != null, "entity fixture program is missing");
-        Map<String, Integer> slots = new java.util.TreeMap<>();
+        Map<String, Integer> slots = new TreeMap<>();
         entities.interfacePlan()
-                .effective(net.chimera.shaderpack.UniformRegistry.Stage.ENTITY).samplers()
+                .effective(UniformRegistry.Stage.ENTITY).samplers()
                 .forEach(value -> slots.put(value.name(), value.slot()));
         assertEquals(25, slots.get("normals"), "entity fixture normals slot");
         assertEquals(26, slots.get("specular"), "entity fixture specular slot");
 
-        List<net.chimera.shaderpack.PackResourceBinding> bindings =
+        List<PackResourceBinding> bindings =
                 analysis.plan().resources().bindings("gbuffers_entities");
         for (String sampler : List.of("normals", "specular")) {
             var binding = bindings.stream().filter(value -> value.sampler().equals(sampler))
                     .findFirst()
                     .orElseThrow(() -> new AssertionError("missing entity binding " + sampler));
-            assertTrue(binding.kind() == net.chimera.shaderpack.PackResourceKind.MATERIAL_MAP
-                    && binding.status() == net.chimera.shaderpack.PackResourceStatus.MATERIAL_MAP
+            assertTrue(binding.kind() == PackResourceKind.MATERIAL_MAP
+                    && binding.status() == PackResourceStatus.MATERIAL_MAP
                     && binding.available(), "entity binding is not servable: " + sampler);
         }
         assertTrue(entities.deviations().stream().noneMatch(value ->
@@ -164,7 +176,7 @@ public final class M87MaterialMapsHarness {
         assertEquals(tiny[0], grown[4], "box upscale center");
 
         int[] identical = MaterialMapPixels.scale(tiny, 2, 2, 2, 2);
-        assertTrue(identical != tiny && java.util.Arrays.equals(identical, tiny), "identical copy");
+        assertTrue(identical != tiny && Arrays.equals(identical, tiny), "identical copy");
 
         assertEquals(8, MaterialMapPixels.levelSize(64, 3), "level size");
         assertEquals(1, MaterialMapPixels.levelSize(4, 3), "level size floor");
@@ -515,12 +527,12 @@ public final class M87MaterialMapsHarness {
             owner.close();
         }
     }
-    private static final com.mojang.blaze3d.textures.AddressMode REPEAT =
-            com.mojang.blaze3d.textures.AddressMode.REPEAT;
-    private static final com.mojang.blaze3d.textures.FilterMode LINEAR =
-            com.mojang.blaze3d.textures.FilterMode.LINEAR;
-    private static final com.mojang.blaze3d.textures.FilterMode NEAREST =
-            com.mojang.blaze3d.textures.FilterMode.NEAREST;
+    private static final AddressMode REPEAT =
+            AddressMode.REPEAT;
+    private static final FilterMode LINEAR =
+            FilterMode.LINEAR;
+    private static final FilterMode NEAREST =
+            FilterMode.NEAREST;
 
     private static DrawMaterialContext profiledContext(VulkanImage base, float maxLod) {
         return new DrawMaterialContext(base,
@@ -530,7 +542,7 @@ public final class M87MaterialMapsHarness {
     private static void verifyOwnedMaterialSamplers() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
         files.put("minecraft:optifine/texture.properties", "format=lab-pbr\n".getBytes(
-                java.nio.charset.StandardCharsets.UTF_8));
+                StandardCharsets.UTF_8));
         FakeFactory factory = new FakeFactory();
         FakeSamplers samplers = new FakeSamplers();
         MaterialMapOwner owner =
@@ -580,7 +592,7 @@ public final class M87MaterialMapsHarness {
     private static void verifySimpleSamplerClamp() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
         files.put("minecraft:optifine/texture.properties", "format=lab-pbr\n".getBytes(
-                java.nio.charset.StandardCharsets.UTF_8));
+                StandardCharsets.UTF_8));
         byte[] mobN = Files.readAllBytes(
                 FIXTURE.resolve("assets/minecraft/textures/block/m87_brick_n.png"));
         byte[] mobS = Files.readAllBytes(
@@ -642,10 +654,10 @@ public final class M87MaterialMapsHarness {
             ChimeraTextureBindingState.markPackBinding(0, entityBase, 0x5555L);
             DrawMaterialContext terrain = new DrawMaterialContext(atlasBase,
                     new SamplerProfile(0x7777L,
-                            com.mojang.blaze3d.textures.AddressMode.REPEAT,
-                            com.mojang.blaze3d.textures.AddressMode.REPEAT,
-                            com.mojang.blaze3d.textures.FilterMode.LINEAR,
-                            com.mojang.blaze3d.textures.FilterMode.LINEAR, 4, 4.0f));
+                            AddressMode.REPEAT,
+                            AddressMode.REPEAT,
+                            FilterMode.LINEAR,
+                            FilterMode.LINEAR, 4, 4.0f));
             var normals = owner.resolveDrawMaterial(terrain, "normals");
             var specular = owner.resolveDrawMaterial(terrain, "specular");
             assertTrue(normals.image() == factory.set("minecraft:blocks",
@@ -674,7 +686,7 @@ public final class M87MaterialMapsHarness {
                 MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
         VulkanImage base = markerImage();
         var prior = new ChimeraTextureBindingState.Snapshot(markerImage(), 123L);
-        Map<Integer, ChimeraTextureBindingState.Snapshot> slots = new java.util.HashMap<>();
+        Map<Integer, ChimeraTextureBindingState.Snapshot> slots = new HashMap<>();
         slots.put(25, prior);
         List<String> events = new ArrayList<>();
         ProgramImageBindingTransaction.Store<ChimeraTextureBindingState.Snapshot> store =
@@ -696,14 +708,14 @@ public final class M87MaterialMapsHarness {
                         else slots.put(slot, value);
                     }
                 };
-        var manifest = new net.chimera.shaderpack.ProgramImageBindingManifest(List.of(
-                new net.chimera.shaderpack.ProgramImageBindingManifest.Entry(
+        var manifest = new ProgramImageBindingManifest(List.of(
+                new ProgramImageBindingManifest.Entry(
                         "normals", 25, 1, 63,
-                        net.chimera.shaderpack.ProgramImageBindingManifest.Kind.MATERIAL_MAP,
+                        ProgramImageBindingManifest.Kind.MATERIAL_MAP,
                         "normals", 0, 9, "normals"),
-                new net.chimera.shaderpack.ProgramImageBindingManifest.Entry(
+                new ProgramImageBindingManifest.Entry(
                         "broken", 26, 1, 63,
-                        net.chimera.shaderpack.ProgramImageBindingManifest.Kind.MATERIAL_MAP,
+                        ProgramImageBindingManifest.Kind.MATERIAL_MAP,
                         "bogus", 0, 10, "bogus")));
         boolean failed = false;
         try {
@@ -870,7 +882,7 @@ public final class M87MaterialMapsHarness {
         assertEquals(logical[0], padded[5], "padded content origin");
         assertEquals(logical[3], padded[10], "padded content far texel");
         int[] same = MaterialMapPixels.padReplicate(logical, 2, 2, 0);
-        assertTrue(same != logical && java.util.Arrays.equals(same, logical), "zero pad copies");
+        assertTrue(same != logical && Arrays.equals(same, logical), "zero pad copies");
 
         assertEquals(2, MaterialMapPixels.recoverPad(10.0f / 64.0f, 64, 8), "padding recovery");
         assertEquals(2, MaterialMapPixels.recoverPad(0.5f, 64, 30), "padding recovery halfway");
@@ -1048,7 +1060,7 @@ public final class M87MaterialMapsHarness {
             assertEquals(brick, normals.levels.get(0).pixels()[16 * 32 + 16], "animation touched a neighbour");
             for (int[] write : normals.writes) {
                 assertTrue(write[1] + write[3] <= (8 >> write[0]) && write[2] + write[4] <= (8 >> write[0]),
-                        "write left the animated slot: " + java.util.Arrays.toString(write));
+                        "write left the animated slot: " + Arrays.toString(write));
             }
 
             // A tick for another atlas never advances this one.
@@ -1157,10 +1169,10 @@ public final class M87MaterialMapsHarness {
     }
 
     private static final class FakeSamplers implements MaterialMapOwner.MaterialSamplerFactory {
-        record Request(com.mojang.blaze3d.textures.AddressMode addressU,
-                com.mojang.blaze3d.textures.AddressMode addressV,
-                com.mojang.blaze3d.textures.FilterMode minFilter,
-                com.mojang.blaze3d.textures.FilterMode magFilter,
+        record Request(AddressMode addressU,
+                AddressMode addressV,
+                FilterMode minFilter,
+                FilterMode magFilter,
                 int anisotropy, float maxLod) {}
         final List<Request> requests = new ArrayList<>();
         final List<FakeOwnedSampler> live = new ArrayList<>();
@@ -1168,10 +1180,10 @@ public final class M87MaterialMapsHarness {
 
         @Override
         public MaterialMapOwner.OwnedMaterialSampler create(
-                com.mojang.blaze3d.textures.AddressMode addressU,
-                com.mojang.blaze3d.textures.AddressMode addressV,
-                com.mojang.blaze3d.textures.FilterMode minFilter,
-                com.mojang.blaze3d.textures.FilterMode magFilter,
+                AddressMode addressU,
+                AddressMode addressV,
+                FilterMode minFilter,
+                FilterMode magFilter,
                 int anisotropy, float maxLod) {
             requests.add(new Request(addressU, addressV, minFilter, magFilter, anisotropy, maxLod));
             FakeOwnedSampler sampler = new FakeOwnedSampler(nextId++);
@@ -1279,7 +1291,7 @@ public final class M87MaterialMapsHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

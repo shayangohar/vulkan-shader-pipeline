@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.vertex.ChimeraEntityVertexData;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -16,6 +17,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.List;
 
 /** Initializes and finalizes the three appended entity vertex elements. */
 @Mixin(BufferBuilder.class)
@@ -204,8 +207,8 @@ public abstract class ChimeraBufferBuilderMixin {
 
     @Unique
     private static int offsetOf(VertexFormat value, String name) {
-        java.util.List<String> names = value.getElementAttributeNames();
-        java.util.List<com.mojang.blaze3d.vertex.VertexFormatElement> elements = value.getElements();
+        List<String> names = value.getElementAttributeNames();
+        List<VertexFormatElement> elements = value.getElements();
         for (int index = 0; index < names.size(); index++) {
             if (names.get(index).equals(name)) {
                 return value.getOffset(elements.get(index));
@@ -216,8 +219,8 @@ public abstract class ChimeraBufferBuilderMixin {
 
     @Unique
     private static int maskOf(VertexFormat value, String name) {
-        java.util.List<String> names = value.getElementAttributeNames();
-        java.util.List<com.mojang.blaze3d.vertex.VertexFormatElement> elements = value.getElements();
+        List<String> names = value.getElementAttributeNames();
+        List<VertexFormatElement> elements = value.getElements();
         for (int index = 0; index < names.size(); index++) {
             if (names.get(index).equals(name)) {
                 return elements.get(index).mask();

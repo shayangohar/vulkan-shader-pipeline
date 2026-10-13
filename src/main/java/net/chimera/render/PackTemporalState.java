@@ -75,15 +75,6 @@ public final class PackTemporalState {
         frameOpen = false;
     }
 
-    static boolean commitTarget(boolean current, boolean pending, boolean committed) {
-        return committed && (current || pending);
-    }
-
-    static int nextSide(int currentSide, int sideCount) {
-        if (sideCount < 2) return 0;
-        return (currentSide + 1) % sideCount;
-    }
-
     private static boolean valid(int target) {
         return target >= 0 && target < TARGET_COUNT;
     }

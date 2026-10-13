@@ -1,8 +1,13 @@
 package net.chimera.shaderpack;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * M8.8 water gates (TASK-432 slices A and B).
@@ -70,8 +75,8 @@ public final class M88WaterHarness {
     }
 
     /** Structural check for the shared Vulkan builder; runtime captures verify its sampler. */
-    private static void verifyDepthSamplingContract() throws java.io.IOException {
-        String source = java.nio.file.Files.readString(Path.of(
+    private static void verifyDepthSamplingContract() throws IOException {
+        String source = Files.readString(Path.of(
                 "src/main/java/net/chimera/render/PackDepthTargets.java"));
         assertTrue(source.contains(".setLinearFiltering(false)")
                         && !source.contains(".setLinearFiltering(true)")
@@ -241,13 +246,13 @@ public final class M88WaterHarness {
      * sampling made the surface blocky.
      */
     private static void verifyTextureMcmeta() throws Exception {
-        Path dir = java.nio.file.Files.createTempDirectory("m88-mcmeta");
+        Path dir = Files.createTempDirectory("m88-mcmeta");
         Path noise = dir.resolve("noise.png");
-        java.nio.file.Files.writeString(noise, "");
+        Files.writeString(noise, "");
         assertTrue(PackResourcePlan.mcmetaFilter(noise, "nearest").equals("nearest")
                         && PackResourcePlan.mcmetaWrap(noise, "repeat").equals("repeat"),
                 "a texture without .mcmeta lost its default sampling");
-        java.nio.file.Files.writeString(dir.resolve("noise.png.mcmeta"),
+        Files.writeString(dir.resolve("noise.png.mcmeta"),
                 "{\"texture\": {\"blur\": true, \"clamp\": true}}");
         assertTrue(PackResourcePlan.mcmetaFilter(noise, "nearest").equals("linear")
                         && PackResourcePlan.mcmetaWrap(noise, "repeat").equals("clamp"),
@@ -284,15 +289,15 @@ public final class M88WaterHarness {
      * chimera.option.* properties win over the file.
      */
     private static void verifyOptionFile() throws Exception {
-        Path dir = java.nio.file.Files.createTempDirectory("m88-options");
+        Path dir = Files.createTempDirectory("m88-options");
         Path pack = dir.resolve("Example_r1.zip");
         String previous = System.getProperty("chimera.option.WATER_STYLE");
         try {
-            java.nio.file.Files.writeString(pack, "");
+            Files.writeString(pack, "");
             assertTrue(PackOptionSources.optionFile(pack) == null
                             && PackOptionSources.fileValues(pack).isEmpty(),
                     "a pack without an option file produced options");
-            java.nio.file.Files.writeString(dir.resolve("Example_r1.zip.txt"),
+            Files.writeString(dir.resolve("Example_r1.zip.txt"),
                     "#Iris options\nWATER_STYLE=2\nRP_MODE=3\nSHADOW_QUALITY=1\n");
             assertTrue(PackOptionSources.fileValues(pack).equals(
                             Map.of("WATER_STYLE", "2", "RP_MODE", "3", "SHADOW_QUALITY", "1")),
@@ -305,8 +310,8 @@ public final class M88WaterHarness {
         } finally {
             if (previous == null) System.clearProperty("chimera.option.WATER_STYLE");
             else System.setProperty("chimera.option.WATER_STYLE", previous);
-            try (var paths = java.nio.file.Files.walk(dir)) {
-                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            try (var paths = Files.walk(dir)) {
+                paths.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
             }
         }
     }
@@ -368,7 +373,7 @@ public final class M88WaterHarness {
         PackBlendPlan.Mode[] modes = plan.attachments(List.of(0, 3, 4, 7));
         assertTrue(modes[0].equals(alpha) && modes[1].equals(alpha)
                         && modes[2] == PackBlendPlan.Mode.OFF && modes[3] == PackBlendPlan.Mode.OFF,
-                "water attachment blends in output order: " + java.util.Arrays.toString(modes));
+                "water attachment blends in output order: " + Arrays.toString(modes));
         assertTrue(plan.deviations().contains("BLEND_DIRECTIVE_MALFORMED:blend.gbuffers_water.colortex99x")
                         && plan.deviations().contains("BLEND_DIRECTIVE_APPLIED:gbuffers_water"),
                 "blend deviations: " + plan.deviations());
@@ -404,7 +409,7 @@ public final class M88WaterHarness {
                     name + " gbuffers_water colortex" + target + " blend " + modes[i]);
         }
         System.out.println("[chimera] m8.8 " + name + " gbuffers_water blends " + targets + " "
-                + java.util.Arrays.toString(modes));
+                + Arrays.toString(modes));
     }
 
     /**
@@ -462,7 +467,8 @@ public final class M88WaterHarness {
 
     private static PackSettingsPlan properties(Map<String, String> values) {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), values, Map.of(),
-                java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), List.of(), "default");
+                Set.of(), Set.of(), Set.of(), List.of(), "default",
+                PackRuntimeSettings.empty(), Map.of(), Map.of(), false);
     }
 
     private static String terrainVertex() {

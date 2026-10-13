@@ -1,15 +1,15 @@
 package net.chimera.mixin;
 
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.resource.ResourceHandle;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
+import com.mojang.blaze3d.resource.ResourceHandle;
 import com.mojang.blaze3d.textures.GpuSampler;
-import net.chimera.render.shader.ChimeraEntityBridge;
-import net.chimera.render.shader.PackUniformProvider;
-import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraHandRenderer;
+import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.ChimeraTextureBindingState;
+import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.PackUniformProvider;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.LevelRenderer;
@@ -17,8 +17,8 @@ import net.minecraft.client.renderer.state.LevelRenderState;
 import net.minecraft.util.profiling.ProfilerFiller;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
-import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -57,11 +57,11 @@ public abstract class ChimeraLevelRendererMixin {
             LevelRenderState levelRenderState,
             ProfilerFiller profilerFiller,
             Matrix4f matrix4f,
-            ResourceHandle resourceHandle,
-            ResourceHandle resourceHandle2,
+            ResourceHandle<?> resourceHandle,
+            ResourceHandle<?> resourceHandle2,
             boolean bl,
-            ResourceHandle resourceHandle3,
-            ResourceHandle resourceHandle4,
+            ResourceHandle<?> resourceHandle3,
+            ResourceHandle<?> resourceHandle4,
             CallbackInfo ci
     ) {
         ChimeraTextureBindingState.captureChunkSampler(this.chunkLayerSampler);
@@ -70,8 +70,8 @@ public abstract class ChimeraLevelRendererMixin {
     @Inject(method = "method_62213", at = @At("HEAD"), require = 1)
     private void chimera$beginParticlePass(
             GpuBufferSlice fog,
-            ResourceHandle particles,
-            ResourceHandle main,
+            ResourceHandle<?> particles,
+            ResourceHandle<?> main,
             CallbackInfo callback
     ) {
         if (ChimeraRenderer.segmentsActive()) {
@@ -82,8 +82,8 @@ public abstract class ChimeraLevelRendererMixin {
     @Inject(method = "method_62213", at = @At("RETURN"), require = 1)
     private void chimera$endParticlePass(
             GpuBufferSlice fog,
-            ResourceHandle particles,
-            ResourceHandle main,
+            ResourceHandle<?> particles,
+            ResourceHandle<?> main,
             CallbackInfo callback
     ) {
         if (chimera$particleDrawActive && ChimeraEntityBridge.isParticleDrawActive()) {

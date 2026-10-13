@@ -1,16 +1,16 @@
 package net.chimera.mixin;
 
-import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
-import net.chimera.render.ChimeraHandRenderer;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.HostLayoutLane;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;

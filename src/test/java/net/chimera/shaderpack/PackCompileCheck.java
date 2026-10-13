@@ -1,8 +1,31 @@
 package net.chimera.shaderpack;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import net.chimera.render.PackShadowCompute;
+import net.chimera.render.shader.ChimeraShaderLoader;
+import net.chimera.render.vertex.ChimeraVertexFormats;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.util.shaderc.Shaderc;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Type;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * Compiles every program a pack plan would install, through the runtime preparation seam
@@ -17,9 +40,9 @@ final class PackCompileCheck {
 
     static Result run(Path pack, PackProbe.Analysis analysis) {
         if (analysis.plan() == null) return new Result(0, List.of());
-        String fixedPostVertex = net.chimera.render.shader.ChimeraShaderLoader.loadSource(
+        String fixedPostVertex = ChimeraShaderLoader.loadSource(
                 "chimera_composite/chimera_composite.vsh");
-        String fixedTerrainVertex = net.chimera.render.shader.ChimeraShaderLoader.loadSource(
+        String fixedTerrainVertex = ChimeraShaderLoader.loadSource(
                 "chimera_terrain/chimera_terrain.vsh");
         int compiled = 0;
         List<String> failures = new ArrayList<>();
@@ -50,7 +73,7 @@ final class PackCompileCheck {
             String vertexError = program.convertedVertex() == null ? null : compile(prepared.vertex(), true);
             String fragmentError = compile(prepared.fragment(), false);
             if (FamilyAdapterRegistry.isHandFamily(program.name())) {
-                for (var host : net.chimera.render.vertex.ChimeraVertexFormats.handFormats().keySet()) {
+                for (var host : ChimeraVertexFormats.handFormats().keySet()) {
                     String variant = LegacyGlslConverter.handVertexForFormat(program.convertedVertex(), host);
                     String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
                     if (error != null) {
@@ -62,7 +85,7 @@ final class PackCompileCheck {
             if (program.name().equals("gbuffers_entities_translucent") || program.name().equals("gbuffers_block")) {
                 // Iris GLYPH text variant (TEXT and TEXT_BE).
                 String variant = LegacyGlslConverter.layoutVertexForFormat(program.convertedVertex(),
-                        com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+                        DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
                 String error = compile(PackPipelines.prepare(program, analysis.plan().advancedResources(), stage, variant).vertex(), true);
                 if (error != null) {
                     failures.add(program.name() + " text input variant: " + error);
@@ -125,15 +148,15 @@ final class PackCompileCheck {
     static String compileShadowCompute(Path pack, PackPlan plan) {
         if (!hasShadowCompute(plan)) return null;
         try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            var module = net.chimera.render.PackShadowCompute.translatedModule(
+            var module = PackShadowCompute.translatedModule(
                     plan.advancedResources(), loaded.shadersDir(),
                     plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
-            java.util.Map<String, Integer> written = new java.util.LinkedHashMap<>();
+            Map<String, Integer> written = new LinkedHashMap<>();
             for (var uniform : module.uniforms()) written.put(uniform.name(), uniform.offset());
             String error = compileComputeValues(module.source(), written);
             if (error != null) error += " [" + dump(pack, "shadowcomp.csh", module.source()) + "]";
             return error;
-        } catch (java.io.IOException | RuntimeException failure) {
+        } catch (IOException | RuntimeException failure) {
             return "translation failed: " + failure.getMessage();
         }
     }
@@ -144,10 +167,10 @@ final class PackCompileCheck {
      * null. Solas's frameCounter, declared after a vec3, read the vec3's padding word under
      * implicit std140 packing and stayed 0, so its floodfill wrote one image only and flickered.
      */
-    static String compileComputeValues(String source, java.util.Map<String, Integer> written) {
-        Compiled compiled = spirv(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_compute_shader, "pack.csh");
+    static String compileComputeValues(String source, Map<String, Integer> written) {
+        Compiled compiled = spirv(source, Shaderc.shaderc_glsl_compute_shader, "pack.csh");
         if (compiled.error() != null) return compiled.error();
-        java.util.Map<String, Integer> read = blockMemberOffsets(compiled.words(), "ChimeraShadowComputeValues");
+        Map<String, Integer> read = blockMemberOffsets(compiled.words(), "ChimeraShadowComputeValues");
         for (var value : written.entrySet()) {
             Integer offset = read.get(value.getKey());
             if (!value.getValue().equals(offset)) {
@@ -159,10 +182,10 @@ final class PackCompileCheck {
     }
 
     /** Byte offset of each member of the named block, by member name, from SPIR-V decorations. */
-    private static java.util.Map<String, Integer> blockMemberOffsets(int[] words, String block) {
-        java.util.Map<Integer, String> names = new java.util.HashMap<>();
-        java.util.Map<Long, String> memberNames = new java.util.HashMap<>();
-        java.util.Map<Long, Integer> memberOffsets = new java.util.HashMap<>();
+    private static Map<String, Integer> blockMemberOffsets(int[] words, String block) {
+        Map<Integer, String> names = new HashMap<>();
+        Map<Long, String> memberNames = new HashMap<>();
+        Map<Long, Integer> memberOffsets = new HashMap<>();
         for (int index = 5; index < words.length; ) {
             int count = words[index] >>> 16;
             int opcode = words[index] & 0xFFFF;
@@ -177,7 +200,7 @@ final class PackCompileCheck {
             }
             index += count;
         }
-        java.util.Map<String, Integer> offsets = new java.util.HashMap<>();
+        Map<String, Integer> offsets = new HashMap<>();
         for (var name : names.entrySet()) {
             if (!name.getValue().equals(block)) continue;
             for (var member : memberNames.entrySet()) {
@@ -206,8 +229,8 @@ final class PackCompileCheck {
 
     /** VulkanMod's shaderc settings; returns the first error line, or null on success. */
     static String compile(String source, boolean vertex) {
-        return vertex ? compile(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
-                : compile(source, org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+        return vertex ? compile(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
+                : compile(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
     }
 
     /** A shaderc result: the SPIR-V words on success, otherwise the first error line. */
@@ -218,43 +241,43 @@ final class PackCompileCheck {
     }
 
     private static Compiled spirv(String source, int kind, String fileName) {
-        long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
-        long options = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_initialize();
+        long compiler = Shaderc.shaderc_compiler_initialize();
+        long options = Shaderc.shaderc_compile_options_initialize();
         // Heap buffers and explicit sizes: large sources overflow LWJGL's stack
         // (M87EntityRealPackHarness.compileStage).
-        java.nio.ByteBuffer text = org.lwjgl.system.MemoryUtil.memUTF8(source);
-        java.nio.ByteBuffer name = org.lwjgl.system.MemoryUtil.memUTF8(fileName);
-        java.nio.ByteBuffer entry = org.lwjgl.system.MemoryUtil.memASCII("main");
+        ByteBuffer text = MemoryUtil.memUTF8(source);
+        ByteBuffer name = MemoryUtil.memUTF8(fileName);
+        ByteBuffer entry = MemoryUtil.memASCII("main");
         long result = 0;
         try {
-            org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_set_target_env(options,
-                    org.lwjgl.util.shaderc.Shaderc.shaderc_target_env_vulkan,
-                    org.lwjgl.util.shaderc.Shaderc.shaderc_env_version_vulkan_1_2);
-            result = org.lwjgl.util.shaderc.Shaderc.nshaderc_compile_into_spv(compiler,
-                    org.lwjgl.system.MemoryUtil.memAddress(text), text.remaining() - 1,
+            Shaderc.shaderc_compile_options_set_target_env(options,
+                    Shaderc.shaderc_target_env_vulkan,
+                    Shaderc.shaderc_env_version_vulkan_1_2);
+            result = Shaderc.nshaderc_compile_into_spv(compiler,
+                    MemoryUtil.memAddress(text), text.remaining() - 1,
                     kind,
-                    org.lwjgl.system.MemoryUtil.memAddress(name),
-                    org.lwjgl.system.MemoryUtil.memAddress(entry), options);
-            if (result != 0 && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)
-                    == org.lwjgl.util.shaderc.Shaderc.shaderc_compilation_status_success) {
-                java.nio.ByteBuffer bytes = org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_bytes(result);
+                    MemoryUtil.memAddress(name),
+                    MemoryUtil.memAddress(entry), options);
+            if (result != 0 && Shaderc.shaderc_result_get_compilation_status(result)
+                    == Shaderc.shaderc_compilation_status_success) {
+                ByteBuffer bytes = Shaderc.shaderc_result_get_bytes(result);
                 int[] words = new int[bytes.remaining() / 4];
-                bytes.order(java.nio.ByteOrder.nativeOrder()).asIntBuffer().get(words);
+                bytes.order(ByteOrder.nativeOrder()).asIntBuffer().get(words);
                 return new Compiled(words, null);
             }
             String message = result == 0 ? "no result"
-                    : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result);
+                    : Shaderc.shaderc_result_get_error_message(result);
             if (message == null) return new Compiled(null, "unknown");
             // Warnings precede errors in shaderc's report; name the first error.
             return new Compiled(null, message.strip().lines().filter(line -> line.contains("error")).findFirst()
                     .orElse(message.strip().lines().findFirst().orElse("unknown")));
         } finally {
-            if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
-            org.lwjgl.util.shaderc.Shaderc.shaderc_compile_options_release(options);
-            org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
-            org.lwjgl.system.MemoryUtil.memFree(entry);
-            org.lwjgl.system.MemoryUtil.memFree(name);
-            org.lwjgl.system.MemoryUtil.memFree(text);
+            if (result != 0) Shaderc.shaderc_result_release(result);
+            Shaderc.shaderc_compile_options_release(options);
+            Shaderc.shaderc_compiler_release(compiler);
+            MemoryUtil.memFree(entry);
+            MemoryUtil.memFree(name);
+            MemoryUtil.memFree(text);
         }
     }
 
@@ -262,18 +285,18 @@ final class PackCompileCheck {
         try {
             Path directory = Path.of("build", "pack-report",
                     pack.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_"));
-            java.nio.file.Files.createDirectories(directory);
+            Files.createDirectories(directory);
             Path target = directory.resolve(file);
-            java.nio.file.Files.writeString(target, source);
+            Files.writeString(target, source);
             return target.toString();
-        } catch (java.io.IOException failure) {
+        } catch (IOException failure) {
             return "dump failed: " + failure.getMessage();
         }
     }
 
     /** Programs of the selected dimension the plan will not attempt, sorted. */
-    static java.util.SortedSet<String> rejectedPrograms(PackProbe.Analysis analysis) {
-        java.util.SortedSet<String> rejected = new java.util.TreeSet<>();
+    static SortedSet<String> rejectedPrograms(PackProbe.Analysis analysis) {
+        SortedSet<String> rejected = new TreeSet<>();
         if (analysis.plan() == null) return rejected;
         for (PackProgramPlan program : analysis.plan().activePrograms()) {
             if (!analysis.plan().shouldAttempt(program.name())) rejected.add(program.name());
@@ -298,7 +321,7 @@ final class PackCompileCheck {
      * (path-separator list); {@code -Dchimera.packCompile.admissionBaseline} names the baseline,
      * and {@code -Dchimera.packCompile.updateAdmission=true} rewrites it.
      */
-    public static void main(String[] args) throws java.io.IOException {
+    public static void main(String[] args) throws IOException {
         String packs = System.getProperty("chimera.packCompile.packs", "");
         if (packs.isBlank()) {
             throw new AssertionError("chimera.packCompile.packs is not set");
@@ -306,28 +329,28 @@ final class PackCompileCheck {
         Path baselinePath = Path.of(System.getProperty("chimera.packCompile.admissionBaseline",
                 "testpacks/baselines/pack_admission.json"));
         boolean update = Boolean.getBoolean("chimera.packCompile.updateAdmission");
-        com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
-        java.lang.reflect.Type baselineType =
-                new com.google.gson.reflect.TypeToken<java.util.TreeMap<String, java.util.TreeSet<String>>>() {}.getType();
-        java.util.TreeMap<String, java.util.TreeSet<String>> baseline = java.nio.file.Files.isRegularFile(baselinePath)
-                ? gson.fromJson(java.nio.file.Files.readString(baselinePath), baselineType)
-                : new java.util.TreeMap<>();
+        Gson gson = new GsonBuilder().setPrettyPrinting().create();
+        Type baselineType =
+                new TypeToken<TreeMap<String, TreeSet<String>>>() {}.getType();
+        TreeMap<String, TreeSet<String>> baseline = Files.isRegularFile(baselinePath)
+                ? gson.fromJson(Files.readString(baselinePath), baselineType)
+                : new TreeMap<>();
         List<String> failures = new ArrayList<>();
-        for (String entry : packs.split(java.io.File.pathSeparator)) {
+        for (String entry : packs.split(File.pathSeparator)) {
             Path pack = Path.of(entry.trim());
             String key = pack.getFileName().toString();
             PackProbe.Analysis analysis = PackProbe.analyze(pack);
             Result result = run(pack, analysis);
-            java.util.SortedSet<String> rejected = rejectedPrograms(analysis);
+            SortedSet<String> rejected = rejectedPrograms(analysis);
             System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected%n",
                     key, result.compiled(), result.failures().size(), rejected.size());
             if (result.compiled() == 0) failures.add(key + ": no program compiled");
             result.failures().forEach(failure -> failures.add(key + " " + failure));
             if (update) {
-                baseline.put(key, new java.util.TreeSet<>(rejected));
+                baseline.put(key, new TreeSet<>(rejected));
                 continue;
             }
-            java.util.Set<String> expected = baseline.get(key);
+            Set<String> expected = baseline.get(key);
             if (expected == null) {
                 failures.add(key + ": no admission baseline; rejected=" + rejected
                         + " (run with -PpackAdmissionUpdate=true after reviewing)");
@@ -345,7 +368,7 @@ final class PackCompileCheck {
             }
         }
         if (update) {
-            java.nio.file.Files.writeString(baselinePath, gson.toJson(baseline) + System.lineSeparator());
+            Files.writeString(baselinePath, gson.toJson(baseline) + System.lineSeparator());
             System.out.println("[chimera] pack admission baseline written: " + baselinePath);
         }
         if (!failures.isEmpty()) {

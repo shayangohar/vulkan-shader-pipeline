@@ -1,7 +1,7 @@
 package net.chimera.render.shader;
 
 import com.google.gson.JsonObject;
-import net.chimera.ChimeraMod;
+import com.google.gson.JsonParser;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -19,7 +19,7 @@ public abstract class ChimeraShaderLoader {
     public static JsonObject loadJson(String relativePath) {
         try (InputStream stream = open(relativePath)) {
             String text = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-            return com.google.gson.JsonParser.parseString(text).getAsJsonObject();
+            return JsonParser.parseString(text).getAsJsonObject();
         } catch (Exception e) {
             throw new RuntimeException("Failed to load chimera shader config: " + relativePath, e);
         }

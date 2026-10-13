@@ -1,5 +1,10 @@
 package net.chimera.render.vertex;
 
+import net.chimera.shaderpack.TerrainMaterialPlan;
+import org.lwjgl.system.MemoryUtil;
+
+import java.util.List;
+
 /**
  * Terrain at_tangent must be the quad's texture U direction with Iris's
  * handedness, not a tangent synthesized from the normal: the synthesized one
@@ -53,11 +58,11 @@ public final class TerrainTangentCodecHarness {
      * zero vector and water lighting and reflections turn NaN.
      */
     private static void checkFluidNormal() {
-        net.chimera.shaderpack.TerrainMaterialPlan plan = new net.chimera.shaderpack.TerrainMaterialPlan(
-                true, true, true, true, java.util.List.of());
+        TerrainMaterialPlan plan = new TerrainMaterialPlan(
+                true, true, true, true, List.of());
         ChimeraExtVertexBuilder builder = new ChimeraExtVertexBuilder(plan);
         int stride = plan.stride();
-        long base = org.lwjgl.system.MemoryUtil.nmemCalloc(4, stride);
+        long base = MemoryUtil.nmemCalloc(4, stride);
         try {
             // Water top face, Minecraft corner order (counter-clockwise from above).
             float[][] corners = {{0, 0.875f, 0}, {0, 0.875f, 1}, {1, 0.875f, 1}, {1, 0.875f, 0}};
@@ -67,14 +72,14 @@ public final class TerrainTangentCodecHarness {
                         index >= 2 ? 1 : 0, index == 1 || index == 2 ? 1 : 0, 0x00F000F0, 0);
             }
             for (int index = 0; index < 4; index++) {
-                int word = org.lwjgl.system.MemoryUtil.memGetInt(base + (long) index * stride + 32);
+                int word = MemoryUtil.memGetInt(base + (long) index * stride + 32);
                 require(Math.abs(ChimeraEntityVertexData.unpack(word, 1) - 1.0f) < 0.01f
                                 && Math.abs(ChimeraEntityVertexData.unpack(word, 0)) < 0.01f
                                 && Math.abs(ChimeraEntityVertexData.unpack(word, 2)) < 0.01f,
                         "fluid vertex " + index + " kept a missing normal: " + Integer.toHexString(word));
             }
         } finally {
-            org.lwjgl.system.MemoryUtil.nmemFree(base);
+            MemoryUtil.nmemFree(base);
         }
     }
 

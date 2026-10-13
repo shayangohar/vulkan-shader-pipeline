@@ -5,14 +5,20 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 /** Deterministic checks for the M8.1 terrain and water material bridge. */
 public final class M81ConformanceHarness {
@@ -101,16 +107,16 @@ public final class M81ConformanceHarness {
         return result;
     }
 
-    private static java.util.List<String> programsWithStatus(
+    private static List<String> programsWithStatus(
             ConformanceReport report, ConformanceReport.SupportStatus... statuses) {
-        java.util.Set<ConformanceReport.SupportStatus> expected = java.util.Set.of(statuses);
+        Set<ConformanceReport.SupportStatus> expected = Set.of(statuses);
         return report.programs().stream()
                 .filter(value -> expected.contains(value.support()))
                 .map(ConformanceReport.ProgramReport::name)
                 .sorted().toList();
     }
 
-    private static java.util.List<String> allDeviations(ConformanceReport report) {
+    private static List<String> allDeviations(ConformanceReport report) {
         return report.programs().stream()
                 .flatMap(value -> value.deviations().stream())
                 .distinct().sorted().toList();
@@ -134,14 +140,14 @@ public final class M81ConformanceHarness {
                 + new GsonBuilder().setPrettyPrinting().create().toJson(entry));
     }
 
-    private static JsonArray jsonStrings(java.util.List<String> values) {
+    private static JsonArray jsonStrings(List<String> values) {
         JsonArray result = new JsonArray();
         values.forEach(result::add);
         return result;
     }
 
-    private static java.util.List<String> strings(JsonArray values) {
-        java.util.List<String> result = new java.util.ArrayList<>();
+    private static List<String> strings(JsonArray values) {
+        List<String> result = new ArrayList<>();
         values.forEach(value -> result.add(value.getAsString()));
         return result;
     }
@@ -175,21 +181,21 @@ public final class M81ConformanceHarness {
     }
 
     private static void verifyFormatWidths() {
-        TerrainMaterialPlan modern = new TerrainMaterialPlan(true, true, true, true, java.util.List.of());
+        TerrainMaterialPlan modern = new TerrainMaterialPlan(true, true, true, true, List.of());
         assertTrue(ChimeraVertexFormats.terrainFormat(modern).getVertexSize() == 36,
                 "modern terrain format is not 36 bytes");
         assertTrue(ChimeraVertexFormats.terrainFormat(modern)
                         .getElementAttributeNames().contains("MidBlock"),
                 "modern format omitted MidBlock");
         var modernElements = ChimeraVertexFormats.terrainFormat(modern).getElements();
-        assertEquals(com.mojang.blaze3d.vertex.VertexFormatElement.Type.INT,
+        assertEquals(VertexFormatElement.Type.INT,
                 modernElements.get(6).type(), "modern midpoint is not a VulkanMod scalar INT");
-        assertEquals(com.mojang.blaze3d.vertex.VertexFormatElement.Type.BYTE,
+        assertEquals(VertexFormatElement.Type.BYTE,
                 modernElements.get(7).type(), "modern normal frame is not a packed BYTE word");
     }
 
     private static int countVersionDirectives(String source) {
-        return java.util.regex.Pattern.compile("(?im)^\\s*#version\\b")
+        return Pattern.compile("(?im)^\\s*#version\\b")
                 .matcher(source == null ? "" : source)
                 .results()
                 .mapToInt(ignored -> 1)
@@ -216,7 +222,7 @@ public final class M81ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

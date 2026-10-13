@@ -33,6 +33,7 @@ import org.joml.Matrix4f;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.SequencedMap;
 
 /**
  * Entities and block entities in the pack shadow map, as Iris ShadowRenderer draws them: after
@@ -48,7 +49,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
     private static ChimeraShadowCasters instance;
 
     private final ByteBufferBuilder vertices = new ByteBufferBuilder(256 * 1024);
-    private final java.util.SequencedMap<RenderType, ByteBufferBuilder> fixed = ChimeraHandRenderer.fixedBuffers();
+    private final SequencedMap<RenderType, ByteBufferBuilder> fixed = ChimeraHandRenderer.fixedBuffers();
     private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediateWithBuffers(fixed, vertices);
     // Casters carry no outline; this source only keeps a stray outline out of the frame's own.
     private final OutlineBufferSource outlines = new OutlineBufferSource();

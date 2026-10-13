@@ -1,15 +1,25 @@
 package net.chimera.shaderpack;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.render.vertex.ChimeraVertexFormats;
+import org.slf4j.LoggerFactory;
+
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Collections;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
  * Converts a legacy OptiFine-style fragment shader (#version 120/120e,
@@ -578,7 +588,7 @@ public final class LegacyGlslConverter {
             }
             src = convertTextureCalls(src);
             if (terrainContract(interfacePlan.stage())) {
-                Set<String> emittedAtlasSamplers = new java.util.HashSet<>();
+                Set<String> emittedAtlasSamplers = new HashSet<>();
                 for (String name : atlasSamplers) {
                     emittedAtlasSamplers.add(name.equals("texture") ? "chimeraTexture" : name);
                 }
@@ -704,7 +714,7 @@ public final class LegacyGlslConverter {
             return src;
         } catch (Exception e) {
             // The planner reports POST_CONVERTER_UNSUPPORTED; the cause belongs in the log.
-            org.slf4j.LoggerFactory.getLogger("chimera").warn(
+            LoggerFactory.getLogger("chimera").warn(
                     "[chimera] fragment conversion failed: {}", e.toString());
             return null;
         }
@@ -955,7 +965,7 @@ public final class LegacyGlslConverter {
             }
             vertex = GlslTokenRewriter.removeUnreachableFunctions(vertex, usage);
             // On the entity layout both stages read entityId and blockEntityId from EntityIds.
-            Map<String, String> entityIdTypes = new java.util.LinkedHashMap<>();
+            Map<String, String> entityIdTypes = new LinkedHashMap<>();
             if (entityInputs) {
                 String authoredVertex = stripComments(vertex);
                 for (String name : ENTITY_ID_NAMES) {
@@ -1360,7 +1370,7 @@ public final class LegacyGlslConverter {
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
                 throw new IllegalArgumentException("entity vertex requires main and gl_Position");
             }
-            Map<String, String> entityIdTypes = new java.util.LinkedHashMap<>();
+            Map<String, String> entityIdTypes = new LinkedHashMap<>();
             for (String name : ENTITY_ID_NAMES) {
                 String type = entityIdentifierType(name, stripped, fragmentSource);
                 if (type != null) entityIdTypes.put(name, type);
@@ -1466,7 +1476,7 @@ public final class LegacyGlslConverter {
             // Iris gbufferProjection uniforms stay in the shared pack UBO so
             // they use the legacy clip-depth convention instead.
             if (vertexPreamble == HAND_VERTEX_PREAMBLE) {
-                inputs = new java.util.HashMap<>(inputs);
+                inputs = new HashMap<>(inputs);
                 inputs.put("gl_ProjectionMatrix", "chimeraHandProjection()");
                 inputs.put("gl_ModelViewProjectionMatrix", "(chimeraHandProjection() * ModelViewMat)");
                 inputs.remove("gbufferModelView");
@@ -1475,12 +1485,12 @@ public final class LegacyGlslConverter {
             if (vertexPreamble == GLINT_VERTEX_PREAMBLE) {
                 // Glint also draws in the hand, where ModelViewMat is the hand pose: the
                 // world matrices stay the pack's own uniforms, as in Iris.
-                inputs = new java.util.HashMap<>(inputs);
+                inputs = new HashMap<>(inputs);
                 inputs.remove("gbufferModelView");
                 inputs.remove("gbufferModelViewInverse");
             }
             if (isSkyPreamble(vertexPreamble)) {
-                inputs = new java.util.HashMap<>(inputs);
+                inputs = new HashMap<>(inputs);
                 inputs.put("gl_ProjectionMatrix", "chimeraSkyProjection()");
                 inputs.put("gl_ModelViewProjectionMatrix", "(chimeraSkyProjection() * ModelViewMat)");
                 // Celestial host transforms rotate the sun/moon mesh. Pack world
@@ -2013,7 +2023,7 @@ public final class LegacyGlslConverter {
 
     /** Names a stage declares at file scope as plain (non-uniform, non-interface) variables. */
     private static Set<String> fileScopeGlobals(String source) {
-        Set<String> names = new java.util.HashSet<>();
+        Set<String> names = new HashSet<>();
         List<GlslLexer.Token> tokens = GlslLexer.lex(stripComments(source));
         int depth = 0;
         int statementStart = 0;
@@ -2759,7 +2769,7 @@ public final class LegacyGlslConverter {
             TerrainVaryingLayout layout
     ) {
         if (layout == null) return source;
-        Map<String, String> replacements = new java.util.HashMap<>();
+        Map<String, String> replacements = new HashMap<>();
         for (String name : ENTITY_ID_NAMES) {
             if (layout.locations().containsKey(entityIdVarying(name))) {
                 replacements.put(name, entityIdExpression(layout, name));
@@ -3030,10 +3040,6 @@ public final class LegacyGlslConverter {
     private static final Set<String> ENTITY_ATTRIBUTE_NAMES = Set.of(
             "entityId", "blockEntityId", "mc_midTexCoord", "at_tangent", "Tangent", "mc_Entity", "at_midBlock");
 
-    private static String stripComments(String source) {
-        return GlslLexer.stripComments(source);
-    }
-
     private static boolean hasModernTerrainVersion(String source) {
         return GlslVersion.declaredAndSupported(source);
     }
@@ -3043,16 +3049,21 @@ public final class LegacyGlslConverter {
     }
 
     static String normalizeModernTerrain(String source) {
-        GlslVersion.requireSupported(source, "modern terrain", true);
+        return normalizeTo460(source, "modern terrain");
+    }
+
+    /**
+     * Removes the authored version, known legacy extensions, precision statements and qualifiers,
+     * and declares 460. The result stays self-describing for the shared program plan; the
+     * converter also accepts this prepared form, so the authored version is removed exactly once.
+     */
+    private static String normalizeTo460(String source, String stage) {
+        GlslVersion.requireSupported(source, stage, true);
         String result = VERSION_LINE.matcher(source).replaceAll("");
         result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
         result = PRECISION_DECL.matcher(result).replaceAll("");
         result = MODERN_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
-        result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(
-                "lowp", "", "mediump", "", "highp", ""));
-        // Keep the normalized source self-describing for the shared program
-        // plan. The converter also accepts this prepared 460 form, so the
-        // authored version is removed exactly once and never duplicated.
+        result = GlslTokenRewriter.replaceIdentifiers(result, Map.of("lowp", "", "mediump", "", "highp", ""));
         return "#version 460\n" + GlslTokenRewriter.relaxNonConstantGlobals(result);
     }
 
@@ -3077,14 +3088,7 @@ public final class LegacyGlslConverter {
     }
 
     private static String normalizeShadowTerrain(String source) {
-        GlslVersion.requireSupported(source, "shadow", true);
-        String result = VERSION_LINE.matcher(source).replaceAll("");
-        result = KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
-        result = PRECISION_DECL.matcher(result).replaceAll("");
-        result = MODERN_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
-        result = GlslTokenRewriter.replaceIdentifiers(result,
-                Map.of("lowp", "", "mediump", "", "highp", ""));
-        return "#version 460\n" + GlslTokenRewriter.relaxNonConstantGlobals(result);
+        return normalizeTo460(source, "shadow");
     }
 
     private static String removeModernTerrainInputs(
@@ -3733,7 +3737,7 @@ public final class LegacyGlslConverter {
             .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
 
     /** Same immutable hand program, adapted only to the host inputs of this draw. */
-    public static String handVertexForFormat(String converted, com.mojang.blaze3d.vertex.VertexFormat host) {
+    public static String handVertexForFormat(String converted, VertexFormat host) {
         return layoutVertexForFormat(converted, host);
     }
 
@@ -3742,8 +3746,8 @@ public final class LegacyGlslConverter {
      * the extended format its native host layout uploads as: held maps, item quads
      * and world or sign text keep their own prefixes, as in Iris.
      */
-    public static String layoutVertexForFormat(String converted, com.mojang.blaze3d.vertex.VertexFormat host) {
-        if (host == com.mojang.blaze3d.vertex.DefaultVertexFormat.NEW_ENTITY) return converted;
+    public static String layoutVertexForFormat(String converted, VertexFormat host) {
+        if (host == DefaultVertexFormat.NEW_ENTITY) return converted;
         String contract = converted == null ? null
                 : converted.contains(HAND_VERTEX_PREAMBLE) ? HAND_VERTEX_PREAMBLE
                 : converted.contains(BLOCK_VERTEX_PREAMBLE) ? BLOCK_VERTEX_PREAMBLE
@@ -3751,7 +3755,7 @@ public final class LegacyGlslConverter {
         if (contract == null) {
             throw new IllegalArgumentException("program lacks the entity input contract");
         }
-        var extended = net.chimera.render.vertex.ChimeraVertexFormats.handFormats().get(host);
+        var extended = ChimeraVertexFormats.handFormats().get(host);
         if (extended == null) {
             throw new IllegalArgumentException("unsupported entity-family host format");
         }
@@ -3980,7 +3984,7 @@ public final class LegacyGlslConverter {
         }
         src = src.substring(0, main.start()) + "void chimeraLineMain()" + src.substring(main.end());
         String globals = LINE_WIDEN_GLOBALS;
-        java.util.Set<String> declared = new java.util.HashSet<>();
+        Set<String> declared = new HashSet<>();
         UniformRegistry.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
         if (!declared.contains("viewWidth")) globals += "uniform float viewWidth;\n";
         if (!declared.contains("viewHeight")) globals += "uniform float viewHeight;\n";
@@ -4218,7 +4222,7 @@ public final class LegacyGlslConverter {
      */
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;
-        Map<String, String> types = new java.util.HashMap<>();
+        Map<String, String> types = new HashMap<>();
         Matcher declaration = ENTITY_ID_DECLARATION.matcher(stripComments(source));
         while (declaration.find()) {
             for (String declarator : declaration.group(3).split(",")) {
@@ -4230,7 +4234,7 @@ public final class LegacyGlslConverter {
         }
         if (types.isEmpty()) return source;
         String src = removeEntityIdDeclarations(source);
-        Map<String, String> replacements = new java.util.HashMap<>();
+        Map<String, String> replacements = new HashMap<>();
         if (types.containsKey("entityId")) {
             replacements.put("entityId", "float".equals(types.get("entityId")) ? "(0.0)" : "(0)");
         }
@@ -4290,7 +4294,7 @@ public final class LegacyGlslConverter {
      * Iris, so GL reads its default (0, 0, 0, 1) cut to the declared type.
      */
     private static String unboundMaterialAttributes(String source) {
-        Map<String, String> defaults = new java.util.HashMap<>();
+        Map<String, String> defaults = new HashMap<>();
         Matcher declaration = MATERIAL_ATTRIBUTE_DECLARATION.matcher(source);
         while (declaration.find()) {
             defaults.put(declaration.group(2), switch (declaration.group(1)) {
@@ -4329,10 +4333,10 @@ public final class LegacyGlslConverter {
 
     private static String skyPreamble(FamilyAdapterPlan.VertexContract contract) {
         var host = switch (contract) {
-            case SKY_POSITION -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION;
-            case SKY_POSITION_COLOR -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR;
-            case SKY_POSITION_UV -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX;
-            case SKY_POSITION_COLOR_UV -> com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX_COLOR;
+            case SKY_POSITION -> DefaultVertexFormat.POSITION;
+            case SKY_POSITION_COLOR -> DefaultVertexFormat.POSITION_COLOR;
+            case SKY_POSITION_UV -> DefaultVertexFormat.POSITION_TEX;
+            case SKY_POSITION_COLOR_UV -> DefaultVertexFormat.POSITION_TEX_COLOR;
             default -> throw new IllegalArgumentException("unsupported sky vertex contract");
         };
         // Reuse the native transform and legacy clip-depth machinery. Sky has

@@ -1,25 +1,27 @@
 package net.chimera.render;
 
-import net.vulkanmod.vulkan.Renderer;
-import net.vulkanmod.vulkan.VRenderSystem;
-import net.vulkanmod.vulkan.framebuffer.Framebuffer;
-import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
-import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.shader.PackGeometryContext;
+import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackConfig;
+import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.framebuffer.Framebuffer;
+import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
+import net.vulkanmod.vulkan.shader.Uniforms;
 import net.vulkanmod.vulkan.texture.SamplerInfo;
 import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
-import net.vulkanmod.vulkan.shader.Uniforms;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkImageCopy;
+
+import java.util.List;
+import java.util.Map;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -43,7 +45,7 @@ public class ChimeraShadowMap {
     private Framebuffer shadowFramebuffer;
     private RenderPass shadowRenderPass;
     private VulkanImage shadowColor1;
-    private java.util.List<VulkanImage> shadowColors = java.util.List.of();
+    private List<VulkanImage> shadowColors = List.of();
     private GraphicsPipeline shadowPipeline;
     private final DepthSampleView depthSampleView = new DepthSampleView();
     /**
@@ -95,7 +97,7 @@ public class ChimeraShadowMap {
     }
 
     public void init(int resolution, float distance) {
-        init(new PackConfig.ShadowSettings(resolution, distance, java.util.Map.of(), java.util.List.of()));
+        init(new PackConfig.ShadowSettings(resolution, distance, Map.of(), List.of()));
     }
 
     public void init(PackConfig.ShadowSettings settings) {
@@ -116,7 +118,7 @@ public class ChimeraShadowMap {
                 .setFormat(VK_FORMAT_R8G8B8A8_UNORM)
                 .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
                 .setLinearFiltering(true).setClamp(true).createVulkanImage();
-        this.shadowColors = java.util.List.of(this.shadowFramebuffer.getColorAttachment(), this.shadowColor1);
+        this.shadowColors = List.of(this.shadowFramebuffer.getColorAttachment(), this.shadowColor1);
         // Receivers sample this D24S8 image; VulkanMod's view carries both aspects.
         VulkanImage depth = this.shadowFramebuffer.getDepthAttachment();
         ChimeraDepthViewOverride.registerOwned(depth, this.depthSampleView.ensure(depth));
@@ -368,7 +370,7 @@ public class ChimeraShadowMap {
         return index >= 0 && index < this.shadowColors.size() ? this.shadowColors.get(index) : null;
     }
 
-    public java.util.List<VulkanImage> shadowColors() { return this.shadowColors; }
+    public List<VulkanImage> shadowColors() { return this.shadowColors; }
 
     /** Initial contents must be defined before geometry samples the first shadow frame. */
     public void initializeSampling(VkCommandBuffer commandBuffer) {
@@ -428,14 +430,6 @@ public class ChimeraShadowMap {
         return this.shadowFramebuffer;
     }
 
-    public int getShadowMapSize() {
-        return this.shadowMapSize;
-    }
-
-    public float getShadowDistance() {
-        return this.shadowDistance;
-    }
-
     public RenderPass getShadowRenderPass() {
         return this.shadowRenderPass;
     }
@@ -457,7 +451,7 @@ public class ChimeraShadowMap {
         if (this.shadowPipeline != null) this.shadowPipeline.cleanUp();
         if (this.shadowColor1 != null) this.shadowColor1.free();
         this.shadowColor1 = null;
-        this.shadowColors = java.util.List.of();
+        this.shadowColors = List.of();
         this.shadowFramebuffer = null;
         this.shadowRenderPass = null;
         this.shadowPipeline = null;

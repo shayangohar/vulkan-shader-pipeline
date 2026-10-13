@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.LinkedHashMap;
 import java.util.Properties;
 
 /**
@@ -60,7 +61,7 @@ public final class MaterialMapPixels {
         if (dstWidth % srcWidth == 0 && dstHeight % srcHeight == 0) {
             return scalePoint(src, srcWidth, srcHeight, dstWidth, dstHeight);
         }
-        return boxAverage(src, srcWidth, srcHeight, dstWidth, dstHeight);
+        return downscale(src, srcWidth, srcHeight, dstWidth, dstHeight, MaterialMapPixels::averageFootprint);
     }
 
     private static int[] scalePoint(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
@@ -81,7 +82,7 @@ public final class MaterialMapPixels {
     public static int[] reduceLinear(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
         checkSize(srcWidth, srcHeight, "reduce-src");
         checkSize(dstWidth, dstHeight, "reduce-dst");
-        return boxAverage(src, srcWidth, srcHeight, dstWidth, dstHeight);
+        return downscale(src, srcWidth, srcHeight, dstWidth, dstHeight, MaterialMapPixels::averageFootprint);
     }
 
     /**
@@ -97,23 +98,13 @@ public final class MaterialMapPixels {
     public static int[] reduceLabPbr(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
         checkSize(srcWidth, srcHeight, "labpbr-src");
         checkSize(dstWidth, dstHeight, "labpbr-dst");
-        int[] dst = new int[dstWidth * dstHeight];
-        for (int y = 0; y < dstHeight; y++) {
-            int y0 = y * srcHeight / dstHeight;
-            int y1 = Math.max(y0 + 1, (y + 1) * srcHeight / dstHeight);
-            for (int x = 0; x < dstWidth; x++) {
-                int x0 = x * srcWidth / dstWidth;
-                int x1 = Math.max(x0 + 1, (x + 1) * srcWidth / dstWidth);
-                dst[y * dstWidth + x] = reduceLabFootprint(src, srcWidth, x0, y0, x1, y1);
-            }
-        }
-        return dst;
+        return downscale(src, srcWidth, srcHeight, dstWidth, dstHeight, MaterialMapPixels::reduceLabFootprint);
     }
 
     private static int reduceLabFootprint(int[] src, int srcWidth, int x0, int y0, int x1, int y1) {
         int redSum = 0;
         int count = 0;
-        java.util.LinkedHashMap<Integer, int[]> greenClasses = new java.util.LinkedHashMap<>();
+        LinkedHashMap<Integer, int[]> greenClasses = new LinkedHashMap<>();
         int blueLow = 0;
         int alphaLow = 0;
         int first = src[y0 * srcWidth + x0];
@@ -170,7 +161,14 @@ public final class MaterialMapPixels {
         return pack(alphaSum / alphaCount, blueSum / blueCount, greenSum / greenCount, redSum / count);
     }
 
-    private static int[] boxAverage(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
+    /** Reduces the source footprint [x0, x1) x [y0, y1) to one destination texel. */
+    private interface FootprintReducer {
+        int reduce(int[] src, int srcWidth, int x0, int y0, int x1, int y1);
+    }
+
+    /** Downscales by reducing, for each destination texel, the source footprint it covers. */
+    private static int[] downscale(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight,
+                                   FootprintReducer reducer) {
         int[] dst = new int[dstWidth * dstHeight];
         for (int y = 0; y < dstHeight; y++) {
             int y0 = y * srcHeight / dstHeight;
@@ -178,27 +176,30 @@ public final class MaterialMapPixels {
             for (int x = 0; x < dstWidth; x++) {
                 int x0 = x * srcWidth / dstWidth;
                 int x1 = Math.max(x0 + 1, (x + 1) * srcWidth / dstWidth);
-                long a = 0;
-                long b = 0;
-                long g = 0;
-                long r = 0;
-                int count = 0;
-                for (int sy = y0; sy < y1; sy++) {
-                    int row = sy * srcWidth;
-                    for (int sx = x0; sx < x1; sx++) {
-                        int texel = src[row + sx];
-                        a += alpha(texel);
-                        b += blue(texel);
-                        g += green(texel);
-                        r += red(texel);
-                        count++;
-                    }
-                }
-                dst[y * dstWidth + x] = pack((int) (a / count), (int) (b / count),
-                        (int) (g / count), (int) (r / count));
+                dst[y * dstWidth + x] = reducer.reduce(src, srcWidth, x0, y0, x1, y1);
             }
         }
         return dst;
+    }
+
+    private static int averageFootprint(int[] src, int srcWidth, int x0, int y0, int x1, int y1) {
+        long a = 0;
+        long b = 0;
+        long g = 0;
+        long r = 0;
+        int count = 0;
+        for (int sy = y0; sy < y1; sy++) {
+            int row = sy * srcWidth;
+            for (int sx = x0; sx < x1; sx++) {
+                int texel = src[row + sx];
+                a += alpha(texel);
+                b += blue(texel);
+                g += green(texel);
+                r += red(texel);
+                count++;
+            }
+        }
+        return pack((int) (a / count), (int) (b / count), (int) (g / count), (int) (r / count));
     }
 
     /** Copies a sprite rectangle into a level canvas, clipping defensively. */

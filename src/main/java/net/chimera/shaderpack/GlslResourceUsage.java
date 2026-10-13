@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -275,12 +276,7 @@ final class GlslResourceUsage {
             Set<String> referencedImages,
             Set<String> referencedStorage
     ) {
-        Set<Integer> functionTokens = new HashSet<>();
-        for (FunctionDefinition function : functions) {
-            for (int index = function.definitionStart(); index <= function.definitionEnd(); index++) {
-                functionTokens.add(index);
-            }
-        }
+        Set<Integer> functionTokens = functionTokens(functions);
         for (int index = 0; index < tokens.size(); index++) {
             if (functionTokens.contains(index)) continue;
             GlslLexer.Token token = tokens.get(index);
@@ -292,6 +288,17 @@ final class GlslResourceUsage {
         }
     }
 
+    /** The indices of every token inside a function definition. */
+    private static Set<Integer> functionTokens(List<FunctionDefinition> functions) {
+        Set<Integer> tokens = new HashSet<>();
+        for (FunctionDefinition function : functions) {
+            for (int index = function.definitionStart(); index <= function.definitionEnd(); index++) {
+                tokens.add(index);
+            }
+        }
+        return tokens;
+    }
+
     private static void seedTopLevelCalls(
             List<GlslLexer.Token> tokens,
             List<FunctionDefinition> functions,
@@ -299,12 +306,7 @@ final class GlslResourceUsage {
             Map<String, List<String>> macroCalls,
             ArrayDeque<FunctionDefinition> pending
     ) {
-        Set<Integer> functionTokens = new HashSet<>();
-        for (FunctionDefinition function : functions) {
-            for (int index = function.definitionStart(); index <= function.definitionEnd(); index++) {
-                functionTokens.add(index);
-            }
-        }
+        Set<Integer> functionTokens = functionTokens(functions);
         for (int index = 0; index < tokens.size(); index++) {
             if (functionTokens.contains(index)) continue;
             GlslLexer.Token token = tokens.get(index);
@@ -667,7 +669,7 @@ final class GlslResourceUsage {
 
     private static List<FunctionDefinition> sortedFunctions(List<FunctionDefinition> values) {
         if (values == null) return List.of();
-        return values.stream().distinct().sorted(java.util.Comparator
+        return values.stream().distinct().sorted(Comparator
                 .comparing(FunctionDefinition::name)
                 .thenComparingInt(FunctionDefinition::definitionStart)
                 .thenComparingInt(FunctionDefinition::definitionEnd)).toList();

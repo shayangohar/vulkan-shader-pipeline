@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import org.lwjgl.vulkan.VK10;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -11,12 +12,15 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Immutable load-time plan for the first advanced-resource contract.
@@ -35,31 +39,25 @@ public final class PackAdvancedResourcePlan {
             "layout\\s*\\(\\s*local_size_x\\s*=\\s*(\\d+)\\s*,\\s*"
                     + "local_size_y\\s*=\\s*(\\d+)\\s*,\\s*"
                     + "local_size_z\\s*=\\s*(\\d+)\\s*\\)", Pattern.MULTILINE);
-    private static final Pattern IMAGE_DECLARATION = Pattern.compile(
-            "(?:layout\\s*\\([^)]*\\)\\s*)?"
-            + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
-            + "\\b(?:u?i?image3D)\\s+([A-Za-z_]\\w*)");
     private static final Pattern GRAPHICS_IMAGE_DECLARATION = Pattern.compile(
             "(?:layout\\s*\\([^)]*\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
                     + "\\b(u?i?image3D)\\s+([A-Za-z_]\\w*)");
-    private static final Pattern SAMPLER_DECLARATION = Pattern.compile(
-            "(?m)^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
-                    + "(u?sampler3D)\\s+([A-Za-z_]\\w*)\\s*;");
     private static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
                     + "(bool|int|uint|float|double|vec[234]|ivec[234]|uvec[234]|bvec[234]"
                     + "|mat[234](?:x[234])?)\\s+([A-Za-z_]\\w*)\\s*;");
-    private static final Pattern STORAGE_BLOCK_DECLARATION = Pattern.compile(
-            "(?s)(?:layout\\s*\\(([^)]*)\\)\\s*)?"
-                    + "(?:(?:readonly|writeonly|coherent|volatile|restrict)\\s+)*"
-                    + "buffer\\s+([A-Za-z_]\\w*)\\s*\\{");
-    private static final Pattern STORAGE_BINDING = Pattern.compile(
-            "(?i)\\bbinding\\s*=\\s*(\\d+)");
     private static final Pattern IMAGE_TYPE = Pattern.compile(
             "[iu]?image(?:1D|2D|3D|Cube|2DRect|1DArray|2DArray|CubeArray|Buffer|2DMS|2DMSArray)");
 
     public enum Status { SUPPORTED, UNSUPPORTED, UNAVAILABLE }
+
+    /** A declaration Chimera admitted or refused. */
+    public interface Admission {
+        Status status();
+
+        default boolean supported() { return status() == Status.SUPPORTED; }
+    }
 
     public record ImageSpec(
             String name,
@@ -78,7 +76,7 @@ public final class PackAdvancedResourcePlan {
             long estimatedBytes,
             Status status,
             List<String> deviations
-    ) {
+    ) implements Admission {
         public ImageSpec {
             name = name == null ? "" : name;
             sampler = sampler == null ? "" : sampler;
@@ -89,31 +87,6 @@ public final class PackAdvancedResourcePlan {
             heightToken = heightToken == null ? Integer.toString(height) : heightToken;
             depthToken = depthToken == null ? Integer.toString(depth) : depthToken;
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
-        }
-
-        /** Compatibility constructor for the original literal-dimension shape. */
-        public ImageSpec(
-                String name,
-                String sampler,
-                String pixelFormat,
-                String internalFormat,
-                String pixelType,
-                boolean clear,
-                boolean relative,
-                int width,
-                int height,
-                int depth,
-                long estimatedBytes,
-                Status status,
-                List<String> deviations
-        ) {
-            this(name, sampler, pixelFormat, internalFormat, pixelType, clear, relative,
-                    width, height, depth, Integer.toString(width), Integer.toString(height),
-                    Integer.toString(depth), estimatedBytes, status, deviations);
-        }
-
-        public boolean supported() {
-            return status == Status.SUPPORTED;
         }
     }
 
@@ -127,17 +100,13 @@ public final class PackAdvancedResourcePlan {
             List<String> samplerNames,
             Status status,
             List<String> deviations
-    ) {
+    ) implements Admission {
         public ComputeSpec {
             program = program == null ? "" : program;
             relativeSource = relativeSource == null ? "" : relativeSource.replace('\\', '/');
             imageNames = imageNames == null ? List.of() : imageNames.stream().distinct().sorted().toList();
             samplerNames = samplerNames == null ? List.of() : samplerNames.stream().distinct().sorted().toList();
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
-        }
-
-        public boolean supported() {
-            return status == Status.SUPPORTED;
         }
     }
 
@@ -151,19 +120,6 @@ public final class PackAdvancedResourcePlan {
             int selectorSlot,
             int stageMask
     ) {
-        /** Compatibility constructor for plans created before stage ownership was recorded. */
-        public GraphicsImageBinding(
-                String program,
-                String symbol,
-                String imageName,
-                String sampler,
-                String glslType,
-                int selectorSlot
-        ) {
-            this(program, symbol, imageName, sampler, glslType, selectorSlot,
-                    org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_ALL_GRAPHICS);
-        }
-
         public GraphicsImageBinding {
             program = program == null ? "" : program;
             symbol = symbol == null ? "" : symbol;
@@ -171,7 +127,7 @@ public final class PackAdvancedResourcePlan {
             sampler = sampler == null ? "" : sampler;
             glslType = glslType == null ? "image3D" : glslType;
             stageMask = stageMask == 0
-                    ? org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_ALL_GRAPHICS : stageMask;
+                    ? VK10.VK_SHADER_STAGE_ALL_GRAPHICS : stageMask;
         }
     }
 
@@ -182,15 +138,11 @@ public final class PackAdvancedResourcePlan {
             String requestedName,
             Status status,
             List<String> deviations
-    ) {
+    ) implements Admission {
         public BufferSpec {
             requestedName = requestedName == null ? "" : requestedName.trim();
             status = status == null ? Status.UNAVAILABLE : status;
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
-        }
-
-        public boolean supported() {
-            return status == Status.SUPPORTED;
         }
     }
 
@@ -206,7 +158,7 @@ public final class PackAdvancedResourcePlan {
             long size,
             Status status,
             List<String> deviations
-    ) {
+    ) implements Admission {
         public StorageBufferBinding {
             program = program == null ? "" : program;
             blockName = blockName == null ? "" : blockName;
@@ -214,21 +166,12 @@ public final class PackAdvancedResourcePlan {
             status = status == null ? Status.UNAVAILABLE : status;
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
         }
-
-        public boolean supported() {
-            return status == Status.SUPPORTED;
-        }
     }
 
     /** A descriptor slot, independent of Vulkan object allocation. */
     public record DescriptorBinding(
             String symbol, int set, int binding, int type, int stages, String identity
     ) {
-        /** Compatibility constructor for the original descriptor shape. */
-        public DescriptorBinding(String symbol, int set, int binding, int type, int stages) {
-            this(symbol, set, binding, type, stages, symbol == null ? "" : symbol);
-        }
-
         public DescriptorBinding {
             symbol = symbol == null ? "" : symbol;
             identity = identity == null ? "" : identity;
@@ -240,14 +183,6 @@ public final class PackAdvancedResourcePlan {
             List<GraphicsImageBinding> advancedSamplers,
             List<DescriptorBinding> ordinaryDescriptors,
             List<DescriptorBinding> descriptors) {
-        /** Compatibility constructor for layouts created before ordinary descriptors were retained. */
-        public ProgramBindingLayout(int storageBase, int imageBase, int samplerBase,
-                List<StorageBufferBinding> storageBuffers, List<GraphicsImageBinding> storageImages,
-                List<GraphicsImageBinding> advancedSamplers, List<DescriptorBinding> descriptors) {
-            this(storageBase, imageBase, samplerBase, storageBuffers, storageImages,
-                    advancedSamplers, List.of(), descriptors);
-        }
-
         public ProgramBindingLayout {
             storageBuffers = List.copyOf(storageBuffers);
             storageImages = List.copyOf(storageImages);
@@ -294,7 +229,7 @@ public final class PackAdvancedResourcePlan {
 
     private static List<GraphicsImageBinding> mergeGraphicsBindings(
             List<GraphicsImageBinding> values,
-            java.util.function.Function<GraphicsImageBinding, String> keyFunction
+            Function<GraphicsImageBinding, String> keyFunction
     ) {
         Map<String, GraphicsImageBinding> merged = new TreeMap<>();
         if (values != null) {
@@ -511,11 +446,11 @@ public final class PackAdvancedResourcePlan {
                 ordinaryContracts.containsKey(program)
                         ? ordinaryContracts.get(program).descriptors() : List.of())));
         this.bindingLayouts = Map.copyOf(layouts);
-        this.dependentPrograms = sorted(dependentPrograms);
-        this.bufferDependentPrograms = sorted(bufferDependentPrograms);
-        this.storageEligiblePrograms = sorted(storageEligiblePrograms);
-        this.customImageFeaturePrograms = sorted(customImageFeaturePrograms);
-        this.deviations = sorted(deviations);
+        this.dependentPrograms = PlanJson.sorted(dependentPrograms);
+        this.bufferDependentPrograms = PlanJson.sorted(bufferDependentPrograms);
+        this.storageEligiblePrograms = PlanJson.sorted(storageEligiblePrograms);
+        this.customImageFeaturePrograms = PlanJson.sorted(customImageFeaturePrograms);
+        this.deviations = PlanJson.sorted(deviations);
         this.snapshot = snapshotJson();
         this.fingerprint = ConformanceReport.sha256(snapshot.getBytes(StandardCharsets.UTF_8));
     }
@@ -608,7 +543,7 @@ public final class PackAdvancedResourcePlan {
         Set<String> imageSamplerNames = images.values().stream()
                 .map(ImageSpec::sampler)
                 .filter(value -> value != null && !value.isBlank())
-                .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+                .collect(Collectors.toCollection(TreeSet::new));
         Set<String> graphicsProducedImages = new TreeSet<>();
         for (PackProgramPlan program : plan.programs()) {
             if (program == null || program.name().isBlank()) continue;
@@ -705,7 +640,7 @@ public final class PackAdvancedResourcePlan {
         graphicsImageReaders.forEach((program, bindings) -> advancedSamplerNames.put(program,
                 bindings.stream().map(GraphicsImageBinding::sampler)
                         .filter(value -> value != null && !value.isBlank())
-                        .collect(java.util.stream.Collectors.toCollection(TreeSet::new))));
+                        .collect(Collectors.toCollection(TreeSet::new))));
         Map<String, OrdinaryDescriptorContract> ordinaryContracts = new TreeMap<>();
         Map<String, Integer> bindingBases = new TreeMap<>();
         PackResourcePlan sampledResources = PackResourcePlan.build(plan, shadersDir);
@@ -791,7 +726,7 @@ public final class PackAdvancedResourcePlan {
         } else if ((size & 3L) != 0L) {
             deviations.add("STORAGE_BUFFER_ALIGNMENT_UNSUPPORTED:" + index);
         }
-        if (raw != null && raw.toLowerCase(java.util.Locale.ROOT).contains("relative")) {
+        if (raw != null && raw.toLowerCase(Locale.ROOT).contains("relative")) {
             deviations.add("STORAGE_BUFFER_RELATIVE_UNSUPPORTED:" + index);
         }
         return new BufferSpec(index, size, values.length == 2 ? values[1] : "",
@@ -814,9 +749,9 @@ public final class PackAdvancedResourcePlan {
             for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
                 if (stage.getValue() == null || stage.getValue().source() == null) continue;
                 int stageMask = stage.getKey().equals("vertex")
-                        ? org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT
+                        ? VK10.VK_SHADER_STAGE_VERTEX_BIT
                         : stage.getKey().equals("fragment")
-                        ? org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT : 0;
+                        ? VK10.VK_SHADER_STAGE_FRAGMENT_BIT : 0;
                 if (stageMask == 0) continue;
                 try {
                     for (StorageBlock block : scanStorageBlocks(stage.getValue().source())) {
@@ -981,8 +916,8 @@ public final class PackAdvancedResourcePlan {
 
     private static int stageMask(String stage) {
         return switch (stage == null ? "" : stage) {
-            case "vertex" -> org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
-            case "fragment" -> org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
+            case "vertex" -> VK10.VK_SHADER_STAGE_VERTEX_BIT;
+            case "fragment" -> VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
             default -> 0;
         };
     }
@@ -1007,7 +942,7 @@ public final class PackAdvancedResourcePlan {
         if (values.length < 9) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
             return new ImageSpec(name, token(values, 0), token(values, 1), token(values, 2),
-                    token(values, 3), false, false, 0, 0, 0, 0, Status.UNSUPPORTED, deviations);
+                    token(values, 3), false, false, 0, 0, 0, null, null, null, 0, Status.UNSUPPORTED, deviations);
         }
         String sampler = values[0];
         String pixelFormat = values[1];
@@ -1081,7 +1016,7 @@ public final class PackAdvancedResourcePlan {
             Map<String, ImageSpec> images,
             List<String> deviations,
             Map<String, String> initialMacros,
-            java.util.Set<String> lockedMacros,
+            Set<String> lockedMacros,
             Set<String> graphicsProducedImages,
             Map<String, UniformRegistry.UniformDescriptor> customDescriptors
     ) {
@@ -1233,7 +1168,7 @@ public final class PackAdvancedResourcePlan {
         Set<String> injectedSamplers = images == null ? Set.of() : images.values().stream()
                 .map(ImageSpec::sampler)
                 .filter(value -> value != null && !value.isBlank())
-                .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+                .collect(Collectors.toCollection(TreeSet::new));
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source, injectedSamplers);
         if (!usage.successful()) return true;
         if (!usage.liveImages().isEmpty()) return true;
@@ -1243,15 +1178,6 @@ public final class PackAdvancedResourcePlan {
             if (usage.liveSamplers().contains(sampler3D.group(1))) return true;
         }
         return usage.liveSamplers().stream().anyMatch(injectedSamplers::contains);
-    }
-
-    private static boolean usesImageWrite(String source, String symbol) {
-        return GlslResourceUsage.analyze(source).liveImages().contains(symbol);
-    }
-
-    private static boolean usesSamplerCall(String source, String sampler) {
-        return source != null && sampler != null
-                && GlslResourceUsage.liveSamplers(source).contains(sampler);
     }
 
     private static int bytesPerVoxel(String format) {
@@ -1265,7 +1191,7 @@ public final class PackAdvancedResourcePlan {
 
     static String storageImageType(ImageSpec spec) {
         if (spec == null) return "image3D";
-        return switch (spec.internalFormat().toLowerCase(java.util.Locale.ROOT)) {
+        return switch (spec.internalFormat().toLowerCase(Locale.ROOT)) {
             case "r8ui", "r16ui" -> "uimage3D";
             case "rgba16f" -> "image3D";
             default -> "image3D";
@@ -1333,9 +1259,6 @@ public final class PackAdvancedResourcePlan {
     }
     public List<String> bufferDependentPrograms() { return bufferDependentPrograms; }
     public List<String> storageEligiblePrograms() { return storageEligiblePrograms; }
-    public boolean hasStorageBuffers() {
-        return storageBuffers.values().stream().anyMatch(value -> !value.isEmpty());
-    }
     public boolean storageBufferCapabilityPossible() {
         if (bufferDependentPrograms.isEmpty()) return true;
         boolean hasBinding = storageBuffers.values().stream().flatMap(List::stream)
@@ -1367,7 +1290,7 @@ public final class PackAdvancedResourcePlan {
 
     public ProgramBindingLayout bindingLayout(String program) {
         return bindingLayouts.getOrDefault(program,
-                new ProgramBindingLayout(0, 0, 0, List.of(), List.of(), List.of(), List.of()));
+                new ProgramBindingLayout(0, 0, 0, List.of(), List.of(), List.of(), List.of(), List.of()));
     }
 
     OrdinaryDescriptorContract ordinaryContract(String program) {
@@ -1438,7 +1361,7 @@ public final class PackAdvancedResourcePlan {
             item.addProperty("depthToken", value.depthToken());
             item.addProperty("estimatedBytes", value.estimatedBytes());
             item.addProperty("status", value.status().name());
-            item.add("deviations", strings(value.deviations()));
+            item.add("deviations", PlanJson.strings(value.deviations()));
             imageArray.add(item);
         });
         root.add("images", imageArray);
@@ -1453,10 +1376,10 @@ public final class PackAdvancedResourcePlan {
             item.addProperty("localSizeX", value.localSizeX());
             item.addProperty("localSizeY", value.localSizeY());
             item.addProperty("localSizeZ", value.localSizeZ());
-            item.add("images", strings(value.imageNames()));
-            item.add("samplers", strings(value.samplerNames()));
+            item.add("images", PlanJson.strings(value.imageNames()));
+            item.add("samplers", PlanJson.strings(value.samplerNames()));
             item.addProperty("status", value.status().name());
-            item.add("deviations", strings(value.deviations()));
+            item.add("deviations", PlanJson.strings(value.deviations()));
             computeArray.add(item);
         });
         root.add("computeStages", computeArray);
@@ -1511,7 +1434,7 @@ public final class PackAdvancedResourcePlan {
             item.addProperty("size", value.size());
             item.addProperty("name", value.requestedName());
             item.addProperty("status", value.status().name());
-            item.add("deviations", strings(value.deviations()));
+            item.add("deviations", PlanJson.strings(value.deviations()));
             bufferArray.add(item);
         });
         root.add("buffers", bufferArray);
@@ -1534,26 +1457,20 @@ public final class PackAdvancedResourcePlan {
                 value.addProperty("stages", binding.stageMask());
                 value.addProperty("size", binding.size());
                 value.addProperty("status", binding.status().name());
-                value.add("deviations", strings(binding.deviations()));
+                value.add("deviations", PlanJson.strings(binding.deviations()));
                 entries.add(value);
             });
             item.add("bindings", entries);
             storageArray.add(item);
         });
         root.add("storageBuffers", storageArray);
-        root.add("dependentPrograms", strings(dependentPrograms));
-        root.add("bufferDependentPrograms", strings(bufferDependentPrograms));
-        root.add("storageEligiblePrograms", strings(storageEligiblePrograms));
-        root.add("customImageFeaturePrograms", strings(customImageFeaturePrograms));
-        root.add("deviations", strings(deviations));
+        root.add("dependentPrograms", PlanJson.strings(dependentPrograms));
+        root.add("bufferDependentPrograms", PlanJson.strings(bufferDependentPrograms));
+        root.add("storageEligiblePrograms", PlanJson.strings(storageEligiblePrograms));
+        root.add("customImageFeaturePrograms", PlanJson.strings(customImageFeaturePrograms));
+        root.add("deviations", PlanJson.strings(deviations));
         root.addProperty("capabilityPossible", capabilityPossible());
         return root.toString();
-    }
-
-    private static List<String> sorted(Iterable<String> values) {
-        TreeSet<String> result = new TreeSet<>();
-        if (values != null) for (String value : values) if (value != null && !value.isBlank()) result.add(value);
-        return List.copyOf(result);
     }
 
     private static boolean requiredImagesSupported(ComputeSpec compute, Map<String, ImageSpec> images) {
@@ -1574,11 +1491,5 @@ public final class PackAdvancedResourcePlan {
             if (image == null || !image.supported()) return false;
         }
         return true;
-    }
-
-    private static JsonArray strings(Iterable<String> values) {
-        JsonArray result = new JsonArray();
-        sorted(values).forEach(result::add);
-        return result;
     }
 }

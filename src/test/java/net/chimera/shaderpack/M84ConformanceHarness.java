@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 /** Deterministic M8.4 checks for the common world-family adapters. */
@@ -271,7 +272,7 @@ public final class M84ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected=" + expected + " actual=" + actual);
         }
     }

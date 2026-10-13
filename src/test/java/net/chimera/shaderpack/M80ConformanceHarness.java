@@ -1,6 +1,10 @@
 package net.chimera.shaderpack;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -285,7 +289,7 @@ public final class M80ConformanceHarness {
                 // const bool colortex7MipmapEnabled = true;
                 /* RENDERTARGETS: 0 */
                 """).plan();
-        assertTrue(directives.mipmappedTargets().equals(java.util.List.of(0, 5)),
+        assertTrue(directives.mipmappedTargets().equals(List.of(0, 5)),
                 "M8.0 mipmap directives: " + directives.mipmappedTargets());
 
         PackProbe.Analysis targetGraph = PackProbe.analyze(root.resolve("m7_4/target_graph"));
@@ -294,14 +298,14 @@ public final class M80ConformanceHarness {
         PostTargetPlan mipmapped = PostTargetPlan.parse("composite1", source.replaceFirst("\n",
                 "\nconst bool colortex0MipmapEnabled = true;\nconst bool colortex9MipmapEnabled = true;\n"),
                 targetGraph.config().colortexFormats()).plan();
-        java.util.List<PackProgramPlan> programs = targetGraph.plan().programs().stream()
+        List<PackProgramPlan> programs = targetGraph.plan().programs().stream()
                 .map(plan -> plan.name().equals("composite1") ? withTargetPlan(plan, mipmapped) : plan)
                 .toList();
         PackTargetGraphPlan mipGraph = PackTargetGraphPlan.build(
                 programs, targetGraph.config(), targetGraph.plan().resources(), 1920, 1080, 8, 16384);
         TargetStep mipStep = mipGraph.step("composite1");
         assertTrue(mipStep != null && mipStep.executable()
-                        && mipStep.mipmapTargets().equals(java.util.List.of(0)),
+                        && mipStep.mipmapTargets().equals(List.of(0)),
                 "M8.0 mipmap step must regenerate allocated colortex0 only: " + mipStep);
         TargetSpec scene = mipGraph.targets().stream().filter(spec -> spec.index() == 0).findFirst().orElseThrow();
         assertTrue(scene.mipmapped() && scene.mipLevels() == 11,
@@ -325,9 +329,9 @@ public final class M80ConformanceHarness {
 
     private static String readFixture(Path path) {
         try {
-            return java.nio.file.Files.readString(path);
-        } catch (java.io.IOException failure) {
-            throw new java.io.UncheckedIOException(failure);
+            return Files.readString(path);
+        } catch (IOException failure) {
+            throw new UncheckedIOException(failure);
         }
     }
 

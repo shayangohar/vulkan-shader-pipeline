@@ -8,6 +8,7 @@ import org.lwjgl.vulkan.*;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.lwjgl.vulkan.VK10.*;
@@ -130,7 +131,7 @@ public final class PackMipChainHarness {
             float[][] read = run(2, 1, 2, new float[] {0, 0, 0, 1, 4, 8, 16, 1}, null);
             float[] top = read[1];
             require(top[0] == 2.0f && top[1] == 4.0f && top[2] == 8.0f && top[3] == 1.0f,
-                    "1x1 level is not the linear average: " + java.util.Arrays.toString(top));
+                    "1x1 level is not the linear average: " + Arrays.toString(top));
         }
 
         /** Seeds level 0 (texels or a clear), poisons the rest, records the chain, reads every level. */

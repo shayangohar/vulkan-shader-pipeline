@@ -1,11 +1,11 @@
 package net.chimera.mixin;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.chimera.render.shader.ChimeraEntityBridge;
-import net.chimera.render.shader.ChimeraEntityStorage;
-import net.chimera.render.shader.ChimeraEntitySubmission;
 import net.chimera.render.ChimeraFamilyDraw;
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraEntityStorage;
+import net.chimera.render.shader.SubmissionIdentity;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.OutlineBufferSource;
 import net.minecraft.client.renderer.SubmitNodeCollection;
@@ -27,7 +27,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
 
     @Inject(method = "renderModel", at = @At("HEAD"), require = 1)
     private void chimera$beginModel(
-            SubmitNodeStorage.ModelSubmit submit,
+            SubmitNodeStorage.ModelSubmit<?> submit,
             RenderType renderType,
             VertexConsumer vertexConsumer,
             OutlineBufferSource outlineBufferSource,
@@ -35,16 +35,15 @@ public abstract class ChimeraModelFeatureRendererMixin {
             CallbackInfo callback
     ) {
         if (ChimeraEntityBridge.isDrawActive()
-                && (Object) submit instanceof ChimeraEntitySubmission entity
-                && entity.chimera$isWorldEntity()) {
+                && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity) {
             ChimeraEntityBridge.noteModelDraw(renderType);
-            ChimeraEntityBridge.beginModelEntity(entity.chimera$entityId(), entity.chimera$blockEntityId());
+            ChimeraEntityBridge.beginModelEntity(entity.entityId(), entity.blockEntityId());
         }
     }
 
     @Inject(method = "renderModel", at = @At("RETURN"), require = 1)
     private void chimera$endModel(
-            SubmitNodeStorage.ModelSubmit submit,
+            SubmitNodeStorage.ModelSubmit<?> submit,
             RenderType renderType,
             VertexConsumer vertexConsumer,
             OutlineBufferSource outlineBufferSource,
@@ -52,8 +51,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
             CallbackInfo callback
     ) {
         if (ChimeraEntityBridge.isDrawActive()
-                && (Object) submit instanceof ChimeraEntitySubmission entity
-                && entity.chimera$isWorldEntity()) {
+                && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity) {
             ChimeraEntityBridge.endModelEntity();
         }
     }
@@ -109,7 +107,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
 
     private void chimera$renderFamily(
             ChimeraEntityBridge.Family family,
-            Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> submits,
+            Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> submits,
             MultiBufferSource.BufferSource hostBufferSource,
             OutlineBufferSource outlineBufferSource,
             MultiBufferSource.BufferSource crumblingBufferSource
@@ -117,8 +115,8 @@ public abstract class ChimeraModelFeatureRendererMixin {
         if (submits.isEmpty()) {
             return;
         }
-        for (Map.Entry<RenderType, List<SubmitNodeStorage.ModelSubmit>> entry : submits.entrySet()) {
-            Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> batch =
+        for (Map.Entry<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> entry : submits.entrySet()) {
+            Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> batch =
                     Map.of(entry.getKey(), entry.getValue());
             if (!ChimeraFamilyDraw.emit(family, entry.getKey(), source ->
                     chimera$renderBatch(source, outlineBufferSource, batch, crumblingBufferSource))) {
@@ -131,7 +129,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
     abstract void chimera$renderBatch(
             MultiBufferSource.BufferSource bufferSource,
             OutlineBufferSource outlineBufferSource,
-            Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> submits,
+            Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> submits,
             MultiBufferSource.BufferSource crumblingBufferSource
     );
 }

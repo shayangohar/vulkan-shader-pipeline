@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -534,8 +535,8 @@ public final class M57ConformanceHarness {
         return object;
     }
 
-    private static com.google.gson.JsonArray strings(Iterable<String> values) {
-        com.google.gson.JsonArray array = new com.google.gson.JsonArray();
+    private static JsonArray strings(Iterable<String> values) {
+        JsonArray array = new JsonArray();
         values.forEach(array::add);
         return array;
     }

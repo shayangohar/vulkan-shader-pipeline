@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Broadening step 1 (TASK-455): the pack front end reads the Iris/GLSL formats in full rather
@@ -40,7 +41,7 @@ public final class PackFrontEndHarness {
                 PackProgramPlan plan = PackPlanBuilder.build(new PackProgram(name, fragment, null,
                         "#version 120\nvoid main() { gl_Position = ftransform(); }", null), null);
                 check(plan.executable(), name + " fixture rejected: " + plan.deviations());
-                var ordinary = PackPipelines.ordinaryDescriptorContract(plan, java.util.Set.of());
+                var ordinary = PackPipelines.ordinaryDescriptorContract(plan, Set.of());
                 var manifest = ProgramImageBindingManifest.from(null, ordinary);
                 check(manifest.entries().size() == (textured ? 1 : 0),
                         name + " injected host textures: " + manifest.entries());
@@ -131,8 +132,9 @@ public final class PackFrontEndHarness {
     /** program.<folder>/<name>.enabled with a declared-but-off toggle disables, as in Iris. */
     private static void verifyProgramSwitches() {
         PackSettingsPlan settings = new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(),
-                Map.of("world0/composite2", false, "composite3", false), java.util.Set.of(),
-                java.util.Set.of(), java.util.Set.of(), List.of(), "default");
+                Map.of("world0/composite2", false, "composite3", false), Set.of(),
+                Set.of(), Set.of(), List.of(), "default",
+                PackRuntimeSettings.empty(), Map.of(), Map.of(), false);
         check(!settings.enabled("world0", "composite2"), "folder-scoped switch ignored");
         check(settings.enabled("world-1", "composite2"), "another folder's switch applied");
         check(!settings.enabled("world0", "composite3"), "bare switch must still apply");
@@ -249,7 +251,7 @@ public final class PackFrontEndHarness {
                 PackRuntimeSettings.declaration(true, "vec3", "wrong", "1.0"),
                 PackRuntimeSettings.declaration(true, "float", "cell",
                         "gbufferModelViewInverse.3.0")), Map.of(), List.of());
-        check(settings.rejected().equals(java.util.Set.of("wrong")),
+        check(settings.rejected().equals(Set.of("wrong")),
                 "only the mistyped value is refused: " + settings.rejected() + " " + settings.deviations());
         check(settings.widthOf("view_res") == 2 && settings.widthOf("dir") == 3
                 && settings.widthOf("dir_y") == 1, "widths");
@@ -514,8 +516,8 @@ public final class PackFrontEndHarness {
 
         // A persistent target a world program reads needs a defined first frame even with no post reader.
         TargetSpec fog = new TargetSpec(7, 97, 16, 16, false, null, true, false, false, List.of());
-        check(PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), java.util.Set.of(7))
-                        && !PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), java.util.Set.of()),
+        check(PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), Set.of(7))
+                        && !PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), Set.of()),
                 "persistent world-read target seeding");
     }
 

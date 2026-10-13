@@ -1,16 +1,9 @@
 package net.chimera.render;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.render.shader.MrtPipelineContext;
-import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
@@ -24,20 +17,28 @@ import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkClearColorValue;
+import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkFormatProperties;
 import org.lwjgl.vulkan.VkImageBlit;
 import org.lwjgl.vulkan.VkImageCopy;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkImageSubresourceLayers;
 import org.lwjgl.vulkan.VkImageSubresourceRange;
-import org.lwjgl.vulkan.VkFormatProperties;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
@@ -48,17 +49,14 @@ import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_FILTER_LINEAR;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_SRC_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
-import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties;
-import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
-import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -76,6 +74,9 @@ import static org.lwjgl.vulkan.VK10.vkCmdClearColorImage;
 import static org.lwjgl.vulkan.VK10.vkCmdCopyImage;
 import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
 import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
+import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties;
+import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
 /**
  * Render-thread executor for the immutable M7.4 target graph. Logical
@@ -225,7 +226,7 @@ public final class PackPostTargets {
     ) {
         if (posts == null || posts.isEmpty()) return false;
         List<PackProgramPlan> plans = posts.stream().map(post -> {
-            List<UniformRegistry.SamplerBinding> samplers = new java.util.ArrayList<>();
+            List<UniformRegistry.SamplerBinding> samplers = new ArrayList<>();
             for (int index = 0; index < post.samplerNames().size(); index++) {
                 samplers.add(new UniformRegistry.SamplerBinding(
                         post.samplerNames().get(index), post.samplerSlots()[index]));
@@ -338,7 +339,7 @@ public final class PackPostTargets {
     /** Returns attachments in the same order as fragment output locations. */
     public List<VulkanImage> geometryAttachments(List<Integer> outputTargets) {
         if (outputTargets == null || outputTargets.isEmpty()) return List.of();
-        java.util.ArrayList<VulkanImage> result = new java.util.ArrayList<>();
+        ArrayList<VulkanImage> result = new ArrayList<>();
         for (int target : outputTargets) {
             VulkanImage image = target == 0 ? this.hdrIdentitySource
                     : imageFor(target, this.activeSide[target]);
@@ -621,22 +622,7 @@ public final class PackPostTargets {
         boolean committed = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdEndRenderingKHR(commandBuffer);
-            for (VulkanImage image : this.pendingImages) {
-                if (image != null) {
-                    image.transitionImageLayout(stack, commandBuffer,
-                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                }
-            }
-            if (this.currentPlan != null) {
-                for (int target : this.currentPlan.targetSlots()) {
-                    VulkanImage image = this.pendingImages[target] != null
-                            ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
-                    if (image != null && !contains(this.pendingImages, image)) {
-                        image.transitionImageLayout(stack, commandBuffer,
-                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                    }
-                }
-            }
+            transitionWrittenTargetsForSampling(stack, commandBuffer);
             committed = true;
         } finally {
             if (committed) {
@@ -655,6 +641,23 @@ public final class PackPostTargets {
         }
     }
 
+    /** Returns the pending images, and every target the current plan wrote, to the sampled layout. */
+    private void transitionWrittenTargetsForSampling(MemoryStack stack, VkCommandBuffer commandBuffer) {
+        for (VulkanImage image : this.pendingImages) {
+            if (image != null) {
+                image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
+        }
+        if (this.currentPlan == null) return;
+        for (int target : this.currentPlan.targetSlots()) {
+            VulkanImage image = this.pendingImages[target] != null
+                    ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
+            if (image != null && !contains(this.pendingImages, image)) {
+                image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
+        }
+    }
+
     /** Commits the current frame's logical state after all scheduled windows finish. */
     public boolean commitFrame() {
         return this.temporal.commit();
@@ -664,22 +667,7 @@ public final class PackPostTargets {
     public void abort(VkCommandBuffer commandBuffer) {
         if (this.rendering) vkCmdEndRenderingKHR(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            for (VulkanImage image : this.pendingImages) {
-                if (image != null) {
-                    image.transitionImageLayout(stack, commandBuffer,
-                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                }
-            }
-            if (this.currentPlan != null) {
-                for (int target : this.currentPlan.targetSlots()) {
-                    VulkanImage image = this.pendingImages[target] != null
-                            ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
-                    if (image != null && !contains(this.pendingImages, image)) {
-                        image.transitionImageLayout(stack, commandBuffer,
-                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                    }
-                }
-            }
+            transitionWrittenTargetsForSampling(stack, commandBuffer);
         } finally {
             this.temporal.abort();
             clearPendingState();
@@ -711,10 +699,6 @@ public final class PackPostTargets {
 
     public boolean currentTargetAvailable(int target) {
         return isTargetAvailable(target);
-    }
-
-    public boolean previousTargetAvailable(int target) {
-        return target >= 0 && target < TARGET_COUNT && this.temporal.previousAvailable(target);
     }
 
     public void resetTemporalState() {

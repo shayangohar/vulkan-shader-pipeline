@@ -3,7 +3,7 @@ package net.chimera.shaderpack;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
+import java.util.Objects;
 
 /** Deterministic M8.5b sky and cloud adapter checks. */
 public final class M85bConformanceHarness {
@@ -69,7 +69,7 @@ public final class M85bConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected=" + expected + " actual=" + actual);
         }
     }

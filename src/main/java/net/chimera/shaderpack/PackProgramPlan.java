@@ -41,35 +41,13 @@ public record PackProgramPlan(
                 ? FamilyAdapterRegistry.forProgram(program == null ? "" : program.name())
                 : familyAdapter;
         terrainMaterial = terrainMaterial == null ? TerrainMaterialPlan.legacy() : terrainMaterial;
-        geometryOutputPlan = geometryOutputPlan == null ? null : geometryOutputPlan;
         alphaTestPlan = alphaTestPlan == null
                 ? PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty())
                 : alphaTestPlan;
         blendPlan = blendPlan == null ? PackBlendPlan.empty() : blendPlan;
     }
 
-    /** Compatibility constructor for callers using the pre-M6.1 plan shape. */
-    public PackProgramPlan(
-            PackProgram program,
-            Map<String, PreparedShaderSource> stages,
-            UniformRegistry.ProgramInterfacePlan interfacePlan,
-            Map<String, GlslInterfaceScanner.StageInterface> stageInterfaces,
-            PostTargetPlan targetPlan,
-            String convertedFragment,
-            String convertedVertex,
-            LegacyGlslConverter.TerrainVaryingLayout vertexLayout,
-            List<String> deviations,
-            boolean executable
-    ) {
-        this(program, stages, interfacePlan, stageInterfaces, Map.of(), targetPlan,
-                convertedFragment, convertedVertex, vertexLayout, deviations, executable,
-                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
-                TerrainMaterialPlan.legacy(), null,
-                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()),
-                PackBlendPlan.empty());
-    }
-
-    /** Compatibility constructor for pre-M7.6 callers. */
+    /** A plan with the default family adapter, terrain material, alpha test and blend for its program. */
     public PackProgramPlan(
             PackProgram program,
             Map<String, PreparedShaderSource> stages,
@@ -84,11 +62,7 @@ public record PackProgramPlan(
             boolean executable
     ) {
         this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
-                convertedFragment, convertedVertex, vertexLayout, deviations, executable,
-                FamilyAdapterRegistry.forProgram(program == null ? "" : program.name()),
-                TerrainMaterialPlan.legacy(), null,
-                PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty()),
-                PackBlendPlan.empty());
+                convertedFragment, convertedVertex, vertexLayout, deviations, executable, null, null, null, null, null);
     }
 
     /** The authored cloud program provably draws nothing (see AuthoredOutput). */
@@ -106,10 +80,6 @@ public record PackProgramPlan(
     public String stageSource(String stage) {
         PreparedShaderSource prepared = stages.get(stage);
         return prepared == null ? null : prepared.source();
-    }
-
-    public boolean hasStage(String stage) {
-        return stages.containsKey(stage);
     }
 
     public String executableFragmentSource() {

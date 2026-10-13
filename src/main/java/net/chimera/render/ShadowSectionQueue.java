@@ -8,6 +8,9 @@ import net.vulkanmod.render.chunk.util.StaticQueue;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * The chunk sections the shadow pass draws, chosen from the light's view.
  *
@@ -33,7 +36,7 @@ public final class ShadowSectionQueue {
     private AreaSetQueue areas;
     private StaticQueue<RenderSection>[] sections;
     /** Kept sections holding block entities, which the caster pass draws. */
-    private final java.util.List<RenderSection> blockEntitySections = new java.util.ArrayList<>();
+    private final List<RenderSection> blockEntitySections = new ArrayList<>();
     private boolean active;
 
     private ShadowSectionQueue() {}
@@ -46,8 +49,8 @@ public final class ShadowSectionQueue {
      * The kept sections that hold block entities, as Iris extracts block entities from its
      * shadow-culled section list. Valid while the queue is active.
      */
-    public static java.util.List<RenderSection> blockEntitySections() {
-        return INSTANCE.active ? INSTANCE.blockEntitySections : java.util.List.of();
+    public static List<RenderSection> blockEntitySections() {
+        return INSTANCE.active ? INSTANCE.blockEntitySections : List.of();
     }
 
     public static AreaSetQueue areas() {
@@ -74,7 +77,7 @@ public final class ShadowSectionQueue {
         INSTANCE.blockEntitySections.clear();
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private boolean fill(SectionGrid grid, int areaCount, Matrix4f lightProjection, Matrix4f lightView,
                          ShadowCullingFrustum culling, double cameraX, double cameraY, double cameraZ) {
         this.active = false;

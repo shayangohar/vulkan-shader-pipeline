@@ -1,14 +1,15 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.GlslTokenRewriter;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackEngineDefines;
-import net.chimera.shaderpack.GlslTokenRewriter;
-import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.ShaderSourcePreprocessor;
+import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.UniformRegistry;
-import net.chimera.render.shader.PackUniformProvider;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Vulkan;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -16,9 +17,9 @@ import org.lwjgl.util.shaderc.Shaderc;
 import org.lwjgl.util.vma.Vma;
 import org.lwjgl.util.vma.VmaAllocationCreateInfo;
 import org.lwjgl.util.vma.VmaAllocationInfo;
-import org.lwjgl.vulkan.VkCommandBuffer;
-import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
+import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkComputePipelineCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
 import org.lwjgl.vulkan.VkDescriptorImageInfo;
@@ -31,6 +32,8 @@ import org.lwjgl.vulkan.VkPipelineLayoutCreateInfo;
 import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 import org.lwjgl.vulkan.VkWriteDescriptorSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -38,29 +41,30 @@ import java.nio.LongBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_COMPUTE;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_COMPUTE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.vkCmdBindPipeline;
-import static org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkAllocateDescriptorSets;
+import static org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets;
+import static org.lwjgl.vulkan.VK10.vkCmdBindPipeline;
 import static org.lwjgl.vulkan.VK10.vkCmdDispatch;
 import static org.lwjgl.vulkan.VK10.vkCreateComputePipelines;
 import static org.lwjgl.vulkan.VK10.vkCreateDescriptorPool;
@@ -68,15 +72,15 @@ import static org.lwjgl.vulkan.VK10.vkCreateDescriptorSetLayout;
 import static org.lwjgl.vulkan.VK10.vkCreatePipelineLayout;
 import static org.lwjgl.vulkan.VK10.vkCreateShaderModule;
 import static org.lwjgl.vulkan.VK10.vkDestroyDescriptorPool;
+import static org.lwjgl.vulkan.VK10.vkDestroyDescriptorSetLayout;
 import static org.lwjgl.vulkan.VK10.vkDestroyPipeline;
 import static org.lwjgl.vulkan.VK10.vkDestroyPipelineLayout;
-import static org.lwjgl.vulkan.VK10.vkDestroyDescriptorSetLayout;
 import static org.lwjgl.vulkan.VK10.vkDestroyShaderModule;
 import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 
 /** Native compute bridge for the bounded shadowcomp image contract. */
 public final class PackShadowCompute implements AutoCloseable {
-    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final Pattern IMAGE_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
@@ -468,7 +472,7 @@ public final class PackShadowCompute implements AutoCloseable {
                 .sType$Default()
                 .size(uniformBufferSize)
                 .usage(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
-                .sharingMode(org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE);
+                .sharingMode(VK10.VK_SHARING_MODE_EXCLUSIVE);
         VmaAllocationCreateInfo allocationInfo = VmaAllocationCreateInfo.calloc(stack)
                 .usage(Vma.VMA_MEMORY_USAGE_AUTO_PREFER_HOST)
                 .flags(Vma.VMA_ALLOCATION_CREATE_MAPPED_BIT
@@ -720,7 +724,7 @@ public final class PackShadowCompute implements AutoCloseable {
 
     private static List<ComputeUniform> computeUniforms(String source) {
         if (source == null) return List.of();
-        Map<String, String> declarations = new java.util.TreeMap<>();
+        Map<String, String> declarations = new TreeMap<>();
         Matcher matcher = VALUE_UNIFORM_DECLARATION.matcher(source);
         while (matcher.find()) {
             String type = matcher.group(1);
@@ -740,7 +744,7 @@ public final class PackShadowCompute implements AutoCloseable {
             }
         }
         int offset = 0;
-        List<ComputeUniform> result = new java.util.ArrayList<>();
+        List<ComputeUniform> result = new ArrayList<>();
         for (Map.Entry<String, String> entry : declarations.entrySet()) {
             int alignment = computeAlignment(entry.getValue());
             int size = computeSize(entry.getValue());

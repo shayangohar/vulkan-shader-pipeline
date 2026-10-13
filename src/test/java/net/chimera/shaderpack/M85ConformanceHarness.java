@@ -10,7 +10,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 /** Deterministic M8.5a terrain and G-buffer contract checks. */
 public final class M85ConformanceHarness {
@@ -120,7 +122,7 @@ public final class M85ConformanceHarness {
     }
 
     private static int countVersions(String source) {
-        return (int) java.util.regex.Pattern.compile("(?im)^\\s*#version\\b")
+        return (int) Pattern.compile("(?im)^\\s*#version\\b")
                 .matcher(source == null ? "" : source).results().count();
     }
 
@@ -128,7 +130,7 @@ public final class M85ConformanceHarness {
         String withoutComments = (source == null ? "" : source)
                 .replaceAll("(?s)/\\*.*?\\*/", " ")
                 .replaceAll("(?m)//.*$", " ");
-        return java.util.regex.Pattern.compile("(?m)^\\s*uniform\\s+sampler")
+        return Pattern.compile("(?m)^\\s*uniform\\s+sampler")
                 .matcher(withoutComments).find();
     }
 
@@ -136,9 +138,9 @@ public final class M85ConformanceHarness {
         String withoutComments = (source == null ? "" : source)
                 .replaceAll("(?s)/\\*.*?\\*/", " ")
                 .replaceAll("(?m)//.*$", " ");
-        return (int) java.util.regex.Pattern.compile(
+        return (int) Pattern.compile(
                         "(?m)^\\s*(?:const\\s+)?(?:int|float)\\s+"
-                                + java.util.regex.Pattern.quote(name) + "\\s*=")
+                                + Pattern.quote(name) + "\\s*=")
                 .matcher(withoutComments).results().count();
     }
 
@@ -153,7 +155,7 @@ public final class M85ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected=" + expected + " actual=" + actual);
         }
     }

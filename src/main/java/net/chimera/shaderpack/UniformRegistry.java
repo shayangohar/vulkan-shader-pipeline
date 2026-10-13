@@ -2,7 +2,9 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +13,9 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
  * The small, shared interface model for pack shader declarations.
@@ -238,7 +243,7 @@ public final class UniformRegistry {
         public ProgramInterfacePlan {
             stages = stages == null
                     ? Map.of()
-                    : java.util.Collections.unmodifiableMap(new TreeMap<>(stages));
+                    : Collections.unmodifiableMap(new TreeMap<>(stages));
             uniforms = sortedUniforms(uniforms);
             samplers = sortedSamplers(samplers);
             deviations = sortedStrings(reconcileStageUnused(stages, deviations));
@@ -463,7 +468,7 @@ public final class UniformRegistry {
     /** Returns the complete deterministic catalog for diagnostics and tests. */
     public static List<UniformDescriptor> catalog() {
         return UNIFORM_SPECS.values().stream()
-                .sorted(java.util.Comparator.comparing(UniformDescriptor::name))
+                .sorted(Comparator.comparing(UniformDescriptor::name))
                 .toList();
     }
 
@@ -970,23 +975,6 @@ public final class UniformRegistry {
         return usage.successful() && !usage.liveSamplers().contains(name);
     }
 
-    private static String removeUniformDeclaration(String source, String name) {
-        Matcher matcher = UNIFORM_DECLARATION.matcher(maskComments(source));
-        StringBuilder result = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            boolean contains = parseVariables(matcher.group(2)).stream()
-                    .anyMatch(value -> value.name().equals(name));
-            if (contains) {
-                result.append(source, last, matcher.start());
-                last = matcher.end();
-            }
-        }
-        if (last == 0) return source;
-        result.append(source, last, source.length());
-        return result.toString();
-    }
-
     private static boolean isLocallyDeclared(String source, String name) {
         return Pattern.compile("\\b(?:const\\s+)?[A-Za-z_]\\w*\\s+"
                 + Pattern.quote(name) + "\\b").matcher(source).find();
@@ -998,15 +986,6 @@ public final class UniformRegistry {
     }
 
     private record Variable(String name, boolean array) {}
-
-    /**
-     * The OptiFine sampler names a fragment program declares, in ascending
-     * slot order, resolved against the stage's map. Unknown names are omitted
-     * from this compatibility list but remain a deviation in {@link #plan}.
-     */
-    public static List<String> scanSamplerNames(String fragmentSource, Stage stage) {
-        return plan(fragmentSource, stage).samplers().stream().map(SamplerBinding::name).toList();
-    }
 
     /** Returns all declared sampler names, including unsupported names, sorted. */
     public static List<String> scanDeclaredSamplerNames(String source) {
@@ -1054,8 +1033,8 @@ public final class UniformRegistry {
     public static String removeUniformDeclarations(String source, ProgramInterface plan) {
         String result = source == null ? "" : source;
         Set<String> executable = plan.executableUniforms().stream()
-                .map(UniformDeclaration::name).collect(java.util.stream.Collectors.toSet());
-        Set<String> unusedSamplers = new java.util.HashSet<>();
+                .map(UniformDeclaration::name).collect(Collectors.toSet());
+        Set<String> unusedSamplers = new HashSet<>();
         for (String deviation : plan.deviations()) {
             if (deviation.startsWith("UNIFORM_DECLARATION_UNUSED:")) {
                 executable.add(deviation.substring("UNIFORM_DECLARATION_UNUSED:".length()));
@@ -1068,37 +1047,19 @@ public final class UniformRegistry {
         int last = 0;
         boolean changed = false;
         while (matcher.find()) {
-            if (isSamplerType(matcher.group(1))) {
-                List<Variable> variables = parseVariables(matcher.group(2));
-                if (!variables.isEmpty()) {
-                    List<Variable> retained = variables.stream()
-                            .filter(variable -> !unusedSamplers.contains(variable.name()))
-                            .toList();
-                    if (retained.size() != variables.size()) {
-                        out.append(result, last, matcher.start());
-                        if (!retained.isEmpty()) {
-                            out.append("uniform ").append(matcher.group(1)).append(' ')
-                                    .append(retained.stream().map(Variable::name)
-                                            .collect(java.util.stream.Collectors.joining(", ")))
-                                    .append(';');
-                        }
-                        last = matcher.end();
-                        changed = true;
-                    }
-                }
-                continue;
-            }
+            // Samplers stay declared for the binding rewrite unless the pack never reads them.
+            Set<String> removed = isSamplerType(matcher.group(1)) ? unusedSamplers : executable;
             List<Variable> variables = parseVariables(matcher.group(2));
             if (!variables.isEmpty()) {
                 List<Variable> retained = variables.stream()
-                        .filter(variable -> !executable.contains(variable.name()))
+                        .filter(variable -> !removed.contains(variable.name()))
                         .toList();
                 if (retained.size() != variables.size()) {
                     out.append(result, last, matcher.start());
                     if (!retained.isEmpty()) {
                         out.append("uniform ").append(matcher.group(1)).append(' ')
                                 .append(retained.stream().map(Variable::name)
-                                        .collect(java.util.stream.Collectors.joining(", ")))
+                                        .collect(Collectors.joining(", ")))
                                 .append(';');
                     }
                     last = matcher.end();
@@ -1444,9 +1405,5 @@ public final class UniformRegistry {
             }
         }
         return masked.toString();
-    }
-
-    private static String stripComments(String source) {
-        return GlslLexer.stripComments(source);
     }
 }

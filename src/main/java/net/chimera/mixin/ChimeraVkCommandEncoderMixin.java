@@ -9,15 +9,16 @@ import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
 import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.render.engine.VkCommandEncoder;
 import net.vulkanmod.render.engine.VkGpuBuffer;
 import net.vulkanmod.render.engine.VkRenderPass;
 import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.memory.buffer.Buffer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
-import net.vulkanmod.vulkan.memory.buffer.Buffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -132,13 +133,13 @@ public abstract class ChimeraVkCommandEncoderMixin {
         var previousPhase = PackUniformProvider.setRenderingPhase(lane != null ? lane.phase()
                 : switch (ChimeraEntityBridge.activeFamily()) {
             // Iris keeps the ENTITIES phase for every entity and block-entity shadow caster.
-            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, SHADOW_ENTITIES -> net.chimera.shaderpack.PackRenderingPhase.ENTITIES;
-            case BLOCK -> net.chimera.shaderpack.PackRenderingPhase.BLOCK_ENTITIES;
-            case DAMAGED_BLOCK -> net.chimera.shaderpack.PackRenderingPhase.DESTROY;
-            case HAND -> net.chimera.shaderpack.PackRenderingPhase.HAND_SOLID;
-            case HAND_WATER -> net.chimera.shaderpack.PackRenderingPhase.HAND_TRANSLUCENT;
-            case PARTICLE, PARTICLE_TRANSLUCENT -> net.chimera.shaderpack.PackRenderingPhase.PARTICLES;
-            default -> net.chimera.shaderpack.PackRenderingPhase.NONE;
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, SHADOW_ENTITIES -> PackRenderingPhase.ENTITIES;
+            case BLOCK -> PackRenderingPhase.BLOCK_ENTITIES;
+            case DAMAGED_BLOCK -> PackRenderingPhase.DESTROY;
+            case HAND -> PackRenderingPhase.HAND_SOLID;
+            case HAND_WATER -> PackRenderingPhase.HAND_TRANSLUCENT;
+            case PARTICLE, PARTICLE_TRANSLUCENT -> PackRenderingPhase.PARTICLES;
+            default -> PackRenderingPhase.NONE;
         });
         try {
             renderer.uploadAndBindUBOs(packPipeline);

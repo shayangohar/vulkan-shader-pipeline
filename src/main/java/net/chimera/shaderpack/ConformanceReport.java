@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -264,7 +265,7 @@ public final class ConformanceReport {
             if (bytes[i] == '\r' && i + 1 < bytes.length && bytes[i + 1] == '\n') continue;
             folded[kept++] = bytes[i];
         }
-        return sha256(java.util.Arrays.copyOf(folded, kept));
+        return sha256(Arrays.copyOf(folded, kept));
     }
 
     public static String textSha256(String text) {

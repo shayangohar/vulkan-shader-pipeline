@@ -1,10 +1,11 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.ConformanceReport;
+import net.chimera.shaderpack.ProgramImageBindingManifest;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import net.chimera.shaderpack.ConformanceReport;
-import net.chimera.shaderpack.ProgramImageBindingManifest;
 
 /**
  * Post bypass regression fixture (DOC-348 repair 3): when pack post cannot
@@ -59,6 +60,7 @@ public final class M87PostBypassHarness {
         }
     }
 
+    @SuppressWarnings("try")
     public static void main(String[] args) {
         // Blocked post holds only HDR target 0: binding the installed pack
         // composite must fail exactly the way the shader-load crash did.

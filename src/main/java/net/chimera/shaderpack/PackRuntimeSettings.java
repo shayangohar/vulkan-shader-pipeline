@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -266,10 +267,6 @@ public final class PackRuntimeSettings {
         return rejected;
     }
 
-    public int valueCount() {
-        return values.size();
-    }
-
     /** The first storage slot of a value; a vector's components follow it in order. */
     public int indexOf(String name) {
         return indices.getOrDefault(name, -1);
@@ -315,9 +312,9 @@ public final class PackRuntimeSettings {
             for (PackExpression.State state : this.states) {
                 state.reset();
             }
-            java.util.Arrays.fill(this.scratch, 0.0);
-            java.util.Arrays.fill(this.output, 0.0F);
-            java.util.Arrays.fill(this.lastFinite, 0.0);
+            Arrays.fill(this.scratch, 0.0);
+            Arrays.fill(this.output, 0.0F);
+            Arrays.fill(this.lastFinite, 0.0);
             this.failures.clear();
             this.frames = 0;
         }

@@ -36,10 +36,10 @@ record PackResolutionPlan(
         selectedSourceFolder = selectedSourceFolder == null ? "" : selectedSourceFolder;
         resolutions = resolutions == null ? Map.of()
                 : Collections.unmodifiableMap(new TreeMap<>(resolutions));
-        aliases = sorted(aliases);
-        missingPrograms = sorted(missingPrograms);
-        disabledPrograms = sorted(disabledPrograms);
-        deviations = sorted(deviations);
+        aliases = PlanJson.sorted(aliases);
+        missingPrograms = PlanJson.sorted(missingPrograms);
+        disabledPrograms = PlanJson.sorted(disabledPrograms);
+        deviations = PlanJson.sorted(deviations);
     }
 
     static PackResolutionPlan empty() {
@@ -158,14 +158,14 @@ record PackResolutionPlan(
                     entry.addProperty("fallbackDepth", value.fallbackDepth());
                     entry.addProperty("enabled", value.enabled());
                     entry.addProperty("executable", value.executable());
-                    entry.add("deviations", strings(value.deviations()));
+                    entry.add("deviations", PlanJson.strings(value.deviations()));
                     entries.add(entry);
                 });
         root.add("resolutions", entries);
-        root.add("aliases", strings(aliases));
-        root.add("missingPrograms", strings(missingPrograms));
-        root.add("disabledPrograms", strings(disabledPrograms));
-        root.add("deviations", strings(deviations));
+        root.add("aliases", PlanJson.strings(aliases));
+        root.add("missingPrograms", PlanJson.strings(missingPrograms));
+        root.add("disabledPrograms", PlanJson.strings(disabledPrograms));
+        root.add("deviations", PlanJson.strings(deviations));
         return JSON.toJson(root);
     }
 
@@ -249,24 +249,6 @@ record PackResolutionPlan(
 
     private static boolean supportsCurrentAdapter(String name) {
         return FamilyAdapterRegistry.isExecutableFamily(name);
-    }
-
-    private static List<String> sorted(Iterable<String> values) {
-        TreeSet<String> result = new TreeSet<>();
-        if (values != null) {
-            for (String value : values) {
-                if (value != null && !value.isBlank()) {
-                    result.add(value);
-                }
-            }
-        }
-        return List.copyOf(result);
-    }
-
-    private static JsonArray strings(Iterable<String> values) {
-        JsonArray result = new JsonArray();
-        sorted(values).forEach(result::add);
-        return result;
     }
 
     private static String relative(Path root, Path path) {

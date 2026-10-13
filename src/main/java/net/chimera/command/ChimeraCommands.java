@@ -1,10 +1,9 @@
 package net.chimera.command;
 
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.context.CommandContext;
 import net.chimera.config.ChimeraConfig;
 import net.chimera.config.ShaderpackDirectory;
-
-import com.mojang.brigadier.context.CommandContext;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.PackNanTripwire;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;

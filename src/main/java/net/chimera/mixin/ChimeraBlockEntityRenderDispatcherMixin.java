@@ -3,9 +3,11 @@ package net.chimera.mixin;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
 import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.client.renderer.state.CameraRenderState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -19,13 +21,13 @@ public abstract class ChimeraBlockEntityRenderDispatcherMixin {
             BlockEntityRenderState state,
             PoseStack poseStack,
             SubmitNodeCollector collector,
-            net.minecraft.client.renderer.state.CameraRenderState camera,
+            CameraRenderState camera,
             CallbackInfo callback
     ) {
         if (ChimeraRenderer.segmentsActive()
                 && ChimeraEntityBridge.isWorldSubmissionWindow()) {
             ChimeraEntityBridge.beginBlockEntity(
-                    net.chimera.render.shader.ChimeraTerrainPipelines.blockStateId(state.blockState));
+                    ChimeraTerrainPipelines.blockStateId(state.blockState));
         }
     }
 
@@ -34,7 +36,7 @@ public abstract class ChimeraBlockEntityRenderDispatcherMixin {
             BlockEntityRenderState state,
             PoseStack poseStack,
             SubmitNodeCollector collector,
-            net.minecraft.client.renderer.state.CameraRenderState camera,
+            CameraRenderState camera,
             CallbackInfo callback
     ) {
         if (ChimeraRenderer.segmentsActive()

@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -26,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.Set;
 
 /**
@@ -296,8 +298,8 @@ public final class MaterialMapOwner implements AutoCloseable {
     private static OwnedMaterialSampler buildMaterialSampler(
             AddressMode addressU, AddressMode addressV,
             FilterMode minFilter, FilterMode magFilter, int anisotropy, float maxLod) {
-        java.util.OptionalDouble lod =
-                maxLod >= 1000.0f ? java.util.OptionalDouble.empty() : java.util.OptionalDouble.of(maxLod);
+        OptionalDouble lod =
+                maxLod >= 1000.0f ? OptionalDouble.empty() : OptionalDouble.of(maxLod);
         VkSampler sampler = new VkSampler(addressU, addressV, minFilter, magFilter, anisotropy, lod);
         LOGGER.info("[chimera] material maps: owned sampler {} min={} mag={} address={}/{} "
                         + "anisotropy={} maxLod={}",
@@ -907,7 +909,7 @@ public final class MaterialMapOwner implements AutoCloseable {
         try (InputStream in = lookup.open(namespace, path + ".mcmeta").orElse(null)) {
             if (in == null) return null;
             return MaterialAnimationSchedule.parse(
-                    new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8), width, height);
+                    new String(in.readAllBytes(), StandardCharsets.UTF_8), width, height);
         }
     }
 

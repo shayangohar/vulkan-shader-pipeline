@@ -1,14 +1,14 @@
 package net.chimera.mixin;
 
 import net.chimera.shaderpack.SelectorNamespace;
-
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Unique;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /** Adds only the unused selector names required by Chimera's bounded targets. */
 @Mixin(VTextureSelector.class)
@@ -18,7 +18,7 @@ public abstract class VTextureSelectorMixin {
     private static final VulkanImage[] chimera$extendedTextures =
             new VulkanImage[SelectorNamespace.EXTENDED_CAPACITY];
 
-    @Inject(method = "getTextureIdx", at = @org.spongepowered.asm.mixin.injection.At("HEAD"), cancellable = true)
+    @Inject(method = "getTextureIdx", at = @At("HEAD"), cancellable = true)
     private static void chimera$extendedSampler(String name, CallbackInfoReturnable<Integer> cir) {
         if (name != null && name.startsWith("Sampler")) {
             try {
@@ -33,9 +33,9 @@ public abstract class VTextureSelectorMixin {
     }
 
     @Inject(method = "bindTexture(ILnet/vulkanmod/vulkan/texture/VulkanImage;)V",
-            at = @org.spongepowered.asm.mixin.injection.At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true)
     private static void chimera$bindExtendedTexture(int index, VulkanImage texture,
-            org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+            CallbackInfo ci) {
         int extended = SelectorNamespace.extendedIndex(index);
         if (extended >= 0) {
             chimera$extendedTextures[extended] = texture;
@@ -43,7 +43,7 @@ public abstract class VTextureSelectorMixin {
         }
     }
 
-    @Inject(method = "getImage", at = @org.spongepowered.asm.mixin.injection.At("HEAD"), cancellable = true)
+    @Inject(method = "getImage", at = @At("HEAD"), cancellable = true)
     private static void chimera$getExtendedImage(int index, CallbackInfoReturnable<VulkanImage> cir) {
         int extended = SelectorNamespace.extendedIndex(index);
         if (extended >= 0) {
@@ -52,7 +52,7 @@ public abstract class VTextureSelectorMixin {
     }
 
     @Inject(method = "getBoundTexture(I)Lnet/vulkanmod/vulkan/texture/VulkanImage;",
-            at = @org.spongepowered.asm.mixin.injection.At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true)
     private static void chimera$getExtendedBoundTexture(int index,
             CallbackInfoReturnable<VulkanImage> cir) {
         int extended = SelectorNamespace.extendedIndex(index);

@@ -1,9 +1,12 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * The pack-authored expression language behind {@code shaders.properties} custom values.
@@ -79,8 +82,8 @@ public final class PackExpression {
 
         /** Drops every accumulator, as a pack reload must. */
         public void reset() {
-            java.util.Arrays.fill(this.accumulators, 0.0F);
-            java.util.Arrays.fill(this.started, false);
+            Arrays.fill(this.accumulators, 0.0F);
+            Arrays.fill(this.started, false);
         }
     }
 
@@ -135,7 +138,7 @@ public final class PackExpression {
          */
         public void evaluate(Inputs inputs, State state, float frameDelta, double[] out, int offset) {
             Context context = new Context(inputs, state, frameDelta,
-                    this.root.width() > 1 ? new java.util.IdentityHashMap<>() : null);
+                    this.root.width() > 1 ? new IdentityHashMap<>() : null);
             for (int lane = 0; lane < this.root.width(); lane++) {
                 out[offset + lane] = this.root.evaluate(context, lane);
             }
@@ -184,7 +187,7 @@ public final class PackExpression {
      * lane by lane, so each is computed once per frame; it is null for a scalar result.
      */
     private record Context(Inputs inputs, State state, float frameDelta,
-                           java.util.IdentityHashMap<Node, Double> scalars) {
+                           IdentityHashMap<Node, Double> scalars) {
         double scalar(Node node) {
             if (this.scalars == null) {
                 return node.evaluate(this, 0);
@@ -383,7 +386,7 @@ public final class PackExpression {
                 return lane(this.arguments.get(last), context, lane);
             }
             if (this.function == Function.RANDOM) {
-                return java.util.concurrent.ThreadLocalRandom.current().nextDouble();
+                return ThreadLocalRandom.current().nextDouble();
             }
             if (this.function == Function.IN) {
                 double needle = context.scalar(this.arguments.get(0));

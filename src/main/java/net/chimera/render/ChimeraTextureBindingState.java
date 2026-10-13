@@ -6,10 +6,11 @@ import net.chimera.ChimeraMod;
 import net.chimera.mixin.ChimeraSamplerAccessor;
 import net.vulkanmod.render.engine.VkSampler;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.slf4j.Logger;
 
 import java.util.HashMap;
-import java.util.OptionalDouble;
 import java.util.Map;
+import java.util.OptionalDouble;
 
 /**
  * Keeps pack sampler overrides separate from VulkanMod image identity.
@@ -293,5 +294,5 @@ public final class ChimeraTextureBindingState {
             int anisotropy
     ) {}
 
-    private static final org.slf4j.Logger LOGGER = ChimeraMod.LOGGER;
+    private static final Logger LOGGER = ChimeraMod.LOGGER;
 }

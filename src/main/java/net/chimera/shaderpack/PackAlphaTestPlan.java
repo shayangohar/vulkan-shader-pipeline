@@ -2,6 +2,8 @@ package net.chimera.shaderpack;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Immutable load-time alpha-test contract for a geometry program. */
 record PackAlphaTestPlan(
@@ -26,9 +28,9 @@ record PackAlphaTestPlan(
         FIXED
     }
 
-    private static final java.util.regex.Pattern VERSION_LINE =
-            java.util.regex.Pattern.compile("(?m)^[ \\t]*#[ \\t]*version\\b[^\\r\\n]*\\R?");
-    private static final java.util.regex.Pattern MODERN_OUTPUT_ZERO = java.util.regex.Pattern.compile(
+    private static final Pattern VERSION_LINE =
+            Pattern.compile("(?m)^[ \\t]*#[ \\t]*version\\b[^\\r\\n]*\\R?");
+    private static final Pattern MODERN_OUTPUT_ZERO = Pattern.compile(
             "layout\\s*\\(\\s*location\\s*=\\s*0\\s*\\)\\s*out\\s+vec4\\s+(\\w+)\\s*;");
 
     private static final List<String> FUNCTIONS = List.of(
@@ -92,14 +94,14 @@ record PackAlphaTestPlan(
         String tested = GlslTokenRewriter.appendMainEpilogue(fragment, rejection);
         if (!perDrawReference()) return tested;
         String declaration = "uniform float " + reference + ";\n";
-        java.util.regex.Matcher version = VERSION_LINE.matcher(tested);
+        Matcher version = VERSION_LINE.matcher(tested);
         return version.find()
                 ? tested.substring(0, version.end()) + declaration + tested.substring(version.end())
                 : declaration + tested;
     }
 
     private static String modernOutputZero(String fragment) {
-        java.util.regex.Matcher matcher = MODERN_OUTPUT_ZERO.matcher(fragment);
+        Matcher matcher = MODERN_OUTPUT_ZERO.matcher(fragment);
         return matcher.find() ? matcher.group(1) : null;
     }
 

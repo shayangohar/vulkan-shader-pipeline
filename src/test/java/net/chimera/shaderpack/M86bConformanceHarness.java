@@ -1,13 +1,33 @@
 package net.chimera.shaderpack;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageBufferOwner;
+import net.chimera.render.ProgramImageBindingTransaction;
+import net.vulkanmod.vulkan.shader.Pipeline;
+import net.vulkanmod.vulkan.shader.PipelineConfig;
+import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
+import net.vulkanmod.vulkan.shader.descriptor.UBO;
+import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.lang.reflect.Array;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /** Deterministic M8.6b bounded storage-buffer plan and descriptor checks. */
 public final class M86bConformanceHarness {
@@ -135,7 +155,7 @@ public final class M86bConformanceHarness {
 
     /** Run independently so one broken shadow contract cannot hide the other. */
     private static void verifyShadowRegressions() throws Exception {
-        List<String> failures = new java.util.ArrayList<>();
+        List<String> failures = new ArrayList<>();
         for (boolean advanced : new boolean[] {true, false}) {
             String regression = advanced ? "SHADOW_STAGE_LOCAL_RESOURCE" : "SHADOW_NATIVE_UBO_STAGES";
             Path fixture = Files.createTempDirectory("chimera-shadow-regression-");
@@ -196,7 +216,7 @@ public final class M86bConformanceHarness {
                 System.err.println("[chimera] " + reason);
             } finally {
                 try (var paths = Files.walk(fixture)) {
-                    for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
                         Files.deleteIfExists(path);
                     }
                 }
@@ -213,24 +233,24 @@ public final class M86bConformanceHarness {
         var layout = resources.bindingLayout("shadow");
         Set<String> advancedNames = layout.advancedSamplers().stream()
                 .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         var json = PackPipelines.shadowPipelineJson();
-        var samplers = new com.google.gson.JsonArray();
+        var samplers = new JsonArray();
         int[] slots = PackPipelines.shadowSamplerSlots(iface.samplers().stream()
                 .filter(value -> !advancedNames.contains(value.name()))
                 .mapToInt(UniformRegistry.SamplerBinding::slot).distinct().toArray());
         for (int slot : slots) {
-            var sampler = new com.google.gson.JsonObject();
+            var sampler = new JsonObject();
             sampler.addProperty("name", "Sampler" + slot);
             samplers.add(sampler);
         }
         json.add("samplers", samplers);
-        var generated = new com.google.gson.JsonObject();
+        var generated = new JsonObject();
         generated.addProperty("type", "all");
         generated.addProperty("binding", 3);
-        var fields = new com.google.gson.JsonArray();
+        var fields = new JsonArray();
         for (var uniform : iface.executableUniforms()) {
-            var field = new com.google.gson.JsonObject();
+            var field = new JsonObject();
             field.addProperty("name", uniform.name());
             field.addProperty("type", UniformRegistry.pipelineType(uniform.glslType()));
             field.addProperty("count", UniformRegistry.pipelineCount(uniform.glslType()));
@@ -239,26 +259,26 @@ public final class M86bConformanceHarness {
         generated.add("fields", fields);
         assertTrue(!fields.isEmpty(), "Synthetic shadow must include a generated UBO");
         json.getAsJsonArray("UBOs").add(generated);
-        var builder = new net.vulkanmod.vulkan.shader.Pipeline.Builder("shadow_regression");
-        List<net.vulkanmod.vulkan.shader.descriptor.UBO> buffers = new java.util.ArrayList<>();
-        List<net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor> images = new java.util.ArrayList<>();
+        var builder = new Pipeline.Builder("shadow_regression");
+        List<UBO> buffers = new ArrayList<>();
+        List<ImageDescriptor> images = new ArrayList<>();
         builder.setUniforms(buffers, images);
         // Descriptor preparation installs suppliers but does not execute them or access Vulkan.
         builder.setUniformSupplierGetter(info -> () -> null);
-        builder.applyConfig(net.vulkanmod.vulkan.shader.PipelineConfig.fromJson("shadow_regression", json));
+        builder.applyConfig(PipelineConfig.fromJson("shadow_regression", json));
         int index = 0;
         for (var binding : layout.storageImages()) {
-            builder.addImageDescriptor(new net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor(
+            builder.addImageDescriptor(new ImageDescriptor(
                     layout.imageBase() + index++, "image3D", "Sampler" + binding.selectorSlot(),
                     binding.selectorSlot(), 3));
         }
         index = 0;
         for (var binding : layout.advancedSamplers()) {
-            builder.addImageDescriptor(new net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor(
+            builder.addImageDescriptor(new ImageDescriptor(
                     layout.samplerBase() + index++, "sampler3D", "Sampler" + binding.selectorSlot(),
                     binding.selectorSlot(), 1));
         }
-        List<PackAdvancedResourcePlan.DescriptorBinding> actual = new java.util.ArrayList<>();
+        List<PackAdvancedResourcePlan.DescriptorBinding> actual = new ArrayList<>();
         for (var buffer : builder.getUBOs()) {
             actual.add(new PackAdvancedResourcePlan.DescriptorBinding(buffer.name, 0, buffer.getBinding(),
                     buffer.getType(), buffer.getStages(), "ubo:" + buffer.getBinding()));
@@ -272,27 +292,27 @@ public final class M86bConformanceHarness {
 
     private static void verifyExtendedSelectorRouting() throws Exception {
         Class<?> mixin = Class.forName("net.chimera.mixin.VTextureSelectorMixin");
-        Class<?> callbackType = org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable.class;
+        Class<?> callbackType = CallbackInfoReturnable.class;
         var read = mixin.getDeclaredMethod("chimera$getExtendedImage", int.class, callbackType);
         var bound = mixin.getDeclaredMethod("chimera$getExtendedBoundTexture", int.class, callbackType);
         var name = mixin.getDeclaredMethod("chimera$extendedSampler", String.class, callbackType);
         var bind = mixin.getDeclaredMethod("chimera$bindExtendedTexture", int.class,
-                net.vulkanmod.vulkan.texture.VulkanImage.class,
-                org.spongepowered.asm.mixin.injection.callback.CallbackInfo.class);
+                VulkanImage.class,
+                CallbackInfo.class);
         for (var method : List.of(read, bound, name, bind)) method.setAccessible(true);
         var backing = mixin.getDeclaredField("chimera$extendedTextures");
         backing.setAccessible(true);
-        assertEquals(SelectorNamespace.EXTENDED_CAPACITY, java.lang.reflect.Array.getLength(backing.get(null)), "Backing must cover 8..26");
+        assertEquals(SelectorNamespace.EXTENDED_CAPACITY, Array.getLength(backing.get(null)), "Backing must cover 8..26");
         // CPU-only image metadata constructor: no image allocation, views, or Vulkan device.
-        var constructor = net.vulkanmod.vulkan.texture.VulkanImage.class.getDeclaredConstructor(
-                net.vulkanmod.vulkan.texture.VulkanImage.Builder.class);
+        var constructor = VulkanImage.class.getDeclaredConstructor(
+                VulkanImage.Builder.class);
         constructor.setAccessible(true);
-        var original = constructor.newInstance(net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
-        var replacement = constructor.newInstance(net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
+        var original = constructor.newInstance(VulkanImage.builder(1, 1));
+        var replacement = constructor.newInstance(VulkanImage.builder(1, 1));
         Object[] host = new Object[12];
         for (int slot = 8; slot <= SelectorNamespace.LAST_RESERVED; slot++) {
             assertTrue(SelectorNamespace.isAddressable(slot), "Reserved selector rejected: " + slot);
-            var named = new org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Integer>("name", true);
+            var named = new CallbackInfoReturnable<Integer>("name", true);
             name.invoke(null, "Sampler" + slot, named);
             assertTrue(named.isCancelled() && named.getReturnValue() == slot, "Sampler name escaped: " + slot);
             selectorBind(bind, slot, original, host);
@@ -302,7 +322,7 @@ public final class M86bConformanceHarness {
             selectorBind(bind, slot, captured, host);
             assertTrue(selectorRead(read, slot, host) == original, "Restore lost original: " + slot);
         }
-        java.util.BitSet cleared = new java.util.BitSet();
+        BitSet cleared = new BitSet();
         SelectorNamespace.clearOwned(slot -> {
             try { selectorBind(bind, slot, null, host); cleared.set(slot); }
             catch (Exception failure) { throw new AssertionError(failure); }
@@ -327,15 +347,15 @@ public final class M86bConformanceHarness {
         System.out.println("[chimera] extended selector routing/lifecycle/preparation: PASS");
     }
 
-    private static Object selectorRead(java.lang.reflect.Method method, int slot, Object[] host) throws Exception {
-        var callback = new org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Object>("read", true);
+    private static Object selectorRead(Method method, int slot, Object[] host) throws Exception {
+        var callback = new CallbackInfoReturnable<Object>("read", true);
         method.invoke(null, slot, callback);
         return callback.isCancelled() ? callback.getReturnValue() : host[slot];
     }
 
-    private static void selectorBind(java.lang.reflect.Method method, int slot, Object image, Object[] host)
+    private static void selectorBind(Method method, int slot, Object image, Object[] host)
             throws Exception {
-        var callback = new org.spongepowered.asm.mixin.injection.callback.CallbackInfo("bind", true);
+        var callback = new CallbackInfo("bind", true);
         method.invoke(null, slot, image, callback);
         if (!callback.isCancelled()) host[slot] = image;
     }
@@ -345,7 +365,7 @@ public final class M86bConformanceHarness {
      * applyConfig metadata, real layoutMismatch. No predicted layout echo.
      */
     private static void verifyExactPackBuilderMetadata() throws Exception {
-        List<String> failures = new java.util.ArrayList<>();
+        List<String> failures = new ArrayList<>();
         long skyColourDeclarations = 0L;
         for (String[] configured : new String[][] {
                 {"Complementary", "chimera.m86.complementary"},
@@ -354,12 +374,12 @@ public final class M86bConformanceHarness {
             Map<String, String> overrides = configured[0].equals("Complementary")
                     ? Map.of("COLORED_LIGHTING", "128", "WORLD_SPACE_REFLECTIONS", "1")
                     : Map.of("MULTICOLORED_BLOCKLIGHT", "1", "MCBL_DISTANCE", "128", "MCBL_HALF_HEIGHT", "1");
-            Map<String, String> previous = new java.util.HashMap<>();
+            Map<String, String> previous = new HashMap<>();
             overrides.forEach((key, setting) -> previous.put(key,
                     System.setProperty("chimera.option." + key, setting)));
             try {
                 String value = System.getProperty(configured[1],
-                        System.getenv(configured[1].replace('.', '_').toUpperCase(java.util.Locale.ROOT)));
+                        System.getenv(configured[1].replace('.', '_').toUpperCase(Locale.ROOT)));
                 assertTrue(value != null && !value.isBlank(), configured[1] + " pack path not provided");
                 Path packPath = Path.of(value);
                 assertTrue(Files.isRegularFile(packPath) || Files.isDirectory(packPath),
@@ -428,7 +448,7 @@ public final class M86bConformanceHarness {
                     }
                     int extraBinding = actual.stream().mapToInt(PackAdvancedResourcePlan.DescriptorBinding::binding)
                             .max().orElse(0) + 1;
-                    builder.addImageDescriptor(new net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor(
+                    builder.addImageDescriptor(new ImageDescriptor(
                             extraBinding, "sampler2D", "Sampler24", 24, 1));
                     try {
                         PackPipelines.createNative(builder, prepared.imageBindings());
@@ -454,19 +474,20 @@ public final class M86bConformanceHarness {
         assertTrue(failures.isEmpty(), "Exact pack builder parity failed: " + String.join("; ", failures));
     }
 
+    @SuppressWarnings("try")
     private static void verifyImageTransaction(ProgramImageBindingManifest exact) {
         record Pair(Object image, Object textureBinding) {}
         Pair[] state = new Pair[SelectorNamespace.LAST_RESERVED + 1];
         int[] captures = new int[state.length];
-        var owner = new java.util.HashMap<String, Pair>();
+        var owner = new HashMap<String, Pair>();
         for (var entry : exact.entries()) owner.putIfAbsent(entry.resourceKey(), new Pair(new Object(), new Object()));
-        var store = new net.chimera.render.ProgramImageBindingTransaction.Store<Pair>() {
+        var store = new ProgramImageBindingTransaction.Store<Pair>() {
             public Pair capture(int slot) { captures[slot]++; return state[slot]; }
             public void bind(int slot, Pair pair) { state[slot] = pair; }
             public void restore(int slot, Pair pair) { state[slot] = pair; }
             public boolean available(Pair pair) { return pair != null && pair.image() != null; }
         };
-        try (var ignored = net.chimera.render.ProgramImageBindingTransaction.bind("composite", exact,
+        try (var ignored = ProgramImageBindingTransaction.bind("composite", exact,
                 store, entry -> owner.get(entry.resourceKey()))) {
             assertTrue(state[18] == owner.get("voxel_img"), "selector 18 did not bind allocated voxel image");
             for (var entry : exact.entries()) assertTrue(state[entry.slot()] == owner.get(entry.resourceKey()),
@@ -476,7 +497,7 @@ public final class M86bConformanceHarness {
             assertEquals(null, state[entry.slot()], "transaction did not restore prior null");
             assertEquals(1, captures[entry.slot()], "transaction captured shared slot more than once");
         }
-        List<ProgramImageBindingManifest.Entry> entries = new java.util.ArrayList<>();
+        List<ProgramImageBindingManifest.Entry> entries = new ArrayList<>();
         for (int slot = 22; slot <= 24; slot++) {
             entries.add(new ProgramImageBindingManifest.Entry("Sampler" + slot, slot, 1, 63,
                     ProgramImageBindingManifest.Kind.ADVANCED_IMAGE, "image" + slot, 0, slot, "read" + slot));
@@ -486,9 +507,9 @@ public final class M86bConformanceHarness {
         var duplicate = new ProgramImageBindingManifest(entries);
         Pair prior = new Pair(new Object(), new Object());
         Pair bound = new Pair(new Object(), new Object());
-        java.util.Arrays.fill(captures, 0);
+        Arrays.fill(captures, 0);
         state[22] = prior;
-        try (var ignored = net.chimera.render.ProgramImageBindingTransaction.bind("duplicate", duplicate,
+        try (var ignored = ProgramImageBindingTransaction.bind("duplicate", duplicate,
                 store, entry -> bound)) {
             for (int slot = 22; slot <= 24; slot++) assertTrue(state[slot] == bound, "extended selector not bound");
         }
@@ -497,7 +518,7 @@ public final class M86bConformanceHarness {
         assertEquals(null, state[23], "shared slot prior null not restored");
         assertEquals(null, state[24], "last extended slot prior null not restored");
         try {
-            net.chimera.render.ProgramImageBindingTransaction.bind("missing", duplicate, store,
+            ProgramImageBindingTransaction.bind("missing", duplicate, store,
                     entry -> entry.slot() == 24 ? null : bound);
             throw new AssertionError("Missing required image was accepted");
         } catch (IllegalStateException failure) {
@@ -506,7 +527,7 @@ public final class M86bConformanceHarness {
         }
         assertTrue(state[22] == prior && state[23] == null && state[24] == null,
                 "failed transaction mutated selector or texture state");
-        var failingStore = new net.chimera.render.ProgramImageBindingTransaction.Store<Pair>() {
+        var failingStore = new ProgramImageBindingTransaction.Store<Pair>() {
             public Pair capture(int slot) { return store.capture(slot); }
             public void bind(int slot, Pair pair) {
                 store.bind(slot, pair);
@@ -516,7 +537,7 @@ public final class M86bConformanceHarness {
             public boolean available(Pair pair) { return store.available(pair); }
         };
         try {
-            net.chimera.render.ProgramImageBindingTransaction.bind("partial", duplicate, failingStore, entry -> bound);
+            ProgramImageBindingTransaction.bind("partial", duplicate, failingStore, entry -> bound);
             throw new AssertionError("Injected selector failure did not abort binding");
         } catch (IllegalStateException failure) {
             assertEquals("injected bind failure", failure.getMessage(), "bind failure identity");
@@ -557,7 +578,7 @@ public final class M86bConformanceHarness {
                     "Mixed resource fixture did not translate");
             Set<String> mixedAdvancedNames = layout.advancedSamplers().stream()
                     .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
-                    .collect(java.util.stream.Collectors.toSet());
+                    .collect(Collectors.toSet());
             assertTrue(mixedAdvancedNames.contains("light_sampler"),
                     "Mixed resource fixture did not plan its advanced sampled image");
             assertTrue(layout.ordinaryDescriptors().stream().noneMatch(value ->
@@ -579,7 +600,7 @@ public final class M86bConformanceHarness {
             assertTrue(!vertex.isBlank() && !fragment.isBlank(),
                     "Mixed resource rewrite lost a stage: " + resources.deviations());
             List<PackAdvancedResourcePlan.DescriptorBinding> descriptors =
-                    new java.util.ArrayList<>(layout.descriptors());
+                    new ArrayList<>(layout.descriptors());
             try (PackStorageBufferOwner owner = new PackStorageBufferOwner(resources)) {
                 assertEquals(null, owner.verifyLayout("shadow", vertex, fragment, descriptors),
                         "Mixed rewritten shader disagrees with descriptor layout: planned=" + layout.descriptors()
@@ -597,17 +618,17 @@ public final class M86bConformanceHarness {
                 assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:ff_sampler",
                         owner.verifyLayout("shadow", vertex + "\nuniform sampler3D ff_sampler;\n", fragment, descriptors),
                         "Unplanned global sampler sharing a helper parameter name escaped verification");
-                var wrongSamplerType = new java.util.ArrayList<>(descriptors);
+                var wrongSamplerType = new ArrayList<>(descriptors);
                 wrongSamplerType.replaceAll(value -> value.binding() == light.binding()
                         ? new PackAdvancedResourcePlan.DescriptorBinding(value.symbol(), value.set(),
-                                value.binding(), 3, value.stages()) : value);
+                                value.binding(), 3, value.stages(), value.symbol()) : value);
                 assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
                         owner.verifyLayout("shadow", vertex, fragment, wrongSamplerType),
                         "Storage image descriptor was accepted for a combined sampler");
-                var wrongSamplerStages = new java.util.ArrayList<>(descriptors);
+                var wrongSamplerStages = new ArrayList<>(descriptors);
                 wrongSamplerStages.replaceAll(value -> value.binding() == light.binding()
                         ? new PackAdvancedResourcePlan.DescriptorBinding(value.symbol(), value.set(),
-                                value.binding(), value.type(), VK_SHADER_STAGE_FRAGMENT_BIT) : value);
+                                value.binding(), value.type(), VK_SHADER_STAGE_FRAGMENT_BIT, value.symbol()) : value);
                 assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
                         owner.verifyLayout("shadow", vertex, fragment, wrongSamplerStages),
                         "Fragment-only sampler descriptor was accepted for a vertex sampler");
@@ -627,7 +648,7 @@ public final class M86bConformanceHarness {
             }
         } finally {
             try (var paths = Files.walk(fixture)) {
-                for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
             }
         }
     }
@@ -809,7 +830,7 @@ public final class M86bConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected=" + expected + " actual=" + actual);
         }
     }

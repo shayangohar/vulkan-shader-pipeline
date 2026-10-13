@@ -1,8 +1,10 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -36,7 +38,7 @@ final class LegacyShaderNormalizer {
      * {@code float tanh(float)}); every call in that source means the pack's function, but the
      * #version 460 Chimera compiles at rejects the redefinition, so the pack's copy is renamed.
      */
-    private static final java.util.Set<String> LATE_BUILTINS = java.util.Set.of(
+    private static final Set<String> LATE_BUILTINS = Set.of(
             "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "trunc", "round", "roundEven",
             "modf", "isnan", "isinf", "floatBitsToInt", "floatBitsToUint", "intBitsToFloat",
             "uintBitsToFloat", "determinant", "inverse", "fma", "frexp", "ldexp",
@@ -71,7 +73,7 @@ final class LegacyShaderNormalizer {
 
     private static void renameLateBuiltinDefinitions(List<GlslLexer.Token> tokens, int version) {
         if (version >= 130) return;
-        java.util.Set<String> defined = new java.util.HashSet<>();
+        Set<String> defined = new HashSet<>();
         int depth = 0;
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);

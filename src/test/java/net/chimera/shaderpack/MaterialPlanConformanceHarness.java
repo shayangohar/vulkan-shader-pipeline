@@ -2,14 +2,20 @@ package net.chimera.shaderpack;
 
 import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.PackResourceOwner;
+import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
+import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.lwjgl.util.shaderc.Shaderc;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 
 /** Pure material planner gates: selectors, stage gating, resource identity, and manifest kind. */
 public final class MaterialPlanConformanceHarness {
@@ -110,7 +116,7 @@ public final class MaterialPlanConformanceHarness {
     private static void verifyFixturePlan(PackProbe.Analysis analysis) {
         PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
         assertTrue(terrain != null, "material fixture terrain is missing");
-        Map<String, Integer> slots = new java.util.TreeMap<>();
+        Map<String, Integer> slots = new TreeMap<>();
         terrain.interfacePlan().effective(UniformRegistry.Stage.GEOMETRY).samplers()
                 .forEach(value -> slots.put(value.name(), value.slot()));
         assertEquals(25, slots.get("normals"), "fixture terrain normals slot");
@@ -156,7 +162,7 @@ public final class MaterialPlanConformanceHarness {
 
     private static void verifyManifest(PackProbe.Analysis analysis) {
         PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
-        var ordinary = net.chimera.shaderpack.PackPipelines.ordinaryDescriptorContract(
+        var ordinary = PackPipelines.ordinaryDescriptorContract(
                 terrain, Set.of());
         ProgramImageBindingManifest manifest =
                 ProgramImageBindingManifest.from(null, ordinary);
@@ -170,7 +176,7 @@ public final class MaterialPlanConformanceHarness {
         assertTrue(material.stream().map(ProgramImageBindingManifest.Entry::binding)
                         .distinct().count() == 2,
                 "material manifest descriptor bindings collide");
-        manifest.verify(new java.util.ArrayList<>(ordinary.descriptors()));
+        manifest.verify(new ArrayList<>(ordinary.descriptors()));
     }
 
     private static void verifyFallbackDispatch() throws Exception {
@@ -182,13 +188,13 @@ public final class MaterialPlanConformanceHarness {
         assertEquals("_s", MaterialMapOwner.MaterialMapKind.SPECULAR.suffix(), "specular suffix");
         assertEquals(0x00000000, MaterialMapOwner.MaterialMapKind.SPECULAR.fallbackAbgr(),
                 "specular flat texel");
-        var constructor = net.vulkanmod.vulkan.texture.VulkanImage.class.getDeclaredConstructor(
-                net.vulkanmod.vulkan.texture.VulkanImage.Builder.class);
+        var constructor = VulkanImage.class.getDeclaredConstructor(
+                VulkanImage.Builder.class);
         constructor.setAccessible(true);
-        net.vulkanmod.vulkan.texture.VulkanImage normals = constructor.newInstance(
-                net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
-        net.vulkanmod.vulkan.texture.VulkanImage specular = constructor.newInstance(
-                net.vulkanmod.vulkan.texture.VulkanImage.builder(1, 1));
+        VulkanImage normals = constructor.newInstance(
+                VulkanImage.builder(1, 1));
+        VulkanImage specular = constructor.newInstance(
+                VulkanImage.builder(1, 1));
         MaterialMapOwner owner = MaterialMapOwner.withImages(normals, specular);
         try {
             assertTrue(owner.snapshot("normals").image() == normals, "normals resolved elsewhere");
@@ -303,7 +309,7 @@ public final class MaterialPlanConformanceHarness {
                 "Projection stage");
 
         Pipeline.Builder builder = new Pipeline.Builder(
-                net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY,
+                ChimeraVertexFormats.EXTENDED_ENTITY,
                 "pack_gbuffers_entities");
         builder.setUniformSupplierGetter(info -> () -> null);
         ordinary.apply(builder);
@@ -359,7 +365,7 @@ public final class MaterialPlanConformanceHarness {
         PackProbe.Analysis shadow = PackProbe.analyze(root.resolve("m87_entity_shadow"));
         PackProgramPlan plan = shadow.plan().program("gbuffers_entities");
         assertTrue(plan != null, "shadow fixture program is missing");
-        Map<String, Integer> slots = new java.util.TreeMap<>();
+        Map<String, Integer> slots = new TreeMap<>();
         plan.interfacePlan().effective(UniformRegistry.Stage.ENTITY).samplers()
                 .forEach(value -> slots.put(value.name(), value.slot()));
         assertEquals(5, slots.get("shadowtex0"), "entity shadowtex0 slot");
@@ -480,38 +486,38 @@ public final class MaterialPlanConformanceHarness {
     }
 
     private static void compileVertexShader(String source, String what) {
-        long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
+        long compiler = Shaderc.shaderc_compiler_initialize();
         long result = 0;
         try {
-            result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_spv(compiler, source,
-                    org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_vertex_shader,
+            result = Shaderc.shaderc_compile_into_spv(compiler, source,
+                    Shaderc.shaderc_glsl_vertex_shader,
                     "entity_fixture.vsh", "main", 0);
             assertTrue(result != 0
-                            && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)
-                            == org.lwjgl.util.shaderc.Shaderc.shaderc_compilation_status_success,
+                            && Shaderc.shaderc_result_get_compilation_status(result)
+                            == Shaderc.shaderc_compilation_status_success,
                     what + " did not compile: " + (result == 0 ? "no result"
-                            : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result)));
+                            : Shaderc.shaderc_result_get_error_message(result)));
         } finally {
-            if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
-            org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
+            if (result != 0) Shaderc.shaderc_result_release(result);
+            Shaderc.shaderc_compiler_release(compiler);
         }
     }
 
     private static void compileFragmentShader(String source, String what) {
-        long compiler = org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_initialize();
+        long compiler = Shaderc.shaderc_compiler_initialize();
         long result = 0;
         try {
-            result = org.lwjgl.util.shaderc.Shaderc.shaderc_compile_into_spv(compiler, source,
-                    org.lwjgl.util.shaderc.Shaderc.shaderc_glsl_fragment_shader,
+            result = Shaderc.shaderc_compile_into_spv(compiler, source,
+                    Shaderc.shaderc_glsl_fragment_shader,
                     "entity_fixture.fsh", "main", 0);
             assertTrue(result != 0
-                            && org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_compilation_status(result)
-                            == org.lwjgl.util.shaderc.Shaderc.shaderc_compilation_status_success,
+                            && Shaderc.shaderc_result_get_compilation_status(result)
+                            == Shaderc.shaderc_compilation_status_success,
                     what + " did not compile: " + (result == 0 ? "no result"
-                            : org.lwjgl.util.shaderc.Shaderc.shaderc_result_get_error_message(result)));
+                            : Shaderc.shaderc_result_get_error_message(result)));
         } finally {
-            if (result != 0) org.lwjgl.util.shaderc.Shaderc.shaderc_result_release(result);
-            org.lwjgl.util.shaderc.Shaderc.shaderc_compiler_release(compiler);
+            if (result != 0) Shaderc.shaderc_result_release(result);
+            Shaderc.shaderc_compiler_release(compiler);
         }
     }
 
@@ -533,7 +539,7 @@ public final class MaterialPlanConformanceHarness {
                         .anyMatch(uniform -> uniform.name().equals("isElytraFlying")),
                 "isElytraFlying did not land in executable uniforms");
         LegacyGlslConverter.TerrainVertexConversion vertex = LegacyGlslConverter.convertEntityVertex(
-                ELYTRA_VERTEX_SNIPPET, null, ELYTRA_SNIPPET, java.util.Map.of());
+                ELYTRA_VERTEX_SNIPPET, null, ELYTRA_SNIPPET, Map.of());
         assertTrue(vertex != null, "elytra vertex bridge failed");
         String converted = LegacyGlslConverter.FragmentConversionRequest
                 .of(ELYTRA_SNIPPET, null, true, new int[0])
@@ -554,7 +560,7 @@ public final class MaterialPlanConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

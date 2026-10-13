@@ -4,7 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraCustomGeometryStorage;
 import net.chimera.render.shader.ChimeraEntityBridge;
-import net.chimera.render.shader.ChimeraEntitySubmission;
+import net.chimera.render.shader.SubmissionIdentity;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.feature.CustomFeatureRenderer;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -68,7 +68,7 @@ public abstract class ChimeraCustomGeometryStorageMixin implements ChimeraCustom
                 || !ChimeraEntityBridge.supportsSubmissionFamily(family)) {
             return null;
         }
-        return family == ChimeraEntitySubmission.FAMILY_BLOCK ? chimera$blockSubmits : chimera$entitySubmits;
+        return family == SubmissionIdentity.FAMILY_BLOCK ? chimera$blockSubmits : chimera$entitySubmits;
     }
 
     @Inject(method = "clear", at = @At("HEAD"), require = 1)

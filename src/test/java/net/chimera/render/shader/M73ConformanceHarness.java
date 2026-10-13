@@ -11,8 +11,12 @@ import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackRuntimeSettings;
 import net.chimera.shaderpack.UniformRegistry;
+import net.minecraft.resources.Identifier;
 import net.vulkanmod.vulkan.shader.layout.Uniform;
 import net.vulkanmod.vulkan.util.MappedBuffer;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
+import org.joml.Vector4f;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -20,6 +24,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 /** Deterministic M7.3 checks for live world-state semantics and custom scalars. */
@@ -116,7 +121,7 @@ public final class M73ConformanceHarness {
                         + " at the horizon crossing itself");
 
         // The light each controlled time produces, in the world the shadow matrix is built from.
-        org.joml.Vector3f world = new org.joml.Vector3f();
+        Vector3f world = new Vector3f();
         CelestialSnapshot.lightVector(0.0f, 0.0f, 0.0f, world);
         assertVectorNear(0.0f, 1.0f, 0.0f, world, "M7.3 noon light must be overhead");
         CelestialSnapshot.lightVector(0.0f, 0.0f, 90.0f, world);
@@ -126,27 +131,27 @@ public final class M73ConformanceHarness {
 
         // Pack/host agreement: the eye-space position is the world light carried by the view, so
         // the two agree at every controlled time and under any camera yaw and pitch.
-        org.joml.Matrix4f modelView = new org.joml.Matrix4f()
+        Matrix4f modelView = new Matrix4f()
                 .translate(12.0f, -60.0f, 8.0f)
                 .rotateY((float) Math.toRadians(37.0))
                 .rotateX((float) Math.toRadians(-18.0));
-        org.joml.Matrix4f inverse = new org.joml.Matrix4f(modelView).invert();
-        org.joml.Matrix4f turned = new org.joml.Matrix4f()
+        Matrix4f inverse = new Matrix4f(modelView).invert();
+        Matrix4f turned = new Matrix4f()
                 .translate(12.0f, -60.0f, 8.0f)
                 .rotateY((float) Math.toRadians(190.0))
                 .rotateX((float) Math.toRadians(22.0));
-        org.joml.Vector3f eye = new org.joml.Vector3f();
-        org.joml.Vector3f turnedEye = new org.joml.Vector3f();
+        Vector3f eye = new Vector3f();
+        Vector3f turnedEye = new Vector3f();
         for (float angle : new float[] {0.0f, 90.0f, 180.0f, 270.0f}) {
             CelestialSnapshot.lightVector(0.0f, 0.0f, angle, world);
             CelestialSnapshot.position(modelView, 0.0f, 0.0f, angle, eye);
             CelestialSnapshot.position(turned, 0.0f, 0.0f, angle, turnedEye);
-            org.joml.Vector3f roundTrip =
-                    inverse.transformPosition(new org.joml.Vector3f(eye)).normalize();
+            Vector3f roundTrip =
+                    inverse.transformPosition(new Vector3f(eye)).normalize();
             assertVectorNear(world.x, world.y, world.z, roundTrip,
                     "M7.3 eye-space sun disagreed with the world light at raw " + angle);
-            org.joml.Vector3f turnedRoundTrip = new org.joml.Matrix4f(turned).invert()
-                    .transformPosition(new org.joml.Vector3f(turnedEye)).normalize();
+            Vector3f turnedRoundTrip = new Matrix4f(turned).invert()
+                    .transformPosition(new Vector3f(turnedEye)).normalize();
             assertVectorNear(world.x, world.y, world.z, turnedRoundTrip,
                     "M7.3 a camera rotation moved the world light at raw " + angle);
             assertTrue(eye.distance(turnedEye) > 1.0f,
@@ -165,16 +170,16 @@ public final class M73ConformanceHarness {
         state.rotateViewForTest(modelView, forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f));
         state.installSunPath(0.0f, 0.0f);
         state.setCelestialForTest(0.0f, 0.0f, 0x4C7BC8);
-        org.joml.Vector3f expectedSun = modelView.transformPosition(
-                new org.joml.Vector3f(0.0f, 100.0f, 0.0f));
-        org.joml.Vector3f expectedUp = modelView.transformDirection(
-                new org.joml.Vector3f(0.0f, 100.0f, 0.0f));
+        Vector3f expectedSun = modelView.transformPosition(
+                new Vector3f(0.0f, 100.0f, 0.0f));
+        Vector3f expectedUp = modelView.transformDirection(
+                new Vector3f(0.0f, 100.0f, 0.0f));
         assertNear(0.25f, writtenFloat(state, "sunAngle"), 1.0e-6f,
                 "M7.3 pack sun angle must be the host sky angle plus the quarter turn");
         assertNear(0.25f, writtenFloat(state, "shadowAngle"), 1.0e-6f,
                 "M7.3 noon shadow angle must follow the sun");
         verifyWrittenVec3(state, "skyColor",
-                new org.joml.Vector3f(0x4C / 255.0f, 0x7B / 255.0f, 0xC8 / 255.0f),
+                new Vector3f(0x4C / 255.0f, 0x7B / 255.0f, 0xC8 / 255.0f),
                 "M7.3 sky colour must be the host's packed colour");
         verifyWrittenVec3(state, "upPosition", expectedUp,
                 "M7.3 up position must be the sky's quarter turn carried by the view");
@@ -198,16 +203,16 @@ public final class M73ConformanceHarness {
                 assertNear(CelestialSnapshot.angle01(lightAngle), writtenFloat(state, "shadowAngle"),
                         1.0e-6f,
                         "M7.3 shadow angle left the light body at raw " + time[0]);
-                org.joml.Vector3f packLight = writtenVec3(state, "shadowLightPosition");
-                org.joml.Vector3f carried =
-                        inverse.transformPosition(new org.joml.Vector3f(packLight)).normalize();
+                Vector3f packLight = writtenVec3(state, "shadowLightPosition");
+                Vector3f carried =
+                        inverse.transformPosition(new Vector3f(packLight)).normalize();
                 assertVectorNear(state.sunLightVector().x, state.sunLightVector().y,
                         state.sunLightVector().z, carried,
                         "M7.3 pack light position left the shadow light at raw " + time[0]);
                 // The caster rotation (Iris's construction) looks along the same light. Raw 0 with
                 // a straight path is the sun overhead, where a fixed-up look-at had no basis.
-                org.joml.Vector3f depthAxis = state.shadowLightRotation()
-                        .transformDirection(new org.joml.Vector3f(state.sunLightVector()));
+                Vector3f depthAxis = state.shadowLightRotation()
+                        .transformDirection(new Vector3f(state.sunLightVector()));
                 assertVectorNear(0.0f, 0.0f, 1.0f, depthAxis,
                         "M7.3 shadow caster rotation left the shadow light at raw " + time[0]);
             }
@@ -222,20 +227,20 @@ public final class M73ConformanceHarness {
         return buffer.getFloat(0);
     }
 
-    private static org.joml.Vector3f writtenVec3(PackFrameState state, String name) {
+    private static Vector3f writtenVec3(PackFrameState state, String name) {
         UniformRegistry.UniformDescriptor descriptor = UniformRegistry.descriptor(name, "vec3");
         assertTrue(descriptor != null, "M7.3 vector uniform is missing from the catalog: " + name);
         MappedBuffer buffer = new MappedBuffer(16);
         state.write(descriptor, "vec3", buffer);
-        return new org.joml.Vector3f(buffer.getFloat(0), buffer.getFloat(4), buffer.getFloat(8));
+        return new Vector3f(buffer.getFloat(0), buffer.getFloat(4), buffer.getFloat(8));
     }
 
     private static void verifyWrittenVec3(PackFrameState state, String name,
-                                          org.joml.Vector3f expected, String message) {
+                                          Vector3f expected, String message) {
         assertVectorNear(expected.x, expected.y, expected.z, writtenVec3(state, name), message);
     }
 
-    private static void assertVectorNear(float x, float y, float z, org.joml.Vector3f actual,
+    private static void assertVectorNear(float x, float y, float z, Vector3f actual,
                                          String message) {
         assertNear(x, actual.x, 1.0e-4f, message + " at component 0");
         assertNear(y, actual.y, 1.0e-4f, message + " at component 1");
@@ -306,14 +311,14 @@ public final class M73ConformanceHarness {
         String biomeTest = "if(in(biome, BIOME_GROVE, BIOME_DESERT), 1, 0) * clamp(sqrt(16.0), 0.0, 3.0)";
         PackExpression.Program biome = PackExpression.parse(biomeTest, BiomeIds.constants());
         PackExpression.State biomeState = biome.newState();
-        int desert = BiomeIds.id(net.minecraft.resources.Identifier.fromNamespaceAndPath(
+        int desert = BiomeIds.id(Identifier.fromNamespaceAndPath(
                 "minecraft", "desert"));
         assertNear(3.0f, (float) biome.evaluate((name, component) -> desert, biomeState, 0.05f),
                 1.0e-6f, "M7.3 a named biome constant must match the biome it names");
         assertNear(0.0f, (float) biome.evaluate((name, component) -> 1.0, biomeState, 0.05f),
                 1.0e-6f, "M7.3 a biome outside the constants must not match one");
         assertTrue(BiomeIds.id(null) == BiomeIds.UNKNOWN
-                        && BiomeIds.id(net.minecraft.resources.Identifier.fromNamespaceAndPath(
+                        && BiomeIds.id(Identifier.fromNamespaceAndPath(
                         "other", "desert")) == BiomeIds.UNKNOWN,
                 "M7.3 an unlisted or foreign biome must match no constant");
 
@@ -349,14 +354,14 @@ public final class M73ConformanceHarness {
      * fresh session restarts the sequence instead of leaking old matrices.
      */
     private static void verifyPreviousMatrixRotation() {
-        org.joml.Matrix4f firstModel = new org.joml.Matrix4f().translate(2.0f, -30.0f, 5.0f);
-        org.joml.Matrix4f firstProjection = forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f);
-        org.joml.Matrix4f secondModel = new org.joml.Matrix4f().translate(2.5f, -30.0f, 5.0f);
-        org.joml.Matrix4f secondProjection = forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f);
+        Matrix4f firstModel = new Matrix4f().translate(2.0f, -30.0f, 5.0f);
+        Matrix4f firstProjection = forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f);
+        Matrix4f secondModel = new Matrix4f().translate(2.5f, -30.0f, 5.0f);
+        Matrix4f secondProjection = forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f);
         secondProjection.m20(0.001f);
 
-        org.joml.Matrix4f firstPackProjection = legacyProjection(firstProjection);
-        org.joml.Matrix4f secondPackProjection = legacyProjection(secondProjection);
+        Matrix4f firstPackProjection = legacyProjection(firstProjection);
+        Matrix4f secondPackProjection = legacyProjection(secondProjection);
         PackFrameState state = new PackFrameState();
         state.rotateViewForTest(firstModel, firstProjection);
         assertMatrixNear(firstModel, state.modelView(), "M7.3 first-frame model view");
@@ -368,7 +373,7 @@ public final class M73ConformanceHarness {
                 "M7.3 first frame must seed previous model view from current");
         assertMatrixNear(firstPackProjection, state.previousProjectionForTest(),
                 "M7.3 first frame must seed previous pack projection from current");
-        assertMatrixNear(new org.joml.Matrix4f(firstProjection).mul(firstModel), state.mvpForTest(),
+        assertMatrixNear(new Matrix4f(firstProjection).mul(firstModel), state.mvpForTest(),
                 "M7.3 host MVP must use the unconverted raster projection");
 
         state.rotateViewForTest(secondModel, secondProjection);
@@ -456,9 +461,9 @@ public final class M73ConformanceHarness {
                 {8.0f, -4.0f, -200.0f}
         };
         for (float[] values : cases) {
-            org.joml.Matrix4f rendered = forwardProjection(values[0], values[1], values[2]);
-            org.joml.Vector4f nearClip = transform(rendered, 0.0f, 0.0f, -values[0]);
-            org.joml.Vector4f farClip = transform(rendered, 0.0f, 0.0f, -values[1]);
+            Matrix4f rendered = forwardProjection(values[0], values[1], values[2]);
+            Vector4f nearClip = transform(rendered, 0.0f, 0.0f, -values[0]);
+            Vector4f farClip = transform(rendered, 0.0f, 0.0f, -values[1]);
             assertNear(0.0f, nearClip.z / nearClip.w, 2.0e-5f,
                     "M8.7 host forward-Z near plane must map to zero");
             assertNear(1.0f, farClip.z / farClip.w, 2.0e-5f,
@@ -466,18 +471,18 @@ public final class M73ConformanceHarness {
             rendered.m20(0.003f).m21(-0.002f);
             // Captured projections can include the camera's bob/tilt. The
             // conversion must preserve these terms instead of rebuilding FOV.
-            rendered.mul(new org.joml.Matrix4f().rotateX(0.009f).rotateZ(-0.004f));
+            rendered.mul(new Matrix4f().rotateX(0.009f).rotateZ(-0.004f));
 
             PackFrameState state = new PackFrameState();
-            state.rotateViewForTest(new org.joml.Matrix4f(), rendered);
-            org.joml.Matrix4f packProjection = state.projectionForTest();
-            org.joml.Matrix4f packInverse = state.projectionInverseForTest();
+            state.rotateViewForTest(new Matrix4f(), rendered);
+            Matrix4f packProjection = state.projectionForTest();
+            Matrix4f packInverse = state.projectionInverseForTest();
             assertMatrixNear(rendered, state.rasterProjectionForTest(),
                     "M7.3 projection conversion changed the host raster matrix");
 
             for (float[] point : points) {
-                org.joml.Vector4f hostClip = transform(rendered, point[0], point[1], point[2]);
-                org.joml.Vector4f packClip = transform(packProjection, point[0], point[1], point[2]);
+                Vector4f hostClip = transform(rendered, point[0], point[1], point[2]);
+                Vector4f packClip = transform(packProjection, point[0], point[1], point[2]);
                 float hostDepth = hostClip.z / hostClip.w;
                 float packDepth = packClip.z / packClip.w;
                 assertNear(2.0f * hostDepth - 1.0f, packDepth, 2.0e-5f,
@@ -486,7 +491,7 @@ public final class M73ConformanceHarness {
                 float u = 0.5f * (hostClip.x / hostClip.w + 1.0f);
                 float v = 0.5f * (hostClip.y / hostClip.w + 1.0f);
                 float depthTex = hostDepth;
-                org.joml.Vector4f reconstructed = new org.joml.Vector4f(
+                Vector4f reconstructed = new Vector4f(
                         2.0f * u - 1.0f, 2.0f * v - 1.0f, 2.0f * depthTex - 1.0f, 1.0f);
                 packInverse.transform(reconstructed);
                 divideByW(reconstructed);
@@ -504,27 +509,27 @@ public final class M73ConformanceHarness {
         verifyFiniteBoundedReprojection();
 
         PackFrameState state = new PackFrameState();
-        org.joml.Matrix4f hostProjection = forwardProjection(0.05f, 512.0f, 16.0f / 9.0f);
-        state.rotateViewForTest(new org.joml.Matrix4f(), hostProjection);
+        Matrix4f hostProjection = forwardProjection(0.05f, 512.0f, 16.0f / 9.0f);
+        state.rotateViewForTest(new Matrix4f(), hostProjection);
         verifyWrittenMatrix(state, "gbufferProjection", legacyProjection(hostProjection));
         verifyWrittenMatrix(state, "ProjMat", hostProjection);
     }
 
     private static void verifyFiniteBoundedReprojection() {
-        org.joml.Matrix4f hostProjection = forwardProjection(0.05f, 512.0f, 16.0f / 9.0f);
-        org.joml.Matrix4f previousModelView = new org.joml.Matrix4f();
-        org.joml.Matrix4f currentModelView = new org.joml.Matrix4f().translation(-0.025f, 0.01f, 0.0f);
+        Matrix4f hostProjection = forwardProjection(0.05f, 512.0f, 16.0f / 9.0f);
+        Matrix4f previousModelView = new Matrix4f();
+        Matrix4f currentModelView = new Matrix4f().translation(-0.025f, 0.01f, 0.0f);
         PackFrameState state = new PackFrameState();
         state.rotateViewForTest(previousModelView, hostProjection);
         state.rotateViewForTest(currentModelView, hostProjection);
 
         float[] worldPoint = {0.12f, 0.08f, -5.0f};
-        org.joml.Vector4f currentView = transform(currentModelView,
+        Vector4f currentView = transform(currentModelView,
                 worldPoint[0], worldPoint[1], worldPoint[2]);
-        org.joml.Vector4f hostClip = new org.joml.Vector4f(currentView);
+        Vector4f hostClip = new Vector4f(currentView);
         hostProjection.transform(hostClip);
         float hostDepth = hostClip.z / hostClip.w;
-        org.joml.Vector4f currentClip = new org.joml.Vector4f(
+        Vector4f currentClip = new Vector4f(
                 hostClip.x / hostClip.w,
                 hostClip.y / hostClip.w,
                 2.0f * hostDepth - 1.0f,
@@ -532,12 +537,12 @@ public final class M73ConformanceHarness {
         state.projectionInverseForTest().transform(currentClip);
         divideByW(currentClip);
 
-        org.joml.Matrix4f inverseCurrentModelView = new org.joml.Matrix4f(currentModelView).invert();
+        Matrix4f inverseCurrentModelView = new Matrix4f(currentModelView).invert();
         inverseCurrentModelView.transform(currentClip);
         divideByW(currentClip);
         previousModelView.transform(currentClip);
-        org.joml.Vector4f previousClip = state.previousProjectionForTest().transform(
-                new org.joml.Vector4f(currentClip));
+        Vector4f previousClip = state.previousProjectionForTest().transform(
+                new Vector4f(currentClip));
         float previousU = 0.5f * (previousClip.x / previousClip.w + 1.0f);
         float previousV = 0.5f * (previousClip.y / previousClip.w + 1.0f);
         assertTrue(Float.isFinite(previousU) && Float.isFinite(previousV),
@@ -585,9 +590,9 @@ public final class M73ConformanceHarness {
                 "M7.3 pack inverse projection was incorrectly derived from host ProjMat");
     }
 
-    private static org.joml.Matrix4f forwardProjection(float near, float far, float aspect) {
+    private static Matrix4f forwardProjection(float near, float far, float aspect) {
         float scale = 1.0f / (float) Math.tan(Math.toRadians(70.0) * 0.5);
-        org.joml.Matrix4f projection = new org.joml.Matrix4f().zero();
+        Matrix4f projection = new Matrix4f().zero();
         projection.m00(scale / aspect);
         projection.m11(scale);
         projection.m22(far / (near - far));
@@ -596,8 +601,8 @@ public final class M73ConformanceHarness {
         return projection;
     }
 
-    private static org.joml.Matrix4f legacyProjection(org.joml.Matrix4f rendered) {
-        org.joml.Matrix4f converted = new org.joml.Matrix4f(rendered);
+    private static Matrix4f legacyProjection(Matrix4f rendered) {
+        Matrix4f converted = new Matrix4f(rendered);
         converted.m02(2.0f * rendered.m02() - rendered.m03());
         converted.m12(2.0f * rendered.m12() - rendered.m13());
         converted.m22(2.0f * rendered.m22() - rendered.m23());
@@ -615,20 +620,20 @@ public final class M73ConformanceHarness {
                 "M8.7 depth snapshot still inverts forward host depth");
     }
 
-    private static org.joml.Vector4f transform(org.joml.Matrix4f matrix, float x, float y, float z) {
-        org.joml.Vector4f vector = new org.joml.Vector4f(x, y, z, 1.0f);
+    private static Vector4f transform(Matrix4f matrix, float x, float y, float z) {
+        Vector4f vector = new Vector4f(x, y, z, 1.0f);
         matrix.transform(vector);
         return vector;
     }
 
-    private static void divideByW(org.joml.Vector4f vector) {
+    private static void divideByW(Vector4f vector) {
         assertTrue(Float.isFinite(vector.w) && Math.abs(vector.w) > 1.0e-7f,
                 "M7.3 homogeneous transform reached a non-finite or singular w");
         vector.div(vector.w);
     }
 
     private static void verifyWrittenMatrix(PackFrameState state, String name,
-                                            org.joml.Matrix4f expected) {
+                                            Matrix4f expected) {
         UniformRegistry.UniformDescriptor descriptor = UniformRegistry.descriptor(name, "mat4");
         assertTrue(descriptor != null, "M7.3 matrix uniform is missing from the catalog: " + name);
         MappedBuffer buffer = new MappedBuffer(64);
@@ -641,7 +646,7 @@ public final class M73ConformanceHarness {
         }
     }
 
-    private static void assertMatrixNear(org.joml.Matrix4f expected, org.joml.Matrix4f actual,
+    private static void assertMatrixNear(Matrix4f expected, Matrix4f actual,
                                          String message) {
         float[] expectedValues = new float[16];
         float[] actualValues = new float[16];
@@ -763,7 +768,7 @@ public final class M73ConformanceHarness {
                 analysis.plan().runtimeSettings().customDescriptors().entrySet().stream()
                         .filter(entry -> entry.getValue().availability()
                                 == UniformRegistry.Availability.LIVE)
-                        .map(java.util.Map.Entry::getKey).sorted().toList(),
+                        .map(Map.Entry::getKey).sorted().toList(),
                 "M7.3 served custom uniform baseline");
         assertEquals(strings(baseline.getAsJsonArray("expectedSettingsDeviations")),
                 analysis.plan().runtimeSettings().deviations(),
@@ -800,7 +805,7 @@ public final class M73ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

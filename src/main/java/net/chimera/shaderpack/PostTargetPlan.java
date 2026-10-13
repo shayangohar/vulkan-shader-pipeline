@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
@@ -150,7 +151,7 @@ public final class PostTargetPlan {
         if (text.matches("(?s).*\\bgl_FragColor\\b.*")) {
             outputSet.add(0);
         }
-        Map<Integer, String> outputTypes = new java.util.TreeMap<>();
+        Map<Integer, String> outputTypes = new TreeMap<>();
         for (ModernOutput output : modernOutputs(text)) {
             if (outputTypes.put(output.location(), output.type()) != null) {
                 deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");

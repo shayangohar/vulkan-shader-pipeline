@@ -1,69 +1,68 @@
 package net.chimera.render;
-import java.nio.file.Path;
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Set;
-import java.util.Map;
-import java.util.Optional;
+
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
-import net.chimera.render.shader.ChimeraPostPipelines;
-import net.chimera.render.shader.PackGeometryContext;
-import net.chimera.render.shader.MrtPipelineContext;
-import net.chimera.render.shader.ChimeraShaderLoader;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import net.chimera.config.ChimeraConfig;
+import net.chimera.config.ShaderpackDirectory;
+import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
-import net.chimera.render.shader.HostLayoutLane;
+import net.chimera.render.shader.ChimeraPostPipelines;
+import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.render.shader.HostLayoutLane;
+import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.PackUniformProvider;
-import net.chimera.mixin.ChimeraDeviceAccessor;
-import net.chimera.shaderpack.DepthGraphPlan;
-import net.chimera.shaderpack.PackPipelines;
-import net.chimera.shaderpack.ProgramImageBindingManifest;
-import net.chimera.shaderpack.PackPlan;
-import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.render.vertex.ChimeraVertexFormats;
+import net.chimera.shaderpack.ConformanceReport;
+import net.chimera.shaderpack.FamilyAdapterRegistry;
+import net.chimera.shaderpack.GeometryOutputPlan;
+import net.chimera.shaderpack.HandLightDirectives;
+import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.PackCoveragePlan;
+import net.chimera.shaderpack.PackEngineDefines;
+import net.chimera.shaderpack.PackFrameSchedulePlan;
+import net.chimera.shaderpack.PackItemIdResolver;
+import net.chimera.shaderpack.PackMaterialResolver;
+import net.chimera.shaderpack.PackOptionSources;
+import net.chimera.shaderpack.PackPipelines;
+import net.chimera.shaderpack.PackPlan;
+import net.chimera.shaderpack.PackProbe;
+import net.chimera.shaderpack.PackProgram;
+import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackResourcePlan;
+import net.chimera.shaderpack.PackSource;
+import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PostTargetPlan;
+import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.chimera.shaderpack.ScreenOverlayDirectives;
+import net.chimera.shaderpack.SelectorNamespace;
 import net.chimera.shaderpack.ShadowCasterDirectives;
 import net.chimera.shaderpack.ShadowCullingPlan;
-import net.chimera.shaderpack.PackProgram;
-import net.chimera.shaderpack.ConformanceReport;
-import net.chimera.shaderpack.PackProbe;
-import net.chimera.shaderpack.PackSource;
-import net.chimera.shaderpack.PackMaterialResolver;
-import net.chimera.shaderpack.PostTargetPlan;
-import net.chimera.shaderpack.PackTargetGraphPlan;
-import net.chimera.shaderpack.PackFrameSchedulePlan;
-import net.chimera.shaderpack.TargetStep;
 import net.chimera.shaderpack.TargetSpec;
-import net.chimera.shaderpack.PackResourceBinding;
-import net.chimera.shaderpack.PackResourcePlan;
-import net.chimera.shaderpack.SelectorNamespace;
-import net.chimera.shaderpack.PackResourceStatus;
+import net.chimera.shaderpack.TargetStep;
 import net.chimera.shaderpack.TerrainMaterialPlan;
-import net.chimera.shaderpack.PackAdvancedResourcePlan;
-import net.chimera.shaderpack.PackCoveragePlan;
-import net.chimera.shaderpack.FamilyAdapterRegistry;
-import net.vulkanmod.vulkan.device.DeviceManager;
+import net.chimera.shaderpack.TerrainShadingDirectives;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.engine.VkGpuDevice;
 import net.vulkanmod.render.engine.VkGpuTexture;
 import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
-import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.VRenderSystem;
-import net.vulkanmod.vulkan.memory.MemoryManager;
+import net.vulkanmod.vulkan.Vulkan;
+import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.framebuffer.SwapChain;
+import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.pass.MainPass;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.PipelineState;
@@ -77,6 +76,22 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
@@ -101,7 +116,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * may retire internal world resources at their frame fence, but it never makes
  * GUI/post passes and world rendering transition the same Vulkan image.
  */
-public class ChimeraMainPass implements MainPass {
+public final class ChimeraMainPass implements MainPass {
     private static final HandBoundaryPolicy HAND_BOUNDARY_POLICY =
             new HandBoundaryPolicy(true, true);
 
@@ -120,7 +135,7 @@ public class ChimeraMainPass implements MainPass {
     private static final boolean PACK_COVERAGE_RUNTIME_ENABLED = false;
 
 
-    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
 
     /** Immutable post-stage order and output contract retained for the pack session. */
     private record PackPostExecution(
@@ -201,7 +216,7 @@ public class ChimeraMainPass implements MainPass {
     /** All discovered post programs, including static fallback stages. */
     private final List<PackPostExecution> packPostExecution = new ArrayList<>();
     /** Identity-boundary diagnostics are emitted once per pack session. */
-    private final Set<String> packPostBoundaryLogged = new java.util.HashSet<>();
+    private final Set<String> packPostBoundaryLogged = new HashSet<>();
     /** The final pass is retained separately because it runs before hand/GUI composition. */
     private PackPipelines.PackPost packFinalPost;
     private PackPostExecution packFinalExecution;
@@ -292,7 +307,7 @@ public class ChimeraMainPass implements MainPass {
     /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
     private ShadowCullingPlan shadowCulling;
     /** Which of Minecraft's screen overlays this pack session keeps (Iris vignette and underwaterOverlay). */
-    private net.chimera.shaderpack.ScreenOverlayDirectives screenOverlays;
+    private ScreenOverlayDirectives screenOverlays;
     /** Pack world-entity program on the guarded delayed model batch. */
     private PackPipelines.PackEntity packEntityPipeline;
     /** Pack translucent world-entity program on the guarded delayed model batch. */
@@ -315,8 +330,8 @@ public class ChimeraMainPass implements MainPass {
     /** Pack translucent particle program on the host translucent particle window. */
     private PackPipelines.PackParticle packTranslucentParticlePipeline;
     /** Pack programs of the installed host-layout lanes (weather, lines, glint, lightning, ...). */
-    private final java.util.EnumMap<ChimeraEntityBridge.Family, PackPipelines.PackParticle> packHostLayoutPipelines =
-            new java.util.EnumMap<>(ChimeraEntityBridge.Family.class);
+    private final EnumMap<ChimeraEntityBridge.Family, PackPipelines.PackParticle> packHostLayoutPipelines =
+            new EnumMap<>(ChimeraEntityBridge.Family.class);
     private PackPipelines.PackSkyFamily packSkyBasicPipeline;
     private PackPipelines.PackSkyFamily packSkyTexturedPipeline;
     private PackPipelines.PackSky packCloudPipeline;
@@ -328,7 +343,7 @@ public class ChimeraMainPass implements MainPass {
     private ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     private final PackShadowDepth packShadowDepth = new PackShadowDepth();
     /** Programs whose routed shadow sampler was already reported once. */
-    private final Set<String> loggedShadowSamplerPrograms = new java.util.HashSet<>();
+    private final Set<String> loggedShadowSamplerPrograms = new HashSet<>();
 
     /** True after renderLevel opens the internal HDR world target. */
     private boolean levelPhase;
@@ -462,13 +477,13 @@ public class ChimeraMainPass implements MainPass {
                 return null;
             }
         }
-        net.chimera.config.ChimeraConfig config = net.chimera.config.ChimeraConfig.get();
+        ChimeraConfig config = ChimeraConfig.get();
         if (!config.shadersEnabled() || config.shaderPack().isEmpty()) {
             return null;
         }
         String name = config.shaderPack().get();
-        Path pack = net.chimera.config.ShaderpackDirectory.resolve(
-                net.chimera.config.ShaderpackDirectory.root(), name).orElse(null);
+        Path pack = ShaderpackDirectory.resolve(
+                ShaderpackDirectory.root(), name).orElse(null);
         if (pack == null) {
             LOGGER.warn("[chimera] saved shader pack is no longer in the shaderpacks folder: {}", name);
         }
@@ -700,7 +715,7 @@ public class ChimeraMainPass implements MainPass {
      */
     private ShadowCullingFrustum shadowCullingFrustum(boolean entities) {
         if (this.shadowCulling == null) return ShadowCullingFrustum.none();
-        int renderDistance = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+        int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
         ShadowCullingPlan.Culler culler = entities
                 ? this.shadowCulling.entities(renderDistance) : this.shadowCulling.terrain(renderDistance);
         return new ShadowCullingFrustum(culler, PackUniformProvider.currentCameraViewProjection(new Matrix4f()),
@@ -727,7 +742,7 @@ public class ChimeraMainPass implements MainPass {
             this.shadowSegmentObserved = true;
             LOGGER.info("[chimera] shadow segment active; advanced compute dispatch is eligible");
         }
-        var mc = net.minecraft.client.Minecraft.getInstance();
+        var mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) {
             return;
         }
@@ -1077,7 +1092,7 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /** Returns the installed pack pipeline for a family window request. */
-    public net.chimera.shaderpack.PackPipelines.PackEntity familyPipeline(
+    public PackPipelines.PackEntity familyPipeline(
             ChimeraEntityBridge.Family family) {
         return switch (family) {
             case ENTITY -> this.packEntityPipeline;
@@ -1111,11 +1126,11 @@ public class ChimeraMainPass implements MainPass {
      * supplies the attachments. Returns true only when this call opened the
      * window; the caller closes exactly what it opened.
      */
-    public boolean beginPackFamilyWindow(net.chimera.shaderpack.PackPipelines.PackEntity family) {
+    public boolean beginPackFamilyWindow(PackPipelines.PackEntity family) {
         return family != null && beginPackFamilyWindow(family.outputPlan());
     }
 
-    public boolean beginPackFamilyWindow(net.chimera.shaderpack.GeometryOutputPlan outputs) {
+    public boolean beginPackFamilyWindow(GeometryOutputPlan outputs) {
         if (outputs == null || !outputs.requiresDynamicAttachments()
                 || !this.packTargetResourcesReady || this.shadowPassActive
                 || this.hdrFramebuffer == null
@@ -1144,11 +1159,11 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /** Commits the family window's auxiliary outputs and reopens the HDR pass. */
-    public void endPackFamilyWindow(net.chimera.shaderpack.PackPipelines.PackEntity family) {
+    public void endPackFamilyWindow(PackPipelines.PackEntity family) {
         if (family != null) endPackFamilyWindow(family.outputPlan());
     }
 
-    public void endPackFamilyWindow(net.chimera.shaderpack.GeometryOutputPlan outputs) {
+    public void endPackFamilyWindow(GeometryOutputPlan outputs) {
         if (outputs == null || !outputs.requiresDynamicAttachments()
                 || !PackGeometryContext.geometryActive() || this.shadowPassActive) {
             return;
@@ -1702,6 +1717,7 @@ public class ChimeraMainPass implements MainPass {
     }
 
     /** Restores the stable host resolve after a pack post pass fails. */
+    @SuppressWarnings("try") // the binding scope restores descriptor state on close
     private void renderIdentityResolve(VkCommandBuffer commandBuffer, VulkanImage hdrColor) {
         PackRenderState previousState = capturePackRenderState();
         preparePackFullscreenState();
@@ -1857,7 +1873,7 @@ public class ChimeraMainPass implements MainPass {
     }
 
     private String unavailablePostInputs(PackPipelines.PackPost post) {
-        java.util.ArrayList<String> missing = new java.util.ArrayList<>();
+        ArrayList<String> missing = new ArrayList<>();
         for (int target : post.requiredColorInputs()) {
             if (!this.packPostTargets.currentTargetAvailable(target)) missing.add("colortex" + target);
         }
@@ -2279,8 +2295,8 @@ public class ChimeraMainPass implements MainPass {
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
-        ChimeraTerrainPipelines.setTerrainShading(net.chimera.shaderpack.TerrainShadingDirectives.VANILLA);
-        PackUniformProvider.installHeldItems(net.chimera.shaderpack.PackItemIdResolver.empty(), true);
+        ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
+        PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
         PackUniformProvider.resetSession();
     }
 
@@ -2373,7 +2389,7 @@ public class ChimeraMainPass implements MainPass {
             // Full exception details stay in latest.log, not a multi-line shader dump in chat.
             reason = reason.lines().findFirst().orElse("unknown error");
             if (reason.length() > 160) reason = reason.substring(0, 160) + "…";
-            minecraft.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+            minecraft.gui.getChat().addMessage(Component.literal(
                     "[Chimera] Failed to load " + packLabel(requested) + ": " + reason
                             + ". " + recovery + " See latest.log."));
         }
@@ -2822,8 +2838,8 @@ public class ChimeraMainPass implements MainPass {
             if (dir == null) LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
-            ChimeraTerrainPipelines.setTerrainShading(net.chimera.shaderpack.TerrainShadingDirectives.VANILLA);
-            PackUniformProvider.installHeldItems(net.chimera.shaderpack.PackItemIdResolver.empty(), true);
+            ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
+            PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
             PackUniformProvider.installRuntimeSettings(null);
             this.packNeedsHdrDepth = false;
             return;
@@ -2832,9 +2848,9 @@ public class ChimeraMainPass implements MainPass {
                 ? this.packSource : PackSource.loadResult(dir, this.currentDimension);
         this.packSource = result;
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
-        Path optionFile = net.chimera.shaderpack.PackOptionSources.optionFile(dir);
+        Path optionFile = PackOptionSources.optionFile(dir);
         LOGGER.info("[chimera] pack options: file={}, applied={}", optionFile == null ? "none" : optionFile,
-                net.chimera.shaderpack.PackOptionSources.overrides(dir));
+                PackOptionSources.overrides(dir));
         this.conformanceReport = analysis.report();
         this.packPrograms = analysis.plan() == null ? result.programs()
                 : analysis.plan().programs().stream().map(PackProgramPlan::program).toList();
@@ -2844,13 +2860,13 @@ public class ChimeraMainPass implements MainPass {
         this.packPlan = analysis.plan() == null
                 ? new PackPlan(this.packConfig, List.of()) : analysis.plan();
         this.shadowCulling = this.packPlan.shadowCulling();
-        int renderDistance = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+        int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
         LOGGER.info("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
                 this.shadowCulling.state(), this.shadowCulling.terrain(renderDistance).describe(),
                 this.shadowCulling.entities(renderDistance).describe(), renderDistance,
                 this.shadowCulling.deviations().isEmpty() ? "" : " " + this.shadowCulling.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(this.packPlan.terrainMaterial());
-        net.chimera.shaderpack.TerrainShadingDirectives shading = this.packPlan.terrainShading();
+        TerrainShadingDirectives shading = this.packPlan.terrainShading();
         LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}{}", shading.oldLighting(),
                 shading.separateAo(), shading.deviations().isEmpty() ? "" : " " + shading.deviations());
         ChimeraTerrainPipelines.setTerrainShading(shading);
@@ -2878,12 +2894,12 @@ public class ChimeraMainPass implements MainPass {
                         || program.samplers().contains("depthtex1")
                         || program.samplers().contains("depthtex2"));
         PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir(),
-                net.chimera.shaderpack.PackEngineDefines.forPack(this.packPlan.settingsPreprocessorDefines()));
+                PackEngineDefines.forPack(this.packPlan.settingsPreprocessorDefines()));
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
-        net.chimera.shaderpack.PackItemIdResolver.ParseResult items = net.chimera.shaderpack.PackItemIdResolver.parse(
+        PackItemIdResolver.ParseResult items = PackItemIdResolver.parse(
                 result.shadersDir(),
-                net.chimera.shaderpack.PackEngineDefines.forPack(this.packPlan.settingsPreprocessorDefines()));
-        net.chimera.shaderpack.HandLightDirectives handLight = this.packPlan.handLight();
+                PackEngineDefines.forPack(this.packPlan.settingsPreprocessorDefines()));
+        HandLightDirectives handLight = this.packPlan.handLight();
         LOGGER.info("[chimera] pack held items: item ids={}, oldHandLight={}{}",
                 items.resolver().mappings().size(), handLight.oldHandLight(),
                 items.deviations().isEmpty() && handLight.deviations().isEmpty() ? ""
@@ -3414,7 +3430,7 @@ public class ChimeraMainPass implements MainPass {
                 }
                 LOGGER.info("[chimera] pack gbuffers_entities: ok (entity pipeline installed, "
                         + "stride={}, samplers={})",
-                        net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
+                        ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                         Arrays.toString(entity.samplerSlots()));
                 if (TRACE_TRANSITIONS) {
                     LOGGER.info("[chimera] pack gbuffers_entities converted vertex:\n{}",
@@ -3485,7 +3501,7 @@ public class ChimeraMainPass implements MainPass {
                 }
                 LOGGER.info("[chimera] pack gbuffers_block: ok (block adapter installed, "
                         + "stride={}, samplers={})",
-                        net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
+                        ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                         Arrays.toString(block.samplerSlots()));
                 this.packBlockTextPipeline = buildTextVariant(name, programPlan);
             } else if (FamilyAdapterRegistry.isBlockFamily(name)) {
@@ -3551,7 +3567,7 @@ public class ChimeraMainPass implements MainPass {
                 }
                 LOGGER.info("[chimera] pack gbuffers_particles: ok (particle adapter installed, "
                         + "stride={}, samplers={})",
-                        com.mojang.blaze3d.vertex.DefaultVertexFormat.PARTICLE.getVertexSize(),
+                        DefaultVertexFormat.PARTICLE.getVertexSize(),
                         Arrays.toString(particle.samplerSlots()));
             } else if (FamilyAdapterRegistry.isParticleLike(name)) {
                 PackPipelines.PackParticle particle = PackPipelines.buildParticleFamily(programPlan,
@@ -3680,7 +3696,7 @@ public class ChimeraMainPass implements MainPass {
         cleanUpPackVariant();
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.gui != null) {
-            minecraft.gui.getChat().addMessage(net.minecraft.network.chat.Component.literal(
+            minecraft.gui.getChat().addMessage(Component.literal(
                     "[Chimera] " + packLabel(this.packPath) + " is not supported yet ("
                             + this.packFrameUnsupported + " could not load). Rendering vanilla. See latest.log."));
         }
@@ -3707,15 +3723,13 @@ public class ChimeraMainPass implements MainPass {
         return missing;
     }
 
-    public boolean hasProgramImages(GraphicsPipeline pipeline) { return this.programImages.containsKey(pipeline); }
-
     public boolean packRuntimeRejected() { return this.packPostChainRejected; }
 
     /** True while a shader pack session is loaded (identity mode has none). */
     public boolean packLoaded() { return this.packPlan != null; }
 
     /** The loaded pack's screen overlay switches, or null while no pack session is loaded. */
-    public net.chimera.shaderpack.ScreenOverlayDirectives screenOverlays() { return this.screenOverlays; }
+    public ScreenOverlayDirectives screenOverlays() { return this.screenOverlays; }
 
     public void recordShadowDraw() {
         if (this.shadowPassActive && usePackShadowRuntime() && this.packStorageBufferOwner != null) {
@@ -3809,7 +3823,7 @@ public class ChimeraMainPass implements MainPass {
         if (plan == null || plan.interfacePlan() == null) {
             return Set.of();
         }
-        Set<String> symbols = new java.util.HashSet<>();
+        Set<String> symbols = new HashSet<>();
         for (var sampler : plan.interfacePlan().samplers()) {
             if (PackShadowDepth.requiresCompareSampler(sampler.glslType())) {
                 symbols.add(sampler.name());
@@ -3910,7 +3924,7 @@ public class ChimeraMainPass implements MainPass {
      */
     private PackPipelines.PackEntity buildTextVariant(String name, PackProgramPlan programPlan) {
         PackPipelines.PackEntity text = PackPipelines.buildLayoutVariant(programPlan,
-                com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
+                DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
                 this.packPlan == null ? PackAdvancedResourcePlan.empty() : this.packPlan.advancedResources(),
                 this.packStorageBufferOwner);
         if (text == null) {
@@ -3922,7 +3936,7 @@ public class ChimeraMainPass implements MainPass {
             return null;
         }
         LOGGER.info("[chimera] pack {}: text layout variant installed (stride={})", name,
-                net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH.getVertexSize());
+                ChimeraVertexFormats.EXTENDED_GLYPH.getVertexSize());
         return text;
     }
 
@@ -4030,16 +4044,6 @@ public class ChimeraMainPass implements MainPass {
                 this.packFinalExecution = execution;
             }
         }
-    }
-
-    private boolean requiresNoise(PackProgram program) {
-        if (this.conformanceReport == null) {
-            return false;
-        }
-        ConformanceReport.ProgramReport report = this.conformanceReport.program(program.name());
-        return report != null
-                && report.samplers().contains("noisetex")
-                && !report.deviations().contains("SAMPLER_DECLARATION_UNUSED:noisetex");
     }
 
     /** Discards installed post pipelines when target graph setup fails. */

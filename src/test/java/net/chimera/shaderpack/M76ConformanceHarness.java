@@ -1,9 +1,9 @@
 package net.chimera.shaderpack;
 
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.chimera.render.vertex.ChimeraVertexFormats;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 /** Deterministic M7.6 checks for the core family adapter registry. */
@@ -254,7 +255,7 @@ public final class M76ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected=" + expected + " actual=" + actual);
         }
     }

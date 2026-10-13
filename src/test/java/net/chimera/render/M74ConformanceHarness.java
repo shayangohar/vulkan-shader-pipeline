@@ -1,15 +1,16 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
-import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TargetStep;
-import net.chimera.render.shader.MrtPipelineContext;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 /** Deterministic M7.4 target and depth graph checks. */
 public final class M74ConformanceHarness {
@@ -134,7 +135,7 @@ public final class M74ConformanceHarness {
                     "unsupported consumer disabled unrelated supported targets");
         } finally {
             try (var paths = Files.walk(fixture)) {
-                for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
                     Files.delete(path);
                 }
             }
@@ -146,7 +147,7 @@ public final class M74ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

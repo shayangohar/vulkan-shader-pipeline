@@ -1,8 +1,12 @@
 package net.chimera.shaderpack;
 
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.util.shaderc.Shaderc;
+
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import org.lwjgl.util.shaderc.Shaderc;
 
 /** Throwaway runtime compiler smoke; no Vulkan device or game launch. */
 public final class AtlasPackSmoke {
@@ -25,21 +29,21 @@ public final class AtlasPackSmoke {
                     if (terrain == null || !terrain.executable()) throw new AssertionError("Terrain rejected: " + path);
                     String fragment = terrain.convertedFragment();
                     if (!fragment.contains("chimeraAtlas")) throw new AssertionError("Atlas bridge missing: " + path);
-                    java.nio.file.Files.writeString(Path.of("scratch/dump-" + (path.contains("Complementary") ? "comp" : "bsl") + "-terrain.frag"), fragment);
+                    Files.writeString(Path.of("scratch/dump-" + (path.contains("Complementary") ? "comp" : "bsl") + "-terrain.frag"), fragment);
                     for (String stage : new String[]{"vertex", "fragment"}) {
                         String source = stage.equals("vertex") ? terrain.convertedVertex() : fragment;
-                        java.nio.ByteBuffer code = org.lwjgl.system.MemoryUtil.memUTF8(source, false);
-                        java.nio.ByteBuffer file = org.lwjgl.system.MemoryUtil.memUTF8("gbuffers_terrain." + stage);
-                        java.nio.ByteBuffer entry = org.lwjgl.system.MemoryUtil.memUTF8("main");
+                        ByteBuffer code = MemoryUtil.memUTF8(source, false);
+                        ByteBuffer file = MemoryUtil.memUTF8("gbuffers_terrain." + stage);
+                        ByteBuffer entry = MemoryUtil.memUTF8("main");
                         long result;
                         try {
                             result = Shaderc.shaderc_compile_into_spv(compiler, code,
                                     stage.equals("vertex") ? Shaderc.shaderc_glsl_vertex_shader : Shaderc.shaderc_glsl_fragment_shader,
                                     file, entry, options);
                         } finally {
-                            org.lwjgl.system.MemoryUtil.memFree(code);
-                            org.lwjgl.system.MemoryUtil.memFree(file);
-                            org.lwjgl.system.MemoryUtil.memFree(entry);
+                            MemoryUtil.memFree(code);
+                            MemoryUtil.memFree(file);
+                            MemoryUtil.memFree(entry);
                         }
                         try {
                             if (result == 0 || Shaderc.shaderc_result_get_compilation_status(result)

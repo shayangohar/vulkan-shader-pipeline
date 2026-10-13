@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * Gives every uninitialized function-scope variable of a plain data type an
@@ -42,7 +43,7 @@ public final class SpirvLocalInitializer {
     private SpirvLocalInitializer() {}
 
     /** Runs a pack pipeline creation with pack-module initialization enabled. */
-    static <T> T forPackCompile(java.util.function.Supplier<T> creation) {
+    static <T> T forPackCompile(Supplier<T> creation) {
         boolean outer = PACK_COMPILE.get();
         PACK_COMPILE.set(true);
         try {

@@ -2,16 +2,16 @@ package net.chimera.render;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackProbe;
-import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackTargetGraphPlan;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 
 /** Deterministic M7.7 schedule and temporal-state checks. */
 public final class M77ConformanceHarness {
@@ -207,7 +207,7 @@ public final class M77ConformanceHarness {
     }
 
     private static void assertEquals(Object expected, Object actual, String message) {
-        if (!java.util.Objects.equals(expected, actual)) {
+        if (!Objects.equals(expected, actual)) {
             throw new AssertionError(message + ": expected " + expected + ", got " + actual);
         }
     }

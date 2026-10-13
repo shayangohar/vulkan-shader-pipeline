@@ -1,8 +1,9 @@
 package net.chimera.shaderpack;
 
+import org.lwjgl.util.shaderc.Shaderc;
+
 import java.util.List;
 import java.util.Set;
-import org.lwjgl.util.shaderc.Shaderc;
 
 public final class TerrainAtlasSamplingHarness {
     public static void main(String[] args) {

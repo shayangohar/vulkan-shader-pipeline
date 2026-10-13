@@ -1,25 +1,32 @@
 package net.chimera.render.shader;
 
 import net.chimera.shaderpack.BiomeIds;
-import net.chimera.shaderpack.UniformRegistry;
+import net.chimera.shaderpack.PackItemIdResolver;
+import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.PackRuntimeSettings;
+import net.chimera.shaderpack.UniformRegistry;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.fog.FogData;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.attribute.EnvironmentAttributes;
-import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.level.GameType;
-import net.minecraft.world.level.LightLayer;
-import net.minecraft.world.level.material.FogType;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.attribute.EnvironmentAttributes;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.material.FogType;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * One render-thread snapshot shared by every pack supplier in a frame.
@@ -123,7 +130,7 @@ final class PackFrameState {
     private float entityAlphaReference;
     // Per frame: the glint strength option, vanilla Globals.GlintAlpha (Iris isGlint gl_Color).
     private float glintAlpha = 1.0F;
-    private net.chimera.shaderpack.PackRenderingPhase renderingPhase = net.chimera.shaderpack.PackRenderingPhase.NONE;
+    private PackRenderingPhase renderingPhase = PackRenderingPhase.NONE;
     private int currentTime;
     private int bedrockLevel;
     private float screenSizeWidth;
@@ -168,7 +175,7 @@ final class PackFrameState {
         this.session = this.runtimeSettings.newSession();
     }
 
-    void installHeldItems(net.chimera.shaderpack.PackItemIdResolver items, boolean oldHandLight) {
+    void installHeldItems(PackItemIdResolver items, boolean oldHandLight) {
         heldItems.install(items, oldHandLight);
     }
 
@@ -611,12 +618,12 @@ final class PackFrameState {
             return;
         }
         long dayTime = level.getDayTime();
-        boolean netherOrEnd = level.dimension() == net.minecraft.world.level.Level.NETHER
-                || level.dimension() == net.minecraft.world.level.Level.END;
+        boolean netherOrEnd = level.dimension() == Level.NETHER
+                || level.dimension() == Level.END;
         boolean fixedTime = level.dimensionType().hasFixedTime();
         worldTime = irisWorldTimeForTest(dayTime, fixedTime, netherOrEnd);
         worldDay = irisWorldDayForTest(dayTime);
-        moonPhase = (int) Math.floorMod(worldDay, 8);
+        moonPhase = Math.floorMod(worldDay, 8);
         rainStrength = clamp(level.getRainLevel(partialTick), 0.0f, 1.0f);
         thunderStrength = clamp(level.getThunderLevel(partialTick), 0.0f, 1.0f);
         captureCelestial(camera, partialTick);
@@ -628,7 +635,7 @@ final class PackFrameState {
         hasCeiling = level.dimensionType().hasCeiling() ? 1 : 0;
         hasSkylight = level.dimensionType().hasSkyLight() ? 1 : 0;
         ambientLight = level.dimensionType().ambientLight();
-        cloudHeight = level.dimension() == net.minecraft.world.level.Level.OVERWORLD
+        cloudHeight = level.dimension() == Level.OVERWORLD
                 ? 192.0f : 0.0f;
         BlockPos biomePos = BlockPos.containing(cameraOrigin.rawX, cameraOrigin.rawY, cameraOrigin.rawZ);
         var biomeHolder = level.getBiome(biomePos);
@@ -636,7 +643,7 @@ final class PackFrameState {
         biomeCategory = BiomeIds.category(biomeHolder).ordinal();
         biomeTemperature = biome.getBaseTemperature();
         rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
-        eyeAltitude = (float) cameraOrigin.y;
+        eyeAltitude = cameraOrigin.y;
         biomeId = BiomeIds.id(biomeKey(level, biomePos));
         biomePrecipitation = precipitation(biome, biomePos, level.getSeaLevel());
         farPlane = Math.max(minecraft.options.getEffectiveRenderDistance(), 1) * 16.0f;
@@ -706,12 +713,12 @@ final class PackFrameState {
     }
 
     /** The camera biome's key, which is the name the constant table numbers. */
-    private static net.minecraft.resources.Identifier biomeKey(ClientLevel level, BlockPos pos) {
+    private static Identifier biomeKey(ClientLevel level, BlockPos pos) {
         return level.getBiome(pos).unwrapKey().map(key -> key.identifier()).orElse(null);
     }
 
     /** The pack's precipitation input: none, rain or snow, as the packs compare it. */
-    private static int precipitation(net.minecraft.world.level.biome.Biome biome, BlockPos pos,
+    private static int precipitation(Biome biome, BlockPos pos,
                                      int seaLevel) {
         return switch (biome.getPrecipitationAt(pos, seaLevel)) {
             case NONE -> 0;
@@ -736,7 +743,7 @@ final class PackFrameState {
     }
 
     /** Declarations whose expression produced a non-finite result this session, with context. */
-    java.util.Map<String, String> valueFailures() {
+    Map<String, String> valueFailures() {
         return session.failures();
     }
 
@@ -755,9 +762,9 @@ final class PackFrameState {
         return true;
     }
 
-    net.chimera.shaderpack.PackRenderingPhase setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase phase) {
+    PackRenderingPhase setRenderingPhase(PackRenderingPhase phase) {
         var previous = renderingPhase;
-        renderingPhase = java.util.Objects.requireNonNull(phase);
+        renderingPhase = Objects.requireNonNull(phase);
         return previous;
     }
 
@@ -891,13 +898,13 @@ final class PackFrameState {
     }
 
     private static int dimensionOrdinal(ClientLevel level) {
-        if (level.dimension() == net.minecraft.world.level.Level.OVERWORLD) {
+        if (level.dimension() == Level.OVERWORLD) {
             return 0;
         }
-        if (level.dimension() == net.minecraft.world.level.Level.NETHER) {
+        if (level.dimension() == Level.NETHER) {
             return -1;
         }
-        if (level.dimension() == net.minecraft.world.level.Level.END) {
+        if (level.dimension() == Level.END) {
             return 1;
         }
         return 2;
