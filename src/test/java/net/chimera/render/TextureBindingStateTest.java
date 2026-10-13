@@ -59,7 +59,11 @@ final class TextureBindingStateTest {
         state.reset();
         assertTrue(state.binding(0) == null && state.binding(14) == null,
                 "cleanup left pack bindings active");
+    }
 
+    @Test
+    void terrainWaitsForSelectorSync() {
+        ChimeraTextureBindingState.BindingStore<Object> state = new ChimeraTextureBindingState.BindingStore<>();
         // Terrain starts with only a selector snapshot. The override must be
         // absent until VulkanMod has synchronized the actual atlas image.
         state.setTerrainSampler(909L);
@@ -75,11 +79,17 @@ final class TextureBindingStateTest {
         state.clear(0);
         assertTrue(state.binding(0) == null,
                 "terrain override survived the terrain window return");
+    }
 
+    @Test
+    void handBoundary() {
         ChimeraMainPass.HandBoundaryPolicy handPolicy = ChimeraMainPass.handBoundaryPolicy();
         assertTrue(handPolicy.loadColor() && handPolicy.clearDepth(),
                 "hand continuation must load color and clear depth");
+    }
 
+    @Test
+    void shadowCompareSampler() {
         // The converted shadow image needs a compare-enabled sampler for
         // sampler2DShadow lookups, and only for those: a program that declares the
         // same texture as sampler2D keeps the image's non-compare sampler.
@@ -94,7 +104,10 @@ final class TextureBindingStateTest {
         assertEquals(3L, compare.getCompareOp(), "shadow sampler comparison operator");
         assertEquals(2L, compare.getAddressModeU(), "shadow sampler address mode");
         assertEquals(1L, compare.getMinFilter(), "shadow sampler min filter");
+    }
 
+    @Test
+    void depthViewOverride() {
         // A depth-only override is scoped to one image identity and cleared after
         // the conversion draw; the host image keeps its own view.
         ChimeraDepthViewOverride.bind(null, 4242L);

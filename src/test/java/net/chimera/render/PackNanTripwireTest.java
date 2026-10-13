@@ -336,24 +336,32 @@ final class PackNanTripwireTest {
             if (device != null) {
                 vkDeviceWaitIdle(device);
                 if (mapped != null) vkUnmapMemory(device, hostMemory);
-                if (pipeline != 0) vkDestroyPipeline(device, pipeline, null);
-                if (descriptors != 0) vkDestroyDescriptorPool(device, descriptors, null);
-                if (layout != 0) vkDestroyPipelineLayout(device, layout, null);
-                if (setLayout != 0) vkDestroyDescriptorSetLayout(device, setLayout, null);
-                if (shader != 0) vkDestroyShaderModule(device, shader, null);
-                if (sampler != 0) vkDestroySampler(device, sampler, null);
-                if (view != 0) vkDestroyImageView(device, view, null);
-                if (image != 0) vkDestroyImage(device, image, null);
-                if (imageMemory != 0) vkFreeMemory(device, imageMemory, null);
-                if (resultBuffer != 0) vkDestroyBuffer(device, resultBuffer, null);
-                if (hostBuffer != 0) vkDestroyBuffer(device, hostBuffer, null);
-                if (resultMemory != 0) vkFreeMemory(device, resultMemory, null);
-                if (hostMemory != 0) vkFreeMemory(device, hostMemory, null);
+                destroyComputePipeline();
+                destroyImageAndBuffers();
                 if (fence != 0) vkDestroyFence(device, fence, null);
                 if (pool != 0) vkDestroyCommandPool(device, pool, null);
                 vkDestroyDevice(device, null);
             }
             if (instance != null) vkDestroyInstance(instance, null);
+        }
+
+        private void destroyComputePipeline() {
+            if (pipeline != 0) vkDestroyPipeline(device, pipeline, null);
+            if (descriptors != 0) vkDestroyDescriptorPool(device, descriptors, null);
+            if (layout != 0) vkDestroyPipelineLayout(device, layout, null);
+            if (setLayout != 0) vkDestroyDescriptorSetLayout(device, setLayout, null);
+            if (shader != 0) vkDestroyShaderModule(device, shader, null);
+        }
+
+        private void destroyImageAndBuffers() {
+            if (sampler != 0) vkDestroySampler(device, sampler, null);
+            if (view != 0) vkDestroyImageView(device, view, null);
+            if (image != 0) vkDestroyImage(device, image, null);
+            if (imageMemory != 0) vkFreeMemory(device, imageMemory, null);
+            if (resultBuffer != 0) vkDestroyBuffer(device, resultBuffer, null);
+            if (hostBuffer != 0) vkDestroyBuffer(device, hostBuffer, null);
+            if (resultMemory != 0) vkFreeMemory(device, resultMemory, null);
+            if (hostMemory != 0) vkFreeMemory(device, hostMemory, null);
         }
     }
 }

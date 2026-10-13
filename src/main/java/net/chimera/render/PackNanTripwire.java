@@ -350,20 +350,10 @@ public final class PackNanTripwire {
         List<String> dirty = new ArrayList<>();
         int firstDirty = -1;
         for (int slot = 0; slot < frame.labels.size(); slot++) {
-            int base = slot * WORDS_PER_CHECK * 4;
-            int nan = frame.data.getInt(base);
-            int inf = frame.data.getInt(base + 4);
-            if (nan == 0 && inf == 0) continue;
-            int first = frame.data.getInt(base + 8);
-            int bits = frame.data.getInt(base + 12);
-            int x = first & 0xFFFF;
-            int y = first >>> 16;
-            int[] size = frame.sizes.get(slot);
+            String description = describeDirty(frame, slot);
+            if (description == null) continue;
             if (firstDirty < 0) firstDirty = slot;
-            dirty.add(String.format(
-                    "#%d %s %dx%d: nan=%d inf=%d channels=%s first=(%d,%d) image, (%d,%d) screen",
-                    slot, frame.labels.get(slot), size[0], size[1], nan, inf, channels(bits),
-                    x, y, x, size[1] - 1 - y));
+            dirty.add(description);
         }
         if (dirty.isEmpty() && frame.badUniforms.isEmpty() && !frame.truncated) {
             if (!this.armed) {
@@ -375,6 +365,36 @@ public final class PackNanTripwire {
         if (dirty.isEmpty() && frame.badUniforms.isEmpty()) return;
         if (!this.armed) return;
         this.armed = false;
+        boolean capture = triggerRenderDocCapture();
+        LOGGER.warn(report(frame, dirty, capture));
+        String first = firstDirty < 0 ? "uniforms"
+                : frame.labels.get(firstDirty);
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.gui != null) {
+            minecraft.gui.getChat().addMessage(Component.literal("[Chimera] NaN: "
+                    + first + (capture ? ". Capture queued." : ".") + " See latest.log."));
+        }
+    }
+
+    /** One check's report line, or null when its target held no non-finite texel. */
+    private static String describeDirty(Frame frame, int slot) {
+        int base = slot * WORDS_PER_CHECK * 4;
+        int nan = frame.data.getInt(base);
+        int inf = frame.data.getInt(base + 4);
+        if (nan == 0 && inf == 0) return null;
+        int first = frame.data.getInt(base + 8);
+        int bits = frame.data.getInt(base + 12);
+        int x = first & 0xFFFF;
+        int y = first >>> 16;
+        int[] size = frame.sizes.get(slot);
+        return String.format(
+                "#%d %s %dx%d: nan=%d inf=%d channels=%s first=(%d,%d) image, (%d,%d) screen",
+                slot, frame.labels.get(slot), size[0], size[1], nan, inf, channels(bits),
+                x, y, x, size[1] - 1 - y);
+    }
+
+    /** The fired frame's report: its checks in order, the dirty ones, the bad uniforms and the capture. */
+    private String report(Frame frame, List<String> dirty, boolean capture) {
         StringBuilder report = new StringBuilder();
         report.append("[chimera] NaN tripwire fired on frame ").append(frame.number)
                 .append(" (pack ").append(frame.pack).append(", ").append(frame.labels.size())
@@ -391,19 +411,11 @@ public final class PackNanTripwire {
         }
         report.append("\n  non-finite uniforms: ")
                 .append(frame.badUniforms.isEmpty() ? "none" : String.join(", ", frame.badUniforms));
-        boolean capture = triggerRenderDocCapture();
         report.append("\n  Results read at frame-slot reuse (ring size ").append(this.frames.length)
                 .append("); an automatic capture records later propagation, not the original seed");
         report.append("\n  RenderDoc capture: ").append(capture ? "triggered for the next frame"
                 : "not available (not running under RenderDoc)");
-        LOGGER.warn(report.toString());
-        String first = firstDirty < 0 ? "uniforms"
-                : frame.labels.get(firstDirty);
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.gui != null) {
-            minecraft.gui.getChat().addMessage(Component.literal("[Chimera] NaN: "
-                    + first + (capture ? ". Capture queued." : ".") + " See latest.log."));
-        }
+        return report.toString();
     }
 
     private static String channels(int bits) {

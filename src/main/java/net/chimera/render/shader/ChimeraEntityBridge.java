@@ -124,6 +124,17 @@ public final class ChimeraEntityBridge {
     );
     /** Fixed core particle/weather, item and crumbling discard threshold. */
     private static final float FIXED_ALPHA_CUTOUT = 0.1F;
+    /** Host pipelines tested at {@link #FIXED_ALPHA_CUTOUT} (Iris ONE_TENTH_ALPHA). */
+    private static final Set<RenderPipeline> FIXED_CUTOUT_PIPELINES = Set.of(
+            RenderPipelines.CRUMBLING,
+            RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL,
+            RenderPipelines.OPAQUE_PARTICLE,
+            RenderPipelines.TRANSLUCENT_PARTICLE,
+            RenderPipelines.WEATHER_DEPTH_WRITE,
+            RenderPipelines.WEATHER_NO_DEPTH_WRITE,
+            // Iris ENTITIES_EYES_TRANS: ONE_TENTH_ALPHA.
+            RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE
+    );
     /** Iris AlphaTests.NON_ZERO_ALPHA: GREATER 0.0001. */
     private static final float NON_ZERO_ALPHA = 0.0001F;
     private ChimeraEntityBridge() {}
@@ -649,14 +660,7 @@ public final class ChimeraEntityBridge {
         if (lane != null) return lane.alphaReference();
         // Iris SHADOW_ENTITIES_CUTOUT tests every entity caster at ONE_TENTH_ALPHA.
         if (isShadowCasterPass()) return FIXED_ALPHA_CUTOUT;
-        if (pipeline == RenderPipelines.CRUMBLING
-                || pipeline == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
-                || pipeline == RenderPipelines.OPAQUE_PARTICLE
-                || pipeline == RenderPipelines.TRANSLUCENT_PARTICLE
-                || pipeline == RenderPipelines.WEATHER_DEPTH_WRITE
-                || pipeline == RenderPipelines.WEATHER_NO_DEPTH_WRITE
-                // Iris ENTITIES_EYES_TRANS: ONE_TENTH_ALPHA.
-                || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) return FIXED_ALPHA_CUTOUT;
+        if (pipeline != null && FIXED_CUTOUT_PIPELINES.contains(pipeline)) return FIXED_ALPHA_CUTOUT;
         // Iris ENTITIES_EYES and GLINT: NON_ZERO_ALPHA.
         if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.GLINT) return NON_ZERO_ALPHA;
         // Iris TEXT and TEXT_BE: ONE_TENTH_ALPHA; HAND_TEXT: NON_ZERO_ALPHA. The core
@@ -666,6 +670,11 @@ public final class ChimeraEntityBridge {
             return activeFamily == Family.HAND || activeFamily == Family.HAND_WATER
                     ? NON_ZERO_ALPHA : FIXED_ALPHA_CUTOUT;
         }
+        return definedAlphaCutout(pipeline);
+    }
+
+    /** The pipeline's positive ALPHA_CUTOUT define, or 0 when it is absent or malformed. */
+    private static float definedAlphaCutout(RenderPipeline pipeline) {
         String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
         if (cutout == null) return 0.0F;
         try {
@@ -684,7 +693,6 @@ public final class ChimeraEntityBridge {
         return pipeline != null && SUPPORTED_WORLD_PIPELINES.contains(pipeline);
     }
 
-    /** Selects the most specific installed entity lane for one host render type. */
     /**
      * Installs the text layout variants after {@link #install}: Iris draws TEXT with
      * gbuffers_entities_translucent and a block entity's TEXT_BE with its block program.
@@ -714,6 +722,7 @@ public final class ChimeraEntityBridge {
         };
     }
 
+    /** Selects the most specific installed entity lane for one host render type. */
     public static Family familyForRenderType(Family base, RenderType renderType) {
         if (isShadowCasterPass()) {
             // One shadow program for every entity-format caster. A batch on another layout
@@ -728,20 +737,23 @@ public final class ChimeraEntityBridge {
             return textPipelineFor(text) != null ? text : Family.HOST_FALLBACK;
         }
         if (base == Family.ENTITY && renderType != null) {
-            if (renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT
-                    || renderType.pipeline() == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) {
-                return translucentEntityPipeline != null
-                        ? Family.ENTITY_TRANSLUCENT : Family.HOST_FALLBACK;
-            }
-            // Iris IrisPipelines: EYES -> ENTITIES_EYES and ENTITY_TRANSLUCENT_EMISSIVE ->
-            // ENTITIES_EYES_TRANS, both ProgramId.SpiderEyes (gbuffers_entities_glowing is unused).
-            if (renderType.pipeline() == RenderPipelines.EYES
-                    || renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
-                return spiderEyesPipeline != null
-                        ? Family.SPIDER_EYES : Family.HOST_FALLBACK;
-            }
+            return entityFamilyFor(renderType.pipeline());
         }
         return base;
+    }
+
+    /** Moves an ENTITY batch to the translucent or eyes lane its host pipeline belongs to. */
+    private static Family entityFamilyFor(RenderPipeline pipeline) {
+        if (pipeline == RenderPipelines.ENTITY_TRANSLUCENT
+                || pipeline == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) {
+            return translucentEntityPipeline != null ? Family.ENTITY_TRANSLUCENT : Family.HOST_FALLBACK;
+        }
+        // Iris IrisPipelines: EYES -> ENTITIES_EYES and ENTITY_TRANSLUCENT_EMISSIVE ->
+        // ENTITIES_EYES_TRANS, both ProgramId.SpiderEyes (gbuffers_entities_glowing is unused).
+        if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
+            return spiderEyesPipeline != null ? Family.SPIDER_EYES : Family.HOST_FALLBACK;
+        }
+        return Family.ENTITY;
     }
 
     /**
@@ -756,12 +768,7 @@ public final class ChimeraEntityBridge {
             return false;
         }
         selectParticleFamily(pipeline);
-        if (requestedFamily == Family.HAND || requestedFamily == Family.HAND_WATER) {
-            var variants = requestedFamily == Family.HAND ? handVariants : handWaterVariants;
-            var selected = variants == null ? null : variants.forFormat(pipeline.getVertexFormat());
-            activeFamily = selected == null ? Family.HOST_FALLBACK : requestedFamily;
-            activePipeline = selected == null ? null : selected.pipeline();
-        }
+        selectHandVariant(pipeline);
         if (activePipeline == null) return false;
         VertexFormat format = pipeline.getVertexFormat();
         if (isGlyphFormat(format) && isTextPipeline(pipeline)
@@ -772,6 +779,11 @@ public final class ChimeraEntityBridge {
             activePipeline = text;
             return true;
         }
+        return activeFamilyAccepts(pipeline, format);
+    }
+
+    /** True when the active family's pack pipeline can draw this host pipeline and vertex format. */
+    private static boolean activeFamilyAccepts(RenderPipeline pipeline, VertexFormat format) {
         return switch (activeFamily) {
             case DAMAGED_BLOCK -> pipeline == RenderPipelines.CRUMBLING
                     && format == DefaultVertexFormat.BLOCK;
@@ -967,6 +979,17 @@ public final class ChimeraEntityBridge {
             activeFamily = Family.HOST_FALLBACK;
             activePipeline = null;
         }
+    }
+
+    /** Picks the hand variant built for the host draw's vertex format, or host fallback. */
+    private static void selectHandVariant(RenderPipeline hostPipeline) {
+        if (requestedFamily != Family.HAND && requestedFamily != Family.HAND_WATER) {
+            return;
+        }
+        var variants = requestedFamily == Family.HAND ? handVariants : handWaterVariants;
+        var selected = variants == null ? null : variants.forFormat(hostPipeline.getVertexFormat());
+        activeFamily = selected == null ? Family.HOST_FALLBACK : requestedFamily;
+        activePipeline = selected == null ? null : selected.pipeline();
     }
 
     private static String status(GraphicsPipeline value) {

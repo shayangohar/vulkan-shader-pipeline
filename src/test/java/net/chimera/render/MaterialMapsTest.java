@@ -72,7 +72,7 @@ final class MaterialMapsTest {
     // ------------------------------------------------------------------
 
     @Test
-    void pixelPolicies() throws Exception {
+    void labPbrReduction() throws Exception {
         int[] lab = readFixtureAbgr("assets/minecraft/textures/block/m87_lab_s.png");
         assertEquals(4 * 4, lab.length, "lab fixture size");
 
@@ -100,6 +100,12 @@ final class MaterialMapsTest {
         assertEquals(231, MaterialMapPixels.green(
                 MaterialMapPixels.reduceLabPbr(metalTie, 2, 2, 1, 1)[0]), "metal tie keeps earliest");
 
+        int[] level2 = MaterialMapPixels.reduceLabPbr(level1, 2, 2, 1, 1);
+        assertEquals(pack(255, 37, 143, 52), level2[0], "lab quad final");
+    }
+
+    @Test
+    void averagedReduction() {
         // Asymmetric reduction averages the whole footprint: a 4x4 source
         // with distinct texels per 2x2 quad must not select top-left texels.
         int[] blocks = new int[16];
@@ -110,16 +116,16 @@ final class MaterialMapsTest {
         assertEquals(pack(255, 2, 2, 2), small[0], "weighted reduction averages");
         assertEquals(pack(255, 12, 12, 12), small[3], "weighted reduction far quad");
 
-        int[] level2 = MaterialMapPixels.reduceLabPbr(level1, 2, 2, 1, 1);
-        assertEquals(pack(255, 37, 143, 52), level2[0], "lab quad final");
-
         int[] quad = {
                 pack(30, 20, 10, 0), pack(70, 60, 50, 40),
                 pack(110, 100, 90, 80), pack(150, 140, 130, 120),
         };
         int[] mean = MaterialMapPixels.reduceLinear(quad, 2, 2, 1, 1);
         assertEquals(pack(90, 80, 70, 60), mean[0], "linear mean");
+    }
 
+    @Test
+    void scaling() throws Exception {
         int[] brickN = readFixtureAbgr("assets/minecraft/textures/block/m87_brick_n.png");
         int[] down = MaterialMapPixels.scale(brickN, 32, 32, 16, 16);
         assertEquals(pack(255, 200, 100, 0), down[0], "point downscale origin");
@@ -141,7 +147,10 @@ final class MaterialMapsTest {
 
         int[] identical = MaterialMapPixels.scale(tiny, 2, 2, 2, 2);
         assertTrue(identical != tiny && Arrays.equals(identical, tiny), "identical copy");
+    }
 
+    @Test
+    void levelSizesAndLimits() {
         assertEquals(8, MaterialMapPixels.levelSize(64, 3), "level size");
         assertEquals(1, MaterialMapPixels.levelSize(4, 3), "level size floor");
 

@@ -35,18 +35,23 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
             SubmitNodeStorage.ModelSubmit<?> submit,
             CallbackInfo callback
     ) {
-        if (ChimeraRenderer.segmentsActive()
-                && ChimeraEntityBridge.isInstalled()
-                && ChimeraEntityBridge.isWorldSubmissionWindow()
-                && ChimeraEntityBridge.isEntityBufferReady()
-                && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity
-                && ChimeraEntityBridge.supportsSubmissionFamily(entity.family())
+        if (!ChimeraRenderer.segmentsActive()
+                || !ChimeraEntityBridge.isInstalled()
+                || !ChimeraEntityBridge.isWorldSubmissionWindow()
+                || !(SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity)
                 // Outlined submissions are consumed by the host outline
                 // buffer. Keep them out of the temporary extended-format
                 // batch so that buffer is never flushed with a host pipeline
                 // and an entity-only stride.
-                && submit.outlineColor() == 0
-                && ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
+                || submit.outlineColor() != 0) {
+            return;
+        }
+        if (!ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
+            FamilyDrawTrace.noteUnsupportedWorldPipeline(renderType);
+            return;
+        }
+        if (ChimeraEntityBridge.isEntityBufferReady()
+                && ChimeraEntityBridge.supportsSubmissionFamily(entity.family())) {
             Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> destination =
                     entity.family() == SubmissionIdentity.FAMILY_BLOCK
                             ? chimera$blockSubmits : chimera$entitySubmits;
@@ -54,13 +59,6 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
             FamilyDrawTrace.noteSeparatedBatch(renderType,
                     destination.get(renderType).size());
             callback.cancel();
-        } else if (ChimeraRenderer.segmentsActive()
-                && ChimeraEntityBridge.isInstalled()
-                && ChimeraEntityBridge.isWorldSubmissionWindow()
-                && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity
-                && submit.outlineColor() == 0
-                && !ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
-            FamilyDrawTrace.noteUnsupportedWorldPipeline(renderType);
         }
     }
 

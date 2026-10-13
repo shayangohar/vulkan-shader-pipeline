@@ -140,24 +140,13 @@ final class PackMipChainTest {
             long image = 0, memory = 0, buffer = 0, bufferMemory = 0;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 LongBuffer handle = stack.mallocLong(1);
-                ok(vkCreateImage(device, VkImageCreateInfo.calloc(stack).sType$Default()
-                        .imageType(VK_IMAGE_TYPE_2D).format(FORMAT).extent(e -> e.set(width, height, 1))
-                        .mipLevels(levels).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
-                        .tiling(VK_IMAGE_TILING_OPTIMAL)
-                        .usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-                        .sharingMode(VK_SHARING_MODE_EXCLUSIVE).initialLayout(VK_IMAGE_LAYOUT_UNDEFINED),
-                        null, handle));
-                image = handle.get(0);
+                image = createImage(stack, handle, width, height, levels);
                 VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
                 vkGetImageMemoryRequirements(device, image, requirements);
                 memory = allocate(stack, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                 ok(vkBindImageMemory(device, image, memory, 0));
 
-                long bytes = 0;
-                for (int level = 0; level < levels; level++) {
-                    bytes += (long) Math.max(1, width >> level) * Math.max(1, height >> level) * 8;
-                }
+                long bytes = chainBytes(width, height, levels);
                 ok(vkCreateBuffer(device, VkBufferCreateInfo.calloc(stack).sType$Default().size(bytes)
                         .usage(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
                         .sharingMode(VK_SHARING_MODE_EXCLUSIVE), null, handle));
@@ -176,15 +165,7 @@ final class PackMipChainTest {
 
                 ok(vkResetCommandBuffer(command, 0));
                 ok(vkBeginCommandBuffer(command, VkCommandBufferBeginInfo.calloc(stack).sType$Default()));
-                barrier(stack, image, 0, levels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
-                VkImageSubresourceRange.Buffer all = VkImageSubresourceRange.calloc(1, stack);
-                all.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(levels).layerCount(1);
-                VkClearColorValue poison = VkClearColorValue.calloc(stack).float32(stack.floats(-7, -7, -7, -7));
-                vkCmdClearColorImage(command, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, poison, all);
-                barrier(stack, image, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                        VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                recordPoison(stack, image, levels);
                 if (texels != null) {
                     VkBufferImageCopy.Buffer upload = VkBufferImageCopy.calloc(1, stack);
                     upload.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
@@ -205,37 +186,15 @@ final class PackMipChainTest {
                 barrier(stack, image, 0, levels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
                         VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-                VkBufferImageCopy.Buffer readback = VkBufferImageCopy.calloc(levels, stack);
-                long offset = 0;
-                for (int level = 0; level < levels; level++) {
-                    int levelWidth = Math.max(1, width >> level);
-                    int levelHeight = Math.max(1, height >> level);
-                    readback.get(level).bufferOffset(offset);
-                    readback.get(level).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                            .mipLevel(level).layerCount(1);
-                    readback.get(level).imageExtent().set(levelWidth, levelHeight, 1);
-                    offset += (long) levelWidth * levelHeight * 8;
-                }
-                vkCmdCopyImageToBuffer(command, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, readback);
+                vkCmdCopyImageToBuffer(command, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer,
+                        readbackRegions(stack, width, height, levels));
                 vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0,
                         VkMemoryBarrier.calloc(1, stack).sType$Default()
                                 .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(VK_ACCESS_HOST_READ_BIT),
                         null, null);
-                ok(vkEndCommandBuffer(command));
-                ok(vkResetFences(device, fence));
-                ok(vkQueueSubmit(queue, VkSubmitInfo.calloc(stack).sType$Default()
-                        .pCommandBuffers(stack.pointers(command.address())), fence));
-                ok(vkWaitForFences(device, fence, true, 10_000_000_000L));
+                submitAndWait(stack);
 
-                float[][] result = new float[levels][];
-                int at = 0;
-                for (int level = 0; level < levels; level++) {
-                    int count = Math.max(1, width >> level) * Math.max(1, height >> level) * 4;
-                    result[level] = new float[count];
-                    for (int i = 0; i < count; i++, at += 2) {
-                        result[level][i] = Float.float16ToFloat(mapped.getShort(at));
-                    }
-                }
+                float[][] result = readLevels(mapped, width, height, levels);
                 vkUnmapMemory(device, bufferMemory);
                 return result;
             } finally {
@@ -244,6 +203,79 @@ final class PackMipChainTest {
                 if (image != 0) vkDestroyImage(device, image, null);
                 if (memory != 0) vkFreeMemory(device, memory, null);
             }
+        }
+
+        private long createImage(MemoryStack stack, LongBuffer handle, int width, int height, int levels) {
+            ok(vkCreateImage(device, VkImageCreateInfo.calloc(stack).sType$Default()
+                    .imageType(VK_IMAGE_TYPE_2D).format(FORMAT).extent(e -> e.set(width, height, 1))
+                    .mipLevels(levels).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
+                    .tiling(VK_IMAGE_TILING_OPTIMAL)
+                    .usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                            | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE).initialLayout(VK_IMAGE_LAYOUT_UNDEFINED),
+                    null, handle));
+            return handle.get(0);
+        }
+
+        /** Staging bytes for every level of the chain, packed back to back. */
+        private static long chainBytes(int width, int height, int levels) {
+            long bytes = 0;
+            for (int level = 0; level < levels; level++) {
+                bytes += (long) Math.max(1, width >> level) * Math.max(1, height >> level) * 8;
+            }
+            return bytes;
+        }
+
+        /** Clears every level to the poison value, then orders level 0 for its seed write. */
+        private void recordPoison(MemoryStack stack, long image, int levels) {
+            barrier(stack, image, 0, levels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+            VkImageSubresourceRange.Buffer all = VkImageSubresourceRange.calloc(1, stack);
+            all.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(levels).layerCount(1);
+            VkClearColorValue poison = VkClearColorValue.calloc(stack).float32(stack.floats(-7, -7, -7, -7));
+            vkCmdClearColorImage(command, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, poison, all);
+            barrier(stack, image, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        }
+
+        /** One copy region per level, at the offsets {@link #chainBytes} packs them to. */
+        private static VkBufferImageCopy.Buffer readbackRegions(MemoryStack stack, int width, int height,
+                                                                int levels) {
+            VkBufferImageCopy.Buffer readback = VkBufferImageCopy.calloc(levels, stack);
+            long offset = 0;
+            for (int level = 0; level < levels; level++) {
+                int levelWidth = Math.max(1, width >> level);
+                int levelHeight = Math.max(1, height >> level);
+                readback.get(level).bufferOffset(offset);
+                readback.get(level).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                        .mipLevel(level).layerCount(1);
+                readback.get(level).imageExtent().set(levelWidth, levelHeight, 1);
+                offset += (long) levelWidth * levelHeight * 8;
+            }
+            return readback;
+        }
+
+        private void submitAndWait(MemoryStack stack) {
+            ok(vkEndCommandBuffer(command));
+            ok(vkResetFences(device, fence));
+            ok(vkQueueSubmit(queue, VkSubmitInfo.calloc(stack).sType$Default()
+                    .pCommandBuffers(stack.pointers(command.address())), fence));
+            ok(vkWaitForFences(device, fence, true, 10_000_000_000L));
+        }
+
+        /** Decodes every staged level from half floats. */
+        private static float[][] readLevels(ByteBuffer mapped, int width, int height, int levels) {
+            float[][] result = new float[levels][];
+            int at = 0;
+            for (int level = 0; level < levels; level++) {
+                int count = Math.max(1, width >> level) * Math.max(1, height >> level) * 4;
+                result[level] = new float[count];
+                for (int i = 0; i < count; i++, at += 2) {
+                    result[level][i] = Float.float16ToFloat(mapped.getShort(at));
+                }
+            }
+            return result;
         }
 
         private void barrier(MemoryStack stack, long image, int baseLevel, int levels, int oldLayout,

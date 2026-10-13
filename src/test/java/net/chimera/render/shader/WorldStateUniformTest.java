@@ -85,7 +85,7 @@ final class WorldStateUniformTest {
      * invariant as a world direction.
      */
     @Test
-    void celestial() {
+    void celestialAngles() {
         assertEquals(UniformRegistry.Availability.LIVE,
                 UniformRegistry.descriptor("skyColor").availability(),
                 "sky colour must be a live host sample, not a default");
@@ -112,7 +112,10 @@ final class WorldStateUniformTest {
                         && !CelestialSnapshot.isDay(180.0f) && !CelestialSnapshot.isDay(270.0f),
                 "day selection must follow the raw sky angle, and hand the light to the moon"
                         + " at the horizon crossing itself");
+    }
 
+    @Test
+    void celestialLightVectors() {
         // The light each controlled time produces, in the world the shadow matrix is built from.
         Vector3f world = new Vector3f();
         CelestialSnapshot.lightVector(0.0f, 0.0f, 0.0f, world);
@@ -122,17 +125,26 @@ final class WorldStateUniformTest {
         CelestialSnapshot.lightVector(0.0f, 0.0f, 270.0f, world);
         assertVectorNear(1.0f, 0.0f, 0.0f, world, "sunset light must lie opposite the sunrise");
 
+        // The pack's sun path is a spatial turn of the frame, not a phase added to time.
+        CelestialSnapshot.lightVector(-40.0f, 0.0f, 0.0f, world);
+        assertNear((float) Math.cos(Math.toRadians(40.0)), world.y, 1.0e-4f,
+                "the pack's sun path must tilt the noon light off the vertical");
+        assertNear((float) Math.sin(Math.toRadians(40.0)), world.z, 1.0e-4f,
+                "the sun path turn must move the light on the axis the reference uses");
+        assertNear(1.0f, world.length(), 1.0e-6f, "light vector must stay a unit vector");
+    }
+
+    @Test
+    void celestialEyePositions() {
         // Pack/host agreement: the eye-space position is the world light carried by the view, so
         // the two agree at every controlled time and under any camera yaw and pitch.
-        Matrix4f modelView = new Matrix4f()
-                .translate(12.0f, -60.0f, 8.0f)
-                .rotateY((float) Math.toRadians(37.0))
-                .rotateX((float) Math.toRadians(-18.0));
+        Matrix4f modelView = celestialCamera();
         Matrix4f inverse = new Matrix4f(modelView).invert();
         Matrix4f turned = new Matrix4f()
                 .translate(12.0f, -60.0f, 8.0f)
                 .rotateY((float) Math.toRadians(190.0))
                 .rotateX((float) Math.toRadians(22.0));
+        Vector3f world = new Vector3f();
         Vector3f eye = new Vector3f();
         Vector3f turnedEye = new Vector3f();
         for (float angle : new float[] {0.0f, 90.0f, 180.0f, 270.0f}) {
@@ -150,19 +162,12 @@ final class WorldStateUniformTest {
             assertTrue(eye.distance(turnedEye) > 1.0f,
                     "a camera rotation must move the eye-space sun at raw " + angle);
         }
+    }
 
-        // The pack's sun path is a spatial turn of the frame, not a phase added to time.
-        CelestialSnapshot.lightVector(-40.0f, 0.0f, 0.0f, world);
-        assertNear((float) Math.cos(Math.toRadians(40.0)), world.y, 1.0e-4f,
-                "the pack's sun path must tilt the noon light off the vertical");
-        assertNear((float) Math.sin(Math.toRadians(40.0)), world.z, 1.0e-4f,
-                "the sun path turn must move the light on the axis the reference uses");
-        assertNear(1.0f, world.length(), 1.0e-6f, "light vector must stay a unit vector");
-
-        PackFrameState state = new PackFrameState();
-        state.rotateViewForTest(modelView, forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f));
-        state.installSunPath(0.0f, 0.0f);
-        state.setCelestialForTest(0.0f, 0.0f, 0x4C7BC8);
+    @Test
+    void celestialNoonUniforms() {
+        Matrix4f modelView = celestialCamera();
+        PackFrameState state = noonState(modelView);
         Vector3f expectedSun = modelView.transformPosition(
                 new Vector3f(0.0f, 100.0f, 0.0f));
         Vector3f expectedUp = modelView.transformDirection(
@@ -180,7 +185,13 @@ final class WorldStateUniformTest {
                 "noon sun must sit on the up direction");
         assertNear(1.0f, state.sunLightVector().y, 1.0e-6f,
                 "noon shadow light must be overhead");
+    }
 
+    @Test
+    void celestialReceiverConsistency() {
+        Matrix4f modelView = celestialCamera();
+        Matrix4f inverse = new Matrix4f(modelView).invert();
+        PackFrameState state = noonState(modelView);
         // Receiver consistency at every controlled time, under a straight path and a turned one:
         // the position the pack reads is the world light the matrix is built from, carried by the
         // view, and the shadow angle follows the body that actually lights the world.
@@ -210,6 +221,23 @@ final class WorldStateUniformTest {
                         "shadow caster rotation left the shadow light at raw " + time[0]);
             }
         }
+    }
+
+    /** A camera with both yaw and pitch, so a light that only agrees head-on would fail. */
+    private static Matrix4f celestialCamera() {
+        return new Matrix4f()
+                .translate(12.0f, -60.0f, 8.0f)
+                .rotateY((float) Math.toRadians(37.0))
+                .rotateX((float) Math.toRadians(-18.0));
+    }
+
+    /** A frame seen through {@code modelView} at raw noon on a straight sun path. */
+    private static PackFrameState noonState(Matrix4f modelView) {
+        PackFrameState state = new PackFrameState();
+        state.rotateViewForTest(modelView, forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f));
+        state.installSunPath(0.0f, 0.0f);
+        state.setCelestialForTest(0.0f, 0.0f, 0x4C7BC8);
+        return state;
     }
 
     private static float writtenFloat(PackFrameState state, String name) {
@@ -349,11 +377,10 @@ final class WorldStateUniformTest {
      */
     @Test
     void previousMatrixRotation() {
-        Matrix4f firstModel = new Matrix4f().translate(2.0f, -30.0f, 5.0f);
-        Matrix4f firstProjection = forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f);
-        Matrix4f secondModel = new Matrix4f().translate(2.5f, -30.0f, 5.0f);
-        Matrix4f secondProjection = forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f);
-        secondProjection.m20(0.001f);
+        Matrix4f firstModel = firstModelView();
+        Matrix4f firstProjection = firstFrameProjection();
+        Matrix4f secondModel = secondModelView();
+        Matrix4f secondProjection = secondFrameProjection();
 
         Matrix4f firstPackProjection = legacyProjection(firstProjection);
         Matrix4f secondPackProjection = legacyProjection(secondProjection);
@@ -398,7 +425,14 @@ final class WorldStateUniformTest {
                 "stationary camera must converge previous model view");
         assertMatrixNear(secondPackProjection, state.previousProjectionForTest(),
                 "stationary camera must converge previous pack projection");
+    }
 
+    /** A fresh session, or one whose first capture was missing, seeds history from its first valid frame. */
+    @Test
+    void previousMatrixRestart() {
+        Matrix4f secondModel = secondModelView();
+        Matrix4f secondProjection = secondFrameProjection();
+        Matrix4f secondPackProjection = legacyProjection(secondProjection);
         PackFrameState reloaded = new PackFrameState();
         reloaded.rotateViewForTest(secondModel, secondProjection);
         assertMatrixNear(secondModel, reloaded.previousModelViewForTest(),
@@ -413,12 +447,19 @@ final class WorldStateUniformTest {
                 "missing initial capture must not seed history with identity");
         assertMatrixNear(secondPackProjection, delayedCapture.previousProjectionForTest(),
                 "first valid projection must seed its own history");
+    }
 
+    /** A resize restarts the matrix history, and the camera-origin history with it. */
+    @Test
+    void previousMatrixResize() {
+        Matrix4f firstModel = firstModelView();
+        Matrix4f firstProjection = firstFrameProjection();
+        Matrix4f firstPackProjection = legacyProjection(firstProjection);
         PackFrameState resized = new PackFrameState();
         assertTrue(!resized.updateViewport(2560, 1440),
                 "initial viewport must not count as a resize");
         resized.rotateViewForTest(firstModel, firstProjection);
-        resized.rotateViewForTest(secondModel, secondProjection);
+        resized.rotateViewForTest(secondModelView(), secondFrameProjection());
         assertTrue(resized.updateViewport(1920, 1080),
                 "viewport size change was not detected");
         resized.rotateViewForTest(firstModel, firstProjection);
@@ -598,6 +639,24 @@ final class WorldStateUniformTest {
         return projection;
     }
 
+    /** The first presented frame of the previous-matrix tests; the second steps half a block in X. */
+    private static Matrix4f firstModelView() {
+        return new Matrix4f().translate(2.0f, -30.0f, 5.0f);
+    }
+
+    private static Matrix4f secondModelView() {
+        return new Matrix4f().translate(2.5f, -30.0f, 5.0f);
+    }
+
+    private static Matrix4f firstFrameProjection() {
+        return forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f);
+    }
+
+    /** The first frame's projection with a small off-axis term, so the two frames differ. */
+    private static Matrix4f secondFrameProjection() {
+        return forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f).m20(0.001f);
+    }
+
     private static Matrix4f legacyProjection(Matrix4f rendered) {
         Matrix4f converted = new Matrix4f(rendered);
         converted.m02(2.0f * rendered.m02() - rendered.m03());
@@ -669,6 +728,15 @@ final class WorldStateUniformTest {
                 "report stability");
 
         PackRuntimeSettings settings = first.plan().runtimeSettings();
+        verifyCustomPlan(settings);
+        verifyCustomEvaluation(settings);
+        verifyCustomRefusals(settings);
+        verifyCustomUniformBridge(first.plan().program("composite"), settings);
+        verifyBaseline(first, baselinePath);
+    }
+
+    /** The fixture's custom declarations: planned, cycle and unknown reported, smoothing half-lives. */
+    private static void verifyCustomPlan(PackRuntimeSettings settings) {
         assertTrue(settings.customDescriptors().containsKey("m73Marker"),
                 "exposed custom uniform was not planned");
         assertTrue(!settings.customDescriptors().containsKey("m73CycleA"),
@@ -681,7 +749,10 @@ final class WorldStateUniformTest {
                 "pack wetness half-life");
         assertEquals(20.0f, settings.eyeBrightnessHalfLife(),
                 "pack eye brightness half-life");
+    }
 
+    /** One evaluated frame: dependencies, derived values, and a reported non-finite result. */
+    private static void verifyCustomEvaluation(PackRuntimeSettings settings) {
         PackRuntimeSettings.Session session = settings.newSession();
         settings.evaluate((name, component) -> name.equals("frameTimeCounter") ? 1.0 : 0.25,
                 session, 0.05f);
@@ -704,6 +775,10 @@ final class WorldStateUniformTest {
                 "the non-finite report must carry the frame context");
         assertTrue(Float.isFinite(session.values()[nonFinite]),
                 "a non-finite derived value must hold a finite result rather than a NaN");
+    }
+
+    /** Declarations the language refuses are reported and never served. */
+    private static void verifyCustomRefusals(PackRuntimeSettings settings) {
         assertTrue(settings.deviations().contains(
                         "CUSTOM_EXPRESSION_UNKNOWN_FUNCTION:m73BadFunction:sinh"),
                 "unknown function was not reported");
@@ -723,8 +798,10 @@ final class WorldStateUniformTest {
                 "a declaration with an unresolved reference must be refused");
         assertTrue(settings.rejected().contains("m73BadArity"),
                 "refused declaration was not recorded as rejected");
+    }
 
-        PackProgramPlan composite = first.plan().program("composite");
+    /** The custom uniform reaches the composite interface and keeps one provider buffer. */
+    private static void verifyCustomUniformBridge(PackProgramPlan composite, PackRuntimeSettings settings) {
         assertTrue(composite != null && composite.executable(),
                 "fixture composite was not executable");
         assertTrue(composite.interfacePlan().uniforms().stream()
@@ -740,8 +817,6 @@ final class WorldStateUniformTest {
         MappedBuffer secondBuffer = PackUniformProvider.shared().supplier(info).get();
         assertTrue(firstBuffer == secondBuffer, "custom uniform buffer was recreated");
         PackUniformProvider.resetSession();
-
-        verifyBaseline(first, baselinePath);
     }
 
     private static void verifyBaseline(PackProbe.Analysis analysis, Path baselinePath) throws Exception {

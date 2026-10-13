@@ -34,22 +34,10 @@ public abstract class ChimeraVkCommandEncoderMixin {
             CallbackInfoReturnable<Boolean> callback
     ) {
         RenderPipeline hostPipeline = renderPass.getPipeline();
+        VkCommandEncoder encoder = (VkCommandEncoder) (Object) this;
         if (ChimeraSkyBridge.isDrawActive()
                 && ChimeraSkyBridge.shouldUsePackPipeline(hostPipeline)) {
-            var packPipeline = ChimeraSkyBridge.pipeline();
-            if (packPipeline == null) {
-                callback.setReturnValue(false);
-                return;
-            }
-            VkCommandEncoder encoder = (VkCommandEncoder) (Object) this;
-            encoder.applyPipelineState(hostPipeline);
-            Renderer renderer = Renderer.getInstance();
-            renderer.bindGraphicsPipeline(packPipeline);
-            bindHostUniforms(renderPass, packPipeline);
-            PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
-            renderer.uploadAndBindUBOs(packPipeline);
-            PackUniformProvider.restoreFrameAtlasSize();
-            callback.setReturnValue(true);
+            callback.setReturnValue(chimera$bindSkyPipeline(encoder, renderPass, hostPipeline));
             return;
         }
         if (!ChimeraEntityBridge.isDrawActive()) {
@@ -104,7 +92,41 @@ public abstract class ChimeraVkCommandEncoderMixin {
             return;
         }
 
-        VkCommandEncoder encoder = (VkCommandEncoder) (Object) this;
+        chimera$bindUnderHostState(encoder, renderPass, hostPipeline, packPipeline);
+        // A routed slice is bound verbatim from the host render pass. The
+        // global buffer stays bound only where the host draw itself would use
+        // it, never to replace a guarded family's per-object transform.
+        applyTransformRoute(dynamicRoute, dynamicTransforms, dynamicTransformsUbo);
+        applyTransformRoute(projectionRoute, projection, projectionUbo);
+        FamilyDrawTrace.noteHostTransformRoutes(describeTransformSources(
+                dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
+        chimera$uploadFamilyUniforms(hostPipeline, packPipeline);
+        callback.setReturnValue(true);
+    }
+
+    /** Binds the sky pipeline under the host render state; false when the sky lane has no pipeline. */
+    private static boolean chimera$bindSkyPipeline(VkCommandEncoder encoder, VkRenderPass renderPass,
+                                                   RenderPipeline hostPipeline) {
+        var packPipeline = ChimeraSkyBridge.pipeline();
+        if (packPipeline == null) {
+            return false;
+        }
+        encoder.applyPipelineState(hostPipeline);
+        Renderer renderer = Renderer.getInstance();
+        renderer.bindGraphicsPipeline(packPipeline);
+        bindHostUniforms(renderPass, packPipeline);
+        PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
+        renderer.uploadAndBindUBOs(packPipeline);
+        PackUniformProvider.restoreFrameAtlasSize();
+        return true;
+    }
+
+    /**
+     * Binds a family's pack pipeline under the host pipeline's state and scissor, with every
+     * uniform block on VulkanMod's global buffer until a transform route replaces it.
+     */
+    private static void chimera$bindUnderHostState(VkCommandEncoder encoder, VkRenderPass renderPass,
+                                                   RenderPipeline hostPipeline, GraphicsPipeline packPipeline) {
         encoder.applyPipelineState(hostPipeline);
         if (renderPass.isScissorEnabled()) {
             GlStateManager._enableScissorTest();
@@ -113,26 +135,33 @@ public abstract class ChimeraVkCommandEncoderMixin {
         } else {
             GlStateManager._disableScissorTest();
         }
-        Renderer renderer = Renderer.getInstance();
-        renderer.bindGraphicsPipeline(packPipeline);
+        Renderer.getInstance().bindGraphicsPipeline(packPipeline);
         FamilyDrawTrace.notePipelineBound(hostPipeline);
         for (var ubo : packPipeline.getBuffers()) {
             ubo.setUseGlobalBuffer(true);
         }
-        // A routed slice is bound verbatim from the host render pass. The
-        // global buffer stays bound only where the host draw itself would use
-        // it, never to replace a guarded family's per-object transform.
-        applyTransformRoute(dynamicRoute, dynamicTransforms, dynamicTransformsUbo);
-        applyTransformRoute(projectionRoute, projection, projectionUbo);
-        FamilyDrawTrace.noteHostTransformRoutes(describeTransformSources(
-                dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
+    }
+
+    /** Uploads a family draw's uniforms under its alpha test, albedo, atlas size and rendering phase. */
+    private static void chimera$uploadFamilyUniforms(RenderPipeline hostPipeline, GraphicsPipeline packPipeline) {
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
         HostLayoutLane lane = HostLayoutLane.of(ChimeraEntityBridge.activeFamily());
         // Restored with the family's texture snapshot when the draw ends.
         if (lane != null && lane.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
         var previousPhase = PackUniformProvider.setRenderingPhase(lane != null ? lane.phase()
-                : switch (ChimeraEntityBridge.activeFamily()) {
+                : chimera$renderingPhase(ChimeraEntityBridge.activeFamily()));
+        try {
+            Renderer.getInstance().uploadAndBindUBOs(packPipeline);
+        } finally {
+            PackUniformProvider.setRenderingPhase(previousPhase);
+            PackUniformProvider.restoreFrameAtlasSize();
+        }
+    }
+
+    /** The Iris rendering phase a family outside the host-layout lanes draws in. */
+    private static PackRenderingPhase chimera$renderingPhase(ChimeraEntityBridge.Family family) {
+        return switch (family) {
             // Iris keeps the ENTITIES phase for every entity and block-entity shadow caster.
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, SHADOW_ENTITIES -> PackRenderingPhase.ENTITIES;
             case BLOCK -> PackRenderingPhase.BLOCK_ENTITIES;
@@ -141,14 +170,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
             case HAND_WATER -> PackRenderingPhase.HAND_TRANSLUCENT;
             case PARTICLE, PARTICLE_TRANSLUCENT -> PackRenderingPhase.PARTICLES;
             default -> PackRenderingPhase.NONE;
-        });
-        try {
-            renderer.uploadAndBindUBOs(packPipeline);
-        } finally {
-            PackUniformProvider.setRenderingPhase(previousPhase);
-            PackUniformProvider.restoreFrameAtlasSize();
-        }
-        callback.setReturnValue(true);
+        };
     }
 
     /**

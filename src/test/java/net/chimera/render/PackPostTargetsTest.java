@@ -70,7 +70,10 @@ final class PackPostTargetsTest {
         PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
         assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
                 "final fallback must resolve through target 0 when target 3 is unavailable");
+    }
 
+    @Test
+    void feedbackSeeding() {
         TargetSpec persistent = new TargetSpec(2, 97, 16, 16, false,
                 new float[] {0, 0, 0, 0}, true, true, false, List.of());
         TargetStep feedback = new TargetStep("feedback", List.of(2), List.of(2),
@@ -92,7 +95,10 @@ final class PackPostTargetsTest {
                 new float[] {0, 0, 0, 0}, true, true, false, List.of());
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(clearedFeedback, List.of(feedback)),
                 "declared feedback target must seed even when the pack clears it");
+    }
 
+    @Test
+    void temporalGeometryTarget() {
         PackTemporalState frame = new PackTemporalState();
         frame.beginFrame(true);
         frame.seedCurrent(6); // Geometry material output, before the first post window.

@@ -3,6 +3,7 @@ package net.chimera.render;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 
 /**
@@ -114,32 +115,20 @@ public final class MaterialMapPixels {
                 int texel = src[row + x];
                 redSum += red(texel);
                 count++;
-                int greenClass = green(texel) < LAB_GREEN_SPLIT ? -1 : green(texel);
-                int[] tally = greenClasses.get(greenClass);
-                if (tally == null) {
-                    greenClasses.put(greenClass, new int[]{1, green(texel)});
-                } else {
-                    tally[0]++;
-                    tally[1] += green(texel);
-                }
+                // Tally {count, sum} per green class: -1 for every dielectric, else the metal index.
+                int[] tally = greenClasses.computeIfAbsent(green(texel) < LAB_GREEN_SPLIT ? -1 : green(texel),
+                        ignored -> new int[2]);
+                tally[0]++;
+                tally[1] += green(texel);
                 if (blue(texel) < LAB_BLUE_SPLIT) blueLow++;
                 if (alpha(texel) < LAB_ALPHA_OPAQUE) alphaLow++;
             }
         }
-        int chosenGreen = -1;
-        int chosenCount = -1;
-        for (var entry : greenClasses.entrySet()) {
-            if (entry.getValue()[0] > chosenCount) {
-                chosenCount = entry.getValue()[0];
-                chosenGreen = entry.getKey();
-            }
-        }
-        int greenSum = greenClasses.get(chosenGreen)[1];
-        int greenCount = chosenCount;
-        boolean blueIsLow = blueLow * 2 > count
-                || (blueLow * 2 == count && blue(first) < LAB_BLUE_SPLIT);
-        boolean alphaIsLow = alphaLow * 2 > count
-                || (alphaLow * 2 == count && alpha(first) < LAB_ALPHA_OPAQUE);
+        int[] greenTally = majorityTally(greenClasses);
+        int greenSum = greenTally[1];
+        int greenCount = greenTally[0];
+        boolean blueIsLow = lowClassWins(blueLow, count, blue(first) < LAB_BLUE_SPLIT);
+        boolean alphaIsLow = lowClassWins(alphaLow, count, alpha(first) < LAB_ALPHA_OPAQUE);
         int blueSum = 0;
         int blueCount = 0;
         int alphaSum = 0;
@@ -159,6 +148,20 @@ public final class MaterialMapPixels {
             }
         }
         return pack(alphaSum / alphaCount, blueSum / blueCount, greenSum / greenCount, redSum / count);
+    }
+
+    /** The {count, sum} tally of the most populated class; a tie keeps the earliest class seen. */
+    private static int[] majorityTally(Map<Integer, int[]> classes) {
+        int[] chosen = null;
+        for (int[] tally : classes.values()) {
+            if (chosen == null || tally[0] > chosen[0]) chosen = tally;
+        }
+        return chosen;
+    }
+
+    /** True when the low threshold class holds the majority; a tie keeps the first texel's class. */
+    private static boolean lowClassWins(int lowCount, int count, boolean firstIsLow) {
+        return lowCount * 2 > count || (lowCount * 2 == count && firstIsLow);
     }
 
     /** Reduces the source footprint [x0, x1) x [y0, y1) to one destination texel. */

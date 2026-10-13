@@ -323,18 +323,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 && descriptorAttached(writer) && descriptorAttached(reader)
                 && pipelineInstalled(writer) && pipelineInstalled(reader)
                 && layoutVerified(writer) && layoutVerified(reader);
-        String missing = ready ? "none"
-                : programFailures.containsKey(writer) ? programFailures.get(writer)
-                : programFailures.containsKey(reader) ? programFailures.get(reader)
-                : !layoutVerified(writer) ? "DESCRIPTOR_LAYOUT_UNVERIFIED:" + writer
-                : !layoutVerified(reader) ? "DESCRIPTOR_LAYOUT_UNVERIFIED:" + reader
-                : !planned ? "MISSING_DECLARATION"
-                : !allocated ? "MISSING_ALLOCATION"
-                : !initialized ? "MISSING_INITIALIZATION"
-                : !descriptorAttached(writer) ? "MISSING_WRITER_DESCRIPTOR"
-                : !descriptorAttached(reader) ? "MISSING_READER:" + reader
-                : !pipelineInstalled(writer) ? "MISSING_WRITER_PIPELINE"
-                : "MISSING_READER:" + reader;
+        String missing = ready ? "none" : missingLink(writer, reader, planned, allocated);
         return "writer=" + writer + ",reader=" + reader
                 + ",planned=" + planned
                 + ",allocated=" + allocated
@@ -345,6 +334,21 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 + ",readerPipeline=" + pipelineInstalled(reader)
                 + ",writerLayout=" + layoutVerified(writer) + ",readerLayout=" + layoutVerified(reader)
                 + ",ready=" + ready + ",missing=" + missing;
+    }
+
+    /** The first unready link of a storage path, a program's recorded failure first. */
+    private String missingLink(String writer, String reader, boolean planned, boolean allocated) {
+        if (programFailures.containsKey(writer)) return programFailures.get(writer);
+        if (programFailures.containsKey(reader)) return programFailures.get(reader);
+        if (!layoutVerified(writer)) return "DESCRIPTOR_LAYOUT_UNVERIFIED:" + writer;
+        if (!layoutVerified(reader)) return "DESCRIPTOR_LAYOUT_UNVERIFIED:" + reader;
+        if (!planned) return "MISSING_DECLARATION";
+        if (!allocated) return "MISSING_ALLOCATION";
+        if (!initialized) return "MISSING_INITIALIZATION";
+        if (!descriptorAttached(writer)) return "MISSING_WRITER_DESCRIPTOR";
+        if (!descriptorAttached(reader)) return "MISSING_READER:" + reader;
+        if (!pipelineInstalled(writer)) return "MISSING_WRITER_PIPELINE";
+        return "MISSING_READER:" + reader;
     }
 
     public boolean storagePathReady(String writer, String reader) {

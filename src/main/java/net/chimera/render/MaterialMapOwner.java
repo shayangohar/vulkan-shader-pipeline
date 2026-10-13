@@ -578,8 +578,7 @@ public final class MaterialMapOwner implements AutoCloseable {
         boolean labSpecular = kind == MaterialMapKind.SPECULAR && match.labPbr();
         if (!match.simple() && !labSpecular) {
             // Atlas normals and non-labPBR specular reuse the exact albedo sampler.
-            if (profile != null && profile.id() != 0) return profile.id();
-            return fallbackSampler(base, match);
+            return drawSampler(profile, base, match);
         }
         if (profile == null) {
             return fallbackSampler(base, match);
@@ -591,18 +590,20 @@ public final class MaterialMapOwner implements AutoCloseable {
         FilterMode minFilter = labSpecular ? FilterMode.NEAREST : profile.minFilter();
         FilterMode magFilter = labSpecular ? FilterMode.NEAREST : profile.magFilter();
         float maxLod = match.simple() ? 0.0f : profile.maxLod();
-        if (profile == null) {
-            return fallbackSampler(base, match);
-        }
         if (profile.addressU() == null || profile.addressV() == null
                 || minFilter == null || magFilter == null) {
             // The draw sampler ID is still meaningful; only derivation is impossible.
-            if (profile.id() != 0) return profile.id();
-            return fallbackSampler(base, match);
+            return drawSampler(profile, base, match);
         }
         Long owned = ownedSamplerId(profile.addressU(), profile.addressV(),
                 minFilter, magFilter, profile.anisotropy(), maxLod);
         if (owned != null) return owned;
+        return fallbackSampler(base, match);
+    }
+
+    /** The draw's own sampler ID when it has one, else the fallback. */
+    private static long drawSampler(SamplerProfile profile, VulkanImage base, CompanionMatch match) {
+        if (profile != null && profile.id() != 0) return profile.id();
         return fallbackSampler(base, match);
     }
 
@@ -692,13 +693,7 @@ public final class MaterialMapOwner implements AutoCloseable {
 
     private void buildSimple(VulkanImage albedo, ResourceLookup lookup, MapImageDecoder decoder,
             SimpleTextureSource source, boolean labPbr) {
-        SimpleEntry match = null;
-        for (SimpleEntry entry : source.entries()) {
-            if (entry.image() == albedo) {
-                match = entry;
-                break;
-            }
-        }
+        SimpleEntry match = findSimpleEntry(source, albedo);
         synchronized (companionsLock) {
             if (closed) return;
             if (isKnownBaseLocked(albedo)) return;
@@ -732,24 +727,12 @@ public final class MaterialMapOwner implements AutoCloseable {
                 }
             }
         } catch (RuntimeException | Error failure) {
-            for (CompanionSet set : sets.values()) {
-                try {
-                    set.close();
-                } catch (RuntimeException closeFailure) {
-                    failure.addSuppressed(closeFailure);
-                }
-            }
+            closeAfterFailure(sets, failure);
             throw failure;
         }
         synchronized (companionsLock) {
             if (closed || isKnownBaseLocked(albedo)) {
-                for (CompanionSet set : sets.values()) {
-                    try {
-                        set.close();
-                    } catch (RuntimeException failure) {
-                        LOGGER.warn("[chimera] material maps: late simple close failed", failure);
-                    }
-                }
+                closeUnused(sets, "[chimera] material maps: late simple close failed");
                 return;
             }
             if (sets.isEmpty()) {
@@ -792,24 +775,12 @@ public final class MaterialMapOwner implements AutoCloseable {
                 }
             }
         } catch (RuntimeException | Error failure) {
-            for (CompanionSet set : sets.values()) {
-                try {
-                    set.close();
-                } catch (RuntimeException closeFailure) {
-                    failure.addSuppressed(closeFailure);
-                }
-            }
+            closeAfterFailure(sets, failure);
             throw failure;
         }
         synchronized (companionsLock) {
             if (closed) {
-                for (CompanionSet set : sets.values()) {
-                    try {
-                        set.close();
-                    } catch (RuntimeException failure) {
-                        LOGGER.warn("[chimera] material maps: late companion close failed", failure);
-                    }
-                }
+                closeUnused(sets, "[chimera] material maps: late companion close failed");
                 return;
             }
             // The albedo has been ticking since its upload; catch the maps up
@@ -835,6 +806,36 @@ public final class MaterialMapOwner implements AutoCloseable {
                     upload.location(), sets.keySet(), mappedSprites, upload.sprites().size(),
                     animated.size(), upload.width(), upload.height(), upload.mipLevels(), labPbr,
                     baseImage.getId(), generation, millis);
+        }
+    }
+
+    /** The live simple texture whose albedo is exactly this image, or null. */
+    private static SimpleEntry findSimpleEntry(SimpleTextureSource source, VulkanImage albedo) {
+        for (SimpleEntry entry : source.entries()) {
+            if (entry.image() == albedo) return entry;
+        }
+        return null;
+    }
+
+    /** Closes the sets of a failed build, attaching each close failure to the build failure. */
+    private static void closeAfterFailure(Map<MaterialMapKind, CompanionSet> sets, Throwable failure) {
+        for (CompanionSet set : sets.values()) {
+            try {
+                set.close();
+            } catch (RuntimeException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+        }
+    }
+
+    /** Closes freshly built sets nothing will use, warning with {@code message} on a close failure. */
+    private static void closeUnused(Map<MaterialMapKind, CompanionSet> sets, String message) {
+        for (CompanionSet set : sets.values()) {
+            try {
+                set.close();
+            } catch (RuntimeException failure) {
+                LOGGER.warn(message, failure);
+            }
         }
     }
 
