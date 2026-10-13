@@ -155,7 +155,7 @@ final class MaterialPlanTest {
 
     private static void verifyManifest(PackProbe.Analysis analysis) {
         PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
-        var ordinary = PackPipelines.ordinaryDescriptorContract(
+        var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(
                 terrain, Set.of());
         ProgramImageBindingManifest manifest =
                 ProgramImageBindingManifest.from(null, ordinary);
@@ -292,7 +292,7 @@ final class MaterialPlanTest {
         Path root = TestPacks.fixtures();
         PackProgramPlan plan = PackProbe.analyze(root.resolve("m87_entity"))
                 .plan().program("gbuffers_entities");
-        OrdinaryDescriptorContract ordinary = PackPipelines.ordinaryDescriptorContract(plan, Set.of());
+        OrdinaryDescriptorContract ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
         PipelineConfig.UB dynamic = blockAt(ordinary, UniformRegistry.DYNAMIC_TRANSFORMS_BINDING);
         PipelineConfig.UB projection = blockAt(ordinary, UniformRegistry.PROJECTION_BINDING);
         assertEquals(List.of("ModelViewMat", "ColorModulator", "ModelOffset", "TextureMat"),
@@ -386,7 +386,7 @@ final class MaterialPlanTest {
         assertTrue(depth1.slot() == 15 && depth1.resourceKey().equals("shadowtex1")
                         && depth1.kind() == PackResourceKind.SHADOW_DEPTH && depth1.available(),
                 "shadowtex1 canonical binding");
-        var ordinary = PackPipelines.ordinaryDescriptorContract(plan, Set.of());
+        var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
         ProgramImageBindingManifest manifest = ProgramImageBindingManifest.from(null, ordinary);
         long shadowEntries = manifest.entries().stream()
                 .filter(value -> value.kind() == ProgramImageBindingManifest.Kind.SHADOW_DEPTH)

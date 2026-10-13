@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.FamilyDrawTrace;
 import net.chimera.render.shader.SubmissionIdentity;
 import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -45,9 +46,9 @@ public final class ChimeraFamilyDraw {
             Consumer<MultiBufferSource.BufferSource> body
     ) {
         ChimeraEntityBridge.Family selected = ChimeraEntityBridge.familyForRenderType(base, renderType);
-        ChimeraEntityBridge.noteFamilyBatch(selected, 1);
+        FamilyDrawTrace.noteFamilyBatch(selected, 1);
         if (!ChimeraEntityBridge.beginDraw(selected)) {
-            ChimeraEntityBridge.noteFamilyHostFallback(selected, renderType);
+            FamilyDrawTrace.noteFamilyHostFallback(selected, renderType);
             return false;
         }
         // The pipeline follows the selected family, not the base family:
@@ -80,7 +81,7 @@ public final class ChimeraFamilyDraw {
                 ChimeraEntityBridge.endDraw();
             }
             if (!admitted) {
-                ChimeraEntityBridge.noteFamilyHostFallback(selected, renderType);
+                FamilyDrawTrace.noteFamilyHostFallback(selected, renderType);
             }
         }
     }

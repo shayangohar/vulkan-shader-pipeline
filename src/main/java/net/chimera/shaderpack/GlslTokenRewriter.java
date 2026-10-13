@@ -1,136 +1,14 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** Token-safe rewrites for the small legacy-to-Vulkan GLSL bridge. */
 public final class GlslTokenRewriter {
-    /**
-     * The explicit-gradient atlas helper: it samples the texel center the gradients select, so a
-     * tile edge never bleeds into its neighbour. {@code {grad}} is its name and {@code {p}} the
-     * prefix that keeps its locals clear of the pack's names.
-     */
-    private static final String ATLAS_GRADIENT_HELPER = """
-            vec4 {grad}(sampler2D {p}Tex, vec2 {p}Uv, vec2 {p}Du, vec2 {p}Dv) {
-            vec2 {p}Pixel = 1.0 / vec2(textureSize({p}Tex, 0));
-            vec2 {p}Screen = max(sqrt({p}Du * {p}Du + {p}Dv * {p}Dv), vec2(1e-20));
-            vec2 {p}Coord = {p}Uv / {p}Pixel;
-            vec2 {p}Center = round({p}Coord) - 0.5;
-            vec2 {p}Offset = clamp(({p}Coord - {p}Center - 0.5) * {p}Pixel / {p}Screen + 0.5, 0.0, 1.0);
-            return textureGrad({p}Tex, ({p}Center + {p}Offset) * {p}Pixel, {p}Du, {p}Dv);
-            }
-            """;
-
-    /** The plain atlas helper, {@code {plain}}, which takes its gradients from the derivatives. */
-    private static final String ATLAS_PLAIN_HELPER = """
-            vec4 {plain}(sampler2D {p}Tex, vec2 {p}Uv) {
-            return {grad}({p}Tex, {p}Uv, dFdx({p}Uv), dFdy({p}Uv));
-            }
-            """;
-
     private GlslTokenRewriter() {}
-
-    /** Load-time bridge for resolved terrain atlas samples; ambiguous scopes stay authored. */
-    public static String rewriteTerrainAtlasSamples(String source, Set<String> atlasSamplers) {
-        if (source == null || source.isBlank() || atlasSamplers.isEmpty()) return source;
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        GlslResourceUsage.Analysis analysis = GlslResourceUsage.analyze(source);
-        if (!analysis.successful()) return source;
-        List<GlslResourceUsage.FunctionDefinition> functions = new ArrayList<>(analysis.reachableFunctions());
-        functions.addAll(analysis.unreachableFunctions());
-        if (functions.isEmpty()) return source;
-        Set<String> identifiers = new HashSet<>();
-        for (var token : tokens) if (token.kind() == GlslLexer.Kind.IDENTIFIER) identifiers.add(token.text());
-        String prefix = "chimeraAtlas";
-        while (atlasPrefixUsed(identifiers, prefix)) prefix += "_";
-        String helper = prefix + "Sample";
-        String gradHelper = prefix + "SampleGrad";
-        boolean[] directive = atlasDirectiveTokens(tokens);
-        Set<String> callableShadows = new HashSet<>();
-        for (var function : functions) callableShadows.add(function.name());
-        // A macro with one of these names is not a known GLSL sampling operation.
-        for (int i = 0; i < tokens.size(); i++) {
-            if (directive[i] && tokens.get(i).identifier("define")) {
-                int name = GlslLexer.nextSignificant(tokens, i);
-                if (name >= 0) callableShadows.add(tokens.get(name).text());
-            }
-        }
-        boolean changed = false;
-        boolean changedGrad = false;
-        for (var function : functions) {
-            Set<String> eligible = new HashSet<>(atlasSamplers);
-            for (int i = function.definitionStart(); i < function.bodyEnd(); i++) {
-                if (directive[i] || !eligible.contains(tokens.get(i).text())) continue;
-                int previous = GlslLexer.previousSignificant(tokens, i);
-                if (previous >= 0 && tokens.get(previous).kind() == GlslLexer.Kind.IDENTIFIER
-                        && !tokens.get(previous).identifier("return")) eligible.remove(tokens.get(i).text());
-                // Multiple declarators and parameter lists: fail closed for the symbol.
-                if (previous >= 0 && tokens.get(previous).symbol(",")) eligible.remove(tokens.get(i).text());
-            }
-            for (int i = function.bodyStart(); i < function.bodyEnd(); i++) {
-                var token = tokens.get(i);
-                if (directive[i] || token.kind() != GlslLexer.Kind.IDENTIFIER
-                        || !Set.of("texture2D", "texture", "chimeraTexture", "textureGrad").contains(token.text())
-                        || callableShadows.contains(token.text())) continue;
-                int open = GlslLexer.nextSignificant(tokens, i);
-                if (open < 0 || !tokens.get(open).symbol("(")) continue;
-                int close = GlslLexer.matching(tokens, open, "(", ")");
-                if (close < 0) continue;
-                List<int[]> arguments = argumentRanges(tokens, open + 1, close);
-                // Plain lookups keep their two-argument shape; only authored
-                // explicit-gradient textureGrad calls take the gradient path.
-                // Every other arity is an unsupported overload: leave it.
-                boolean explicit = token.text().equals("textureGrad");
-                if (explicit ? arguments.size() != 4 : arguments.size() != 2) continue;
-                String sampler;
-                try { sampler = singleIdentifier(tokens, arguments.get(0)); }
-                catch (IllegalArgumentException ignored) { continue; }
-                if (!eligible.contains(sampler)) continue;
-                tokens.set(i, identifier(explicit ? gradHelper : helper));
-                if (explicit) changedGrad = true;
-                else changed = true;
-            }
-        }
-        if (!changed && !changedGrad) return source;
-        int insertion = functions.stream().mapToInt(
-                GlslResourceUsage.FunctionDefinition::definitionStart).min().orElseThrow();
-        // The plain helper delegates so both call shapes share one
-        // pixel-center correction; it is always emitted with its target.
-        String definitions = (changed ? ATLAS_GRADIENT_HELPER + ATLAS_PLAIN_HELPER : ATLAS_GRADIENT_HELPER)
-                .replace("{grad}", gradHelper).replace("{plain}", helper).replace("{p}", prefix);
-        tokens.add(insertion, raw(definitions));
-        return GlslLexer.render(tokens);
-    }
-
-    private static boolean atlasPrefixUsed(Set<String> identifiers, String prefix) {
-        for (String name : identifiers) if (name.startsWith(prefix)) return true;
-        return false;
-    }
-
-    private static boolean[] atlasDirectiveTokens(List<GlslLexer.Token> tokens) {
-        boolean[] result = new boolean[tokens.size()];
-        boolean lineStart = true, inDirective = false, escaped = false;
-        for (int i = 0; i < tokens.size(); i++) {
-            var token = tokens.get(i);
-            if (lineStart && token.symbol("#")) inDirective = true;
-            result[i] = inDirective;
-            if (token.text().contains("\n") || token.text().contains("\r")) {
-                if (!escaped) inDirective = false;
-                lineStart = true;
-                escaped = false;
-            } else if (token.significant()) {
-                lineStart = false;
-                escaped = token.symbol("\\");
-            }
-        }
-        return result;
-    }
 
     /**
      * Blanks complete unreachable function definitions while preserving line
@@ -157,7 +35,7 @@ public final class GlslTokenRewriter {
         return GlslLexer.render(tokens);
     }
 
-    private static String lineBreaks(String text) {
+    static String lineBreaks(String text) {
         StringBuilder result = new StringBuilder();
         for (int index = 0; index < text.length(); index++) {
             char value = text.charAt(index);
@@ -477,141 +355,6 @@ public final class GlslTokenRewriter {
     private static final Set<String> MEMORY_QUALIFIERS = Set.of(
             "writeonly", "readonly", "coherent", "volatile", "restrict");
 
-    private static final Pattern ALIAS_DEFINE = Pattern.compile(
-            "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*(?://.*)?$");
-    /** Group 1 is the directive through the macro name; group 2 is the name. */
-    private static final Pattern MACRO_DEFINE = Pattern.compile(
-            "(\\s*#\\s*define\\s+([A-Za-z_]\\w*))");
-    private static final Pattern UNDEF = Pattern.compile(
-            "^\\s*#\\s*undef\\s+([A-Za-z_]\\w*)\\s*$");
-    private static final Pattern SAMPLER_DECLARATION = Pattern.compile(
-            "\\buniform\\s+(?:(?:lowp|mediump|highp)\\s+)?[iu]?sampler\\w*\\s+([A-Za-z_]\\w*)");
-
-    /** {@code #define attribute in}: a macro renaming one storage qualifier to another. */
-    private static final Pattern STORAGE_ALIAS_DEFINE = Pattern.compile(
-            "^\\s*#\\s*define\\s+(attribute|varying)\\s+(in|out|attribute|varying)\\s*(?://.*)?$");
-
-    /**
-     * Applies macros that rename a storage qualifier and drops their definitions, so every
-     * converter reads a declaration in the spelling it was compiled with. Photon defines
-     * {@code attribute} as {@code in} for strict drivers. Each alias holds from its definition to
-     * its #undef; the removed lines stay empty, so line numbers do not move.
-     */
-    static String expandStorageQualifierAliases(String source) {
-        if (source == null || !source.contains("#")) return source;
-        // Directives are read line by line; substitution runs over one token
-        // stream, so a block comment spanning lines is never lexed in pieces.
-        String[] lines = source.split("\n", -1);
-        List<Map<String, String>> active = new ArrayList<>(lines.length);
-        boolean[] drop = new boolean[lines.length];
-        boolean[] directive = new boolean[lines.length];
-        Map<String, String> aliases = new HashMap<>();
-        boolean changed = false;
-        for (int line = 0; line < lines.length; line++) {
-            String body = lines[line].endsWith("\r")
-                    ? lines[line].substring(0, lines[line].length() - 1) : lines[line];
-            Matcher define = STORAGE_ALIAS_DEFINE.matcher(body);
-            Matcher undef = UNDEF.matcher(body);
-            if (define.matches()) {
-                aliases.put(define.group(1), define.group(2));
-                drop[line] = true;
-                changed = true;
-            } else if (undef.matches() && aliases.remove(undef.group(1)) != null) {
-                drop[line] = true;
-            } else {
-                directive[line] = body.stripLeading().startsWith("#");
-            }
-            active.add(Map.copyOf(aliases));
-        }
-        if (!changed) return source;
-        StringBuilder result = new StringBuilder(source.length());
-        int line = 0;
-        for (GlslLexer.Token token : GlslLexer.lex(source)) {
-            String text = token.text();
-            if (drop[line]) {
-                result.append(lineBreaks(text));
-            } else if (!directive[line] && token.kind() == GlslLexer.Kind.IDENTIFIER
-                    && active.get(line).containsKey(text)) {
-                result.append(active.get(line).get(text));
-            } else {
-                result.append(text);
-            }
-            for (int at = 0; at < text.length(); at++) if (text.charAt(at) == '\n') line++;
-        }
-        return result.toString();
-    }
-
-    /**
-     * Expands object-like macros that name a declared sampler
-     * ({@code #define SRC_SAMPLER colortex0}), as Iris's full preprocessing
-     * does before any analysis, so sampler use is visible to planning. Only
-     * those aliases are touched, in source order: a later {@code #undef} or
-     * redefinition ends the alias, and every other macro stays as written.
-     */
-    static String expandSamplerAliases(String source) {
-        if (source == null || !source.contains("#")) return source;
-        Set<String> samplers = new HashSet<>();
-        Matcher declared = SAMPLER_DECLARATION.matcher(source);
-        while (declared.find()) samplers.add(declared.group(1));
-        if (samplers.isEmpty()) return source;
-        // Directives are read line by line; substitution runs over one token
-        // stream, so a block comment spanning lines is never lexed in pieces.
-        String[] lines = source.split("\n", -1);
-        List<Map<String, String>> active = new ArrayList<>(lines.length);
-        boolean[] drop = new boolean[lines.length];
-        boolean[] macro = new boolean[lines.length];
-        Map<String, String> aliases = new HashMap<>();
-        boolean changed = false;
-        for (int line = 0; line < lines.length; line++) {
-            String body = lines[line].endsWith("\r")
-                    ? lines[line].substring(0, lines[line].length() - 1) : lines[line];
-            Matcher define = ALIAS_DEFINE.matcher(body);
-            Matcher undef = UNDEF.matcher(body);
-            Matcher named = MACRO_DEFINE.matcher(body);
-            if (define.matches()) {
-                String target = aliases.getOrDefault(define.group(2), define.group(2));
-                aliases.remove(define.group(1));
-                if (samplers.contains(target) && !define.group(1).equals(target)) {
-                    aliases.put(define.group(1), target);
-                    drop[line] = true;
-                    changed = true;
-                } else {
-                    macro[line] = true;
-                }
-            } else if (undef.matches() && aliases.remove(undef.group(1)) != null) {
-                drop[line] = true;
-            } else if (named.lookingAt()) {
-                // Any other definition of an alias name ends that alias; other
-                // macro bodies may use an alias and expand after it is gone.
-                aliases.remove(named.group(2));
-                macro[line] = true;
-            }
-            active.add(Map.copyOf(aliases));
-        }
-        if (!changed) return source;
-        StringBuilder result = new StringBuilder(source.length());
-        int line = 0;
-        int previous = -1;
-        List<GlslLexer.Token> tokens = GlslLexer.lex(source);
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            String text = token.text();
-            if (drop[line]) {
-                result.append(lineBreaks(text));
-            } else if (token.kind() == GlslLexer.Kind.IDENTIFIER
-                    && !(previous >= 0 && tokens.get(previous).symbol("."))
-                    && !(macro[line] && previous >= 0 && tokens.get(previous).identifier("define"))
-                    && active.get(line).containsKey(text)) {
-                result.append(active.get(line).get(text));
-            } else {
-                result.append(text);
-            }
-            if (token.significant()) previous = index;
-            for (int at = 0; at < text.length(); at++) if (text.charAt(at) == '\n') line++;
-        }
-        return result.toString();
-    }
-
     /**
      * Desktop GL drivers accept a global {@code const} whose initializer is
      * not a constant expression (a uniform, a plain global, a user function);
@@ -870,7 +613,7 @@ public final class GlslTokenRewriter {
         return result.toString();
     }
 
-    private static List<int[]> argumentRanges(List<GlslLexer.Token> tokens, int start, int end) {
+    static List<int[]> argumentRanges(List<GlslLexer.Token> tokens, int start, int end) {
         List<int[]> ranges = new ArrayList<>();
         int argumentStart = start;
         int parentheses = 0;
@@ -925,7 +668,7 @@ public final class GlslTokenRewriter {
         return defined;
     }
 
-    private static String singleIdentifier(List<GlslLexer.Token> tokens, int[] range) {
+    static String singleIdentifier(List<GlslLexer.Token> tokens, int[] range) {
         int first = -1;
         int last = -1;
         for (int index = range[0]; index < range[1]; index++) {
@@ -1036,11 +779,11 @@ public final class GlslTokenRewriter {
         return count;
     }
 
-    private static GlslLexer.Token identifier(String value) {
+    static GlslLexer.Token identifier(String value) {
         return new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, value);
     }
 
-    private static GlslLexer.Token raw(String value) {
+    static GlslLexer.Token raw(String value) {
         return new GlslLexer.Token(GlslLexer.Kind.TRIVIA, value);
     }
 

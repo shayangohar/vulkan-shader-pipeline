@@ -5,6 +5,7 @@ import net.chimera.render.ChimeraFamilyDraw;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraEntityStorage;
+import net.chimera.render.shader.FamilyDrawTrace;
 import net.chimera.render.shader.SubmissionIdentity;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.OutlineBufferSource;
@@ -36,7 +37,7 @@ public abstract class ChimeraModelFeatureRendererMixin {
     ) {
         if (ChimeraEntityBridge.isDrawActive()
                 && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity) {
-            ChimeraEntityBridge.noteModelDraw(renderType);
+            FamilyDrawTrace.noteModelDraw(renderType);
             ChimeraEntityBridge.beginModelEntity(entity.entityId(), entity.blockEntityId());
         }
     }

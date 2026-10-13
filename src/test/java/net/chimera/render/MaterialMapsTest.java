@@ -1,35 +1,25 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackResourceBinding;
 import net.chimera.shaderpack.PackResourceKind;
 import net.chimera.shaderpack.PackResourceStatus;
-import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.testing.TestPacks;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.TreeMap;
 
+import static net.chimera.render.MaterialMapFixtures.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -43,10 +33,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * companions land in a recording fake factory.
  */
 final class MaterialMapsTest {
-    private static final Path FIXTURE = Path.of("src/test/resources/m87_material_pack");
-    private static final int FALLBACK_NORMALS = 0xFFFF7F7F;
-    private static final int FALLBACK_SPECULAR = 0x00000000;
-
     // ------------------------------------------------------------------
     // Entity fixture: a supported gbuffers_entities program plans material maps
     // ------------------------------------------------------------------
@@ -145,7 +131,8 @@ final class MaterialMapsTest {
         assertEquals(pack(255, 128, 32, 32), up[2 * 16 + 2], "point upscale interior");
         assertEquals(pack(255, 128, 32, 32), up[3 * 16 + 3], "point upscale replication");
 
-        int[] tiny = {pack(255, 0, 0, 10), pack(255, 0, 0, 20), pack(255, 0, 0, 30), pack(255, 0, 0, 40)};
+        int[] tiny = {pack(255, 0, 0, 10), pack(255, 0, 0, 20),
+                pack(255, 0, 0, 30), pack(255, 0, 0, 40)};
         int[] grown = MaterialMapPixels.scale(tiny, 2, 2, 3, 3);
         assertEquals(9, grown.length, "box upscale size");
         assertEquals(tiny[0], grown[0], "box upscale corner");
@@ -192,82 +179,26 @@ final class MaterialMapsTest {
             assertTrue(!MaterialMapPixels.detectLabPbr(fixture), "fixture is linear mode");
         }
         assertTrue(MaterialMapPixels.detectLabPbr(stream("format=lab-pbr\n")), "lab-pbr flag");
-        assertTrue(MaterialMapPixels.detectLabPbr(stream("format=lab-pbr/1.1\n")), "lab-pbr versioned");
+        assertTrue(MaterialMapPixels.detectLabPbr(stream("format=lab-pbr/1.1\n")),
+                "lab-pbr versioned");
         assertTrue(!MaterialMapPixels.detectLabPbr(stream("format=old-pbr\n")), "other format");
         assertTrue(!MaterialMapPixels.detectLabPbr(stream("# empty\n")), "missing key");
-    }
-
-    private static InputStream stream(String text) {
-        return new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8));
     }
 
     // ------------------------------------------------------------------
     // Owner build: linear mode
     // ------------------------------------------------------------------
 
-    private static MaterialMapOwner.AtlasUpload layout() {
-        return new MaterialMapOwner.AtlasUpload("minecraft:blocks", 64, 64, 4, List.of(
-                sprite("minecraft:block/m87_brick", 0, 0, 16, 16, 0, 0),
-                sprite("minecraft:block/m87_edge", 16, 0, 16, 16, 0, 0),
-                sprite("minecraft:block/m87_plain", 32, 0, 16, 16, 0, 0),
-                sprite("minecraft:block/m87_lab", 48, 0, 4, 4, 0, 0)));
-    }
-
-    /**
-     * Padded topology: brick owns slot (8,8,20,20) with a 2-texel border,
-     * edge starts exactly where brick ends, plain is missing but keeps its
-     * padded slot at fallback, lab rides a 1-texel border. Nothing may
-     * write outside its own padded rectangle.
-     */
-    private static MaterialMapOwner.AtlasUpload layoutPadded() {
-        return new MaterialMapOwner.AtlasUpload("minecraft:padded", 64, 64, 4, List.of(
-                sprite("minecraft:block/m87_brick", 8, 8, 16, 16, 2, 2),
-                sprite("minecraft:block/m87_edge", 28, 8, 16, 16, 2, 2),
-                sprite("minecraft:block/m87_plain", 48, 8, 8, 8, 2, 2),
-                sprite("minecraft:block/m87_lab", 8, 32, 4, 4, 1, 1)));
-    }
-
-    private static MaterialMapOwner.AtlasSprite sprite(String id, int x, int y, int w, int h) {
-        return sprite(id, x, y, w, h, 0, 0);
-    }
-
-    private static MaterialMapOwner.AtlasSprite sprite(String id, int x, int y, int w, int h,
-            int padX, int padY) {
-        int separator = id.indexOf(':');
-        return new MaterialMapOwner.AtlasSprite(id, id.substring(0, separator),
-                id.substring(separator + 1), x, y, w, h, padX, padY);
-    }
-
-    private static Map<String, byte[]> fixtureFiles() throws IOException {
-        Map<String, byte[]> files = new LinkedHashMap<>();
-        Files.walk(FIXTURE.resolve("assets")).filter(Files::isRegularFile).forEach(path -> {
-            try {
-                String relative = FIXTURE.resolve("assets").relativize(path).toString()
-                        .replace('\\', '/');
-                int slash = relative.indexOf('/');
-                files.put(relative.substring(0, slash) + ":" + relative.substring(slash + 1),
-                        Files.readAllBytes(path));
-            } catch (IOException failure) {
-                throw new RuntimeException(failure);
-            }
-        });
-        return files;
-    }
-
-    private static MaterialMapOwner.ResourceLookup mapLookup(Map<String, byte[]> files) {
-        return (namespace, path) -> Optional.ofNullable(files.get(namespace + ":" + path))
-                .map(content -> (InputStream) new ByteArrayInputStream(content));
-    }
-
     @Test
     void ownerBuildLinear() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
         FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(),
+                markerImage(), factory);
         VulkanImage base = markerImage();
         try {
             owner.noteAtlasUpload(layout(), base);
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
+            owner.pumpPendingBuilds(mapLookup(files), MaterialMapFixtures::decodeImageIO);
 
             FakeSet normals = factory.set("minecraft:blocks",
                     MaterialMapOwner.MaterialMapKind.NORMALS);
@@ -335,17 +266,19 @@ final class MaterialMapsTest {
         Map<String, byte[]> files = fixtureFiles();
         files.put("minecraft:optifine/texture.properties", "format=lab-pbr\n".getBytes(StandardCharsets.UTF_8));
         FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(),
+                markerImage(), factory);
         try {
             owner.noteAtlasUpload(layout(), markerImage());
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
+            owner.pumpPendingBuilds(mapLookup(files), MaterialMapFixtures::decodeImageIO);
             FakeSet specular = factory.set("minecraft:blocks",
                     MaterialMapOwner.MaterialMapKind.SPECULAR);
             int[] s1 = specular.levels.get(1).pixels();
             assertEquals(pack(255, 10, 200, 25), s1[24], "lab quad keeps its class");
             assertEquals(pack(255, 70, 0, 100), s1[25], "lab quad majority class");
             assertEquals(pack(254, 64, 229, 77), s1[32 + 24], "lab quad uniform class");
-            assertEquals(pack(255, 110, 230, 6), s1[32 + 25], "lab quad split metals stay discrete");
+            assertEquals(pack(255, 110, 230, 6), s1[32 + 25],
+                    "lab quad split metals stay discrete");
             int[] s2 = specular.levels.get(2).pixels();
             assertEquals(16, specular.levels.get(2).width(), "lab chain canvas width");
             // Lab slot at level 2 is (12,0,1,1).
@@ -369,10 +302,11 @@ final class MaterialMapsTest {
         Map<String, byte[]> files = fixtureFiles();
         files.put("minecraft:textures/block/m87_edge_n.png", "not a png".getBytes(StandardCharsets.UTF_8));
         FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(),
+                markerImage(), factory);
         try {
             owner.noteAtlasUpload(layout(), markerImage());
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
+            owner.pumpPendingBuilds(mapLookup(files), MaterialMapFixtures::decodeImageIO);
             FakeSet normals = factory.set("minecraft:blocks",
                     MaterialMapOwner.MaterialMapKind.NORMALS);
             int[] n0 = normals.levels.get(0).pixels();
@@ -387,7 +321,8 @@ final class MaterialMapsTest {
     void replacementAndLifecycle() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
         FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(),
+                markerImage(), factory);
         VulkanImage baseA = markerImage();
         VulkanImage baseB = markerImage();
         try {
@@ -399,7 +334,7 @@ final class MaterialMapsTest {
             // Latest upload per location wins.
             owner.noteAtlasUpload(layout(), baseA);
             owner.noteAtlasUpload(layout(), baseA);
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
+            owner.pumpPendingBuilds(mapLookup(files), MaterialMapFixtures::decodeImageIO);
             assertEquals(1, factory.buildsFor("minecraft:blocks"), "latest upload wins");
             assertTrue(factory.set("minecraft:blocks",
                     MaterialMapOwner.MaterialMapKind.NORMALS) != null, "first build installed");
@@ -408,7 +343,7 @@ final class MaterialMapsTest {
 
             // A new base image retires the old companions.
             owner.noteAtlasUpload(layout(), baseB);
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
+            owner.pumpPendingBuilds(mapLookup(files), MaterialMapFixtures::decodeImageIO);
             assertTrue(first.closed, "replacement closed the old companions");
             assertTrue(owner.companionFor(baseA, "normals") == null, "old base no longer resolves");
             assertTrue(owner.companionFor(baseB, "normals") != null, "new base resolves");
@@ -417,7 +352,7 @@ final class MaterialMapsTest {
             owner.close();
             owner.close();
             owner.noteAtlasUpload(layout(), markerImage());
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
+            owner.pumpPendingBuilds(mapLookup(files), MaterialMapFixtures::decodeImageIO);
             assertEquals(2, factory.buildsFor("minecraft:blocks"), "no build after close");
         } finally {
             owner.close();
@@ -426,329 +361,18 @@ final class MaterialMapsTest {
     }
 
     // ------------------------------------------------------------------
-    // Draw-time resolution and sampler overrides
-    // ------------------------------------------------------------------
-
-    private static DrawMaterialContext contextFor(VulkanImage base, long samplerId) {
-        return new DrawMaterialContext(base, SamplerProfile.ofId(samplerId));
-    }
-
-    @Test
-    void resolveDrawMaterial() throws Exception {
-        Map<String, byte[]> files = fixtureFiles();
-        FakeFactory factory = new FakeFactory();
-        FakeSamplers samplers = new FakeSamplers();
-        VulkanImage flatNormals = markerImage();
-        VulkanImage flatSpecular = markerImage();
-        MaterialMapOwner owner =
-                MaterialMapOwner.withImages(flatNormals, flatSpecular, factory, samplers);
-        VulkanImage base = markerImage();
-        try {
-            // Pre-pump draws answer flat fallbacks, exactly like descriptors.
-            var flat = owner.resolveDrawMaterial(contextFor(base, 0x7777L), "normals");
-            assertTrue(flat.image() == flatNormals, "unresolved base is not flat");
-            assertEquals(0x7777L, flat.samplerOverride(), "context sampler lost");
-
-            boolean rejected = false;
-            try {
-                owner.resolveDrawMaterial(contextFor(base, 0x7777L), "bogus");
-            } catch (IllegalArgumentException expected) {
-                rejected = true;
-            }
-            assertTrue(rejected, "unknown material name did not fail loudly");
-            assertTrue(owner.resolveDrawMaterial(new DrawMaterialContext(null, null), "normals").image()
-                            == flatNormals,
-                    "null base is not flat");
-
-            // Linear fixtures resolve with the captured context sampler.
-            owner.noteAtlasUpload(layout(), base);
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
-            var resolved = owner.resolveDrawMaterial(contextFor(base, 0x7777L), "normals");
-            assertTrue(resolved.image() == factory.set("minecraft:blocks",
-                    MaterialMapOwner.MaterialMapKind.NORMALS).image,
-                    "context draw missed its companion");
-            assertEquals(0x7777L, resolved.samplerOverride(), "context sampler override lost");
-
-            // Unmarked image samplers fall back to the albedo image sampler.
-            var unmarked = owner.resolveDrawMaterial(contextFor(base, 0L), "specular");
-            assertTrue(unmarked.image() == factory.set("minecraft:blocks",
-                    MaterialMapOwner.MaterialMapKind.SPECULAR).image,
-                    "unmarked draw missed its companion");
-            assertEquals(base.getSampler(), unmarked.samplerOverride(), "albedo sampler fallback lost");
-        } finally {
-            ChimeraTextureBindingState.reset();
-            owner.close();
-        }
-    }
-
-    /**
-     * Two atlases built side by side: each draw resolves the companion of
-     * the exact albedo image it binds, never the other atlas's, and an
-     * image neither atlas owns stays flat.
-     */
-    @Test
-    void twoAtlasDispatch() throws Exception {
-        FakeFactory factory = new FakeFactory();
-        VulkanImage flatNormals = markerImage();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(flatNormals, markerImage(), factory);
-        MaterialMapOwner.ResourceLookup lookup = mapLookup(fixtureFiles());
-        VulkanImage blocks = markerImage();
-        VulkanImage animated = markerImage();
-        try {
-            owner.noteAtlasUpload(layout(), blocks);
-            owner.noteAtlasUpload(layoutAnimated("minecraft:animated"), animated);
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-            for (MaterialMapOwner.MaterialMapKind kind : MaterialMapOwner.MaterialMapKind.values()) {
-                assertTrue(owner.resolveDrawMaterial(contextFor(blocks, 0L), kind.sampler()).image()
-                                == factory.set("minecraft:blocks", kind).image,
-                        "blocks draw missed its own " + kind.sampler());
-                assertTrue(owner.resolveDrawMaterial(contextFor(animated, 0L), kind.sampler()).image()
-                                == factory.set("minecraft:animated", kind).image,
-                        "animated draw missed its own " + kind.sampler());
-            }
-            assertTrue(owner.resolveDrawMaterial(contextFor(markerImage(), 0L), "normals").image()
-                    == flatNormals, "an unowned image did not stay flat");
-        } finally {
-            owner.close();
-        }
-    }
-    private static final AddressMode REPEAT =
-            AddressMode.REPEAT;
-    private static final FilterMode LINEAR =
-            FilterMode.LINEAR;
-    private static final FilterMode NEAREST =
-            FilterMode.NEAREST;
-
-    private static DrawMaterialContext profiledContext(VulkanImage base, float maxLod) {
-        return new DrawMaterialContext(base,
-                new SamplerProfile(0x7777L, REPEAT, REPEAT, LINEAR, LINEAR, 4, maxLod));
-    }
-
-    @Test
-    void ownedMaterialSamplers() throws Exception {
-        Map<String, byte[]> files = fixtureFiles();
-        files.put("minecraft:optifine/texture.properties", "format=lab-pbr\n".getBytes(
-                StandardCharsets.UTF_8));
-        FakeFactory factory = new FakeFactory();
-        FakeSamplers samplers = new FakeSamplers();
-        MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory, samplers);
-        VulkanImage base = markerImage();
-        try {
-            owner.noteAtlasUpload(layout(), base);
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
-            DrawMaterialContext lod4 = profiledContext(base, 4.0f);
-            DrawMaterialContext lod8 = profiledContext(base, 8.0f);
-
-            // Normals keep the exact albedo sampler ID and own nothing.
-            var normals = owner.resolveDrawMaterial(lod4, "normals");
-            assertEquals(0x7777L, normals.samplerOverride(), "normals left the albedo sampler");
-            assertTrue(samplers.requests.isEmpty(), "normals allocated a sampler");
-
-            // Atlas labPBR specular derives NEAREST/NEAREST with the source ceiling.
-            var specular4 = owner.resolveDrawMaterial(lod4, "specular");
-            var specular8 = owner.resolveDrawMaterial(lod8, "specular");
-            assertEquals(2, samplers.requests.size(), "max-LOD variants aliased in the cache");
-            FakeSamplers.Request first = samplers.requests.get(0);
-            assertEquals(NEAREST, first.minFilter(), "labPBR min filter");
-            assertEquals(NEAREST, first.magFilter(), "labPBR mag filter");
-            assertEquals(REPEAT, first.addressU(), "labPBR address U");
-            assertEquals(REPEAT, first.addressV(), "labPBR address V");
-            assertEquals(4, first.anisotropy(), "labPBR anisotropy");
-            assertEquals(4.0f, first.maxLod(), "labPBR max LOD not preserved");
-            assertEquals(8.0f, samplers.requests.get(1).maxLod(), "second ceiling not preserved");
-            assertTrue(specular4.samplerOverride() != specular8.samplerOverride(),
-                    "different ceilings shared one sampler");
-
-            // Reuse: the same profile never builds twice.
-            owner.resolveDrawMaterial(lod4, "specular");
-            assertEquals(2, samplers.requests.size(), "identical profile rebuilt");
-
-            // Incomplete profiles cannot derive: the base ID wins instead.
-            var incomplete = owner.resolveDrawMaterial(
-                    new DrawMaterialContext(base, SamplerProfile.ofId(0x7777L)), "specular");
-            assertEquals(0x7777L, incomplete.samplerOverride(), "incomplete profile derived");
-            assertEquals(2, samplers.requests.size(), "incomplete profile allocated");
-        } finally {
-            owner.close();
-        }
-        assertTrue(samplers.allClosed(), "shutdown closed owned samplers");
-    }
-
-    @Test
-    void simpleSamplerClamp() throws Exception {
-        Map<String, byte[]> files = fixtureFiles();
-        files.put("minecraft:optifine/texture.properties", "format=lab-pbr\n".getBytes(
-                StandardCharsets.UTF_8));
-        byte[] mobN = Files.readAllBytes(
-                FIXTURE.resolve("assets/minecraft/textures/block/m87_brick_n.png"));
-        byte[] mobS = Files.readAllBytes(
-                FIXTURE.resolve("assets/minecraft/textures/block/m87_brick_s.png"));
-        files.put("minecraft:textures/entity/m87_mob_n.png", mobN);
-        files.put("minecraft:textures/entity/m87_mob_s.png", mobS);
-        FakeFactory factory = new FakeFactory();
-        FakeSamplers samplers = new FakeSamplers();
-        MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory, samplers);
-        VulkanImage mob = markerImage();
-        MaterialMapOwner.SimpleTextureSource source = () -> List.of(
-                new MaterialMapOwner.SimpleEntry(mob, "minecraft",
-                        SimpleTextureIndex.relativeSpritePath("textures/entity/m87_mob.png")));
-        try {
-            owner.resolveDrawMaterial(contextFor(mob, 0L), "normals");
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO, source);
-            DrawMaterialContext context = profiledContext(mob, 4.0f);
-            // Simple normals keep the source policy but clamp to LOD zero.
-            var normals = owner.resolveDrawMaterial(context, "normals");
-            // Simple labPBR specular filters NEAREST and clamps to LOD zero.
-            var specular = owner.resolveDrawMaterial(context, "specular");
-            assertEquals(2, samplers.requests.size(), "simple maps did not derive two samplers");
-            FakeSamplers.Request normalRequest = samplers.requests.get(0);
-            assertEquals(LINEAR, normalRequest.minFilter(), "simple normals min filter");
-            assertEquals(LINEAR, normalRequest.magFilter(), "simple normals mag filter");
-            assertEquals(REPEAT, normalRequest.addressU(), "simple normals address");
-            assertEquals(0.0f, normalRequest.maxLod(), "simple normals LOD not clamped");
-            FakeSamplers.Request specularRequest = samplers.requests.get(1);
-            assertEquals(NEAREST, specularRequest.minFilter(), "simple specular min filter");
-            assertEquals(NEAREST, specularRequest.magFilter(), "simple specular mag filter");
-            assertEquals(0.0f, specularRequest.maxLod(), "simple specular LOD not clamped");
-            assertTrue(normals.samplerOverride() != specular.samplerOverride(),
-                    "simple kinds shared one sampler");
-        } finally {
-            owner.close();
-        }
-        assertTrue(samplers.allClosed(), "shutdown closed simple samplers");
-    }
-
-    /**
-     * The first-draw race, directed: an entity draw marks slot 0 with its
-     * own sampler, then the very first terrain transaction must still bind
-     * all three terrain resources with the chunk profile, because terrain
-     * resolves from its captured context and never re-queries slot state.
-     */
-    @Test
-    void firstTerrainDrawWins() throws Exception {
-        Map<String, byte[]> files = fixtureFiles();
-        FakeFactory factory = new FakeFactory();
-        FakeSamplers samplers = new FakeSamplers();
-        MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory, samplers);
-        VulkanImage atlasBase = markerImage();
-        VulkanImage entityBase = markerImage();
-        try {
-            owner.noteAtlasUpload(layout(), atlasBase);
-            owner.pumpPendingBuilds(mapLookup(files), MaterialMapsTest::decodeImageIO);
-            // Entity batch first: slot 0 now names a foreign image.
-            ChimeraTextureBindingState.markPackBinding(0, entityBase, 0x5555L);
-            DrawMaterialContext terrain = new DrawMaterialContext(atlasBase,
-                    new SamplerProfile(0x7777L,
-                            AddressMode.REPEAT,
-                            AddressMode.REPEAT,
-                            FilterMode.LINEAR,
-                            FilterMode.LINEAR, 4, 4.0f));
-            var normals = owner.resolveDrawMaterial(terrain, "normals");
-            var specular = owner.resolveDrawMaterial(terrain, "specular");
-            assertTrue(normals.image() == factory.set("minecraft:blocks",
-                    MaterialMapOwner.MaterialMapKind.NORMALS).image,
-                    "first terrain draw missed its normals");
-            assertTrue(specular.image() == factory.set("minecraft:blocks",
-                    MaterialMapOwner.MaterialMapKind.SPECULAR).image,
-                    "first terrain draw missed its specular");
-            assertEquals(0x7777L, normals.samplerOverride(), "first draw lost the chunk sampler");
-            assertEquals(0x7777L, specular.samplerOverride(), "linear specular lost chunk sampler");
-            assertTrue(ChimeraTextureBindingState.capture(0, atlasBase).samplerOverride() == null,
-                    "slot state leaked into the verdict");
-        } finally {
-            ChimeraTextureBindingState.reset();
-            owner.close();
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Transaction rollback around the resolver
-    // ------------------------------------------------------------------
-
-    @Test
-    void transactionRollback() {
-        FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
-        VulkanImage base = markerImage();
-        var prior = new ChimeraTextureBindingState.Snapshot(markerImage(), 123L);
-        Map<Integer, ChimeraTextureBindingState.Snapshot> slots = new HashMap<>();
-        slots.put(25, prior);
-        List<String> events = new ArrayList<>();
-        ProgramImageBindingTransaction.Store<ChimeraTextureBindingState.Snapshot> store =
-                new ProgramImageBindingTransaction.Store<>() {
-                    public ChimeraTextureBindingState.Snapshot capture(int slot) {
-                        events.add("capture:" + slot);
-                        return slots.get(slot);
-                    }
-                    public boolean available(ChimeraTextureBindingState.Snapshot value) {
-                        return value != null && value.image() != null;
-                    }
-                    public void bind(int slot, ChimeraTextureBindingState.Snapshot value) {
-                        events.add("bind:" + slot);
-                        slots.put(slot, value);
-                    }
-                    public void restore(int slot, ChimeraTextureBindingState.Snapshot value) {
-                        events.add("restore:" + slot);
-                        if (value == null) slots.remove(slot);
-                        else slots.put(slot, value);
-                    }
-                };
-        var manifest = new ProgramImageBindingManifest(List.of(
-                new ProgramImageBindingManifest.Entry(
-                        "normals", 25, 1, 63,
-                        ProgramImageBindingManifest.Kind.MATERIAL_MAP,
-                        "normals", 0, 9, "normals"),
-                new ProgramImageBindingManifest.Entry(
-                        "broken", 26, 1, 63,
-                        ProgramImageBindingManifest.Kind.MATERIAL_MAP,
-                        "bogus", 0, 10, "bogus")));
-        boolean failed = false;
-        try {
-            ProgramImageBindingTransaction.bind("slice-c-test", manifest, store,
-                    entry -> owner.resolveDrawMaterial(contextFor(base, 0L), entry.resourceKey()));
-        } catch (RuntimeException failure) {
-            failed = failure.getMessage() != null
-                    && failure.getMessage().startsWith("RESOURCE_BINDING_UNAVAILABLE:slice-c-test:");
-        }
-        assertTrue(failed, "resolver failure did not fail the transaction loudly");
-        assertTrue(slots.get(25) == prior, "rollback did not restore slot 25");
-        assertTrue(!slots.containsKey(26), "rollback left slot 26 bound");
-        assertTrue(events.contains("restore:25") && events.contains("restore:26"),
-                "rollback did not restore every slot: " + events);
-        owner.close();
-    }
-
-    // ------------------------------------------------------------------
     // Simple textures: first frame flat, next frame bound
     // ------------------------------------------------------------------
-
-    private static final class CountingLookup implements MaterialMapOwner.ResourceLookup {
-        final MaterialMapOwner.ResourceLookup inner;
-        int opens;
-        int siblingOpens;
-
-        CountingLookup(MaterialMapOwner.ResourceLookup inner) {
-            this.inner = inner;
-        }
-
-        public Optional<InputStream> open(String namespace, String path) {
-            opens++;
-            if (!path.equals("optifine/texture.properties")) siblingOpens++;
-            return inner.open(namespace, path);
-        }
-    }
 
     @Test
     void simpleTextures() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
-        CountingLookup lookup = new CountingLookup(mapLookup(files));
+        CountingLookup lookup = new CountingLookup(
+                mapLookup(files));
         FakeFactory factory = new FakeFactory();
         MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+                MaterialMapOwner.withImages(markerImage(), markerImage(),
+                        factory);
         VulkanImage mob = markerImage();
         VulkanImage stranger = markerImage();
         MaterialMapOwner.SimpleTextureSource source = () -> List.of(
@@ -769,7 +393,7 @@ final class MaterialMapsTest {
                     "first frame has no fallback");
             assertTrue(owner.companionFor(mob, "normals") == null, "unknown image resolved early");
 
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO, source);
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO, source);
             // One properties probe plus exactly the two sibling maps.
             assertEquals(3, lookup.opens, "simple decode did not read exactly three files");
             FakeSet normals = factory.set("minecraft:entity/m87_mob",
@@ -784,13 +408,14 @@ final class MaterialMapsTest {
             assertTrue(resolved.image() == normals.image, "second frame missed its simple map");
 
             // Unknown images stay flat and are never re-scanned.
-            assertTrue(owner.resolveDrawMaterial(contextFor(stranger, 0L), "normals").image() != null,
+            assertTrue(owner.resolveDrawMaterial(contextFor(stranger, 0L), "normals")
+                    .image() != null,
                     "stranger has no fallback");
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO, source);
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO, source);
             int afterNegative = lookup.siblingOpens;
             owner.resolveDrawMaterial(contextFor(mob, 0L), "specular");
             owner.resolveDrawMaterial(contextFor(stranger, 0L), "specular");
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO, source);
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO, source);
             assertEquals(afterNegative, lookup.siblingOpens, "negative cache did not hold");
         } finally {
             owner.close();
@@ -805,10 +430,12 @@ final class MaterialMapsTest {
     @Test
     void generations() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
-        CountingLookup lookup = new CountingLookup(mapLookup(files));
+        CountingLookup lookup = new CountingLookup(
+                mapLookup(files));
         FakeFactory factory = new FakeFactory();
         MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+                MaterialMapOwner.withImages(markerImage(), markerImage(),
+                        factory);
         VulkanImage baseA = markerImage();
         VulkanImage baseB = markerImage();
         VulkanImage mob = markerImage();
@@ -818,7 +445,7 @@ final class MaterialMapsTest {
         try {
             owner.noteAtlasUpload(layout(), baseA);
             owner.resolveDrawMaterial(contextFor(mob, 0L), "normals");
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO, source);
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO, source);
             assertTrue(owner.companionFor(baseA, "normals") != null, "generation A did not resolve");
             assertTrue(owner.companionFor(mob, "normals") != null, "simple map did not resolve");
             FakeSet setA = factory.set("minecraft:blocks",
@@ -835,13 +462,13 @@ final class MaterialMapsTest {
             assertTrue(!setA.closed, "bump closed atlas A");
             // Simple identities die with the TextureManager swap.
             assertTrue(owner.companionFor(mob, "normals") == null, "bump kept simple resolving");
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO, source);
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO, source);
             assertTrue(setMob.closed, "retired simple set was not closed");
             assertTrue(!setA.closed, "pump closed surviving atlas A");
 
             // A fresh upload for the same location displaces the old base.
             owner.noteAtlasUpload(layout(), baseB);
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO, source);
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO, source);
             assertTrue(setA.closed, "displacement did not close atlas A");
             assertTrue(owner.companionFor(baseA, "normals") == null, "old base still resolves");
             assertTrue(owner.companionFor(baseB, "normals") != null, "new base does not resolve");
@@ -885,13 +512,15 @@ final class MaterialMapsTest {
     @Test
     void paddedTopology() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
-        CountingLookup lookup = new CountingLookup(mapLookup(files));
+        CountingLookup lookup = new CountingLookup(
+                mapLookup(files));
         FakeFactory factory = new FakeFactory();
         MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+                MaterialMapOwner.withImages(markerImage(), markerImage(),
+                        factory);
         try {
             owner.noteAtlasUpload(layoutPadded(), markerImage());
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO);
             FakeSet normals = factory.set("minecraft:padded",
                     MaterialMapOwner.MaterialMapKind.NORMALS);
             int[] n0 = normals.levels.get(0).pixels();
@@ -899,9 +528,11 @@ final class MaterialMapsTest {
             // Brick content begins at slot + padding, borders replicate edges.
             assertEquals(pack(255, 200, 100, 0), n0[10 * 64 + 10], "padded content origin");
             assertEquals(n0[10 * 64 + 10], n0[8 * 64 + 8], "padded corner replicates");
-            assertEquals(pack(255, 200, 115, 240), n0[10 * 64 + 27], "padded far border replicates");
+            assertEquals(pack(255, 200, 115, 240), n0[10 * 64 + 27],
+                    "padded far border replicates");
             // Adjacent padded slots meet without overwriting each other.
-            assertEquals(pack(255, 255, 255, 255), n0[10 * 64 + 28], "adjacent slot keeps its border");
+            assertEquals(pack(255, 255, 255, 255), n0[10 * 64 + 28],
+                    "adjacent slot keeps its border");
             // Missing sprites leave the whole padded slot at fallback.
             assertEquals(FALLBACK_NORMALS, n0[10 * 64 + 50], "missing content stays fallback");
             assertEquals(FALLBACK_NORMALS, n0[8 * 64 + 48], "missing border stays fallback");
@@ -934,15 +565,18 @@ final class MaterialMapsTest {
     @Test
     void asymmetricPaddingIsolated() throws Exception {
         Map<String, byte[]> files = fixtureFiles();
-        CountingLookup lookup = new CountingLookup(mapLookup(files));
+        CountingLookup lookup = new CountingLookup(
+                mapLookup(files));
         FakeFactory factory = new FakeFactory();
         MaterialMapOwner owner =
-                MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
+                MaterialMapOwner.withImages(markerImage(), markerImage(),
+                        factory);
         try {
             int siblingBefore = lookup.siblingOpens;
             owner.noteAtlasUpload(new MaterialMapOwner.AtlasUpload("minecraft:skewed", 64, 64, 1,
-                    List.of(sprite("minecraft:block/m87_brick", 0, 0, 16, 16, 2, 3))), markerImage());
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
+                    List.of(sprite("minecraft:block/m87_brick", 0, 0, 16, 16, 2, 3))),
+                            markerImage());
+            owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO);
             assertEquals(siblingBefore, lookup.siblingOpens, "asymmetric sprite read files");
             assertTrue(factory.buildsFor("minecraft:skewed") == 0, "asymmetric sprite built");
         } finally {
@@ -950,337 +584,4 @@ final class MaterialMapsTest {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Animated material maps
-    // ------------------------------------------------------------------
-
-    /**
-     * Animated sprites, each map carrying its own table: anim_n cycles
-     * 0 (2 ticks) -> 2 (3 ticks) -> 1 (1 tick) without interpolation;
-     * blend_s interpolates two frames of 4 ticks; single_n names one frame
-     * and so stays static; badmeta_n names a frame outside its strip and
-     * baddims_n cannot be cut into frames, so both stay flat alone. Brick
-     * is a static neighbour whose slot animation must never touch.
-     */
-    private static MaterialMapOwner.AtlasUpload layoutAnimated(String location) {
-        return new MaterialMapOwner.AtlasUpload(location, 32, 32, 3, List.of(
-                sprite("minecraft:block/m87_anim", 0, 0, 4, 4, 1, 1),
-                sprite("minecraft:block/m87_blend", 8, 0, 4, 4, 1, 1),
-                sprite("minecraft:block/m87_single", 16, 0, 4, 4, 0, 0),
-                sprite("minecraft:block/m87_badmeta", 0, 8, 4, 4, 0, 0),
-                sprite("minecraft:block/m87_baddims", 8, 8, 4, 4, 0, 0),
-                sprite("minecraft:block/m87_brick", 16, 16, 16, 16, 0, 0)));
-    }
-
-    @Test
-    void animationSchedules() throws Exception {
-        String table = "{\"animation\":{\"frametime\":1,\"frames\":[{\"index\":0,\"time\":2},"
-                + "{\"index\":2,\"time\":3},1]}}";
-        MaterialAnimationSchedule schedule = MaterialAnimationSchedule.parse(table, 4, 12);
-        assertEquals(List.of(new MaterialAnimation.Frame(0, 2), new MaterialAnimation.Frame(2, 3),
-                new MaterialAnimation.Frame(1, 1)), schedule.frames(), "explicit table order and times");
-        assertTrue(!schedule.interpolate() && schedule.animated(), "explicit table flags");
-        assertEquals(4, schedule.frameHeight(), "square frame from the width");
-
-        MaterialAnimationSchedule implicit = MaterialAnimationSchedule.parse(
-                "{\"animation\":{\"interpolate\":true,\"frametime\":4}}", 4, 8);
-        assertEquals(List.of(new MaterialAnimation.Frame(0, 4), new MaterialAnimation.Frame(1, 4)),
-                implicit.frames(), "implicit table is every frame at frametime");
-        assertTrue(implicit.interpolate(), "interpolate flag lost");
-
-        MaterialAnimationSchedule wide = MaterialAnimationSchedule.parse(
-                "{\"animation\":{\"width\":2,\"height\":4}}", 4, 8);
-        assertEquals(4, wide.frameCount(8), "explicit frame size counts a grid");
-        assertEquals(2, wide.columns(), "explicit frame size keeps two columns");
-
-        assertTrue(MaterialAnimationSchedule.parse("{\"texture\":{\"blur\":true}}", 4, 8) == null,
-                "a file without animation is not a schedule");
-        assertTrue(!MaterialAnimationSchedule.parse("{\"animation\":{\"frames\":[1]}}", 4, 8).animated(),
-                "a single entry is not an animation");
-        expectRejected("{\"animation\":{\"frames\":[0,7]}}", 4, 8, "frame index outside the strip");
-        expectRejected("{\"animation\":{\"frames\":[{\"index\":0,\"time\":0},1]}}", 4, 8, "zero duration");
-        expectRejected("{\"animation\":{}}", 4, 10, "frame size that does not divide the image");
-    }
-
-    private static void expectRejected(String mcmeta, int width, int height, String what) {
-        try {
-            MaterialAnimationSchedule.parse(mcmeta, width, height);
-        } catch (IllegalArgumentException expected) {
-            return;
-        }
-        throw new AssertionError("accepted " + what);
-    }
-
-    @Test
-    void animatedCompanions() throws Exception {
-        FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
-        MaterialMapOwner.ResourceLookup lookup = mapLookup(fixtureFiles());
-        VulkanImage base = markerImage();
-        try {
-            owner.noteAtlasUpload(layoutAnimated("minecraft:animated"), base);
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-            FakeSet normals = factory.set("minecraft:animated", MaterialMapOwner.MaterialMapKind.NORMALS);
-            VulkanImage bound = owner.companionFor(base, "normals").image();
-            int[] frames = {pack(255, 30, 20, 10), pack(255, 60, 50, 40), pack(255, 90, 80, 70)};
-
-            int[] n0 = normals.levels.get(0).pixels();
-            assertEquals(frames[0], n0[32 + 1], "animation starts on its first entry");
-            assertEquals(frames[0], n0[0], "first frame fills the replicated padding");
-            assertEquals(pack(255, 3, 2, 1), n0[16], "single-entry table shows the strip's first frame");
-            assertEquals(FALLBACK_NORMALS, n0[8 * 32], "invalid frame index left its slot flat");
-            assertEquals(FALLBACK_NORMALS, n0[8 * 32 + 8], "undividable strip left its slot flat");
-            int brick = n0[16 * 32 + 16];
-
-            // Shown frame after each tick: 0 holds 2, then 2 holds 3, then 1 holds 1.
-            // Tick 5 first reaches the last entry: from then on only mip 0 is
-            // redrawn (Iris + Sodium), so mip 1 keeps frame 2.
-            int[] expected = {0, 2, 2, 2, 1, 0, 0, 2};
-            int lastEntryTick = 4;
-            int writes = 0;
-            for (int tick = 0; tick < expected.length; tick++) {
-                owner.tickAtlas("minecraft:animated");
-                owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-                boolean changed = tick == 0 ? false : expected[tick] != expected[tick - 1];
-                if (changed) writes += tick < lastEntryTick ? 3 : 1;
-                assertEquals(writes, normals.writes.size(), "tick " + (tick + 1) + " redraw count");
-                int shown = frames[expected[tick]];
-                int smaller = frames[expected[Math.min(tick, lastEntryTick - 1)]];
-                assertEquals(shown, normals.levels.get(0).pixels()[32 + 1], "tick " + (tick + 1) + " frame");
-                assertEquals(shown, normals.levels.get(0).pixels()[0], "tick " + (tick + 1) + " padding");
-                assertEquals(smaller, normals.levels.get(1).pixels()[0], "tick " + (tick + 1) + " mip 1");
-            }
-            assertTrue(owner.companionFor(base, "normals").image() == bound,
-                    "animation changed the descriptor identity");
-            assertEquals(1, factory.buildsFor("minecraft:animated"), "animation rebuilt the companion");
-            assertEquals(brick, normals.levels.get(0).pixels()[16 * 32 + 16], "animation touched a neighbour");
-            for (int[] write : normals.writes) {
-                assertTrue(write[1] + write[3] <= (8 >> write[0]) && write[2] + write[4] <= (8 >> write[0]),
-                        "write left the animated slot: " + Arrays.toString(write));
-            }
-
-            // A tick for another atlas never advances this one.
-            int before = normals.writes.size();
-            owner.tickAtlas("minecraft:blocks");
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-            assertEquals(before, normals.writes.size(), "a foreign atlas tick advanced the map");
-
-            // A re-stitch restarts the schedule on its first entry.
-            owner.noteAtlasUpload(layoutAnimated("minecraft:animated"), markerImage());
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-            FakeSet rebuilt = factory.set("minecraft:animated", MaterialMapOwner.MaterialMapKind.NORMALS);
-            assertEquals(frames[0], rebuilt.levels.get(0).pixels()[32 + 1], "re-stitch kept an old frame");
-            assertTrue(normals.closed, "re-stitch did not close the old companion");
-        } finally {
-            owner.close();
-        }
-        assertTrue(factory.allClosed(), "shutdown closed every animated companion");
-    }
-
-    @Test
-    void interpolatedCompanion() throws Exception {
-        FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
-        MaterialMapOwner.ResourceLookup lookup = mapLookup(fixtureFiles());
-        try {
-            owner.noteAtlasUpload(layoutAnimated("minecraft:animated"), markerImage());
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-            FakeSet specular = factory.set("minecraft:animated", MaterialMapOwner.MaterialMapKind.SPECULAR);
-            int content = 32 + 9;
-            assertEquals(pack(40, 200, 100, 0), specular.levels.get(0).pixels()[content],
-                    "interpolation starts on frame 0");
-            // Four ticks per frame: progress 0.25, 0.5, 0.75, then frame 1 exactly.
-            int[][] shown = {
-                    {90, 150, 100, 50},
-                    {140, 100, 100, 100},
-                    {190, 50, 100, 150},
-                    {240, 0, 100, 200},
-                    {190, 50, 100, 150}};
-            for (int tick = 0; tick < shown.length; tick++) {
-                owner.tickAtlas("minecraft:animated");
-                owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-                int[] value = shown[tick];
-                assertEquals(pack(value[0], value[1], value[2], value[3]),
-                        specular.levels.get(0).pixels()[content], "interpolated tick " + (tick + 1));
-                assertEquals(pack(value[0], value[1], value[2], value[3]),
-                        specular.levels.get(0).pixels()[8], "interpolated padding tick " + (tick + 1));
-            }
-            // Every tick redraws; tick 4 reaches the last entry, after which only mip 0 is written.
-            assertEquals(3 * 3 + (shown.length - 3), specular.writes.size(), "interpolation redraws every tick");
-        } finally {
-            owner.close();
-        }
-    }
-
-    /** Ticks that land between the atlas upload and the build still count. */
-    @Test
-    void animationLockstep() throws Exception {
-        FakeFactory factory = new FakeFactory();
-        MaterialMapOwner owner = MaterialMapOwner.withImages(markerImage(), markerImage(), factory);
-        MaterialMapOwner.ResourceLookup lookup = mapLookup(fixtureFiles());
-        try {
-            owner.noteAtlasUpload(layoutAnimated("minecraft:animated"), markerImage());
-            owner.tickAtlas("minecraft:animated");
-            owner.tickAtlas("minecraft:animated");
-            owner.pumpPendingBuilds(lookup, MaterialMapsTest::decodeImageIO);
-            FakeSet normals = factory.set("minecraft:animated", MaterialMapOwner.MaterialMapKind.NORMALS);
-            assertEquals(pack(255, 90, 80, 70), normals.levels.get(0).pixels()[32 + 1],
-                    "the build did not catch up with the albedo's ticks");
-        } finally {
-            owner.close();
-        }
-    }
-    // ------------------------------------------------------------------
-    // Fakes and helpers
-    // ------------------------------------------------------------------
-
-    private static final class FakeSet implements MaterialMapOwner.CompanionSet {
-        final List<MaterialMapOwner.LevelPixels> levels;
-        final VulkanImage image;
-        boolean closed;
-
-        FakeSet(List<MaterialMapOwner.LevelPixels> levels, VulkanImage image) {
-            this.levels = levels;
-            this.image = image;
-        }
-
-        /** Region writes, applied to the recorded levels like a GPU copy. */
-        final List<int[]> writes = new ArrayList<>();
-
-        @Override
-        public VulkanImage image() {
-            return image;
-        }
-
-        @Override
-        public void writeRegion(int level, int x, int y, int width, int height, int[] pixels) {
-            MaterialMapOwner.LevelPixels canvas = levels.get(level);
-            MaterialMapPixels.placeRect(canvas.pixels(), canvas.width(), canvas.height(),
-                    x, y, pixels, width, height);
-            writes.add(new int[] {level, x, y, width, height});
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-        }
-    }
-
-    private static final class FakeSamplers implements MaterialMapOwner.MaterialSamplerFactory {
-        record Request(AddressMode addressU,
-                AddressMode addressV,
-                FilterMode minFilter,
-                FilterMode magFilter,
-                int anisotropy, float maxLod) {}
-        final List<Request> requests = new ArrayList<>();
-        final List<FakeOwnedSampler> live = new ArrayList<>();
-        long nextId = 0x9E450L;
-
-        @Override
-        public MaterialMapOwner.OwnedMaterialSampler create(
-                AddressMode addressU,
-                AddressMode addressV,
-                FilterMode minFilter,
-                FilterMode magFilter,
-                int anisotropy, float maxLod) {
-            requests.add(new Request(addressU, addressV, minFilter, magFilter, anisotropy, maxLod));
-            FakeOwnedSampler sampler = new FakeOwnedSampler(nextId++);
-            live.add(sampler);
-            return sampler;
-        }
-
-        boolean allClosed() {
-            return live.stream().allMatch(sampler -> sampler.closed);
-        }
-    }
-
-    private static final class FakeOwnedSampler
-            implements MaterialMapOwner.OwnedMaterialSampler {
-        final long samplerId;
-        boolean closed;
-
-        FakeOwnedSampler(long samplerId) {
-            this.samplerId = samplerId;
-        }
-
-        @Override
-        public long id() {
-            return samplerId;
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-        }
-    }
-
-    private static final class FakeFactory implements MaterialMapOwner.CompanionFactory {
-        final Map<String, Map<MaterialMapOwner.MaterialMapKind, FakeSet>> built = new LinkedHashMap<>();
-        final Map<String, Integer> builds = new LinkedHashMap<>();
-
-        @Override
-        public MaterialMapOwner.CompanionSet build(String location,
-                MaterialMapOwner.MaterialMapKind kind, int width, int height,
-                List<MaterialMapOwner.LevelPixels> levels) {
-            FakeSet set = new FakeSet(levels, markerImage());
-            built.computeIfAbsent(location, key -> new LinkedHashMap<>()).put(kind, set);
-            builds.merge(location + "/" + kind.sampler(), 1, Integer::sum);
-            return set;
-        }
-
-        FakeSet set(String location, MaterialMapOwner.MaterialMapKind kind) {
-            return built.get(location).get(kind);
-        }
-
-        int buildsFor(String location) {
-            int total = 0;
-            for (var entry : builds.entrySet()) {
-                if (entry.getKey().startsWith(location + "/")) total += entry.getValue();
-            }
-            return total / MaterialMapOwner.MaterialMapKind.values().length;
-        }
-
-        boolean allClosed() {
-            return built.values().stream().flatMap(map -> map.values().stream()).allMatch(set -> set.closed);
-        }
-    }
-
-    private static MaterialMapOwner.DecodedImage decodeImageIO(InputStream in) throws IOException {
-        BufferedImage image = ImageIO.read(in);
-        if (image == null) {
-            throw new IOException("MATERIAL_MAP_UNDECODABLE");
-        }
-        int width = image.getWidth();
-        int height = image.getHeight();
-        MaterialMapPixels.checkSize(width, height, "fixture");
-        int[] argb = image.getRGB(0, 0, width, height, null, 0, width);
-        int[] abgr = new int[argb.length];
-        for (int i = 0; i < argb.length; i++) {
-            int pixel = argb[i];
-            abgr[i] = MaterialMapPixels.pack(pixel >>> 24, pixel & 0xFF,
-                    (pixel >> 8) & 0xFF, (pixel >> 16) & 0xFF);
-        }
-        return new MaterialMapOwner.DecodedImage(abgr, width, height);
-    }
-
-    private static int[] readFixtureAbgr(String relative) throws IOException {
-        try (InputStream in = Files.newInputStream(FIXTURE.resolve(relative))) {
-            MaterialMapOwner.DecodedImage decoded = decodeImageIO(in);
-            return decoded.pixels();
-        }
-    }
-
-    private static VulkanImage markerImage() {
-        try {
-            var constructor = VulkanImage.class.getDeclaredConstructor(VulkanImage.Builder.class);
-            constructor.setAccessible(true);
-            return constructor.newInstance(VulkanImage.builder(1, 1));
-        } catch (ReflectiveOperationException failure) {
-            throw new RuntimeException(failure);
-        }
-    }
-
-    private static int pack(int alpha, int blue, int green, int red) {
-        return MaterialMapPixels.pack(alpha, blue, green, red);
-    }
 }

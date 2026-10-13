@@ -151,7 +151,8 @@ final class PackPostChain {
                 try {
                     pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
                     pass.prepareProgramImages(post.pipeline());
-                    previous = pass.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(), hdrColor,
+                    previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
+                            hdrColor,
                             DrawMaterialContext.captureLive());
                     attempted = true;
                     pass.packPostTargets.prepare(post, commandBuffer);
@@ -240,7 +241,8 @@ final class PackPostChain {
                     pass.packFinalInputs[target] = pass.packPostTargets.activeTarget(target);
                 }
                 VulkanImage resolved = pass.packPostTargets.activeTarget(0);
-                previous = pass.bindProgramImages(pass.pipelines.finalPost.pipeline(), pass.packFinalInputs, resolved,
+                previous = pass.images.bindProgramImages(pass.pipelines.finalPost.pipeline(), pass.packFinalInputs,
+                        resolved,
                         DrawMaterialContext.captureLive());
                 pass.drawFullscreen(commandBuffer, pass.pipelines.finalPost.pipeline());
             } finally {
@@ -321,7 +323,7 @@ final class PackPostChain {
     void renderIdentityResolve(VkCommandBuffer commandBuffer, VulkanImage hdrColor) {
         ChimeraMainPass.PackRenderState previousState = pass.capturePackRenderState();
         ChimeraMainPass.preparePackFullscreenState();
-        try (var bindings = pass.bindProgramImages(pass.compositePipeline, null, hdrColor,
+        try (var bindings = pass.images.bindProgramImages(pass.compositePipeline, null, hdrColor,
                 DrawMaterialContext.captureLive())) {
             Renderer.getInstance().beginRenderPass(pass.targets.compositeRenderPass, pass.targets.compositeFramebuffer);
             pass.drawFullscreen(commandBuffer, pass.compositePipeline);
@@ -383,7 +385,7 @@ final class PackPostChain {
     void disablePackPostChain(String reason) {
         pass.packTargetResourcesReady = false;
         pass.packPostFrameStarted = false;
-        pass.restorePackResourceWindow();
+        pass.windows.restorePackResourceWindow();
         if (PackGeometryContext.active()) PackGeometryContext.close();
         pass.pipelines.terrainRoute = null;
         pass.pipelines.waterRoute = null;
@@ -473,24 +475,24 @@ final class PackPostChain {
             pass.packTargetGraph = PackTargetGraphPlan.build(
                     pass.packPlan.activePrograms(), pass.packConfig, pass.packPlan.resources(), width, height,
                     maxAttachments, ChimeraMainPass.deviceMaxImageDimension());
-            pass.packCoveragePlan = PackCoveragePlan.from(
+            pass.coverage.packCoveragePlan = PackCoveragePlan.from(
                     pass.packTargetGraph, pass.packPlan, width, height);
-            if (pass.packCoveragePlan.enabled() && pass.packCoverageRuntimeEnabled()) {
-                pass.packCoverageOwner.ensure(width, height);
-                if (pass.sceneSeedPipeline != null) {
-                    pass.sceneSeedPipeline.cleanUp();
+            if (pass.coverage.packCoveragePlan.enabled() && pass.packCoverageRuntimeEnabled()) {
+                pass.coverage.packCoverageOwner.ensure(width, height);
+                if (pass.coverage.sceneSeedPipeline != null) {
+                    pass.coverage.sceneSeedPipeline.cleanUp();
                 }
                 MrtPipelineContext.begin(new int[] {pass.packGeometryTargetFormat()}, maxAttachments);
                 try {
-                    pass.sceneSeedPipeline = ChimeraPostPipelines.createSceneSeedPipeline();
+                    pass.coverage.sceneSeedPipeline = ChimeraPostPipelines.createSceneSeedPipeline();
                 } finally {
                     MrtPipelineContext.end();
                 }
                 LOGGER.info("[chimera] scene seed: planned families={} deviations={}",
-                        pass.packCoveragePlan.families(), pass.packCoveragePlan.deviations());
-            } else if (!pass.packCoveragePlan.deviations().isEmpty()) {
+                        pass.coverage.packCoveragePlan.families(), pass.coverage.packCoveragePlan.deviations());
+            } else if (!pass.coverage.packCoveragePlan.deviations().isEmpty()) {
                 LOGGER.info("[chimera] scene seed: fallback deviations={}",
-                        pass.packCoveragePlan.deviations());
+                        pass.coverage.packCoveragePlan.deviations());
             }
             pass.packFrameSchedule = PackFrameSchedulePlan.build(
                     pass.packPlan.activePrograms(), pass.packTargetGraph);
@@ -522,9 +524,9 @@ final class PackPostChain {
         } catch (RuntimeException e) {
             pass.packPostTargets.cleanUp();
             pass.packDepthTargets.cleanUp();
-            pass.packCoverageOwner.close();
-            pass.packCoverageState.endFrame();
-            pass.packCoveragePlan = PackCoveragePlan.disabled();
+            pass.coverage.packCoverageOwner.close();
+            pass.coverage.packCoverageState.endFrame();
+            pass.coverage.packCoveragePlan = PackCoveragePlan.disabled();
             pass.packPostChainActive = false;
             pass.packTargetResourcesReady = false;
             pass.packTargetGraph = null;

@@ -123,7 +123,7 @@ final class PackShadowPass {
                         pass.packAdvancedImageOwner.prepareFrame(cmd);
                     }
                     pass.prepareProgramImages(pass.pipelines.shadowPipeline);
-                    shadowBindings = pass.bindProgramImages(pass.pipelines.shadowPipeline, null, null,
+                    shadowBindings = pass.images.bindProgramImages(pass.pipelines.shadowPipeline, null, null,
                             DrawMaterialContext.captureLive());
                     PackGeometryContext.beginShadow(this.shadowMap.shadowColors(), shadowDepth);
                     // Pack receivers read the map with GL's v = ndc * 0.5 + 0.5.
@@ -364,7 +364,7 @@ final class PackShadowPass {
                 // target; its owner closes and commits it as usual.
                 PackGeometryContext.beginPreserving(
                         resumeColors.get(0),
-                        resumeColors.size() > 1 ? resumeColors.get(1) : pass.packCoverageOwner.image(),
+                        resumeColors.size() > 1 ? resumeColors.get(1) : pass.coverage.packCoverageOwner.image(),
                         pass.targets.hdrFramebuffer.getDepthAttachment());
                 pass.rebindMainTarget();
             } else {

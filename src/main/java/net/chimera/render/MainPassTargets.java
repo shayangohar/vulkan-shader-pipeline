@@ -180,9 +180,9 @@ final class MainPassTargets {
     }
 
     void cleanUpFramebuffersAndPasses() {
-        pass.worldResourcesReady = false;
-        pass.outputResourcesReady = false;
-        pass.hdrDepthReadable = false;
+        pass.resources.worldResourcesReady = false;
+        pass.resources.outputResourcesReady = false;
+        pass.depth.hdrDepthReadable = false;
         releaseHdrInteropTextures();
         releaseOutputInteropTextures();
         if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(false);

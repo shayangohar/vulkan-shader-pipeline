@@ -1,6 +1,6 @@
 package net.chimera.command;
 
-import net.chimera.render.ChimeraMainPass;
+import net.chimera.render.PackChangeQueue;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -63,7 +63,7 @@ final class HotSwapCommandTest {
         Path active = Path.of("active");
         Path first = Path.of("first");
         Path second = Path.of("second");
-        ChimeraMainPass.PackChangeQueue queue = new ChimeraMainPass.PackChangeQueue();
+        PackChangeQueue queue = new PackChangeQueue();
 
         assertTrue(!queue.request(active, active, false), "same active pack must be a no-op");
         assertTrue(!queue.request(Path.of("relative", "active"),

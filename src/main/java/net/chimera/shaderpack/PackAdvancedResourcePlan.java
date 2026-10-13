@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -35,7 +34,7 @@ public final class PackAdvancedResourcePlan {
     public static final int MAX_BUFFER_INDEX = 12;
     public static final long MAX_STORAGE_BUFFER_BYTES = 64L * 1024L * 1024L;
 
-    private static final Pattern LOCAL_SIZE = Pattern.compile(
+    static final Pattern LOCAL_SIZE = Pattern.compile(
             "layout\\s*\\(\\s*local_size_x\\s*=\\s*(\\d+)\\s*,\\s*"
                     + "local_size_y\\s*=\\s*(\\d+)\\s*,\\s*"
                     + "local_size_z\\s*=\\s*(\\d+)\\s*\\)", Pattern.MULTILINE);
@@ -43,7 +42,7 @@ public final class PackAdvancedResourcePlan {
             "(?:layout\\s*\\([^)]*\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
                     + "\\b(u?i?image3D)\\s+([A-Za-z_]\\w*)");
-    private static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(
+    static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
                     + "(bool|int|uint|float|double|vec[234]|ivec[234]|uvec[234]|bvec[234]"
                     + "|mat[234](?:x[234])?)\\s+([A-Za-z_]\\w*)\\s*;");
@@ -249,7 +248,6 @@ public final class PackAdvancedResourcePlan {
         }
         return List.copyOf(merged.values());
     }
-
 
     /** Reads the emitted shader declarations, not the rewrite's intended offsets. */
     public static List<DescriptorBinding> shaderBindings(String source, int stage) {
@@ -466,7 +464,7 @@ public final class PackAdvancedResourcePlan {
      * source scan constructs the immutable per-program bindings.
      */
     public static PackAdvancedResourcePlan catalog(PackSettingsPlan settings) {
-        Map<Integer, BufferSpec> buffers = parseBuffers(settings, new ArrayList<>());
+        Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(settings, new ArrayList<>());
         return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), Map.of(), buffers, Map.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), Map.of());
     }
@@ -518,7 +516,7 @@ public final class PackAdvancedResourcePlan {
         List<String> deviations = new ArrayList<>();
         for (Map.Entry<String, String> entry : plan.settings().propertyValues().entrySet()) {
             if (!entry.getKey().startsWith("image.")) continue;
-            ImageSpec spec = parseImage(entry.getKey(), entry.getValue(),
+            ImageSpec spec = AdvancedImageDeclarations.parseImage(entry.getKey(), entry.getValue(),
                     plan.settings() == null ? Map.of() : plan.settings().preprocessorDefines());
             images.put(spec.name(), spec);
             deviations.addAll(spec.deviations());
@@ -526,8 +524,8 @@ public final class PackAdvancedResourcePlan {
                 deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name());
             }
         }
-        applyBudget(images, deviations);
-        Map<Integer, BufferSpec> buffers = parseBuffers(plan.settings(), deviations);
+        AdvancedImageDeclarations.applyBudget(images, deviations);
+        Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(plan.settings(), deviations);
 
         boolean customImages = images.values().stream().anyMatch(ImageSpec::supported);
         Map<String, String> computeMacros = PackEngineDefines.forCompute(
@@ -548,7 +546,7 @@ public final class PackAdvancedResourcePlan {
         for (PackProgramPlan program : plan.programs()) {
             if (program == null || program.name().isBlank()) continue;
             boolean usesAdvanced = program.stages().values().stream().anyMatch(value ->
-                    usesAdvancedResource(value.source(), images));
+                    AdvancedImageDeclarations.usesAdvancedResource(value.source(), images));
             if (usesAdvanced) {
                 dependent.add(program.name());
             }
@@ -579,7 +577,7 @@ public final class PackAdvancedResourcePlan {
                     graphicsImages.computeIfAbsent(program.name(), ignored -> new ArrayList<>())
                             .add(new GraphicsImageBinding(program.name(), image.group(2),
                                     spec.name(), spec.sampler(), image.group(1), selectorSlot,
-                                    stageMask(stageEntry.getKey())));
+                                    StorageBufferDeclarations.stageMask(stageEntry.getKey())));
                     graphicsProducedImages.add(spec.name());
                 }
                 // Vulkan GLSL needs a binding for every opaque declaration,
@@ -605,8 +603,8 @@ public final class PackAdvancedResourcePlan {
                     }
                     graphicsImageReaders.computeIfAbsent(program.name(), ignored -> new ArrayList<>())
                             .add(new GraphicsImageBinding(program.name(), spec.name(), spec.name(),
-                                    spec.sampler(), storageImageType(spec), selectorSlot,
-                                    stageMask(stageEntry.getKey())));
+                                    spec.sampler(), AdvancedImageDeclarations.storageImageType(spec), selectorSlot,
+                                    StorageBufferDeclarations.stageMask(stageEntry.getKey())));
                 }
                 if (stage.source().contains("IRIS_FEATURE_CUSTOM_IMAGES")
                         && stage.source().contains("OPTIFINE_ACT_ERROR")) {
@@ -614,7 +612,7 @@ public final class PackAdvancedResourcePlan {
                 }
             }
         }
-        Map<String, ComputeSpec> compute = discoverCompute(
+        Map<String, ComputeSpec> compute = AdvancedImageDeclarations.discoverCompute(
                 shadersDir, plan.resolution().selectedSourceFolder(), images, deviations,
                 computeMacros,
                 PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
@@ -645,561 +643,26 @@ public final class PackAdvancedResourcePlan {
         Map<String, Integer> bindingBases = new TreeMap<>();
         PackResourcePlan sampledResources = PackResourcePlan.build(plan, shadersDir);
         for (PackProgramPlan program : plan.programs()) {
-            var contract = PackPipelines.ordinaryDescriptorContract(program,
+            var contract = PackDescriptorContracts.ordinaryDescriptorContract(program,
                     advancedSamplerNames.getOrDefault(program.name(), Set.of()))
                     .withResources(sampledResources.bindings(program.name()));
             ordinaryContracts.put(program.name(), contract);
             bindingBases.put(program.name(), contract.nextBinding());
         }
-        Map<String, List<StorageBufferBinding>> storageBuffers = scanStorageBuffers(
+        Map<String, List<StorageBufferBinding>> storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
                 plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
-        Map<Integer, BufferSpec> budgetedBuffers = applyStorageBudget(
+        Map<Integer, BufferSpec> budgetedBuffers = StorageBufferDeclarations.applyStorageBudget(
                 buffers, storageBuffers, storageEligible, images, deviations);
         if (!budgetedBuffers.equals(buffers)) {
             buffers = budgetedBuffers;
             bufferDependent.clear();
             storageEligible.clear();
-            storageBuffers = scanStorageBuffers(
+            storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
                     plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
         }
         return new PackAdvancedResourcePlan(images, compute, graphicsImages, graphicsImageReaders, buffers,
                 storageBuffers, dependent, bufferDependent, storageEligible,
                 customImageFeaturePrograms, deviations, ordinaryContracts, bindingBases);
-    }
-
-    private static Map<Integer, BufferSpec> parseBuffers(
-            PackSettingsPlan settings,
-            List<String> deviations
-    ) {
-        Map<Integer, BufferSpec> result = new TreeMap<>();
-        if (settings == null) {
-            return result;
-        }
-        settings.propertyValues().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> {
-                    String key = entry.getKey();
-                    if (key.startsWith("ssbo.") || key.startsWith("storage.")) {
-                        deviations.add("STORAGE_BUFFER_UNSUPPORTED_PROPERTY:" + key);
-                        deviations.add("STORAGE_BUFFER_DEFERRED:" + key);
-                        return;
-                    }
-                    if (!key.startsWith("bufferObject.")) {
-                        return;
-                    }
-                    String suffix = key.substring("bufferObject.".length());
-                    int index;
-                    try {
-                        index = Integer.parseInt(suffix);
-                    } catch (RuntimeException failure) {
-                        deviations.add("STORAGE_BUFFER_INDEX_UNSUPPORTED:" + suffix);
-                        return;
-                    }
-                    BufferSpec spec = parseBuffer(index, entry.getValue());
-                    result.put(index, spec);
-                    deviations.addAll(spec.deviations());
-                });
-        return result;
-    }
-
-    private static BufferSpec parseBuffer(int index, String raw) {
-        List<String> deviations = new ArrayList<>();
-        if (index < 0 || index > MAX_BUFFER_INDEX) {
-            deviations.add("STORAGE_BUFFER_INDEX_UNSUPPORTED:" + index);
-            return new BufferSpec(index, 0L, "", Status.UNSUPPORTED, deviations);
-        }
-        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        if (values.length == 0 || values.length > 2) {
-            deviations.add("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index);
-            return new BufferSpec(index, 0L, "", Status.UNSUPPORTED, deviations);
-        }
-        long size;
-        try {
-            size = Long.parseLong(values[0]);
-        } catch (RuntimeException failure) {
-            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
-            return new BufferSpec(index, 0L, values.length == 2 ? values[1] : "",
-                    Status.UNSUPPORTED, deviations);
-        }
-        if (size <= 0L || size > MAX_STORAGE_BUFFER_BYTES) {
-            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
-        } else if ((size & 3L) != 0L) {
-            deviations.add("STORAGE_BUFFER_ALIGNMENT_UNSUPPORTED:" + index);
-        }
-        if (raw != null && raw.toLowerCase(Locale.ROOT).contains("relative")) {
-            deviations.add("STORAGE_BUFFER_RELATIVE_UNSUPPORTED:" + index);
-        }
-        return new BufferSpec(index, size, values.length == 2 ? values[1] : "",
-                deviations.isEmpty() ? Status.SUPPORTED : Status.UNSUPPORTED, deviations);
-    }
-
-    private static Map<String, List<StorageBufferBinding>> scanStorageBuffers(
-            PackPlan plan,
-            Map<Integer, BufferSpec> specs,
-            List<String> dependentPrograms,
-            List<String> eligiblePrograms,
-            List<String> deviations,
-            Map<String, Integer> bindingBases
-    ) {
-        Map<String, List<StorageBufferBinding>> result = new TreeMap<>();
-        if (plan == null) return result;
-        for (PackProgramPlan program : plan.programs()) {
-            if (program == null || program.name().isBlank()) continue;
-            List<StorageBlock> blocks = new ArrayList<>();
-            for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
-                if (stage.getValue() == null || stage.getValue().source() == null) continue;
-                int stageMask = stage.getKey().equals("vertex")
-                        ? VK10.VK_SHADER_STAGE_VERTEX_BIT
-                        : stage.getKey().equals("fragment")
-                        ? VK10.VK_SHADER_STAGE_FRAGMENT_BIT : 0;
-                if (stageMask == 0) continue;
-                try {
-                    for (StorageBlock block : scanStorageBlocks(stage.getValue().source())) {
-                        blocks.add(new StorageBlock(block.blockName(), block.instanceName(),
-                                block.originalBinding(), block.std430(), stageMask));
-                    }
-                } catch (RuntimeException failure) {
-                    // Keep malformed storage declarations local to this
-                    // program. They must not become an invented executable
-                    // binding, and they must not reject unrelated programs.
-                    String marker = "__parse_error__" + stage.getKey();
-                    blocks.add(new StorageBlock(marker, "", -1, false, stageMask));
-                    deviations.add("STORAGE_BUFFER_PARSE_UNSUPPORTED:" + program.name()
-                            + ":" + stage.getKey());
-                }
-            }
-            if (blocks.isEmpty()) continue;
-            dependentPrograms.add(program.name());
-            // A structurally valid block is a producer/consumer candidate even
-            // while the first immutable plan is still waiting for its final
-            // storage bindings. Final eligibility is decided after descriptor
-            // construction and shader conversion.
-            eligiblePrograms.add(program.name());
-            Map<String, StorageBlock> merged = new TreeMap<>();
-            Set<String> duplicateBlocks = new TreeSet<>();
-            for (StorageBlock block : blocks) {
-                String key = block.blockName() + "\\u0000" + block.instanceName();
-                StorageBlock previous = merged.get(key);
-                if (previous == null) {
-                    merged.put(key, block);
-                } else {
-                    if ((previous.stageMask() & block.stageMask()) != 0) {
-                        duplicateBlocks.add(key);
-                    }
-                    merged.put(key, new StorageBlock(previous.blockName(), previous.instanceName(),
-                            previous.originalBinding(), previous.std430() && block.std430(),
-                            previous.stageMask() | block.stageMask()));
-                }
-            }
-            Map<Integer, Integer> logicalBindings = new TreeMap<>();
-            List<StorageBufferBinding> bindings = new ArrayList<>();
-            for (StorageBlock block : merged.values()) {
-                String blockKey = block.blockName() + "\\u0000" + block.instanceName();
-                List<BufferSpec> matches = matchingBufferSpecs(block, specs);
-                BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
-                List<String> local = new ArrayList<>();
-                if (!block.std430()) {
-                    local.add("STORAGE_BUFFER_LAYOUT_UNSUPPORTED:" + block.blockName());
-                }
-                if (duplicateBlocks.contains(blockKey)) {
-                    local.add("STORAGE_BUFFER_BLOCK_DUPLICATE:" + program.name() + ":"
-                            + block.blockName());
-                }
-                if (matches.size() > 1) {
-                    local.add("STORAGE_BUFFER_BLOCK_AMBIGUOUS:" + program.name() + ":"
-                            + block.blockName());
-                } else if (spec == null) {
-                    local.add("STORAGE_BUFFER_BLOCK_UNMAPPED:" + program.name() + ":"
-                            + block.blockName());
-                } else {
-                    local.addAll(spec.deviations());
-                }
-                Status status = spec != null && spec.supported() && local.stream().noneMatch(
-                        value -> value.startsWith("STORAGE_BUFFER_LAYOUT_UNSUPPORTED:")
-                                || value.startsWith("STORAGE_BUFFER_BLOCK_UNMAPPED:")
-                                || value.startsWith("STORAGE_BUFFER_BLOCK_AMBIGUOUS:")
-                                || value.startsWith("STORAGE_BUFFER_BLOCK_DUPLICATE:")
-                                || value.startsWith("STORAGE_BUFFER_SIZE_")
-                                || value.startsWith("STORAGE_BUFFER_ALIGNMENT_")
-                                || value.startsWith("STORAGE_BUFFER_RELATIVE_"))
-                        ? Status.SUPPORTED : Status.UNSUPPORTED;
-                int logicalIndex = spec == null ? -1 : spec.logicalIndex();
-                long size = spec == null ? 0L : spec.size();
-                int rewritten = status != Status.SUPPORTED ? -1 : logicalBindings.computeIfAbsent(
-                        logicalIndex, ignored -> bindingBases.getOrDefault(program.name(), 0)
-                                + logicalBindings.size());
-                StorageBufferBinding binding = new StorageBufferBinding(
-                        program.name(), block.blockName(), block.instanceName(),
-                        block.originalBinding(), logicalIndex, rewritten, block.stageMask(),
-                        size, status, local);
-                bindings.add(binding);
-                deviations.addAll(local);
-                if (!binding.supported()) {
-                    deviations.add("STORAGE_BUFFER_PROGRAM_FALLBACK:" + program.name());
-                }
-            }
-            result.put(program.name(), bindings);
-        }
-        for (BufferSpec spec : specs.values()) {
-            boolean used = result.values().stream().flatMap(List::stream)
-                    .filter(value -> eligiblePrograms.contains(value.program()))
-                    .anyMatch(value -> value.logicalIndex() == spec.logicalIndex());
-            if (!used) {
-                deviations.add("STORAGE_BUFFER_DEFERRED:bufferObject." + spec.logicalIndex());
-            }
-        }
-        return result;
-    }
-
-    private static List<BufferSpec> matchingBufferSpecs(StorageBlock block,
-                                                        Map<Integer, BufferSpec> specs) {
-        List<BufferSpec> matches = specs.values().stream()
-                .filter(spec -> !spec.requestedName().isBlank()
-                        && (spec.requestedName().equals(block.blockName())
-                        || spec.requestedName().equals(block.instanceName())))
-                .toList();
-        if (matches.isEmpty() && block.originalBinding() >= 0) {
-            matches = specs.values().stream()
-                    .filter(spec -> spec.requestedName().isBlank()
-                            && spec.logicalIndex() == block.originalBinding())
-                    .toList();
-        }
-        return matches;
-    }
-
-    private static Map<Integer, BufferSpec> applyStorageBudget(
-            Map<Integer, BufferSpec> buffers,
-            Map<String, List<StorageBufferBinding>> storageBuffers,
-            List<String> eligiblePrograms,
-            Map<String, ImageSpec> images,
-            List<String> deviations
-    ) {
-        Map<Integer, BufferSpec> result = new TreeMap<>(buffers);
-        long imageBytes = images.values().stream()
-                .filter(ImageSpec::supported)
-                .mapToLong(ImageSpec::estimatedBytes)
-                .sum();
-        long remaining = Math.max(0L, MAX_TOTAL_BYTES - imageBytes);
-        TreeSet<Integer> used = new TreeSet<>();
-        storageBuffers.entrySet().stream()
-                .filter(entry -> eligiblePrograms.contains(entry.getKey()))
-                .flatMap(entry -> entry.getValue().stream())
-                .filter(StorageBufferBinding::supported)
-                .map(StorageBufferBinding::logicalIndex)
-                .forEach(used::add);
-        boolean rejected = false;
-        for (Integer index : used) {
-            BufferSpec spec = result.get(index);
-            if (spec == null || !spec.supported()) continue;
-            if (spec.size() > remaining) {
-                List<String> next = new ArrayList<>(spec.deviations());
-                next.add("STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
-                result.put(index, new BufferSpec(spec.logicalIndex(), spec.size(),
-                        spec.requestedName(), Status.UNSUPPORTED, next));
-                deviations.add("STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
-                rejected = true;
-            } else {
-                remaining -= spec.size();
-            }
-        }
-        if (rejected) deviations.add("STORAGE_BUFFER_BUDGET_EXCEEDED");
-        return result;
-    }
-
-    private record StorageBlock(
-            String blockName,
-            String instanceName,
-            int originalBinding,
-            boolean std430,
-            int stageMask
-    ) {}
-
-    private static int stageMask(String stage) {
-        return switch (stage == null ? "" : stage) {
-            case "vertex" -> VK10.VK_SHADER_STAGE_VERTEX_BIT;
-            case "fragment" -> VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
-            default -> 0;
-        };
-    }
-
-    private static List<StorageBlock> scanStorageBlocks(String source) {
-        List<StorageBlock> result = new ArrayList<>();
-        for (GlslStorageBufferParser.Block block : GlslStorageBufferParser.scan(source)) {
-            result.add(new StorageBlock(block.blockName(), block.instanceName(),
-                    block.originalBinding(), block.std430(), 0));
-        }
-        return result;
-    }
-
-    private static ImageSpec parseImage(
-            String key,
-            String raw,
-            Map<String, String> defines
-    ) {
-        String name = key.substring("image.".length());
-        List<String> deviations = new ArrayList<>();
-        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        if (values.length < 9) {
-            deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-            return new ImageSpec(name, token(values, 0), token(values, 1), token(values, 2),
-                    token(values, 3), false, false, 0, 0, 0, null, null, null, 0, Status.UNSUPPORTED, deviations);
-        }
-        String sampler = values[0];
-        String pixelFormat = values[1];
-        String internalFormat = values[2].toLowerCase();
-        String pixelType = values[3];
-        boolean clear = Boolean.parseBoolean(values[4]);
-        boolean relative = Boolean.parseBoolean(values[5]);
-        try {
-            int width = resolveImageDimension(name, values[6], defines, deviations);
-            int height = resolveImageDimension(name, values[7], defines, deviations);
-            int depth = resolveImageDimension(name, values[8], defines, deviations);
-            if (width < 1 || height < 1 || depth < 1) {
-                deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-                return new ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                        clear, relative, width, height, depth, values[6], values[7], values[8],
-                        0, Status.UNSUPPORTED, deviations);
-            }
-            long bytes = Math.multiplyExact(Math.multiplyExact((long) width, height), depth)
-                    * bytesPerVoxel(internalFormat);
-            if (width < 1 || height < 1 || depth < 1 || width > MAX_DIMENSION
-                    || height > MAX_DIMENSION || depth > MAX_DIMENSION) {
-                deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-                return new ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                        clear, relative, width, height, depth, values[6], values[7], values[8],
-                        bytes, Status.UNSUPPORTED, deviations);
-            }
-            deviations.add("ADVANCED_IMAGE_DECLARED:" + name);
-            return new ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                    clear, relative, width, height, depth, values[6], values[7], values[8],
-                    bytes, Status.SUPPORTED, deviations);
-        } catch (RuntimeException failure) {
-            if (deviations.stream().noneMatch(value -> value.startsWith(
-                    "ADVANCED_IMAGE_DIMENSION_UNRESOLVED:" + name + ":"))) {
-                deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-            }
-            return new ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                    clear, relative, 0, 0, 0, values[6], values[7], values[8],
-                    0, Status.UNSUPPORTED, deviations);
-        }
-    }
-
-    private static int resolveImageDimension(
-            String image,
-            String token,
-            Map<String, String> defines,
-            List<String> deviations
-    ) {
-        String value = token == null ? "" : token.trim();
-        Set<String> visiting = new TreeSet<>();
-        for (int depth = 0; depth < 8; depth++) {
-            if (value.matches("[-+]?\\d+")) {
-                try {
-                    return Integer.parseInt(value);
-                } catch (NumberFormatException failure) {
-                    break;
-                }
-            }
-            if (!value.matches("[A-Za-z_]\\w*") || defines == null || !defines.containsKey(value)
-                    || !visiting.add(value)) {
-                break;
-            }
-            value = defines.get(value);
-        }
-        deviations.add("ADVANCED_IMAGE_DIMENSION_UNRESOLVED:" + image + ":" + token);
-        return 0;
-    }
-
-    private static Map<String, ComputeSpec> discoverCompute(
-            Path shadersDir,
-            String selectedFolder,
-            Map<String, ImageSpec> images,
-            List<String> deviations,
-            Map<String, String> initialMacros,
-            Set<String> lockedMacros,
-            Set<String> graphicsProducedImages,
-            Map<String, UniformRegistry.UniformDescriptor> customDescriptors
-    ) {
-        if (shadersDir == null) return Map.of();
-        Path root = selectedFolder == null || selectedFolder.isBlank()
-                ? shadersDir : shadersDir.resolve(selectedFolder);
-        Map<String, ComputeSpec> result = new TreeMap<>();
-        Path source = root.resolve("shadowcomp.csh").normalize();
-        if (!source.startsWith(shadersDir.normalize()) || !Files.isRegularFile(source)) return result;
-        try {
-            String raw = Files.readString(source, StandardCharsets.UTF_8);
-            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
-                    shadersDir, source, raw,
-                    initialMacros, lockedMacros);
-            if (!prepared.successful()) {
-                deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-                return result;
-            }
-            // The plan reads what PackShadowCompute translates: one declaration per name.
-            String text = GlslTokenRewriter.splitUniformDeclarators(prepared.source());
-            List<String> localDeviations = new ArrayList<>(prepared.deviations());
-            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
-            localDeviations.addAll(usage.deviations());
-            if (!usage.successful()) {
-                localDeviations.add("COMPUTE_RESOURCE_USAGE_UNCLASSIFIABLE");
-            }
-            Matcher size = LOCAL_SIZE.matcher(text);
-            int x = 0, y = 0, z = 0;
-            if (size.find()) {
-                x = Integer.parseInt(size.group(1));
-                y = Integer.parseInt(size.group(2));
-                z = Integer.parseInt(size.group(3));
-            } else {
-                localDeviations.add("COMPUTE_WORKGROUP_UNSUPPORTED:shadowcomp");
-            }
-            // Compute stages exist from GLSL 430; any profile converts to Chimera's 450 module.
-            GlslVersion version = GlslVersion.first(text);
-            if (version == null || !version.supported() || version.number() < 430) {
-                localDeviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-            }
-            TreeSet<String> names = new TreeSet<>();
-            names.addAll(usage.liveImages());
-            TreeSet<String> samplers = new TreeSet<>();
-            for (String sampler : usage.liveSamplers()) {
-                if (images.values().stream().anyMatch(image -> image.sampler().equals(sampler))) {
-                    samplers.add(sampler);
-                }
-            }
-            for (String name : names) {
-                ImageSpec dependency = images.get(name);
-                if (dependency == null) {
-                    dependency = images.values().stream()
-                            .filter(spec -> spec.sampler().equals(name))
-                            .findFirst().orElse(null);
-                }
-                boolean declared = dependency != null && dependency.supported();
-                if (!declared) {
-                    localDeviations.add("COMPUTE_IMAGE_UNAVAILABLE:" + name);
-                }
-            }
-            for (String name : samplers) {
-                ImageSpec dependency = images.values().stream()
-                        .filter(value -> value.sampler().equals(name))
-                        .findFirst().orElse(null);
-                if (dependency == null || !dependency.supported()) {
-                    localDeviations.add("COMPUTE_SAMPLER_UNAVAILABLE:" + name);
-                } else if (dependency.clear()
-                        && !names.contains(dependency.name())
-                        && !names.contains(name)
-                        && (graphicsProducedImages == null
-                        || !graphicsProducedImages.contains(dependency.name()))) {
-                    // A clear-only image is not a producer. BSL uses its
-                    // voxel image as compute input, but Chimera does not yet
-                    // have the shadow-geometry voxel writer that populates it.
-                    // Do not expose undefined image contents to dependent
-                    // graphics programs.
-                    localDeviations.add("COMPUTE_INPUT_UNAVAILABLE:" + name);
-                }
-            }
-            if (text.matches("(?s).*\\btexelFetch\\s*\\(.*")) {
-                localDeviations.add("COMPUTE_TEXEL_FETCH_CLAMPED");
-            }
-            Matcher valueUniform = VALUE_UNIFORM_DECLARATION.matcher(text);
-            while (valueUniform.find()) {
-                String name = valueUniform.group(2);
-                if (UniformRegistry.resolve(name, valueUniform.group(1), customDescriptors) != null) {
-                    if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                        localDeviations.add("COMPUTE_UNIFORM_LIVE:" + name);
-                    } else {
-                        localDeviations.add("COMPUTE_UNIFORM_UNUSED:" + name);
-                    }
-                } else if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                    localDeviations.add("COMPUTE_UNIFORM_UNSUPPORTED:" + name);
-                }
-            }
-            Status status = !hasBlockingComputeDeviation(localDeviations) && !names.isEmpty()
-                    ? Status.SUPPORTED : Status.UNSUPPORTED;
-            if (status == Status.SUPPORTED) deviations.add("COMPUTE_STAGE_SUPPORTED:shadowcomp");
-            else deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-            String relative = shadersDir.normalize().relativize(source).toString().replace('\\', '/');
-            result.put("shadowcomp", new ComputeSpec("shadowcomp", relative, x, y, z,
-                    new ArrayList<>(names), new ArrayList<>(samplers), status, localDeviations));
-        } catch (IOException | RuntimeException failure) {
-            deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-        }
-        return result;
-    }
-
-    private static void applyBudget(Map<String, ImageSpec> images, List<String> deviations) {
-        List<Map.Entry<String, ImageSpec>> candidates = images.entrySet().stream()
-                .filter(entry -> entry.getValue().supported())
-                .sorted(Comparator.comparingLong((Map.Entry<String, ImageSpec> entry)
-                                -> entry.getValue().estimatedBytes())
-                        .thenComparing(Map.Entry::getKey))
-                .toList();
-        long admitted = 0L;
-        boolean rejected = false;
-        for (Map.Entry<String, ImageSpec> entry : candidates) {
-            ImageSpec spec = entry.getValue();
-            if (spec.estimatedBytes() > MAX_TOTAL_BYTES - admitted) {
-                List<String> next = new ArrayList<>(spec.deviations());
-                next.add("ADVANCED_IMAGE_BUDGET_EXCEEDED:" + spec.name());
-                images.put(entry.getKey(), new ImageSpec(spec.name(), spec.sampler(),
-                        spec.pixelFormat(), spec.internalFormat(), spec.pixelType(), spec.clear(),
-                        spec.relative(), spec.width(), spec.height(), spec.depth(),
-                        spec.widthToken(), spec.heightToken(), spec.depthToken(), spec.estimatedBytes(),
-                        Status.UNSUPPORTED, next));
-                deviations.add("ADVANCED_IMAGE_BUDGET_EXCEEDED:" + spec.name());
-                rejected = true;
-            } else {
-                admitted += spec.estimatedBytes();
-            }
-        }
-        if (rejected) deviations.add("ADVANCED_IMAGE_BUDGET_EXCEEDED");
-    }
-
-    private static boolean hasBlockingComputeDeviation(List<String> deviations) {
-        return deviations.stream().anyMatch(value ->
-                value == null
-                        || (!value.startsWith("PREPROCESSOR_MACRO_REDEFINED:")
-                        && !value.startsWith("COMPUTE_UNIFORM_DEFAULTED:")
-                        && !value.startsWith("COMPUTE_UNIFORM_LIVE:")
-                        && !value.startsWith("COMPUTE_UNIFORM_UNUSED:")
-                        && !value.equals("COMPUTE_TEXEL_FETCH_CLAMPED")));
-    }
-
-    private static boolean usesAdvancedResource(String source, Map<String, ImageSpec> images) {
-        if (source == null) return false;
-        Set<String> injectedSamplers = images == null ? Set.of() : images.values().stream()
-                .map(ImageSpec::sampler)
-                .filter(value -> value != null && !value.isBlank())
-                .collect(Collectors.toCollection(TreeSet::new));
-        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source, injectedSamplers);
-        if (!usage.successful()) return true;
-        if (!usage.liveImages().isEmpty()) return true;
-        Matcher sampler3D = Pattern.compile("\\b(?:sampler3D|isampler3D|usampler3D)\\s+([A-Za-z_]\\w*)")
-                .matcher(source);
-        while (sampler3D.find()) {
-            if (usage.liveSamplers().contains(sampler3D.group(1))) return true;
-        }
-        return usage.liveSamplers().stream().anyMatch(injectedSamplers::contains);
-    }
-
-    private static int bytesPerVoxel(String format) {
-        return switch (format) {
-            case "r8ui" -> 1;
-            case "r16ui" -> 2;
-            case "rgba16f" -> 8;
-            default -> throw new IllegalArgumentException("unsupported advanced image format: " + format);
-        };
-    }
-
-    static String storageImageType(ImageSpec spec) {
-        if (spec == null) return "image3D";
-        return switch (spec.internalFormat().toLowerCase(Locale.ROOT)) {
-            case "r8ui", "r16ui" -> "uimage3D";
-            case "rgba16f" -> "image3D";
-            default -> "image3D";
-        };
-    }
-
-    private static String token(String[] values, int index) {
-        return values.length > index ? values[index] : "";
     }
 
     public Map<String, ImageSpec> images() { return images; }

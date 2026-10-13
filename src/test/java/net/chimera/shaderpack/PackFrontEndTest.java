@@ -25,7 +25,7 @@ final class PackFrontEndTest {
                 PackProgramPlan plan = PackPlanBuilder.build(new PackProgram(name, fragment, null,
                         "#version 120\nvoid main() { gl_Position = ftransform(); }", null), null);
                 assertTrue(plan.executable(), name + " fixture rejected: " + plan.deviations());
-                var ordinary = PackPipelines.ordinaryDescriptorContract(plan, Set.of());
+                var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
                 var manifest = ProgramImageBindingManifest.from(null, ordinary);
                 assertTrue(manifest.entries().size() == (textured ? 1 : 0),
                         name + " injected host textures: " + manifest.entries());
@@ -459,7 +459,7 @@ final class PackFrontEndTest {
     @Test
     void samplerMacroAliases() {
         // Photon reaches samplers through macros; only those aliases expand, and only while defined.
-        String aliased = GlslTokenRewriter.expandSamplerAliases("""
+        String aliased = GlslMacroAliases.expandSamplerAliases("""
                 uniform sampler2D colortex0;
                 uniform sampler2D colortex5;
                 #define rec709_to_working_color rec709_to_rec2020

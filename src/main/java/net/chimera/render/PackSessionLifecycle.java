@@ -56,7 +56,7 @@ final class PackSessionLifecycle {
 
     /** Prevents repeated log spam while a pending change waits for an idle boundary. */
     String loggedPendingPackDimension;
-    final ChimeraMainPass.PackChangeQueue packChangeQueue = new ChimeraMainPass.PackChangeQueue();
+    final PackChangeQueue packChangeQueue = new PackChangeQueue();
 
     /** Prevents a blocked request from producing per-frame diagnostics. */
     String loggedPendingPackChange;
@@ -97,7 +97,7 @@ final class PackSessionLifecycle {
 
     /** The pack the frame will run once pending changes apply; null when none. */
     Path selectedPackPath() {
-        ChimeraMainPass.PendingPackChange pending = this.packChangeQueue.pending();
+        PackChangeQueue.PendingPackChange pending = this.packChangeQueue.pending();
         return pending != null ? pending.path() : this.packPath;
     }
 
@@ -107,8 +107,8 @@ final class PackSessionLifecycle {
                 || hasPendingPackChange()) {
             return false;
         }
-        pass.ensureOutputResources();
-        return pass.outputResourcesReady && pass.targets.outputResourcesLive();
+        pass.resources.ensureOutputResources();
+        return pass.resources.outputResourcesReady && pass.targets.outputResourcesLive();
     }
 
     /** Called before Renderer begins a fresh main command buffer. */
@@ -144,7 +144,7 @@ final class PackSessionLifecycle {
 
     String packStatus() {
         String active = packLabel(this.packPath);
-        ChimeraMainPass.PendingPackChange pendingRequest = this.packChangeQueue.pending();
+        PackChangeQueue.PendingPackChange pendingRequest = this.packChangeQueue.pending();
         String pending = pendingRequest == null
                 ? (hasPendingPackVariant() ? "dimension " + this.pendingPackDimension : "none")
                 : packLabel(pendingRequest.path());
@@ -174,8 +174,8 @@ final class PackSessionLifecycle {
         ChimeraEntityBridge.disable();
         ChimeraSkyBridge.disable();
         // Restore the host values before any pack-owned image is destroyed.
-        pass.restorePackResourceWindow();
-        pass.programImages.clear();
+        pass.windows.restorePackResourceWindow();
+        pass.images.programImages.clear();
         pass.shadowPass.loggedShadowSamplerPrograms.clear();
         // Clear every selector that may still refer to a retired pack image.
         // The host rebinds its normal slots during the next draw window.
@@ -186,9 +186,9 @@ final class PackSessionLifecycle {
         pass.shadowPass.packShadowDepth.cleanUp();
         pass.packPostTargets.cleanUp();
         pass.packDepthTargets.cleanUp();
-        pass.packCoverageOwner.close();
-        pass.packCoverageState.endFrame();
-        pass.packCoveragePlan = PackCoveragePlan.disabled();
+        pass.coverage.packCoverageOwner.close();
+        pass.coverage.packCoverageState.endFrame();
+        pass.coverage.packCoveragePlan = PackCoveragePlan.disabled();
         pass.pipelines.destroy();
         if (pass.packShadowCompute != null) pass.packShadowCompute.close();
         pass.packShadowCompute = null;
@@ -231,7 +231,7 @@ final class PackSessionLifecycle {
         pass.packPrograms = null;
         pass.packHdrFormat = 97;
         pass.packNeedsHdrDepth = false;
-        pass.hdrDepthReadable = false;
+        pass.depth.hdrDepthReadable = false;
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
@@ -264,7 +264,7 @@ final class PackSessionLifecycle {
 
     /** Queues a complete pack replacement for the next safe command boundary. */
     boolean applyPendingPackChange() {
-        ChimeraMainPass.PendingPackChange request = this.packChangeQueue.pending();
+        PackChangeQueue.PendingPackChange request = this.packChangeQueue.pending();
         if (request == null) {
             return true;
         }
@@ -286,7 +286,7 @@ final class PackSessionLifecycle {
             preparePackSessionReplacement(true);
             this.packPath = request.path();
             this.currentDimension = previousDimension;
-            pass.createResources();
+            pass.resources.createResources();
             if (request.path() != null && packSourceLoadFailed()) {
                 throw new IllegalStateException("shaderpack source could not be loaded");
             }
@@ -302,7 +302,7 @@ final class PackSessionLifecycle {
                 preparePackSessionReplacement(false);
                 this.packPath = previousPath;
                 this.currentDimension = previousDimension;
-                pass.createResources();
+                pass.resources.createResources();
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
                 LOGGER.info("[chimera] pack change rolled back: {}", packLabel(previousPath));
@@ -406,7 +406,7 @@ final class PackSessionLifecycle {
             cleanUpPackVariant();
             pass.packFrameUnsupported = null;
             pass.packSource.selectDimension(requested);
-            pass.createResources();
+            pass.resources.createResources();
             this.pendingPackDimension = null;
             this.loggedPendingPackDimension = null;
             LOGGER.info("[chimera] pack dimension variant installed: {} ({})",
@@ -422,7 +422,7 @@ final class PackSessionLifecycle {
                 pass.targets.cleanUpFramebuffersAndPasses();
                 pass.cleanUpPipelines();
                 pass.packSource.selectDimension(previous);
-                pass.createResources();
+                pass.resources.createResources();
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
                 if (pass.conformanceReport != null) {
@@ -554,7 +554,7 @@ final class PackSessionLifecycle {
         PackUniformProvider.installHeldItems(items.resolver(), handLight.oldHandLight());
         pass.packHdrFormat = pass.packConfig.colortexFormats().getOrDefault(0, 97);
         pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), result.shadersDir());
-        pass.ensureMaterialMapOwner();
+        pass.materials.ensureMaterialMapOwner();
         pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources());
         pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources());
         pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),

@@ -111,9 +111,9 @@ final class TerrainAtlasSamplingTest {
         return count;
     }
     private static String rewrite(
-            String source) { return GlslTokenRewriter.rewriteTerrainAtlasSamples(source,Set.of("tex")); }
+            String source) { return AtlasSampleRewriter.rewriteTerrainAtlasSamples(source,Set.of("tex")); }
     private static String rewrite(String source,
-            Set<String> samplers) { return GlslTokenRewriter.rewriteTerrainAtlasSamples(source,samplers); }
+            Set<String> samplers) { return AtlasSampleRewriter.rewriteTerrainAtlasSamples(source,samplers); }
     private static void compile(String source) {
         long compiler = Shaderc.shaderc_compiler_initialize();
         long result = Shaderc.shaderc_compile_into_spv(

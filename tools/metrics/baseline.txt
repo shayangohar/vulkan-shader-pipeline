@@ -6,37 +6,27 @@ main-duplication-percent 0.1
 test-duplication-percent 1.9
 qualified-names 0
 lines-over-120 0
-file src/main/java/net/chimera/render/ChimeraMainPass.java 1829 frame orchestration for every host pass; per-concern state lives in six collaborators
-file src/main/java/net/chimera/render/MaterialMapOwner.java 1130 one lifetime owner for static, simple-texture and animated material companions
-file src/main/java/net/chimera/render/shader/ChimeraEntityBridge.java 1115 render-thread state for every guarded geometry family lane
-file src/main/java/net/chimera/render/shader/PackFrameState.java 1122 one value-table row per uniform the frame serves
-file src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java 1048 the token-level GLSL rewrites every converter shares
-file src/main/java/net/chimera/shaderpack/PackAdvancedResourcePlan.java 1497 image, buffer and compute admission rules for one resource contract
-file src/main/java/net/chimera/shaderpack/PackPipelines.java 1621 pipeline preparation for every pack program family
-file src/main/java/net/chimera/shaderpack/PackProbe.java 1166 the per-program support rules behind the conformance report
-file src/main/java/net/chimera/shaderpack/UniformRegistry.java 1441 the uniform catalog and its per-stage binding rules
-file src/test/java/net/chimera/render/MaterialMapsTest.java 1287 every material-map policy checked against one mini resource pack
 method src/main/java/net/chimera/mixin/ChimeraModelFeatureStorageMixin.java ChimeraModelFeatureStorageMixin.chimera$separate/3 16 34
 method src/main/java/net/chimera/mixin/ChimeraRenderTypeMixin.java ChimeraRenderTypeMixin.chimera$immediateFamilyWindow/2 31 71
 method src/main/java/net/chimera/mixin/ChimeraVkCommandEncoderMixin.java ChimeraVkCommandEncoderMixin.chimera$bindEntityPipeline/2 25 122
-method src/main/java/net/chimera/render/ChimeraMainPass.java ChimeraMainPass.beginPackCoverageWindow/1 16 44
-method src/main/java/net/chimera/render/ChimeraMainPass.java ChimeraMainPass.bindProgramImages/4 23 46
-method src/main/java/net/chimera/render/ChimeraMainPass.java ChimeraMainPass.captureOpaqueDepthBeforeTranslucent/0 20 63
 method src/main/java/net/chimera/render/ChimeraMainPass.java ChimeraMainPass.end/1 11 81
 method src/main/java/net/chimera/render/ChimeraMainPass.java ChimeraMainPass.finishLevelSegment/0 22 81
-method src/main/java/net/chimera/render/ChimeraMainPass.java ChimeraMainPass.loadPackPipelines/0 19 86
 method src/main/java/net/chimera/render/ChimeraMainPass.java ChimeraMainPass.openLevelSegment/3 16 85
-method src/main/java/net/chimera/render/MaterialMapOwner.java MaterialMapOwner.buildAtlas/5 18 74
+method src/main/java/net/chimera/render/MaterialMapOwner.java MaterialMapOwner.buildAtlas/5 18 75
 method src/main/java/net/chimera/render/MaterialMapOwner.java MaterialMapOwner.buildSimple/5 17 71
 method src/main/java/net/chimera/render/MaterialMapOwner.java MaterialMapOwner.resolveSamplerId/4 17 32
 method src/main/java/net/chimera/render/MaterialMapPixels.java MaterialMapPixels.reduceLabFootprint/6 17 59
+method src/main/java/net/chimera/render/OpaqueDepthCapture.java OpaqueDepthCapture.captureOpaqueDepthBeforeTranslucent/0 20 63
 method src/main/java/net/chimera/render/PackDepthTargets.java PackDepthTargets.convert/4 17 103
+method src/main/java/net/chimera/render/PackImageBindings.java PackImageBindings.bindProgramImages/4 23 46
 method src/main/java/net/chimera/render/PackNanTripwire.java PackNanTripwire.evaluate/1 20 60
 method src/main/java/net/chimera/render/PackPipelineInstaller.java PackPipelineInstaller.installProgram/3 18 36
 method src/main/java/net/chimera/render/PackPipelineInstaller.java PackPipelineInstaller.runtimeRefusal/2 30 41
-method src/main/java/net/chimera/render/PackPostChain.java PackPostChain.finishPackFinalBeforeHand/0 16 80
-method src/main/java/net/chimera/render/PackPostChain.java PackPostChain.runPackPostWindow/3 21 85
+method src/main/java/net/chimera/render/PackPipelineLoad.java PackPipelineLoad.loadPackPipelines/0 19 86
+method src/main/java/net/chimera/render/PackPostChain.java PackPostChain.finishPackFinalBeforeHand/0 16 81
+method src/main/java/net/chimera/render/PackPostChain.java PackPostChain.runPackPostWindow/3 21 86
 method src/main/java/net/chimera/render/PackPostTargets.java PackPostTargets.prepare/2 22 87
+method src/main/java/net/chimera/render/PackSceneCoverage.java PackSceneCoverage.beginPackCoverageWindow/1 16 44
 method src/main/java/net/chimera/render/PackSessionLifecycle.java PackSessionLifecycle.loadPackConfig/0 31 161
 method src/main/java/net/chimera/render/PackShadowCompute.java PackShadowCompute.computeSize/1 16 12
 method src/main/java/net/chimera/render/PackShadowCompute.java PackShadowCompute.create/1 23 100
@@ -52,6 +42,8 @@ method src/main/java/net/chimera/render/shader/IrisPlayerState.java IrisPlayerSt
 method src/main/java/net/chimera/render/shader/IrisPlayerState.java IrisPlayerState.value/2 39 39
 method src/main/java/net/chimera/render/shader/PackFrameState.java PackFrameState.buildValues/0 2 99
 method src/main/java/net/chimera/render/shader/PackGeometryContext.java PackGeometryContext.beginRendering/2 21 58
+method src/main/java/net/chimera/shaderpack/AdvancedImageDeclarations.java AdvancedImageDeclarations.discoverCompute/8 35 115
+method src/main/java/net/chimera/shaderpack/AtlasSampleRewriter.java AtlasSampleRewriter.rewriteTerrainAtlasSamples/2 40 70
 method src/main/java/net/chimera/shaderpack/BiomeIds.java BiomeIds.category/1 18 20
 method src/main/java/net/chimera/shaderpack/EntityVertexBridge.java EntityVertexBridge.convertEntityVertexOrThrow/8 29 198
 method src/main/java/net/chimera/shaderpack/EntityVertexBridge.java EntityVertexBridge.rejectEntityVertexFeatures/3 38 98
@@ -60,50 +52,48 @@ method src/main/java/net/chimera/shaderpack/GlslInterfaceScanner.java GlslInterf
 method src/main/java/net/chimera/shaderpack/GlslInterfaceScanner.java GlslInterfaceScanner.memberSlots/4 24 51
 method src/main/java/net/chimera/shaderpack/GlslInterfaceScanner.java GlslInterfaceScanner.parse/2 35 93
 method src/main/java/net/chimera/shaderpack/GlslLexer.java GlslLexer.lex/1 40 95
+method src/main/java/net/chimera/shaderpack/GlslMacroAliases.java GlslMacroAliases.expandSamplerAliases/1 26 63
+method src/main/java/net/chimera/shaderpack/GlslMacroAliases.java GlslMacroAliases.expandStorageQualifierAliases/1 16 43
 method src/main/java/net/chimera/shaderpack/GlslResourceUsage.java GlslResourceUsage.analyze/2 26 103
 method src/main/java/net/chimera/shaderpack/GlslResourceUsage.java GlslResourceUsage.collectDeclarations/5 21 50
 method src/main/java/net/chimera/shaderpack/GlslResourceUsage.java GlslResourceUsage.collectFunctions/1 16 30
 method src/main/java/net/chimera/shaderpack/GlslResourceUsage.java GlslResourceUsage.isDeclarationName/2 21 35
 method src/main/java/net/chimera/shaderpack/GlslStorageBufferParser.java GlslStorageBufferParser.rewrite/2 21 36
 method src/main/java/net/chimera/shaderpack/GlslStorageBufferParser.java GlslStorageBufferParser.scan/1 31 70
-method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.expandSamplerAliases/1 26 63
-method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.expandStorageQualifierAliases/1 16 43
 method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.locateMain/1 19 42
 method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.parseConstDeclaration/2 22 35
 method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.relaxNonConstantGlobals/1 25 47
 method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.rewritePostOutputs/2 18 37
 method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.rewriteShadowCalls/2 25 66
-method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.rewriteTerrainAtlasSamples/2 40 70
 method src/main/java/net/chimera/shaderpack/GlslTokenRewriter.java GlslTokenRewriter.splitUniformDeclarators/1 32 52
+method src/main/java/net/chimera/shaderpack/InterfacePlanner.java InterfacePlanner.bindSamplers/7 20 44
+method src/main/java/net/chimera/shaderpack/InterfacePlanner.java InterfacePlanner.planUniform/7 24 54
+method src/main/java/net/chimera/shaderpack/InterfacePlanner.java InterfacePlanner.samplerSlot/5 16 25
+method src/main/java/net/chimera/shaderpack/InterfacePlanner.java InterfacePlanner.scanDeclarations/4 22 71
 method src/main/java/net/chimera/shaderpack/IrisCoreProfile.java IrisCoreProfile.prepareIrisCoreProfile/5 26 46
 method src/main/java/net/chimera/shaderpack/LegacyGlslConverter.java LegacyGlslConverter.configIndexOf/4 17 49
 method src/main/java/net/chimera/shaderpack/LegacyGlslConverter.java LegacyGlslConverter.convertVaryings/5 21 84
 method src/main/java/net/chimera/shaderpack/LegacyGlslConverter.java LegacyGlslConverter.fileScopeGlobals/1 20 33
 method src/main/java/net/chimera/shaderpack/LegacyShaderNormalizer.java LegacyShaderNormalizer.normalize/2 24 87
 method src/main/java/net/chimera/shaderpack/PackAdvancedResourcePlan.java PackAdvancedResourcePlan.build/2 36 154
-method src/main/java/net/chimera/shaderpack/PackAdvancedResourcePlan.java PackAdvancedResourcePlan.discoverCompute/8 35 114
 method src/main/java/net/chimera/shaderpack/PackAdvancedResourcePlan.java PackAdvancedResourcePlan.layoutMismatch/4 27 58
-method src/main/java/net/chimera/shaderpack/PackAdvancedResourcePlan.java PackAdvancedResourcePlan.scanStorageBuffers/6 39 117
 method src/main/java/net/chimera/shaderpack/PackAdvancedResourcePlan.java PackAdvancedResourcePlan.shaderBindings/2 28 51
 method src/main/java/net/chimera/shaderpack/PackAdvancedResourcePlan.java PackAdvancedResourcePlan.snapshotJson/0 2 131
 method src/main/java/net/chimera/shaderpack/PackConditionals.java PackConditionals.State.apply/2 20 46
 method src/main/java/net/chimera/shaderpack/PackConfig.java PackConfig.applyTargetProperty/3 20 40
 method src/main/java/net/chimera/shaderpack/PackConfig.java PackConfig.validateShadowSettings/1 20 51
+method src/main/java/net/chimera/shaderpack/PackDescriptorContracts.java PackDescriptorContracts.bindStorageImages/5 30 102
+method src/main/java/net/chimera/shaderpack/PackDescriptorContracts.java PackDescriptorContracts.ordinaryDescriptorContract/2 25 75
+method src/main/java/net/chimera/shaderpack/PackDescriptorContracts.java PackDescriptorContracts.stageForProgram/1 18 16
 method src/main/java/net/chimera/shaderpack/PackExpression.java PackExpression.Binary.evaluate/2 26 21
 method src/main/java/net/chimera/shaderpack/PackExpression.java PackExpression.Call.evaluate/2 40 84
 method src/main/java/net/chimera/shaderpack/PackExpression.java PackExpression.Parser.width/3 17 55
 method src/main/java/net/chimera/shaderpack/PackFrameSchedulePlan.java PackFrameSchedulePlan.build/2 31 72
 method src/main/java/net/chimera/shaderpack/PackMaterialResolver.java PackMaterialResolver.parseLine/5 17 69
-method src/main/java/net/chimera/shaderpack/PackPipelines.java PackPipelines.bindStorageImages/5 30 98
-method src/main/java/net/chimera/shaderpack/PackPipelines.java PackPipelines.buildGeometry/7 19 51
-method src/main/java/net/chimera/shaderpack/PackPipelines.java PackPipelines.ordinaryDescriptorContract/2 25 75
-method src/main/java/net/chimera/shaderpack/PackPipelines.java PackPipelines.stageForProgram/1 18 16
+method src/main/java/net/chimera/shaderpack/PackPipelines.java PackPipelines.buildGeometry/7 19 52
 method src/main/java/net/chimera/shaderpack/PackPlanBuilder.java PackPlanBuilder.ProgramBuild.interfaceAdmitted/0 19 19
 method src/main/java/net/chimera/shaderpack/PackPlanBuilder.java PackPlanBuilder.ProgramBuild.vertexAdmitted/0 16 31
-method src/main/java/net/chimera/shaderpack/PackProbe.java PackProbe.addUnmappedSamplerDeviations/3 17 26
 method src/main/java/net/chimera/shaderpack/PackProbe.java PackProbe.analyze/2 23 165
-method src/main/java/net/chimera/shaderpack/PackProbe.java PackProbe.toProgram/5 19 73
-method src/main/java/net/chimera/shaderpack/PackProbe.java PackProbe.unplannedVertexBridge/4 19 33
 method src/main/java/net/chimera/shaderpack/PackResolutionPlan.java PackResolutionPlan.build/4 17 67
 method src/main/java/net/chimera/shaderpack/PackResourcePlan.java PackResourcePlan.build/2 20 56
 method src/main/java/net/chimera/shaderpack/PackResourcePlan.java PackResourcePlan.standardBinding/6 18 70
@@ -120,19 +110,19 @@ method src/main/java/net/chimera/shaderpack/PostTargetPlan.java PostTargetPlan.p
 method src/main/java/net/chimera/shaderpack/PostVertexBridge.java PostVertexBridge.convertPostVertex/6 27 107
 method src/main/java/net/chimera/shaderpack/ProgramImageBindingManifest.java ProgramImageBindingManifest.from/2 26 49
 method src/main/java/net/chimera/shaderpack/ProgramImageBindingManifest.java ProgramImageBindingManifest.verify/1 16 24
+method src/main/java/net/chimera/shaderpack/ProgramReportRules.java ProgramReportRules.addUnmappedSamplerDeviations/3 17 26
+method src/main/java/net/chimera/shaderpack/ProgramReportRules.java ProgramReportRules.toProgram/5 19 73
+method src/main/java/net/chimera/shaderpack/ProgramReportRules.java ProgramReportRules.unplannedVertexBridge/4 19 33
 method src/main/java/net/chimera/shaderpack/ShaderSourcePreprocessor.java ShaderSourcePreprocessor.Context.processLine/3 20 50
 method src/main/java/net/chimera/shaderpack/SpirvLocalInitializer.java SpirvLocalInitializer.apply/1 25 67
 method src/main/java/net/chimera/shaderpack/SpirvTrigPrecision.java SpirvTrigPrecision.apply/1 39 106
+method src/main/java/net/chimera/shaderpack/StorageBufferDeclarations.java StorageBufferDeclarations.scanStorageBuffers/6 39 119
 method src/main/java/net/chimera/shaderpack/TerrainVertexBridge.java TerrainVertexBridge.adaptModernTerrainType/3 19 50
 method src/main/java/net/chimera/shaderpack/TerrainVertexBridge.java TerrainVertexBridge.convertModernTerrainVertexOrThrow/8 25 90
 method src/main/java/net/chimera/shaderpack/TerrainVertexBridge.java TerrainVertexBridge.modernTerrainInputExpression/2 17 59
 method src/main/java/net/chimera/shaderpack/TerrainVertexBridge.java TerrainVertexBridge.removeTerrainAttributes/2 18 34
-method src/main/java/net/chimera/shaderpack/UniformRegistry.java UniformRegistry.bindSamplers/7 20 44
-method src/main/java/net/chimera/shaderpack/UniformRegistry.java UniformRegistry.planUniform/7 24 54
-method src/main/java/net/chimera/shaderpack/UniformRegistry.java UniformRegistry.samplerSlot/5 16 23
-method src/main/java/net/chimera/shaderpack/UniformRegistry.java UniformRegistry.scanDeclarations/4 22 70
-method src/main/java/net/chimera/shaderpack/UniformRegistry.java UniformRegistry.uniformSpecs/0 1 129
-method src/test/java/net/chimera/render/MaterialMapsTest.java MaterialMapsTest.pixelPolicies/0 4 81
+method src/main/java/net/chimera/shaderpack/UniformCatalog.java UniformCatalog.uniformSpecs/0 1 129
+method src/test/java/net/chimera/render/MaterialMapsTest.java MaterialMapsTest.pixelPolicies/0 4 82
 method src/test/java/net/chimera/render/PackMipChainTest.java PackMipChainTest.Gpu.run/5 12 109
 method src/test/java/net/chimera/render/PackNanTripwireTest.java PackNanTripwireTest.GpuScan.close/0 19 23
 method src/test/java/net/chimera/render/PackPostTargetsTest.java PackPostTargetsTest.availability/0 5 97
@@ -162,7 +152,7 @@ method src/test/java/net/chimera/shaderpack/SpirvLocalInitializerTest.java Spirv
 method src/test/java/net/chimera/shaderpack/StorageBufferPlanTest.java StorageBufferPlanTest.exactPackBuilderMetadata/0 21 108
 method src/test/java/net/chimera/shaderpack/StorageBufferPlanTest.java StorageBufferPlanTest.storageBuffers/0 34 108
 method src/test/java/net/chimera/shaderpack/StorageBufferPlanTest.java StorageBufferPlanTest.storageParserAndLiveResourceUse/0 32 168
-method src/test/java/net/chimera/shaderpack/StorageBufferPlanTest.java StorageBufferPlanTest.verifyMixedBindingAgreement/1 12 111
+method src/test/java/net/chimera/shaderpack/StorageBufferPlanTest.java StorageBufferPlanTest.verifyMixedBindingAgreement/1 12 113
 method src/test/java/net/chimera/shaderpack/TerrainInputsTest.java TerrainInputsTest.legacyHostVertexSemantics/0 21 93
 method src/test/java/net/chimera/shaderpack/TerrainInputsTest.java TerrainInputsTest.nonzeroGeometryAndPrepare/1 19 103
 method src/test/java/net/chimera/shaderpack/TerrainInputsTest.java TerrainInputsTest.terrainShading/1 27 101

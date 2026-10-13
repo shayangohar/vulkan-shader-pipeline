@@ -212,7 +212,7 @@ final class SkyWeatherTest {
             var format = PackPipelines.skyVertexFormat(contract);
             var nativeBuilder = new Pipeline.Builder(format, "test_sky");
             nativeBuilder.setUniformSupplierGetter(info -> () -> null);
-            PackPipelines.ordinaryDescriptorContract(plan, Set.of()).apply(nativeBuilder);
+            PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of()).apply(nativeBuilder);
             var stageInfo = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
                     .filter(field -> field.getName().equals("renderStage")).findFirst().orElseThrow().getInfo();
             var supplier = PackUniformProvider.shared().supplier(stageInfo);

@@ -28,8 +28,16 @@ import org.joml.Vector3f;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.DoubleSupplier;
 import java.util.function.IntToDoubleFunction;
+
+import static net.chimera.render.shader.FrameValues.componentOf;
+import static net.chimera.render.shader.FrameValues.floats;
+import static net.chimera.render.shader.FrameValues.ints;
+import static net.chimera.render.shader.FrameValues.matrix;
+import static net.chimera.render.shader.FrameValues.put;
+import static net.chimera.render.shader.FrameValues.scalar;
+import static net.chimera.render.shader.FrameValues.vector;
+import static net.chimera.render.shader.FrameValues.writeDefault;
 
 /**
  * One render-thread snapshot shared by every pack supplier in a frame.
@@ -162,7 +170,7 @@ final class PackFrameState {
      * declared GLSL type, and a custom-value expression reads them one at a time (a matrix's
      * elements column-major, as GLSL and Iris number them).
      */
-    private record FrameValue(int width, IntToDoubleFunction component) {}
+    record FrameValue(int width, IntToDoubleFunction component) {}
 
     /** Every engine value the frame serves, by uniform name; aliases share one entry. */
     private final Map<String, FrameValue> values = buildValues();
@@ -265,37 +273,6 @@ final class PackFrameState {
         matrix(table, shadowProjection, "shadowProjection");
         matrix(table, shadowProjectionInverse, "shadowProjectionInverse");
         return Map.copyOf(table);
-    }
-
-    private static void scalar(Map<String, FrameValue> table, DoubleSupplier value, String... names) {
-        serve(table, new FrameValue(1, component -> value.getAsDouble()), names);
-    }
-
-    private static void vector(Map<String, FrameValue> table, int width, IntToDoubleFunction component,
-                               String... names) {
-        serve(table, new FrameValue(width, component), names);
-    }
-
-    private static void vector(Map<String, FrameValue> table, Vector3f value, String... names) {
-        vector(table, 3, component -> componentOf(value.x, value.y, value.z, component), names);
-    }
-
-    private static void ints(Map<String, FrameValue> table, int[] values, String... names) {
-        vector(table, values.length, component -> values[component], names);
-    }
-
-    private static void floats(Map<String, FrameValue> table, float[] values, String... names) {
-        vector(table, values.length, component -> values[component], names);
-    }
-
-    private static void matrix(Map<String, FrameValue> table, Matrix4f matrix, String... names) {
-        vector(table, 16, component -> matrix.get(component / 4, component % 4), names);
-    }
-
-    private static void serve(Map<String, FrameValue> table, FrameValue value, String... names) {
-        for (String name : names) {
-            if (table.put(name, value) != null) throw new IllegalStateException("frame value served twice: " + name);
-        }
     }
 
     /** Returns true and resets temporal state when the level identity changes. */
@@ -444,14 +421,6 @@ final class PackFrameState {
         int count = Math.min(value.width(), UniformRegistry.pipelineCount(type));
         for (int component = 0; component < count; component++) {
             put(target, component, value.component().applyAsDouble(component), integral);
-        }
-    }
-
-    private static void put(MappedBuffer target, int component, double value, boolean integral) {
-        if (integral) {
-            target.putInt(component * 4, (int) value);
-        } else {
-            target.putFloat(component * 4, (float) value);
         }
     }
 
@@ -844,10 +813,6 @@ final class PackFrameState {
         shadowProjectionInverse.identity();
     }
 
-    private static double componentOf(float x, float y, float z, int component) {
-        return component == 0 ? x : component == 1 ? y : z;
-    }
-
     private static int dimensionOrdinal(ClientLevel level) {
         if (level.dimension() == Level.OVERWORLD) {
             return 0;
@@ -1016,31 +981,6 @@ final class PackFrameState {
         clearWorldState();
     }
 
-    private static void writeDefault(UniformRegistry.DefaultPolicy policy,
-                                     String type, MappedBuffer target) {
-        if (type.equals("mat4")) {
-            for (int i = 0; i < 16; i++) {
-                target.putFloat(i * 4, i % 5 == 0 ? 1.0f : 0.0f);
-            }
-            return;
-        }
-        if (type.startsWith("i")) {
-            for (int i = 0; i < UniformRegistry.pipelineCount(type); i++) {
-                target.putInt(i * 4, 0);
-            }
-            return;
-        }
-        float value = switch (policy) {
-            case ONE -> 1.0f;
-            case CLOUD_HEIGHT -> 192.0f;
-            case NEAR_CLIP -> 0.05f;
-            default -> 0.0f;
-        };
-        for (int i = 0; i < UniformRegistry.pipelineCount(type); i++) {
-            target.putFloat(i * 4, value);
-        }
-    }
-
     private static void invertOrIdentity(Matrix4f source, Matrix4f destination) {
         float determinant = source.determinant();
         if (!Float.isFinite(determinant) || Math.abs(determinant) < 1.0e-7f) {
@@ -1052,70 +992,5 @@ final class PackFrameState {
 
     private static float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
-    }
-
-    private static final class CameraOrigin {
-        private double rawX;
-        private double rawY;
-        private double rawZ;
-        private double previousRawX;
-        private double previousRawY;
-        private double previousRawZ;
-        private float x;
-        private float y;
-        private float z;
-        private float previousX;
-        private float previousY;
-        private float previousZ;
-        private double shiftX;
-        private double shiftZ;
-        private boolean seeded;
-
-        private void advance(double nextX, double nextY, double nextZ) {
-            previousRawX = rawX;
-            previousRawY = rawY;
-            previousRawZ = rawZ;
-            rawX = nextX;
-            rawY = nextY;
-            rawZ = nextZ;
-            double currentShiftedX = rawX + shiftX;
-            double currentShiftedZ = rawZ + shiftZ;
-            double previousShiftedX = previousRawX + shiftX;
-            double previousShiftedZ = previousRawZ + shiftZ;
-            if (!seeded) {
-                previousRawX = rawX;
-                previousRawY = rawY;
-                previousRawZ = rawZ;
-                previousShiftedX = currentShiftedX;
-                previousShiftedZ = currentShiftedZ;
-                seeded = true;
-            }
-            double deltaX = cameraShift(currentShiftedX, previousShiftedX);
-            double deltaZ = cameraShift(currentShiftedZ, previousShiftedZ);
-            shiftX += deltaX;
-            shiftZ += deltaZ;
-            x = (float) (rawX + shiftX);
-            y = (float) rawY;
-            z = (float) (rawZ + shiftZ);
-            previousX = (float) (previousRawX + shiftX);
-            previousY = (float) previousRawY;
-            previousZ = (float) (previousRawZ + shiftZ);
-        }
-
-        private void reset() {
-            rawX = rawY = rawZ = previousRawX = previousRawY = previousRawZ = 0.0;
-            x = y = z = previousX = previousY = previousZ = 0.0f;
-            shiftX = shiftZ = 0.0;
-            seeded = false;
-        }
-
-        private void seedPreviousFromCurrent() {
-            previousRawX = rawX;
-            previousRawY = rawY;
-            previousRawZ = rawZ;
-            previousX = x;
-            previousY = y;
-            previousZ = z;
-        }
     }
 }

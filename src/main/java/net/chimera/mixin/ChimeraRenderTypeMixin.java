@@ -9,6 +9,7 @@ import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.FamilyDrawTrace;
 import net.chimera.render.shader.HostLayoutLane;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -102,7 +103,7 @@ public abstract class ChimeraRenderTypeMixin {
     private void chimera$traceEntityMesh(MeshData mesh, CallbackInfo callback) {
         if (ChimeraEntityBridge.isDrawActive() && mesh != null) {
             MeshData.DrawState state = mesh.drawState();
-            ChimeraEntityBridge.noteMeshDraw(state.vertexCount(), state.indexCount(),
+            FamilyDrawTrace.noteMeshDraw(state.vertexCount(), state.indexCount(),
                     state.format().getVertexSize());
         }
     }

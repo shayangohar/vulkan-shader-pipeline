@@ -8,6 +8,7 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.FamilyAdapterRegistry;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
+import net.chimera.shaderpack.PackFamilyPipelines;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgram;
@@ -465,7 +466,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_entities_translucent or gbuffers_spidereyes; the translucent program also gets its text layout. */
     void installWorldEntity(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity entity = PackPipelines.buildEntityFamily(programPlan,
+        PackPipelines.PackEntity entity = PackFamilyPipelines.buildEntityFamily(programPlan,
                 advancedResources(), storage);
         if (entity == null) {
             markFamilyPipelineFallback(name, "ENTITY_PIPELINE_BUILD_FAILED");
@@ -494,7 +495,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_block, with its text layout for block-entity text. */
     void installBlock(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity block = PackPipelines.buildBlock(programPlan,
+        PackPipelines.PackEntity block = PackFamilyPipelines.buildBlock(programPlan,
                 advancedResources(), storage);
         if (block == null) {
             if (report != null) {
@@ -535,7 +536,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_damagedblock on the host block format. */
     void installDamagedBlock(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity damaged = PackPipelines.buildEntityFamily(programPlan,
+        PackPipelines.PackEntity damaged = PackFamilyPipelines.buildEntityFamily(programPlan,
                 advancedResources(), storage);
         if (damaged == null) {
             markFamilyPipelineFallback(name, "DAMAGED_BLOCK_PIPELINE_BUILD_FAILED");
@@ -551,7 +552,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_hand or gbuffers_hand_water, one pipeline per native hand mesh shape. */
     void installHand(String name, PackProgramPlan programPlan) {
-        var hand = PackPipelines.buildHand(programPlan,
+        var hand = PackFamilyPipelines.buildHand(programPlan,
                 advancedResources(),
                 storage);
         if (hand == null) {
@@ -573,7 +574,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_particles on the host particle format. */
     void installParticles(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackParticle particle = PackPipelines.buildParticle(programPlan,
+        PackPipelines.PackParticle particle = PackFamilyPipelines.buildParticle(programPlan,
                 advancedResources(), storage);
         if (particle == null) {
             if (report != null) {
@@ -607,7 +608,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_particles_translucent on the host particle format. */
     void installTranslucentParticles(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackParticle particle = PackPipelines.buildParticleFamily(programPlan,
+        PackPipelines.PackParticle particle = PackFamilyPipelines.buildParticleFamily(programPlan,
                 advancedResources(), storage);
         if (particle == null) {
             markFamilyPipelineFallback(name, "PARTICLE_PIPELINE_BUILD_FAILED");
@@ -624,7 +625,7 @@ final class PackPipelineInstaller {
 
     boolean attachPackStoragePipeline(String program, GraphicsPipeline pipeline,
             ProgramImageBindingManifest manifest) {
-        pass.programImages.put(pipeline, new ChimeraMainPass.ProgramImages(program, manifest,
+        pass.images.programImages.put(pipeline, new ChimeraMainPass.ProgramImages(program, manifest,
                 pass.shadowPass.shadowSamplerSymbols(program)));
         if (storage == null
                 || plan == null
@@ -658,7 +659,7 @@ final class PackPipelineInstaller {
      * Without it the text keeps its host draw.
      */
     PackPipelines.PackEntity buildTextVariant(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity text = PackPipelines.buildLayoutVariant(programPlan,
+        PackPipelines.PackEntity text = PackFamilyPipelines.buildLayoutVariant(programPlan,
                 DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
                 advancedResources(),
                 storage);
@@ -685,9 +686,9 @@ final class PackPipelineInstaller {
         PackAdvancedResourcePlan advanced = advancedResources();
         for (HostLayoutLane lane : HostLayoutLane.forProgram(name)) {
             PackPipelines.PackParticle built = switch (lane) {
-                case WEATHER -> PackPipelines.buildParticleFamily(programPlan, advanced, storage);
-                case HAND_GLINT -> PackPipelines.buildHandGlint(programPlan, advanced, storage);
-                default -> PackPipelines.buildHostLayout(programPlan, advanced, storage);
+                case WEATHER -> PackFamilyPipelines.buildParticleFamily(programPlan, advanced, storage);
+                case HAND_GLINT -> PackFamilyPipelines.buildHandGlint(programPlan, advanced, storage);
+                default -> PackFamilyPipelines.buildHostLayout(programPlan, advanced, storage);
             };
             if (built == null) {
                 if (lane.pass() == HostLayoutLane.Pass.HAND) {

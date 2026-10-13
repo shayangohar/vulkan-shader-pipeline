@@ -3,6 +3,7 @@ package net.chimera.mixin;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraEntityStorage;
+import net.chimera.render.shader.FamilyDrawTrace;
 import net.chimera.render.shader.SubmissionIdentity;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
@@ -50,7 +51,7 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
                     entity.family() == SubmissionIdentity.FAMILY_BLOCK
                             ? chimera$blockSubmits : chimera$entitySubmits;
             destination.computeIfAbsent(renderType, ignored -> new ArrayList<>()).add(submit);
-            ChimeraEntityBridge.noteSeparatedBatch(renderType,
+            FamilyDrawTrace.noteSeparatedBatch(renderType,
                     destination.get(renderType).size());
             callback.cancel();
         } else if (ChimeraRenderer.segmentsActive()
@@ -59,7 +60,7 @@ public abstract class ChimeraModelFeatureStorageMixin implements ChimeraEntitySt
                 && SubmissionIdentity.ofWorldNode(submit) instanceof SubmissionIdentity entity
                 && submit.outlineColor() == 0
                 && !ChimeraEntityBridge.supportsWorldRenderType(renderType)) {
-            ChimeraEntityBridge.noteUnsupportedWorldPipeline(renderType);
+            FamilyDrawTrace.noteUnsupportedWorldPipeline(renderType);
         }
     }
 

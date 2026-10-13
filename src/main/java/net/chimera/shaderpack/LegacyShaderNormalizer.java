@@ -103,9 +103,9 @@ final class LegacyShaderNormalizer {
             return new Result(null, List.of(), false);
         }
         try {
-            List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(GlslTokenRewriter.expandSamplerAliases(
+            List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(GlslMacroAliases.expandSamplerAliases(
                     GlslTokenRewriter.splitUniformDeclarators(
-                            GlslTokenRewriter.expandStorageQualifierAliases(source)))));
+                            GlslMacroAliases.expandStorageQualifierAliases(source)))));
             int version = authoredVersion(source);
             renameLateBuiltinDefinitions(tokens, version);
             endLineCommentsAtTheirLine(tokens, version);

@@ -9,6 +9,7 @@ import net.chimera.render.ChimeraFamilyDraw;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraEntitySubmission;
+import net.chimera.render.shader.FamilyDrawTrace;
 import net.chimera.render.shader.SubmissionIdentity;
 import net.fabricmc.fabric.api.renderer.v1.render.BlockVertexConsumerProvider;
 import net.fabricmc.fabric.api.renderer.v1.render.FabricBlockModelRenderer;
@@ -140,7 +141,7 @@ public abstract class ChimeraBlockFeatureRendererMixin {
         for (RenderType type : types) {
             String rejected = chimera$rejection(command, type);
             if (rejected != null) {
-                ChimeraEntityBridge.noteSubmissionKeptOnHost(rejected, type);
+                FamilyDrawTrace.noteSubmissionKeptOnHost(rejected, type);
                 return false;
             }
         }
@@ -188,7 +189,7 @@ public abstract class ChimeraBlockFeatureRendererMixin {
         }
         String rejected = chimera$rejection(submit, renderType);
         if (rejected != null) {
-            ChimeraEntityBridge.noteSubmissionKeptOnHost(rejected, renderType);
+            FamilyDrawTrace.noteSubmissionKeptOnHost(rejected, renderType);
             return false;
         }
         return ChimeraFamilyDraw.emitSubmission(SubmissionIdentity.ofWorldNode(submit), renderType, body);

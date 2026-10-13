@@ -19,7 +19,6 @@ import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.util.EnumMap;
-import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -84,7 +83,7 @@ public final class ChimeraEntityBridge {
     private static boolean shadowCasterPass;
     private static final Set<RenderPipeline> droppedShadowPipelines = new HashSet<>();
     private static GraphicsPipeline activePipeline;
-    private static Family activeFamily;
+    static Family activeFamily;
     /** The family requested for the current guarded draw, even if host fallback is selected. */
     private static Family requestedFamily;
     private static boolean enabled;
@@ -105,19 +104,6 @@ public final class ChimeraEntityBridge {
     private static boolean textureSnapshot;
     private static boolean entityBufferUnavailable;
     private static boolean submissionTraceLogged;
-    private static final EnumSet<Family> drawTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> separatedTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> hostFallbackTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> modelTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> pipelineTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> meshTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> hostTransformBindingTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> hostTransformAbandonTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> transformContractTraceFamilies = EnumSet.noneOf(Family.class);
-    private static boolean separatedBatchTraceLogged;
-    private static boolean unsupportedPipelineTraceLogged;
-    private static final Set<String> submissionHostTraces = new HashSet<>();
-    private static boolean flushTraceLogged;
     private static ByteBufferBuilder entityBuffer;
     private static MultiBufferSource.BufferSource entityBufferSource;
     private static final VulkanImage[] previousTextures =
@@ -203,19 +189,7 @@ public final class ChimeraEntityBridge {
         textureSnapshot = false;
         entityBufferUnavailable = false;
         submissionTraceLogged = false;
-        drawTraceFamilies.clear();
-        separatedTraceFamilies.clear();
-        hostFallbackTraceFamilies.clear();
-        modelTraceFamilies.clear();
-        pipelineTraceFamilies.clear();
-        meshTraceFamilies.clear();
-        hostTransformBindingTraceFamilies.clear();
-        hostTransformAbandonTraceFamilies.clear();
-        transformContractTraceFamilies.clear();
-        separatedBatchTraceLogged = false;
-        unsupportedPipelineTraceLogged = false;
-        submissionHostTraces.clear();
-        flushTraceLogged = false;
+        FamilyDrawTrace.reset();
         clearScopedState();
         ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
                         + "block={}, damagedBlock={}, hand={}, handWater={}, particle={}, particleTranslucent={}",
@@ -442,7 +416,7 @@ public final class ChimeraEntityBridge {
         if (!EntityTransformBinding.canServeHostTransforms(widensVertexFormat(family),
                 selected.getUBO(UniformRegistry.DYNAMIC_TRANSFORMS_UBO) != null,
                 selected.getUBO(UniformRegistry.PROJECTION_UBO) != null)) {
-            noteTransformContractMissing(family, selected);
+            FamilyDrawTrace.noteTransformContractMissing(family, selected);
             return false;
         }
         activate(family, selected, "batch");
@@ -502,7 +476,7 @@ public final class ChimeraEntityBridge {
         if (family == Family.DAMAGED_BLOCK && !EntityTransformBinding.canServeHostTransforms(true,
                 selected.getUBO(UniformRegistry.DYNAMIC_TRANSFORMS_UBO) != null,
                 selected.getUBO(UniformRegistry.PROJECTION_UBO) != null)) {
-            noteTransformContractMissing(family, selected);
+            FamilyDrawTrace.noteTransformContractMissing(family, selected);
             return false;
         }
         activate(family, selected, "draw");
@@ -519,7 +493,7 @@ public final class ChimeraEntityBridge {
         }
         textureSnapshot = true;
         drawActive = true;
-        if (drawTraceFamilies.add(family)) {
+        if (FamilyDrawTrace.drawTraceFamilies.add(family)) {
             ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} {}", family.name().toLowerCase(),
                     kind);
         }
@@ -568,8 +542,8 @@ public final class ChimeraEntityBridge {
         if (entityBufferSource == null || !drawActive) {
             return;
         }
-        if (!flushTraceLogged) {
-            flushTraceLogged = true;
+        if (!FamilyDrawTrace.flushTraceLogged) {
+            FamilyDrawTrace.flushTraceLogged = true;
             ChimeraMod.LOGGER.info("[chimera] entity bridge: flushing separated world batch");
         }
         if (renderType == null) {
@@ -866,119 +840,6 @@ public final class ChimeraEntityBridge {
     /** True when the active family needs an append-only format. */
     public static boolean shouldExtendEntityFormat(VertexFormat format) {
         return extendedFormat(format) != format;
-    }
-
-    /** Records which separated family is about to emit a model batch. */
-    public static void noteFamilyBatch(Family family, int renderTypeCount) {
-        if (family == null || !separatedTraceFamilies.add(family)) {
-            return;
-        }
-        ChimeraMod.LOGGER.info("[chimera] entity bridge: family={} separated render types={}",
-                family.name().toLowerCase(), renderTypeCount);
-    }
-
-    /** Emits one diagnostic for the first separated pack entity batch. */
-    public static void noteSeparatedBatch(RenderType renderType, int count) {
-        if (!separatedBatchTraceLogged) {
-            separatedBatchTraceLogged = true;
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: separated world batch type={} count={}",
-                    renderType == null ? "unknown" : renderType, count);
-        }
-    }
-
-    /** Emits one diagnostic when a world entity uses a lane outside the contract. */
-    /** Emits one diagnostic per reason a world block or block-model submission keeps its host draw. */
-    public static void noteSubmissionKeptOnHost(String reason, RenderType renderType) {
-        if (submissionHostTraces.add(reason)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: block submission kept on host reason={} type={}",
-                    reason, renderType == null ? "unknown" : renderType);
-        }
-    }
-
-    public static void noteUnsupportedWorldPipeline(RenderType renderType) {
-        if (!unsupportedPipelineTraceLogged) {
-            unsupportedPipelineTraceLogged = true;
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: world entity lane kept on host type={} pipeline={}",
-                    renderType == null ? "unknown" : renderType,
-                    renderType == null ? "unknown" : renderType.pipeline());
-        }
-    }
-
-    /**
-     * Records a family batch that stayed on the host path because admission
-     * failed before the mesh was built, once per family. The mesh therefore
-     * keeps the host vertex format and the host pipeline draws it.
-     */
-    public static void noteFamilyHostFallback(Family family, RenderType renderType) {
-        if (hostFallbackTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: family={} kept on the host path type={}",
-                    family.name().toLowerCase(), renderType == null ? "unknown" : renderType);
-        }
-    }
-
-    /** Emits one diagnostic when a delayed world entity reaches model emission. */
-    public static void noteModelDraw(RenderType renderType) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (modelTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: model emission reached type={}",
-                    renderType == null ? "unknown" : renderType);
-        }
-    }
-
-    /** Emits one diagnostic after the Vulkan seam binds the pack entity pipeline. */
-    public static void notePipelineBound(RenderPipeline hostPipeline) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (pipelineTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: pack pipeline bound family={} hostPipeline={}",
-                    activeFamily == null ? "unknown" : activeFamily.name().toLowerCase(),
-                    hostPipeline == null ? "unknown" : hostPipeline);
-        }
-    }
-
-    /** Records the per-draw host transform routes for one family. */
-    public static void noteHostTransformRoutes(String detail) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (hostTransformBindingTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: host raster UBOs family={} {}",
-                    family.name().toLowerCase(), detail);
-        }
-    }
-
-    /**
-     * Records an abandoned guarded draw for one family.
-     *
-     * <p>A widened batch keeps its append-only mesh, so an unusable or missing
-     * depth contract drops the draw. Routing it back to the host pipeline would
-     * make that pipeline read the widened layout.</p>
-     */
-    public static void noteDrawAbandoned(String detail) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (hostTransformAbandonTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.warn("[chimera] entity bridge: abandoned guarded draw family={} {}",
-                    family.name().toLowerCase(), detail);
-        }
-    }
-
-    /** Records a family whose pack pipeline cannot serve the host transform blocks. */
-    public static void noteTransformContractMissing(Family family, GraphicsPipeline pipeline) {
-        if (transformContractTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.warn("[chimera] entity bridge: pack pipeline cannot serve host "
-                            + "transforms family={} pipeline={} DynamicTransforms={} Projection={}; "
-                            + "batch kept on the host format",
-                    family.name().toLowerCase(), pipeline,
-                    pipeline.getUBO(UniformRegistry.DYNAMIC_TRANSFORMS_UBO) != null,
-                    pipeline.getUBO(UniformRegistry.PROJECTION_UBO) != null);
-        }
-    }
-
-    /** Emits one diagnostic for the mesh handed to the guarded Vulkan draw. */
-    public static void noteMeshDraw(int vertexCount, int indexCount, int stride) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (meshTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: mesh ready family={} vertices={} indices={} stride={}B",
-                    activeFamily == null ? "unknown" : activeFamily.name().toLowerCase(),
-                    vertexCount, indexCount, stride);
-        }
     }
 
     private static void restoreTextures() {

@@ -7,6 +7,7 @@ import net.chimera.render.EntityTransformBinding;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
+import net.chimera.render.shader.FamilyDrawTrace;
 import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackRenderingPhase;
@@ -66,7 +67,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
             // host pipeline would read the shorter host layout. A batch that
             // still uses the host format keeps the ordinary host setup.
             if (perDrawTransforms) {
-                ChimeraEntityBridge.noteDrawAbandoned("reason=depthless-pass");
+                FamilyDrawTrace.noteDrawAbandoned("reason=depthless-pass");
                 callback.setReturnValue(false);
             }
             return;
@@ -92,13 +93,13 @@ public abstract class ChimeraVkCommandEncoderMixin {
             projectionRoute = routeTransform(projection, projectionUbo, perDrawTransforms);
             if (dynamicRoute == EntityTransformBinding.HostTransformRoute.UNAVAILABLE
                     || projectionRoute == EntityTransformBinding.HostTransformRoute.UNAVAILABLE) {
-                ChimeraEntityBridge.noteDrawAbandoned(describeTransformSources(
+                FamilyDrawTrace.noteDrawAbandoned(describeTransformSources(
                         dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
                 callback.setReturnValue(false);
                 return;
             }
         } else if (perDrawTransforms) {
-            ChimeraEntityBridge.noteDrawAbandoned("reason=render-pass-access");
+            FamilyDrawTrace.noteDrawAbandoned("reason=render-pass-access");
             callback.setReturnValue(false);
             return;
         }
@@ -114,7 +115,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
         }
         Renderer renderer = Renderer.getInstance();
         renderer.bindGraphicsPipeline(packPipeline);
-        ChimeraEntityBridge.notePipelineBound(hostPipeline);
+        FamilyDrawTrace.notePipelineBound(hostPipeline);
         for (var ubo : packPipeline.getBuffers()) {
             ubo.setUseGlobalBuffer(true);
         }
@@ -123,7 +124,7 @@ public abstract class ChimeraVkCommandEncoderMixin {
         // it, never to replace a guarded family's per-object transform.
         applyTransformRoute(dynamicRoute, dynamicTransforms, dynamicTransformsUbo);
         applyTransformRoute(projectionRoute, projection, projectionUbo);
-        ChimeraEntityBridge.noteHostTransformRoutes(describeTransformSources(
+        FamilyDrawTrace.noteHostTransformRoutes(describeTransformSources(
                 dynamicTransforms, dynamicTransformsUbo, projection, projectionUbo));
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference(hostPipeline));
         HostLayoutLane lane = HostLayoutLane.of(ChimeraEntityBridge.activeFamily());

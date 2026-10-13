@@ -304,7 +304,7 @@ public final class FragmentConverter {
                 for (String name : request.atlasSamplers()) {
                     emittedAtlasSamplers.add(name.equals("texture") ? "chimeraTexture" : name);
                 }
-                src = GlslTokenRewriter.rewriteTerrainAtlasSamples(src, emittedAtlasSamplers);
+                src = AtlasSampleRewriter.rewriteTerrainAtlasSamples(src, emittedAtlasSamplers);
             }
             src = removeLegacyShadowSamplerHelper(src);
             if (GlslTokenRewriter.containsIdentifier(src, "shadow2DProj")

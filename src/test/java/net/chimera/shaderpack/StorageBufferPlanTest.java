@@ -101,7 +101,7 @@ final class StorageBufferPlanTest {
                         && shadowBinding.originalBinding() == 0
                         && shadowBinding.stageMask() == (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT),
                 "shadow name/binding or stage merge is incorrect");
-        int shadowBase = PackPipelines.storageBufferBindingBase(shadow);
+        int shadowBase = PackDescriptorContracts.storageBufferBindingBase(shadow);
         assertTrue(shadowBinding.rewrittenBinding() == shadowBase,
                 "shadow binding is not compact after generated descriptors");
 
@@ -196,9 +196,9 @@ final class StorageBufferPlanTest {
                             .findFirst().orElseThrow();
                     assertEquals(VK_SHADER_STAGE_VERTEX_BIT, sampler.stageMask(),
                             "Vertex-only resource was widened in the plan");
-                    String vertex = PackPipelines.bindStorageImages(shadow.convertedVertex(), "shadow",
+                    String vertex = PackDescriptorContracts.bindStorageImages(shadow.convertedVertex(), "shadow",
                             resources, layout, VK_SHADER_STAGE_VERTEX_BIT);
-                    String fragment = PackPipelines.bindStorageImages(shadow.convertedFragment(), "shadow",
+                    String fragment = PackDescriptorContracts.bindStorageImages(shadow.convertedFragment(), "shadow",
                             resources, layout, VK_SHADER_STAGE_FRAGMENT_BIT);
                     assertTrue(!fragment.contains("uniform sampler3D volume_sampler"),
                             "Vertex-only advanced sampler leaked into final shadow fragment; rewrite=" + fragment);
@@ -419,7 +419,7 @@ final class StorageBufferPlanTest {
                     PackPipelines.PreparedPipeline prepared = PackPipelines.prepareShadow(shadow, resources);
                     var builder = PackPipelines.prepareBuilder(prepared, shadow.name(), resources, null,
                             info -> () -> null);
-                    var actual = PackPipelines.builderDescriptors(builder);
+                    var actual = PackDescriptorContracts.builderDescriptors(builder);
                     assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
                             prepared.vertex(), prepared.fragment(), actual), label);
                     prepared.imageBindings().verify(actual);
@@ -438,7 +438,7 @@ final class StorageBufferPlanTest {
                     PackPipelines.PreparedPipeline prepared = PackPipelines.preparePost(post, "", resources);
                     var builder = PackPipelines.prepareBuilder(prepared, post.name(), resources, null,
                             info -> () -> null);
-                    var actual = PackPipelines.builderDescriptors(builder);
+                    var actual = PackDescriptorContracts.builderDescriptors(builder);
                     assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
                             prepared.vertex(), prepared.fragment(), actual), label + " " + post.name());
                     prepared.imageBindings().verify(actual);
@@ -603,9 +603,11 @@ final class StorageBufferPlanTest {
             String vertex;
             String fragment;
             try {
-                vertex = PackPipelines.bindStorageImages(shadow.convertedVertex(), "shadow", resources, layout,
+                vertex = PackDescriptorContracts.bindStorageImages(shadow.convertedVertex(), "shadow", resources,
+                        layout,
                         VK_SHADER_STAGE_VERTEX_BIT);
-                fragment = PackPipelines.bindStorageImages(shadow.convertedFragment(), "shadow", resources, layout,
+                fragment = PackDescriptorContracts.bindStorageImages(shadow.convertedFragment(), "shadow", resources,
+                        layout,
                         VK_SHADER_STAGE_FRAGMENT_BIT);
             } catch (PackPipelines.PreparationFailure failure) {
                 throw new AssertionError("Mixed resource rewrite rejected live resources: " + failure.reason);

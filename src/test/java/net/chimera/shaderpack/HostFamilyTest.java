@@ -205,7 +205,7 @@ final class HostFamilyTest {
             for (String name : List.of("gbuffers_hand", "gbuffers_hand_water")) {
                 var handPlan = analysis.plan().program(name);
                 assertTrue(handPlan.convertedFragment().contains("bool hasSkylight;"), "GLSL bool semantics changed");
-                var ordinary = PackPipelines.ordinaryDescriptorContract(handPlan, Set.of());
+                var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(handPlan, Set.of());
                 var nativeBuilder = new Pipeline.Builder(
                         ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
                 nativeBuilder.setUniformSupplierGetter(info -> () -> null);
@@ -439,7 +439,7 @@ final class HostFamilyTest {
                         "weather keeps the particle conversion");
             } else {
                 assertTrue(adapter.vertexContract().hostLayout(), lane.program() + " must be a host-layout program");
-                assertEquals(lane.format(), PackPipelines.hostLayoutFormat(adapter.vertexContract()),
+                assertEquals(lane.format(), PackFamilyPipelines.hostLayoutFormat(adapter.vertexContract()),
                         lane + " pack layout and host layout disagree");
                 servedPrograms.add(lane.program());
             }
