@@ -95,29 +95,10 @@ final class PackPipelineInstaller {
         boolean reportAllowed = report == null || report.shouldAttempt(name);
         boolean planAllowed = plan == null || plan.shouldAttempt(name);
         if (!reportAllowed || !planAllowed) {
-            if (plan != null && plan.isProgramDisabled(name)) {
-                return "PROGRAM_DISABLED:" + name;
-            }
-            if (plan != null && plan.isProgramAlias(name)) {
-                return "PROGRAM_ALIAS_RUNTIME_FALLBACK:" + name;
-            }
-            if (plan != null && !plan.resources().programAllowed(name)) {
-                return plan.resources().unavailableReason(name);
-            }
-            return programPlan != null && !programPlan.executable() ? "PLAN_INELIGIBLE:" + name
-                    : "CONTRACT_UNSUPPORTED";
+            return declinedReason(name, programPlan);
         }
         PackAdvancedResourcePlan advanced = advancedResources();
-        boolean advancedProducer = plan != null && !advanced.graphicsImages(name).isEmpty();
-        boolean advancedAllowed = plan == null
-                || !advanced.dependentPrograms().contains(name)
-                || (advancedImages != null
-                && advanced.capabilityPossible()
-                && advancedImages.resourcesAvailable()
-                && shadowCompute != null
-                && shadowCompute.isInstalled()
-                && (advancedProducer || advancedImages.producerCandidatesReady()));
-        if (!advancedAllowed) {
+        if (!advancedImagesAllowed(name, advanced)) {
             return "ADVANCED_RESOURCE_BRIDGE_UNAVAILABLE";
         }
         boolean storageAllowed = plan == null
@@ -131,6 +112,37 @@ final class PackPipelineInstaller {
             return resources.failureDeviationForProgram(name);
         }
         return null;
+    }
+
+    /** Why the report or the plan declines to attempt a program. */
+    private String declinedReason(String name, PackProgramPlan programPlan) {
+        if (plan != null && plan.isProgramDisabled(name)) {
+            return "PROGRAM_DISABLED:" + name;
+        }
+        if (plan != null && plan.isProgramAlias(name)) {
+            return "PROGRAM_ALIAS_RUNTIME_FALLBACK:" + name;
+        }
+        if (plan != null && !plan.resources().programAllowed(name)) {
+            return plan.resources().unavailableReason(name);
+        }
+        return programPlan != null && !programPlan.executable() ? "PLAN_INELIGIBLE:" + name
+                : "CONTRACT_UNSUPPORTED";
+    }
+
+    /**
+     * True unless the program reads advanced images the session cannot serve: it needs the image
+     * owner, its resources, an installed shadowcomp, and either its own producer role or ready producers.
+     */
+    private boolean advancedImagesAllowed(String name, PackAdvancedResourcePlan advanced) {
+        boolean advancedProducer = plan != null && !advanced.graphicsImages(name).isEmpty();
+        return plan == null
+                || !advanced.dependentPrograms().contains(name)
+                || (advancedImages != null
+                && advanced.capabilityPossible()
+                && advancedImages.resourcesAvailable()
+                && shadowCompute != null
+                && shadowCompute.isInstalled()
+                && (advancedProducer || advancedImages.producerCandidatesReady()));
     }
 
     PackAdvancedResourcePlan advancedResources() {
@@ -158,7 +170,17 @@ final class PackPipelineInstaller {
             installSky(name, programPlan);
         } else if (name.equals("gbuffers_clouds")) {
             installCloud(name, programPlan);
-        } else if (name.equals("gbuffers_entities")) {
+        } else {
+            installFamilyProgram(name, programPlan);
+        }
+    }
+
+    /**
+     * Installs an entity, block, hand, particle or host-layout program; an exact program name
+     * takes its own installer before the family it belongs to.
+     */
+    void installFamilyProgram(String name, PackProgramPlan programPlan) {
+        if (name.equals("gbuffers_entities")) {
             installEntities(name, programPlan);
         } else if (FamilyAdapterRegistry.isWorldEntityFamily(name)) {
             installWorldEntity(name, programPlan);

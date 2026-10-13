@@ -100,6 +100,12 @@ public final class PackShadowCompute implements AutoCloseable {
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)[ \\t]+)+"
                     + "([A-Za-z_]\\w*)[ \\t]+([^;\\r\\n]+);");
 
+    /** std140 sizes of the matrix value uniforms. */
+    private static final Map<String, Integer> MATRIX_SIZES = Map.of("mat2", 32, "mat3", 48, "mat4", 64);
+    private static final List<String> FOUR_WORD_VECTORS =
+            List.of("vec3", "vec4", "ivec3", "ivec4", "uvec3", "uvec4", "bvec3", "bvec4");
+    private static final Set<String> TWO_WORD_VECTORS = Set.of("vec2", "ivec2", "uvec2", "bvec2");
+
     private final PackAdvancedResourcePlan.ComputeSpec spec;
     private final PackAdvancedImageOwner owner;
     private final PackResourceOwner sampledResourceOwner;
@@ -333,85 +339,106 @@ public final class PackShadowCompute implements AutoCloseable {
             int resourceCount = imageNames.size() + samplerNames.size() + sampled2dNames.size();
             int uniformBinding = resourceCount;
             int bindingCount = resourceCount + (uniformBufferSize > 0 ? 1 : 0);
-            VkDescriptorSetLayoutBinding.Buffer bindings =
-                    VkDescriptorSetLayoutBinding.calloc(bindingCount, stack);
-            for (int index = 0; index < imageNames.size(); index++) {
-                bindings.get(index).binding(index).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            for (int index = 0; index < samplerNames.size(); index++) {
-                bindings.get(imageNames.size() + index)
-                        .binding(imageNames.size() + index)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            for (int index = 0; index < sampled2dNames.size(); index++) {
-                int binding = imageNames.size() + samplerNames.size() + index;
-                bindings.get(binding).binding(binding)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            if (uniformBufferSize > 0) {
-                bindings.get(uniformBinding).binding(uniformBinding)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            VkDescriptorSetLayoutCreateInfo layoutInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
-                    .sType$Default()
-                    .pBindings(bindings);
-            LongBuffer layout = stack.mallocLong(1);
-            if (vkCreateDescriptorSetLayout(Vulkan.getVkDevice(), layoutInfo, null, layout) != VK_SUCCESS) return;
-            setLayout = layout.get(0);
-
-            boolean hasCombinedSamplers = !samplerNames.isEmpty() || !sampled2dNames.isEmpty();
-            boolean hasUniformBuffer = uniformBufferSize > 0;
-            int poolSizeCount = 1 + (hasCombinedSamplers ? 1 : 0) + (hasUniformBuffer ? 1 : 0);
-            VkDescriptorPoolSize.Buffer poolSizes = VkDescriptorPoolSize.calloc(poolSizeCount, stack);
-            poolSizes.get(0).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                    .descriptorCount(imageNames.size() * frames.length);
-            int poolIndex = 1;
-            if (hasCombinedSamplers) {
-                poolSizes.get(poolIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount((samplerNames.size() + sampled2dNames.size()) * frames.length);
-            }
-            if (hasUniformBuffer) {
-                poolSizes.get(poolIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .descriptorCount(frames.length);
-            }
-            VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-                    .sType$Default().maxSets(frames.length).pPoolSizes(poolSizes);
-            LongBuffer pool = stack.mallocLong(1);
-            if (vkCreateDescriptorPool(Vulkan.getVkDevice(), poolInfo, null, pool) != VK_SUCCESS) return;
-            descriptorPool = pool.get(0);
-
-            LongBuffer layouts = stack.mallocLong(frames.length);
-            for (int index = 0; index < frames.length; index++) layouts.put(index, setLayout);
-            VkDescriptorSetAllocateInfo allocateInfo = VkDescriptorSetAllocateInfo.calloc(stack)
-                    .sType$Default().descriptorPool(descriptorPool).pSetLayouts(layouts);
-            LongBuffer descriptors = stack.mallocLong(frames.length);
-            if (vkAllocateDescriptorSets(Vulkan.getVkDevice(), allocateInfo, descriptors) != VK_SUCCESS) return;
-            for (int index = 0; index < frames.length; index++) {
-                frames[index].descriptorSet = descriptors.get(index);
-                if (!writeDescriptors(frames[index], resourceCount, bindingCount, uniformBinding)) return;
-            }
-
-            VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.calloc(stack)
-                    .sType$Default().pSetLayouts(stack.longs(setLayout));
-            LongBuffer pipelineLayout = stack.mallocLong(1);
-            if (vkCreatePipelineLayout(Vulkan.getVkDevice(), pipelineLayoutInfo, null,
-                    pipelineLayout) != VK_SUCCESS) return;
-            this.pipelineLayout = pipelineLayout.get(0);
-            VkPipelineShaderStageCreateInfo stage = VkPipelineShaderStageCreateInfo.calloc(stack)
-                    .sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT)
-                    .module(shaderModule).pName(stack.UTF8("main"));
-            VkComputePipelineCreateInfo.Buffer pipelineInfo = VkComputePipelineCreateInfo.calloc(1, stack);
-            pipelineInfo.get(0).sType$Default().stage(stage).layout(this.pipelineLayout);
-            LongBuffer pipeline = stack.mallocLong(1);
-            if (vkCreateComputePipelines(Vulkan.getVkDevice(), 0L, pipelineInfo, null, pipeline) == VK_SUCCESS) {
-                this.pipeline = pipeline.get(0);
-            }
+            if (!createSetLayout(stack, bindingCount, uniformBinding)) return;
+            if (!createDescriptorPool(stack)) return;
+            if (!allocateDescriptorSets(stack, resourceCount, bindingCount, uniformBinding)) return;
+            createPipeline(stack);
         } finally {
             MemoryUtil.memFree(code);
+        }
+    }
+
+    /** The set layout: storage images, then 3D samplers, then 2D samplers, then the uniform block. */
+    private boolean createSetLayout(MemoryStack stack, int bindingCount, int uniformBinding) {
+        VkDescriptorSetLayoutBinding.Buffer bindings =
+                VkDescriptorSetLayoutBinding.calloc(bindingCount, stack);
+        for (int index = 0; index < imageNames.size(); index++) {
+            bindings.get(index).binding(index).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                    .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+        }
+        for (int index = 0; index < samplerNames.size(); index++) {
+            bindings.get(imageNames.size() + index)
+                    .binding(imageNames.size() + index)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+        }
+        for (int index = 0; index < sampled2dNames.size(); index++) {
+            int binding = imageNames.size() + samplerNames.size() + index;
+            bindings.get(binding).binding(binding)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+        }
+        if (uniformBufferSize > 0) {
+            bindings.get(uniformBinding).binding(uniformBinding)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+        }
+        VkDescriptorSetLayoutCreateInfo layoutInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
+                .sType$Default()
+                .pBindings(bindings);
+        LongBuffer layout = stack.mallocLong(1);
+        if (vkCreateDescriptorSetLayout(Vulkan.getVkDevice(), layoutInfo, null, layout) != VK_SUCCESS) return false;
+        setLayout = layout.get(0);
+        return true;
+    }
+
+    /** A pool holding one descriptor set per frame slot. */
+    private boolean createDescriptorPool(MemoryStack stack) {
+        boolean hasCombinedSamplers = !samplerNames.isEmpty() || !sampled2dNames.isEmpty();
+        boolean hasUniformBuffer = uniformBufferSize > 0;
+        int poolSizeCount = 1 + (hasCombinedSamplers ? 1 : 0) + (hasUniformBuffer ? 1 : 0);
+        VkDescriptorPoolSize.Buffer poolSizes = VkDescriptorPoolSize.calloc(poolSizeCount, stack);
+        poolSizes.get(0).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                .descriptorCount(imageNames.size() * frames.length);
+        int poolIndex = 1;
+        if (hasCombinedSamplers) {
+            poolSizes.get(poolIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount((samplerNames.size() + sampled2dNames.size()) * frames.length);
+        }
+        if (hasUniformBuffer) {
+            poolSizes.get(poolIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    .descriptorCount(frames.length);
+        }
+        VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                .sType$Default().maxSets(frames.length).pPoolSizes(poolSizes);
+        LongBuffer pool = stack.mallocLong(1);
+        if (vkCreateDescriptorPool(Vulkan.getVkDevice(), poolInfo, null, pool) != VK_SUCCESS) return false;
+        descriptorPool = pool.get(0);
+        return true;
+    }
+
+    /** Allocates each frame slot's descriptor set and points it at the module's resources. */
+    private boolean allocateDescriptorSets(MemoryStack stack, int resourceCount, int bindingCount,
+            int uniformBinding) {
+        LongBuffer layouts = stack.mallocLong(frames.length);
+        for (int index = 0; index < frames.length; index++) layouts.put(index, setLayout);
+        VkDescriptorSetAllocateInfo allocateInfo = VkDescriptorSetAllocateInfo.calloc(stack)
+                .sType$Default().descriptorPool(descriptorPool).pSetLayouts(layouts);
+        LongBuffer descriptors = stack.mallocLong(frames.length);
+        if (vkAllocateDescriptorSets(Vulkan.getVkDevice(), allocateInfo, descriptors) != VK_SUCCESS) return false;
+        for (int index = 0; index < frames.length; index++) {
+            frames[index].descriptorSet = descriptors.get(index);
+            if (!writeDescriptors(frames[index], resourceCount, bindingCount, uniformBinding)) return false;
+        }
+        return true;
+    }
+
+    /** The pipeline layout and the compute pipeline; pipeline stays 0 when either fails. */
+    private void createPipeline(MemoryStack stack) {
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+                .sType$Default().pSetLayouts(stack.longs(setLayout));
+        LongBuffer pipelineLayout = stack.mallocLong(1);
+        if (vkCreatePipelineLayout(Vulkan.getVkDevice(), pipelineLayoutInfo, null,
+                pipelineLayout) != VK_SUCCESS) return;
+        this.pipelineLayout = pipelineLayout.get(0);
+        VkPipelineShaderStageCreateInfo stage = VkPipelineShaderStageCreateInfo.calloc(stack)
+                .sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT)
+                .module(shaderModule).pName(stack.UTF8("main"));
+        VkComputePipelineCreateInfo.Buffer pipelineInfo = VkComputePipelineCreateInfo.calloc(1, stack);
+        pipelineInfo.get(0).sType$Default().stage(stage).layout(this.pipelineLayout);
+        LongBuffer pipeline = stack.mallocLong(1);
+        if (vkCreateComputePipelines(Vulkan.getVkDevice(), 0L, pipelineInfo, null, pipeline) == VK_SUCCESS) {
+            this.pipeline = pipeline.get(0);
         }
     }
 
@@ -545,145 +572,54 @@ public final class PackShadowCompute implements AutoCloseable {
         body = removeLegacyExtensions(body);
         body = GlslTokenRewriter.splitUniformDeclarators(body);
         body = GlslTokenRewriter.rewriteTextureCalls(body);
+        body = boundTexelFetches(body, samplerNames);
+        ResourceDeclarations resources = new ResourceDeclarations(plan, imageNames, samplerNames, sampled2dNames);
+        body = resources.bindSamplers(body);
+        body = resources.bindImages(body);
+        body = removeValueUniforms(body, computeUniforms);
+        body = resources.removeUnsupportedUniforms(body);
+        body = addDispatchBoundsGuard(body, imageNames);
+        String generated = resources.undeclaredSamplers(body);
+        return "#version 450\n" + valuesBlock(computeUniforms, uniformBinding) + generated + body;
+    }
+
+    /** Bounds texelFetch on the bound 3D samplers and on every sampler3D function parameter. */
+    private static String boundTexelFetches(String body, List<String> samplerNames) {
         Set<String> boundedSamplers = new TreeSet<>(samplerNames);
         Matcher samplerParameter = SAMPLER_3D_PARAMETER.matcher(body);
         while (samplerParameter.find()) {
             boundedSamplers.add(samplerParameter.group(1));
         }
-        body = GlslTokenRewriter.rewriteTexelFetchBounds(body, boundedSamplers);
+        return GlslTokenRewriter.rewriteTexelFetchBounds(body, boundedSamplers);
+    }
 
-        Set<String> declaredSamplers = new TreeSet<>();
-        Set<String> declaredSampled2d = new TreeSet<>();
-        Matcher sampler = SAMPLER_DECLARATION.matcher(body);
-        StringBuffer samplerResult = new StringBuffer();
-        while (sampler.find()) {
-            String type = sampler.group(1);
-            String name = sampler.group(2);
-            if (type.endsWith("2D") || type.equals("sampler2DShadow")) {
-                if (!sampled2dNames.contains(name)) {
-                    if (GlslTokenRewriter.identifierCount(body, name) > 1) {
-                        throw new IllegalArgumentException("unsupported compute sampler: " + name);
-                    }
-                    sampler.appendReplacement(samplerResult, "");
-                    continue;
-                }
-                // sampled2dNames holds only resources the pack owner has loaded.
-                int binding = imageNames.size() + samplerNames.size()
-                        + sampled2dNames.indexOf(name);
-                String replacement = "layout(binding = " + binding
-                        + ") uniform sampler2D " + name + ";";
-                declaredSampled2d.add(name);
-                sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
-                continue;
-            }
-            if (!samplerNames.contains(name)) {
-                if (GlslTokenRewriter.identifierCount(body, name) > 1) {
-                    throw new IllegalArgumentException("unsupported compute sampler: " + name);
-                }
-                sampler.appendReplacement(samplerResult, "");
-                continue;
-            }
-            int binding = imageNames.size() + samplerNames.indexOf(name);
-            PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(name);
-            String replacement = "layout(binding = " + binding + ") uniform "
-                    + samplerType(image) + " " + name + ";";
-            declaredSamplers.add(name);
-            sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
-        }
-        sampler.appendTail(samplerResult);
-        body = samplerResult.toString();
-
-        Matcher image = IMAGE_DECLARATION.matcher(body);
-        StringBuffer imageResult = new StringBuffer();
-        while (image.find()) {
-            String type = image.group(1);
-            String name = image.group(2);
-            int binding = imageNames.indexOf(name);
-            if (binding < 0) binding = indexBySampler(imageNames, name, plan);
-            if (binding < 0) {
-                throw new IllegalArgumentException("unsupported compute image: " + name);
-            }
-            PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(name);
-            String replacement = "layout(" + spec.internalFormat() + ", binding = " + binding
-                    + ") uniform " + imageType(spec, type) + " " + name + ";";
-            image.appendReplacement(imageResult, Matcher.quoteReplacement(replacement));
-        }
-        image.appendTail(imageResult);
-        body = imageResult.toString();
-
+    /**
+     * Drops every value uniform declaration; the generated block declares the live ones. Throws on
+     * one the block cannot serve that the source still uses.
+     */
+    private static String removeValueUniforms(String body, List<ComputeUniform> computeUniforms) {
         Matcher valueUniform = VALUE_UNIFORM_DECLARATION.matcher(body);
         StringBuffer uniformResult = new StringBuffer();
         while (valueUniform.find()) {
-            String type = valueUniform.group(1);
             String declarators = valueUniform.group(2).trim();
-            StringBuilder replacement = new StringBuilder();
             for (String declarator : declarators.split(",")) {
                 String name = declarator.trim();
                 int initializer = name.indexOf('=');
                 if (initializer >= 0) name = name.substring(0, initializer).trim();
                 String uniformName = name;
-                ComputeUniform uniform = computeUniforms.stream()
-                        .filter(value -> value.name().equals(uniformName))
-                        .findFirst().orElse(null);
-                if (uniform == null) {
-                    if (GlslTokenRewriter.identifierCount(body, name) > 1) {
-                        throw new IllegalArgumentException("unsupported compute uniform: " + name);
-                    }
-                    continue;
-                }
-            }
-            valueUniform.appendReplacement(uniformResult,
-                    Matcher.quoteReplacement(replacement.toString()));
-        }
-        valueUniform.appendTail(uniformResult);
-        body = uniformResult.toString();
-
-        Matcher unsupportedUniform = ANY_UNIFORM_DECLARATION.matcher(body);
-        StringBuffer unsupportedResult = new StringBuffer();
-        while (unsupportedUniform.find()) {
-            String type = unsupportedUniform.group(1);
-            String declarators = unsupportedUniform.group(2).trim();
-            if (isTranslatedResourceDeclaration(type, declarators, imageNames, samplerNames,
-                    sampled2dNames)) {
-                unsupportedUniform.appendReplacement(unsupportedResult,
-                        Matcher.quoteReplacement(unsupportedUniform.group()));
-                continue;
-            }
-            for (String declarator : declarators.split(",")) {
-                String name = declarator.trim();
-                int initializer = name.indexOf('=');
-                if (initializer >= 0) name = name.substring(0, initializer).trim();
-                name = name.replaceFirst("\\[.*$", "").trim();
-                if (!name.matches("[A-Za-z_]\\w*")) {
-                    throw new IllegalArgumentException("unsupported compute uniform declaration: "
-                            + type + " " + declarators);
-                }
-                if (GlslTokenRewriter.identifierCount(body, name) > 1) {
+                boolean live = computeUniforms.stream().anyMatch(value -> value.name().equals(uniformName));
+                if (!live && GlslTokenRewriter.identifierCount(body, name) > 1) {
                     throw new IllegalArgumentException("unsupported compute uniform: " + name);
                 }
             }
-            unsupportedUniform.appendReplacement(unsupportedResult, "");
+            valueUniform.appendReplacement(uniformResult, "");
         }
-        unsupportedUniform.appendTail(unsupportedResult);
-        body = unsupportedResult.toString();
-        body = addDispatchBoundsGuard(body, imageNames);
+        valueUniform.appendTail(uniformResult);
+        return uniformResult.toString();
+    }
 
-        StringBuilder generated = new StringBuilder();
-        for (String name : samplerNames) {
-            if (declaredSamplers.contains(name)) continue;
-            if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
-            int binding = imageNames.size() + samplerNames.indexOf(name);
-            PackAdvancedResourcePlan.ImageSpec imageSpec = plan.imageForSymbol(name);
-            generated.append("layout(binding = ").append(binding).append(") uniform ")
-                    .append(samplerType(imageSpec)).append(' ').append(name).append(";\n");
-        }
-        for (String name : sampled2dNames) {
-            if (declaredSampled2d.contains(name)) continue;
-            if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
-            int binding = imageNames.size() + samplerNames.size() + sampled2dNames.indexOf(name);
-            generated.append("layout(binding = ").append(binding)
-                    .append(") uniform sampler2D ").append(name).append(";\n");
-        }
+    /** The std140 block of the live value uniforms, each at the offset dispatch writes it; empty with none. */
+    private static String valuesBlock(List<ComputeUniform> computeUniforms, int uniformBinding) {
         StringBuilder values = new StringBuilder();
         if (!computeUniforms.isEmpty()) {
             // Each member states the offset dispatch writes it at. Implicit std140 packs a scalar
@@ -697,7 +633,145 @@ public final class PackShadowCompute implements AutoCloseable {
             }
             values.append("};\n");
         }
-        return "#version 450\n" + values + generated + body;
+        return values.toString();
+    }
+
+    /**
+     * The module's image and sampler declarations: binds the ones it owns in binding order (storage
+     * images, 3D samplers, 2D samplers), drops unused ones, and declares any the source uses
+     * without declaring. Throws on a used declaration it cannot bind.
+     */
+    private static final class ResourceDeclarations {
+        private final PackAdvancedResourcePlan plan;
+        private final List<String> imageNames;
+        private final List<String> samplerNames;
+        private final List<String> sampled2dNames;
+        private final Set<String> declaredSamplers = new TreeSet<>();
+        private final Set<String> declaredSampled2d = new TreeSet<>();
+
+        ResourceDeclarations(PackAdvancedResourcePlan plan, List<String> imageNames, List<String> samplerNames,
+                List<String> sampled2dNames) {
+            this.plan = plan;
+            this.imageNames = imageNames;
+            this.samplerNames = samplerNames;
+            this.sampled2dNames = sampled2dNames;
+        }
+
+        /** Binds each declared sampler the module owns, 2D ones after the 3D ones, and drops the rest. */
+        String bindSamplers(String body) {
+            Matcher sampler = SAMPLER_DECLARATION.matcher(body);
+            StringBuffer samplerResult = new StringBuffer();
+            while (sampler.find()) {
+                String type = sampler.group(1);
+                String name = sampler.group(2);
+                if (type.endsWith("2D") || type.equals("sampler2DShadow")) {
+                    if (!sampled2dNames.contains(name)) {
+                        if (GlslTokenRewriter.identifierCount(body, name) > 1) {
+                            throw new IllegalArgumentException("unsupported compute sampler: " + name);
+                        }
+                        sampler.appendReplacement(samplerResult, "");
+                        continue;
+                    }
+                    // sampled2dNames holds only resources the pack owner has loaded.
+                    int binding = imageNames.size() + samplerNames.size()
+                            + sampled2dNames.indexOf(name);
+                    String replacement = "layout(binding = " + binding
+                            + ") uniform sampler2D " + name + ";";
+                    declaredSampled2d.add(name);
+                    sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
+                    continue;
+                }
+                if (!samplerNames.contains(name)) {
+                    if (GlslTokenRewriter.identifierCount(body, name) > 1) {
+                        throw new IllegalArgumentException("unsupported compute sampler: " + name);
+                    }
+                    sampler.appendReplacement(samplerResult, "");
+                    continue;
+                }
+                int binding = imageNames.size() + samplerNames.indexOf(name);
+                PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(name);
+                String replacement = "layout(binding = " + binding + ") uniform "
+                        + samplerType(image) + " " + name + ";";
+                declaredSamplers.add(name);
+                sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
+            }
+            sampler.appendTail(samplerResult);
+            return samplerResult.toString();
+        }
+
+        /** Binds each declared storage image, by its own name or by the sampler that aliases it. */
+        String bindImages(String body) {
+            Matcher image = IMAGE_DECLARATION.matcher(body);
+            StringBuffer imageResult = new StringBuffer();
+            while (image.find()) {
+                String type = image.group(1);
+                String name = image.group(2);
+                int binding = imageNames.indexOf(name);
+                if (binding < 0) binding = indexBySampler(imageNames, name, plan);
+                if (binding < 0) {
+                    throw new IllegalArgumentException("unsupported compute image: " + name);
+                }
+                PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(name);
+                String replacement = "layout(" + spec.internalFormat() + ", binding = " + binding
+                        + ") uniform " + imageType(spec, type) + " " + name + ";";
+                image.appendReplacement(imageResult, Matcher.quoteReplacement(replacement));
+            }
+            image.appendTail(imageResult);
+            return imageResult.toString();
+        }
+
+        /** Keeps the bound resource declarations and drops every other uniform the source does not use. */
+        String removeUnsupportedUniforms(String body) {
+            Matcher unsupportedUniform = ANY_UNIFORM_DECLARATION.matcher(body);
+            StringBuffer unsupportedResult = new StringBuffer();
+            while (unsupportedUniform.find()) {
+                String type = unsupportedUniform.group(1);
+                String declarators = unsupportedUniform.group(2).trim();
+                if (isTranslatedResourceDeclaration(type, declarators, imageNames, samplerNames,
+                        sampled2dNames)) {
+                    unsupportedUniform.appendReplacement(unsupportedResult,
+                            Matcher.quoteReplacement(unsupportedUniform.group()));
+                    continue;
+                }
+                for (String declarator : declarators.split(",")) {
+                    String name = declarator.trim();
+                    int initializer = name.indexOf('=');
+                    if (initializer >= 0) name = name.substring(0, initializer).trim();
+                    name = name.replaceFirst("\\[.*$", "").trim();
+                    if (!name.matches("[A-Za-z_]\\w*")) {
+                        throw new IllegalArgumentException("unsupported compute uniform declaration: "
+                                + type + " " + declarators);
+                    }
+                    if (GlslTokenRewriter.identifierCount(body, name) > 1) {
+                        throw new IllegalArgumentException("unsupported compute uniform: " + name);
+                    }
+                }
+                unsupportedUniform.appendReplacement(unsupportedResult, "");
+            }
+            unsupportedUniform.appendTail(unsupportedResult);
+            return unsupportedResult.toString();
+        }
+
+        /** Declarations for the bound samplers the body uses but never declared. */
+        String undeclaredSamplers(String body) {
+            StringBuilder generated = new StringBuilder();
+            for (String name : samplerNames) {
+                if (declaredSamplers.contains(name)) continue;
+                if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
+                int binding = imageNames.size() + samplerNames.indexOf(name);
+                PackAdvancedResourcePlan.ImageSpec imageSpec = plan.imageForSymbol(name);
+                generated.append("layout(binding = ").append(binding).append(") uniform ")
+                        .append(samplerType(imageSpec)).append(' ').append(name).append(";\n");
+            }
+            for (String name : sampled2dNames) {
+                if (declaredSampled2d.contains(name)) continue;
+                if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
+                int binding = imageNames.size() + samplerNames.size() + sampled2dNames.indexOf(name);
+                generated.append("layout(binding = ").append(binding)
+                        .append(") uniform sampler2D ").append(name).append(";\n");
+            }
+            return generated.toString();
+        }
     }
 
     private static String normalizeVersion(String source) {
@@ -763,27 +837,22 @@ public final class PackShadowCompute implements AutoCloseable {
     }
 
     private static int computeAlignment(String type) {
-        if (type.startsWith("vec3") || type.startsWith("vec4")
-                || type.startsWith("ivec3") || type.startsWith("ivec4")
-                || type.startsWith("uvec3") || type.startsWith("uvec4")
-                || type.startsWith("bvec3") || type.startsWith("bvec4")
-                || type.startsWith("mat")) return 16;
-        if (type.endsWith("vec2") || type.equals("vec2") || type.equals("ivec2")
-                || type.equals("uvec2") || type.equals("bvec2")) return 8;
+        if (isFourWordVector(type) || type.startsWith("mat")) return 16;
+        if (type.endsWith("vec2")) return 8;
         return 4;
     }
 
     private static int computeSize(String type) {
-        if (type.equals("mat2")) return 32;
-        if (type.equals("mat3")) return 48;
-        if (type.equals("mat4")) return 64;
-        if (type.startsWith("vec3") || type.startsWith("vec4")
-                || type.startsWith("ivec3") || type.startsWith("ivec4")
-                || type.startsWith("uvec3") || type.startsWith("uvec4")
-                || type.startsWith("bvec3") || type.startsWith("bvec4")) return 16;
-        if (type.equals("vec2") || type.equals("ivec2") || type.equals("uvec2")
-                || type.equals("bvec2")) return 8;
+        Integer matrixSize = MATRIX_SIZES.get(type);
+        if (matrixSize != null) return matrixSize;
+        if (isFourWordVector(type)) return 16;
+        if (TWO_WORD_VECTORS.contains(type)) return 8;
         return 4;
+    }
+
+    /** vec3 and vec4 of every component type, which std140 sizes and aligns as four words. */
+    private static boolean isFourWordVector(String type) {
+        return FOUR_WORD_VECTORS.stream().anyMatch(type::startsWith);
     }
 
     private static int align(int value, int alignment) {

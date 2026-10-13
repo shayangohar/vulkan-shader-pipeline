@@ -102,6 +102,57 @@ final class PackPostChain {
         }
     }
 
+    /** Opens the frame's target executor and NaN tripwire, and scene coverage when it runs. */
+    void beginPostFrame(VkCommandBuffer commandBuffer) {
+        VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
+        pass.packPostTargets.beginFrame(commandBuffer, hdrColor);
+        pass.packPostFrameStarted = true;
+        this.nanTripwire.beginFrame(commandBuffer,
+                pass.sessions.packPath == null ? "?" : String.valueOf(pass.sessions.packPath.getFileName()));
+        if (pass.coverage.packCoverageRuntimeEnabled() && pass.packPostChainActive) {
+            pass.packPostTargets.prepareGeometryTarget(commandBuffer);
+            pass.coverage.packCoverageOwner.beginFrame(commandBuffer);
+            pass.coverage.packCoverageState.beginFrame();
+        }
+    }
+
+    /** Runs the PREPARE window over the freshly cleared world target, then reopens it. */
+    void runPrepareWindow(VkCommandBuffer commandBuffer) {
+        Renderer.getInstance().endRenderPass(commandBuffer);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
+            hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.PREPARE);
+            if (pass.packPostChainActive) {
+                pass.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
+            }
+            hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        }
+        pass.rebindMainTarget();
+    }
+
+    /**
+     * Runs the world's post windows at level end, EARLY unless the pre-translucent seam already
+     * ran it and then LATE, and commits the frame's target state.
+     */
+    void runWorldPostWindows(VkCommandBuffer commandBuffer, VulkanImage hdrColor) {
+        if (!pass.packEarlyPostCompleted
+                && pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.EARLY)) {
+            runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.EARLY);
+            pass.packEarlyPostCompleted = true;
+        }
+        runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.LATE);
+        commitPostFrame();
+    }
+
+    /** Commits the frame's target state if this frame opened it. */
+    void commitPostFrame() {
+        if (pass.packPostFrameStarted) {
+            pass.packPostTargets.commitFrame();
+            pass.packPostFrameStarted = false;
+        }
+    }
+
     /** Runs one scheduled non-final post window through the pack target graph. */
     void runPackPostWindow(
             VkCommandBuffer commandBuffer,
@@ -122,65 +173,17 @@ final class PackPostChain {
             ChimeraMainPass.preparePackFullscreenState();
             boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
-                PackFrameSchedulePlan.PostStage scheduled = pass.packFrameSchedule.postStage(stage.name());
-                if (stage.finalStage() || scheduled == null || scheduled.window() != window) {
-                    continue;
-                }
-                PackPipelines.PackPost post = stage.post();
-                if (post == null) {
-                    markPostStageIdentityBoundary(stage, "not installed");
-                    continue;
-                }
-                TargetStep graphStep = postGraphStep(stage);
-                if (graphStep == null || !graphStep.executable()) {
-                    markPostGraphIdentityBoundary(stage, graphStep);
-                    continue;
-                }
-                if (!pass.packPostTargets.areInputsAvailable(post.requiredColorInputs())
-                        || !packDepthInputsAvailable(post.samplerNames())) {
-                    markPostStageIdentityBoundary(stage,
-                            unavailablePostInputs(post));
+                if (!scheduledIn(stage, window) || !stageRunnable(stage)) {
                     continue;
                 }
                 if (!tripwireSwept) {
                     tripwireSwept = true;
                     sweepNanTripwire(commandBuffer, "before " + window);
                 }
-                ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
-                boolean attempted = false;
-                try {
-                    pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
-                    pass.prepareProgramImages(post.pipeline());
-                    previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
-                            hdrColor,
-                            DrawMaterialContext.captureLive());
-                    attempted = true;
-                    pass.packPostTargets.prepare(post, commandBuffer);
-                    pass.drawFullscreen(commandBuffer, post.pipeline());
-                    pass.packPostTargets.finish(commandBuffer);
-                    checkNanTripwireOutputs(commandBuffer, stage);
-                } catch (RuntimeException stageFailure) {
-                    if (attempted) {
-                        pass.packPostTargets.abort(commandBuffer);
-                    }
-                    markPostStageFailure(post, stageFailure);
-                    throw stageFailure;
-                } finally {
-                    if (previous != null) previous.close();
-                }
+                runPostStage(commandBuffer, hdrColor, stage);
             }
         } catch (RuntimeException e) {
-            try {
-                if (pass.packPostFrameStarted) {
-                    pass.packPostTargets.abort(commandBuffer);
-                    pass.packPostFrameStarted = false;
-                }
-            } catch (RuntimeException abortFailure) {
-                pass.logPackRuntimeFailure("post-abort:" + window, abortFailure);
-            }
-            String reason = ChimeraMainPass.runtimeFailureReason("post-window:" + window, e);
-            disablePackPostChain("POST_RUNTIME_FAILED:" + reason);
-            pass.logPackRuntimeFailure("post-window:" + window, e);
+            abortPostWindow(commandBuffer, window, e);
         } finally {
             pass.restorePackRenderState(previousState);
         }
@@ -188,6 +191,76 @@ final class PackPostChain {
             pass.conformanceReport.addDeviation("PING_PONG_TARGETS_APPLIED");
             pass.conformanceReport.addDeviation("UNWRITTEN_TARGET_PRESERVED");
         }
+    }
+
+    /** True when the frame schedule runs this non-final stage in the window. */
+    private boolean scheduledIn(PackPostExecution stage, PackFrameSchedulePlan.PostWindow window) {
+        PackFrameSchedulePlan.PostStage scheduled = pass.packFrameSchedule.postStage(stage.name());
+        return !stage.finalStage() && scheduled != null && scheduled.window() == window;
+    }
+
+    /** True when the stage is installed, executable and has its inputs; otherwise marks its identity boundary. */
+    private boolean stageRunnable(PackPostExecution stage) {
+        PackPipelines.PackPost post = stage.post();
+        if (post == null) {
+            markPostStageIdentityBoundary(stage, "not installed");
+            return false;
+        }
+        TargetStep graphStep = postGraphStep(stage);
+        if (graphStep == null || !graphStep.executable()) {
+            markPostGraphIdentityBoundary(stage, graphStep);
+            return false;
+        }
+        if (!pass.packPostTargets.areInputsAvailable(post.requiredColorInputs())
+                || !packDepthInputsAvailable(post.samplerNames())) {
+            markPostStageIdentityBoundary(stage,
+                    unavailablePostInputs(post));
+            return false;
+        }
+        return true;
+    }
+
+    /** Draws one post stage into its graph targets; a failure aborts the targets it opened and rethrows. */
+    private void runPostStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
+        PackPipelines.PackPost post = stage.post();
+        ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
+        boolean attempted = false;
+        try {
+            pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
+            pass.prepareProgramImages(post.pipeline());
+            previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
+                    hdrColor,
+                    DrawMaterialContext.captureLive());
+            attempted = true;
+            pass.packPostTargets.prepare(post, commandBuffer);
+            pass.drawFullscreen(commandBuffer, post.pipeline());
+            pass.packPostTargets.finish(commandBuffer);
+            checkNanTripwireOutputs(commandBuffer, stage);
+        } catch (RuntimeException stageFailure) {
+            if (attempted) {
+                pass.packPostTargets.abort(commandBuffer);
+            }
+            markPostStageFailure(post, stageFailure);
+            throw stageFailure;
+        } finally {
+            if (previous != null) previous.close();
+        }
+    }
+
+    /** Aborts the frame's open targets and disables the post chain after a window fails. */
+    private void abortPostWindow(VkCommandBuffer commandBuffer, PackFrameSchedulePlan.PostWindow window,
+            RuntimeException failure) {
+        try {
+            if (pass.packPostFrameStarted) {
+                pass.packPostTargets.abort(commandBuffer);
+                pass.packPostFrameStarted = false;
+            }
+        } catch (RuntimeException abortFailure) {
+            pass.logPackRuntimeFailure("post-abort:" + window, abortFailure);
+        }
+        String reason = ChimeraMainPass.runtimeFailureReason("post-window:" + window, failure);
+        disablePackPostChain("POST_RUNTIME_FAILED:" + reason);
+        pass.logPackRuntimeFailure("post-window:" + window, failure);
     }
 
     /** Runs the pack final stage after world post passes and before host hand. */
@@ -200,63 +273,13 @@ final class PackPostChain {
         if (pass.packDepthTargets.isConfigured()) {
             pass.packDepthTargets.commitFrame();
         }
-        if (pass.pipelines.finalPost == null || !pass.packPostChainActive) {
-            pass.packFinalApplied = true;
-            return;
-        }
-        TargetStep finalGraphStep = postGraphStep(this.packFinalExecution);
-        boolean finalGraphExecutable = finalGraphStep != null && finalGraphStep.executable();
-        boolean finalInputsAvailable = finalGraphExecutable
-                && pass.packPostTargets.areInputsAvailable(pass.pipelines.finalPost.requiredColorInputs())
-                && packDepthInputsAvailable(pass.pipelines.finalPost.samplerNames());
-        if (!finalInputsAvailable) {
-            if (this.packFinalExecution != null) {
-                if (!finalGraphExecutable) {
-                    markPostGraphIdentityBoundary(this.packFinalExecution, finalGraphStep);
-                } else {
-                    markPostStageIdentityBoundary(this.packFinalExecution,
-                            unavailablePostInputs(pass.pipelines.finalPost));
-                }
-            }
+        if (pass.pipelines.finalPost == null || !pass.packPostChainActive || !finalStageRunnable()) {
             pass.packFinalApplied = true;
             return;
         }
 
         try {
-            pass.prepareProgramImages(pass.pipelines.finalPost.pipeline());
-            // Final reads pack targets in GL row order. It renders
-            // into a GL-ordered image; the flipped resolve below moves that
-            // image into the host-ordered output.
-            Renderer.getInstance().endRenderPass(commandBuffer);
-            // No pack target is written between the last post output check and final.
-            // Re-reading every target/history/depth here adds cost but no new evidence.
-            pass.packPostTargets.resetMipmapSampling();
-            pass.packPostTargets.generateMipmaps(commandBuffer, pass.pipelines.finalPost.name());
-            Renderer.getInstance().beginRenderPass(pass.targets.packFinalRenderPass, pass.targets.packFinalFramebuffer);
-            ChimeraMainPass.PackRenderState finalState = pass.capturePackRenderState();
-            ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
-            try {
-                ChimeraMainPass.preparePackFullscreenState();
-                for (int target = 0; target < pass.packFinalInputs.length; target++) {
-                    pass.packFinalInputs[target] = pass.packPostTargets.activeTarget(target);
-                }
-                VulkanImage resolved = pass.packPostTargets.activeTarget(0);
-                previous = pass.images.bindProgramImages(pass.pipelines.finalPost.pipeline(), pass.packFinalInputs,
-                        resolved,
-                        DrawMaterialContext.captureLive());
-                pass.drawFullscreen(commandBuffer, pass.pipelines.finalPost.pipeline());
-            } finally {
-                if (previous != null) {
-                    previous.close();
-                }
-                pass.restorePackRenderState(finalState);
-            }
-            Renderer.getInstance().endRenderPass(commandBuffer);
-            VulkanImage finalColor = pass.targets.packFinalFramebuffer.getColorAttachment();
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                finalColor.transitionImageLayout(stack, commandBuffer,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            }
+            VulkanImage finalColor = renderPackFinal(commandBuffer);
             this.nanTripwire.check(commandBuffer, "final", finalColor);
             pass.resolveWorldToOutput(commandBuffer, finalColor);
             pass.packFinalApplied = true;
@@ -271,6 +294,66 @@ final class PackPostChain {
             pass.packFinalApplied = true;
             pass.logPackRuntimeFailure("final", failure);
         }
+    }
+
+    /** True when final's graph step is executable and its inputs are live; otherwise marks its boundary. */
+    private boolean finalStageRunnable() {
+        TargetStep finalGraphStep = postGraphStep(this.packFinalExecution);
+        boolean finalGraphExecutable = finalGraphStep != null && finalGraphStep.executable();
+        boolean finalInputsAvailable = finalGraphExecutable
+                && pass.packPostTargets.areInputsAvailable(pass.pipelines.finalPost.requiredColorInputs())
+                && packDepthInputsAvailable(pass.pipelines.finalPost.samplerNames());
+        if (finalInputsAvailable) {
+            return true;
+        }
+        if (this.packFinalExecution != null) {
+            if (!finalGraphExecutable) {
+                markPostGraphIdentityBoundary(this.packFinalExecution, finalGraphStep);
+            } else {
+                markPostStageIdentityBoundary(this.packFinalExecution,
+                        unavailablePostInputs(pass.pipelines.finalPost));
+            }
+        }
+        return false;
+    }
+
+    /** Draws the final program into its own image and returns that image, readable by the resolve. */
+    private VulkanImage renderPackFinal(VkCommandBuffer commandBuffer) {
+        pass.prepareProgramImages(pass.pipelines.finalPost.pipeline());
+        // Final reads pack targets in GL row order. It renders
+        // into a GL-ordered image; the flipped resolve below moves that
+        // image into the host-ordered output.
+        Renderer.getInstance().endRenderPass(commandBuffer);
+        // No pack target is written between the last post output check and final.
+        // Re-reading every target/history/depth here adds cost but no new evidence.
+        pass.packPostTargets.resetMipmapSampling();
+        pass.packPostTargets.generateMipmaps(commandBuffer, pass.pipelines.finalPost.name());
+        Renderer.getInstance().beginRenderPass(pass.targets.packFinalRenderPass, pass.targets.packFinalFramebuffer);
+        ChimeraMainPass.PackRenderState finalState = pass.capturePackRenderState();
+        ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
+        try {
+            ChimeraMainPass.preparePackFullscreenState();
+            for (int target = 0; target < pass.packFinalInputs.length; target++) {
+                pass.packFinalInputs[target] = pass.packPostTargets.activeTarget(target);
+            }
+            VulkanImage resolved = pass.packPostTargets.activeTarget(0);
+            previous = pass.images.bindProgramImages(pass.pipelines.finalPost.pipeline(), pass.packFinalInputs,
+                    resolved,
+                    DrawMaterialContext.captureLive());
+            pass.drawFullscreen(commandBuffer, pass.pipelines.finalPost.pipeline());
+        } finally {
+            if (previous != null) {
+                previous.close();
+            }
+            pass.restorePackRenderState(finalState);
+        }
+        Renderer.getInstance().endRenderPass(commandBuffer);
+        VulkanImage finalColor = pass.targets.packFinalFramebuffer.getColorAttachment();
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            finalColor.transitionImageLayout(stack, commandBuffer,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        return finalColor;
     }
 
     TargetStep postGraphStep(PackPostExecution stage) {

@@ -7,7 +7,6 @@ import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.PackGeometryContext;
-import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.GeometryOutputPlan;
 import net.chimera.shaderpack.PackConfig;
@@ -298,40 +297,9 @@ public final class ChimeraMainPass implements MainPass {
             this.packDepthTargets.beginFrame();
         }
         if (this.packPostTargets.isConfigured()) {
-            VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
-            VulkanImage hdrColor = this.targets.hdrFramebuffer.getColorAttachment();
-            this.packPostTargets.beginFrame(commandBuffer, hdrColor);
-            this.packPostFrameStarted = true;
-            this.postChain.nanTripwire.beginFrame(commandBuffer,
-                    this.sessions.packPath == null ? "?" : String.valueOf(this.sessions.packPath.getFileName()));
-            if (coverage.packCoverageRuntimeEnabled() && this.packPostChainActive) {
-                this.packPostTargets.prepareGeometryTarget(commandBuffer);
-                this.coverage.packCoverageOwner.beginFrame(commandBuffer);
-                this.coverage.packCoverageState.beginFrame();
-            }
+            postChain.beginPostFrame(Renderer.getCommandBuffer());
         }
-
-        // Compute the light once before any terrain draw. The shadow pass at
-        // the opaque layer's head reuses this exact state.
-        if (this.shadowPass.shadowMap.isInitialized()) {
-            this.shadowPass.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
-                    cameraX, cameraY, cameraZ);
-            this.shadowPass.shadowFrameReady = shadowPass.prepareShadowForSampling(cameraX, cameraY, cameraZ);
-            if (this.shadowPass.shadowFrameReady && this.shadowPass.shadowMap.hasMapSnapshot()) {
-                this.shadowPass.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
-            } else {
-                PackUniformProvider.clearShadowState();
-            }
-        }
-
-        // Arm this frame's shadow segment; consumed at the opaque layer's head.
-        this.shadowPass.shadowPending = this.shadowPass.shadowFrameReady;
-
-        // Terrain shaders sample the shadow map from their first draw.
-        if (this.shadowPass.shadowFrameReady) {
-            this.shadowPass.shadowMap.bindShadowTexture();
-            shadowPass.maintainPackShadowGoal();
-        }
+        shadowPass.beginShadowFrame(cameraX, cameraY, cameraZ);
 
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -347,17 +315,7 @@ public final class ChimeraMainPass implements MainPass {
         }
         if (this.packPostChainActive
                 && this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE)) {
-            Renderer.getInstance().endRenderPass(commandBuffer);
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VulkanImage hdrColor = this.targets.hdrFramebuffer.getColorAttachment();
-                hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                postChain.runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.PREPARE);
-                if (this.packPostChainActive) {
-                    this.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
-                }
-                hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            }
-            this.rebindMainTarget();
+            postChain.runPrepareWindow(commandBuffer);
         }
     }
 
@@ -386,19 +344,7 @@ public final class ChimeraMainPass implements MainPass {
             trace("resolveWorld", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             if (this.packNeedsHdrDepth) {
-                if (this.packDepthTargets.isConfigured()
-                        && this.packDepthTargets.plan().depthtex2()
-                        && !this.packDepthTargets.currentAvailable("depthtex2")
-                        && !this.packDepthTargets.capturePreHand(
-                                commandBuffer, this.targets.hdrFramebuffer.getDepthAttachment())) {
-                    LOGGER.warn("[chimera] pack depth graph: fallback=IDENTITY (pre-hand depth conversion failed)");
-                }
-                depth.transitionHdrDepthForSampling(stack, commandBuffer);
-                if (this.packDepthTargets.isConfigured()
-                        && !this.packDepthTargets.captureScene(
-                        commandBuffer, this.targets.hdrFramebuffer.getDepthAttachment())) {
-                    LOGGER.warn("[chimera] pack depth graph: fallback=IDENTITY (depth conversion failed)");
-                }
+                depth.captureWorldDepth(stack, commandBuffer);
             }
 
             if (coverage.packCoverageRuntimeEnabled() && this.coverage.packCoverageState.canSeed()) {
@@ -406,23 +352,11 @@ public final class ChimeraMainPass implements MainPass {
             }
 
             if (this.packPostChainActive && this.packPostTargets.isConfigured()) {
-                if (!this.packEarlyPostCompleted
-                        && this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.EARLY)) {
-                    postChain.runPackPostWindow(commandBuffer, hdrColor,
-                            PackFrameSchedulePlan.PostWindow.EARLY);
-                    this.packEarlyPostCompleted = true;
-                }
-                postChain.runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.LATE);
-                if (this.packPostFrameStarted) {
-                    this.packPostTargets.commitFrame();
-                    this.packPostFrameStarted = false;
-                }
+                postChain.runWorldPostWindows(commandBuffer, hdrColor);
                 resolvePackWorldToOutput(commandBuffer, hdrColor);
                 this.packWorldResolved = true;
                 this.currentFramebuffer = this.targets.compositeFramebuffer;
-                if (coverage.packCoverageRuntimeEnabled()) {
-                    this.coverage.packCoverageState.endFrame();
-                }
+                coverage.endCoverageFrame();
                 // The pack final stage is the last pack operation in the
                 // world segment.  It must complete before vanilla hand
                 // submission, so host hand and GUI draws remain visible.
@@ -430,10 +364,7 @@ public final class ChimeraMainPass implements MainPass {
                 return;
             }
 
-            if (this.packPostFrameStarted) {
-                this.packPostTargets.commitFrame();
-                this.packPostFrameStarted = false;
-            }
+            postChain.commitPostFrame();
             // Mask-critical bypass: this branch runs when
             // the post chain is blocked or unconfigured. Installed pack
             // objects stay untouched for deterministic cleanup and reload,
@@ -444,9 +375,7 @@ public final class ChimeraMainPass implements MainPass {
             // image through a Sampler0-only manifest instead.
             resolveWorldToOutput(commandBuffer, hdrColor);
             this.currentFramebuffer = this.targets.compositeFramebuffer;
-            if (coverage.packCoverageRuntimeEnabled()) {
-                this.coverage.packCoverageState.endFrame();
-            }
+            coverage.endCoverageFrame();
         }
     }
 
@@ -535,52 +464,7 @@ public final class ChimeraMainPass implements MainPass {
                 depth.transitionHdrDepthForSampling(stack, commandBuffer);
             }
             VTextureSelector.bindTexture(outputColor);
-
-            SwapChain swapChain = Renderer.getInstance().getSwapChain();
-            if (swapChain.hasImages()) {
-                trace("presentSwap", "swapchain", swapChain.getColorAttachment(),
-                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer,
-                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                Renderer.getInstance().beginRenderPass(this.targets.presentRenderPass, swapChain);
-                // The present draw otherwise inherits the GUI's last viewport and
-                // scissor, leaving the swapchain on its clear color; pin the full
-                // swapchain like DefaultMainPass.begin does.
-                Renderer.setViewport(0, 0, swapChain.getWidth(), swapChain.getHeight(), stack);
-                VK10.vkCmdSetScissor(commandBuffer, 0, swapChain.scissor(stack));
-                // VulkanMod binds a pipeline variant keyed on the CURRENT
-                // VRenderSystem state (getCurrentPipelineState at bind). The
-                // swapchain depth attachment is DONT_CARE (a depth-tested
-                // present quad is culled by stale/self-written depth), and the
-                // GUI draws just before this bind leave blend/colorMask at GUI
-                // values: with the leftover SRC_ALPHA blend applied to the
-                // output's zero alpha, or a cleared color mask, the present
-                // quad writes nothing and the swapchain stays on the pass
-                // clear. Force the same plain opaque blit state the composite
-                // resolve uses, and restore the globals right after.
-                PackRenderState previousState = capturePackRenderState();
-                preparePackFullscreenState();
-                try {
-                    // Pack final is executed before GUI by the hand seam.
-                    // The swapchain always uses the host present pipeline.
-                    drawFullscreen(commandBuffer, this.presentPipeline);
-                    // Identity's end-of-frame state after the present is
-                    // slot 0 = outputColor. The captured slot 0 can be
-                    // chimera's own bindAsTexture residue (hdrColor), which
-                    // the next world-leave churn destroys; leaving it would
-                    // hand the host a dead image at the transition.
-                    if (this.pipelines.finalPipeline != null || this.pipelines.finalPost != null) {
-                        VTextureSelector.bindTexture(outputColor);
-                    }
-                } finally {
-                    restorePackRenderState(previousState);
-                }
-                Renderer.getInstance().endRenderPass(commandBuffer);
-
-                trace("presentSrc", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-                swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer,
-                        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-            }
+            presentToSwapChain(commandBuffer, stack, outputColor);
         }
 
         this.levelPhase = false;
@@ -588,6 +472,56 @@ public final class ChimeraMainPass implements MainPass {
         if (result != VK_SUCCESS) {
             throw new RuntimeException("Failed to record command buffer: " + result);
         }
+    }
+
+    /** Draws the output target onto the swapchain image and leaves that image ready to present. */
+    private void presentToSwapChain(VkCommandBuffer commandBuffer, MemoryStack stack, VulkanImage outputColor) {
+        SwapChain swapChain = Renderer.getInstance().getSwapChain();
+        if (!swapChain.hasImages()) {
+            return;
+        }
+        trace("presentSwap", "swapchain", swapChain.getColorAttachment(),
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        Renderer.getInstance().beginRenderPass(this.targets.presentRenderPass, swapChain);
+        // The present draw otherwise inherits the GUI's last viewport and
+        // scissor, leaving the swapchain on its clear color; pin the full
+        // swapchain like DefaultMainPass.begin does.
+        Renderer.setViewport(0, 0, swapChain.getWidth(), swapChain.getHeight(), stack);
+        VK10.vkCmdSetScissor(commandBuffer, 0, swapChain.scissor(stack));
+        // VulkanMod binds a pipeline variant keyed on the CURRENT
+        // VRenderSystem state (getCurrentPipelineState at bind). The
+        // swapchain depth attachment is DONT_CARE (a depth-tested
+        // present quad is culled by stale/self-written depth), and the
+        // GUI draws just before this bind leave blend/colorMask at GUI
+        // values: with the leftover SRC_ALPHA blend applied to the
+        // output's zero alpha, or a cleared color mask, the present
+        // quad writes nothing and the swapchain stays on the pass
+        // clear. Force the same plain opaque blit state the composite
+        // resolve uses, and restore the globals right after.
+        PackRenderState previousState = capturePackRenderState();
+        preparePackFullscreenState();
+        try {
+            // Pack final is executed before GUI by the hand seam.
+            // The swapchain always uses the host present pipeline.
+            drawFullscreen(commandBuffer, this.presentPipeline);
+            // Identity's end-of-frame state after the present is
+            // slot 0 = outputColor. The captured slot 0 can be
+            // chimera's own bindAsTexture residue (hdrColor), which
+            // the next world-leave churn destroys; leaving it would
+            // hand the host a dead image at the transition.
+            if (this.pipelines.finalPipeline != null || this.pipelines.finalPost != null) {
+                VTextureSelector.bindTexture(outputColor);
+            }
+        } finally {
+            restorePackRenderState(previousState);
+        }
+        Renderer.getInstance().endRenderPass(commandBuffer);
+
+        trace("presentSrc", "swapchain", swapChain.getColorAttachment(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer,
+                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
 
     void drawFullscreen(VkCommandBuffer commandBuffer, GraphicsPipeline pipeline) {

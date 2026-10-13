@@ -82,30 +82,47 @@ final class PackImageBindings {
                 if (pass.materials.materialMapOwner == null) return null;
                 return pass.materials.materialMapOwner.resolveDrawMaterial(drawContext, entry.resourceKey());
             }
-            VulkanImage image = switch (entry.kind()) {
-                case COLOR_TARGET -> PackPostChain.resolvePackColorInput(
-                        PackResourcePlan.targetIndex(entry.resourceKey()), colors, fallback);
-                case DEPTH_TARGET -> {
-                    VulkanImage depth = pass.packDepthTargets.image(entry.resourceKey());
-                    yield depth == null && entry.resourceKey().equals("depthtex0")
-                            && pass.targets.hdrFramebuffer != null
-                            ? pass.targets.hdrFramebuffer.getDepthAttachment() : depth;
-                }
-                case SHADOW_DEPTH -> pass.shadowPass.shadowMap.getShadowFramebuffer() == null ? null
-                        : entry.resourceKey().equals("shadowtex1") ? pass.shadowPass.shadowMap.opaqueDepth()
-                        : pass.shadowPass.shadowMap.getShadowFramebuffer().getDepthAttachment();
-                case SHADOW_COLOR ->
-                        pass.shadowPass.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
-                case PACK_TEXTURE -> pass.packResourceOwner == null ? null
-                        : pass.packResourceOwner.image(entry.resourceKey());
-                case ADVANCED_IMAGE -> pass.packAdvancedImageOwner == null ? null
-                        : pass.packAdvancedImageOwner.image(entry.resourceKey());
-                case MATERIAL_MAP -> throw new AssertionError();
-                case HOST_TEXTURE -> throw new AssertionError();
-            };
+            VulkanImage image = entryImage(entry, colors, fallback);
             return new ChimeraTextureBindingState.Snapshot(image,
                     image == null ? null : pass.shadowPass.shadowSamplerFor(bound, entry, image));
         });
+    }
+
+    /** The image one target, depth, shadow, pack or advanced manifest entry binds this draw. */
+    private VulkanImage entryImage(ProgramImageBindingManifest.Entry entry, VulkanImage[] colors,
+            VulkanImage fallback) {
+        return switch (entry.kind()) {
+            case COLOR_TARGET -> PackPostChain.resolvePackColorInput(
+                    PackResourcePlan.targetIndex(entry.resourceKey()), colors, fallback);
+            case DEPTH_TARGET -> depthTargetImage(entry.resourceKey());
+            case SHADOW_DEPTH -> shadowDepthImage(entry.resourceKey());
+            case SHADOW_COLOR ->
+                    pass.shadowPass.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
+            case PACK_TEXTURE -> pass.packResourceOwner == null ? null
+                    : pass.packResourceOwner.image(entry.resourceKey());
+            case ADVANCED_IMAGE -> pass.packAdvancedImageOwner == null ? null
+                    : pass.packAdvancedImageOwner.image(entry.resourceKey());
+            case MATERIAL_MAP -> throw new AssertionError();
+            case HOST_TEXTURE -> throw new AssertionError();
+        };
+    }
+
+    /** A depth snapshot; depthtex0 falls back to the live world depth until it is captured. */
+    private VulkanImage depthTargetImage(String name) {
+        VulkanImage depth = pass.packDepthTargets.image(name);
+        return depth == null && name.equals("depthtex0")
+                && pass.targets.hdrFramebuffer != null
+                ? pass.targets.hdrFramebuffer.getDepthAttachment() : depth;
+    }
+
+    /** shadowtex1 is the opaque-only shadow depth; shadowtex0 is the full shadow depth. */
+    private VulkanImage shadowDepthImage(String name) {
+        ChimeraShadowMap shadowMap = pass.shadowPass.shadowMap;
+        if (shadowMap.getShadowFramebuffer() == null) {
+            return null;
+        }
+        return name.equals("shadowtex1") ? shadowMap.opaqueDepth()
+                : shadowMap.getShadowFramebuffer().getDepthAttachment();
     }
 
     public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindProgramImages(

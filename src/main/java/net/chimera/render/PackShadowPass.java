@@ -103,6 +103,8 @@ final class PackShadowPass {
         Matrix4f projection = packShadow
                 ? this.shadowMap.getPackLightProjection()
                 : this.shadowMap.getHostLightProjection();
+        ShadowFrame frame = new ShadowFrame(cmd, shadowColor, shadowDepth, packShadow, projection,
+                cameraX, cameraY, cameraZ);
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> shadowBindings = null;
         try {
             // The receiver keeps sampling the previously committed map until
@@ -118,55 +120,10 @@ final class PackShadowPass {
 
             try {
                 if (packShadow) {
-                    if (pass.packAdvancedImageOwner != null
-                            && pass.packAdvancedImageOwner.capabilityEnabled()) {
-                        pass.packAdvancedImageOwner.prepareFrame(cmd);
-                    }
-                    pass.prepareProgramImages(pass.pipelines.shadowPipeline);
-                    shadowBindings = pass.images.bindProgramImages(pass.pipelines.shadowPipeline, null, null,
-                            DrawMaterialContext.captureLive());
-                    PackGeometryContext.beginShadow(this.shadowMap.shadowColors(), shadowDepth);
-                    // Pack receivers read the map with GL's v = ndc * 0.5 + 0.5.
-                    // The fixed host receiver compensates for VulkanMod's flip.
-                    ChimeraRasterOrientation.markGlOriented(this.shadowMap.getShadowRenderPass());
+                    shadowBindings = bindPackShadowImages(cmd);
                 }
-                this.shadowPassActive = true;
-                PipelineManager.setShaderGetter(rt -> {
-                    if (packShadow) {
-                        VRenderSystem.disableBlend();
-                        return pass.pipelines.shadowPipeline;
-                    }
-                    return this.shadowMap.getShadowPipeline();
-                });
-                if (packShadow) {
-                    // This scoped pair is exactly the one used by MVP and
-                    // ftransform() in the pack shadow draw.
-                    this.shadowMap.publishCurrentDrawState();
-                }
-                VRenderSystem.applyProjectionMatrix(projection);
-                VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
-                VRenderSystem.calculateMVP();
-                beginShadowSections(cameraX, cameraY, cameraZ);
-                // Iris tests solid and cutout shadow casters at alpha 0.1 and
-                // translucent ones not at all; foliage quads otherwise cast
-                // their whole square.
-                if (packShadow) {
-                    PackUniformProvider.updateDrawAlphaReference(SHADOW_CUTOUT_ALPHA);
-                }
-
-                TerrainRenderType opaqueType = TerrainRenderType.getRemapped(TerrainRenderType.SOLID);
-                WorldRenderer.getInstance().renderSectionLayer(
-                        opaqueType,
-                        cameraX, cameraY, cameraZ,
-                        this.shadowMap.getLightView(), projection);
-
-                TerrainRenderType cutoutType = TerrainRenderType.getRemapped(TerrainRenderType.CUTOUT);
-                recordShadowCutoutDisposition(cutoutType == opaqueType);
-                if (cutoutType != opaqueType) {
-                    WorldRenderer.getInstance().renderSectionLayer(
-                            cutoutType, cameraX, cameraY, cameraZ,
-                            this.shadowMap.getLightView(), projection);
-                }
+                beginShadowDraw(frame);
+                drawShadowTerrain(frame);
                 if (packShadow) {
                     renderShadowCasters(cameraX, cameraY, cameraZ);
                     // shadowtex1 is the opaque, cutout and entity casters only;
@@ -182,83 +139,184 @@ final class PackShadowPass {
                             this.shadowMap.getLightView(), projection);
                 }
             } finally {
-                ShadowSectionQueue.end();
-                if (Renderer.getInstance().getBoundRenderPass() != null) {
-                    Renderer.getInstance().endRenderPass(cmd);
-                }
-                if (packShadow) {
-                    PackGeometryContext.close();
-                    ChimeraRasterOrientation.unmark(this.shadowMap.getShadowRenderPass());
-                }
-                this.shadowPassActive = false;
-                if (shadowBindings != null) shadowBindings.close();
+                endShadowRecording(frame, shadowBindings);
             }
-
-            if (packShadow && pass.packStorageBufferOwner != null) {
-                pass.packStorageBufferOwner.prepareForUse(cmd);
-            }
-
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                ChimeraMainPass.trace("shadowPost", "shadowColor", shadowColor,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                ChimeraMainPass.trace("shadowPost", "shadowDepth", shadowDepth,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                if (packShadow) {
-                    this.shadowMap.shadowColor(1).transitionImageLayout(stack, cmd,
-                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                }
-                shadowDepth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            }
-            if (pass.packAdvancedImageOwner != null
-                    && pass.packAdvancedImageOwner.capabilityEnabled()
-                    && pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
-                if (pass.packShadowCompute.dispatch(cmd)) {
-                    if (pass.packStorageBufferOwner != null) pass.packStorageBufferOwner.recordDispatch();
-                } else LOGGER.warn("[chimera] shadowcomp dispatch failed; dependent advanced resources use fallback");
-            }
-            this.shadowMap.markInitialSamplingLayoutReady();
-            if (packShadow) {
-                this.shadowMap.commitRenderedMap(cameraX, cameraY, cameraZ);
-                this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
-            } else {
-                this.shadowMap.invalidatePackMapSnapshot();
-                PackUniformProvider.clearShadowState();
-            }
-
-            this.shadowMap.bindShadowTexture();
-            maintainPackShadowGoal();
+            publishShadowMap(frame);
         } catch (RuntimeException failure) {
-            this.shadowMap.invalidateMapSnapshot();
-            this.shadowFrameReady = false;
-            if (pass.conformanceReport != null) {
-                pass.conformanceReport.addDeviation("SHADOW_MAP_WRITE_FAILED");
-            }
-            if (!this.shadowTransitionFallbackLogged) {
-                this.shadowTransitionFallbackLogged = true;
-                LOGGER.warn("[chimera] shadow map write failed; clearing to all-lit fallback: {}",
-                        failure.toString());
-            }
-            try {
-                if (Renderer.getInstance().getBoundRenderPass() != null) {
-                    Renderer.getInstance().endRenderPass(cmd);
-                }
-                this.shadowPassActive = false;
-                PackGeometryContext.close();
-                this.shadowMap.initializeSampling(cmd);
-                this.shadowMap.seedClearedMap(cameraX, cameraY, cameraZ);
-                this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
-                this.shadowMap.bindShadowTexture();
-                this.shadowFrameReady = true;
-            } catch (RuntimeException clearFailure) {
-                this.shadowFrameReady = false;
-                PackUniformProvider.clearShadowState();
-                LOGGER.warn("[chimera] shadow map recovery failed; shadow inputs remain unavailable: {}",
-                        clearFailure.toString());
-            }
+            recoverShadowMap(frame, failure);
         } finally {
             this.shadowPassActive = false;
             PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
+        }
+    }
+
+    /** One shadow map recording: its command buffer, attachments, caster path, projection and camera. */
+    private record ShadowFrame(VkCommandBuffer cmd, VulkanImage color, VulkanImage depth, boolean pack,
+            Matrix4f projection, double cameraX, double cameraY, double cameraZ) {}
+
+    /** Readies the frame's advanced images and binds the pack shadow program's images for its draws. */
+    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPackShadowImages(
+            VkCommandBuffer cmd) {
+        if (pass.packAdvancedImageOwner != null
+                && pass.packAdvancedImageOwner.capabilityEnabled()) {
+            pass.packAdvancedImageOwner.prepareFrame(cmd);
+        }
+        pass.prepareProgramImages(pass.pipelines.shadowPipeline);
+        return pass.images.bindProgramImages(pass.pipelines.shadowPipeline, null, null,
+                DrawMaterialContext.captureLive());
+    }
+
+    /**
+     * Redirects terrain into the shadow pass, with the light's matrices and its sections; the pack
+     * caster also draws inside its shadow geometry scope.
+     */
+    private void beginShadowDraw(ShadowFrame frame) {
+        boolean packShadow = frame.pack();
+        if (packShadow) {
+            PackGeometryContext.beginShadow(this.shadowMap.shadowColors(), frame.depth());
+            // Pack receivers read the map with GL's v = ndc * 0.5 + 0.5.
+            // The fixed host receiver compensates for VulkanMod's flip.
+            ChimeraRasterOrientation.markGlOriented(this.shadowMap.getShadowRenderPass());
+        }
+        this.shadowPassActive = true;
+        PipelineManager.setShaderGetter(rt -> {
+            if (packShadow) {
+                VRenderSystem.disableBlend();
+                return pass.pipelines.shadowPipeline;
+            }
+            return this.shadowMap.getShadowPipeline();
+        });
+        if (packShadow) {
+            // This scoped pair is exactly the one used by MVP and
+            // ftransform() in the pack shadow draw.
+            this.shadowMap.publishCurrentDrawState();
+        }
+        VRenderSystem.applyProjectionMatrix(frame.projection());
+        VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
+        VRenderSystem.calculateMVP();
+        beginShadowSections(frame.cameraX(), frame.cameraY(), frame.cameraZ());
+        // Iris tests solid and cutout shadow casters at alpha 0.1 and
+        // translucent ones not at all; foliage quads otherwise cast
+        // their whole square.
+        if (packShadow) {
+            PackUniformProvider.updateDrawAlphaReference(SHADOW_CUTOUT_ALPHA);
+        }
+    }
+
+    /** Draws the opaque terrain layer, then the cutout layer unless the host merged it into opaque. */
+    private void drawShadowTerrain(ShadowFrame frame) {
+        TerrainRenderType opaqueType = TerrainRenderType.getRemapped(TerrainRenderType.SOLID);
+        WorldRenderer.getInstance().renderSectionLayer(
+                opaqueType,
+                frame.cameraX(), frame.cameraY(), frame.cameraZ(),
+                this.shadowMap.getLightView(), frame.projection());
+
+        TerrainRenderType cutoutType = TerrainRenderType.getRemapped(TerrainRenderType.CUTOUT);
+        recordShadowCutoutDisposition(cutoutType == opaqueType);
+        if (cutoutType != opaqueType) {
+            WorldRenderer.getInstance().renderSectionLayer(
+                    cutoutType, frame.cameraX(), frame.cameraY(), frame.cameraZ(),
+                    this.shadowMap.getLightView(), frame.projection());
+        }
+    }
+
+    /** Closes the shadow sections, the shadow pass, the pack's shadow geometry scope and its bindings. */
+    private void endShadowRecording(ShadowFrame frame,
+            ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> shadowBindings) {
+        ShadowSectionQueue.end();
+        if (Renderer.getInstance().getBoundRenderPass() != null) {
+            Renderer.getInstance().endRenderPass(frame.cmd());
+        }
+        if (frame.pack()) {
+            PackGeometryContext.close();
+            ChimeraRasterOrientation.unmark(this.shadowMap.getShadowRenderPass());
+        }
+        this.shadowPassActive = false;
+        if (shadowBindings != null) shadowBindings.close();
+    }
+
+    /**
+     * Makes the recorded map sampleable, runs shadowcomp over it, then publishes the pack map or
+     * clears the pack map state for the fixed host map, and binds it for the receivers.
+     */
+    private void publishShadowMap(ShadowFrame frame) {
+        VkCommandBuffer cmd = frame.cmd();
+        if (frame.pack() && pass.packStorageBufferOwner != null) {
+            pass.packStorageBufferOwner.prepareForUse(cmd);
+        }
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            ChimeraMainPass.trace("shadowPost", "shadowColor", frame.color(),
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            ChimeraMainPass.trace("shadowPost", "shadowDepth", frame.depth(),
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            frame.color().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (frame.pack()) {
+                this.shadowMap.shadowColor(1).transitionImageLayout(stack, cmd,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
+            frame.depth().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        dispatchShadowCompute(cmd);
+        this.shadowMap.markInitialSamplingLayoutReady();
+        if (frame.pack()) {
+            this.shadowMap.commitRenderedMap(frame.cameraX(), frame.cameraY(), frame.cameraZ());
+            this.shadowMap.publishMapState(frame.cameraX(), frame.cameraY(), frame.cameraZ());
+        } else {
+            this.shadowMap.invalidatePackMapSnapshot();
+            PackUniformProvider.clearShadowState();
+        }
+
+        this.shadowMap.bindShadowTexture();
+        maintainPackShadowGoal();
+    }
+
+    /** Runs the pack's shadowcomp over the new map when its advanced images are live. */
+    private void dispatchShadowCompute(VkCommandBuffer cmd) {
+        if (pass.packAdvancedImageOwner != null
+                && pass.packAdvancedImageOwner.capabilityEnabled()
+                && pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
+            if (pass.packShadowCompute.dispatch(cmd)) {
+                if (pass.packStorageBufferOwner != null) pass.packStorageBufferOwner.recordDispatch();
+            } else LOGGER.warn("[chimera] shadowcomp dispatch failed; dependent advanced resources use fallback");
+        }
+    }
+
+    /**
+     * After a failed shadow write, clears the map to the all-lit fallback; when that fails too,
+     * the frame's shadow inputs stay unavailable.
+     */
+    private void recoverShadowMap(ShadowFrame frame, RuntimeException failure) {
+        VkCommandBuffer cmd = frame.cmd();
+        double cameraX = frame.cameraX();
+        double cameraY = frame.cameraY();
+        double cameraZ = frame.cameraZ();
+        this.shadowMap.invalidateMapSnapshot();
+        this.shadowFrameReady = false;
+        if (pass.conformanceReport != null) {
+            pass.conformanceReport.addDeviation("SHADOW_MAP_WRITE_FAILED");
+        }
+        if (!this.shadowTransitionFallbackLogged) {
+            this.shadowTransitionFallbackLogged = true;
+            LOGGER.warn("[chimera] shadow map write failed; clearing to all-lit fallback: {}",
+                    failure.toString());
+        }
+        try {
+            if (Renderer.getInstance().getBoundRenderPass() != null) {
+                Renderer.getInstance().endRenderPass(cmd);
+            }
+            this.shadowPassActive = false;
+            PackGeometryContext.close();
+            this.shadowMap.initializeSampling(cmd);
+            this.shadowMap.seedClearedMap(cameraX, cameraY, cameraZ);
+            this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
+            this.shadowMap.bindShadowTexture();
+            this.shadowFrameReady = true;
+        } catch (RuntimeException clearFailure) {
+            this.shadowFrameReady = false;
+            PackUniformProvider.clearShadowState();
+            LOGGER.warn("[chimera] shadow map recovery failed; shadow inputs remain unavailable: {}",
+                    clearFailure.toString());
         }
     }
 
@@ -340,12 +398,9 @@ final class PackShadowPass {
         }
 
         VkCommandBuffer cmd = Renderer.getCommandBuffer();
-        boolean resumePackCoverage = PackGeometryContext.coverageActive();
-        boolean resumePackTerrain = PackGeometryContext.geometryActive();
-        List<VulkanImage> resumeColors = PackGeometryContext.colors();
-        VulkanImage resumeDepth = PackGeometryContext.depth();
+        InterruptedGeometry interrupted = InterruptedGeometry.capture();
         Renderer.getInstance().endRenderPass(cmd);
-        if (resumePackCoverage || resumePackTerrain) {
+        if (interrupted.coverage() || interrupted.terrain()) {
             // The nested shadow render must not be intercepted by the pack
             // geometry dynamic-rendering bridge. Otherwise its 2048 viewport
             // renders into the world target and its clear load-op erases the
@@ -355,22 +410,64 @@ final class PackShadowPass {
         try {
             this.renderShadowMap(cameraX, cameraY, cameraZ);
         } finally {
-            if (resumePackTerrain && !resumeColors.isEmpty() && resumeDepth != null
-                    && pass.targets.hdrFramebuffer != null) {
-                PackGeometryContext.beginGeometry(resumeColors, resumeDepth);
-                pass.rebindMainTarget();
-            } else if (resumePackCoverage && pass.targets.hdrFramebuffer != null) {
-                // Continue an interrupted coverage window on the same pack
-                // target; its owner closes and commits it as usual.
-                PackGeometryContext.beginPreserving(
-                        resumeColors.get(0),
-                        resumeColors.size() > 1 ? resumeColors.get(1) : pass.coverage.packCoverageOwner.image(),
-                        pass.targets.hdrFramebuffer.getDepthAttachment());
-                pass.rebindMainTarget();
+            resumeAfterShadow(interrupted);
+        }
+    }
+
+    /** The pack geometry scope the shadow segment interrupts, to reopen once the map is drawn. */
+    private record InterruptedGeometry(boolean coverage, boolean terrain, List<VulkanImage> colors,
+            VulkanImage depth) {
+        static InterruptedGeometry capture() {
+            return new InterruptedGeometry(PackGeometryContext.coverageActive(), PackGeometryContext.geometryActive(),
+                    PackGeometryContext.colors(), PackGeometryContext.depth());
+        }
+    }
+
+    /** Reopens the interrupted pack terrain or coverage scope, or else the plain HDR pass. */
+    private void resumeAfterShadow(InterruptedGeometry interrupted) {
+        List<VulkanImage> resumeColors = interrupted.colors();
+        if (interrupted.terrain() && !resumeColors.isEmpty() && interrupted.depth() != null
+                && pass.targets.hdrFramebuffer != null) {
+            PackGeometryContext.beginGeometry(resumeColors, interrupted.depth());
+            pass.rebindMainTarget();
+        } else if (interrupted.coverage() && pass.targets.hdrFramebuffer != null) {
+            // Continue an interrupted coverage window on the same pack
+            // target; its owner closes and commits it as usual.
+            PackGeometryContext.beginPreserving(
+                    resumeColors.get(0),
+                    resumeColors.size() > 1 ? resumeColors.get(1) : pass.coverage.packCoverageOwner.image(),
+                    pass.targets.hdrFramebuffer.getDepthAttachment());
+            pass.rebindMainTarget();
+        } else {
+            // Reopen the HDR pass (load ops) for the terrain layers.
+            pass.rebindMainTarget();
+        }
+    }
+
+    /**
+     * Readies the frame's shadow map at level-segment HEAD: computes the light once before any
+     * terrain draw (the shadow pass at the opaque layer's head reuses this exact state), arms the
+     * shadow segment, and binds the map for the terrain shaders' first draw.
+     */
+    void beginShadowFrame(double cameraX, double cameraY, double cameraZ) {
+        if (this.shadowMap.isInitialized()) {
+            this.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
+                    cameraX, cameraY, cameraZ);
+            this.shadowFrameReady = prepareShadowForSampling(cameraX, cameraY, cameraZ);
+            if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
+                this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
             } else {
-                // Reopen the HDR pass (load ops) for the terrain layers.
-                pass.rebindMainTarget();
+                PackUniformProvider.clearShadowState();
             }
+        }
+
+        // Arm this frame's shadow segment; consumed at the opaque layer's head.
+        this.shadowPending = this.shadowFrameReady;
+
+        // Terrain shaders sample the shadow map from their first draw.
+        if (this.shadowFrameReady) {
+            this.shadowMap.bindShadowTexture();
+            maintainPackShadowGoal();
         }
     }
 

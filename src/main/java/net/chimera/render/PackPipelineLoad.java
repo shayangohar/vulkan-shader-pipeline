@@ -49,44 +49,16 @@ final class PackPipelineLoad {
             // at frame boundaries. They are destroyed in cleanUp() only.
             return;
         }
-        pass.pipelines.clear();
-        pass.postChain.packPostExecution.clear();
-        pass.postChain.packPostBoundaryLogged.clear();
-        pass.postChain.packFinalExecution = null;
-        pass.packPostChainRejected = false;
-        pass.windows.restorePackResourceWindow();
-        pass.packTranslucentSuspended = false;
-        pass.packTranslucentSuspendLogged = false;
-        pass.shadowPass.shadowCastersFailed = false;
-        pass.shadowPass.shadowCutoutDispositionLogged = false;
-        pass.packPipelinesLoaded = true;
+        resetSessionPipelines();
 
         if (pass.packPrograms == null) {
             // loadPackConfig found no pack (or no programs).
-            if (pass.conformanceReport != null) {
-                pass.conformanceReport.markUnattemptedAsFallback();
-                LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
-                pass.sessions.logConformanceSummary();
-            }
+            reportConformance();
             return;
         }
 
         new PackPipelineInstaller(pass).installPrograms();
-        ChimeraEntityBridge.install(pass.pipelines.entity, pass.pipelines.translucentEntity,
-                pass.pipelines.spiderEyes, pass.pipelines.block, pass.pipelines.damagedBlock,
-                pass.pipelines.hand, pass.pipelines.handWater, pass.pipelines.particle,
-                pass.pipelines.translucentParticle,
-                pass.packPlan == null ? null : pass.packPlan.entityIds());
-        ChimeraEntityBridge.installTextVariants(pass.pipelines.translucentEntityText, pass.pipelines.blockText);
-        ChimeraEntityBridge.installHostLayout(pass.pipelines.hostLayout);
-        ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities);
-        LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
-                pass.pipelines.entity == null ? "none"
-                        : pass.pipelines.entity.outputPlan() == null
-                        ? List.of(0) : pass.pipelines.entity.outputPlan().targetSlots(),
-                pass.pipelines.block == null ? "none"
-                        :                 pass.pipelines.block.outputPlan() == null
-                        ? List.of(0) : pass.pipelines.block.outputPlan().targetSlots());
+        installFamilyBridge();
         if (!enforceMaskCriticalFamilyContract()) {
             return;
         }
@@ -100,6 +72,50 @@ final class PackPipelineLoad {
             LOGGER.info("[chimera] scene seed: direct HDR composition active; coverage merge deferred families={}",
                     pass.coverage.packCoveragePlan.families());
         }
+        reportShadowFallbacks();
+        reportConformance();
+        logPackStoragePath("pipelines-installed");
+    }
+
+    /** Clears the previous session's pipelines and per-session runtime flags, and marks this load. */
+    private void resetSessionPipelines() {
+        pass.pipelines.clear();
+        pass.postChain.packPostExecution.clear();
+        pass.postChain.packPostBoundaryLogged.clear();
+        pass.postChain.packFinalExecution = null;
+        pass.packPostChainRejected = false;
+        pass.windows.restorePackResourceWindow();
+        pass.packTranslucentSuspended = false;
+        pass.packTranslucentSuspendLogged = false;
+        pass.shadowPass.shadowCastersFailed = false;
+        pass.shadowPass.shadowCutoutDispositionLogged = false;
+        pass.packPipelinesLoaded = true;
+    }
+
+    /** Hands the installed entity, block, hand, particle and caster pipelines to the family bridge. */
+    private void installFamilyBridge() {
+        ChimeraEntityBridge.install(pass.pipelines.entity, pass.pipelines.translucentEntity,
+                pass.pipelines.spiderEyes, pass.pipelines.block, pass.pipelines.damagedBlock,
+                pass.pipelines.hand, pass.pipelines.handWater, pass.pipelines.particle,
+                pass.pipelines.translucentParticle,
+                pass.packPlan == null ? null : pass.packPlan.entityIds());
+        ChimeraEntityBridge.installTextVariants(pass.pipelines.translucentEntityText, pass.pipelines.blockText);
+        ChimeraEntityBridge.installHostLayout(pass.pipelines.hostLayout);
+        ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities);
+        LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
+                familyTargets(pass.pipelines.entity), familyTargets(pass.pipelines.block));
+    }
+
+    /** The targets a family pipeline writes, for the bridge log; "none" when it is not installed. */
+    private static Object familyTargets(PackPipelines.PackEntity family) {
+        if (family == null) {
+            return "none";
+        }
+        return family.outputPlan() == null ? List.of(0) : family.outputPlan().targetSlots();
+    }
+
+    /** Reports a pack shadow program the terrain cannot consume, or a pack with no shadow program. */
+    private void reportShadowFallbacks() {
         if (pass.pipelines.shadowPipeline != null && !pass.shadowPass.usePackShadowRuntime()) {
             if (pass.conformanceReport != null) {
                 pass.conformanceReport.markRuntime("shadow",
@@ -116,12 +132,15 @@ final class PackPipelineLoad {
             }
             LOGGER.warn("[chimera] pack shadow: fallback=IDENTITY (SHADOW_PROGRAM_MISSING)");
         }
+    }
+
+    /** Marks every program never attempted as a fallback and logs the session's conformance report. */
+    private void reportConformance() {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markUnattemptedAsFallback();
             LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
             pass.sessions.logConformanceSummary();
         }
-        logPackStoragePath("pipelines-installed");
     }
 
     /**

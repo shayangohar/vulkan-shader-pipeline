@@ -548,45 +548,10 @@ public final class PackPostTargets {
                     + " color attachments, device supports " + deviceLimit);
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            for (int target : step.outputTargets()) {
-                if (target < 0 || target >= TARGET_COUNT || !this.used[target]) {
-                    throw new IllegalStateException("missing output target " + target);
-                }
-                int side = this.doubled[target]
-                        ? nextWriteSide(target) : this.activeSide[target];
-                this.pendingWriteSide[target] = side;
-                VulkanImage destination = imageFor(target, side);
-                this.pendingImages[target] = destination;
-                if (step.reads(target) && this.sourceImages[target] != null
-                        && this.sourceImages[target] != destination) {
-                    copyImage(stack, commandBuffer, this.sourceImages[target], destination);
-                }
-            }
-            List<Integer> attachmentTargets = plan.targetSlots();
-            VkRenderingAttachmentInfo.Buffer attachments =
-                    VkRenderingAttachmentInfo.calloc(attachmentTargets.size(), stack);
-            int renderWidth = step.width();
-            int renderHeight = step.height();
-            for (int i = 0; i < attachmentTargets.size(); i++) {
-                int target = attachmentTargets.get(i);
-                VulkanImage destination = this.pendingImages[target] != null
-                        ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
-                if (destination == null) {
-                    throw new IllegalStateException("missing attachment target " + target);
-                }
-                destination.transitionImageLayout(stack, commandBuffer,
-                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                VkRenderingAttachmentInfo attachment = attachments.get(i);
-                attachment.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR);
-                attachment.imageView(attachmentView(destination));
-                attachment.imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                attachment.loadOp(VK_ATTACHMENT_LOAD_OP_LOAD);
-                attachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE);
-                if (i == 0) {
-                    renderWidth = destination.width;
-                    renderHeight = destination.height;
-                }
-            }
+            claimOutputSides(stack, commandBuffer, step);
+            PostAttachments attachments = colorAttachments(stack, commandBuffer, plan, step);
+            int renderWidth = attachments.width();
+            int renderHeight = attachments.height();
 
             VkRect2D renderArea = VkRect2D.calloc(stack);
             renderArea.offset().set(0, 0);
@@ -595,7 +560,7 @@ public final class PackPostTargets {
             renderingInfo.sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR);
             renderingInfo.renderArea(renderArea);
             renderingInfo.layerCount(1);
-            renderingInfo.pColorAttachments(attachments);
+            renderingInfo.pColorAttachments(attachments.buffer());
 
             MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit);
             Renderer.getInstance().setBoundFramebuffer(this.pipelineFramebuffer);
@@ -615,6 +580,58 @@ public final class PackPostTargets {
                 throw failure;
             }
         }
+    }
+
+    /** Picks each output's write side and, when the step also reads it, copies its source in first. */
+    private void claimOutputSides(MemoryStack stack, VkCommandBuffer commandBuffer, TargetStep step) {
+        for (int target : step.outputTargets()) {
+            if (target < 0 || target >= TARGET_COUNT || !this.used[target]) {
+                throw new IllegalStateException("missing output target " + target);
+            }
+            int side = this.doubled[target]
+                    ? nextWriteSide(target) : this.activeSide[target];
+            this.pendingWriteSide[target] = side;
+            VulkanImage destination = imageFor(target, side);
+            this.pendingImages[target] = destination;
+            if (step.reads(target) && this.sourceImages[target] != null
+                    && this.sourceImages[target] != destination) {
+                copyImage(stack, commandBuffer, this.sourceImages[target], destination);
+            }
+        }
+    }
+
+    /** One post draw's color attachments and its render extent, the first attachment's size. */
+    private record PostAttachments(VkRenderingAttachmentInfo.Buffer buffer, int width, int height) {}
+
+    /** Moves the plan's attachment targets to attachment layout and describes them in slot order. */
+    private PostAttachments colorAttachments(MemoryStack stack, VkCommandBuffer commandBuffer,
+                                             PostTargetPlan plan, TargetStep step) {
+        List<Integer> attachmentTargets = plan.targetSlots();
+        VkRenderingAttachmentInfo.Buffer attachments =
+                VkRenderingAttachmentInfo.calloc(attachmentTargets.size(), stack);
+        int renderWidth = step.width();
+        int renderHeight = step.height();
+        for (int i = 0; i < attachmentTargets.size(); i++) {
+            int target = attachmentTargets.get(i);
+            VulkanImage destination = this.pendingImages[target] != null
+                    ? this.pendingImages[target] : imageFor(target, this.activeSide[target]);
+            if (destination == null) {
+                throw new IllegalStateException("missing attachment target " + target);
+            }
+            destination.transitionImageLayout(stack, commandBuffer,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            VkRenderingAttachmentInfo attachment = attachments.get(i);
+            attachment.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR);
+            attachment.imageView(attachmentView(destination));
+            attachment.imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            attachment.loadOp(VK_ATTACHMENT_LOAD_OP_LOAD);
+            attachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+            if (i == 0) {
+                renderWidth = destination.width;
+                renderHeight = destination.height;
+            }
+        }
+        return new PostAttachments(attachments, renderWidth, renderHeight);
     }
 
     /** Commits only successful output writes. */

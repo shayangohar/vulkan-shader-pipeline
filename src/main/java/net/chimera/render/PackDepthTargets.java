@@ -111,17 +111,7 @@ public final class PackDepthTargets {
             boolean restoreDepthAttachment
     ) {
         Renderer renderer = Renderer.getInstance();
-        // A depth snapshot owns a separate fullscreen render pass. It cannot
-        // be recorded while the guarded terrain context is active because the
-        // RenderPass mixin intentionally redirects dynamic rendering in that
-        // context. Refuse the nested operation and keep the host depth path.
-        if (PackGeometryContext.active()
-                || commandBuffer == null
-                || commandBuffer.address() == 0L
-                || rawDepth.getId() == 0L
-                || images[index] == null
-                || images[index].getId() == 0L
-                || conversionPipeline == null) {
+        if (!canRecordConversion(commandBuffer, rawDepth, index)) {
             return false;
         }
         VulkanImage previousDepthBinding = VTextureSelector.getImage(6);
@@ -145,25 +135,7 @@ public final class PackDepthTargets {
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             ChimeraDepthViewOverride.bind(rawDepth, depthView);
             VTextureSelector.bindTexture(6, rawDepth);
-            VkClearValue clear = VkClearValue.calloc(stack);
-            clear.color().float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
-            VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
-            attachments.get(0)
-                    .sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
-                    .imageView(images[index].getImageView())
-                    .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-                    .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
-                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
-                    .clearValue(clear);
-            VkRect2D area = VkRect2D.calloc(stack);
-            area.offset().set(0, 0);
-            area.extent().set(images[index].width, images[index].height);
-            VkRenderingInfo rendering = VkRenderingInfo.calloc(stack)
-                    .sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR)
-                    .renderArea(area)
-                    .layerCount(1)
-                    .pColorAttachments(attachments);
-            vkCmdBeginRenderingKHR(commandBuffer, rendering);
+            vkCmdBeginRenderingKHR(commandBuffer, snapshotRendering(stack, images[index]));
             renderingActive = true;
             Renderer.setViewport(0, 0, images[index].width, images[index].height, stack);
             renderer.bindGraphicsPipeline(this.conversionPipeline);
@@ -206,6 +178,44 @@ public final class PackDepthTargets {
             ChimeraDepthViewOverride.clear();
             VTextureSelector.bindTexture(6, previousDepthBinding);
         }
+    }
+
+    /**
+     * A depth snapshot owns a separate fullscreen render pass. It cannot
+     * be recorded while the guarded terrain context is active because the
+     * RenderPass mixin intentionally redirects dynamic rendering in that
+     * context. Refuse the nested operation and keep the host depth path.
+     */
+    private boolean canRecordConversion(VkCommandBuffer commandBuffer, VulkanImage rawDepth, int index) {
+        return !PackGeometryContext.active()
+                && commandBuffer != null
+                && commandBuffer.address() != 0L
+                && rawDepth.getId() != 0L
+                && images[index] != null
+                && images[index].getId() != 0L
+                && conversionPipeline != null;
+    }
+
+    /** Dynamic rendering that clears one snapshot image and draws over its whole extent. */
+    private static VkRenderingInfo snapshotRendering(MemoryStack stack, VulkanImage snapshot) {
+        VkClearValue clear = VkClearValue.calloc(stack);
+        clear.color().float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
+        VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
+        attachments.get(0)
+                .sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
+                .imageView(snapshot.getImageView())
+                .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
+                .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
+                .clearValue(clear);
+        VkRect2D area = VkRect2D.calloc(stack);
+        area.offset().set(0, 0);
+        area.extent().set(snapshot.width, snapshot.height);
+        return VkRenderingInfo.calloc(stack)
+                .sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR)
+                .renderArea(area)
+                .layerCount(1)
+                .pColorAttachments(attachments);
     }
 
     public VulkanImage image(String name) {

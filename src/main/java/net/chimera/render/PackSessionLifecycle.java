@@ -488,6 +488,27 @@ final class PackSessionLifecycle {
             pass.packNeedsHdrDepth = false;
             return;
         }
+        PackSource.LoadResult result = loadPackPlan(dir);
+        installTerrainDirectives();
+        pass.screenOverlays = pass.packPlan.screenOverlays();
+        LOGGER.info("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
+                pass.screenOverlays.vignette(), pass.screenOverlays.underwaterOverlay(),
+                pass.screenOverlays.deviations().isEmpty() ? "" : " " + pass.screenOverlays.deviations());
+        installRuntimeSettings();
+        pass.packNeedsHdrDepth = pass.conformanceReport.programs().stream()
+                .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
+                .anyMatch(program -> program.samplers().contains("depthtex0")
+                        || program.samplers().contains("depthtex1")
+                        || program.samplers().contains("depthtex2"));
+        installIdMaps(result.shadersDir());
+        pass.packHdrFormat = pass.packConfig.colortexFormats().getOrDefault(0, 97);
+        loadResourceOwners(result.shadersDir());
+        logResourcePlans();
+        logPackPrograms(dir);
+    }
+
+    /** Loads the pack source once and installs its analysis: report, programs, constants and plan. */
+    private PackSource.LoadResult loadPackPlan(Path dir) {
         PackSource.LoadResult result = pass.packSource != null
                 ? pass.packSource : PackSource.loadResult(dir, this.currentDimension);
         pass.packSource = result;
@@ -503,6 +524,11 @@ final class PackSessionLifecycle {
                 : PackConfig.parse(pass.packPrograms, result.shadersDir());
         pass.packPlan = analysis.plan() == null
                 ? new PackPlan(pass.packConfig, List.of()) : analysis.plan();
+        return result;
+    }
+
+    /** Hands the plan's shadow culling, terrain material and terrain shading to the host. */
+    private void installTerrainDirectives() {
         pass.shadowPass.shadowCulling = pass.packPlan.shadowCulling();
         int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
         LOGGER.info("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
@@ -515,10 +541,10 @@ final class PackSessionLifecycle {
         LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}{}", shading.oldLighting(),
                 shading.separateAo(), shading.deviations().isEmpty() ? "" : " " + shading.deviations());
         ChimeraTerrainPipelines.setTerrainShading(shading);
-        pass.screenOverlays = pass.packPlan.screenOverlays();
-        LOGGER.info("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
-                pass.screenOverlays.vignette(), pass.screenOverlays.underwaterOverlay(),
-                pass.screenOverlays.deviations().isEmpty() ? "" : " " + pass.screenOverlays.deviations());
+    }
+
+    /** Installs the plan's uniform runtime settings and logs how the pack resolved. */
+    private void installRuntimeSettings() {
         PackUniformProvider.installRuntimeSettings(pass.packPlan.runtimeSettings());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, "
                 + "missing={}, settingsFingerprint={}, resolutionFingerprint={}",
@@ -535,16 +561,15 @@ final class PackSessionLifecycle {
                 pass.packPlan.runtimeSettings().wetnessRiseHalfLife(),
                 pass.packPlan.runtimeSettings().wetnessFallHalfLife(),
                 pass.packPlan.runtimeSettings().eyeBrightnessHalfLife());
-        pass.packNeedsHdrDepth = pass.conformanceReport.programs().stream()
-                .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
-                .anyMatch(program -> program.samplers().contains("depthtex0")
-                        || program.samplers().contains("depthtex1")
-                        || program.samplers().contains("depthtex2"));
-        PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(result.shadersDir(),
+    }
+
+    /** Parses the pack's block and item id maps and installs them with its hand-light setting. */
+    private void installIdMaps(Path shadersDir) {
+        PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(shadersDir,
                 PackEngineDefines.forPack(pass.packPlan.settingsPreprocessorDefines()));
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
         PackItemIdResolver.ParseResult items = PackItemIdResolver.parse(
-                result.shadersDir(),
+                shadersDir,
                 PackEngineDefines.forPack(pass.packPlan.settingsPreprocessorDefines()));
         HandLightDirectives handLight = pass.packPlan.handLight();
         LOGGER.info("[chimera] pack held items: item ids={}, oldHandLight={}{}",
@@ -552,15 +577,23 @@ final class PackSessionLifecycle {
                 items.deviations().isEmpty() && handLight.deviations().isEmpty() ? ""
                         : " " + items.deviations() + handLight.deviations());
         PackUniformProvider.installHeldItems(items.resolver(), handLight.oldHandLight());
-        pass.packHdrFormat = pass.packConfig.colortexFormats().getOrDefault(0, 97);
-        pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), result.shadersDir());
+    }
+
+    /** Loads the session's pack textures, material maps, advanced images, storage buffers and shadowcomp. */
+    private void loadResourceOwners(Path shadersDir) {
+        pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), shadersDir);
         pass.materials.ensureMaterialMapOwner();
         pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources());
         pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources());
         pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),
-                pass.packAdvancedImageOwner, pass.packResourceOwner, result.shadersDir(),
+                pass.packAdvancedImageOwner, pass.packResourceOwner, shadersDir,
                 pass.packPlan.settingsPreprocessorDefines(),
                 pass.packPlan.settingsOverriddenNames());
+        recordShadowComputeDisposition();
+    }
+
+    /** Records whether shadowcomp installed natively, or why it fell back, in the conformance report. */
+    private void recordShadowComputeDisposition() {
         if (pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
             pass.packAdvancedImageOwner.markComputeInstalled();
             if (pass.conformanceReport != null
@@ -579,6 +612,10 @@ final class PackSessionLifecycle {
                             ? "COMPUTE_PIPELINE_BUILD_FAILED"
                             : "COMPUTE_CAPABILITY_UNAVAILABLE");
         }
+    }
+
+    /** Logs the session's resource, advanced image, storage buffer and compute plans. */
+    private void logResourcePlans() {
         LOGGER.info("[chimera] pack resources: fingerprint={}, declarations={}, deviations={}",
                 pass.packPlan.resources().fingerprint(),
                 pass.packPlan.resources().declarations().size(),
@@ -615,6 +652,10 @@ final class PackSessionLifecycle {
                         .toList());
         LOGGER.info("[chimera] advanced compute: shadowcompInstalled={}",
                 pass.packShadowCompute != null && pass.packShadowCompute.isInstalled());
+    }
+
+    /** Logs the pack's programs and constants, or that it has no programs. */
+    private void logPackPrograms(Path dir) {
         if (pass.packPrograms.isEmpty()) {
             LOGGER.warn("[chimera] pack '{}' from {}: no programs found", dir.getFileName(), dir.toAbsolutePath());
             return;

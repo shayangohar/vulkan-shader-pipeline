@@ -63,18 +63,7 @@ final class PackSceneCoverage {
      * render pass; the post graph reads that complete HDR image as colortex0.
      */
     public void beginPackCoverageWindow(TerrainRenderType renderType) {
-        if (renderType == TerrainRenderType.TRANSLUCENT && !pass.shadowPass.shadowPassActive
-                && pass.pipelines.waterRoute != null
-                && !pass.images.packTranslucentInputsReady(pass.pipelines.waterRoute)) {
-            // The fixed pipeline draws this layer; the pack program never
-            // binds a stale or missing image.
-            ChimeraTerrainPipelines.suspendTranslucentOverride(true);
-            pass.packTranslucentSuspended = true;
-            if (!pass.packTranslucentSuspendLogged) {
-                pass.packTranslucentSuspendLogged = true;
-                LOGGER.warn("[chimera] pack gbuffers_water: inputs unavailable this frame, "
-                        + "fixed translucent pipeline used");
-            }
+        if (suspendTranslucentWithoutInputs(renderType)) {
             return;
         }
         pass.windows.beginPackResourceWindow(renderType);
@@ -107,8 +96,37 @@ final class PackSceneCoverage {
         }
     }
 
+    /**
+     * Hands the translucent layer to the fixed pipeline when the water program's inputs are not
+     * live this frame. True when it did, so the layer opens no pack window.
+     */
+    private boolean suspendTranslucentWithoutInputs(TerrainRenderType renderType) {
+        if (renderType != TerrainRenderType.TRANSLUCENT || pass.shadowPass.shadowPassActive
+                || pass.pipelines.waterRoute == null
+                || pass.images.packTranslucentInputsReady(pass.pipelines.waterRoute)) {
+            return false;
+        }
+        // The fixed pipeline draws this layer; the pack program never
+        // binds a stale or missing image.
+        ChimeraTerrainPipelines.suspendTranslucentOverride(true);
+        pass.packTranslucentSuspended = true;
+        if (!pass.packTranslucentSuspendLogged) {
+            pass.packTranslucentSuspendLogged = true;
+            LOGGER.warn("[chimera] pack gbuffers_water: inputs unavailable this frame, "
+                    + "fixed translucent pipeline used");
+        }
+        return true;
+    }
+
     boolean packCoverageRuntimeEnabled() {
         return PACK_COVERAGE_RUNTIME_ENABLED;
+    }
+
+    /** Ends the frame's coverage state when the coverage runtime is enabled. */
+    void endCoverageFrame() {
+        if (packCoverageRuntimeEnabled()) {
+            this.packCoverageState.endFrame();
+        }
     }
 
     /** The direct-HDR terrain path has no separate coverage window to close. */
