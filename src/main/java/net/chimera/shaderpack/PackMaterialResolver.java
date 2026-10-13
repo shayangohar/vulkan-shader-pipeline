@@ -223,30 +223,14 @@ public final class PackMaterialResolver {
         }
 
         Matcher matcher = MAPPING.matcher(line);
-        if (!matcher.matches()) {
+        Integer mappedId = matchMappingId(matcher);
+        if (mappedId == null) {
             deviations.add("BLOCK_PROPERTIES_INVALID");
             return;
         }
+        int id = mappedId;
 
-        int id;
-        try {
-            id = Integer.parseInt(matcher.group(1));
-        } catch (NumberFormatException e) {
-            deviations.add("BLOCK_PROPERTIES_INVALID");
-            return;
-        }
-        if (id < Short.MIN_VALUE || id > Short.MAX_VALUE) {
-            deviations.add("BLOCK_PROPERTIES_INVALID");
-            return;
-        }
-
-        String value = matcher.group(2);
-        if (value.isBlank()) {
-            deviations.add("BLOCK_PROPERTIES_INVALID");
-            return;
-        }
-
-        for (String token : value.split("\\s+")) {
+        for (String token : matcher.group(2).split("\\s+")) {
             if (token.isBlank()) {
                 continue;
             }
@@ -273,6 +257,26 @@ public final class PackMaterialResolver {
                 deviations.add("BLOCK_MAPPING_CONFLICT");
             }
         }
+    }
+
+    /**
+     * Matches a {@code block.<id> = <names>} line and returns its id, or null when the line is
+     * malformed, the id falls outside the short range, or no names follow it.
+     */
+    private static Integer matchMappingId(Matcher matcher) {
+        if (!matcher.matches()) {
+            return null;
+        }
+        int id;
+        try {
+            id = Integer.parseInt(matcher.group(1));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (id < Short.MIN_VALUE || id > Short.MAX_VALUE || matcher.group(2).isBlank()) {
+            return null;
+        }
+        return id;
     }
 
     /**

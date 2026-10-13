@@ -171,15 +171,12 @@ public final class PackSource {
             boolean hasNestedVariants = variants.keySet().stream()
                     .anyMatch(value -> !value.isBlank());
 
-            if (hasNestedVariants && !hasDimensionProperties
-                    && !isStandardDimension(requested)
-                    && folder.equals("world0") && variants.containsKey("world0")) {
+            if (hasNestedVariants && folder.equals("world0") && fallsBackToWorld0(requested)) {
                 nextDeviations.add("DIMENSION_SOURCE_FALLBACK_TO_WORLD0:" + requested);
             }
 
             if (selected == null && hasNestedVariants) {
-                if (!hasDimensionProperties && !isStandardDimension(requested)
-                        && variants.containsKey("world0")) {
+                if (fallsBackToWorld0(requested)) {
                     chosen = "world0";
                     selected = variants.get("world0");
                     nextDeviations.add("DIMENSION_SOURCE_FALLBACK_TO_WORLD0:" + requested);
@@ -198,6 +195,14 @@ public final class PackSource {
             this.selectedVariantFolder = chosen;
             this.programs = selected;
             this.deviations = List.copyOf(new TreeSet<>(nextDeviations));
+        }
+
+        /**
+         * A dimension other than the three standard ones reads the world0 sources when no
+         * dimension.properties names its folder and the pack has a world0 folder.
+         */
+        private boolean fallsBackToWorld0(String requested) {
+            return !hasDimensionProperties && !isStandardDimension(requested) && variants.containsKey("world0");
         }
 
         private String selectedFolder(String dimension) {
@@ -247,53 +252,14 @@ public final class PackSource {
         Path temporaryRoot = null;
         try {
             temporaryRoot = Files.createTempDirectory("chimera-pack-");
-            List<String> names = new ArrayList<>();
             try (ZipFile zip = new ZipFile(archive.toFile())) {
-                TreeSet<String> seen = new TreeSet<>();
-                var entries = zip.entries();
-                while (entries.hasMoreElements()) {
-                    ZipEntry entry = entries.nextElement();
-                    String name = normalizeZipName(entry.getName());
-                    if (unsafeZipName(name)) {
-                        deviations.add("PACK_ARCHIVE_UNSAFE_PATH");
-                        throw new IOException("unsafe ZIP entry path");
-                    }
-                    if (!seen.add(name)) {
-                        deviations.add("PACK_ARCHIVE_DUPLICATE_ENTRY:" + name);
-                        throw new IOException("duplicate ZIP entry");
-                    }
-                    names.add(name);
-                }
-
+                List<String> names = entryNames(zip, deviations);
                 String prefix = findShadersPrefix(names);
                 if (prefix == null) {
                     deviations.add("PACK_SHADERS_NOT_FOUND");
                     throw new IOException("ZIP contains no unambiguous shaders directory");
                 }
-                String shaderPrefix = prefix + "shaders/";
-                Files.createDirectories(temporaryRoot.resolve("shaders"));
-                for (String name : names) {
-                    if (!name.startsWith(shaderPrefix) || name.endsWith("/")) {
-                        continue;
-                    }
-                    String relative = name.substring(shaderPrefix.length());
-                    if (relative.isBlank()) {
-                        continue;
-                    }
-                    Path target = temporaryRoot.resolve("shaders").resolve(relative).normalize();
-                    if (!target.startsWith(temporaryRoot)) {
-                        deviations.add("PACK_ARCHIVE_UNSAFE_PATH");
-                        throw new IOException("ZIP entry escaped extraction root");
-                    }
-                    Files.createDirectories(target.getParent());
-                    ZipEntry entry = zip.getEntry(name);
-                    if (entry == null) {
-                        throw new IOException("ZIP entry disappeared during extraction");
-                    }
-                    try (var input = zip.getInputStream(entry)) {
-                        Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
-                    }
-                }
+                extractShaders(zip, names, prefix + "shaders/", temporaryRoot, deviations);
             }
             return discover(temporaryRoot.resolve("shaders"), temporaryRoot, deviations, dimension);
         } catch (Exception e) {
@@ -310,6 +276,55 @@ public final class PackSource {
                 deleteTree(temporaryRoot);
             }
             return emptyResult(failedShadersDir, null, deviations, dimension);
+        }
+    }
+
+    /** Every entry name in archive order; an unsafe or repeated name fails the whole archive. */
+    private static List<String> entryNames(ZipFile zip, List<String> deviations) throws IOException {
+        List<String> names = new ArrayList<>();
+        TreeSet<String> seen = new TreeSet<>();
+        var entries = zip.entries();
+        while (entries.hasMoreElements()) {
+            ZipEntry entry = entries.nextElement();
+            String name = normalizeZipName(entry.getName());
+            if (unsafeZipName(name)) {
+                deviations.add("PACK_ARCHIVE_UNSAFE_PATH");
+                throw new IOException("unsafe ZIP entry path");
+            }
+            if (!seen.add(name)) {
+                deviations.add("PACK_ARCHIVE_DUPLICATE_ENTRY:" + name);
+                throw new IOException("duplicate ZIP entry");
+            }
+            names.add(name);
+        }
+        return names;
+    }
+
+    /** Extracts the files under the archive's shaders directory into {@code temporaryRoot/shaders}. */
+    private static void extractShaders(ZipFile zip, List<String> names, String shaderPrefix, Path temporaryRoot,
+                                       List<String> deviations) throws IOException {
+        Files.createDirectories(temporaryRoot.resolve("shaders"));
+        for (String name : names) {
+            if (!name.startsWith(shaderPrefix) || name.endsWith("/")) {
+                continue;
+            }
+            String relative = name.substring(shaderPrefix.length());
+            if (relative.isBlank()) {
+                continue;
+            }
+            Path target = temporaryRoot.resolve("shaders").resolve(relative).normalize();
+            if (!target.startsWith(temporaryRoot)) {
+                deviations.add("PACK_ARCHIVE_UNSAFE_PATH");
+                throw new IOException("ZIP entry escaped extraction root");
+            }
+            Files.createDirectories(target.getParent());
+            ZipEntry entry = zip.getEntry(name);
+            if (entry == null) {
+                throw new IOException("ZIP entry disappeared during extraction");
+            }
+            try (var input = zip.getInputStream(entry)) {
+                Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+            }
         }
     }
 
@@ -416,13 +431,7 @@ public final class PackSource {
                         String argument = stripLineComment(directive.group(2)).trim();
                         try {
                             if (name.equals("define")) {
-                                if (conditions.active()) {
-                                    Matcher define = PROPERTY_DEFINE.matcher(argument);
-                                    if (!define.matches()) {
-                                        throw new IllegalArgumentException("invalid define");
-                                    }
-                                    conditions.define(define.group(1), define.group(2));
-                                }
+                                defineProperty(conditions, argument);
                             } else {
                                 conditions.apply(name, argument);
                             }
@@ -434,29 +443,8 @@ public final class PackSource {
                     }
                     continue;
                 }
-                if (invalidCondition || !conditions.active()) {
-                    continue;
-                }
-                String value = line.trim();
-                if (value.isEmpty() || value.startsWith("#")) {
-                    continue;
-                }
-                int equals = value.indexOf('=');
-                if (equals <= "dimension.".length()) {
-                    continue;
-                }
-                String key = value.substring(0, equals).trim();
-                if (!key.startsWith("dimension.")) {
-                    continue;
-                }
-                String folder = key.substring("dimension.".length()).trim();
-                if (!folder.matches("[A-Za-z0-9_-]+")) {
-                    continue;
-                }
-                for (String world : value.substring(equals + 1).trim().split("\\s+")) {
-                    if (!world.isBlank()) {
-                        result.put(world.equals("*") ? "*" : normalizeDimension(world), folder);
-                    }
+                if (!invalidCondition && conditions.active()) {
+                    putDimensionFolder(line, result);
                 }
             }
             if (!invalidCondition) {
@@ -470,6 +458,43 @@ public final class PackSource {
             return Map.of();
         }
         return Map.copyOf(result);
+    }
+
+    /** A {@code #define NAME [value]} directive, which only an active block applies. */
+    private static void defineProperty(PackConditionals.State conditions, String argument) {
+        if (!conditions.active()) {
+            return;
+        }
+        Matcher define = PROPERTY_DEFINE.matcher(argument);
+        if (!define.matches()) {
+            throw new IllegalArgumentException("invalid define");
+        }
+        conditions.define(define.group(1), define.group(2));
+    }
+
+    /** Maps each world a {@code dimension.<folder> = <worlds>} line lists to that folder. */
+    private static void putDimensionFolder(String line, Map<String, String> result) {
+        String value = line.trim();
+        if (value.isEmpty() || value.startsWith("#")) {
+            return;
+        }
+        int equals = value.indexOf('=');
+        if (equals <= "dimension.".length()) {
+            return;
+        }
+        String key = value.substring(0, equals).trim();
+        if (!key.startsWith("dimension.")) {
+            return;
+        }
+        String folder = key.substring("dimension.".length()).trim();
+        if (!folder.matches("[A-Za-z0-9_-]+")) {
+            return;
+        }
+        for (String world : value.substring(equals + 1).trim().split("\\s+")) {
+            if (!world.isBlank()) {
+                result.put(world.equals("*") ? "*" : normalizeDimension(world), folder);
+            }
+        }
     }
 
     private static String stripLineComment(String value) {

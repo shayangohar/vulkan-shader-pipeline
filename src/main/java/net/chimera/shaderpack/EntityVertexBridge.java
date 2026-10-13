@@ -6,11 +6,11 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -23,16 +23,6 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  */
 public final class EntityVertexBridge {
     private EntityVertexBridge() {}
-
-    /**
-     * Legacy built-ins with token mappings in the entity vertex inputs
-     * table. Every other gl_ builtin fails closed with its own name.
-     */
-    static final Set<String> ENTITY_SERVED_BUILTINS = Set.of(
-            "gl_Vertex", "gl_Color", "gl_MultiTexCoord0", "gl_MultiTexCoord1",
-            "gl_MultiTexCoord2", "gl_Normal", "gl_NormalMatrix", "gl_ModelViewMatrix",
-            "gl_ModelViewProjectionMatrix", "gl_ProjectionMatrix", "gl_TextureMatrix",
-            "gl_Position", "gl_VertexID");
 
     static final Pattern ENTITY_ID_DECLARATION = Pattern.compile(
             "(?m)\\b(uniform|attribute|in)\\s+(int|float)\\s+"
@@ -306,193 +296,276 @@ public final class EntityVertexBridge {
             List<UniformRegistry.UniformDeclaration> fragmentUniforms,
             VertexSamplerPlan samplerPlan
     ) {
-            String src = LegacyGlslConverter.prepareSource(source, sourceFile, true);
-            src = LegacyGlslConverter.expandModernVaryingLists(src);
-            src = LegacyGlslConverter.pruneUnreachableVertexFunctions(src);
-            String stripped = stripComments(src);
-            GlslVersion.requireSupported(stripped, "entity vertex", true);
-            if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
-                    || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
-                throw new IllegalArgumentException("entity vertex requires main and gl_Position");
-            }
-            Map<String, String> entityIdTypes = new LinkedHashMap<>();
-            for (String name : ENTITY_ID_NAMES) {
-                String type = entityIdentifierType(name, stripped, fragmentSource);
-                if (type != null) entityIdTypes.put(name, type);
-            }
-            // Catalog uniforms, legacy matrix built-ins, and stage-level
-            // flat/layout qualifiers in real entity sources are translated
-            // below; reject only what no adapter path can serve.
-            String beforeFeatures = removeEntityIdDeclarations(stripped);
-            rejectEntityVertexFeatures(
-                    LegacyGlslConverter.stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
-                    allowStorageBuffers, samplerPlan != null);
+        String src = LegacyGlslConverter.prepareSource(source, sourceFile, true);
+        src = LegacyGlslConverter.expandModernVaryingLists(src);
+        src = LegacyGlslConverter.pruneUnreachableVertexFunctions(src);
+        String stripped = stripComments(src);
+        GlslVersion.requireSupported(stripped, "entity vertex", true);
+        if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
+                || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+            throw new IllegalArgumentException("entity vertex requires main and gl_Position");
+        }
+        Map<String, String> entityIdTypes = entityIdTypes(stripped, fragmentSource);
+        // Catalog uniforms, legacy matrix built-ins, and stage-level
+        // flat/layout qualifiers in real entity sources are translated
+        // below; reject only what no adapter path can serve.
+        String beforeFeatures = removeEntityIdDeclarations(stripped);
+        EntityVertexFeatureCheck.rejectEntityVertexFeatures(
+                LegacyGlslConverter.stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
+                allowStorageBuffers, samplerPlan != null);
 
-            EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
-            Map<String, String> vertexTypes = new TreeMap<>(vertexVaryings.types());
-            String expandedFragment = LegacyGlslConverter.expandModernVaryingLists(
-                    fragmentSource == null ? "" : stripComments(fragmentSource));
-            EntityVaryingDeclarations fragmentVaryings = parseEntityVaryingDeclarations(expandedFragment, false);
-            Map<String, String> fragmentTypes = fragmentVaryings.types();
-            Map<String, String> vertexQualifiers = vertexVaryings.qualifiers();
-            Map<String, String> fragmentQualifiers = fragmentVaryings.qualifiers();
-            for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
-                String vertexType = vertexTypes.get(entry.getKey());
-                if (!entry.getValue().equals(vertexType)) {
-                    throw new IllegalArgumentException("entity varying mismatch: " + entry.getKey());
-                }
-                String vertexQualifier = vertexQualifiers.getOrDefault(entry.getKey(), "");
-                String fragmentQualifier = fragmentQualifiers.getOrDefault(entry.getKey(), "");
-                if (!vertexQualifier.equals(fragmentQualifier)) {
-                    throw new IllegalArgumentException(
-                            "entity varying qualifier mismatch: " + entry.getKey());
-                }
-            }
+        EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
+        requireMatchingFragmentVaryings(vertexVaryings, fragmentSource);
+        boolean overlayUv = LegacyGlslConverter.containsIdentifier(stripComments(fragmentSource == null ? ""
+                : fragmentSource),
+                EntityOverlayColor.UV_VARYING);
+        // The bridge's flat varyings follow the pack's: the entity identities, then the overlay coordinates.
+        Map<String, String> addedVaryings = new LinkedHashMap<>();
+        entityIdTypes.forEach((name, type) -> addedVaryings.put(entityIdVarying(name), type));
+        if (overlayUv) {
+            addedVaryings.put(EntityOverlayColor.UV_VARYING, "ivec2");
+        }
+        LegacyGlslConverter.TerrainVaryingLayout layout =
+                entityVaryingLayout(vertexVaryings, sharedLocations, addedVaryings);
 
-            Map<String, Integer> locations = new TreeMap<>();
-            if (sharedLocations != null) {
-                locations.putAll(sharedLocations);
-            }
-            // Each varying takes as many locations as its type occupies (a mat3 takes three).
-            int location = 0;
-            for (Map.Entry<String, Integer> shared : locations.entrySet()) {
-                location = Math.max(location,
-                        shared.getValue() + vertexVaryings.slots().getOrDefault(shared.getKey(), 1));
-            }
-            for (String name : vertexTypes.keySet().stream().sorted().toList()) {
-                if (!locations.containsKey(name)) {
-                    locations.put(name, location);
-                    location += vertexVaryings.slots().get(name);
-                }
-            }
-            for (Map.Entry<String, String> id : entityIdTypes.entrySet()) {
-                locations.put(entityIdVarying(id.getKey()), location++);
-                vertexTypes.put(entityIdVarying(id.getKey()), id.getValue());
-            }
-            boolean overlayUv = LegacyGlslConverter.containsIdentifier(stripComments(fragmentSource == null ? ""
-                    : fragmentSource),
-                    EntityOverlayColor.UV_VARYING);
-            if (overlayUv) {
-                locations.put(EntityOverlayColor.UV_VARYING, location++);
-                vertexTypes.put(EntityOverlayColor.UV_VARYING, "ivec2");
-            }
-            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
-                    locations, vertexQualifiers);
+        String converted = rewriteEntityDeclarations(src, layout, fragmentUniforms);
+        if (samplerPlan != null) {
+            converted = bindVertexSamplers(converted, samplerPlan);
+        }
+        converted = GlslTokenRewriter.replaceIdentifiers(converted,
+                entityInputReplacements(vertexPreamble, stripped, layout));
+        converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]",
+                "TextureMat");
+        // Iris VanillaTransformer/VanillaCoreTransformer: raw UV2 for both
+        // light-coordinate aliases, normalized once by the legacy matrix.
+        converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted);
+        converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
+                "chimeraEntityFtransform()");
+        converted = injectEntityIdPrologues(converted, entityIdTypes.keySet());
+        if (overlayUv) {
+            converted = LegacyGlslConverter.injectMainPrologue(converted,
+                    EntityOverlayColor.UV_VARYING + " = UV1;");
+        }
+        requireConsumedDeclarations(converted);
+        String chimeraVaryings = entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
+        if (overlayUv) {
+            chimeraVaryings += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
+                    + ") flat out ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
+        }
+        String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
+        converted = wrapProjectedMain(converted, vertexPreamble);
+        return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n" + vertexPreamble
+                + chimeraVaryings + cameraBlock + converted,
+                layout);
+    }
 
-            String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
-            converted = removeEntityIdDeclarations(converted);
-            converted = removeEntityAttributes(converted);
-            converted = replaceEntityVaryings(converted, layout, "out", true);
-            // Served and dead uniform declarations leave before identifier
-            // replacement: the replacement would otherwise rewrite names
-            // inside their own declarations into garbage.
-            converted = LegacyGlslConverter.stripUnusableUniformDeclarations(converted, fragmentUniforms);
-            // Unused sampler declarations would fail Vulkan compilation:
-            // opaque uniforms require layout(binding) even when unread.
-            // Referenced samplers already failed loudly in rejection.
-            converted = LegacyGlslConverter.stripUnreferencedSamplerDeclarations(converted);
-            if (samplerPlan != null) {
-                converted = bindVertexSamplers(converted, samplerPlan);
+    /** Every input the fragment reads must be a vertex output of the same type and interpolation. */
+    private static void requireMatchingFragmentVaryings(EntityVaryingDeclarations vertexVaryings,
+                                                        String fragmentSource) {
+        String expandedFragment = LegacyGlslConverter.expandModernVaryingLists(
+                fragmentSource == null ? "" : stripComments(fragmentSource));
+        EntityVaryingDeclarations fragmentVaryings = parseEntityVaryingDeclarations(expandedFragment, false);
+        for (Map.Entry<String, String> entry : fragmentVaryings.types().entrySet()) {
+            String vertexType = vertexVaryings.types().get(entry.getKey());
+            if (!entry.getValue().equals(vertexType)) {
+                throw new IllegalArgumentException("entity varying mismatch: " + entry.getKey());
             }
-            // Legacy MVP is a mat4; substituting vec4 ftransform() silently
-            // turns authored MVP * gl_Vertex into component-wise multiplication.
-            Map<String, String> inputs = Map.ofEntries(
-                    Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
-                    Map.entry("gl_Color", GlslVertexPreambles.nativeLayoutPreamble(vertexPreamble)
-                            ? "(Color * ColorModulator)" : "Color"),
-                    Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
-                    Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2), 0.0, 1.0)"),
-                    Map.entry("gl_MultiTexCoord2", "vec4(vec2(UV2), 0.0, 1.0)"),
-                    Map.entry("gl_Normal", "Normal.xyz"),
-                    Map.entry("gl_NormalMatrix", GlslVertexPreambles.nativeLayoutPreamble(vertexPreamble)
-                            ? "transpose(inverse(mat3(ModelViewMat)))" : "mat3(ModelViewMat)"),
-                    Map.entry("gl_ModelViewMatrix", "ModelViewMat"),
-                    Map.entry("gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)"),
-                    Map.entry("gl_ProjectionMatrix", "ProjMat"),
-                    Map.entry("gbufferModelView", "ModelViewMat"),
-                    Map.entry("gbufferModelViewInverse", "chimeraEntityInverseModelView()"),
-                    Map.entry("mc_midTexCoord", midTexCoordValue(stripped)),
-                    Map.entry("at_tangent", "chimeraEntityTangentValue()"),
-                    Map.entry("Tangent", "chimeraEntityTangentValue()"),
-                    Map.entry("isElytraFlying", "(chimeraIsElytraFlying != 0)"),
-                    // Vulkan's index counts from the draw's first vertex, as GL's does.
-                    Map.entry("gl_VertexID", "gl_VertexIndex"),
-                    Map.entry("entityId", entityIdExpression(layout, "entityId")),
-                    Map.entry("blockEntityId", entityIdExpression(layout, "blockEntityId")));
-            // ProjMat and gl_ProjectionMatrix belong to the host raster path.
-            // Iris gbufferProjection uniforms stay in the shared pack UBO so
-            // they use the legacy clip-depth convention instead.
-            if (vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE) {
-                inputs = new HashMap<>(inputs);
-                inputs.put("gl_ProjectionMatrix", "chimeraHandProjection()");
-                inputs.put("gl_ModelViewProjectionMatrix", "(chimeraHandProjection() * ModelViewMat)");
-                inputs.remove("gbufferModelView");
-                inputs.remove("gbufferModelViewInverse");
+            String vertexQualifier = vertexVaryings.qualifiers().getOrDefault(entry.getKey(), "");
+            String fragmentQualifier = fragmentVaryings.qualifiers().getOrDefault(entry.getKey(), "");
+            if (!vertexQualifier.equals(fragmentQualifier)) {
+                throw new IllegalArgumentException(
+                        "entity varying qualifier mismatch: " + entry.getKey());
             }
-            if (vertexPreamble == GlslVertexPreambles.GLINT_VERTEX_PREAMBLE) {
-                // Glint also draws in the hand, where ModelViewMat is the hand pose: the
-                // world matrices stay the pack's own uniforms, as in Iris.
-                inputs = new HashMap<>(inputs);
-                inputs.remove("gbufferModelView");
-                inputs.remove("gbufferModelViewInverse");
+        }
+    }
+
+    /**
+     * Locations for the shared varyings as the stage matcher chose them, then the other vertex
+     * outputs in name order, then the varyings the bridge adds, in their given order.
+     */
+    private static LegacyGlslConverter.TerrainVaryingLayout entityVaryingLayout(
+            EntityVaryingDeclarations vertexVaryings,
+            Map<String, Integer> sharedLocations,
+            Map<String, String> addedVaryings
+    ) {
+        Map<String, String> vertexTypes = new TreeMap<>(vertexVaryings.types());
+        Map<String, Integer> locations = new TreeMap<>();
+        if (sharedLocations != null) {
+            locations.putAll(sharedLocations);
+        }
+        // Each varying takes as many locations as its type occupies (a mat3 takes three).
+        int location = 0;
+        for (Map.Entry<String, Integer> shared : locations.entrySet()) {
+            location = Math.max(location,
+                    shared.getValue() + vertexVaryings.slots().getOrDefault(shared.getKey(), 1));
+        }
+        for (String name : vertexTypes.keySet().stream().sorted().toList()) {
+            if (!locations.containsKey(name)) {
+                locations.put(name, location);
+                location += vertexVaryings.slots().get(name);
             }
-            if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
-                inputs = new HashMap<>(inputs);
-                inputs.put("gl_ProjectionMatrix", "chimeraSkyProjection()");
-                inputs.put("gl_ModelViewProjectionMatrix", "(chimeraSkyProjection() * ModelViewMat)");
-                // Celestial host transforms rotate the sun/moon mesh. Pack world
-                // matrices must remain the frame's world matrices, as in Iris.
-                inputs.remove("gbufferModelView");
-                inputs.remove("gbufferModelViewInverse");
-            }
-            converted = GlslTokenRewriter.replaceIdentifiers(converted, inputs);
-            converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]",
-                    "TextureMat");
-            // Iris VanillaTransformer/VanillaCoreTransformer: raw UV2 for both
-            // light-coordinate aliases, normalized once by the legacy matrix.
-            converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted);
-            converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
-                    "chimeraEntityFtransform()");
-            for (String name : entityIdTypes.keySet()) {
-                converted = LegacyGlslConverter.injectMainPrologue(converted,
-                        entityIdVarying(name) + " = EntityIds." + entityIdComponent(name) + ";");
-            }
-            if (overlayUv) {
-                converted = LegacyGlslConverter.injectMainPrologue(converted,
-                        EntityOverlayColor.UV_VARYING + " = UV1;");
-            }
-            Matcher leftoverDeclaration = Pattern.compile("(?m)^\\s*(?:attribute|varying|in|out)\\s+.*$")
-                    .matcher(stripComments(converted));
-            if (leftoverDeclaration.find()) {
-                String line = leftoverDeclaration.group().trim();
-                throw new IllegalArgumentException("entity declaration was not consumed: "
-                        + line.substring(0, Math.min(80, line.length())));
-            }
-            String chimeraVaryings = "";
-            for (String name : entityIdTypes.keySet()) {
-                chimeraVaryings += "layout(location = " + layout.location(entityIdVarying(name))
-                        + ") flat out uint " + entityIdVarying(name) + ";\n";
-            }
-            if (overlayUv) {
-                chimeraVaryings += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
-                        + ") flat out ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
-            }
-            String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
-            if (vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE) {
-                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
-                        "void chimeraHandMain()");
-                converted += "\nvoid main() { chimeraHandMain();"
-                        + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
-            }
-            if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
-                converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
-                        "void chimeraSkyMain()");
-                converted += "\nvoid main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"
-                        + " }\n";
-            }
-            return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n" + vertexPreamble
-                    + chimeraVaryings + cameraBlock + converted,
-                    layout);
+        }
+        for (Map.Entry<String, String> added : addedVaryings.entrySet()) {
+            locations.put(added.getKey(), location++);
+            vertexTypes.put(added.getKey(), added.getValue());
+        }
+        return new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes, locations, vertexVaryings.qualifiers());
+    }
+
+    /**
+     * Drops what the entity contract declares itself (the version line, entity ids and attributes,
+     * served or dead uniforms, unread samplers) and gives the varyings their layout locations.
+     */
+    private static String rewriteEntityDeclarations(
+            String src,
+            LegacyGlslConverter.TerrainVaryingLayout layout,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms
+    ) {
+        String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
+        converted = removeEntityIdDeclarations(converted);
+        converted = removeEntityAttributes(converted);
+        converted = replaceEntityVaryings(converted, layout, "out", true);
+        // Served and dead uniform declarations leave before identifier
+        // replacement: the replacement would otherwise rewrite names
+        // inside their own declarations into garbage.
+        converted = LegacyGlslConverter.stripUnusableUniformDeclarations(converted, fragmentUniforms);
+        // Unused sampler declarations would fail Vulkan compilation:
+        // opaque uniforms require layout(binding) even when unread.
+        // Referenced samplers already failed loudly in rejection.
+        return LegacyGlslConverter.stripUnreferencedSamplerDeclarations(converted);
+    }
+
+    /** The token replacements for the legacy inputs and matrices, as the hand, glint and sky draws adjust them. */
+    private static Map<String, String> entityInputReplacements(
+            String vertexPreamble,
+            String stripped,
+            LegacyGlslConverter.TerrainVaryingLayout layout
+    ) {
+        // Legacy MVP is a mat4; substituting vec4 ftransform() silently
+        // turns authored MVP * gl_Vertex into component-wise multiplication.
+        Map<String, String> inputs = Map.ofEntries(
+                Map.entry("gl_Vertex", "chimeraEntityVertexValue()"),
+                Map.entry("gl_Color", GlslVertexPreambles.nativeLayoutPreamble(vertexPreamble)
+                        ? "(Color * ColorModulator)" : "Color"),
+                Map.entry("gl_MultiTexCoord0", "vec4(UV0, 0.0, 1.0)"),
+                Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2), 0.0, 1.0)"),
+                Map.entry("gl_MultiTexCoord2", "vec4(vec2(UV2), 0.0, 1.0)"),
+                Map.entry("gl_Normal", "Normal.xyz"),
+                Map.entry("gl_NormalMatrix", GlslVertexPreambles.nativeLayoutPreamble(vertexPreamble)
+                        ? "transpose(inverse(mat3(ModelViewMat)))" : "mat3(ModelViewMat)"),
+                Map.entry("gl_ModelViewMatrix", "ModelViewMat"),
+                Map.entry("gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)"),
+                Map.entry("gl_ProjectionMatrix", "ProjMat"),
+                Map.entry("gbufferModelView", "ModelViewMat"),
+                Map.entry("gbufferModelViewInverse", "chimeraEntityInverseModelView()"),
+                Map.entry("mc_midTexCoord", midTexCoordValue(stripped)),
+                Map.entry("at_tangent", "chimeraEntityTangentValue()"),
+                Map.entry("Tangent", "chimeraEntityTangentValue()"),
+                Map.entry("isElytraFlying", "(chimeraIsElytraFlying != 0)"),
+                // Vulkan's index counts from the draw's first vertex, as GL's does.
+                Map.entry("gl_VertexID", "gl_VertexIndex"),
+                Map.entry("entityId", entityIdExpression(layout, "entityId")),
+                Map.entry("blockEntityId", entityIdExpression(layout, "blockEntityId")));
+        // ProjMat and gl_ProjectionMatrix belong to the host raster path.
+        // Iris gbufferProjection uniforms stay in the shared pack UBO so
+        // they use the legacy clip-depth convention instead.
+        if (vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE) {
+            inputs = new HashMap<>(inputs);
+            inputs.put("gl_ProjectionMatrix", "chimeraHandProjection()");
+            inputs.put("gl_ModelViewProjectionMatrix", "(chimeraHandProjection() * ModelViewMat)");
+            inputs.remove("gbufferModelView");
+            inputs.remove("gbufferModelViewInverse");
+        }
+        if (vertexPreamble == GlslVertexPreambles.GLINT_VERTEX_PREAMBLE) {
+            // Glint also draws in the hand, where ModelViewMat is the hand pose: the
+            // world matrices stay the pack's own uniforms, as in Iris.
+            inputs = new HashMap<>(inputs);
+            inputs.remove("gbufferModelView");
+            inputs.remove("gbufferModelViewInverse");
+        }
+        if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
+            inputs = new HashMap<>(inputs);
+            inputs.put("gl_ProjectionMatrix", "chimeraSkyProjection()");
+            inputs.put("gl_ModelViewProjectionMatrix", "(chimeraSkyProjection() * ModelViewMat)");
+            // Celestial host transforms rotate the sun/moon mesh. Pack world
+            // matrices must remain the frame's world matrices, as in Iris.
+            inputs.remove("gbufferModelView");
+            inputs.remove("gbufferModelViewInverse");
+        }
+        return inputs;
+    }
+
+    /** Fails on an attribute, varying or interface declaration the conversion did not consume. */
+    private static void requireConsumedDeclarations(String converted) {
+        Matcher leftoverDeclaration = Pattern.compile("(?m)^\\s*(?:attribute|varying|in|out)\\s+.*$")
+                .matcher(stripComments(converted));
+        if (leftoverDeclaration.find()) {
+            String line = leftoverDeclaration.group().trim();
+            throw new IllegalArgumentException("entity declaration was not consumed: "
+                    + line.substring(0, Math.min(80, line.length())));
+        }
+    }
+
+    /**
+     * The hand and sky draws run the pack's main from a wrapper that then maps the legacy clip
+     * depth onto Vulkan's zero-to-one range.
+     */
+    private static String wrapProjectedMain(String converted, String vertexPreamble) {
+        String wrapped = converted;
+        if (vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE) {
+            wrapped = wrapped.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
+                    "void chimeraHandMain()");
+            wrapped += "\nvoid main() { chimeraHandMain();"
+                    + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+        }
+        if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
+            wrapped = wrapped.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
+                    "void chimeraSkyMain()");
+            wrapped += "\nvoid main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"
+                    + " }\n";
+        }
+        return wrapped;
+    }
+
+    /** The entityId and blockEntityId types either stage declares, in {@code ENTITY_ID_NAMES} order. */
+    static Map<String, String> entityIdTypes(String strippedVertex, String fragmentSource) {
+        Map<String, String> types = new LinkedHashMap<>();
+        for (String name : ENTITY_ID_NAMES) {
+            String type = entityIdentifierType(name, strippedVertex, fragmentSource);
+            if (type != null) types.put(name, type);
+        }
+        return types;
+    }
+
+    /** Copies each named identity from the EntityIds input into its flat varying at the start of main. */
+    static String injectEntityIdPrologues(String source, Collection<String> names) {
+        String result = source;
+        for (String name : names) {
+            result = LegacyGlslConverter.injectMainPrologue(result,
+                    entityIdVarying(name) + " = EntityIds." + entityIdComponent(name) + ";");
+        }
+        return result;
+    }
+
+    /** The flat output declaration of each named identity's varying, at its layout location. */
+    static String entityIdOutputDeclarations(Collection<String> names,
+                                             LegacyGlslConverter.TerrainVaryingLayout layout) {
+        StringBuilder declarations = new StringBuilder();
+        for (String name : names) {
+            declarations.append("layout(location = " + layout.location(entityIdVarying(name))
+                    + ") flat out uint " + entityIdVarying(name) + ";\n");
+        }
+        return declarations.toString();
+    }
+
+    /** Each named identity read through its flat varying. */
+    static Map<String, String> entityIdReplacements(Collection<String> names,
+                                                    LegacyGlslConverter.TerrainVaryingLayout layout) {
+        Map<String, String> replacements = new LinkedHashMap<>();
+        for (String name : names) {
+            replacements.put(name, entityIdExpression(layout, name));
+        }
+        return replacements;
     }
 
     /** Converts the legacy particle vertex contract onto DefaultVertexFormat.PARTICLE. */
@@ -797,109 +870,6 @@ public final class EntityVertexBridge {
         }
         return converted;
     }
-
-    static void rejectEntityVertexFeatures(
-            String source, boolean allowStorageBuffers, boolean allowSamplers
-    ) {
-        // Served and dead uniform declarations are stripped before this
-        // check, so a remaining value-type uniform names a referenced
-        // custom with no adapter. Matrix and texture built-ins below have
-        // token mappings in the inputs table.
-        Matcher leftoverUniform = Pattern.compile(
-                "(?m)^\\s*uniform\\s+(?:highp|mediump|lowp\\s+)?(?:bool|int|float|vec[234]|ivec[234]|mat[234])\\s+"
-                        + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*;").matcher(source);
-        while (leftoverUniform.find()) {
-            String checkSource = source.substring(0, leftoverUniform.start())
-                    + source.substring(leftoverUniform.end());
-            for (String declarator : leftoverUniform.group(1).split(",")) {
-                String name = declarator.trim();
-                if (GlslTokenRewriter.containsIdentifier(checkSource, name)) {
-                    throw new IllegalArgumentException(
-                            "unsupported entity vertex uniform: " + name);
-                }
-            }
-        }
-        Matcher vertexSampler = Pattern.compile(
-                "(?m)^\\s*uniform\\s+(?:[iu]?sampler\\w*|u?i?image\\w*)\\s+"
-                        + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*;\\s*$").matcher(source);
-        StringBuffer keptSamplers = new StringBuffer();
-        while (vertexSampler.find()) {
-            String checkSource = source.substring(0, vertexSampler.start())
-                    + source.substring(vertexSampler.end());
-            boolean referenced = false;
-            for (String declarator : vertexSampler.group(1).split(",")) {
-                if (GlslTokenRewriter.containsIdentifier(checkSource, declarator.trim())) {
-                    referenced = true;
-                    break;
-                }
-            }
-            boolean image = vertexSampler.group().matches("(?s).*\\buniform\\s+u?i?image\\w*.*");
-            if (referenced && (image || !allowSamplers)) {
-                String first = vertexSampler.group(1).split(",")[0].trim();
-                throw new IllegalArgumentException(
-                        "unsupported entity vertex sampler: " + first);
-            }
-        }
-        Matcher builtin = Pattern.compile("\\bgl_[A-Za-z]\\w*\\b").matcher(source);
-        while (builtin.find()) {
-            if (!ENTITY_SERVED_BUILTINS.contains(builtin.group())) {
-                throw new IllegalArgumentException(
-                        "unsupported entity vertex builtin: " + builtin.group());
-            }
-        }
-        if (source.matches("(?s).*\\b(?:image\\w*|geometry|tessellation|compute)\\b.*")) {
-            throw new IllegalArgumentException("unsupported entity vertex feature");
-        }
-        if (!allowStorageBuffers && source.matches("(?s).*\\bbuffer\\b.*")) {
-            throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
-        }
-        Matcher attributes = Pattern.compile(
-                "(?m)\\b(attribute|in)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;").matcher(source);
-        while (attributes.find()) {
-            String type = attributes.group(2);
-            String name = attributes.group(3);
-            boolean supported = (ENTITY_ID_NAMES.contains(name)
-                    && (type.equals("float") || type.equals("int")))
-                    || (name.equals("mc_midTexCoord") && (type.equals("vec2") || type.equals("vec4")))
-                    || (name.equals("at_tangent") && type.equals("vec4"))
-                    // Iris capital-T tangent names the same host input.
-                    || (name.equals("Tangent") && type.equals("vec4"))
-                    // Terrain inputs the entity format lacks read GL's unbound default.
-                    || (name.equals("mc_Entity") || name.equals("at_midBlock"))
-                    && (type.equals("float") || type.equals("vec2") || type.equals("vec3") || type.equals("vec4"));
-            if (!supported) {
-                throw new IllegalArgumentException("unsupported entity attribute: " + name);
-            }
-        }
-        // File-scope interfaces come from the shared scanner, so parameter qualifiers
-        // (`const in float depth`) and integral or matrix varyings are not misread.
-        String withoutInterfaces;
-        try {
-            for (GlslInterfaceScanner.Declaration input : GlslInterfaceScanner.scan(source, true).inputs()) {
-                if (!ENTITY_ATTRIBUTE_NAMES.contains(input.name())) {
-                    throw new IllegalArgumentException("unsupported entity attribute: " + input.name());
-                }
-            }
-            withoutInterfaces = GlslInterfaceScanner.rewrite(source, true, declaration -> "");
-        } catch (IllegalArgumentException failure) {
-            throw new IllegalArgumentException("entity vertex interface: " + failure.getMessage());
-        }
-        if (withoutInterfaces.matches("(?s).*\\battribute\\b.*")
-                && !withoutInterfaces.matches("(?s).*\\battribute\\s+(?:int|float|vec2|vec3|vec4)\\s+"
-                + "(?:entityId|blockEntityId|mc_midTexCoord|at_tangent|Tangent|mc_Entity|at_midBlock)\\s*;.*")) {
-            throw new IllegalArgumentException("unsupported entity attribute declaration");
-        }
-        // Interpolation survives on scanned varyings via the shared layout. Pack-authored
-        // explicit layouts would conflict with the generated locations, and interpolation
-        // qualifiers anywhere else have no adapter path.
-        if (withoutInterfaces.matches("(?s).*\\b(?:layout|flat|noperspective)\\b.*")) {
-            throw new IllegalArgumentException("entity vertex layout is fixed by Chimera");
-        }
-    }
-
-    /** Host inputs the entity vertex bridge serves (see the attribute check above). */
-    static final Set<String> ENTITY_ATTRIBUTE_NAMES = Set.of(
-            "entityId", "blockEntityId", "mc_midTexCoord", "at_tangent", "Tangent", "mc_Entity", "at_midBlock");
 
     /** Same immutable hand program, adapted only to the host inputs of this draw. */
     public static String handVertexForFormat(String converted, VertexFormat host) {

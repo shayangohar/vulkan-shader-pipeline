@@ -80,9 +80,7 @@ final class PostVertexBridge {
             Map<String, String> packConstants
     ) {
         try {
-            if (source == null || vertexInterface == null || fragmentInterface == null
-                    || match == null || !match.executable() || interfacePlan == null
-                    || !interfacePlan.executable()) {
+            if (source == null || !executableInterfaces(vertexInterface, fragmentInterface, match, interfacePlan)) {
                 throw new IllegalArgumentException("POST_VERTEX_INTERFACE_UNSUPPORTED");
             }
             String converted = LegacyGlslConverter.prepareSource(source, null, true);
@@ -98,20 +96,7 @@ final class PostVertexBridge {
             for (GlslInterfaceScanner.Declaration input : vertexInterface.inputs()) {
                 throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + input.name());
             }
-            // Matched outputs keep the fragment's locations; unread outputs follow them, each
-            // taking as many locations as its type occupies.
-            Map<String, Integer> locations = new TreeMap<>(match.locations());
-            int nextLocation = 0;
-            for (GlslInterfaceScanner.Declaration output : vertexInterface.outputs()) {
-                Integer location = locations.get(output.name());
-                if (location != null) nextLocation = Math.max(nextLocation, location + output.slots());
-            }
-            for (GlslInterfaceScanner.Declaration output : vertexInterface.outputs()) {
-                if (!locations.containsKey(output.name())) {
-                    locations.put(output.name(), nextLocation);
-                    nextLocation += output.slots();
-                }
-            }
+            Map<String, Integer> locations = outputLocations(vertexInterface, match);
             converted = GlslInterfaceScanner.rewrite(LegacyGlslConverter.VERSION_LINE.matcher(converted).replaceAll(""),
                     true,
                     declaration -> {
@@ -127,41 +112,11 @@ final class PostVertexBridge {
             converted = LegacyGlslConverter.stripUnusedConsumedConsts(converted, packConstants);
             converted = LegacyGlslConverter.injectPackConstants(converted, packConstants);
             converted = LegacyGlslConverter.convertTextureCalls(converted);
-            int samplerBase = interfacePlan.executableUniforms().isEmpty() ? 0 : 1;
-            Map<String, String> samplerTypes = new TreeMap<>();
-            for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
-                samplerTypes.put(sampler.name(), sampler.glslType());
-                if (FragmentConverter.hasSamplerDeclaration(converted, sampler.name())) {
-                    converted = FragmentConverter.rewriteSamplerDeclaration(converted, sampler.name(),
-                            samplerBase + interfacePlan.samplerIndex(sampler.name()));
-                }
-            }
-            converted = GlslTokenRewriter.rewriteShadowCalls(converted, samplerTypes);
-            Map<String, String> inputs = new TreeMap<>();
-            inputs.put("gl_Vertex", "vec4(chimeraFullscreenUv(), 0.0, 1.0)");
-            inputs.put("gl_MultiTexCoord0", "vec4(chimeraFullscreenUv(), 0.0, 1.0)");
-            // A fullscreen draw has only position/UV0, exactly as the legacy
-            // fullscreen contract: other texture coordinates have no mesh data.
-            for (int unit = 1; unit < 8; unit++) {
-                inputs.put("gl_MultiTexCoord" + unit, "vec4(0.0, 0.0, 0.0, 1.0)");
-            }
-            inputs.put("gl_Color", "vec4(1.0)");
-            inputs.put("gl_Normal", "vec3(0.0, 0.0, 1.0)");
-            inputs.put("gl_ModelViewMatrix", "mat4(1.0)");
-            inputs.put("gl_ModelViewProjectionMatrix", "chimeraFullscreenProjection()");
-            inputs.put("gl_ProjectionMatrix", "chimeraFullscreenProjection()");
-            inputs.put("gl_NormalMatrix", "mat3(1.0)");
-            inputs.put("gl_VertexID", "gl_VertexIndex");
-            converted = GlslTokenRewriter.replaceIdentifiers(converted, inputs);
+            converted = bindPostSamplers(converted, interfacePlan);
+            converted = GlslTokenRewriter.replaceIdentifiers(converted, fullscreenInputs());
             converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*[0-7]\\s*\\]", "mat4(1.0)");
             converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)", "chimeraFullscreenPosition()");
-            for (GlslLexer.Token token : GlslLexer.lex(converted)) {
-                if (token.text().startsWith("gl_") && !Set.of("gl_Position", "gl_VertexIndex",
-                        "gl_InstanceIndex", "gl_PointSize", "gl_ClipDistance",
-                                "gl_CullDistance").contains(token.text())) {
-                    throw new IllegalArgumentException("POST_VERTEX_BUILTIN_UNSUPPORTED:" + token.text());
-                }
-            }
+            requireServedBuiltins(converted);
             // The pack positions geometry in GL clip space, where NDC y = -1 is image row 0.
             // Post passes keep VulkanMod's negative-height viewport, which maps y = -1 to the
             // last row, so the authored position is mirrored once here. Packs that draw a
@@ -176,6 +131,85 @@ final class PostVertexBridge {
         } catch (RuntimeException failure) {
             return new PostVertexConversion(null, List.of(failure.getMessage() == null
                     ? "POST_VERTEX_TRANSLATION_UNSUPPORTED" : failure.getMessage()));
+        }
+    }
+
+    /** Both stage interfaces are present and the program match and uniform plan are executable. */
+    private static boolean executableInterfaces(
+            GlslInterfaceScanner.StageInterface vertexInterface,
+            GlslInterfaceScanner.StageInterface fragmentInterface,
+            GlslInterfaceScanner.ProgramMatch match,
+            UniformRegistry.ProgramInterface interfacePlan
+    ) {
+        return vertexInterface != null && fragmentInterface != null && match != null && match.executable()
+                && interfacePlan != null && interfacePlan.executable();
+    }
+
+    /**
+     * Matched outputs keep the fragment's locations; unread outputs follow them, each
+     * taking as many locations as its type occupies.
+     */
+    private static Map<String, Integer> outputLocations(GlslInterfaceScanner.StageInterface vertexInterface,
+                                                        GlslInterfaceScanner.ProgramMatch match) {
+        Map<String, Integer> locations = new TreeMap<>(match.locations());
+        int nextLocation = 0;
+        for (GlslInterfaceScanner.Declaration output : vertexInterface.outputs()) {
+            Integer location = locations.get(output.name());
+            if (location != null) nextLocation = Math.max(nextLocation, location + output.slots());
+        }
+        for (GlslInterfaceScanner.Declaration output : vertexInterface.outputs()) {
+            if (!locations.containsKey(output.name())) {
+                locations.put(output.name(), nextLocation);
+                nextLocation += output.slots();
+            }
+        }
+        return locations;
+    }
+
+    /** Binds each declared sampler after the uniform block, if any, and rewrites its shadow calls. */
+    private static String bindPostSamplers(String source, UniformRegistry.ProgramInterface interfacePlan) {
+        String converted = source;
+        int samplerBase = interfacePlan.executableUniforms().isEmpty() ? 0 : 1;
+        Map<String, String> samplerTypes = new TreeMap<>();
+        for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
+            samplerTypes.put(sampler.name(), sampler.glslType());
+            if (FragmentConverter.hasSamplerDeclaration(converted, sampler.name())) {
+                converted = FragmentConverter.rewriteSamplerDeclaration(converted, sampler.name(),
+                        samplerBase + interfacePlan.samplerIndex(sampler.name()));
+            }
+        }
+        return GlslTokenRewriter.rewriteShadowCalls(converted, samplerTypes);
+    }
+
+    /** The legacy vertex inputs as the fullscreen triangle serves them. */
+    private static Map<String, String> fullscreenInputs() {
+        Map<String, String> inputs = new TreeMap<>();
+        inputs.put("gl_Vertex", "vec4(chimeraFullscreenUv(), 0.0, 1.0)");
+        inputs.put("gl_MultiTexCoord0", "vec4(chimeraFullscreenUv(), 0.0, 1.0)");
+        // A fullscreen draw has only position/UV0, exactly as the legacy
+        // fullscreen contract: other texture coordinates have no mesh data.
+        for (int unit = 1; unit < 8; unit++) {
+            inputs.put("gl_MultiTexCoord" + unit, "vec4(0.0, 0.0, 0.0, 1.0)");
+        }
+        inputs.put("gl_Color", "vec4(1.0)");
+        inputs.put("gl_Normal", "vec3(0.0, 0.0, 1.0)");
+        inputs.put("gl_ModelViewMatrix", "mat4(1.0)");
+        inputs.put("gl_ModelViewProjectionMatrix", "chimeraFullscreenProjection()");
+        inputs.put("gl_ProjectionMatrix", "chimeraFullscreenProjection()");
+        inputs.put("gl_NormalMatrix", "mat3(1.0)");
+        inputs.put("gl_VertexID", "gl_VertexIndex");
+        return inputs;
+    }
+
+    /** Built-ins a converted post vertex may still name; any other gl_ name has no fullscreen value. */
+    private static final Set<String> SERVED_POST_BUILTINS = Set.of("gl_Position", "gl_VertexIndex",
+            "gl_InstanceIndex", "gl_PointSize", "gl_ClipDistance", "gl_CullDistance");
+
+    private static void requireServedBuiltins(String converted) {
+        for (GlslLexer.Token token : GlslLexer.lex(converted)) {
+            if (token.text().startsWith("gl_") && !SERVED_POST_BUILTINS.contains(token.text())) {
+                throw new IllegalArgumentException("POST_VERTEX_BUILTIN_UNSUPPORTED:" + token.text());
+            }
         }
     }
 

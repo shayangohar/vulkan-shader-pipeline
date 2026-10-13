@@ -411,43 +411,62 @@ public final class PackConfig {
 
     /** A target size, clear, clear color or flip directive. */
     private static void applyTargetProperty(String key, String value, Collected collected) {
-        List<String> deviations = collected.deviations;
         Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
         Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
         Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
         Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
         if (sizeKey.matches()) {
-            int slot = parseTargetIndex(sizeKey.group(1), deviations);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                updateTargetSettings(collected.targetSettings, slot, value, null, null, null);
-            }
+            applyTargetSize(sizeKey.group(1), value, collected);
         } else if (clearKey.matches()) {
-            int slot = parseTargetIndex(clearKey.group(1), deviations);
-            Boolean clear = parseBoolean(value);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
-                updateTargetSettings(collected.targetSettings, slot, null, clear, null, null);
-            } else if (clear != null) {
-                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-            }
+            applyTargetClear(clearKey.group(1), value, collected);
         } else if (clearColorKey.matches()) {
-            int slot = parseTargetIndex(clearColorKey.group(1), deviations);
-            float[] color = parseColor(value);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
-                updateTargetSettings(collected.targetSettings, slot, null, null, color, null);
-            } else {
-                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-            }
+            applyTargetClearColor(clearColorKey.group(1), value, collected);
         } else if (flipKey.matches()) {
-            int slot = parseTargetIndex(flipKey.group(2), deviations);
-            Boolean flip = parseBoolean(value);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && flip != null) {
-                updateFlip(flipKey.group(1).endsWith("_pre") ? collected.preFlips : collected.flips,
-                        flipKey.group(1), slot, flip);
-            } else {
-                deviations.add("POST_TARGET_FLIP_UNSUPPORTED:" + key);
-            }
+            applyTargetFlip(key, flipKey, value, collected);
         } else if (key.startsWith("size.buffer.") || key.startsWith("flip.")) {
-            deviations.add("POST_TARGET_PROPERTY_UNSUPPORTED:" + key);
+            collected.deviations.add("POST_TARGET_PROPERTY_UNSUPPORTED:" + key);
+        }
+    }
+
+    /** A {@code size.buffer.colortexN} size expression. */
+    private static void applyTargetSize(String index, String value, Collected collected) {
+        int slot = parseTargetIndex(index, collected.deviations);
+        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
+            updateTargetSettings(collected.targetSettings, slot, value, null, null, null);
+        }
+    }
+
+    /** A {@code colortexNClear} switch; a value that is no boolean is ignored. */
+    private static void applyTargetClear(String index, String value, Collected collected) {
+        int slot = parseTargetIndex(index, collected.deviations);
+        Boolean clear = parseBoolean(value);
+        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
+            updateTargetSettings(collected.targetSettings, slot, null, clear, null, null);
+        } else if (clear != null) {
+            collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+        }
+    }
+
+    /** A {@code colortexNClearColor} colour. */
+    private static void applyTargetClearColor(String index, String value, Collected collected) {
+        int slot = parseTargetIndex(index, collected.deviations);
+        float[] color = parseColor(value);
+        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
+            updateTargetSettings(collected.targetSettings, slot, null, null, color, null);
+        } else {
+            collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+        }
+    }
+
+    /** A {@code flip.<program>.colortexN} switch; a {@code <program>_pre} key's flips are kept apart. */
+    private static void applyTargetFlip(String key, Matcher flipKey, String value, Collected collected) {
+        int slot = parseTargetIndex(flipKey.group(2), collected.deviations);
+        Boolean flip = parseBoolean(value);
+        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && flip != null) {
+            updateFlip(flipKey.group(1).endsWith("_pre") ? collected.preFlips : collected.flips,
+                    flipKey.group(1), slot, flip);
+        } else {
+            collected.deviations.add("POST_TARGET_FLIP_UNSUPPORTED:" + key);
         }
     }
 
@@ -627,37 +646,8 @@ public final class PackConfig {
 
     private static ShadowSettings validateShadowSettings(Map<String, String> rawValues) {
         List<String> deviations = new ArrayList<>();
-        int resolution = DEFAULT_SHADOW_MAP_RESOLUTION;
-        String rawResolution = rawValues.get("shadowMapResolution");
-        if (rawResolution != null) {
-            try {
-                double parsed = Double.parseDouble(rawResolution);
-                if (parsed >= MIN_SHADOW_MAP_RESOLUTION && parsed <= MAX_SHADOW_MAP_RESOLUTION
-                        && parsed == Math.rint(parsed)) {
-                    resolution = (int) parsed;
-                } else {
-                    deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
-                }
-            } catch (NumberFormatException e) {
-                deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
-            }
-        }
-
-        float distance = DEFAULT_SHADOW_DISTANCE;
-        String rawDistance = rawValues.get("shadowDistance");
-        if (rawDistance != null) {
-            try {
-                float parsed = Float.parseFloat(rawDistance);
-                if (Float.isFinite(parsed)
-                        && parsed >= MIN_SHADOW_DISTANCE && parsed <= MAX_SHADOW_DISTANCE) {
-                    distance = parsed;
-                } else {
-                    deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
-                }
-            } catch (NumberFormatException e) {
-                deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
-            }
-        }
+        int resolution = validShadowMapResolution(rawValues.get("shadowMapResolution"), deviations);
+        float distance = validShadowDistance(rawValues.get("shadowDistance"), deviations);
 
         validateFiniteShadowSetting(rawValues, deviations, "shadowDistanceRenderMul", 0.0F, 4.0F);
         validateFiniteShadowSetting(rawValues, deviations, "sunPathRotation", -360.0F, 360.0F);
@@ -667,14 +657,52 @@ public final class PackConfig {
         validateFiniteShadowSetting(rawValues, deviations, "voxelDistance", 0.0F, MAX_SHADOW_DISTANCE);
 
         for (String key : rawValues.keySet()) {
-            if (!key.equals("shadowMapResolution") && !key.equals("shadowDistance")
-                    && !key.equals("shadowDistanceRenderMul") && !key.equals("shadowIntervalSize")
-                    && !key.equals("sunPathRotation") && !key.equals("sunPathOffset")
-                    && !key.equals("entityShadowDistanceMul") && !key.equals("voxelDistance")) {
+            if (!SUPPORTED_SHADOW_SETTINGS.contains(key)) {
                 deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
             }
         }
         return new ShadowSettings(resolution, distance, rawValues, deviations);
+    }
+
+    /** The shadow settings validated above; any other collected key is reported unsupported. */
+    private static final Set<String> SUPPORTED_SHADOW_SETTINGS = Set.of(
+            "shadowMapResolution", "shadowDistance", "shadowDistanceRenderMul", "shadowIntervalSize",
+            "sunPathRotation", "sunPathOffset", "entityShadowDistanceMul", "voxelDistance");
+
+    /** The authored shadow map resolution when it is a whole number in range, else the default. */
+    private static int validShadowMapResolution(String raw, List<String> deviations) {
+        if (raw == null) {
+            return DEFAULT_SHADOW_MAP_RESOLUTION;
+        }
+        try {
+            double parsed = Double.parseDouble(raw);
+            if (parsed >= MIN_SHADOW_MAP_RESOLUTION && parsed <= MAX_SHADOW_MAP_RESOLUTION
+                    && parsed == Math.rint(parsed)) {
+                return (int) parsed;
+            }
+            deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
+        } catch (NumberFormatException e) {
+            deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
+        }
+        return DEFAULT_SHADOW_MAP_RESOLUTION;
+    }
+
+    /** The authored shadow distance when it is finite and in range, else the default. */
+    private static float validShadowDistance(String raw, List<String> deviations) {
+        if (raw == null) {
+            return DEFAULT_SHADOW_DISTANCE;
+        }
+        try {
+            float parsed = Float.parseFloat(raw);
+            if (Float.isFinite(parsed)
+                    && parsed >= MIN_SHADOW_DISTANCE && parsed <= MAX_SHADOW_DISTANCE) {
+                return parsed;
+            }
+            deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
+        } catch (NumberFormatException e) {
+            deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
+        }
+        return DEFAULT_SHADOW_DISTANCE;
     }
 
     private static void validateFiniteShadowSetting(

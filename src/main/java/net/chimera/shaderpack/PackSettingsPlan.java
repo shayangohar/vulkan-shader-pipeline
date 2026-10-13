@@ -102,27 +102,10 @@ record PackSettingsPlan(
         Map<String, Option> options = new TreeMap<>();
         Map<String, String> defaults = new TreeMap<>();
         List<String> deviations = new ArrayList<>();
-        Map<String, String> sourceFiles = new TreeMap<>();
-        if (programs != null) {
-            for (PackProgram program : programs.stream()
-                    .filter(value -> value != null)
-                    .sorted(Comparator.comparing(PackProgram::name))
-                    .toList()) {
-                Path sourceRoot = program.sourceRoot() == null ? shadersDir : program.sourceRoot();
-                if (program.fragmentSource() != null) {
-                    sourceFiles.putIfAbsent(relative(sourceRoot, program.fragmentPath()),
-                            program.fragmentSource());
-                }
-                if (program.vertexSource() != null) {
-                    sourceFiles.putIfAbsent(relative(sourceRoot, program.vertexPath()),
-                            program.vertexSource());
-                }
-            }
-        }
         // Only executable entry files can author global pack defaults. Helper
         // libraries contain implementation macros that must stay local to
         // the source that includes them.
-        for (Map.Entry<String, String> file : sourceFiles.entrySet()) {
+        for (Map.Entry<String, String> file : entrySourceFiles(programs, shadersDir).entrySet()) {
             collectSourceOptions(file.getValue(), file.getKey(), options, defaults, deviations);
         }
 
@@ -139,11 +122,7 @@ record PackSettingsPlan(
         // (Chimera's "1", as for an active source define); off means the
         // macro is undefined, so it leaves the defaults and is locked out of
         // the source below (overriddenNames without a value).
-        Set<String> disabled = new TreeSet<>();
-        for (Map.Entry<String, String> override : overrides.entrySet()) {
-            if (override.getValue().equalsIgnoreCase("true")) override.setValue("1");
-            else if (override.getValue().equalsIgnoreCase("false")) disabled.add(override.getKey());
-        }
+        Set<String> disabled = applyToggleOverrides(overrides);
         for (Map.Entry<String, String> override : overrides.entrySet()) {
             options.put(override.getKey(), new Option(override.getKey(), "chimera.option",
                     override.getValue(), List.of(), "chimera.option"));
@@ -163,30 +142,76 @@ record PackSettingsPlan(
         Map<String, PackResourceDeclaration> resourceDeclarations = new TreeMap<>();
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
-            Set<String> toggleOptions = new TreeSet<>();
-            for (Option option : options.values()) {
-                if (option.type().equals("define")) toggleOptions.add(option.name());
-            }
-            for (Option option : helperOptions.values()) {
-                if (option.type().equals("define")) toggleOptions.add(option.name());
-            }
-            toggleOptions.addAll(disabled);
             parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations,
-                    mergedConditionMacros(defaults, helperDefaults, overrides), toggleOptions);
+                    mergedConditionMacros(defaults, helperDefaults, overrides),
+                    toggleOptions(options, helperOptions, disabled));
         }
-        Set<String> unsupportedRequired = new TreeSet<>();
-        for (String feature : required) {
-            if (!SUPPORTED_FEATURES.contains(feature.toUpperCase())) {
-                unsupportedRequired.add(feature);
-                deviations.add("REQUIRED_FEATURE_UNSUPPORTED:" + feature);
-            }
-        }
+        Set<String> unsupportedRequired = unsupportedFeatures(required, deviations);
         PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(
                 customValues, defaults, deviations, BiomeIds.constants());
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
                 runtimeSettings, resourceDeclarations, Map.of(), false);
+    }
+
+    /** The programs' fragment and vertex sources by relative path; the first program by name wins a path. */
+    private static Map<String, String> entrySourceFiles(List<PackProgram> programs, Path shadersDir) {
+        Map<String, String> sourceFiles = new TreeMap<>();
+        if (programs == null) {
+            return sourceFiles;
+        }
+        for (PackProgram program : programs.stream()
+                .filter(value -> value != null)
+                .sorted(Comparator.comparing(PackProgram::name))
+                .toList()) {
+            Path sourceRoot = program.sourceRoot() == null ? shadersDir : program.sourceRoot();
+            if (program.fragmentSource() != null) {
+                sourceFiles.putIfAbsent(relative(sourceRoot, program.fragmentPath()),
+                        program.fragmentSource());
+            }
+            if (program.vertexSource() != null) {
+                sourceFiles.putIfAbsent(relative(sourceRoot, program.vertexPath()),
+                        program.vertexSource());
+            }
+        }
+        return sourceFiles;
+    }
+
+    /** Turns a true override into the plain define and returns the names a false one turns off. */
+    private static Set<String> applyToggleOverrides(Map<String, String> overrides) {
+        Set<String> disabled = new TreeSet<>();
+        for (Map.Entry<String, String> override : overrides.entrySet()) {
+            if (override.getValue().equalsIgnoreCase("true")) override.setValue("1");
+            else if (override.getValue().equalsIgnoreCase("false")) disabled.add(override.getKey());
+        }
+        return disabled;
+    }
+
+    /** The define options of the entry sources and helpers, and the overrides turned off. */
+    private static Set<String> toggleOptions(Map<String, Option> options, Map<String, Option> helperOptions,
+                                             Set<String> disabled) {
+        Set<String> toggleOptions = new TreeSet<>();
+        for (Option option : options.values()) {
+            if (option.type().equals("define")) toggleOptions.add(option.name());
+        }
+        for (Option option : helperOptions.values()) {
+            if (option.type().equals("define")) toggleOptions.add(option.name());
+        }
+        toggleOptions.addAll(disabled);
+        return toggleOptions;
+    }
+
+    /** The required features Chimera does not support, each recorded as a deviation. */
+    private static Set<String> unsupportedFeatures(Set<String> required, List<String> deviations) {
+        Set<String> unsupported = new TreeSet<>();
+        for (String feature : required) {
+            if (!SUPPORTED_FEATURES.contains(feature.toUpperCase())) {
+                unsupported.add(feature);
+                deviations.add("REQUIRED_FEATURE_UNSUPPORTED:" + feature);
+            }
+        }
+        return unsupported;
     }
 
     private static Map<String, String> mergedConditionMacros(
@@ -358,16 +383,7 @@ record PackSettingsPlan(
     /** Resolves only samplers proven live in the prepared source snapshot. */
     Map<String, Integer> customSamplerSlots(Set<String> liveSamplers) {
         Map<String, Integer> slots = new TreeMap<>();
-        Set<Integer> reserved = new TreeSet<>();
-        if (liveSamplers != null) {
-            for (String sampler : liveSamplers) {
-                Integer target = PackResourcePlan.targetIndex(sampler);
-                if (target != null && target <= PostTargetPlan.MAX_TARGET) {
-                    int slot = SelectorNamespace.colorTargetSlot(target);
-                    if (slot >= 0) reserved.add(slot);
-                }
-            }
-        }
+        Set<Integer> reserved = reservedTargetSlots(liveSamplers);
         List<Integer> available = SelectorNamespace.PACK_SELECTOR_SLOTS.stream()
                 .filter(slot -> !reserved.contains(slot)).toList();
         int next = 0;
@@ -377,15 +393,10 @@ record PackSettingsPlan(
         // WSR or voxel sampler. The ordering remains deterministic by the
         // property key.
         for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
-            if (!entry.getKey().startsWith("image.")) {
+            String sampler = imageSampler(entry);
+            if (sampler == null) {
                 continue;
             }
-            String[] values = entry.getValue() == null
-                    ? new String[0] : entry.getValue().trim().split("\\s+");
-            if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) {
-                continue;
-            }
-            String sampler = values[0];
             String image = entry.getKey().substring("image.".length());
             if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)
                     || liveSamplers == null
@@ -409,6 +420,35 @@ record PackSettingsPlan(
         return Collections.unmodifiableMap(slots);
     }
 
+    /** The selector slots of the live colortex samplers, which no custom sampler may take. */
+    private static Set<Integer> reservedTargetSlots(Set<String> liveSamplers) {
+        Set<Integer> reserved = new TreeSet<>();
+        if (liveSamplers == null) {
+            return reserved;
+        }
+        for (String sampler : liveSamplers) {
+            Integer target = PackResourcePlan.targetIndex(sampler);
+            if (target != null && target <= PostTargetPlan.MAX_TARGET) {
+                int slot = SelectorNamespace.colorTargetSlot(target);
+                if (slot >= 0) reserved.add(slot);
+            }
+        }
+        return reserved;
+    }
+
+    /** The sampler an {@code image.<name>} entry names first, or null for any other or malformed entry. */
+    private static String imageSampler(Map.Entry<String, String> entry) {
+        if (!entry.getKey().startsWith("image.")) {
+            return null;
+        }
+        String[] values = entry.getValue() == null
+                ? new String[0] : entry.getValue().trim().split("\\s+");
+        if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) {
+            return null;
+        }
+        return values[0];
+    }
+
     private Map<String, Integer> defaultSamplerSlots() {
         Map<String, Integer> slots = new TreeMap<>();
         int next = 0;
@@ -420,11 +460,8 @@ record PackSettingsPlan(
             }
         }
         for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
-            if (!entry.getKey().startsWith("image.")) continue;
-            String[] values = entry.getValue() == null
-                    ? new String[0] : entry.getValue().trim().split("\\s+");
-            if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) continue;
-            String sampler = values[0];
+            String sampler = imageSampler(entry);
+            if (sampler == null) continue;
             if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) continue;
             if (next < SelectorNamespace.PACK_SELECTOR_SLOTS.size()) {
                 slots.put(sampler, SelectorNamespace.PACK_SELECTOR_SLOTS.get(next++));
@@ -768,17 +805,18 @@ record PackSettingsPlan(
         }
     }
 
+    /** Property key prefixes Chimera reads; "shadow" covers every shadow setting. */
+    private static final List<String> SUPPORTED_PROPERTY_PREFIXES = List.of(
+            "profile.", "program.", "iris.features.", "size.buffer.colortex", "flip.", "customTexture.",
+            "texture.", "alphaTest.", "shadow");
+    private static final Set<String> SUPPORTED_PROPERTY_NAMES = Set.of("sunPathRotation", "sunPathOffset");
+    private static final Pattern SUPPORTED_TARGET_PROPERTY = Pattern.compile(
+            "colortex\\d+(?:Format|Clear|ClearColor|MipmapEnabled)");
+
     private static boolean isSupportedProperty(String key) {
-        return key.startsWith("profile.") || key.startsWith("program.")
-                || key.startsWith("iris.features.") || key.matches("colortex\\d+Format")
-                || key.matches("colortex\\d+Clear") || key.matches("colortex\\d+ClearColor")
-                || key.matches("colortex\\d+MipmapEnabled")
-                || key.startsWith("size.buffer.colortex") || key.startsWith("flip.")
-                || key.startsWith("customTexture.") || key.startsWith("texture.")
-                || key.startsWith("alphaTest.")
-                || key.startsWith("shadow") || key.equals("sunPathRotation")
-                || key.equals("sunPathOffset") || key.equals("shadowMapResolution")
-                || key.equals("shadowDistance");
+        return SUPPORTED_PROPERTY_PREFIXES.stream().anyMatch(key::startsWith)
+                || SUPPORTED_PROPERTY_NAMES.contains(key)
+                || SUPPORTED_TARGET_PROPERTY.matcher(key).matches();
     }
 
     private static PackResourceDeclaration resourceDeclaration(String key, String value) {
@@ -837,16 +875,15 @@ record PackSettingsPlan(
         return comment < 0 ? value : value.substring(0, comment);
     }
 
+    /** Macros that name the stage or pass being compiled, never a pack-wide option. */
+    private static final Set<String> STAGE_CONTEXT_MACROS = Set.of(
+            "FSH", "VSH", "GSH", "CSH", "TCS", "TES", "VERTEX_SHADER", "FRAGMENT_SHADER", "GEOMETRY_SHADER",
+            "COMPUTE_SHADER", "SHADOW", "COMPOSITE", "DEFERRED", "FINAL", "SETUP");
+    private static final Pattern STAGE_CONTEXT_MACRO_FAMILIES = Pattern.compile(
+            "COMPOSITE\\d+|DEFERRED\\d+|GBUFFERS_[A-Za-z0-9_]+|DH_[A-Za-z0-9_]+");
+
     private static boolean isStageContextMacro(String name) {
-        return name.equals("FSH") || name.equals("VSH") || name.equals("GSH")
-                || name.equals("CSH") || name.equals("TCS") || name.equals("TES")
-                || name.equals("VERTEX_SHADER") || name.equals("FRAGMENT_SHADER")
-                || name.equals("GEOMETRY_SHADER") || name.equals("COMPUTE_SHADER")
-                || name.equals("SHADOW") || name.equals("COMPOSITE")
-                || name.matches("COMPOSITE\\d+") || name.equals("DEFERRED")
-                || name.matches("DEFERRED\\d+") || name.equals("FINAL")
-                || name.equals("SETUP") || name.matches("GBUFFERS_[A-Za-z0-9_]+")
-                || name.matches("DH_[A-Za-z0-9_]+");
+        return STAGE_CONTEXT_MACROS.contains(name) || STAGE_CONTEXT_MACRO_FAMILIES.matcher(name).matches();
     }
 
     private static boolean isDimensionContextMacro(String name) {

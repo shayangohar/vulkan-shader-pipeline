@@ -112,15 +112,7 @@ public final class PackRuntimeSettings {
         float eyeBrightness = numeric(defaults, "eyeBrightnessHalflife",
                 DEFAULT_EYE_BRIGHTNESS_HALF_LIFE, result, "eyeBrightness");
 
-        Map<String, Declaration> byName = new TreeMap<>();
-        if (declarations != null) {
-            for (Declaration declaration : declarations) {
-                if (declaration != null) {
-                    byName.put(declaration.name(), declaration);
-                }
-            }
-        }
-
+        Map<String, Declaration> byName = declarationsByName(declarations);
         Map<String, ParsedValue> parsed = new TreeMap<>();
         Set<String> rejected = new TreeSet<>();
         // A declared value types every reference to it; anything else is the host's input.
@@ -129,44 +121,13 @@ public final class PackRuntimeSettings {
             return declared != null ? width(declared.type()) : UniformRegistry.expressionWidth(name);
         };
         for (Declaration declaration : byName.values()) {
-            if (width(declaration.type()) == 0) {
-                result.add("CUSTOM_VALUE_TYPE_UNSUPPORTED:" + declaration.name());
+            Compiled compiled = compile(declaration, constants, widths, byName.keySet());
+            if (compiled.refusal() != null) {
+                result.add(compiled.refusal());
                 rejected.add(declaration.name());
-                continue;
+            } else {
+                parsed.put(declaration.name(), new ParsedValue(declaration, compiled.program()));
             }
-            if (UniformRegistry.isEngineInput(declaration.name())) {
-                result.add("CUSTOM_VALUE_SHADOWS_BUILTIN:" + declaration.name());
-                rejected.add(declaration.name());
-                continue;
-            }
-            PackExpression.Program program;
-            try {
-                program = PackExpression.parse(declaration.expression(), constants, widths);
-            } catch (PackExpression.Unsupported failure) {
-                result.add(failure.code() + ":" + declaration.name()
-                        + (failure.detail().isBlank() ? "" : ":" + failure.detail()));
-                rejected.add(declaration.name());
-                continue;
-            }
-            if (program.width() != width(declaration.type())) {
-                result.add("CUSTOM_EXPRESSION_TYPE:" + declaration.name() + ":" + declaration.type()
-                        + " given width " + program.width());
-                rejected.add(declaration.name());
-                continue;
-            }
-            String unknown = unresolved(program, byName.keySet());
-            if (unknown != null) {
-                result.add("CUSTOM_EXPRESSION_UNKNOWN:" + declaration.name() + ":" + unknown);
-                rejected.add(declaration.name());
-                continue;
-            }
-            String unreadable = unreadable(program, byName.keySet());
-            if (unreadable != null) {
-                result.add("CUSTOM_EXPRESSION_COMPONENT:" + declaration.name() + ":" + unreadable);
-                rejected.add(declaration.name());
-                continue;
-            }
-            parsed.put(declaration.name(), new ParsedValue(declaration, program));
         }
 
         Set<String> visiting = new HashSet<>();
@@ -175,7 +136,68 @@ public final class PackRuntimeSettings {
         for (String name : parsed.keySet()) {
             resolve(name, parsed, rejected, visiting, resolved, order, result);
         }
+        return new PackRuntimeSettings(wetnessRise, wetnessFall, eyeBrightness,
+                orderedValues(order, parsed, rejected), rejectedDescriptors(rejected, byName), rejected, result);
+    }
 
+    /** The non-null declarations by name; a later declaration of a name replaces the earlier one. */
+    private static Map<String, Declaration> declarationsByName(List<Declaration> declarations) {
+        Map<String, Declaration> byName = new TreeMap<>();
+        if (declarations != null) {
+            for (Declaration declaration : declarations) {
+                if (declaration != null) {
+                    byName.put(declaration.name(), declaration);
+                }
+            }
+        }
+        return byName;
+    }
+
+    /** One declaration's compiled program, or the deviation that refuses it. */
+    private record Compiled(PackExpression.Program program, String refusal) {
+        static Compiled refused(String refusal) {
+            return new Compiled(null, refusal);
+        }
+    }
+
+    /**
+     * Compiles one declaration. It is refused for a type the language does not serve, a genuine
+     * engine input's name, an expression that does not parse or has another width, or a
+     * dependency nothing serves.
+     */
+    private static Compiled compile(Declaration declaration, PackExpression.Constants constants,
+                                    PackExpression.Widths widths, Set<String> declared) {
+        if (width(declaration.type()) == 0) {
+            return Compiled.refused("CUSTOM_VALUE_TYPE_UNSUPPORTED:" + declaration.name());
+        }
+        if (UniformRegistry.isEngineInput(declaration.name())) {
+            return Compiled.refused("CUSTOM_VALUE_SHADOWS_BUILTIN:" + declaration.name());
+        }
+        PackExpression.Program program;
+        try {
+            program = PackExpression.parse(declaration.expression(), constants, widths);
+        } catch (PackExpression.Unsupported failure) {
+            return Compiled.refused(failure.code() + ":" + declaration.name()
+                    + (failure.detail().isBlank() ? "" : ":" + failure.detail()));
+        }
+        if (program.width() != width(declaration.type())) {
+            return Compiled.refused("CUSTOM_EXPRESSION_TYPE:" + declaration.name() + ":" + declaration.type()
+                    + " given width " + program.width());
+        }
+        String unknown = unresolved(program, declared);
+        if (unknown != null) {
+            return Compiled.refused("CUSTOM_EXPRESSION_UNKNOWN:" + declaration.name() + ":" + unknown);
+        }
+        String unreadable = unreadable(program, declared);
+        if (unreadable != null) {
+            return Compiled.refused("CUSTOM_EXPRESSION_COMPONENT:" + declaration.name() + ":" + unreadable);
+        }
+        return new Compiled(program, null);
+    }
+
+    /** The values to evaluate, in dependency order, skipping every refused name. */
+    private static List<Value> orderedValues(List<String> order, Map<String, ParsedValue> parsed,
+                                             Set<String> rejected) {
         List<Value> values = new ArrayList<>();
         for (String name : order) {
             if (!rejected.contains(name)) {
@@ -185,18 +207,23 @@ public final class PackRuntimeSettings {
                         width(value.declaration().type())));
             }
         }
-        Map<String, UniformRegistry.UniformDescriptor> rejectedDescriptors = new TreeMap<>();
+        return values;
+    }
+
+    /** A REJECTED descriptor for each refused value that shaders can see. */
+    private static Map<String, UniformRegistry.UniformDescriptor> rejectedDescriptors(
+            Set<String> rejected, Map<String, Declaration> byName) {
+        Map<String, UniformRegistry.UniformDescriptor> descriptors = new TreeMap<>();
         for (String name : rejected) {
             Declaration declaration = byName.get(name);
             if (declaration != null && declaration.exposed()) {
-                rejectedDescriptors.put(name, new UniformRegistry.UniformDescriptor(
+                descriptors.put(name, new UniformRegistry.UniformDescriptor(
                         name, glslTypes(declaration.type()),
                         UniformRegistry.Availability.REJECTED, "rejected:" + name,
                         UniformRegistry.DefaultPolicy.ZERO));
             }
         }
-        return new PackRuntimeSettings(wetnessRise, wetnessFall, eyeBrightness, values,
-                rejectedDescriptors, rejected, result);
+        return descriptors;
     }
 
     /** The first dependency that is neither a declared name nor a served uniform. */

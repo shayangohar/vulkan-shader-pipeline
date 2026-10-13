@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -117,31 +118,7 @@ public final class LegacyGlslConverter {
             UniformRegistry.Stage stage,
             UniformRegistry.ProgramInterface interfacePlan
     ) {
-        if (stage.shadowPass()) {
-            Integer slotValue = UniformRegistry.SHADOW_NAME_TO_SLOT.get(name);
-            if (slotValue == null && interfacePlan != null) {
-                slotValue = interfacePlan.samplers().stream()
-                        .filter(value -> value.name().equals(name))
-                        .map(UniformRegistry.SamplerBinding::slot)
-                        .findFirst()
-                        .orElse(null);
-            }
-            if (slotValue == null) {
-                return -1;
-            }
-            for (int i = 0; i < slots.length; i++) {
-                if (slots[i] == slotValue) return i;
-            }
-            return -1;
-        }
-        Map<String, Integer> mapping = (stage == UniformRegistry.Stage.ENTITY
-                || stage == UniformRegistry.Stage.BLOCK
-                || stage == UniformRegistry.Stage.HAND
-                || stage == UniformRegistry.Stage.PARTICLE)
-                ? UniformRegistry.ENTITY_NAME_TO_SLOT
-                : stage == UniformRegistry.Stage.TRANSLUCENT
-                ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT : UniformRegistry.GEOMETRY_NAME_TO_SLOT;
-        Integer slotValue = mapping.get(name);
+        Integer slotValue = nameToSlot(stage).get(name);
         if (slotValue == null && interfacePlan != null) {
             slotValue = interfacePlan.samplers().stream()
                     .filter(value -> value.name().equals(name))
@@ -159,6 +136,18 @@ public final class LegacyGlslConverter {
             }
         }
         return -1;
+    }
+
+    /** The fixed sampler-name slots of a stage's family: shadow, entity, translucent or geometry. */
+    private static Map<String, Integer> nameToSlot(UniformRegistry.Stage stage) {
+        if (stage.shadowPass()) {
+            return UniformRegistry.SHADOW_NAME_TO_SLOT;
+        }
+        return switch (stage) {
+            case ENTITY, BLOCK, HAND, PARTICLE -> UniformRegistry.ENTITY_NAME_TO_SLOT;
+            case TRANSLUCENT -> UniformRegistry.TRANSLUCENT_NAME_TO_SLOT;
+            default -> UniformRegistry.GEOMETRY_NAME_TO_SLOT;
+        };
     }
 
     static String insertAfterFirstLine(String src, String line) {
@@ -184,24 +173,30 @@ public final class LegacyGlslConverter {
                 statementStart = index + 1;
                 continue;
             }
-            // `type name =|;|[` opening a file-scope statement without uniform/in/out/varying/attribute.
-            int next = GlslLexer.nextSignificant(tokens, index);
-            if (token.kind() != GlslLexer.Kind.IDENTIFIER || next < 0
-                    || !(tokens.get(next).symbol("=") || tokens.get(next).symbol(";")
-                            || tokens.get(next).symbol("["))) {
-                continue;
-            }
-            int type = GlslLexer.previousSignificant(tokens, index);
-            if (type < statementStart || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) continue;
-            boolean qualified = false;
-            for (int prior = statementStart; prior < type; prior++) {
-                String text = tokens.get(prior).text();
-                if (Set.of("uniform", "in", "out", "varying", "attribute", "buffer",
-                        "shared").contains(text)) qualified = true;
-            }
-            if (!qualified) names.add(token.text());
+            if (namesPlainGlobal(tokens, statementStart, index)) names.add(token.text());
         }
         return names;
+    }
+
+    /** Qualifiers that make a file-scope declaration a uniform, interface or storage variable. */
+    private static final Set<String> GLOBAL_STORAGE_QUALIFIERS = Set.of(
+            "uniform", "in", "out", "varying", "attribute", "buffer", "shared");
+
+    /** Whether the token at {@code index} is the name in a file-scope statement that declares a plain global. */
+    private static boolean namesPlainGlobal(List<GlslLexer.Token> tokens, int statementStart, int index) {
+        // `type name =|;|[` opening a file-scope statement without uniform/in/out/varying/attribute.
+        int next = GlslLexer.nextSignificant(tokens, index);
+        if (tokens.get(index).kind() != GlslLexer.Kind.IDENTIFIER || next < 0
+                || !(tokens.get(next).symbol("=") || tokens.get(next).symbol(";")
+                        || tokens.get(next).symbol("["))) {
+            return false;
+        }
+        int type = GlslLexer.previousSignificant(tokens, index);
+        if (type < statementStart || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) return false;
+        for (int prior = statementStart; prior < type; prior++) {
+            if (GLOBAL_STORAGE_QUALIFIERS.contains(tokens.get(prior).text())) return false;
+        }
+        return true;
     }
 
     /** Compatibility adapter for callers that still pass raw source and a path. */
@@ -238,44 +233,54 @@ public final class LegacyGlslConverter {
                     ? PostVertexBridge.convertPostVaryings(src)
                     : PostVertexBridge.convertPostVaryings(src, postVaryingLayout);
         }
-        if (stage == UniformRegistry.Stage.ENTITY
-                || stage == UniformRegistry.Stage.BLOCK
-                || stage == UniformRegistry.Stage.HAND
-                || stage == UniformRegistry.Stage.PARTICLE
-                || stage == UniformRegistry.Stage.SKY
-                || stage == UniformRegistry.Stage.CLOUD) {
+        if (ENTITY_VARYING_STAGES.contains(stage)) {
             return EntityVertexBridge.replaceEntityVaryings(expandModernVaryingLists(src), terrainLayout, "in", false);
         }
         if (src.contains("#version 460")) {
-            Matcher modern = TerrainVertexBridge.MODERN_TERRAIN_INPUT_DECL.matcher(src);
-            StringBuilder modernOut = new StringBuilder();
-            int modernLast = 0;
-            while (modern.find()) {
-                String qualifier = modern.group(1);
-                String type = modern.group(2);
-                String name = modern.group(3);
-                if (PostVertexBridge.unproducedAndUnread(src, modern, name, terrainLayout)) {
-                    modernOut.append(src, modernLast, modern.start());
-                    modernLast = modern.end();
-                    continue;
-                }
-                int location = terrainLayout == null
-                        ? GEOMETRY_VARYING_LOCATIONS.getOrDefault(name, -1)
-                        : terrainLayout.location(name);
-                if (location < 0) {
-                    throw new IllegalArgumentException("modern geometry varying has no fixed slot: " + name);
-                }
-                modernOut.append(src, modernLast, modern.start());
-                modernOut.append("layout(location = ").append(location).append(") ");
-                if (qualifier != null) {
-                    modernOut.append(qualifier).append(' ');
-                }
-                modernOut.append("in ").append(type).append(' ').append(name).append(';');
-                modernLast = modern.end();
-            }
-            modernOut.append(src, modernLast, src.length());
-            return modernOut.toString();
+            return convertModernGeometryVaryings(src, terrainLayout);
         }
+        return convertLegacyGeometryVaryings(src, terrainLayout);
+    }
+
+    /** Stages whose fragment inputs follow the entity bridge's varying layout. */
+    private static final Set<UniformRegistry.Stage> ENTITY_VARYING_STAGES = EnumSet.of(
+            UniformRegistry.Stage.ENTITY, UniformRegistry.Stage.BLOCK, UniformRegistry.Stage.HAND,
+            UniformRegistry.Stage.PARTICLE, UniformRegistry.Stage.SKY, UniformRegistry.Stage.CLOUD);
+
+    /** Gives a modern geometry fragment's inputs the terrain layout's locations, or the fixed vertex's. */
+    private static String convertModernGeometryVaryings(String src, TerrainVaryingLayout terrainLayout) {
+        Matcher modern = TerrainVertexBridge.MODERN_TERRAIN_INPUT_DECL.matcher(src);
+        StringBuilder modernOut = new StringBuilder();
+        int modernLast = 0;
+        while (modern.find()) {
+            String qualifier = modern.group(1);
+            String type = modern.group(2);
+            String name = modern.group(3);
+            if (PostVertexBridge.unproducedAndUnread(src, modern, name, terrainLayout)) {
+                modernOut.append(src, modernLast, modern.start());
+                modernLast = modern.end();
+                continue;
+            }
+            int location = terrainLayout == null
+                    ? GEOMETRY_VARYING_LOCATIONS.getOrDefault(name, -1)
+                    : terrainLayout.location(name);
+            if (location < 0) {
+                throw new IllegalArgumentException("modern geometry varying has no fixed slot: " + name);
+            }
+            modernOut.append(src, modernLast, modern.start());
+            modernOut.append("layout(location = ").append(location).append(") ");
+            if (qualifier != null) {
+                modernOut.append(qualifier).append(' ');
+            }
+            modernOut.append("in ").append(type).append(' ').append(name).append(';');
+            modernLast = modern.end();
+        }
+        modernOut.append(src, modernLast, src.length());
+        return modernOut.toString();
+    }
+
+    /** Gives a legacy geometry fragment's varyings the terrain layout's locations, or the fixed vertex's. */
+    private static String convertLegacyGeometryVaryings(String src, TerrainVaryingLayout terrainLayout) {
         Matcher matcher = VARYING_DECL.matcher(src);
         StringBuilder out = new StringBuilder();
         int last = 0;
@@ -288,9 +293,9 @@ public final class LegacyGlslConverter {
                 continue;
             }
             int location;
-            if (geometryStage && terrainLayout != null) {
+            if (terrainLayout != null) {
                 location = terrainLayout.location(name);
-            } else if (geometryStage) {
+            } else {
                 Integer slot = GEOMETRY_VARYING_LOCATIONS.get(name);
                 if (slot == null) {
                     throw new IllegalArgumentException(
@@ -298,8 +303,6 @@ public final class LegacyGlslConverter {
                                     + GEOMETRY_VARYING_LOCATIONS.keySet() + ")");
                 }
                 location = slot;
-            } else {
-                location = 0;
             }
             out.append(src, last, matcher.start());
             out.append("layout(location = ").append(location).append(") "

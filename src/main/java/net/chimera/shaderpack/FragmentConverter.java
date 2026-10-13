@@ -287,10 +287,6 @@ public final class FragmentConverter {
          * layout, never the filtered stage order.
          */
         private void bindSamplers() {
-            List<UniformRegistry.SamplerBinding> samplers = interfacePlan.samplers();
-            int bindingBase = geometryStage
-                    ? geometrySamplerBindingBase(interfacePlan)
-                    : (interfacePlan.executableUniforms().isEmpty() ? 0 : 1);
             if (geometryStage) {
                 // GLSL 460: 'texture' is the sampling function name, so a pack sampler declared as
                 // 'uniform sampler2D texture;' (the OptiFine atlas convention) is renamed uniformly.
@@ -312,11 +308,19 @@ public final class FragmentConverter {
                 throw new IllegalArgumentException("projected shadow lookup is outside the supported bridge");
             }
             Map<String, String> samplerTypes = new TreeMap<>();
-            for (UniformRegistry.SamplerBinding sampler : samplers) {
+            for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
                 samplerTypes.put(sampler.name(), sampler.glslType());
             }
             src = GlslTokenRewriter.rewriteShadowCalls(src, samplerTypes);
-            for (UniformRegistry.SamplerBinding sampler : samplers) {
+            bindSamplerDeclarations();
+        }
+
+        /** Rewrites each declared sampler to its descriptor binding. */
+        private void bindSamplerDeclarations() {
+            int bindingBase = geometryStage
+                    ? geometrySamplerBindingBase(interfacePlan)
+                    : (interfacePlan.executableUniforms().isEmpty() ? 0 : 1);
+            for (UniformRegistry.SamplerBinding sampler : interfacePlan.samplers()) {
                 String name = sampler.name();
                 String srcName = geometryStage && name.equals("texture") ? "chimeraTexture" : name;
                 int binding = geometryStage

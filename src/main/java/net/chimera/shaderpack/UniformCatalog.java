@@ -10,6 +10,15 @@ final class UniformCatalog {
 
     static Map<String, UniformRegistry.UniformDescriptor> uniformSpecs() {
         Map<String, UniformRegistry.UniformDescriptor> specs = new LinkedHashMap<>();
+        addWorldAndCameraUniforms(specs);
+        addIrisStandardUniforms(specs);
+        addIrisPlayerState(specs);
+        addHostShaderUniforms(specs);
+        return Map.copyOf(specs);
+    }
+
+    /** The OptiFine world, weather, camera, sky, shadow and frame uniforms. */
+    static void addWorldAndCameraUniforms(Map<String, UniformRegistry.UniformDescriptor> specs) {
         addLive(specs, "cameraPosition", "vec3");
         addLive(specs, "worldTime", "int");
         addLive(specs, "frameTimeCounter", "float");
@@ -39,10 +48,14 @@ final class UniformCatalog {
         addLive(specs, "previousCameraPositionFract", "vec3");
         addLive(specs, "previousCameraPosition", "vec3");
         addLive(specs, "cloudHeight", "float");
+    }
 
-        // Common standard Iris values used by real legacy post sources. The
-        // provider supplies live values where Chimera has a source of truth;
-        // the remaining values are explicit zero or identity defaults.
+    /**
+     * Common standard Iris values used by real legacy post sources. The
+     * provider supplies live values where Chimera has a source of truth;
+     * the remaining values are explicit zero or identity defaults.
+     */
+    static void addIrisStandardUniforms(Map<String, UniformRegistry.UniformDescriptor> specs) {
         addLive(specs, "bedrockLevel", "int");
         addLive(specs, "blindness", "float", "blindness");
         addLive(specs, "darknessFactor", "float");
@@ -98,9 +111,13 @@ final class UniformCatalog {
         addLive(specs, "shadowModelViewInverse", "mat4");
         addLive(specs, "shadowProjectionInverse", "mat4");
         addLive(specs, "renderStage", "int");
+    }
 
-        addIrisPlayerState(specs);
-
+    /**
+     * The host's core-shader uniforms (MVP, the Fog block, ScreenSize and the rest), then the
+     * lowercase spellings of the fog and size ones.
+     */
+    static void addHostShaderUniforms(Map<String, UniformRegistry.UniformDescriptor> specs) {
         addLive(specs, "MVP", "mat4");
         addLive(specs, "ModelViewMat", "mat4");
         addLive(specs, "ProjMat", "mat4");
@@ -135,7 +152,6 @@ final class UniformCatalog {
         addLive(specs, "screenSize", "vec2");
         addLive(specs, "textureSize", "ivec2");
         addLive(specs, "texelSize", "vec2");
-        return Map.copyOf(specs);
     }
 
     /**

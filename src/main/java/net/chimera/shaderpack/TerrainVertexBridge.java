@@ -1,8 +1,8 @@
 package net.chimera.shaderpack;
 
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -148,21 +148,13 @@ final class TerrainVertexBridge {
         String prepared = EntityVertexBridge.defaultUnboundIdentityAttributes(
                 LegacyGlslConverter.prepareSource(source, sourceFile, true));
         String vertex = shadowStage ? normalizeShadowTerrain(prepared) : normalizeModernTerrain(prepared);
-        String fragment = fragmentSource == null ? "" : fragmentSource;
-        if (shadowStage && hasShadowTerrainVersion(fragment)) {
-            fragment = normalizeShadowTerrain(fragment);
-        } else if (hasModernTerrainVersion(fragment)) {
-            fragment = normalizeModernTerrain(fragment);
-        }
+        String fragment = normalizedFragment(fragmentSource, shadowStage);
         vertex = LegacyGlslConverter.expandModernVaryingLists(vertex);
         fragment = LegacyGlslConverter.expandModernVaryingLists(fragment);
-        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(vertex);
-        if (!usage.successful()) {
-            throw new IllegalArgumentException(usage.deviations().toString());
-        }
-        vertex = GlslTokenRewriter.removeUnreachableFunctions(vertex, usage);
+        vertex = withoutUnreachableFunctions(vertex);
         // On the entity layout both stages read entityId and blockEntityId from EntityIds.
-        Map<String, String> entityIdTypes = entityInputs ? entityIdTypes(vertex, fragment) : Map.of();
+        Map<String, String> entityIdTypes = entityInputs
+                ? EntityVertexBridge.entityIdTypes(stripComments(vertex), fragment) : Map.of();
         vertex = interfacePlan == null
                 ? stripShadowUniformDeclarations(vertex)
                 : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
@@ -181,14 +173,9 @@ final class TerrainVertexBridge {
                 .replaceAll("");
         Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
         if (shadowStage) {
-            inputReplacements.putAll(shadowAttributeInputReplacements(vertex));
-            inputReplacements.putAll(entityInputs
-                    ? EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
-                    : shadowMatrixBuiltinReplacements());
+            inputReplacements.putAll(shadowInputReplacements(vertex, entityInputs));
         }
-        for (String name : entityIdTypes.keySet()) {
-            inputReplacements.put(name, EntityVertexBridge.entityIdExpression(layout, name));
-        }
+        inputReplacements.putAll(EntityVertexBridge.entityIdReplacements(entityIdTypes.keySet(), layout));
         converted = GlslTokenRewriter.replaceIdentifiers(converted, inputReplacements);
         // Iris gives entity programs the draw's texture matrix (iris_TextureMat).
         converted = converted.replaceAll(
@@ -205,18 +192,11 @@ final class TerrainVertexBridge {
             throw new IllegalArgumentException("modern terrain input was not consumed");
         }
         String uniformBlock = modernUniformBlock(interfacePlan, shadowStage);
-        if (shadowStage && interfacePlan != null && !interfacePlan.executableUniforms().isEmpty()) {
-            converted = FragmentConverter.qualifyShadowUniformReferences(converted,
-                    interfacePlan.executableUniforms());
+        if (shadowStage) {
+            converted = qualifyPlannedShadowUniforms(converted, interfacePlan);
         }
-        String chimeraVaryings = "";
-        for (String name : entityIdTypes.keySet()) {
-            converted = LegacyGlslConverter.injectMainPrologue(converted,
-                    EntityVertexBridge.entityIdVarying(name) + " = EntityIds."
-                            + EntityVertexBridge.entityIdComponent(name) + ";");
-            chimeraVaryings += "layout(location = " + layout.location(EntityVertexBridge.entityIdVarying(name))
-                    + ") flat out uint " + EntityVertexBridge.entityIdVarying(name) + ";\n";
-        }
+        converted = EntityVertexBridge.injectEntityIdPrologues(converted, entityIdTypes.keySet());
+        String chimeraVaryings = EntityVertexBridge.entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
         String effectivePreamble = shadowStage && !extendedShadow && !entityInputs
                 ? GlslVertexPreambles.SHADOW_VERTEX_PREAMBLE : vertexPreamble;
         String body = shadowStage ? shadowClipRangeWrapper(converted) : converted;
@@ -225,15 +205,42 @@ final class TerrainVertexBridge {
                 + chimeraVaryings + uniformBlock + body, layout);
     }
 
-    /** The entityId and blockEntityId types either stage declares, in {@code ENTITY_ID_NAMES} order. */
-    private static Map<String, String> entityIdTypes(String vertex, String fragment) {
-        Map<String, String> types = new LinkedHashMap<>();
-        String authoredVertex = stripComments(vertex);
-        for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
-            String type = EntityVertexBridge.entityIdentifierType(name, authoredVertex, fragment);
-            if (type != null) types.put(name, type);
+    /** The fragment source normalized as its vertex stage is, when it declares a supported version. */
+    private static String normalizedFragment(String fragmentSource, boolean shadowStage) {
+        String fragment = fragmentSource == null ? "" : fragmentSource;
+        if (shadowStage && hasShadowTerrainVersion(fragment)) {
+            return normalizeShadowTerrain(fragment);
         }
-        return types;
+        return hasModernTerrainVersion(fragment) ? normalizeModernTerrain(fragment) : fragment;
+    }
+
+    /** Drops the functions main never reaches; a source the resource analysis refuses fails with its reasons. */
+    private static String withoutUnreachableFunctions(String vertex) {
+        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(vertex);
+        if (!usage.successful()) {
+            throw new IllegalArgumentException(usage.deviations().toString());
+        }
+        return GlslTokenRewriter.removeUnreachableFunctions(vertex, usage);
+    }
+
+    /**
+     * The shadow stage's attribute inputs and legacy matrix built-ins: the draw's own host
+     * matrices on the entity layout, the light's matrices otherwise.
+     */
+    private static Map<String, String> shadowInputReplacements(String vertex, boolean entityInputs) {
+        Map<String, String> replacements = shadowAttributeInputReplacements(vertex);
+        replacements.putAll(entityInputs
+                ? EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
+                : shadowMatrixBuiltinReplacements());
+        return replacements;
+    }
+
+    /** Reads the shadow stage's planned uniforms through the generated shadow block's instance. */
+    private static String qualifyPlannedShadowUniforms(String source, UniformRegistry.ProgramInterface interfacePlan) {
+        if (interfacePlan == null || interfacePlan.executableUniforms().isEmpty()) {
+            return source;
+        }
+        return FragmentConverter.qualifyShadowUniformReferences(source, interfacePlan.executableUniforms());
     }
 
     /** The strict modern subset: a main that writes gl_Position, and no unsupported resource or stage. */
@@ -667,6 +674,12 @@ final class TerrainVertexBridge {
         return result.toString();
     }
 
+    /** The legacy attributes the extended terrain format backs, with the types each may be declared as. */
+    private static final Map<String, Set<String>> TERRAIN_ATTRIBUTE_TYPES = Map.of(
+            "mc_Entity", Set.of("float", "vec2", "vec3", "vec4"),
+            "mc_midTexCoord", Set.of("vec2", "vec4"),
+            "at_tangent", Set.of("vec4"));
+
     /** Removes the small legacy attribute declarations backed by the extended terrain format. */
     static String removeTerrainAttributes(String source, boolean shadowStage) {
         if (shadowStage) {
@@ -678,20 +691,12 @@ final class TerrainVertexBridge {
         while (matcher.find()) {
             String type = matcher.group(1);
             String name = matcher.group(2);
-            if (!name.equals("mc_Entity") && !name.equals("mc_midTexCoord")
-                    && !name.equals("at_tangent")) {
+            Set<String> servedTypes = TERRAIN_ATTRIBUTE_TYPES.get(name);
+            if (servedTypes == null) {
                 throw new IllegalArgumentException("unsupported terrain attribute: " + name);
             }
-            if (name.equals("mc_Entity")
-                    && !(type.equals("float") || type.equals("vec2") || type.equals("vec3") || type.equals("vec4"))) {
-                throw new IllegalArgumentException("unsupported mc_Entity type: " + type);
-            }
-            if (name.equals("mc_midTexCoord")
-                    && !(type.equals("vec2") || type.equals("vec4"))) {
-                throw new IllegalArgumentException("unsupported mc_midTexCoord type: " + type);
-            }
-            if (name.equals("at_tangent") && !type.equals("vec4")) {
-                throw new IllegalArgumentException("unsupported at_tangent type: " + type);
+            if (!servedTypes.contains(type)) {
+                throw new IllegalArgumentException("unsupported " + name + " type: " + type);
             }
             result.append(source, last, matcher.start());
             last = matcher.end();
@@ -818,114 +823,68 @@ final class TerrainVertexBridge {
     }
 
     static String modernTerrainInputExpression(String type, String name) {
-        String value;
-        String baseType;
-        switch (name) {
-            case "Position", "vaPosition", "a_Position" -> {
-                value = "chimeraVertexValue()";
-                baseType = "vec4";
-            }
-            case "Color", "vaColor", "a_Color" -> {
-                value = "chimeraColorValue()";
-                baseType = "vec4";
-            }
-            case "UV0", "vaUV0", "a_TexCoord" -> {
-                value = "chimeraTexCoord0Value()";
-                baseType = "vec4";
-            }
-            case "UV2", "vaUV2", "a_Light" -> {
-                if (type.equals("ivec2")) {
-                    return "ivec2(chimeraTexCoord1Value().xy)";
-                }
-                value = "chimeraTexCoord1Value()";
-                baseType = "vec4";
-            }
-            case "Normal", "vaNormal", "a_Normal" -> {
-                value = "chimeraNormalValue()";
-                baseType = "vec3";
-            }
-            case "mc_Entity" -> {
-                value = "chimeraMcEntityValue()";
-                baseType = "vec2";
-            }
-            case "mc_midTexCoord" -> {
-                if (type.equals("uvec2")) {
-                    return "chimeraMidTexCoordRawValue()";
-                }
-                value = "chimeraMidTexCoordValue()";
-                baseType = "vec2";
-            }
-            case "at_midBlock" -> {
-                if (type.equals("ivec2") || type.equals("ivec3") || type.equals("ivec4")) {
-                    return switch (type) {
-                        case "ivec2" -> "chimeraMidBlockRawValue().xy";
-                        case "ivec3" -> "chimeraMidBlockRawValue().xyz";
-                        default -> "chimeraMidBlockRawValue()";
-                    };
-                }
-                value = "chimeraMidBlockValue()";
-                baseType = "vec4";
-            }
-            case "at_tangent" -> {
-                value = "chimeraTangentValue()";
-                baseType = "vec4";
-            }
-            default -> {
-                return "";
-            }
+        String raw = integralTerrainInputExpression(type, name);
+        if (raw != null) {
+            return raw;
         }
-        return adaptModernTerrainType(type, value, baseType);
+        TerrainInput input = switch (name) {
+            case "Position", "vaPosition", "a_Position" -> new TerrainInput("chimeraVertexValue()", "vec4");
+            case "Color", "vaColor", "a_Color" -> new TerrainInput("chimeraColorValue()", "vec4");
+            case "UV0", "vaUV0", "a_TexCoord" -> new TerrainInput("chimeraTexCoord0Value()", "vec4");
+            case "UV2", "vaUV2", "a_Light" -> new TerrainInput("chimeraTexCoord1Value()", "vec4");
+            case "Normal", "vaNormal", "a_Normal" -> new TerrainInput("chimeraNormalValue()", "vec3");
+            case "mc_Entity" -> new TerrainInput("chimeraMcEntityValue()", "vec2");
+            case "mc_midTexCoord" -> new TerrainInput("chimeraMidTexCoordValue()", "vec2");
+            case "at_midBlock" -> new TerrainInput("chimeraMidBlockValue()", "vec4");
+            case "at_tangent" -> new TerrainInput("chimeraTangentValue()", "vec4");
+            default -> null;
+        };
+        return input == null ? "" : adaptModernTerrainType(type, input.value(), input.baseType());
+    }
+
+    /** A host terrain input's value expression and the GLSL type that expression has. */
+    private record TerrainInput(String value, String baseType) {}
+
+    /**
+     * Integer reads of the light, mid-texture and mid-block inputs, which have expressions of
+     * their own; null for every other input and type.
+     */
+    private static String integralTerrainInputExpression(String type, String name) {
+        return switch (name) {
+            case "UV2", "vaUV2", "a_Light" -> type.equals("ivec2") ? "ivec2(chimeraTexCoord1Value().xy)" : null;
+            case "mc_midTexCoord" -> type.equals("uvec2") ? "chimeraMidTexCoordRawValue()" : null;
+            case "at_midBlock" -> switch (type) {
+                case "ivec2" -> "chimeraMidBlockRawValue().xy";
+                case "ivec3" -> "chimeraMidBlockRawValue().xyz";
+                case "ivec4" -> "chimeraMidBlockRawValue()";
+                default -> null;
+            };
+            default -> null;
+        };
     }
 
     static String adaptModernTerrainType(String type, String value, String baseType) {
         if (type.equals(baseType)) {
             return value;
         }
-        if (type.equals("float")) {
-            return value + ".x";
-        }
-        if (type.equals("int")) {
-            return "int(" + value + ".x)";
-        }
-        if (type.equals("uint")) {
-            return "uint(" + value + ".x)";
-        }
-        if (type.equals("vec2")) {
-            return baseType.equals("vec2") ? value : value + ".xy";
-        }
-        if (type.equals("vec3")) {
-            return switch (baseType) {
+        return switch (type) {
+            case "float" -> value + ".x";
+            case "int" -> "int(" + value + ".x)";
+            case "uint" -> "uint(" + value + ".x)";
+            case "vec2" -> baseType.equals("vec2") ? value : value + ".xy";
+            case "vec3" -> switch (baseType) {
                 case "vec2" -> "vec3(" + value + ", 0.0)";
                 case "vec3" -> value;
                 default -> value + ".xyz";
             };
-        }
-        if (type.equals("vec4")) {
-            return switch (baseType) {
+            case "vec4" -> switch (baseType) {
                 case "vec2" -> "vec4(" + value + ", 0.0, 1.0)";
                 case "vec3" -> "vec4(" + value + ", 0.0)";
                 default -> value;
             };
-        }
-        if (type.equals("ivec2")) {
-            return "ivec2(" + value + ")";
-        }
-        if (type.equals("ivec3")) {
-            return "ivec3(" + value + ")";
-        }
-        if (type.equals("ivec4")) {
-            return "ivec4(" + value + ")";
-        }
-        if (type.equals("uvec2")) {
-            return "uvec2(" + value + ")";
-        }
-        if (type.equals("uvec3")) {
-            return "uvec3(" + value + ")";
-        }
-        if (type.equals("uvec4")) {
-            return "uvec4(" + value + ")";
-        }
-        return "";
+            case "ivec2", "ivec3", "ivec4", "uvec2", "uvec3", "uvec4" -> type + "(" + value + ")";
+            default -> "";
+        };
     }
 
     /** Maps legacy matrix built-ins to the fixed terrain inputs used by the shadow adapter. */
