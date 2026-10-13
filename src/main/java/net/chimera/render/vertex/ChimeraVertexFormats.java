@@ -6,6 +6,8 @@ import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -120,15 +122,24 @@ public final class ChimeraVertexFormats {
             DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, true);
     private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(
             DefaultVertexFormat.POSITION_TEX_COLOR);
-    private static final Map<VertexFormat, VertexFormat> HAND_FORMATS = Map.of(
-            DefaultVertexFormat.NEW_ENTITY, EXTENDED_ENTITY,
-            DefaultVertexFormat.PARTICLE, EXTENDED_PARTICLE,
-            DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, EXTENDED_GLYPH,
-            DefaultVertexFormat.POSITION_TEX_COLOR, EXTENDED_HAND_MAP_BACKGROUND);
+    private static final Map<VertexFormat, VertexFormat> HAND_FORMATS = handFormatsInOrder();
 
-    /** Native hand models, item quads, map text and map background keep distinct prefixes. */
+    /**
+     * Native hand models, item quads, map text and map background keep distinct prefixes. The
+     * order is fixed because each hand variant is named by its position, as pack_gbuffers_hand_N.
+     */
     public static Map<VertexFormat, VertexFormat> handFormats() {
         return HAND_FORMATS;
+    }
+
+    /** Map.of iterates in an order randomized per JVM start, which renamed the variants per session. */
+    private static Map<VertexFormat, VertexFormat> handFormatsInOrder() {
+        Map<VertexFormat, VertexFormat> formats = new LinkedHashMap<>();
+        formats.put(DefaultVertexFormat.NEW_ENTITY, EXTENDED_ENTITY);
+        formats.put(DefaultVertexFormat.PARTICLE, EXTENDED_PARTICLE);
+        formats.put(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, EXTENDED_GLYPH);
+        formats.put(DefaultVertexFormat.POSITION_TEX_COLOR, EXTENDED_HAND_MAP_BACKGROUND);
+        return Collections.unmodifiableMap(formats);
     }
 
     /** True for a format whose normal Chimera computes per quad because the host writes none. */

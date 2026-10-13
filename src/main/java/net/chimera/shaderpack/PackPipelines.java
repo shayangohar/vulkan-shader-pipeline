@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -272,7 +273,7 @@ public final class PackPipelines {
 
     /** One authored hand program owns a pipeline for each native hand mesh shape. */
     public record PackHand(Map<VertexFormat, PackEntity> variants) implements PipelineVariants {
-        public PackHand { variants = Map.copyOf(variants); }
+        public PackHand { variants = Collections.unmodifiableMap(new LinkedHashMap<>(variants)); }
         public PackEntity primary() { return variants.get(DefaultVertexFormat.NEW_ENTITY); }
         /** The variant for a native hand mesh shape, or null for any other layout (glint keeps its host draw). */
         public PackEntity forFormat(VertexFormat format) {
@@ -307,7 +308,7 @@ public final class PackPipelines {
     }
 
     public record PackSkyFamily(Map<VertexFormat, PackSky> variants) implements PipelineVariants {
-        public PackSkyFamily { variants = Map.copyOf(variants); }
+        public PackSkyFamily { variants = Collections.unmodifiableMap(new LinkedHashMap<>(variants)); }
         public PackSky forFormat(VertexFormat format) { return variants.get(format); }
     }
 

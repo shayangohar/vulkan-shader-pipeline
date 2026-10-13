@@ -37,6 +37,15 @@ final class HostFamilyTest {
             }
             """;
 
+    /** Hand variants are named by position (pack_gbuffers_hand_N), so the order must not change per run. */
+    @Test
+    void handFormatOrderIsFixed() {
+        assertEquals(List.of(DefaultVertexFormat.NEW_ENTITY, DefaultVertexFormat.PARTICLE,
+                        DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, DefaultVertexFormat.POSITION_TEX_COLOR),
+                List.copyOf(ChimeraVertexFormats.handFormats().keySet()),
+                "hand formats keep declaration order: native model, item quad, map text, map background");
+    }
+
     @Test
     void handInputsAndProjection() {
         String vertex = """
