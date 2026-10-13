@@ -291,48 +291,50 @@ public final class GlslInterfaceScanner {
                     || (qualifierToken.identifier("varying") && !vertexStage);
             boolean output = qualifierToken.identifier("out")
                     || (qualifierToken.identifier("varying") && vertexStage);
-            List<Declaration> declared = new ArrayList<>();
-            boolean malformed = false;
-            int nameIndex = GlslLexer.nextSignificant(tokens, typeIndex);
-            while (nameIndex >= 0 && nameIndex < statementEnd - 1) {
-                if (tokens.get(nameIndex).kind() != GlslLexer.Kind.IDENTIFIER) {
-                    malformed = true;
-                    break;
-                }
-                String name = tokens.get(nameIndex).text();
-                int separator = GlslLexer.nextSignificant(tokens, nameIndex);
-                int arraySize = 0;
-                if (separator >= 0 && tokens.get(separator).symbol("[")) {
-                    int size = GlslLexer.nextSignificant(tokens, separator);
-                    int close = size < 0 ? -1 : GlslLexer.nextSignificant(tokens, size);
-                    arraySize = size < 0 ? -1 : arraySize(tokens.get(size));
-                    if (arraySize <= 0 || close < 0 || !tokens.get(close).symbol("]")) {
-                        malformed = true;
-                        break;
-                    }
-                    separator = GlslLexer.nextSignificant(tokens, close);
-                }
-                if (separator < 0 || separator >= statementEnd
-                        || (!tokens.get(separator).symbol(",") && !tokens.get(separator).symbol(";"))) {
-                    malformed = true;
-                    break;
-                }
-                boolean referenced = referencedOutsideDeclaration(tokens, name, index, statementEnd);
-                declared.add(new Declaration(name, type, interpolation, input, output, referenced,
-                        arraySize, typeSlots * Math.max(arraySize, 1)));
-                if (tokens.get(separator).symbol(";")) {
-                    break;
-                }
-                nameIndex = GlslLexer.nextSignificant(tokens, separator);
-            }
-            if (malformed || declared.isEmpty()) {
+            List<Declaration> declared = declarators(tokens, index, typeIndex, statementEnd,
+                    new InterfaceType(type, interpolation, input, output, typeSlots));
+            if (declared == null || declared.isEmpty()) {
                 deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
                 continue;
             }
-            statements.add(new Statement(index, statementEnd, List.copyOf(declared)));
+            statements.add(new Statement(index, statementEnd, declared));
             index = statementEnd - 1;
         }
         return new Parse(tokens, statements, deviations);
+    }
+
+    /** What one interface statement's declarators share: type, interpolation, direction and size. */
+    private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots) {}
+
+    /**
+     * The variables one interface statement declares after its type, each with any array size, or
+     * null when a declarator is malformed.
+     */
+    private static List<Declaration> declarators(List<GlslLexer.Token> tokens, int statementStart, int typeIndex,
+                                                 int statementEnd, InterfaceType kind) {
+        List<Declaration> declared = new ArrayList<>();
+        int nameIndex = GlslLexer.nextSignificant(tokens, typeIndex);
+        while (nameIndex >= 0 && nameIndex < statementEnd - 1) {
+            if (tokens.get(nameIndex).kind() != GlslLexer.Kind.IDENTIFIER) return null;
+            String name = tokens.get(nameIndex).text();
+            int separator = GlslLexer.nextSignificant(tokens, nameIndex);
+            int arraySize = 0;
+            if (separator >= 0 && tokens.get(separator).symbol("[")) {
+                int size = GlslLexer.nextSignificant(tokens, separator);
+                int close = size < 0 ? -1 : GlslLexer.nextSignificant(tokens, size);
+                arraySize = size < 0 ? -1 : arraySize(tokens.get(size));
+                if (arraySize <= 0 || close < 0 || !tokens.get(close).symbol("]")) return null;
+                separator = GlslLexer.nextSignificant(tokens, close);
+            }
+            if (separator < 0 || separator >= statementEnd
+                    || (!tokens.get(separator).symbol(",") && !tokens.get(separator).symbol(";"))) return null;
+            boolean referenced = referencedOutsideDeclaration(tokens, name, statementStart, statementEnd);
+            declared.add(new Declaration(name, kind.type(), kind.interpolation(), kind.input(), kind.output(),
+                    referenced, arraySize, kind.slots() * Math.max(arraySize, 1)));
+            if (tokens.get(separator).symbol(";")) break;
+            nameIndex = GlslLexer.nextSignificant(tokens, separator);
+        }
+        return List.copyOf(declared);
     }
 
     /**

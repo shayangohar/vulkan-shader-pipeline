@@ -144,141 +144,152 @@ final class TerrainVertexBridge {
             boolean entityInputs,
             boolean allowStorageBuffers
     ) {
-            boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
-            String vertex = shadowStage
-                    ? normalizeShadowTerrain(
-                            EntityVertexBridge.defaultUnboundIdentityAttributes(
-                            LegacyGlslConverter.prepareSource(source, sourceFile, true)))
-                    : normalizeModernTerrain(
-                            EntityVertexBridge.defaultUnboundIdentityAttributes(
-                            LegacyGlslConverter.prepareSource(source, sourceFile, true)));
-            String fragment = fragmentSource == null ? "" : fragmentSource;
-            if (shadowStage && hasShadowTerrainVersion(fragment)) {
-                fragment = normalizeShadowTerrain(fragment);
-            } else if (hasModernTerrainVersion(fragment)) {
-                fragment = normalizeModernTerrain(fragment);
-            }
-            vertex = LegacyGlslConverter.expandModernVaryingLists(vertex);
-            fragment = LegacyGlslConverter.expandModernVaryingLists(fragment);
-            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(vertex);
-            if (!usage.successful()) {
-                throw new IllegalArgumentException(usage.deviations().toString());
-            }
-            vertex = GlslTokenRewriter.removeUnreachableFunctions(vertex, usage);
-            // On the entity layout both stages read entityId and blockEntityId from EntityIds.
-            Map<String, String> entityIdTypes = new LinkedHashMap<>();
-            if (entityInputs) {
-                String authoredVertex = stripComments(vertex);
-                for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
-                    String type = EntityVertexBridge.entityIdentifierType(name, authoredVertex, fragment);
-                    if (type != null) entityIdTypes.put(name, type);
-                }
-            }
-            vertex = interfacePlan == null
-                    ? stripShadowUniformDeclarations(vertex)
-                    : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
-            if (entityInputs) {
-                vertex = EntityVertexBridge.removeEntityIdDeclarations(vertex, interfacePlan);
-            }
-            String stripped = stripComments(vertex);
-            if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
-                    || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
-                throw new IllegalArgumentException("modern terrain vertex main or position is missing");
-            }
-            if ((!allowStorageBuffers && stripped.matches("(?s).*\\bbuffer\\b.*"))
-                    || stripped.matches("(?s).*\\b(?:geometry|tessellation|compute)\\b.*")
-                    || stripped.matches(
-                            "(?s).*\\buniform\\s+(?!(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)))\\w+.*")) {
-                throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
-            }
+        boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
+        String prepared = EntityVertexBridge.defaultUnboundIdentityAttributes(
+                LegacyGlslConverter.prepareSource(source, sourceFile, true));
+        String vertex = shadowStage ? normalizeShadowTerrain(prepared) : normalizeModernTerrain(prepared);
+        String fragment = fragmentSource == null ? "" : fragmentSource;
+        if (shadowStage && hasShadowTerrainVersion(fragment)) {
+            fragment = normalizeShadowTerrain(fragment);
+        } else if (hasModernTerrainVersion(fragment)) {
+            fragment = normalizeModernTerrain(fragment);
+        }
+        vertex = LegacyGlslConverter.expandModernVaryingLists(vertex);
+        fragment = LegacyGlslConverter.expandModernVaryingLists(fragment);
+        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(vertex);
+        if (!usage.successful()) {
+            throw new IllegalArgumentException(usage.deviations().toString());
+        }
+        vertex = GlslTokenRewriter.removeUnreachableFunctions(vertex, usage);
+        // On the entity layout both stages read entityId and blockEntityId from EntityIds.
+        Map<String, String> entityIdTypes = entityInputs ? entityIdTypes(vertex, fragment) : Map.of();
+        vertex = interfacePlan == null
+                ? stripShadowUniformDeclarations(vertex)
+                : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
+        if (entityInputs) {
+            vertex = EntityVertexBridge.removeEntityIdDeclarations(vertex, interfacePlan);
+        }
+        requireSupportedModernVertex(stripComments(vertex), allowStorageBuffers);
+        LegacyGlslConverter.TerrainVaryingLayout layout = modernVaryingLayout(vertex, fragment, entityIdTypes);
 
-            // The shared typed scanner keeps integral, matrix and array varyings (Photon:
-            // flat uint material_mask, flat mat3 tbn) and their location widths.
-            EntityVertexBridge.EntityVaryingDeclarations vertexVaryings =
-                    EntityVertexBridge.parseEntityVaryingDeclarations(vertex, true);
-            Map<String, String> vertexTypes = vertexVaryings.types();
-            Map<String, String> fragmentTypes =
-                    EntityVertexBridge.parseEntityVaryingDeclarations(fragment, false).types();
-            for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
-                if (!entry.getValue().equals(vertexTypes.get(entry.getKey()))) {
-                    throw new IllegalArgumentException("modern terrain varying mismatch: " + entry.getKey());
-                }
-            }
-            Map<String, Integer> locations = new TreeMap<>();
-            int location = 0;
-            for (String name : vertexTypes.keySet().stream().sorted().toList()) {
-                locations.put(name, location);
-                location += vertexVaryings.slots().get(name);
-            }
-            if (!entityIdTypes.isEmpty()) {
-                vertexTypes = new TreeMap<>(vertexTypes);
-                for (Map.Entry<String, String> id : entityIdTypes.entrySet()) {
-                    locations.put(EntityVertexBridge.entityIdVarying(id.getKey()), location++);
-                    vertexTypes.put(EntityVertexBridge.entityIdVarying(id.getKey()), id.getValue());
-                }
-            }
-            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
-                    locations, vertexVaryings.qualifiers());
+        // The prepared source keeps one version directive so the shared
+        // plan can inspect it. The generated bridge owns the final
+        // directive, so remove the prepared copy before composing the
+        // executable vertex shader.
+        String converted = LegacyGlslConverter.VERSION_LINE.matcher(removeShadowAttributes(
+                        removeTerrainAttributes(removeModernTerrainInputs(vertex, layout), shadowStage), shadowStage))
+                .replaceAll("");
+        Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
+        if (shadowStage) {
+            inputReplacements.putAll(shadowAttributeInputReplacements(vertex));
+            inputReplacements.putAll(entityInputs
+                    ? EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
+                    : shadowMatrixBuiltinReplacements());
+        }
+        for (String name : entityIdTypes.keySet()) {
+            inputReplacements.put(name, EntityVertexBridge.entityIdExpression(layout, name));
+        }
+        converted = GlslTokenRewriter.replaceIdentifiers(converted, inputReplacements);
+        // Iris gives entity programs the draw's texture matrix (iris_TextureMat).
+        converted = converted.replaceAll(
+                "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", entityInputs ? "TextureMat" : "mat4(1.0)");
+        converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted);
+        converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
+                "chimeraFtransform()");
+        if (shadowStage) {
+            converted = normalizeShadowLegacyBuiltins(converted);
+        }
+        converted = rewriteModernTerrainSamplers(converted, interfacePlan, shadowStage);
+        converted = LegacyGlslConverter.convertTextureCalls(converted);
+        if (MODERN_TERRAIN_INPUT_DECL.matcher(stripComments(converted)).find()) {
+            throw new IllegalArgumentException("modern terrain input was not consumed");
+        }
+        String uniformBlock = modernUniformBlock(interfacePlan, shadowStage);
+        if (shadowStage && interfacePlan != null && !interfacePlan.executableUniforms().isEmpty()) {
+            converted = FragmentConverter.qualifyShadowUniformReferences(converted,
+                    interfacePlan.executableUniforms());
+        }
+        String chimeraVaryings = "";
+        for (String name : entityIdTypes.keySet()) {
+            converted = LegacyGlslConverter.injectMainPrologue(converted,
+                    EntityVertexBridge.entityIdVarying(name) + " = EntityIds."
+                            + EntityVertexBridge.entityIdComponent(name) + ";");
+            chimeraVaryings += "layout(location = " + layout.location(EntityVertexBridge.entityIdVarying(name))
+                    + ") flat out uint " + EntityVertexBridge.entityIdVarying(name) + ";\n";
+        }
+        String effectivePreamble = shadowStage && !extendedShadow && !entityInputs
+                ? GlslVertexPreambles.SHADOW_VERTEX_PREAMBLE : vertexPreamble;
+        String body = shadowStage ? shadowClipRangeWrapper(converted) : converted;
+        return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n"
+                + effectivePreamble + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
+                + chimeraVaryings + uniformBlock + body, layout);
+    }
 
-            // The prepared source keeps one version directive so the shared
-            // plan can inspect it. The generated bridge owns the final
-            // directive, so remove the prepared copy before composing the
-            // executable vertex shader.
-            String converted = LegacyGlslConverter.VERSION_LINE.matcher(removeShadowAttributes(
-                            removeTerrainAttributes(removeModernTerrainInputs(vertex, layout), shadowStage),
-                                    shadowStage))
-                    .replaceAll("");
-            Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
-            if (shadowStage) {
-                inputReplacements.putAll(shadowAttributeInputReplacements(vertex));
-                inputReplacements.putAll(entityInputs
-                        ? EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
-                                : shadowMatrixBuiltinReplacements());
+    /** The entityId and blockEntityId types either stage declares, in {@code ENTITY_ID_NAMES} order. */
+    private static Map<String, String> entityIdTypes(String vertex, String fragment) {
+        Map<String, String> types = new LinkedHashMap<>();
+        String authoredVertex = stripComments(vertex);
+        for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
+            String type = EntityVertexBridge.entityIdentifierType(name, authoredVertex, fragment);
+            if (type != null) types.put(name, type);
+        }
+        return types;
+    }
+
+    /** The strict modern subset: a main that writes gl_Position, and no unsupported resource or stage. */
+    private static void requireSupportedModernVertex(String stripped, boolean allowStorageBuffers) {
+        if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
+                || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+            throw new IllegalArgumentException("modern terrain vertex main or position is missing");
+        }
+        if ((!allowStorageBuffers && stripped.matches("(?s).*\\bbuffer\\b.*"))
+                || stripped.matches("(?s).*\\b(?:geometry|tessellation|compute)\\b.*")
+                || stripped.matches(
+                        "(?s).*\\buniform\\s+(?!(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)))\\w+.*")) {
+            throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
+        }
+    }
+
+    /**
+     * Locations for the vertex outputs in name order, then the entity id varyings. The shared typed
+     * scanner keeps integral, matrix and array varyings (Photon: flat uint material_mask, flat mat3
+     * tbn) and their location widths; a fragment input of another type is refused.
+     */
+    private static LegacyGlslConverter.TerrainVaryingLayout modernVaryingLayout(
+            String vertex, String fragment, Map<String, String> entityIdTypes) {
+        EntityVertexBridge.EntityVaryingDeclarations vertexVaryings =
+                EntityVertexBridge.parseEntityVaryingDeclarations(vertex, true);
+        Map<String, String> vertexTypes = vertexVaryings.types();
+        Map<String, String> fragmentTypes =
+                EntityVertexBridge.parseEntityVaryingDeclarations(fragment, false).types();
+        for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
+            if (!entry.getValue().equals(vertexTypes.get(entry.getKey()))) {
+                throw new IllegalArgumentException("modern terrain varying mismatch: " + entry.getKey());
             }
-            for (String name : entityIdTypes.keySet()) {
-                inputReplacements.put(name, EntityVertexBridge.entityIdExpression(layout, name));
+        }
+        Map<String, Integer> locations = new TreeMap<>();
+        int location = 0;
+        for (String name : vertexTypes.keySet().stream().sorted().toList()) {
+            locations.put(name, location);
+            location += vertexVaryings.slots().get(name);
+        }
+        if (!entityIdTypes.isEmpty()) {
+            vertexTypes = new TreeMap<>(vertexTypes);
+            for (Map.Entry<String, String> id : entityIdTypes.entrySet()) {
+                locations.put(EntityVertexBridge.entityIdVarying(id.getKey()), location++);
+                vertexTypes.put(EntityVertexBridge.entityIdVarying(id.getKey()), id.getValue());
             }
-            converted = GlslTokenRewriter.replaceIdentifiers(converted, inputReplacements);
-            // Iris gives entity programs the draw's texture matrix (iris_TextureMat).
-            converted = converted.replaceAll(
-                    "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", entityInputs ? "TextureMat" : "mat4(1.0)");
-            converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted);
-            converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
-                    "chimeraFtransform()");
-            if (shadowStage) {
-                converted = normalizeShadowLegacyBuiltins(converted);
-            }
-            converted = rewriteModernTerrainSamplers(converted, interfacePlan, shadowStage);
-            converted = LegacyGlslConverter.convertTextureCalls(converted);
-            if (MODERN_TERRAIN_INPUT_DECL.matcher(stripComments(converted)).find()) {
-                throw new IllegalArgumentException("modern terrain input was not consumed");
-            }
-            String uniformBlock = shadowStage && interfacePlan != null
-                    && !interfacePlan.executableUniforms().isEmpty()
-                    ? FragmentConverter.generatedShadowUniformBlock(interfacePlan.executableUniforms(),
-                    FragmentConverter.shadowUniformBinding(interfacePlan.stage()))
-                    : !shadowStage && interfacePlan != null
-                    && !interfacePlan.executableUniforms().isEmpty()
-                    ? FragmentConverter.generatedGeometryUniformBlock(interfacePlan.executableUniforms()) : "";
-            if (shadowStage && interfacePlan != null
-                    && !interfacePlan.executableUniforms().isEmpty()) {
-                converted = FragmentConverter.qualifyShadowUniformReferences(converted,
-                        interfacePlan.executableUniforms());
-            }
-            String chimeraVaryings = "";
-            for (String name : entityIdTypes.keySet()) {
-                converted = LegacyGlslConverter.injectMainPrologue(converted,
-                        EntityVertexBridge.entityIdVarying(name) + " = EntityIds."
-                                + EntityVertexBridge.entityIdComponent(name) + ";");
-                chimeraVaryings += "layout(location = " + layout.location(EntityVertexBridge.entityIdVarying(name))
-                        + ") flat out uint " + EntityVertexBridge.entityIdVarying(name) + ";\n";
-            }
-            String effectivePreamble = shadowStage && !extendedShadow && !entityInputs
-                    ? GlslVertexPreambles.SHADOW_VERTEX_PREAMBLE : vertexPreamble;
-            String body = shadowStage ? shadowClipRangeWrapper(converted) : converted;
-            return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n"
-                    + effectivePreamble + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
-                    + chimeraVaryings + uniformBlock + body, layout);
+        }
+        return new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes, locations, vertexVaryings.qualifiers());
+    }
+
+    /** The generated uniform block: the shadow pipeline's own binding, or the geometry block. */
+    private static String modernUniformBlock(UniformRegistry.ProgramInterface interfacePlan, boolean shadowStage) {
+        if (interfacePlan == null || interfacePlan.executableUniforms().isEmpty()) return "";
+        return shadowStage
+                ? FragmentConverter.generatedShadowUniformBlock(interfacePlan.executableUniforms(),
+                        FragmentConverter.shadowUniformBinding(interfacePlan.stage()))
+                : FragmentConverter.generatedGeometryUniformBlock(interfacePlan.executableUniforms());
     }
 
     /** Converts the same strict bridge for the shadow pipeline's one-matrix UBO. */

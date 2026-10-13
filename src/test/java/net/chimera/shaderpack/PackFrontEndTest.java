@@ -286,12 +286,11 @@ final class PackFrontEndTest {
     }
 
     /**
-     * Step 3a: the names Iris gives a program. Its player, HUD, clock and DH uniforms; its legacy
-     * shadow sampler aliases; gl_Fog.color; a pack's own value of a VulkanMod-only name; and the
-     * zero Iris leaves in a uniform it does not provide.
+     * The uniform names Iris serves a program (player, HUD, clock and DH), and the zero it leaves
+     * in a uniform it does not provide.
      */
     @Test
-    void irisNames() {
+    void irisUniforms() {
         UniformRegistry.ProgramInterface served = UniformRegistry.plan(String.join("\n",
                 "uniform float currentPlayerHealth;", "uniform bool hideGUI;", "uniform int isRightHanded;",
                 "uniform mat4 dhProjection;", "uniform float dhFarPlane;", "uniform int dhRenderDistance;",
@@ -313,7 +312,10 @@ final class PackFrontEndTest {
                 "the runtime serves the same zero");
         assertTrue(UniformRegistry.resolve("fogDensity", "float", Map.of()) == null,
                 "an unserved Iris name gets no substitute at runtime");
+    }
 
+    @Test
+    void packOwnTexelSize() {
         // Bliss authors texelSize; Iris has no such builtin, so the pack's value stands.
         PackRuntimeSettings texel = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "vec2", "texelSize",
@@ -325,7 +327,10 @@ final class PackFrontEndTest {
                 "the pack's texelSize wins over the host name");
         assertTrue(UniformRegistry.isEngineInput("gbufferProjection") && !UniformRegistry.isEngineInput("texelSize"),
                 "Iris names stay engine inputs; VulkanMod names do not");
+    }
 
+    @Test
+    void shadowSamplerAliases() {
         // IrisSamplers.addShadowSamplers: shadow is shadowtex0 unless watershadow is declared.
         assertTrue(PackResourcePlan.programResource("shadow", false).equals("shadowtex0")
                 && PackResourcePlan.programResource("shadow", true).equals("shadowtex1")
@@ -344,7 +349,10 @@ final class PackFrontEndTest {
         assertTrue(both.executable() && slotOf(both, "shadow") == SelectorNamespace.SHADOW_TEX1_SLOT
                         && slotOf(both, "watershadow") == 5,
                 "with watershadow, shadow is the opaque casters: " + both.deviations());
+    }
 
+    @Test
+    void fogColor() {
         // CommonTransformer: gl_Fog.color is iris_FogColor, the fog RGBA.
         LegacyShaderNormalizer.Result undeclared = LegacyShaderNormalizer.normalize(
                 "#version 120\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
@@ -354,7 +362,10 @@ final class PackFrontEndTest {
                 "#version 120\nuniform vec3 fogColor;\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
         assertTrue(vec3.successful() && vec3.source().contains("vec4(fogColor, 1.0)")
                 && !vec3.source().contains("uniform vec4 fogColor"), "vec3 fogColor kept:\n" + vec3.source());
+    }
 
+    @Test
+    void fogFragCoord() {
         // CommonTransformer: gl_FogFragCoord is the varying iris_FogFragCoord, zeroed first in the vertex stage.
         LegacyShaderNormalizer.Result fogVertex = LegacyShaderNormalizer.normalize(
                 "#version 120\nvoid main() {\n    gl_FogFragCoord = 4.0;\n}\n", true);
@@ -371,7 +382,10 @@ final class PackFrontEndTest {
                 "gl_FogFragCoord fragment:\n" + fogFragment.source());
         assertTrue(LegacyShaderNormalizer.normalize(fogVertex.source(), true).source().equals(fogVertex.source()),
                 "gl_FogFragCoord normalization must be idempotent");
+    }
 
+    @Test
+    void uniformDeclaratorLists() {
         // Solas declares samplers in lists; every per-name rewriter needs one declaration per name.
         String lists = GlslTokenRewriter.splitUniformDeclarators("""
                 #version 330
@@ -390,7 +404,10 @@ final class PackFrontEndTest {
                         && lists.contains("{ float x, y; }")
                         && lists.contains("float c = 1.0, d = 2.0;"),
                 "uniform declarator lists:\n" + lists);
+    }
 
+    @Test
+    void commentedUniformDeclarations() {
         // Solas comments "a corresponding uniform in shaders.properties" right above its declarations.
         String commented = """
                 //Every biome has a corresponding uniform in the shaders.properties file
@@ -404,7 +421,10 @@ final class PackFrontEndTest {
                         && stripped.contains("corresponding uniform in the shaders.properties file")
                         && stripped.contains("/* uniform float inBlockComment; */"),
                 "a comment must not start a uniform declaration:\n" + stripped);
+    }
 
+    @Test
+    void nonConstantGlobals() {
         // Photon: constants stay const (array sizes and later consts need them); only a
         // global const that really depends on a uniform, a plain global or a function loses it.
         String relaxed = GlslTokenRewriter.relaxNonConstantGlobals("""
@@ -434,7 +454,10 @@ final class PackFrontEndTest {
                         && !relaxed.contains("const float called")
                         && relaxed.contains("float shade(const float x) { const float y"),
                 "non-constant global const relaxation:\n" + relaxed);
+    }
 
+    @Test
+    void samplerMacroAliases() {
         // Photon reaches samplers through macros; only those aliases expand, and only while defined.
         String aliased = GlslTokenRewriter.expandSamplerAliases("""
                 uniform sampler2D colortex0;
@@ -456,7 +479,10 @@ final class PackFrontEndTest {
                         && aliased.contains("#define rec709_to_working_color rec709_to_rec2020")
                         && aliased.contains("vec3 c = rec709_to_working_color[0];"),
                 "sampler alias expansion:\n" + aliased);
+    }
 
+    @Test
+    void objectMacroReachability() {
         // Photon calls tonemap_lottes only as tonemap(x) through an object-like alias.
         String reachable = """
                 #define tonemap tonemap_lottes
@@ -468,7 +494,10 @@ final class PackFrontEndTest {
                 GlslResourceUsage.analyze(reachable));
         assertTrue(pruned.contains("vec3 tonemap_lottes(vec3 rgb)") && !pruned.contains("unused_operator"),
                 "object-like macro call reachability:\n" + pruned);
+    }
 
+    @Test
+    void modernOutputLocations() {
         // Photon: explicit (even multi-line) output locations hold; unlocated ones take the next free one.
         String outputs = "/* RENDERTARGETS: 6,14,3 */\nlayout(\n    location = 1\n) out vec4 b;\n"
                 + "out vec2 a;\nlayout(location = 0) out vec3 c;\nvoid main() {}\n";
@@ -481,7 +510,10 @@ final class PackFrontEndTest {
                         && routed.outputLocations().equals(List.of(0, 1, 2))
                         && routed.outputType(0).equals("vec3") && routed.outputType(2).equals("vec2"),
                 "modern output locations: " + modern + " plan " + routed.outputLocations());
+    }
 
+    @Test
+    void worldColourTargetReads() {
         // MakeUp: world programs read pack colour targets (gaux4 = colortex7) as Iris binds them;
         // colortex0..3 stay off the host atlas/overlay/lightmap/shadowcolor selectors.
         String worldReader = """
@@ -496,20 +528,29 @@ final class PackFrontEndTest {
                             && reader.samplers().stream().noneMatch(value -> value.name().equals("colortex2")),
                     world + " colour target reads: " + reader.samplers() + " " + reader.deviations());
         }
+    }
 
+    @Test
+    void implicitModelView() {
         // The terrain bridge rewrites gl_ModelViewMatrix to gbufferModelView; the plan must serve it.
         UniformRegistry.ProgramInterface legacyMatrix = UniformRegistry.plan(
                 "void main() { gl_Position = gl_ModelViewMatrix * gl_Vertex; }", UniformRegistry.Stage.GEOMETRY);
         assertTrue(legacyMatrix.uniforms().stream().anyMatch(value -> value.name().equals("gbufferModelView")),
                 "implicit gbufferModelView: " + legacyMatrix.uniforms());
+    }
 
+    @Test
+    void entityDefaultAttribute() {
         // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
         String entity = EntityVertexBridge.removeEntityAttributes(
                 "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
         assertTrue(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
                         && !entity.contains("mc_midTexCoord"),
                 "entity mc_Entity default:\n" + entity);
+    }
 
+    @Test
+    void persistentWorldTargetSeed() {
         // A persistent target a world program reads needs a defined first frame even with no post reader.
         TargetSpec fog = new TargetSpec(7, 97, 16, 16, false, null, true, false, false, List.of());
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), Set.of(7))

@@ -275,53 +275,20 @@ public final class PackConfig {
             Path shadersDir,
             PackSettingsPlan settings
     ) {
-        Map<Integer, Integer> colortexFormats = new HashMap<>();
-        Map<String, String> shadowValues = new TreeMap<>();
-        Map<String, String> shaderConstants = new TreeMap<>();
-        Map<Integer, TargetSettings> targetSettings = new TreeMap<>();
-        Map<String, List<Integer>> flips = new TreeMap<>();
-        Map<String, List<Integer>> preFlips = new TreeMap<>();
-        List<String> deviations = new ArrayList<>();
-
+        Collected collected = new Collected();
         for (PackProgram program : programs.stream()
                 .sorted(Comparator.comparing(PackProgram::name)).toList()) {
             String src = program.executableFragmentSource();
             if (src == null) {
                 src = "";
             }
-            Matcher fmt = COLORTEX_FMT_CONST.matcher(src);
-            while (fmt.find()) {
-                int slot = parseTargetIndex(fmt.group(1), deviations);
-                if (slot < 0) {
-                    continue;
-                }
-                String token = fmt.group(2);
-                Integer code = FMT_TO_VK.get(token);
-                if (code == null) {
-                    code = APPROXIMATE_FMT_TO_VK.get(token);
-                    if (code != null) {
-                        deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
-                                + slot + "=" + token + "->" + formatName(code));
-                    }
-                }
-                if (code == null) {
-                    deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
-                    LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
-                            program.name(), slot, token);
-                    continue;
-                }
-                Integer previous = colortexFormats.put(slot, code);
-                if (previous != null && !previous.equals(code)) {
-                    LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program.name(), slot, previous,
-                            code);
-                }
-            }
-            collectShadowConstants(src, shadowValues);
-            collectShadowConstants(program.executableVertexSource(), shadowValues);
-            collectPackConstants(src, shaderConstants, deviations);
-            collectPackConstants(program.executableVertexSource(), shaderConstants, deviations);
-            collectTargetConstants(src, targetSettings, deviations);
-            collectTargetConstants(program.executableVertexSource(), targetSettings, deviations);
+            collectSourceFormats(program.name(), src, collected);
+            collectShadowConstants(src, collected.shadowValues);
+            collectShadowConstants(program.executableVertexSource(), collected.shadowValues);
+            collectPackConstants(src, collected.shaderConstants, collected.deviations);
+            collectPackConstants(program.executableVertexSource(), collected.shaderConstants, collected.deviations);
+            collectTargetConstants(src, collected.targetSettings, collected.deviations);
+            collectTargetConstants(program.executableVertexSource(), collected.targetSettings, collected.deviations);
         }
 
         // shaders.properties overrides (OptiFine packs may declare formats here).
@@ -330,83 +297,8 @@ public final class PackConfig {
             try {
                 for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
                     Matcher m = PROPERTY_LINE.matcher(line);
-                    if (!m.find()) {
-                        continue;
-                    }
-                    String key = m.group(1);
-                    String value = m.group(2).trim();
-                    Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
-                    if (colortexKey.find()) {
-                        int slot = parseTargetIndex(colortexKey.group(1), deviations);
-                        if (slot < 0) {
-                            continue;
-                        }
-                        Integer code = FMT_TO_VK.get(value);
-                        if (code == null) {
-                            code = APPROXIMATE_FMT_TO_VK.get(value);
-                            if (code != null) {
-                                deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
-                                        + slot + "=" + value + "->" + formatName(code));
-                            }
-                        }
-                        if (code == null) {
-                            deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:" + key + "=" + value);
-                            LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
-                            continue;
-                        }
-                        colortexFormats.put(slot, code);
-                        LOGGER.info("[chimera] pack properties: {}={}", key, value);
-                    } else {
-                        Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
-                        Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
-                        Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
-                        Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
-                        if (sizeKey.matches()) {
-                            int slot = parseTargetIndex(sizeKey.group(1), deviations);
-                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                                updateTargetSettings(targetSettings, slot, value, null, null, null);
-                            }
-                        } else if (clearKey.matches()) {
-                            int slot = parseTargetIndex(clearKey.group(1), deviations);
-                            Boolean clear = parseBoolean(value);
-                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
-                                updateTargetSettings(targetSettings, slot, null, clear, null, null);
-                            } else if (clear != null) {
-                                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-                            }
-                        } else if (clearColorKey.matches()) {
-                            int slot = parseTargetIndex(clearColorKey.group(1), deviations);
-                            float[] color = parseColor(value);
-                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
-                                updateTargetSettings(targetSettings, slot, null, null, color, null);
-                            } else {
-                                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-                            }
-                        } else if (flipKey.matches()) {
-                            int slot = parseTargetIndex(flipKey.group(2), deviations);
-                            Boolean flip = parseBoolean(value);
-                            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && flip != null) {
-                                Map<String, List<Integer>> destination = flipKey.group(1).endsWith("_pre")
-                                        ? preFlips : flips;
-                                updateFlip(destination, flipKey.group(1), slot, flip);
-                            } else {
-                                deviations.add("POST_TARGET_FLIP_UNSUPPORTED:" + key);
-                            }
-                        } else if (key.startsWith("size.buffer.")
-                                || key.startsWith("flip.")) {
-                            deviations.add("POST_TARGET_PROPERTY_UNSUPPORTED:" + key);
-                        }
-                    }
-                    if (SHADOW_PROPERTIES.contains(key)) {
-                        shadowValues.put(key, value);
-                        LOGGER.info("[chimera] pack properties: {}={}", key, value);
-                    } else if (PACK_CONSTANT_NAMES.contains(key)) {
-                        if (isNumeric(value)) {
-                            shaderConstants.put(key, normalizeNumeric(value));
-                            LOGGER.info("[chimera] pack properties: {}={}", key, value);
-                        } else {
-                            deviations.add("PACK_CONSTANT_UNSUPPORTED:" + key);
-                        }
+                    if (m.find()) {
+                        applyProperty(m.group(1), m.group(2).trim(), collected);
                     }
                 }
             } catch (IOException e) {
@@ -423,7 +315,145 @@ public final class PackConfig {
             }
         }
 
-        ShadowSettings shadowSettings = validateShadowSettings(shadowValues);
+        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues);
+        addShadowConstants(shadowSettings, collected.shadowValues, collected.shaderConstants);
+        return new PackConfigData(collected.colortexFormats, drawBufferCount,
+                shadowSettings, collected.shaderConstants, collected.deviations, settings,
+                collected.targetSettings, collected.flips, collected.preFlips);
+    }
+
+    /** What parsing gathers from the sources and shaders.properties before shadow validation. */
+    private static final class Collected {
+        final Map<Integer, Integer> colortexFormats = new HashMap<>();
+        final Map<String, String> shadowValues = new TreeMap<>();
+        final Map<String, String> shaderConstants = new TreeMap<>();
+        final Map<Integer, TargetSettings> targetSettings = new TreeMap<>();
+        final Map<String, List<Integer>> flips = new TreeMap<>();
+        final Map<String, List<Integer>> preFlips = new TreeMap<>();
+        final List<String> deviations = new ArrayList<>();
+    }
+
+    /** A colortex format token's Vulkan format, recording an approximation; null when unsupported. */
+    private static Integer formatCode(int slot, String token, List<String> deviations) {
+        Integer code = FMT_TO_VK.get(token);
+        if (code == null) {
+            code = APPROXIMATE_FMT_TO_VK.get(token);
+            if (code != null) {
+                deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
+                        + slot + "=" + token + "->" + formatName(code));
+            }
+        }
+        return code;
+    }
+
+    /** The {@code const int colortexNFormat} declarations of one program's fragment source. */
+    private static void collectSourceFormats(String program, String src, Collected collected) {
+        Matcher fmt = COLORTEX_FMT_CONST.matcher(src);
+        while (fmt.find()) {
+            int slot = parseTargetIndex(fmt.group(1), collected.deviations);
+            if (slot < 0) {
+                continue;
+            }
+            String token = fmt.group(2);
+            Integer code = formatCode(slot, token, collected.deviations);
+            if (code == null) {
+                collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
+                LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
+                        program, slot, token);
+                continue;
+            }
+            Integer previous = collected.colortexFormats.put(slot, code);
+            if (previous != null && !previous.equals(code)) {
+                LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
+            }
+        }
+    }
+
+    /** One shaders.properties entry: a target format or directive, a shadow setting, or a pack constant. */
+    private static void applyProperty(String key, String value, Collected collected) {
+        Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
+        if (colortexKey.find()) {
+            if (!applyFormatProperty(key, value, colortexKey.group(1), collected)) {
+                return;
+            }
+        } else {
+            applyTargetProperty(key, value, collected);
+        }
+        if (SHADOW_PROPERTIES.contains(key)) {
+            collected.shadowValues.put(key, value);
+            LOGGER.info("[chimera] pack properties: {}={}", key, value);
+        } else if (PACK_CONSTANT_NAMES.contains(key)) {
+            if (isNumeric(value)) {
+                collected.shaderConstants.put(key, normalizeNumeric(value));
+                LOGGER.info("[chimera] pack properties: {}={}", key, value);
+            } else {
+                collected.deviations.add("PACK_CONSTANT_UNSUPPORTED:" + key);
+            }
+        }
+    }
+
+    /** A {@code colortexNFormat} property; false when it names no target or no supported format. */
+    private static boolean applyFormatProperty(String key, String value, String index, Collected collected) {
+        int slot = parseTargetIndex(index, collected.deviations);
+        if (slot < 0) {
+            return false;
+        }
+        Integer code = formatCode(slot, value, collected.deviations);
+        if (code == null) {
+            collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:" + key + "=" + value);
+            LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
+            return false;
+        }
+        collected.colortexFormats.put(slot, code);
+        LOGGER.info("[chimera] pack properties: {}={}", key, value);
+        return true;
+    }
+
+    /** A target size, clear, clear color or flip directive. */
+    private static void applyTargetProperty(String key, String value, Collected collected) {
+        List<String> deviations = collected.deviations;
+        Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
+        Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
+        Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
+        Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
+        if (sizeKey.matches()) {
+            int slot = parseTargetIndex(sizeKey.group(1), deviations);
+            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
+                updateTargetSettings(collected.targetSettings, slot, value, null, null, null);
+            }
+        } else if (clearKey.matches()) {
+            int slot = parseTargetIndex(clearKey.group(1), deviations);
+            Boolean clear = parseBoolean(value);
+            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
+                updateTargetSettings(collected.targetSettings, slot, null, clear, null, null);
+            } else if (clear != null) {
+                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+            }
+        } else if (clearColorKey.matches()) {
+            int slot = parseTargetIndex(clearColorKey.group(1), deviations);
+            float[] color = parseColor(value);
+            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
+                updateTargetSettings(collected.targetSettings, slot, null, null, color, null);
+            } else {
+                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+            }
+        } else if (flipKey.matches()) {
+            int slot = parseTargetIndex(flipKey.group(2), deviations);
+            Boolean flip = parseBoolean(value);
+            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && flip != null) {
+                updateFlip(flipKey.group(1).endsWith("_pre") ? collected.preFlips : collected.flips,
+                        flipKey.group(1), slot, flip);
+            } else {
+                deviations.add("POST_TARGET_FLIP_UNSUPPORTED:" + key);
+            }
+        } else if (key.startsWith("size.buffer.") || key.startsWith("flip.")) {
+            deviations.add("POST_TARGET_PROPERTY_UNSUPPORTED:" + key);
+        }
+    }
+
+    /** The validated shadow settings the converted sources read as constants. */
+    private static void addShadowConstants(ShadowSettings shadowSettings, Map<String, String> shadowValues,
+                                           Map<String, String> shaderConstants) {
         shaderConstants.put("shadowMapResolution", Integer.toString(shadowSettings.resolution()));
         shaderConstants.put("shadowDistance", Float.toString(shadowSettings.distance()));
         if (shadowValues.containsKey("shadowDistanceRenderMul")) {
@@ -436,9 +466,6 @@ public final class PackConfig {
         if (shadowValues.containsKey("sunPathOffset")) {
             shaderConstants.put("sunPathOffset", Float.toString(shadowSettings.sunPathOffset()));
         }
-        return new PackConfigData(colortexFormats, drawBufferCount,
-                shadowSettings, shaderConstants, deviations, settings,
-                targetSettings, flips, preFlips);
     }
 
     private static final List<String> SHADOW_PROPERTIES = List.of(

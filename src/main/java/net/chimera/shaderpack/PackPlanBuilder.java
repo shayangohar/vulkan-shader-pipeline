@@ -321,6 +321,16 @@ public final class PackPlanBuilder {
 
         /** Whether the planned sources may execute, recording each contract they break. */
         private boolean admitted() {
+            // Every check runs, so the report names every reason a program is refused.
+            boolean admitted = interfaceAdmitted();
+            admitted &= targetsAdmitted();
+            admitted &= storageAdmitted();
+            admitted &= vertexAdmitted();
+            return admitted;
+        }
+
+        /** The family, stages, interface, targets and alpha test each allow the program. */
+        private boolean interfaceAdmitted() {
             boolean needsVertex = FamilyAdapterRegistry.isEntityLike(name)
                     || FamilyAdapterRegistry.isShadowEntityFamily(name)
                     || FamilyAdapterRegistry.isParticleLike(name)
@@ -328,7 +338,7 @@ public final class PackPlanBuilder {
                     || hostLayoutLane != null
                     || FamilyAdapterRegistry.isSkyFamily(name)
                     || FamilyAdapterRegistry.isCloudFamily(name);
-            boolean admitted = FamilyAdapterRegistry.isExecutableFamily(name)
+            return FamilyAdapterRegistry.isExecutableFamily(name)
                     && fragment != null
                     && (!needsVertex || vertex != null)
                     && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
@@ -338,6 +348,11 @@ public final class PackPlanBuilder {
                     && (targetPlan == null || targetPlan.executable())
                     && (geometryOutputPlan == null || geometryOutputPlan.executable())
                     && alphaTestPlan.valid();
+        }
+
+        /** A world draw must not sample its own outputs, and shadow outputs are shadowcolor0 and 1 only. */
+        private boolean targetsAdmitted() {
+            boolean admitted = true;
             if (geometryOutputPlan != null) {
                 // A world draw samples pack targets as shader-read images while its own outputs
                 // are colour attachments; one image cannot be both inside a render pass.
@@ -362,6 +377,11 @@ public final class PackPlanBuilder {
                 }
                 admitted &= shadowOutputs.executable();
             }
+            return admitted;
+        }
+
+        /** A storage block needs a planned buffer, or a supported catalog still to bind it. */
+        private boolean storageAdmitted() {
             boolean hasStorageBlock = stages.values().stream()
                     .filter(value -> value != null)
                     .anyMatch(value -> PackAdvancedResourcePlan.containsStorageBlock(value.source()));
@@ -371,9 +391,15 @@ public final class PackPlanBuilder {
                         .anyMatch(PackAdvancedResourcePlan.BufferSpec::supported);
                 if (!pendingCatalog) {
                     deviations.add("STORAGE_BUFFER_UNPLANNED:" + name);
-                    admitted = false;
+                    return false;
                 }
             }
+            return true;
+        }
+
+        /** The vertex stage each family needs: MRT pairs, family bridges, and host layout lanes. */
+        private boolean vertexAdmitted() {
+            boolean admitted = true;
             if (geometryOutputPlan != null && geometryOutputPlan.requiresMrt() && vertex == null
                     && !FamilyAdapterRegistry.isEntityLike(name)
                     && !FamilyAdapterRegistry.isParticleLike(name)

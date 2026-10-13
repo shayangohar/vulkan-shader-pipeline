@@ -339,21 +339,7 @@ final class AdvancedImagePlanTest {
             PackProgramPlan shadow = packPlan.program("shadow");
             assertTrue(shadow != null && shadow.executable() && packPlan.shouldAttempt("shadow"),
                     label + " shadow producer is not executable with advanced resources");
-            if (label.equals("BSL") || label.equals("Complementary")) {
-                String vertex = shadow.executableVertexSource();
-                // Camera gbuffer uniforms stay distinct from the legacy
-                // shadow-stage built-ins. Do not require a camera matrix to
-                // survive conversion when only the shadow draw pair is used.
-                assertTrue(vertex.contains("ChimeraShadowUniforms")
-                                && vertex.contains("shadowModelView")
-                                && vertex.contains("shadowProjection"),
-                        label + " shadow adapter lost its canonical matrix UBO");
-                assertTrue(vertex.contains("chimeraShadowUniforms.shadowModelView")
-                                && vertex.contains("chimeraShadowUniforms.shadowProjection"),
-                        label + " shadow adapter did not qualify its draw matrix UBO access");
-                assertTrue(!vertex.contains("gl_VertexID"),
-                        label + " shadow adapter left Vulkan-incompatible gl_VertexID");
-            }
+            verifyShadowAdapter(shadow, label);
             assertTrue(!plan.computeStages().get("shadowcomp").samplerNames().isEmpty(),
                     label + " 3D sampler dependencies were not planned");
             if (plan.graphicsImages().containsKey("shadow")) {
@@ -367,121 +353,152 @@ final class AdvancedImagePlanTest {
                     label + " live advanced sampler was starved by a slot limit: "
                             + plan.deviations());
             if (label.equals("Complementary")) {
-                PackAdvancedResourcePlan.ImageSpec wsr = plan.images().get("wsr_img");
-                assertTrue(wsr != null && wsr.supported()
-                                && wsr.width() == 128 && wsr.height() == 64 && wsr.depth() == 128
-                                && wsr.widthToken().equals("COLORED_LIGHTING")
-                                && wsr.heightToken().equals("64")
-                                && wsr.depthToken().equals("COLORED_LIGHTING"),
-                        "Complementary WSR dimensions were not resolved from the active option");
-                PackAdvancedResourcePlan.BufferSpec wsrBuffer = plan.buffers().get(0);
-                assertTrue(wsrBuffer != null && wsrBuffer.supported()
-                                && wsrBuffer.size() == 50_855_936L,
-                        "Complementary WSR bufferObject.0 was not admitted at its authored size");
-                Map<String, Integer> slots = analysis.settings().customSamplerSlots();
-                assertTrue(slots.containsKey("voxel_sampler")
-                                && slots.containsKey("wsr_sampler")
-                                && slots.containsKey("wsr_lod_sampler"),
-                        "Complementary advanced sampler slots are incomplete: " + slots);
-                assertTrue(plan.graphicsImages("shadow").stream().anyMatch(value ->
-                                value.imageName().equals("wsr_img")),
-                        "Complementary WSR image producer was not admitted");
-                Set<String> shadowReaders = plan.graphicsImageReaders("shadow").stream()
-                        .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
-                        .collect(Collectors.toSet());
-                assertTrue(shadowReaders.containsAll(Set.of(
-                                "voxel_sampler", "floodfill_sampler", "floodfill_sampler_copy")),
-                        "Complementary shadow helper samplers were not declared: "
-                                + shadowReaders);
-                List<PackAdvancedResourcePlan.StorageBufferBinding> writer =
-                        plan.storageBuffers("shadow");
-                assertTrue(writer.stream().anyMatch(value ->
-                                value.blockName().equals("blockDataBuffer")
-                                        && value.logicalIndex() == 0
-                                        && value.originalBinding() == 0
-                                        && (value.stageMask() & 1) != 0),
-                        "Complementary shadow storage writer was not planned: " + writer);
-                assertTrue(plan.storageBuffers().entrySet().stream()
-                                .filter(entry -> !entry.getKey().equals("shadow"))
-                                .flatMap(entry -> entry.getValue().stream())
-                                .anyMatch(value -> value.blockName().equals("blockDataBuffer")
-                                        && value.logicalIndex() == 0
-                                        && (value.stageMask() & 16) != 0),
-                        "Complementary storage reader was not planned");
-                PackProgramPlan composite = packPlan.program("composite");
-                assertTrue(composite != null && composite.executable()
-                                && packPlan.shouldAttempt("composite"),
-                        "Complementary composite reader is not executable: "
-                                + (composite == null ? "missing" : composite.deviations()));
-                assertTrue(composite.convertedFragment() != null
-                                && composite.stageSource("fragment") != null
-                                && !composite.stageSource("fragment").contains("gl_Fog.")
-                                && composite.stageSource("fragment").contains("fogStart")
-                                && composite.stageSource("fragment").contains("fogEnd"),
-                        "Complementary legacy fog normalization did not reach the plan");
-                assertTrue(composite.interfacePlan().deviations().stream().noneMatch(value ->
-                                value.equals("UNIFORM_IMPLICIT_DECLARATION:textureSize")),
-                        "Complementary textureSize call became a generated uniform");
-                assertTrue(composite.interfacePlan().deviations().stream().noneMatch(value ->
-                                value.equals("SAMPLER_NOT_MAPPED:tex")),
-                        "Complementary source-only tex remains a blocking sampler: "
-                                + composite.interfacePlan().deviations());
-                assertTrue(plan.storageBuffers("composite").stream().anyMatch(value ->
-                                value.blockName().equals("blockDataBuffer")
-                                        && value.logicalIndex() == 0
-                                        && (value.stageMask() & 16) != 0),
-                        "Complementary composite fragment storage reader is missing");
-                assertTrue(!analysis.settings().customSamplerSlots().containsKey("tex"),
-                        "Complementary source-only tex consumed a custom sampler slot");
-                PackResourceBinding blockAtlas = packPlan.resources().bindings().values().stream()
-                        .flatMap(Collection::stream)
-                        .filter(value -> value.source().equals("minecraft:textures/atlas/blocks.png"))
-                        .findFirst().orElse(null);
-                assertTrue(blockAtlas != null
-                                && blockAtlas.status() == PackResourceStatus.HOST_ALIAS
-                                && blockAtlas.kind() == PackResourceKind.TARGET
-                                && blockAtlas.resourceKey().equals("texture")
-                                && packPlan.resources().programAllowed(blockAtlas.program()),
-                        "Complementary generated block atlas was not a truthful host alias: "
-                                + blockAtlas);
+                verifyComplementaryResources(analysis, plan);
+            } else {
+                verifyBslResources(analysis);
             }
-            if (label.equals("BSL")) {
-                Map<String, Integer> slots = analysis.settings().customSamplerSlots();
-                assertTrue(slots.containsKey("voxeltex") && slots.containsKey("lighttex0")
-                                && slots.containsKey("lighttex1"),
-                        "BSL advanced sampler slots are incomplete: " + slots);
-                PackProgramPlan composite4 = packPlan.program("composite4");
-                assertTrue(composite4 != null && composite4.executable()
-                                && composite4.convertedFragment() != null
-                                && composite4.stageSource("fragment") != null
-                                && composite4.stageSource("fragment").contains("#define Bayer4")
-                                && composite4.stageSource("fragment").contains("#define Bayer8"),
-                        "BSL composite4 macro/function plan is not executable: "
-                                + (composite4 == null ? "missing" : composite4.deviations()));
-            }
-            if (label.equals("BSL") || label.equals("Complementary")) {
-                PackProgramPlan terrain = packPlan.program("gbuffers_terrain");
-                assertTrue(terrain != null && terrain.executable()
-                                && packPlan.shouldAttempt("gbuffers_terrain"),
-                        label + " terrain plan is not executable with advanced resources");
-                var samplers = terrain.interfacePlan()
-                        .effective(UniformRegistry.Stage.GEOMETRY).samplers().stream()
-                        .map(UniformRegistry.SamplerBinding::name).toList();
-                if (label.equals("BSL")) {
-                    assertTrue(samplers.contains("lighttex0") && samplers.contains("lighttex1"),
-                            "BSL terrain 3D sampler bindings are missing");
-                    assertTrue(packPlan.resources().binding("gbuffers_terrain", "lighttex0") != null
-                                    && packPlan.resources().binding("gbuffers_terrain", "lighttex0").kind()
-                                    == PackResourceKind.ADVANCED_IMAGE,
-                            "BSL lighttex0 resource identity is missing");
-                }
-            }
+            verifyAdvancedTerrain(packPlan, label);
         } finally {
             for (Map.Entry<String, String> entry : previous.entrySet()) {
                 String property = "chimera.option." + entry.getKey();
                 if (entry.getValue() == null) System.clearProperty(property);
                 else System.setProperty(property, entry.getValue());
             }
+        }
+    }
+
+    /** The converted shadow vertex keeps the canonical matrix UBO and drops gl_VertexID. */
+    private static void verifyShadowAdapter(PackProgramPlan shadow, String label) {
+        String vertex = shadow.executableVertexSource();
+        // Camera gbuffer uniforms stay distinct from the legacy
+        // shadow-stage built-ins. Do not require a camera matrix to
+        // survive conversion when only the shadow draw pair is used.
+        assertTrue(vertex.contains("ChimeraShadowUniforms")
+                        && vertex.contains("shadowModelView")
+                        && vertex.contains("shadowProjection"),
+                label + " shadow adapter lost its canonical matrix UBO");
+        assertTrue(vertex.contains("chimeraShadowUniforms.shadowModelView")
+                        && vertex.contains("chimeraShadowUniforms.shadowProjection"),
+                label + " shadow adapter did not qualify its draw matrix UBO access");
+        assertTrue(!vertex.contains("gl_VertexID"),
+                label + " shadow adapter left Vulkan-incompatible gl_VertexID");
+    }
+
+    /** Complementary's WSR image and buffer, advanced sampler slots, storage readers and composite. */
+    private static void verifyComplementaryResources(PackProbe.Analysis analysis, PackAdvancedResourcePlan plan) {
+        PackPlan packPlan = analysis.plan();
+        PackAdvancedResourcePlan.ImageSpec wsr = plan.images().get("wsr_img");
+        assertTrue(wsr != null && wsr.supported()
+                        && wsr.width() == 128 && wsr.height() == 64 && wsr.depth() == 128
+                        && wsr.widthToken().equals("COLORED_LIGHTING")
+                        && wsr.heightToken().equals("64")
+                        && wsr.depthToken().equals("COLORED_LIGHTING"),
+                "Complementary WSR dimensions were not resolved from the active option");
+        PackAdvancedResourcePlan.BufferSpec wsrBuffer = plan.buffers().get(0);
+        assertTrue(wsrBuffer != null && wsrBuffer.supported()
+                        && wsrBuffer.size() == 50_855_936L,
+                "Complementary WSR bufferObject.0 was not admitted at its authored size");
+        Map<String, Integer> slots = analysis.settings().customSamplerSlots();
+        assertTrue(slots.containsKey("voxel_sampler")
+                        && slots.containsKey("wsr_sampler")
+                        && slots.containsKey("wsr_lod_sampler"),
+                "Complementary advanced sampler slots are incomplete: " + slots);
+        assertTrue(plan.graphicsImages("shadow").stream().anyMatch(value ->
+                        value.imageName().equals("wsr_img")),
+                "Complementary WSR image producer was not admitted");
+        Set<String> shadowReaders = plan.graphicsImageReaders("shadow").stream()
+                .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
+                .collect(Collectors.toSet());
+        assertTrue(shadowReaders.containsAll(Set.of(
+                        "voxel_sampler", "floodfill_sampler", "floodfill_sampler_copy")),
+                "Complementary shadow helper samplers were not declared: "
+                        + shadowReaders);
+        List<PackAdvancedResourcePlan.StorageBufferBinding> writer =
+                plan.storageBuffers("shadow");
+        assertTrue(writer.stream().anyMatch(value ->
+                        value.blockName().equals("blockDataBuffer")
+                                && value.logicalIndex() == 0
+                                && value.originalBinding() == 0
+                                && (value.stageMask() & 1) != 0),
+                "Complementary shadow storage writer was not planned: " + writer);
+        assertTrue(plan.storageBuffers().entrySet().stream()
+                        .filter(entry -> !entry.getKey().equals("shadow"))
+                        .flatMap(entry -> entry.getValue().stream())
+                        .anyMatch(value -> value.blockName().equals("blockDataBuffer")
+                                && value.logicalIndex() == 0
+                                && (value.stageMask() & 16) != 0),
+                "Complementary storage reader was not planned");
+        PackProgramPlan composite = packPlan.program("composite");
+        assertTrue(composite != null && composite.executable()
+                        && packPlan.shouldAttempt("composite"),
+                "Complementary composite reader is not executable: "
+                        + (composite == null ? "missing" : composite.deviations()));
+        assertTrue(composite.convertedFragment() != null
+                        && composite.stageSource("fragment") != null
+                        && !composite.stageSource("fragment").contains("gl_Fog.")
+                        && composite.stageSource("fragment").contains("fogStart")
+                        && composite.stageSource("fragment").contains("fogEnd"),
+                "Complementary legacy fog normalization did not reach the plan");
+        assertTrue(composite.interfacePlan().deviations().stream().noneMatch(value ->
+                        value.equals("UNIFORM_IMPLICIT_DECLARATION:textureSize")),
+                "Complementary textureSize call became a generated uniform");
+        assertTrue(composite.interfacePlan().deviations().stream().noneMatch(value ->
+                        value.equals("SAMPLER_NOT_MAPPED:tex")),
+                "Complementary source-only tex remains a blocking sampler: "
+                        + composite.interfacePlan().deviations());
+        assertTrue(plan.storageBuffers("composite").stream().anyMatch(value ->
+                        value.blockName().equals("blockDataBuffer")
+                                && value.logicalIndex() == 0
+                                && (value.stageMask() & 16) != 0),
+                "Complementary composite fragment storage reader is missing");
+        assertTrue(!analysis.settings().customSamplerSlots().containsKey("tex"),
+                "Complementary source-only tex consumed a custom sampler slot");
+        PackResourceBinding blockAtlas = packPlan.resources().bindings().values().stream()
+                .flatMap(Collection::stream)
+                .filter(value -> value.source().equals("minecraft:textures/atlas/blocks.png"))
+                .findFirst().orElse(null);
+        assertTrue(blockAtlas != null
+                        && blockAtlas.status() == PackResourceStatus.HOST_ALIAS
+                        && blockAtlas.kind() == PackResourceKind.TARGET
+                        && blockAtlas.resourceKey().equals("texture")
+                        && packPlan.resources().programAllowed(blockAtlas.program()),
+                "Complementary generated block atlas was not a truthful host alias: "
+                        + blockAtlas);
+    }
+
+    /** BSL's 3D light volume slots and its composite4 macro and function plan. */
+    private static void verifyBslResources(PackProbe.Analysis analysis) {
+        PackPlan packPlan = analysis.plan();
+        Map<String, Integer> slots = analysis.settings().customSamplerSlots();
+        assertTrue(slots.containsKey("voxeltex") && slots.containsKey("lighttex0")
+                        && slots.containsKey("lighttex1"),
+                "BSL advanced sampler slots are incomplete: " + slots);
+        PackProgramPlan composite4 = packPlan.program("composite4");
+        assertTrue(composite4 != null && composite4.executable()
+                        && composite4.convertedFragment() != null
+                        && composite4.stageSource("fragment") != null
+                        && composite4.stageSource("fragment").contains("#define Bayer4")
+                        && composite4.stageSource("fragment").contains("#define Bayer8"),
+                "BSL composite4 macro/function plan is not executable: "
+                        + (composite4 == null ? "missing" : composite4.deviations()));
+    }
+
+    /** Terrain stays executable with the advanced resources, and BSL's terrain binds its light volumes. */
+    private static void verifyAdvancedTerrain(PackPlan packPlan, String label) {
+        PackProgramPlan terrain = packPlan.program("gbuffers_terrain");
+        assertTrue(terrain != null && terrain.executable()
+                        && packPlan.shouldAttempt("gbuffers_terrain"),
+                label + " terrain plan is not executable with advanced resources");
+        var samplers = terrain.interfacePlan()
+                .effective(UniformRegistry.Stage.GEOMETRY).samplers().stream()
+                .map(UniformRegistry.SamplerBinding::name).toList();
+        if (label.equals("BSL")) {
+            assertTrue(samplers.contains("lighttex0") && samplers.contains("lighttex1"),
+                    "BSL terrain 3D sampler bindings are missing");
+            assertTrue(packPlan.resources().binding("gbuffers_terrain", "lighttex0") != null
+                            && packPlan.resources().binding("gbuffers_terrain", "lighttex0").kind()
+                            == PackResourceKind.ADVANCED_IMAGE,
+                    "BSL lighttex0 resource identity is missing");
         }
     }
 

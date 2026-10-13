@@ -426,22 +426,48 @@ public final class PackProbe {
         }
         deviations.addAll(interfacePlan.deviations());
         addTargetRouteDeviations(targetResult, postName, programPlan, deviations);
-        if (programPlan == null && postName && hasFragment && !modern && targetResult != null
-                && targetResult.executable() && interfacePlan.executable()) {
-            Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
-                    ? null : inventory.sourcePaths.get("fragment");
-            String converted = FragmentConverter.convertPostFragment(
-                    fragment, sourcePath, interfacePlan, targetResult.plan(),
-                    packConfig.shaderConstants());
-            if (converted == null) {
-                deviations.addAll(PostVertexBridge.postVaryingDeviations(fragment));
-                deviations.add("POST_CONVERTER_UNSUPPORTED");
-            }
+        if (programPlan == null && postName && hasFragment && !modern) {
+            addUnplannedPostDeviations(inventory, packConfig, fragment, relaxed, targetResult, interfacePlan,
+                    deviations);
         }
         if (postName) {
             addPackConstantDeviations(fragment, packConfig, deviations);
         }
+        addVertexDeviations(inventory, programPlan, fragment, postName, deviations);
+        addSourceDeviations(inventory, packPlan, programPlan, source, samplers, relaxed, modern, deviations);
+        addTargetCountDeviations(name, programPlan, targetResult, targets, deviations);
+        if (!hasFragment) {
+            deviations.add("MISSING_FRAGMENT_SOURCE");
+        }
 
+        return new ConformanceReport.ProgramReport(
+                name, familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
+                sorted(inventory.stages), inventory.sourceHashes, samplers, List.copyOf(uniformNames),
+                targets, supportStatus(executableName(name, inventory, postName), hasFragment, deviations),
+                ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
+    }
+
+    /** A post program without a plan must still convert; say why it cannot. */
+    private static void addUnplannedPostDeviations(Inventory inventory, PackConfig.PackConfigData packConfig,
+                                                   String fragment, boolean relaxed,
+                                                   PostTargetPlan.ParseResult targetResult,
+                                                   UniformRegistry.ProgramInterface interfacePlan,
+                                                   Set<String> deviations) {
+        if (targetResult == null || !targetResult.executable() || !interfacePlan.executable()) return;
+        Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
+                ? null : inventory.sourcePaths.get("fragment");
+        String converted = FragmentConverter.convertPostFragment(
+                fragment, sourcePath, interfacePlan, targetResult.plan(), packConfig.shaderConstants());
+        if (converted == null) {
+            deviations.addAll(PostVertexBridge.postVaryingDeviations(fragment));
+            deviations.add("POST_CONVERTER_UNSUPPORTED");
+        }
+    }
+
+    /** The vertex bridge the program takes, and what its installed family fixes to the host. */
+    private static void addVertexDeviations(Inventory inventory, PackProgramPlan programPlan, String fragment,
+                                            boolean postName, Set<String> deviations) {
+        String name = inventory.name;
         boolean hasVertex = inventory.stages.contains("vertex");
         String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         String vertexBridge = programPlan != null
@@ -456,6 +482,12 @@ public final class PackProbe {
         if (programPlan != null && programPlan.executable()) {
             deviations.addAll(installedFamilyDeviations(name));
         }
+    }
+
+    /** Stages, GLSL dialect, advanced resources and samplers the program's sources use. */
+    private static void addSourceDeviations(Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
+                                            String source, List<String> samplers, boolean relaxed, boolean modern,
+                                            Set<String> deviations) {
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
                         || stage.equals("tess_evaluation") || stage.equals("compute"))) {
@@ -465,37 +497,35 @@ public final class PackProbe {
             deviations.add("MODERN_GLSL_UNSUPPORTED");
         }
         if (PackAdvancedResourcePlan.containsAdvancedDeclarations(source)
-                && !advancedResourcesArePlanned(name, packPlan)) {
+                && !advancedResourcesArePlanned(inventory.name, packPlan)) {
             deviations.add("ADVANCED_RESOURCE_UNSUPPORTED");
         }
         // PackPlanBuilder already resolved standard aliases and pack-owned
         // sampler slots through the shared interface plan. Keep the legacy
         // scan only for compatibility callers that do not have a plan.
         if (!relaxed && programPlan == null) {
-            addUnmappedSamplerDeviations(name, samplers, deviations);
+            addUnmappedSamplerDeviations(inventory.name, samplers, deviations);
         }
         if (samplers.contains("noisetex")) {
             // Runtime performs the exact file check. The report records the
             // standard resource requirement without embedding a path.
             deviations.add("NOISETEX_PACK_RESOURCE");
         }
+    }
+
+    /** Without a target plan, only one output to colortex0 runs as authored. */
+    private static void addTargetCountDeviations(String name, PackProgramPlan programPlan,
+                                                 PostTargetPlan.ParseResult targetResult, List<Integer> targets,
+                                                 Set<String> deviations) {
         boolean authoredShadowOutputs = FamilyAdapterRegistry.isShadowFamily(name) && programPlan != null
                 && programPlan.convertedFragment() != null && programPlan.executable();
-        if (!authoredShadowOutputs && targetResult == null && targets.size() > 1) {
+        if (authoredShadowOutputs || targetResult != null) return;
+        if (targets.size() > 1) {
             deviations.add(FamilyAdapterRegistry.isShadowFamily(name)
                     ? "SHADOW_COLOR_TARGET_UNSUPPORTED" : "MRT_NOT_SUPPORTED");
-        } else if (!authoredShadowOutputs && targetResult == null && !targets.isEmpty() && targets.get(0) != 0) {
+        } else if (!targets.isEmpty() && targets.get(0) != 0) {
             deviations.add("TARGET_ROUTING_FIXED_TO_COLORTEX0");
         }
-        if (!hasFragment) {
-            deviations.add("MISSING_FRAGMENT_SOURCE");
-        }
-
-        return new ConformanceReport.ProgramReport(
-                name, familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
-                sorted(inventory.stages), inventory.sourceHashes, samplers, List.copyOf(uniformNames),
-                targets, supportStatus(executableName(name, inventory, postName), hasFragment, deviations),
-                ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
     }
 
     /** Modern terrain, water and shadow sources run through their own planned bridge. */

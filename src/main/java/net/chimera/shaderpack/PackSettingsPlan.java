@@ -509,153 +509,210 @@ record PackSettingsPlan(
             Map<String, String> initialMacros,
             Set<String> toggleOptions
     ) {
-        PackConditionals.State conditions = new PackConditionals.State(
-                stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
-        boolean invalidCondition = false;
-        try {
-            List<String> physical = Files.readAllLines(propertyFile, StandardCharsets.UTF_8);
-            PropertyLineJoiner joiner = new PropertyLineJoiner();
-            for (int index = 0; index <= physical.size(); index++) {
-                String raw = index < physical.size() ? physical.get(index) : null;
-                String line;
-                if (raw != null && PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
-                    // The directive ends the open continuation: handle that line first,
-                    // then revisit the directive.
-                    line = joiner.finish();
-                    index--;
-                } else if (raw == null) {
-                    line = joiner.finish();
-                } else {
-                    Matcher directive = CONDITION.matcher(raw);
-                    if (directive.matches()) {
-                        if (!invalidCondition) {
-                            try {
-                                conditions.apply(directive.group(1), directive.group(2).trim());
-                            } catch (RuntimeException failure) {
-                                deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                                conditions = new PackConditionals.State(
-                                        stageIndependentDefaults(defaults));
-                                invalidCondition = true;
-                            }
-                        }
+        PropertiesParse parse = new PropertiesParse(propertyFile, options, defaults, profiles, values,
+                programEnabled, required, optional, customValues, resourceDeclarations, deviations, toggleOptions);
+        parse.run(stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
+    }
+
+    /** One pass over shaders.properties: its conditional blocks, defines and key=value entries. */
+    private static final class PropertiesParse {
+        private final Path propertyFile;
+        private final Map<String, Option> options;
+        private final Map<String, String> defaults;
+        private final Map<String, Profile> profiles;
+        private final Map<String, String> values;
+        private final Map<String, Boolean> programEnabled;
+        private final Set<String> required;
+        private final Set<String> optional;
+        private final List<PackRuntimeSettings.Declaration> customValues;
+        private final Map<String, PackResourceDeclaration> resourceDeclarations;
+        private final List<String> deviations;
+        private final Set<String> toggleOptions;
+        private PackConditionals.State conditions;
+        private boolean invalidCondition;
+
+        PropertiesParse(Path propertyFile, Map<String, Option> options, Map<String, String> defaults,
+                        Map<String, Profile> profiles, Map<String, String> values,
+                        Map<String, Boolean> programEnabled, Set<String> required, Set<String> optional,
+                        List<PackRuntimeSettings.Declaration> customValues,
+                        Map<String, PackResourceDeclaration> resourceDeclarations, List<String> deviations,
+                        Set<String> toggleOptions) {
+            this.propertyFile = propertyFile;
+            this.options = options;
+            this.defaults = defaults;
+            this.profiles = profiles;
+            this.values = values;
+            this.programEnabled = programEnabled;
+            this.required = required;
+            this.optional = optional;
+            this.customValues = customValues;
+            this.resourceDeclarations = resourceDeclarations;
+            this.deviations = deviations;
+            this.toggleOptions = toggleOptions;
+        }
+
+        void run(Map<String, String> initialMacros) {
+            conditions = new PackConditionals.State(initialMacros);
+            try {
+                List<String> physical = Files.readAllLines(propertyFile, StandardCharsets.UTF_8);
+                PropertyLineJoiner joiner = new PropertyLineJoiner();
+                for (int index = 0; index <= physical.size(); index++) {
+                    String raw = index < physical.size() ? physical.get(index) : null;
+                    String line;
+                    if (raw != null && PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
+                        // The directive ends the open continuation: handle that line first,
+                        // then revisit the directive.
+                        line = joiner.finish();
+                        index--;
+                    } else if (raw == null) {
+                        line = joiner.finish();
+                    } else if (applyCondition(raw) || invalidCondition || !conditions.active()) {
                         continue;
+                    } else {
+                        line = PropertyLineJoiner.isDirective(raw) ? raw : joiner.accept(raw);
                     }
-                    if (invalidCondition || !conditions.active()) {
-                        continue;
+                    if (line != null) {
+                        accept(line);
                     }
-                    line = PropertyLineJoiner.isDirective(raw) ? raw : joiner.accept(raw);
                 }
-                if (line == null) {
-                    continue;
-                }
-                Matcher define = DEFINE.matcher(line);
-                if (define.matches()) {
-                    String name = define.group(1);
-                    if (isStageContextMacro(name) || isDimensionContextMacro(name)) {
-                        continue;
-                    }
-                    String value = define.group(2) == null || define.group(2).isBlank()
-                            ? "1" : stripComment(define.group(2)).trim();
-                    options.putIfAbsent(name, new Option(name, "define", value, valuesFrom(line),
-                            propertyFile.getFileName().toString()));
-                    defaults.put(name, value);
-                    conditions.define(name, value);
-                    continue;
-                }
-                Matcher commentedDefine = COMMENTED_DEFINE.matcher(line);
-                if (commentedDefine.matches()) {
-                    String name = commentedDefine.group(1);
-                    options.putIfAbsent(name, new Option(name, "define", "0", valuesFrom(line),
-                            propertyFile.getFileName().toString()));
-                    continue;
-                }
-                if (line.trim().startsWith("#")) {
-                    continue;
-                }
-                int equals = line.indexOf('=');
-                if (equals < 1) {
-                    continue;
-                }
-                String key = line.substring(0, equals).trim();
-                String value = line.substring(equals + 1).trim();
-                if (key.isBlank()) {
-                    continue;
-                }
-                values.put(key, value);
-                PackResourceDeclaration resource = resourceDeclaration(key, value);
-                if (resource != null) {
-                    resourceDeclarations.put(resource.key(), resource);
-                    continue;
-                }
-                Matcher profile = PROFILE.matcher(line);
-                if (profile.matches()) {
-                    profiles.put(profile.group(1), new Profile(profile.group(1), value));
-                    continue;
-                }
-                Matcher enabled = PROGRAM_ENABLED.matcher(line);
-                if (enabled.matches()) {
+                if (!invalidCondition) {
                     try {
-                        // Iris evaluates the switch against the pack's option values: a toggle
-                        // the pack declares but leaves off (`//#define DOF`) is false. Only a
-                        // name that is no option at all keeps the program enabled.
-                        Map<String, String> switches = new HashMap<>(conditions.macros());
-                        for (String toggle : toggleOptions) {
-                            switches.putIfAbsent(toggle, "0");
-                        }
-                        programEnabled.put(enabled.group(1), PackConditionals.evaluate(
-                                enabled.group(2).trim(), switches, true));
+                        conditions.finish();
                     } catch (RuntimeException failure) {
-                        programEnabled.put(enabled.group(1), true);
-                        deviations.add("PROGRAM_ENABLE_EXPRESSION_UNSUPPORTED:" + enabled.group(1));
+                        deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
                     }
-                    continue;
                 }
-                Matcher feature = FEATURES.matcher(line);
-                if (feature.matches()) {
-                    Set<String> destination = feature.group(1).equals("required") ? required : optional;
-                    destination.clear();
-                    for (String token : feature.group(2).split("[\\s,]+")) {
-                        if (!token.isBlank()) {
-                            destination.add(token);
-                        }
-                    }
-                    continue;
-                }
-                Matcher custom = CUSTOM_VALUE.matcher(line);
-                if (custom.matches()) {
-                    customValues.add(PackRuntimeSettings.declaration(
-                            custom.group(1).equals("uniform"), custom.group(2),
-                            custom.group(3), custom.group(4).trim()));
-                    continue;
-                }
-                if (key.startsWith("image.") || key.startsWith("customImage.")) {
-                    deviations.add("CUSTOM_IMAGE_UNSUPPORTED:" + key);
-                    continue;
-                }
-                if (key.startsWith("bufferObject.")) {
-                    // Bounded bufferObject.N declarations are admitted. The
-                    // source plan remains responsible for proving that a
-                    // matching std430 block and supported schedule exist.
-                    deviations.add("STORAGE_BUFFER_DECLARED:" + key);
-                    continue;
-                }
-                if (key.startsWith("ssbo.") || key.startsWith("storage.")) {
-                    deviations.add("STORAGE_RESOURCE_UNSUPPORTED:" + key);
-                    continue;
-                }
-                if (!isSupportedProperty(key)) {
-                    deviations.add("SETTING_UNSUPPORTED:" + key);
-                }
+            } catch (IOException e) {
+                deviations.add("SHADERS_PROPERTIES_READ_FAILED");
+            }
+        }
+
+        /** Applies an #if, #ifdef, #else or #endif line; false when the line is not one. */
+        private boolean applyCondition(String raw) {
+            Matcher directive = CONDITION.matcher(raw);
+            if (!directive.matches()) {
+                return false;
             }
             if (!invalidCondition) {
                 try {
-                    conditions.finish();
+                    conditions.apply(directive.group(1), directive.group(2).trim());
                 } catch (RuntimeException failure) {
                     deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
+                    conditions = new PackConditionals.State(stageIndependentDefaults(defaults));
+                    invalidCondition = true;
                 }
             }
-        } catch (IOException e) {
-            deviations.add("SHADERS_PROPERTIES_READ_FAILED");
+            return true;
+        }
+
+        /** One logical line: a define, a commented-out define, a comment, or a key=value entry. */
+        private void accept(String line) {
+            if (acceptDefine(line) || line.trim().startsWith("#")) {
+                return;
+            }
+            int equals = line.indexOf('=');
+            if (equals < 1) {
+                return;
+            }
+            String key = line.substring(0, equals).trim();
+            String value = line.substring(equals + 1).trim();
+            if (key.isBlank()) {
+                return;
+            }
+            values.put(key, value);
+            acceptEntry(line, key, value);
+        }
+
+        /** A #define declares an option and its default; a commented-out one declares it off. */
+        private boolean acceptDefine(String line) {
+            Matcher define = DEFINE.matcher(line);
+            if (define.matches()) {
+                String name = define.group(1);
+                if (isStageContextMacro(name) || isDimensionContextMacro(name)) {
+                    return true;
+                }
+                String value = define.group(2) == null || define.group(2).isBlank()
+                        ? "1" : stripComment(define.group(2)).trim();
+                options.putIfAbsent(name, new Option(name, "define", value, valuesFrom(line),
+                        propertyFile.getFileName().toString()));
+                defaults.put(name, value);
+                conditions.define(name, value);
+                return true;
+            }
+            Matcher commentedDefine = COMMENTED_DEFINE.matcher(line);
+            if (!commentedDefine.matches()) {
+                return false;
+            }
+            String name = commentedDefine.group(1);
+            options.putIfAbsent(name, new Option(name, "define", "0", valuesFrom(line),
+                    propertyFile.getFileName().toString()));
+            return true;
+        }
+
+        /** A key=value entry: a resource, profile, program switch, feature list, custom value, or unsupported. */
+        private void acceptEntry(String line, String key, String value) {
+            PackResourceDeclaration resource = resourceDeclaration(key, value);
+            if (resource != null) {
+                resourceDeclarations.put(resource.key(), resource);
+                return;
+            }
+            Matcher profile = PROFILE.matcher(line);
+            if (profile.matches()) {
+                profiles.put(profile.group(1), new Profile(profile.group(1), value));
+                return;
+            }
+            Matcher enabled = PROGRAM_ENABLED.matcher(line);
+            if (enabled.matches()) {
+                acceptProgramSwitch(enabled.group(1), enabled.group(2).trim());
+                return;
+            }
+            Matcher feature = FEATURES.matcher(line);
+            if (feature.matches()) {
+                Set<String> destination = feature.group(1).equals("required") ? required : optional;
+                destination.clear();
+                for (String token : feature.group(2).split("[\\s,]+")) {
+                    if (!token.isBlank()) {
+                        destination.add(token);
+                    }
+                }
+                return;
+            }
+            Matcher custom = CUSTOM_VALUE.matcher(line);
+            if (custom.matches()) {
+                customValues.add(PackRuntimeSettings.declaration(
+                        custom.group(1).equals("uniform"), custom.group(2),
+                        custom.group(3), custom.group(4).trim()));
+                return;
+            }
+            if (key.startsWith("image.") || key.startsWith("customImage.")) {
+                deviations.add("CUSTOM_IMAGE_UNSUPPORTED:" + key);
+            } else if (key.startsWith("bufferObject.")) {
+                // Bounded bufferObject.N declarations are admitted. The
+                // source plan remains responsible for proving that a
+                // matching std430 block and supported schedule exist.
+                deviations.add("STORAGE_BUFFER_DECLARED:" + key);
+            } else if (key.startsWith("ssbo.") || key.startsWith("storage.")) {
+                deviations.add("STORAGE_RESOURCE_UNSUPPORTED:" + key);
+            } else if (!isSupportedProperty(key)) {
+                deviations.add("SETTING_UNSUPPORTED:" + key);
+            }
+        }
+
+        /** A {@code program.<name>.enabled} switch, evaluated against the pack's option values. */
+        private void acceptProgramSwitch(String program, String expression) {
+            try {
+                // Iris evaluates the switch against the pack's option values: a toggle
+                // the pack declares but leaves off (`//#define DOF`) is false. Only a
+                // name that is no option at all keeps the program enabled.
+                Map<String, String> switches = new HashMap<>(conditions.macros());
+                for (String toggle : toggleOptions) {
+                    switches.putIfAbsent(toggle, "0");
+                }
+                programEnabled.put(program, PackConditionals.evaluate(expression, switches, true));
+            } catch (RuntimeException failure) {
+                programEnabled.put(program, true);
+                deviations.add("PROGRAM_ENABLE_EXPRESSION_UNSUPPORTED:" + program);
+            }
         }
     }
 
