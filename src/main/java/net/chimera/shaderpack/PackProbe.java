@@ -380,41 +380,26 @@ public final class PackProbe {
             PackResourcePlan resourcePlan,
             PackPlan packPlan
     ) {
-        boolean relaxed = !inventory.variantFolder.isBlank();
-        StringBuilder combinedSource = new StringBuilder();
-        Map<String, String> sourceView = relaxed && !inventory.preparedSources.isEmpty()
-                ? inventory.preparedSources : inventory.sources;
-        sourceView.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
-        String source = combinedSource.toString();
-        String fragment = sourceView.getOrDefault("fragment", source);
-        String vertex = sourceView.get("vertex");
         String name = inventory.name;
         PackAdvancedResourcePlan.ComputeSpec computeSpec = packPlan == null
                 ? null : packPlan.advancedResources().computeStages().get(name);
         if (computeSpec != null && inventory.stages.contains("compute")) {
             return computeProgram(inventory, computeSpec, packPlan);
         }
+        boolean relaxed = !inventory.variantFolder.isBlank();
+        Map<String, String> sourceView = relaxed && !inventory.preparedSources.isEmpty()
+                ? inventory.preparedSources : inventory.sources;
+        StringBuilder combinedSource = new StringBuilder();
+        sourceView.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
+        String source = combinedSource.toString();
+        String fragment = sourceView.getOrDefault("fragment", source);
         String stripped = stripComments(source);
-        boolean executablePostName = PostTargetPlan.isPostProgramName(name);
-        boolean modernTerrain = (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
-                || name.equals("shadow"))
-                && programPlan != null
-                && programPlan.terrainMaterial().modern();
-        boolean modern = usesUnsupportedModernGlsl(stripped,
-                executablePostName, FamilyAdapterRegistry.isEntityLike(name));
-        // A validated conversion is authoritative for every family, not just
-        // post/particles. The old lexical veto also rejected executable sky
-        // and modern shadow shaders that already passed their converter guards.
-        if (programPlan != null && programPlan.executable()
-                && programPlan.convertedFragment() != null
-                && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null)) {
-            modern = false;
-        }
-        if (modernTerrain) {
-            modern = false;
-        }
+        boolean postName = PostTargetPlan.isPostProgramName(name);
+        boolean hasFragment = inventory.stages.contains("fragment");
+        boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan)
+                && usesUnsupportedModernGlsl(stripped, postName, FamilyAdapterRegistry.isEntityLike(name));
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
         // including samplers. Keep that public inventory stable while the
@@ -422,22 +407,10 @@ public final class PackProbe {
         TreeSet<String> uniformNames = new TreeSet<>(samplers);
         uniformNames.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
                 .map(UniformRegistry.UniformDeclaration::name).toList());
-        List<String> uniforms = List.copyOf(uniformNames);
-        PostTargetPlan.ParseResult targetResult = null;
-        if (programPlan != null && programPlan.targetPlan() != null) {
-            targetResult = new PostTargetPlan.ParseResult(
-                    programPlan.targetPlan(), programPlan.targetPlan().deviations());
-        } else if (programPlan != null && programPlan.geometryOutputPlan() != null) {
-            // The plan routes the prepared source, whose #if already chose one
-            // DRAWBUFFERS directive; an authored scan would count every branch.
-            targetResult = new PostTargetPlan.ParseResult(
-                    programPlan.geometryOutputPlan().targetPlan(),
-                    programPlan.geometryOutputPlan().deviations());
-        } else if (executablePostName) {
-            targetResult = PostTargetPlan.parse(inventory.name, fragment, packConfig.colortexFormats());
-        }
+        PostTargetPlan.ParseResult targetResult = targetResult(inventory, fragment, packConfig, programPlan, postName);
         List<Integer> targets = targetResult != null
                 ? targetResult.plan().targetSlots() : scanTargets(fragment);
+
         TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
         if (resourcePlan != null) {
             resourcePlan.deviationsForProgram(name).stream()
@@ -446,37 +419,14 @@ public final class PackProbe {
                     .forEach(deviations::add);
         }
         deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
-
-        String family = familyOf(name);
-        boolean hasFragment = inventory.stages.contains("fragment");
-        UniformRegistry.Stage interfaceStage = FamilyAdapterRegistry.stageFor(name);
-        UniformRegistry.ProgramInterface interfacePlan;
+        UniformRegistry.ProgramInterface interfacePlan =
+                interfacePlan(name, fragment, programPlan, targetResult, relaxed, postName);
         if (programPlan != null) {
-            interfacePlan = programPlan.interfacePlan().effective(interfaceStage);
             deviations.addAll(programPlan.deviations());
-        } else {
-            interfacePlan = executablePostName
-                    ? (relaxed ? UniformRegistry.planPreparedPost(fragment, targetResult.plan())
-                    : UniformRegistry.planPost(fragment, targetResult.plan()))
-                    : (relaxed ? UniformRegistry.planPrepared(fragment, interfaceStage)
-                    : UniformRegistry.plan(fragment, interfaceStage));
         }
         deviations.addAll(interfacePlan.deviations());
-        if (targetResult != null) {
-            deviations.addAll(targetResult.deviations());
-            if (targetResult.executable()
-                    && !targetResult.plan().targetSlots().equals(List.of(0))
-                    && (executablePostName || targetResult.plan().requiresMrt())) {
-                deviations.add(executablePostName
-                        ? "POST_TARGET_ROUTE_APPLIED" : "GEOMETRY_TARGET_ROUTE_APPLIED");
-            }
-            if (targetResult.executable() && targetResult.plan().requiresMrt()
-                    && (executablePostName || programPlan == null || programPlan.executable())) {
-                deviations.add(executablePostName ? "MRT_POST_BRIDGE" : "MRT_GEOMETRY_BRIDGE");
-            }
-        }
-
-        if (programPlan == null && executablePostName && hasFragment && !modern && targetResult != null
+        addTargetRouteDeviations(targetResult, postName, programPlan, deviations);
+        if (programPlan == null && postName && hasFragment && !modern && targetResult != null
                 && targetResult.executable() && interfacePlan.executable()) {
             Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
                     ? null : inventory.sourcePaths.get("fragment");
@@ -488,229 +438,23 @@ public final class PackProbe {
                 deviations.add("POST_CONVERTER_UNSUPPORTED");
             }
         }
-
-        if (executablePostName) {
+        if (postName) {
             addPackConstantDeviations(fragment, packConfig, deviations);
         }
 
-        boolean executableName = FamilyAdapterRegistry.isExecutableFamily(name)
-                && (executablePostName || inventory.stages.contains("fragment"))
-                && (!FamilyAdapterRegistry.isEntityLike(name)
-                && !FamilyAdapterRegistry.isParticleLike(name)
-                && !FamilyAdapterRegistry.isWeatherFamily(name)
-                && !FamilyAdapterRegistry.isHostLayoutFamily(name)
-                && !FamilyAdapterRegistry.isSkyFamily(name)
-                && !FamilyAdapterRegistry.isCloudFamily(name)
-                || inventory.stages.contains("vertex"));
-        vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
-        if (programPlan != null) {
-            if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
-                deviations.add(programPlan.terrainMaterial().modern()
-                        ? (programPlan.convertedVertex() != null
-                        ? "MODERN_TERRAIN_VERTEX_BRIDGE" : "MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
-                        : (programPlan.convertedVertex() != null
-                        ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"));
-            } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "SHADOW_VERTEX_BRIDGE" : "SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isShadowEntityFamily(name)) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "SHADOW_ENTITY_VERTEX_BRIDGE" : "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
-                deviations.add(programPlan.terrainMaterial().modern()
-                        ? (programPlan.convertedVertex() != null
-                        ? "MODERN_WATER_VERTEX_BRIDGE" : "MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED")
-                        : (programPlan.convertedVertex() != null
-                        ? "TRANSLUCENT_VERTEX_BRIDGE" : "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED"));
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_entities")) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "ENTITY_VERTEX_BRIDGE" : "ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_block")) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "BLOCK_VERTEX_BRIDGE" : "BLOCK_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_hand")) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "HAND_VERTEX_BRIDGE" : "HAND_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isParticleLike(name)) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "PARTICLE_VERTEX_BRIDGE" : "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isHostLayoutFamily(name)) {
-                String lane = FamilyAdapterRegistry.hostLayoutLane(name);
-                deviations.add(lane + (programPlan.convertedVertex() != null
-                        ? "_VERTEX_BRIDGE" : "_VERTEX_BRIDGE_UNSUPPORTED"));
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "WEATHER_VERTEX_BRIDGE" : "WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isSkyFamily(name)) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "SKY_VERTEX_BRIDGE" : "SKY_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)
-                    && programPlan.cloudDrawsNothing()) {
-                deviations.add(PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)) {
-                deviations.add(programPlan.convertedVertex() != null
-                        ? "CLOUD_VERTEX_BRIDGE" : "CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (name.equals("gbuffers_water")) {
-                deviations.add("FIXED_VERTEX_SUBSTITUTION");
-            } else if (name.equals("shadow")) {
-                deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
-                deviations.add("SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex")) {
-                if (programPlan.convertedVertex() != null && executablePostName) {
-                    deviations.add(programPlan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
-                            ? "POST_VERTEX_AUTHORED_TRANSLATED" : "POST_VERTEX_ADAPTER");
-                } else {
-                    deviations.add("FIXED_VERTEX_SUBSTITUTION");
-                }
-            }
-        } else {
-            if (inventory.stages.contains("vertex") && name.equals("gbuffers_terrain")) {
-                if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
-                    deviations.add("LEGACY_TERRAIN_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && name.equals("shadow")) {
-                if (LegacyGlslConverter.supportsModernShadow(vertex, fragment)
-                        || LegacyGlslConverter.supportsShadowVertex(vertex, fragment)) {
-                    deviations.add("SHADOW_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_water")) {
-                if (LegacyGlslConverter.supportsModernTerrain(vertex, fragment)) {
-                    deviations.add("MODERN_WATER_VERTEX_BRIDGE");
-                } else if (LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)) {
-                    deviations.add("TRANSLUCENT_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_entities")) {
-                if (LegacyGlslConverter.supportsEntityVertex(vertex, fragment)) {
-                    deviations.add("ENTITY_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_block")) {
-                if (LegacyGlslConverter.supportsEntityVertex(vertex, fragment)) {
-                    deviations.add("BLOCK_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("BLOCK_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && name.equals("gbuffers_hand")) {
-                if (LegacyGlslConverter.supportsHandVertex(vertex, fragment)) {
-                    deviations.add("HAND_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("HAND_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isParticleLike(name)) {
-                if (LegacyGlslConverter.convertParticleVertex(vertex, null, fragment, Map.of()) != null) {
-                    deviations.add("PARTICLE_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isWeatherFamily(name)) {
-                if (LegacyGlslConverter.convertParticleVertex(vertex, null, fragment, Map.of()) != null) {
-                    deviations.add("WEATHER_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isSkyFamily(name)) {
-                if (LegacyGlslConverter.convertSkyVertex(vertex, null, fragment,
-                        name.equals("gbuffers_skytextured")) != null) {
-                    deviations.add("SKY_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("SKY_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)
-                    && AuthoredOutput.producesNothing(vertex, fragment)) {
-                deviations.add(PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
-            } else if (inventory.stages.contains("vertex") && FamilyAdapterRegistry.isCloudFamily(name)) {
-                if (LegacyGlslConverter.convertCloudVertex(vertex, null, fragment) != null) {
-                    deviations.add("CLOUD_VERTEX_BRIDGE");
-                } else {
-                    deviations.add("CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
-                }
-            } else if (name.equals("gbuffers_water")) {
-                deviations.add("FIXED_VERTEX_SUBSTITUTION");
-            } else if (name.equals("shadow")) {
-                deviations.add("SHADOW_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
-                deviations.add("SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED");
-            } else if (inventory.stages.contains("vertex")) {
-                deviations.add("FIXED_VERTEX_SUBSTITUTION");
-            }
+        boolean hasVertex = inventory.stages.contains("vertex");
+        String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
+        String vertexBridge = programPlan != null
+                ? plannedVertexBridge(name, hasVertex, programPlan, postName)
+                : unplannedVertexBridge(name, hasVertex, vertex, fragment);
+        if (vertexBridge != null) {
+            deviations.add(vertexBridge);
         }
         if (name.equals("gbuffers_water")) {
             deviations.add("TRANSLUCENT_STATE_FIXED_TO_HOST");
         }
-        if (name.equals("gbuffers_entities")
-                && programPlan != null && programPlan.executable()) {
-            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
-            deviations.add("ENTITY_STATE_FIXED_TO_HOST");
-            deviations.add("ENTITY_BATCH_ORIGIN_SPLIT");
-            deviations.add("ENTITY_SCREEN_DRAW_FALLBACK");
-        }
-        if (name.equals("gbuffers_block") && programPlan != null && programPlan.executable()) {
-            deviations.add("FAMILY_ADAPTER_INSTALLED");
-            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
-            deviations.add("BLOCK_ENTITY_ID_DEFAULTED");
-            deviations.add("ENTITY_STATE_FIXED_TO_HOST");
-        }
-        if (name.equals("gbuffers_hand") && programPlan != null && programPlan.executable()) {
-            deviations.add("FAMILY_ADAPTER_INSTALLED");
-            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
-            deviations.add("HAND_ITEM_ID_DEFAULTED");
-            deviations.add("HAND_STATE_FIXED_TO_HOST");
-        }
-        if (name.equals("gbuffers_particles") && programPlan != null && programPlan.executable()) {
-            deviations.add("FAMILY_ADAPTER_INSTALLED");
-            deviations.add("PARTICLE_STATE_FIXED_TO_HOST");
-        }
-        if (FamilyAdapterRegistry.isWorldEntityFamily(name)
-                && programPlan != null && programPlan.executable()) {
-            if (!name.equals("gbuffers_entities")) {
-                deviations.add("FAMILY_ADAPTER_INSTALLED");
-                deviations.add("ENTITY_STATE_FIXED_TO_HOST");
-            }
-        }
-        if (FamilyAdapterRegistry.isBlockFamily(name)
-                && programPlan != null && programPlan.executable()) {
-            if (name.equals("gbuffers_damagedblock")) {
-                deviations.add("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
-            }
-        }
-        if (FamilyAdapterRegistry.isHandFamily(name)
-                && programPlan != null && programPlan.executable()) {
-            if (name.equals("gbuffers_hand_water")) {
-                deviations.add("FAMILY_ADAPTER_INSTALLED");
-                deviations.add("HAND_TRANSLUCENT_ITEM_PHASE");
-            }
-        }
-        if (FamilyAdapterRegistry.isParticleLike(name)
-                && programPlan != null && programPlan.executable()) {
-            if (!name.equals("gbuffers_particles")) {
-                deviations.add("FAMILY_ADAPTER_INSTALLED");
-                deviations.add("PARTICLE_TRANSLUCENT_INSTALLED");
-            }
-        }
-        if (FamilyAdapterRegistry.isWeatherFamily(name)
-                && programPlan != null && programPlan.executable()) {
-            deviations.add("FAMILY_ADAPTER_INSTALLED");
-            deviations.add("WEATHER_STATE_FIXED_TO_HOST");
-        }
-        if (FamilyAdapterRegistry.isHostLayoutFamily(name)
-                && programPlan != null && programPlan.executable()) {
-            deviations.add("FAMILY_ADAPTER_INSTALLED");
-            deviations.add(FamilyAdapterRegistry.hostLayoutLane(name) + "_STATE_FIXED_TO_HOST");
-        }
-        if (FamilyAdapterRegistry.isShadowEntityFamily(name)
-                && programPlan != null && programPlan.executable()) {
-            // Depth and cull follow each caster's host pipeline; blending is off, as in Iris.
-            deviations.add("FAMILY_ADAPTER_INSTALLED");
-            deviations.add("ENTITY_VERTEX_FORMAT_EXTENDED");
-            deviations.add("SHADOW_ENTITY_STATE_FIXED_TO_HOST");
+        if (programPlan != null && programPlan.executable()) {
+            deviations.addAll(installedFamilyDeviations(name));
         }
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
@@ -724,39 +468,11 @@ public final class PackProbe {
                 && !advancedResourcesArePlanned(name, packPlan)) {
             deviations.add("ADVANCED_RESOURCE_UNSUPPORTED");
         }
-
-        Map<String, Integer> knownSamplers = name.equals("gbuffers_terrain")
-                ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
-                : FamilyAdapterRegistry.isShadowFamily(name) ? UniformRegistry.SHADOW_NAME_TO_SLOT
-                : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
-                : (FamilyAdapterRegistry.isEntityLike(name)
-                || FamilyAdapterRegistry.isParticleLike(name)
-                || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isHostLayoutFamily(name)
-                || FamilyAdapterRegistry.isSkyFamily(name)
-                || FamilyAdapterRegistry.isCloudFamily(name))
-                ? UniformRegistry.ENTITY_NAME_TO_SLOT
-                : UniformRegistry.NAME_TO_SLOT;
         // PackPlanBuilder already resolved standard aliases and pack-owned
         // sampler slots through the shared interface plan. Keep the legacy
         // scan only for compatibility callers that do not have a plan.
         if (!relaxed && programPlan == null) {
-            for (String sampler : samplers) {
-                if (!knownSamplers.containsKey(sampler)) {
-                    deviations.add(name.equals("gbuffers_water")
-                            ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
-                            ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
-                            : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
-                            : FamilyAdapterRegistry.isShadowFamily(name)
-                            ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
-                            : FamilyAdapterRegistry.isEntityLike(name)
-                            || FamilyAdapterRegistry.isParticleLike(name)
-                            || FamilyAdapterRegistry.isHostLayoutFamily(name)
-                            || FamilyAdapterRegistry.isWeatherFamily(name)
-                            ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
-                            : "SAMPLER_NOT_MAPPED:" + sampler);
-                }
-            }
+            addUnmappedSamplerDeviations(name, samplers, deviations);
         }
         if (samplers.contains("noisetex")) {
             // Runtime performs the exact file check. The report records the
@@ -766,11 +482,8 @@ public final class PackProbe {
         boolean authoredShadowOutputs = FamilyAdapterRegistry.isShadowFamily(name) && programPlan != null
                 && programPlan.convertedFragment() != null && programPlan.executable();
         if (!authoredShadowOutputs && targetResult == null && targets.size() > 1) {
-            if (FamilyAdapterRegistry.isShadowFamily(name)) {
-                deviations.add("SHADOW_COLOR_TARGET_UNSUPPORTED");
-            } else {
-                deviations.add("MRT_NOT_SUPPORTED");
-            }
+            deviations.add(FamilyAdapterRegistry.isShadowFamily(name)
+                    ? "SHADOW_COLOR_TARGET_UNSUPPORTED" : "MRT_NOT_SUPPORTED");
         } else if (!authoredShadowOutputs && targetResult == null && !targets.isEmpty() && targets.get(0) != 0) {
             deviations.add("TARGET_ROUTING_FIXED_TO_COLORTEX0");
         }
@@ -778,22 +491,257 @@ public final class PackProbe {
             deviations.add("MISSING_FRAGMENT_SOURCE");
         }
 
-        ConformanceReport.SupportStatus support;
-        if (!executableName) {
-            support = ConformanceReport.SupportStatus.UNSUPPORTED;
-        } else if (!hasFragment || hasSevereDeviation(deviations)) {
-            support = ConformanceReport.SupportStatus.IDENTITY_FALLBACK;
-        } else if (!deviations.isEmpty()) {
-            support = ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
-        } else {
-            support = ConformanceReport.SupportStatus.SUPPORTED;
-        }
-
         return new ConformanceReport.ProgramReport(
-                name, family, modern ? "MODERN_GLSL" : "LEGACY_GLSL",
-                sorted(inventory.stages), inventory.sourceHashes, samplers, uniforms,
-                targets, support, ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED,
-                List.copyOf(deviations));
+                name, familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
+                sorted(inventory.stages), inventory.sourceHashes, samplers, List.copyOf(uniformNames),
+                targets, supportStatus(executableName(name, inventory, postName), hasFragment, deviations),
+                ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
+    }
+
+    /** Modern terrain, water and shadow sources run through their own planned bridge. */
+    private static boolean modernTerrainPlan(String name, PackProgramPlan programPlan) {
+        return (name.equals("gbuffers_terrain") || name.equals("gbuffers_water") || name.equals("shadow"))
+                && programPlan != null && programPlan.terrainMaterial().modern();
+    }
+
+    /**
+     * A validated conversion is authoritative for every family, not just post and particles: the
+     * lexical modern-GLSL veto must not reject a program whose converters already accepted it.
+     */
+    private static boolean validatedConversion(Inventory inventory, PackProgramPlan programPlan) {
+        return programPlan != null && programPlan.executable() && programPlan.convertedFragment() != null
+                && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null);
+    }
+
+    private static PostTargetPlan.ParseResult targetResult(
+            Inventory inventory,
+            String fragment,
+            PackConfig.PackConfigData packConfig,
+            PackProgramPlan programPlan,
+            boolean postName
+    ) {
+        if (programPlan != null && programPlan.targetPlan() != null) {
+            return new PostTargetPlan.ParseResult(programPlan.targetPlan(), programPlan.targetPlan().deviations());
+        }
+        if (programPlan != null && programPlan.geometryOutputPlan() != null) {
+            // The plan routes the prepared source, whose #if already chose one
+            // DRAWBUFFERS directive; an authored scan would count every branch.
+            return new PostTargetPlan.ParseResult(programPlan.geometryOutputPlan().targetPlan(),
+                    programPlan.geometryOutputPlan().deviations());
+        }
+        return postName ? PostTargetPlan.parse(inventory.name, fragment, packConfig.colortexFormats()) : null;
+    }
+
+    private static UniformRegistry.ProgramInterface interfacePlan(
+            String name,
+            String fragment,
+            PackProgramPlan programPlan,
+            PostTargetPlan.ParseResult targetResult,
+            boolean relaxed,
+            boolean postName
+    ) {
+        UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(name);
+        if (programPlan != null) {
+            return programPlan.interfacePlan().effective(stage);
+        }
+        if (postName) {
+            return relaxed ? UniformRegistry.planPreparedPost(fragment, targetResult.plan())
+                    : UniformRegistry.planPost(fragment, targetResult.plan());
+        }
+        return relaxed ? UniformRegistry.planPrepared(fragment, stage) : UniformRegistry.plan(fragment, stage);
+    }
+
+    private static void addTargetRouteDeviations(
+            PostTargetPlan.ParseResult targetResult,
+            boolean postName,
+            PackProgramPlan programPlan,
+            Collection<String> deviations
+    ) {
+        if (targetResult == null) {
+            return;
+        }
+        deviations.addAll(targetResult.deviations());
+        if (!targetResult.executable()) {
+            return;
+        }
+        PostTargetPlan plan = targetResult.plan();
+        if (!plan.targetSlots().equals(List.of(0)) && (postName || plan.requiresMrt())) {
+            deviations.add(postName ? "POST_TARGET_ROUTE_APPLIED" : "GEOMETRY_TARGET_ROUTE_APPLIED");
+        }
+        if (plan.requiresMrt() && (postName || programPlan == null || programPlan.executable())) {
+            deviations.add(postName ? "MRT_POST_BRIDGE" : "MRT_GEOMETRY_BRIDGE");
+        }
+    }
+
+    /** Whether a program of this name and these stages is one Chimera could execute at all. */
+    private static boolean executableName(String name, Inventory inventory, boolean postName) {
+        boolean needsVertex = FamilyAdapterRegistry.isEntityLike(name)
+                || FamilyAdapterRegistry.isParticleLike(name)
+                || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isHostLayoutFamily(name)
+                || FamilyAdapterRegistry.isSkyFamily(name)
+                || FamilyAdapterRegistry.isCloudFamily(name);
+        return FamilyAdapterRegistry.isExecutableFamily(name)
+                && (postName || inventory.stages.contains("fragment"))
+                && (!needsVertex || inventory.stages.contains("vertex"));
+    }
+
+    private static ConformanceReport.SupportStatus supportStatus(
+            boolean executableName, boolean hasFragment, Collection<String> deviations) {
+        if (!executableName) {
+            return ConformanceReport.SupportStatus.UNSUPPORTED;
+        }
+        if (!hasFragment || hasSevereDeviation(deviations)) {
+            return ConformanceReport.SupportStatus.IDENTITY_FALLBACK;
+        }
+        return deviations.isEmpty() ? ConformanceReport.SupportStatus.SUPPORTED
+                : ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
+    }
+
+    /** How a planned program's vertex stage is bridged, as its report names it; null when it has none. */
+    private static String plannedVertexBridge(
+            String name, boolean hasVertex, PackProgramPlan plan, boolean postName) {
+        boolean converted = plan.convertedVertex() != null;
+        if (hasVertex) {
+            if (FamilyAdapterRegistry.isCloudFamily(name) && plan.cloudDrawsNothing()) {
+                return PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT;
+            }
+            boolean modern = plan.terrainMaterial().modern();
+            String bridge = switch (name) {
+                case "gbuffers_terrain" -> modern ? bridge("MODERN_TERRAIN", converted)
+                        : converted ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
+                case "gbuffers_water" -> bridge(modern ? "MODERN_WATER" : "TRANSLUCENT", converted);
+                default -> {
+                    String label = vertexBridgeLabel(name);
+                    yield label == null ? null : bridge(label, converted);
+                }
+            };
+            if (bridge != null) {
+                return bridge;
+            }
+            if (converted && postName) {
+                return plan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
+                        ? "POST_VERTEX_AUTHORED_TRANSLATED" : "POST_VERTEX_ADAPTER";
+            }
+        }
+        return unbridgedVertex(name, hasVertex);
+    }
+
+    /** The bridge a program without a plan would get, judged from its authored sources alone. */
+    private static String unplannedVertexBridge(String name, boolean hasVertex, String vertex, String fragment) {
+        if (hasVertex) {
+            if (FamilyAdapterRegistry.isCloudFamily(name) && AuthoredOutput.producesNothing(vertex, fragment)) {
+                return PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT;
+            }
+            String bridge = switch (name) {
+                case "gbuffers_terrain" -> LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)
+                        ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
+                case "gbuffers_water" -> LegacyGlslConverter.supportsModernTerrain(vertex, fragment)
+                        ? "MODERN_WATER_VERTEX_BRIDGE"
+                        : LegacyGlslConverter.supportsTerrainVertex(vertex, fragment)
+                        ? "TRANSLUCENT_VERTEX_BRIDGE" : "MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED";
+                case "shadow" -> bridge("SHADOW", LegacyGlslConverter.supportsModernShadow(vertex, fragment)
+                        || LegacyGlslConverter.supportsShadowVertex(vertex, fragment));
+                case "gbuffers_entities" -> bridge("ENTITY", LegacyGlslConverter.supportsEntityVertex(vertex, fragment));
+                case "gbuffers_block" -> bridge("BLOCK", LegacyGlslConverter.supportsEntityVertex(vertex, fragment));
+                case "gbuffers_hand" -> bridge("HAND", LegacyGlslConverter.supportsHandVertex(vertex, fragment));
+                default -> FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
+                        ? bridge(vertexBridgeLabel(name),
+                        LegacyGlslConverter.convertParticleVertex(vertex, null, fragment, Map.of()) != null)
+                        : FamilyAdapterRegistry.isSkyFamily(name)
+                        ? bridge("SKY", LegacyGlslConverter.convertSkyVertex(vertex, null, fragment,
+                        name.equals("gbuffers_skytextured")) != null)
+                        : FamilyAdapterRegistry.isCloudFamily(name)
+                        ? bridge("CLOUD", LegacyGlslConverter.convertCloudVertex(vertex, null, fragment) != null)
+                        : null;
+            };
+            if (bridge != null) {
+                return bridge;
+            }
+        }
+        return unbridgedVertex(name, hasVertex);
+    }
+
+    /**
+     * The label of a family's authored vertex bridge, or null for one without: terrain and water
+     * name theirs by the material contract.
+     */
+    private static String vertexBridgeLabel(String name) {
+        if (name.equals("shadow")) return "SHADOW";
+        if (name.equals("gbuffers_entities")) return "ENTITY";
+        if (name.equals("gbuffers_block")) return "BLOCK";
+        if (name.equals("gbuffers_hand")) return "HAND";
+        if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY";
+        if (FamilyAdapterRegistry.isParticleLike(name)) return "PARTICLE";
+        if (FamilyAdapterRegistry.isWeatherFamily(name)) return "WEATHER";
+        if (FamilyAdapterRegistry.isSkyFamily(name)) return "SKY";
+        if (FamilyAdapterRegistry.isCloudFamily(name)) return "CLOUD";
+        return FamilyAdapterRegistry.hostLayoutLane(name);
+    }
+
+    private static String bridge(String label, boolean converted) {
+        return label + (converted ? "_VERTEX_BRIDGE" : "_VERTEX_BRIDGE_UNSUPPORTED");
+    }
+
+    /** A vertex stage no bridge serves: water draws on the fixed host vertex, shadow programs fail. */
+    private static String unbridgedVertex(String name, boolean hasVertex) {
+        if (name.equals("gbuffers_water")) return "FIXED_VERTEX_SUBSTITUTION";
+        if (name.equals("shadow")) return "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
+        if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
+        return hasVertex ? "FIXED_VERTEX_SUBSTITUTION" : null;
+    }
+
+    /** What an executable plan of each family records about the host state its draws keep. */
+    private static List<String> installedFamilyDeviations(String name) {
+        FamilyAdapterPlan family = FamilyAdapterRegistry.forProgram(name);
+        return switch (family.family()) {
+            case ENTITY -> List.of("ENTITY_VERTEX_FORMAT_EXTENDED", "ENTITY_STATE_FIXED_TO_HOST",
+                    "ENTITY_BATCH_ORIGIN_SPLIT", "ENTITY_SCREEN_DRAW_FALLBACK");
+            case ENTITY_TRANSLUCENT, SPIDER_EYES -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_STATE_FIXED_TO_HOST");
+            case BLOCK -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
+                    "BLOCK_ENTITY_ID_DEFAULTED", "ENTITY_STATE_FIXED_TO_HOST");
+            case DAMAGED_BLOCK -> List.of("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
+            case HAND -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
+                    "HAND_ITEM_ID_DEFAULTED", "HAND_STATE_FIXED_TO_HOST");
+            case HAND_WATER -> List.of("FAMILY_ADAPTER_INSTALLED", "HAND_TRANSLUCENT_ITEM_PHASE");
+            case PARTICLE -> List.of("FAMILY_ADAPTER_INSTALLED", "PARTICLE_STATE_FIXED_TO_HOST");
+            case PARTICLE_TRANSLUCENT -> List.of("FAMILY_ADAPTER_INSTALLED", "PARTICLE_TRANSLUCENT_INSTALLED");
+            case WEATHER -> List.of("FAMILY_ADAPTER_INSTALLED", "WEATHER_STATE_FIXED_TO_HOST");
+            // Depth and cull follow each caster's host pipeline; blending is off, as in Iris.
+            case SHADOW_ENTITIES -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
+                    "SHADOW_ENTITY_STATE_FIXED_TO_HOST");
+            default -> family.vertexContract().hostLayout()
+                    ? List.of("FAMILY_ADAPTER_INSTALLED", family.family().name() + "_STATE_FIXED_TO_HOST")
+                    : List.of();
+        };
+    }
+
+    /** Declared samplers a program without a plan could not bind, by the slot map of its stage. */
+    private static void addUnmappedSamplerDeviations(String name, List<String> samplers,
+                                                     Collection<String> deviations) {
+        boolean entityStage = FamilyAdapterRegistry.isEntityLike(name)
+                || FamilyAdapterRegistry.isParticleLike(name)
+                || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isHostLayoutFamily(name);
+        Map<String, Integer> knownSamplers = name.equals("gbuffers_terrain")
+                ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
+                : FamilyAdapterRegistry.isShadowFamily(name) ? UniformRegistry.SHADOW_NAME_TO_SLOT
+                : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
+                : entityStage || FamilyAdapterRegistry.isSkyFamily(name) || FamilyAdapterRegistry.isCloudFamily(name)
+                ? UniformRegistry.ENTITY_NAME_TO_SLOT
+                : UniformRegistry.NAME_TO_SLOT;
+        for (String sampler : samplers) {
+            if (knownSamplers.containsKey(sampler)) {
+                continue;
+            }
+            deviations.add(name.equals("gbuffers_water")
+                    ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
+                    ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
+                    : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
+                    : FamilyAdapterRegistry.isShadowFamily(name) ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
+                    : entityStage ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
+                    : "SAMPLER_NOT_MAPPED:" + sampler);
+        }
     }
 
     /** Builds a truthful report for a native compute stage without applying graphics rules. */
@@ -866,73 +814,45 @@ public final class PackProbe {
             .map(lane -> lane + "_VERTEX_BRIDGE_UNSUPPORTED")
             .collect(Collectors.toUnmodifiableSet());
 
+    /** Deviations that leave a program on the identity fallback. */
+    private static final Set<String> SEVERE_DEVIATIONS = Set.of(
+            "UNSUPPORTED_PACK_STAGE", "MODERN_GLSL_UNSUPPORTED", "ADVANCED_RESOURCE_UNSUPPORTED",
+            "MRT_NOT_SUPPORTED", "TARGET_ROUTING_FIXED_TO_COLORTEX0",
+            "POST_TARGET_DIRECTIVE_MALFORMED", "POST_TARGET_DIRECTIVE_CONFLICT", "FINAL_MRT_UNSUPPORTED",
+            "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED", "MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",
+            "MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED", "SHADOW_VERTEX_BRIDGE_UNSUPPORTED",
+            "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED", "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
+            "ENTITY_VERTEX_BRIDGE_UNSUPPORTED", "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+            "HAND_VERTEX_BRIDGE_UNSUPPORTED", "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED",
+            "WEATHER_VERTEX_BRIDGE_UNSUPPORTED", "SKY_VERTEX_BRIDGE_UNSUPPORTED",
+            "CLOUD_VERTEX_BRIDGE_UNSUPPORTED", "DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED",
+            "SHADOW_COLOR_INPUT_UNSUPPORTED", "MISSING_FRAGMENT_SOURCE", "POST_CONVERTER_UNSUPPORTED");
+
+    /** Deviation families that do the same, matched by prefix. */
+    private static final List<String> SEVERE_PREFIXES = List.of(
+            "POST_TARGET_DIRECTIVE_DUPLICATE:", "POST_TARGET_INDEX_UNSUPPORTED:",
+            "POST_TARGET_FORMAT_UNSUPPORTED:", "ENTITY_SAMPLER_UNSUPPORTED:", "ENTITY_ID_UNSUPPORTED:",
+            "UNIFORM_TYPE_UNSUPPORTED:", "UNIFORM_NAME_UNSUPPORTED:", "UNIFORM_CONFLICT:",
+            "SAMPLER_NOT_MAPPED:", "SAMPLER_SLOT_CONFLICT:", "PACK_TEXTURE_MISSING:",
+            "PACK_RAW_TEXTURE_UNSUPPORTED:", "PACK_TEXTURE_PATH_UNSAFE:", "PACK_TEXTURE_LOAD_FAILED:",
+            "PACK_RESOURCE_SLOT_LIMIT:", "STANDARD_RESOURCE_UNAVAILABLE:", "SHADOW_SAMPLER_UNSUPPORTED:",
+            "TRANSLUCENT_SAMPLER_UNSUPPORTED:", "GBUFFER_TARGET_FEEDBACK:", "PROGRAM_", "SOURCE_INCLUDE_",
+            "TRANSLATION_UNSUPPORTED:", "STORAGE_BUFFER_", "POST_VARYING_UNSUPPORTED:",
+            "ALPHA_TEST_MALFORMED:", "LEGACY_FOG_FIELD_UNSUPPORTED:", "SOURCE_NORMALIZATION_FAILED:",
+            "PREPROCESSOR_");
+
+    /** Members of a severe family that only record a fact. */
+    private static final List<String> BENIGN_PREFIXES = List.of(
+            "PROGRAM_ALIAS_RECORDED:", "PREPROCESSOR_MACRO_REDEFINED:");
+
     private static boolean hasSevereDeviation(Collection<String> deviations) {
-        for (String deviation : deviations) {
-            if (deviation.equals("UNSUPPORTED_PACK_STAGE")
-                    || deviation.equals("MODERN_GLSL_UNSUPPORTED")
-                    || deviation.equals("ADVANCED_RESOURCE_UNSUPPORTED")
-                    || deviation.equals("MRT_NOT_SUPPORTED")
-                    || deviation.equals("TARGET_ROUTING_FIXED_TO_COLORTEX0")
-                    || deviation.equals("POST_TARGET_DIRECTIVE_MALFORMED")
-                    || deviation.equals("POST_TARGET_DIRECTIVE_CONFLICT")
-                    || deviation.startsWith("POST_TARGET_DIRECTIVE_DUPLICATE:")
-                    || deviation.startsWith("POST_TARGET_INDEX_UNSUPPORTED:")
-                    || deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")
-                    || deviation.equals("FINAL_MRT_UNSUPPORTED")
-                    || deviation.equals("TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("SHADOW_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED")
-                    || deviation.equals("ENTITY_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("BLOCK_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("HAND_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("WEATHER_VERTEX_BRIDGE_UNSUPPORTED")
-                    || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)
-                    || deviation.equals("SKY_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("CLOUD_VERTEX_BRIDGE_UNSUPPORTED")
-                    || deviation.equals("DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED")
-                    || deviation.startsWith("ENTITY_SAMPLER_UNSUPPORTED:")
-                    || deviation.startsWith("ENTITY_ID_UNSUPPORTED:")
-                    || deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
-                    || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
-                    || deviation.startsWith("UNIFORM_CONFLICT:")
-                    || deviation.startsWith("SAMPLER_NOT_MAPPED:")
-                    || deviation.startsWith("SAMPLER_SLOT_CONFLICT:")
-                    || deviation.startsWith("PACK_TEXTURE_MISSING:")
-                    || deviation.startsWith("PACK_RAW_TEXTURE_UNSUPPORTED:")
-                    || deviation.startsWith("PACK_TEXTURE_PATH_UNSAFE:")
-                    || deviation.startsWith("PACK_TEXTURE_LOAD_FAILED:")
-                    || deviation.startsWith("PACK_RESOURCE_SLOT_LIMIT:")
-                    || deviation.startsWith("STANDARD_RESOURCE_UNAVAILABLE:")
-                    || deviation.startsWith("SHADOW_SAMPLER_UNSUPPORTED:")
-                    || deviation.startsWith("TRANSLUCENT_SAMPLER_UNSUPPORTED:")
-                    || deviation.startsWith("GBUFFER_TARGET_FEEDBACK:")
-                    || deviation.equals("SHADOW_COLOR_INPUT_UNSUPPORTED")
-                    || deviation.equals("MISSING_FRAGMENT_SOURCE")
-                    || (deviation.startsWith("PROGRAM_")
-                    && !deviation.startsWith("PROGRAM_ALIAS_RECORDED:"))
-                    || deviation.startsWith("SOURCE_INCLUDE_")
-                    || deviation.equals("POST_CONVERTER_UNSUPPORTED")
-                    || deviation.startsWith("TRANSLATION_UNSUPPORTED:")
-                    || deviation.startsWith("STORAGE_BUFFER_")
-                    || deviation.startsWith("PROGRAM_INTERFACE_")
-                    || deviation.startsWith("POST_VARYING_UNSUPPORTED:")
-                    || deviation.startsWith("ALPHA_TEST_MALFORMED:")
-                    || deviation.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:")
-                    || deviation.startsWith("SOURCE_NORMALIZATION_FAILED:")
-                    || isBlockingPreprocessorDeviation(deviation)) {
-                return true;
-            }
-        }
-        return false;
+        return deviations.stream().anyMatch(PackProbe::isSevere);
     }
 
-    private static boolean isBlockingPreprocessorDeviation(String deviation) {
-        return deviation.startsWith("PREPROCESSOR_")
-                && !deviation.startsWith("PREPROCESSOR_MACRO_REDEFINED:");
+    private static boolean isSevere(String deviation) {
+        if (SEVERE_DEVIATIONS.contains(deviation) || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)) return true;
+        return BENIGN_PREFIXES.stream().noneMatch(deviation::startsWith)
+                && SEVERE_PREFIXES.stream().anyMatch(deviation::startsWith);
     }
 
     private static void addPackConstantDeviations(

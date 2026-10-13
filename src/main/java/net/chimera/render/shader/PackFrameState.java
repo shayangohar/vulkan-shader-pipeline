@@ -25,8 +25,11 @@ import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.DoubleSupplier;
+import java.util.function.IntToDoubleFunction;
 
 /**
  * One render-thread snapshot shared by every pack supplier in a frame.
@@ -154,6 +157,147 @@ final class PackFrameState {
     private float eyeBrightnessBlockSmooth;
     private float eyeBrightnessSkySmooth;
 
+    /**
+     * One frame value as both readers see it: a uniform buffer receives its components in the
+     * declared GLSL type, and a custom-value expression reads them one at a time (a matrix's
+     * elements column-major, as GLSL and Iris number them).
+     */
+    private record FrameValue(int width, IntToDoubleFunction component) {}
+
+    /** Every engine value the frame serves, by uniform name; aliases share one entry. */
+    private final Map<String, FrameValue> values = buildValues();
+
+    private Map<String, FrameValue> buildValues() {
+        Map<String, FrameValue> table = new HashMap<>();
+        scalar(table, () -> frameTime, "frameTime");
+        scalar(table, () -> frameTimeCounter, "frameTimeCounter");
+        scalar(table, () -> frameCounter, "frameCounter");
+        scalar(table, () -> renderingPhase.ordinal(), "renderStage");
+        scalar(table, () -> currentTime, "CurrentTime");
+        scalar(table, () -> worldTime, "worldTime");
+        scalar(table, () -> worldDay, "worldDay");
+        scalar(table, () -> moonPhase, "moonPhase");
+        scalar(table, () -> rainStrength, "rainStrength");
+        scalar(table, () -> thunderStrength, "thunderStrength");
+        scalar(table, () -> wetness, "wetness");
+        scalar(table, () -> sunAngle01, "sunAngle");
+        scalar(table, () -> shadowAngle01, "shadowAngle");
+        scalar(table, () -> dimension, "dimension");
+        scalar(table, () -> bedrockLevel, "bedrockLevel");
+        scalar(table, () -> heightLimit, "heightLimit");
+        scalar(table, () -> logicalHeightLimit, "logicalHeightLimit");
+        scalar(table, () -> seaLevel, "seaLevel");
+        scalar(table, () -> hasCeiling, "hasCeiling");
+        scalar(table, () -> hasSkylight, "hasSkylight");
+        scalar(table, () -> ambientLight, "ambientLight");
+        scalar(table, () -> cloudHeight, "cloudHeight");
+        scalar(table, () -> biomeTemperature, "temperature");
+        scalar(table, () -> rainfall, "rainfall");
+        scalar(table, () -> viewWidth, "viewWidth");
+        scalar(table, () -> viewHeight, "viewHeight");
+        scalar(table, () -> aspectRatio, "aspectRatio");
+        scalar(table, () -> nearPlane, "near");
+        scalar(table, () -> farPlane, "far");
+        scalar(table, () -> blindness, "blindness", "blindFactor");
+        scalar(table, () -> darknessFactor, "darknessFactor");
+        scalar(table, () -> darknessLightFactor, "darknessLightFactor");
+        scalar(table, () -> nightVision, "nightVision");
+        scalar(table, () -> screenBrightness, "screenBrightness");
+        scalar(table, () -> isEyeInWater, "isEyeInWater");
+        scalar(table, () -> isElytraFlying, "isElytraFlying");
+        scalar(table, () -> eyeAltitude, "eyeAltitude");
+        scalar(table, () -> biomeId, "biome");
+        scalar(table, () -> biomeCategory, "biome_category");
+        scalar(table, () -> biomePrecipitation, "biome_precipitation");
+        scalar(table, () -> fogStart, "fogStart", "FogStart", "FogRenderDistanceStart");
+        scalar(table, () -> fogEnd, "fogEnd", "FogEnd", "FogRenderDistanceEnd");
+        scalar(table, () -> fogEnvironmentalStart, "FogEnvironmentalStart");
+        scalar(table, () -> fogEnvironmentalEnd, "FogEnvironmentalEnd");
+        scalar(table, () -> fogSkyEnd, "FogSkyEnd");
+        scalar(table, () -> fogCloudsEnd, "FogCloudsEnd");
+        scalar(table, () -> alphaCutout, "AlphaCutout");
+        scalar(table, () -> entityAlphaReference, UniformRegistry.ENTITY_ALPHA_REFERENCE);
+        scalar(table, () -> glintAlpha, UniformRegistry.GLINT_ALPHA);
+        scalar(table, () -> 0, "UseRgss");
+
+        vector(table, 3, component -> componentOf(cameraOrigin.x, cameraOrigin.y, cameraOrigin.z, component),
+                "cameraPosition");
+        vector(table, 3, component -> componentOf(cameraOrigin.previousX, cameraOrigin.previousY,
+                cameraOrigin.previousZ, component), "previousCameraPosition");
+        ints(table, cameraPositionInt, "cameraPositionInt");
+        ints(table, previousCameraPositionInt, "previousCameraPositionInt");
+        floats(table, cameraPositionFract, "cameraPositionFract");
+        floats(table, previousCameraPositionFract, "previousCameraPositionFract");
+        vector(table, eyePosition, "eyePosition");
+        vector(table, relativeEyePosition, "relativeEyePosition");
+        vector(table, playerLookVector, "playerLookVector");
+        vector(table, sunPosition, "sunPosition");
+        vector(table, moonPosition, "moonPosition");
+        vector(table, shadowLightPosition, "shadowLightPosition");
+        vector(table, upPosition, "upPosition");
+        vector(table, skyColor, "skyColor");
+        // Defaulted: no bolt, as the uniform itself serves.
+        vector(table, 4, component -> 0.0, "lightningBoltPosition");
+        ints(table, eyeBrightness, "eyeBrightness");
+        ints(table, eyeBrightnessSmooth, "eyeBrightnessSmooth");
+        ints(table, atlasSize, "atlasSize");
+        floats(table, fogColor, "fogColor", "FogColor");
+        vector(table, 2, component -> component == 0 ? screenSizeWidth : screenSizeHeight,
+                "screenSize", "ScreenSize");
+        floats(table, textureSize, "textureSize", "TextureSize");
+        floats(table, texelSize, "texelSize", "TexelSize");
+        floats(table, shaderColor, "ColorModulator");
+        floats(table, lightDirection0, "Light0_Direction");
+        floats(table, lightDirection1, "Light1_Direction");
+
+        matrix(table, modelView, "gbufferModelView", "ModelViewMat");
+        matrix(table, modelViewInverse, "gbufferModelViewInverse");
+        matrix(table, previousModelView, "gbufferPreviousModelView");
+        // DHCompat without Distant Horizons: the gbuffer projection and its derivations.
+        matrix(table, projection, "gbufferProjection", "dhProjection");
+        matrix(table, projectionInverse, "gbufferProjectionInverse", "dhProjectionInverse");
+        matrix(table, previousProjection, "gbufferPreviousProjection", "dhPreviousProjection");
+        matrix(table, rasterProjection, "ProjMat");
+        matrix(table, mvp, "MVP");
+        matrix(table, textureMatrix, "TextureMat");
+        matrix(table, shadowModelView, "shadowModelView");
+        matrix(table, shadowModelViewInverse, "shadowModelViewInverse");
+        matrix(table, shadowProjection, "shadowProjection");
+        matrix(table, shadowProjectionInverse, "shadowProjectionInverse");
+        return Map.copyOf(table);
+    }
+
+    private static void scalar(Map<String, FrameValue> table, DoubleSupplier value, String... names) {
+        serve(table, new FrameValue(1, component -> value.getAsDouble()), names);
+    }
+
+    private static void vector(Map<String, FrameValue> table, int width, IntToDoubleFunction component,
+                               String... names) {
+        serve(table, new FrameValue(width, component), names);
+    }
+
+    private static void vector(Map<String, FrameValue> table, Vector3f value, String... names) {
+        vector(table, 3, component -> componentOf(value.x, value.y, value.z, component), names);
+    }
+
+    private static void ints(Map<String, FrameValue> table, int[] values, String... names) {
+        vector(table, values.length, component -> values[component], names);
+    }
+
+    private static void floats(Map<String, FrameValue> table, float[] values, String... names) {
+        vector(table, values.length, component -> values[component], names);
+    }
+
+    private static void matrix(Map<String, FrameValue> table, Matrix4f matrix, String... names) {
+        vector(table, 16, component -> matrix.get(component / 4, component % 4), names);
+    }
+
+    private static void serve(Map<String, FrameValue> table, FrameValue value, String... names) {
+        for (String name : names) {
+            if (table.put(name, value) != null) throw new IllegalStateException("frame value served twice: " + name);
+        }
+    }
+
     /** Returns true and resets temporal state when the level identity changes. */
     boolean prepareLevel(ClientLevel level) {
         if (level == this.lastLevel) {
@@ -272,138 +416,63 @@ final class PackFrameState {
         return shadowLightRotation;
     }
 
+    /** Writes the value a uniform names into its buffer slot, in the type the pack declared it. */
     void write(UniformRegistry.UniformDescriptor descriptor, String type, MappedBuffer target) {
-        if (descriptor.sourceKey().startsWith("custom:")) {
+        String name = descriptor.sourceKey();
+        boolean integral = type.startsWith("i") || type.equals("bool");
+        if (name.startsWith("custom:")) {
             int index = runtimeSettings.indexOf(descriptor.name());
             int width = runtimeSettings.widthOf(descriptor.name());
             for (int lane = 0; lane < Math.max(width, 1); lane++) {
-                float value = index < 0 ? 0.0f : session.values()[index + lane];
-                if (type.startsWith("i") || type.equals("bool")) {
-                    target.putInt(lane * 4, (int) value);
-                } else {
-                    target.putFloat(lane * 4, value);
-                }
+                put(target, lane, index < 0 ? 0.0 : session.values()[index + lane], integral);
             }
             return;
         }
-        if (IrisPlayerState.NAMES.contains(descriptor.sourceKey())) {
-            irisPlayer.write(descriptor.sourceKey(), type, target);
+        if (IrisPlayerState.NAMES.contains(name)) {
+            irisPlayer.write(name, type, target);
             return;
         }
-        if (HeldItemState.NAMES.contains(descriptor.sourceKey())) {
-            heldItems.write(descriptor.sourceKey(), type, target);
+        if (HeldItemState.NAMES.contains(name)) {
+            heldItems.write(name, type, target);
             return;
         }
-        switch (descriptor.sourceKey()) {
-            case "cameraPosition" -> writeVec3(target, cameraOrigin.x, cameraOrigin.y, cameraOrigin.z);
-            case "previousCameraPosition" -> writeVec3(target,
-                    cameraOrigin.previousX, cameraOrigin.previousY, cameraOrigin.previousZ);
-            case "cameraPositionInt" -> writeInts(target, cameraPositionInt);
-            case "previousCameraPositionInt" -> writeInts(target, previousCameraPositionInt);
-            case "cameraPositionFract" -> writeVec3(target, cameraPositionFract);
-            case "previousCameraPositionFract" -> writeVec3(target, previousCameraPositionFract);
-            case "eyePosition" -> writeVec3(target, eyePosition.x, eyePosition.y, eyePosition.z);
-            case "relativeEyePosition" -> writeVec3(target,
-                    relativeEyePosition.x, relativeEyePosition.y, relativeEyePosition.z);
-            case "playerLookVector" -> writeVec3(target,
-                    playerLookVector.x, playerLookVector.y, playerLookVector.z);
-            case "worldTime" -> target.putInt(0, worldTime);
-            case "worldDay" -> target.putInt(0, worldDay);
-            case "moonPhase" -> target.putInt(0, moonPhase);
-            case "dimension" -> target.putInt(0, dimension);
-            case "heightLimit" -> target.putInt(0, heightLimit);
-            case "logicalHeightLimit" -> target.putInt(0, logicalHeightLimit);
-            case "seaLevel" -> target.putInt(0, seaLevel);
-            case "hasCeiling" -> target.putInt(0, hasCeiling);
-            case "hasSkylight" -> target.putInt(0, hasSkylight);
-            case "ambientLight" -> target.putFloat(0, ambientLight);
-            case "cloudHeight" -> target.putFloat(0, cloudHeight);
-            case "temperature" -> target.putFloat(0, biomeTemperature);
-            case "rainfall" -> target.putFloat(0, rainfall);
-            case "frameCounter" -> target.putInt(0, frameCounter);
-            case "CurrentTime" -> target.putInt(0, currentTime);
-            case "isEyeInWater" -> target.putInt(0, isEyeInWater);
-            case "isElytraFlying" -> target.putInt(0, isElytraFlying);
-            case "eyeBrightness" -> writeInts(target, eyeBrightness);
-            case "atlasSize" -> writeInts(target, atlasSize);
-            case "eyeBrightnessSmooth" -> writeInts(target, eyeBrightnessSmooth);
-            case "frameTime" -> target.putFloat(0, frameTime);
-            case "frameTimeCounter" -> target.putFloat(0, frameTimeCounter);
-            case "rainStrength" -> target.putFloat(0, rainStrength);
-            case "thunderStrength" -> target.putFloat(0, thunderStrength);
-            case "wetness" -> target.putFloat(0, wetness);
-            case "sunAngle" -> target.putFloat(0, sunAngle01);
-            case "shadowAngle" -> target.putFloat(0, shadowAngle01);
-            case "sunPosition" -> writeVec3(target, sunPosition.x, sunPosition.y, sunPosition.z);
-            case "moonPosition" -> writeVec3(target, moonPosition.x, moonPosition.y, moonPosition.z);
-            case "upPosition" -> writeVec3(target, upPosition.x, upPosition.y, upPosition.z);
-            case "skyColor" -> writeVec3(target, skyColor.x, skyColor.y, skyColor.z);
-            case "shadowLightPosition" -> writeVec3(target,
-                    shadowLightPosition.x, shadowLightPosition.y, shadowLightPosition.z);
-            case "shadowModelView" -> writeMatrix(target, shadowModelView);
-            case "shadowProjection" -> writeMatrix(target, shadowProjection);
-            case "shadowModelViewInverse" -> writeMatrix(target, shadowModelViewInverse);
-            case "shadowProjectionInverse" -> writeMatrix(target, shadowProjectionInverse);
-            case "gbufferModelView", "ModelViewMat" -> writeMatrix(target, modelView);
-            case "gbufferModelViewInverse" -> writeMatrix(target, modelViewInverse);
-            case "gbufferPreviousModelView" -> writeMatrix(target, previousModelView);
-            case "gbufferPreviousProjection" -> writeMatrix(target, previousProjection);
-            case "gbufferProjection" -> writeMatrix(target, projection);
-            // DHCompat without Distant Horizons: the gbuffer projection and its derivations.
-            case "dhProjection" -> writeMatrix(target, projection);
-            case "dhProjectionInverse" -> writeMatrix(target, projectionInverse);
-            case "dhPreviousProjection" -> writeMatrix(target, previousProjection);
-            case "ProjMat" -> writeMatrix(target, rasterProjection);
-            case "gbufferProjectionInverse" -> writeMatrix(target, projectionInverse);
-            case "MVP" -> writeMatrix(target, mvp);
-            case "TextureMat" -> writeMatrix(target, textureMatrix);
-            case "FogColor", "fogColor" -> writeFloatArray(target, fogColor,
-                    type.equals("vec3") ? 3 : 4);
-            case "FogStart", "fogStart" -> target.putFloat(0, fogStart);
-            case "FogEnd", "fogEnd" -> target.putFloat(0, fogEnd);
-            case "FogEnvironmentalStart" -> target.putFloat(0, fogEnvironmentalStart);
-            case "FogEnvironmentalEnd" -> target.putFloat(0, fogEnvironmentalEnd);
-            case "FogRenderDistanceStart" -> target.putFloat(0, fogStart);
-            case "FogRenderDistanceEnd" -> target.putFloat(0, fogEnd);
-            case "FogSkyEnd" -> target.putFloat(0, fogSkyEnd);
-            case "FogCloudsEnd" -> target.putFloat(0, fogCloudsEnd);
-            case "ScreenSize", "screenSize" -> {
-                target.putFloat(0, screenSizeWidth);
-                target.putFloat(4, screenSizeHeight);
-            }
-            case "TextureSize", "textureSize" -> {
-                target.putInt(0, (int) textureSize[0]);
-                target.putInt(4, (int) textureSize[1]);
-            }
-            case "TexelSize", "texelSize" -> {
-                target.putFloat(0, texelSize[0]);
-                target.putFloat(4, texelSize[1]);
-            }
-            case "viewWidth" -> target.putFloat(0, viewWidth);
-            case "viewHeight" -> target.putFloat(0, viewHeight);
-            case "aspectRatio" -> target.putFloat(0, aspectRatio);
-            case "near" -> target.putFloat(0, nearPlane);
-            case "far" -> target.putFloat(0, farPlane);
-            case "blindFactor", "blindness" -> target.putFloat(0, blindness);
-            case "darknessFactor" -> target.putFloat(0, darknessFactor);
-            case "darknessLightFactor" -> target.putFloat(0, darknessLightFactor);
-            case "nightVision" -> target.putFloat(0, nightVision);
-            case "screenBrightness" -> target.putFloat(0, screenBrightness);
-            case "bedrockLevel" -> target.putInt(0, bedrockLevel);
-            case "eyeAltitude" -> target.putFloat(0, eyeAltitude);
-            case "biome" -> target.putInt(0, biomeId);
-            case "biome_category" -> target.putInt(0, biomeCategory);
-            case "biome_precipitation" -> target.putInt(0, biomePrecipitation);
-            case "AlphaCutout" -> target.putFloat(0, alphaCutout);
-            case UniformRegistry.ENTITY_ALPHA_REFERENCE -> target.putFloat(0, entityAlphaReference);
-            case UniformRegistry.GLINT_ALPHA -> target.putFloat(0, glintAlpha);
-            case "renderStage" -> target.putInt(0, renderingPhase.ordinal());
-            case "ColorModulator" -> writeFloatArray(target, shaderColor, 4);
-            case "Light0_Direction" -> writeVec3(target, lightDirection0);
-            case "Light1_Direction" -> writeVec3(target, lightDirection1);
-            case "UseRgss" -> target.putInt(0, 0);
-            default -> writeDefault(descriptor.defaultPolicy(), type, target);
+        FrameValue value = values.get(name);
+        if (value == null) {
+            writeDefault(descriptor.defaultPolicy(), type, target);
+            return;
         }
+        int count = Math.min(value.width(), UniformRegistry.pipelineCount(type));
+        for (int component = 0; component < count; component++) {
+            put(target, component, value.component().applyAsDouble(component), integral);
+        }
+    }
+
+    private static void put(MappedBuffer target, int component, double value, boolean integral) {
+        if (integral) {
+            target.putInt(component * 4, (int) value);
+        } else {
+            target.putFloat(component * 4, (float) value);
+        }
+    }
+
+    /**
+     * The value, or one component of it, the host serves under a name: the same table a uniform
+     * buffer is written from. Custom values are resolved before this, so everything here is a
+     * canonical engine input -- which is exactly why a pack may not author one.
+     */
+    double value(String name, int component) {
+        if (IrisPlayerState.NAMES.contains(name)) {
+            return irisPlayer.value(name, component);
+        }
+        if (HeldItemState.NAMES.contains(name)) {
+            return heldItems.value(name, component);
+        }
+        FrameValue value = values.get(name);
+        if (value == null) {
+            return component < 0 ? 0.0 : Double.NaN;
+        }
+        int index = Math.max(component, 0);
+        return index < value.width() ? value.component().applyAsDouble(index) : Double.NaN;
     }
 
     static int wrapFrameCounter(int value) {
@@ -739,7 +808,7 @@ final class PackFrameState {
     }
 
     private void evaluateCustomValues() {
-        runtimeSettings.evaluate(this::engineValue, session, frameTime);
+        runtimeSettings.evaluate(this::value, session, frameTime);
     }
 
     /** Declarations whose expression produced a non-finite result this session, with context. */
@@ -775,126 +844,8 @@ final class PackFrameState {
         shadowProjectionInverse.identity();
     }
 
-    /**
-     * The host's own answer for a name, or one component of it. Custom values are resolved before
-     * this, so everything here is a canonical engine input -- which is exactly why a pack may not
-     * author one.
-     */
-    private double engineValue(String name, int component) {
-        if (IrisPlayerState.NAMES.contains(name)) {
-            return irisPlayer.value(name, component);
-        }
-        if (HeldItemState.NAMES.contains(name)) {
-            return heldItems.value(name, component);
-        }
-        if (component < 0) {
-            return scalarValue(name);
-        }
-        return switch (name) {
-            case "eyeBrightness" -> componentOf(eyeBrightness, component);
-            case "atlasSize" -> componentOf(atlasSize, component);
-            case "eyeBrightnessSmooth" -> componentOf(eyeBrightnessSmooth, component);
-            case "cameraPosition" ->
-                    componentOf(cameraOrigin.x, cameraOrigin.y, cameraOrigin.z, component);
-            case "previousCameraPosition" -> componentOf(cameraOrigin.previousX,
-                    cameraOrigin.previousY, cameraOrigin.previousZ, component);
-            case "cameraPositionFract" -> componentOf(cameraPositionFract, component);
-            case "previousCameraPositionFract" -> componentOf(previousCameraPositionFract, component);
-            case "cameraPositionInt" -> componentOf(cameraPositionInt, component);
-            case "previousCameraPositionInt" -> componentOf(previousCameraPositionInt, component);
-            case "eyePosition" -> componentOf(eyePosition, component);
-            case "relativeEyePosition" -> componentOf(relativeEyePosition, component);
-            case "playerLookVector" -> componentOf(playerLookVector, component);
-            case "sunPosition" -> componentOf(sunPosition, component);
-            case "moonPosition" -> componentOf(moonPosition, component);
-            case "shadowLightPosition" -> componentOf(shadowLightPosition, component);
-            case "upPosition" -> componentOf(upPosition, component);
-            case "skyColor" -> componentOf(skyColor, component);
-            // Defaulted: no bolt, as the uniform itself serves.
-            case "lightningBoltPosition" -> 0.0;
-            case "gbufferModelView" -> elementOf(modelView, component);
-            case "gbufferModelViewInverse" -> elementOf(modelViewInverse, component);
-            case "gbufferPreviousModelView" -> elementOf(previousModelView, component);
-            case "gbufferProjection" -> elementOf(projection, component);
-            case "gbufferProjectionInverse" -> elementOf(projectionInverse, component);
-            case "dhProjection" -> elementOf(projection, component);
-            case "dhProjectionInverse" -> elementOf(projectionInverse, component);
-            case "dhPreviousProjection" -> elementOf(previousProjection, component);
-            case "gbufferPreviousProjection" -> elementOf(previousProjection, component);
-            case "shadowModelView" -> elementOf(shadowModelView, component);
-            case "shadowModelViewInverse" -> elementOf(shadowModelViewInverse, component);
-            case "shadowProjection" -> elementOf(shadowProjection, component);
-            case "shadowProjectionInverse" -> elementOf(shadowProjectionInverse, component);
-            // Unreachable: the plan rejects a component of a name with no component source.
-            default -> Double.NaN;
-        };
-    }
-
-    /** One element of a matrix, numbered column-major as GLSL and Iris's accessors read it. */
-    private static double elementOf(Matrix4f matrix, int component) {
-        return component < 16 ? matrix.get(component / 4, component % 4) : Double.NaN;
-    }
-
-    private static double componentOf(int[] values, int component) {
-        return component < values.length ? values[component] : Double.NaN;
-    }
-
-    private static double componentOf(float[] values, int component) {
-        return component < values.length ? values[component] : Double.NaN;
-    }
-
-    private static double componentOf(Vector3f value, int component) {
-        return componentOf(value.x, value.y, value.z, component);
-    }
-
     private static double componentOf(float x, float y, float z, int component) {
         return component == 0 ? x : component == 1 ? y : z;
-    }
-
-    private double scalarValue(String name) {
-        return switch (name) {
-            case "frameTime" -> frameTime;
-            case "frameTimeCounter" -> frameTimeCounter;
-            case "frameCounter" -> frameCounter;
-            case "renderStage" -> renderingPhase.ordinal();
-            case "worldTime" -> worldTime;
-            case "worldDay" -> worldDay;
-            case "moonPhase" -> moonPhase;
-            case "rainStrength" -> rainStrength;
-            case "thunderStrength" -> thunderStrength;
-            case "wetness" -> wetness;
-            case "sunAngle" -> sunAngle01;
-            case "shadowAngle" -> shadowAngle01;
-            case "dimension" -> dimension;
-            case "bedrockLevel" -> bedrockLevel;
-            case "heightLimit" -> heightLimit;
-            case "logicalHeightLimit" -> logicalHeightLimit;
-            case "seaLevel" -> seaLevel;
-            case "hasCeiling" -> hasCeiling;
-            case "hasSkylight" -> hasSkylight;
-            case "ambientLight" -> ambientLight;
-            case "cloudHeight" -> cloudHeight;
-            case "temperature" -> biomeTemperature;
-            case "rainfall" -> rainfall;
-            case "viewWidth" -> viewWidth;
-            case "viewHeight" -> viewHeight;
-            case "aspectRatio" -> aspectRatio;
-            case "near" -> nearPlane;
-            case "far" -> farPlane;
-            case "blindness" -> blindness;
-            case "darknessFactor" -> darknessFactor;
-            case "darknessLightFactor" -> darknessLightFactor;
-            case "nightVision" -> nightVision;
-            case "screenBrightness" -> screenBrightness;
-            case "isEyeInWater" -> isEyeInWater;
-            case "isElytraFlying" -> isElytraFlying;
-            case "eyeAltitude" -> eyeAltitude;
-            case "biome" -> biomeId;
-            case "biome_category" -> biomeCategory;
-            case "biome_precipitation" -> biomePrecipitation;
-            case "eyeBrightness" -> eyeBrightness[0];
-            default -> 0.0;
-        };
     }
 
     private static int dimensionOrdinal(ClientLevel level) {
@@ -1087,35 +1038,6 @@ final class PackFrameState {
         };
         for (int i = 0; i < UniformRegistry.pipelineCount(type); i++) {
             target.putFloat(i * 4, value);
-        }
-    }
-
-    private void writeMatrix(MappedBuffer target, Matrix4f matrix) {
-        matrix.get(matrixScratch);
-        for (int i = 0; i < matrixScratch.length; i++) {
-            target.putFloat(i * 4, matrixScratch[i]);
-        }
-    }
-
-    private static void writeFloatArray(MappedBuffer target, float[] values, int count) {
-        for (int i = 0; i < count; i++) {
-            target.putFloat(i * 4, values[i]);
-        }
-    }
-
-    private static void writeVec3(MappedBuffer target, float x, float y, float z) {
-        target.putFloat(0, x);
-        target.putFloat(4, y);
-        target.putFloat(8, z);
-    }
-
-    private static void writeVec3(MappedBuffer target, float[] values) {
-        writeVec3(target, values[0], values[1], values[2]);
-    }
-
-    private static void writeInts(MappedBuffer target, int[] values) {
-        for (int i = 0; i < values.length; i++) {
-            target.putInt(i * 4, values[i]);
         }
     }
 

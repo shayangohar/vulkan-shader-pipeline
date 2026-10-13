@@ -75,80 +75,112 @@ public final class PackTargetGraphPlan {
             int deviceMaxColorAttachments,
             int deviceMaxImageDimension
     ) {
-        Map<Integer, Integer> formats = config == null ? Map.of() : config.colortexFormats();
-        Map<Integer, PackConfig.TargetSettings> settings = config == null
-                ? Map.of() : config.targetSettings();
-        Map<String, List<Integer>> flips = config == null ? Map.of() : config.flips();
-        Map<String, List<Integer>> preFlips = config == null ? Map.of() : config.preFlips();
-        PackResourcePlan resourcePlan = resources == null ? PackResourcePlan.empty() : resources;
-        int safeWindowWidth = Math.max(1, windowWidth);
-        int safeWindowHeight = Math.max(1, windowHeight);
-        int safeDimension = deviceMaxImageDimension <= 0 ? Integer.MAX_VALUE : deviceMaxImageDimension;
-        Set<Integer> unavailableFormatTargets = unavailableFormatTargets(config);
-
-        Set<Integer> used = new TreeSet<>();
+        GraphInputs inputs = new GraphInputs(
+                programs == null ? List.of() : programs.stream().filter(value -> value != null).toList(),
+                config, resources == null ? PackResourcePlan.empty() : resources,
+                Math.max(1, windowWidth), Math.max(1, windowHeight), deviceMaxColorAttachments,
+                deviceMaxImageDimension <= 0 ? Integer.MAX_VALUE : deviceMaxImageDimension,
+                unavailableFormatTargets(config));
+        List<String> deviations = new ArrayList<>();
         Set<Integer> geometryReads = new TreeSet<>();
+        Map<Integer, TargetSpec> preliminary = preliminaryTargets(inputs, usedTargets(inputs, geometryReads),
+                deviations);
+        List<PackProgramPlan> postPrograms = inputs.programs().stream()
+                .filter(value -> value.targetPlan() != null)
+                .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
+                .toList();
+        Map<Integer, Boolean> doubleTargets = new TreeMap<>();
+        Set<Integer> mipmappedTargets = new TreeSet<>();
+        List<TargetStep> steps = new ArrayList<>();
+        for (PackProgramPlan program : postPrograms) {
+            TargetStep step = step(inputs, program, preliminary, doubleTargets, mipmappedTargets);
+            steps.add(step);
+            deviations.addAll(step.deviations());
+        }
+        DepthGraphPlan depth = depthGraph(inputs.programs(), postPrograms);
+        deviations.addAll(depth.deviations());
+        return new PackTargetGraphPlan(finalTargets(preliminary, doubleTargets, mipmappedTargets), steps, depth,
+                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads);
+    }
+
+    /** What every phase of the graph build reads. */
+    private record GraphInputs(
+            List<PackProgramPlan> programs,
+            PackConfig.PackConfigData config,
+            PackResourcePlan resources,
+            int windowWidth,
+            int windowHeight,
+            int deviceMaxColorAttachments,
+            int maxDimension,
+            Set<Integer> unavailableFormatTargets
+    ) {
+        Map<Integer, PackConfig.TargetSettings> settings() {
+            return config == null ? Map.of() : config.targetSettings();
+        }
+
+        Map<Integer, Integer> formats() {
+            return config == null ? Map.of() : config.colortexFormats();
+        }
+
+        boolean allocatable(Integer target) {
+            return target != null && !unavailableFormatTargets.contains(target);
+        }
+    }
+
+    /**
+     * Every target an executable post or world program writes or reads, in range. The targets a
+     * world program reads are also collected into {@code geometryReads}.
+     */
+    private static Set<Integer> usedTargets(GraphInputs inputs, Set<Integer> geometryReads) {
+        Set<Integer> used = new TreeSet<>();
         used.add(0);
-        if (programs != null) {
-            for (PackProgramPlan program : programs) {
-                if (program == null || program.targetPlan() == null
-                        || !program.executable() || !program.targetPlan().executable()) continue;
-                for (int target : program.targetPlan().targetSlots()) {
-                    if (!unavailableFormatTargets.contains(target)) {
-                        used.add(target);
-                    }
-                }
-                for (String sampler : samplerNames(program)) {
-                    Integer target = colorTarget(program, sampler, resourcePlan);
-                    if (target != null && !unavailableFormatTargets.contains(target)) {
-                        used.add(target);
-                    }
-                }
+        for (PackProgramPlan program : inputs.programs()) {
+            if (program.targetPlan() == null || !program.executable() || !program.targetPlan().executable()) {
+                continue;
             }
-            for (PackProgramPlan program : programs) {
-                if (program == null || program.geometryOutputPlan() == null
-                        || !program.executable() || !program.geometryOutputPlan().executable()) {
-                    continue;
-                }
-                for (int target : program.geometryOutputPlan().targetSlots()) {
-                    if (!unavailableFormatTargets.contains(target)) {
-                        used.add(target);
-                    }
-                }
-                for (String sampler : geometrySamplerNames(program)) {
-                    Integer target = colorTarget(program, sampler, resourcePlan);
-                    if (target != null && !unavailableFormatTargets.contains(target)) {
-                        geometryReads.add(target);
-                        used.add(target);
-                    }
+            program.targetPlan().targetSlots().stream().filter(inputs::allocatable).forEach(used::add);
+            for (String sampler : samplerNames(program)) {
+                Integer target = colorTarget(program, sampler, inputs.resources());
+                if (inputs.allocatable(target)) used.add(target);
+            }
+        }
+        for (PackProgramPlan program : inputs.programs()) {
+            if (program.geometryOutputPlan() == null || !program.executable()
+                    || !program.geometryOutputPlan().executable()) {
+                continue;
+            }
+            program.geometryOutputPlan().targetSlots().stream().filter(inputs::allocatable).forEach(used::add);
+            for (String sampler : geometrySamplerNames(program)) {
+                Integer target = colorTarget(program, sampler, inputs.resources());
+                if (inputs.allocatable(target)) {
+                    geometryReads.add(target);
+                    used.add(target);
                 }
             }
         }
-
-        Map<Integer, Boolean> doubleTargets = new TreeMap<>();
-        List<TargetStep> steps = new ArrayList<>();
-        List<String> deviations = new ArrayList<>();
         // Resource identity resolution can recognize targets beyond this backend's
         // capability. Such references remain diagnostic inputs, never allocations.
         used.removeIf(target -> target < 0 || target > MAX_TARGET);
-        List<PackProgramPlan> sortedPrograms = programs == null ? List.of() : programs.stream()
-                .filter(value -> value != null && value.targetPlan() != null)
-                .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
-                .toList();
+        return used;
+    }
 
+    /** Each used target's declared size, format and clear policy, clamped to what the device allows. */
+    private static Map<Integer, TargetSpec> preliminaryTargets(
+            GraphInputs inputs, Set<Integer> used, List<String> deviations) {
         Map<Integer, TargetSpec> preliminary = new TreeMap<>();
         for (int target : used) {
-            PackConfig.TargetSettings setting = settings.getOrDefault(target, PackConfig.TargetSettings.defaults());
-            Size size = resolveSize(setting.sizeExpression(), config, safeWindowWidth, safeWindowHeight,
-                    target, deviations);
+            PackConfig.TargetSettings setting = inputs.settings()
+                    .getOrDefault(target, PackConfig.TargetSettings.defaults());
+            Size size = resolveSize(setting.sizeExpression(), inputs.config(), inputs.windowWidth(),
+                    inputs.windowHeight(), target, deviations);
             int width = size.width();
             int height = size.height();
-            if (width > safeDimension || height > safeDimension) {
+            if (width > inputs.maxDimension() || height > inputs.maxDimension()) {
                 deviations.add("POST_TARGET_SIZE_UNSUPPORTED:" + target);
-                width = Math.min(width, safeDimension);
-                height = Math.min(height, safeDimension);
+                width = Math.min(width, inputs.maxDimension());
+                height = Math.min(height, inputs.maxDimension());
             }
-            int format = formats.getOrDefault(target, PostTargetPlan.DEFAULT_FORMAT);
+            int format = inputs.formats().getOrDefault(target, PostTargetPlan.DEFAULT_FORMAT);
             if (!isSupportedFormat(format)) {
                 deviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
                 format = PostTargetPlan.DEFAULT_FORMAT;
@@ -158,154 +190,152 @@ public final class PackTargetGraphPlan {
                     setting.deviations()));
             deviations.addAll(setting.deviations());
         }
-        Set<Integer> mipmappedTargets = new TreeSet<>();
+        return preliminary;
+    }
 
-        for (PackProgramPlan program : sortedPrograms) {
-            PostTargetPlan post = program.targetPlan();
-            List<Integer> outputs = new ArrayList<>(post.targetSlots());
-            if (outputs.isEmpty()) outputs.add(0);
-            List<Integer> writes = outputTargets(post);
-            List<Integer> reads = new ArrayList<>();
-            for (String sampler : samplerNames(program)) {
-                Integer target = colorTarget(program, sampler, resourcePlan);
-                if (target != null && !reads.contains(target)) reads.add(target);
-            }
-            reads.sort(Integer::compareTo);
-            List<String> stepDeviations = new ArrayList<>(post.deviations());
-            if (!program.executable()) {
-                stepDeviations.addAll(program.deviations());
-                for (String deviation : program.deviations()) {
-                    if (!deviation.startsWith("SAMPLER_NOT_MAPPED:")) continue;
-                    Integer target = PackResourcePlan.targetIndex(
-                            deviation.substring("SAMPLER_NOT_MAPPED:".length()));
-                    if (target != null && target > MAX_TARGET) {
-                        stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
-                    }
-                }
-            }
-            boolean executable = program.executable() && post.executable();
-            Set<Integer> referencedTargets = new TreeSet<>(outputs);
-            referencedTargets.addAll(reads);
-            for (int target : referencedTargets) {
-                if (target < 0 || target > MAX_TARGET) {
-                    stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
-                    executable = false;
-                }
-                if (unavailableFormatTargets.contains(target)) {
-                    stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
-                    executable = false;
-                }
-            }
-            // Iris generates mips for every directive whose target exists,
-            // read by this program or not; an unallocated target has nothing to mip.
-            List<Integer> mipmapTargets = post.mipmappedTargets().stream()
-                    .filter(preliminary::containsKey).toList();
-            if (executable) mipmappedTargets.addAll(mipmapTargets);
-            if (outputs.size() > Math.min(LOGICAL_ATTACHMENT_LIMIT, Math.max(1, deviceMaxColorAttachments))) {
-                stepDeviations.add("POST_TARGET_ATTACHMENT_LIMIT:" + program.name());
-                executable = false;
-            }
-            if (post.isFinal() && writes.stream().anyMatch(value -> value != 0)) {
-                stepDeviations.add("FINAL_MRT_UNSUPPORTED");
-                executable = false;
-            }
-            TargetSpec first = preliminary.get(outputs.get(0));
-            int stepWidth = first == null ? safeWindowWidth : first.width();
-            int stepHeight = first == null ? safeWindowHeight : first.height();
-            for (int target : outputs) {
-                TargetSpec spec = preliminary.get(target);
-                if (spec == null || spec.width() != stepWidth || spec.height() != stepHeight) {
-                    stepDeviations.add("POST_TARGET_SIZE_CONFLICT:" + program.name());
-                    executable = false;
-                }
-            }
-            if (post.isFinal() && (stepWidth != safeWindowWidth || stepHeight != safeWindowHeight)) {
-                stepDeviations.add("POST_TARGET_SIZE_CONFLICT:" + program.name());
-                executable = false;
-            }
-            for (int target : reads) {
-                if (writes.contains(target)) {
-                    doubleTargets.put(target, true);
-                }
-            }
-            List<Integer> preFlipTargets = preFlips.getOrDefault(
-                    post.isFinal() ? "final_pre" : post.programName() + "_pre", List.of());
-            if (!preFlipTargets.isEmpty()) {
-                for (int target : preFlipTargets) {
-                    doubleTargets.put(target, true);
-                    stepDeviations.add("POST_TARGET_FLIP_PRE_APPLIED:" + post.programName()
-                            + ":" + target);
-                }
-            }
-            for (int target : flips.getOrDefault(post.programName(), List.of())) {
-                doubleTargets.put(target, true);
-                stepDeviations.add("POST_TARGET_FLIP_APPLIED:" + post.programName() + ":" + target);
-            }
-            Map<Integer, Integer> readSides = new TreeMap<>();
-            Map<Integer, Integer> writeSides = new TreeMap<>();
-            for (int target : reads) readSides.put(target, 0);
-            for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
-            steps.add(new TargetStep(post.programName(), reads, writes,
-                    post.outputFormats(), readSides, writeSides, mipmapTargets, stepWidth, stepHeight,
-                    post.isFinal(), executable, stepDeviations));
-            deviations.addAll(stepDeviations);
+    /**
+     * One post program's step: what it reads and writes, at which extent, and on which side of
+     * each double-buffered target. Targets it both reads and writes, or that a flip names, become
+     * double-buffered in {@code doubleTargets}.
+     */
+    private static TargetStep step(
+            GraphInputs inputs,
+            PackProgramPlan program,
+            Map<Integer, TargetSpec> preliminary,
+            Map<Integer, Boolean> doubleTargets,
+            Set<Integer> mipmappedTargets
+    ) {
+        PostTargetPlan post = program.targetPlan();
+        List<Integer> outputs = new ArrayList<>(post.targetSlots());
+        if (outputs.isEmpty()) outputs.add(0);
+        List<Integer> writes = outputTargets(post);
+        List<Integer> reads = new ArrayList<>();
+        for (String sampler : samplerNames(program)) {
+            Integer target = colorTarget(program, sampler, inputs.resources());
+            if (target != null && !reads.contains(target)) reads.add(target);
         }
+        reads.sort(Integer::compareTo);
+        List<String> stepDeviations = new ArrayList<>(post.deviations());
+        if (!program.executable()) {
+            stepDeviations.addAll(program.deviations());
+            for (String deviation : program.deviations()) {
+                if (!deviation.startsWith("SAMPLER_NOT_MAPPED:")) continue;
+                Integer target = PackResourcePlan.targetIndex(deviation.substring("SAMPLER_NOT_MAPPED:".length()));
+                if (target != null && target > MAX_TARGET) {
+                    stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
+                }
+            }
+        }
+        boolean executable = program.executable() && post.executable();
+        Set<Integer> referencedTargets = new TreeSet<>(outputs);
+        referencedTargets.addAll(reads);
+        for (int target : referencedTargets) {
+            if (target < 0 || target > MAX_TARGET) {
+                stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
+                executable = false;
+            }
+            if (inputs.unavailableFormatTargets().contains(target)) {
+                stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
+                executable = false;
+            }
+        }
+        // Iris generates mips for every directive whose target exists,
+        // read by this program or not; an unallocated target has nothing to mip.
+        List<Integer> mipmapTargets = post.mipmappedTargets().stream().filter(preliminary::containsKey).toList();
+        if (executable) mipmappedTargets.addAll(mipmapTargets);
+        if (outputs.size() > Math.min(LOGICAL_ATTACHMENT_LIMIT, Math.max(1, inputs.deviceMaxColorAttachments()))) {
+            stepDeviations.add("POST_TARGET_ATTACHMENT_LIMIT:" + program.name());
+            executable = false;
+        }
+        if (post.isFinal() && writes.stream().anyMatch(value -> value != 0)) {
+            stepDeviations.add("FINAL_MRT_UNSUPPORTED");
+            executable = false;
+        }
+        TargetSpec first = preliminary.get(outputs.get(0));
+        int stepWidth = first == null ? inputs.windowWidth() : first.width();
+        int stepHeight = first == null ? inputs.windowHeight() : first.height();
+        boolean sizeConflict = outputs.stream().map(preliminary::get).anyMatch(spec ->
+                spec == null || spec.width() != stepWidth || spec.height() != stepHeight)
+                || post.isFinal() && (stepWidth != inputs.windowWidth() || stepHeight != inputs.windowHeight());
+        if (sizeConflict) {
+            stepDeviations.add("POST_TARGET_SIZE_CONFLICT:" + program.name());
+            executable = false;
+        }
+        for (int target : reads) {
+            if (writes.contains(target)) {
+                doubleTargets.put(target, true);
+            }
+        }
+        Map<String, List<Integer>> preFlips = inputs.config() == null ? Map.of() : inputs.config().preFlips();
+        Map<String, List<Integer>> flips = inputs.config() == null ? Map.of() : inputs.config().flips();
+        for (int target : preFlips.getOrDefault(post.isFinal() ? "final_pre" : post.programName() + "_pre",
+                List.of())) {
+            doubleTargets.put(target, true);
+            stepDeviations.add("POST_TARGET_FLIP_PRE_APPLIED:" + post.programName() + ":" + target);
+        }
+        for (int target : flips.getOrDefault(post.programName(), List.of())) {
+            doubleTargets.put(target, true);
+            stepDeviations.add("POST_TARGET_FLIP_APPLIED:" + post.programName() + ":" + target);
+        }
+        Map<Integer, Integer> readSides = new TreeMap<>();
+        Map<Integer, Integer> writeSides = new TreeMap<>();
+        for (int target : reads) readSides.put(target, 0);
+        for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
+        return new TargetStep(post.programName(), reads, writes, post.outputFormats(), readSides, writeSides,
+                mipmapTargets, stepWidth, stepHeight, post.isFinal(), executable, stepDeviations);
+    }
 
-        List<TargetSpec> finalTargets = new ArrayList<>();
-        // Persistence is declaration-driven: a target persists across
-        // frames only when the pack contract says it is not cleared every
-        // frame (colortexNClear=false). A read-before-write shape alone
-        // never implies persistence; declared persistent feedback targets
-        // still receive their one-time initial seed through
-        // requiresInitialSeed.
-        for (Map.Entry<Integer, TargetSpec> entry : preliminary.entrySet()) {
-            TargetSpec source = entry.getValue();
-            // Target 0 is reseeded from the HDR identity source every frame
-            // and reinitialized by geometry, so graph-level persistence must
-            // not apply to it.
+    /**
+     * The allocated targets with their schedule-derived flags. Persistence is declaration-driven:
+     * a target persists across frames only when the pack says it is not cleared every frame
+     * (colortexNClear=false). A read-before-write shape alone never implies persistence; declared
+     * persistent feedback targets still receive their one-time initial seed through
+     * requiresInitialSeed.
+     */
+    private static List<TargetSpec> finalTargets(
+            Map<Integer, TargetSpec> preliminary,
+            Map<Integer, Boolean> doubleTargets,
+            Set<Integer> mipmappedTargets
+    ) {
+        List<TargetSpec> targets = new ArrayList<>();
+        for (TargetSpec source : preliminary.values()) {
+            // Target 0 is reseeded from the HDR identity source every frame and reinitialized by
+            // geometry, so graph-level persistence must not apply to it.
             boolean persistent = source.index() != 0 && source.persistent();
-            finalTargets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
+            targets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
                     source.clear(), source.clearColorCopy(), persistent,
                     doubleTargets.getOrDefault(source.index(), false),
                     mipmappedTargets.contains(source.index()), source.deviations()));
         }
-        boolean depth0 = false;
-        boolean depth1 = false;
-        boolean depth2 = false;
-        for (PackProgramPlan program : sortedPrograms) {
-            if (!program.executable() || !program.targetPlan().executable()) {
-                continue;
-            }
-            for (String sampler : samplerNames(program)) {
-                depth0 |= sampler.equals("depthtex0");
-                depth1 |= sampler.equals("depthtex1");
-                depth2 |= sampler.equals("depthtex2");
-            }
-        }
-        // A world program that reads depth needs the same snapshot a post
-        // pass would: gbuffers_water reads opaque depth as depthtex1.
-        if (programs != null) {
-            for (PackProgramPlan program : programs) {
-                if (program == null || program.geometryOutputPlan() == null || !program.executable()) {
-                    continue;
-                }
-                for (String sampler : geometrySamplerNames(program)) {
-                    depth0 |= sampler.equals("depthtex0");
-                    depth1 |= sampler.equals("depthtex1");
-                    depth2 |= sampler.equals("depthtex2");
-                }
+        return targets;
+    }
+
+    /**
+     * The depth snapshots executable programs read. A world program that reads depth needs the
+     * same snapshot a post pass would: gbuffers_water reads opaque depth as depthtex1.
+     */
+    private static DepthGraphPlan depthGraph(List<PackProgramPlan> programs, List<PackProgramPlan> postPrograms) {
+        Set<String> depthReads = new TreeSet<>();
+        for (PackProgramPlan program : postPrograms) {
+            if (program.executable() && program.targetPlan().executable()) {
+                depthReads.addAll(samplerNames(program));
             }
         }
+        for (PackProgramPlan program : programs) {
+            if (program.geometryOutputPlan() != null && program.executable()) {
+                depthReads.addAll(geometrySamplerNames(program));
+            }
+        }
+        boolean depth0 = depthReads.contains("depthtex0");
+        boolean depth1 = depthReads.contains("depthtex1");
+        boolean depth2 = depthReads.contains("depthtex2");
         List<String> depthDeviations = new ArrayList<>();
         if (depth0 || depth1 || depth2) {
             depthDeviations.add("DEPTH_COPY_GRAPH_APPLIED");
             depthDeviations.add("DEPTH_COPY_FORWARD_Z_PRESERVED");
             if (depth2) depthDeviations.add("DEPTH2_PREHAND_AT_LEVEL_END");
         }
-        deviations.addAll(depthDeviations);
-        return new PackTargetGraphPlan(finalTargets, steps,
-                new DepthGraphPlan(depth0, depth1, depth2, DepthGraphPlan.R32_SFLOAT, depthDeviations),
-                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads);
+        return new DepthGraphPlan(depth0, depth1, depth2, DepthGraphPlan.R32_SFLOAT, depthDeviations);
     }
 
     private static Set<Integer> unavailableFormatTargets(PackConfig.PackConfigData config) {
