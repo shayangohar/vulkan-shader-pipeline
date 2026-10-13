@@ -1084,7 +1084,7 @@ public final class ConformanceHarness {
         assertEquals(ShadowCasterDirectives.DEFAULTS, ShadowCasterDirectives.fromProperties(Map.of()),
                 "Iris defaults: entities and block entities on, player and light block entities off");
 
-        var shadowMap = nativeClass("net/chimera/render/ChimeraMainPass").methods.stream()
+        var shadowMap = nativeClass("net/chimera/render/PackShadowPass").methods.stream()
                 .filter(method -> method.name.equals("renderShadowMap")).findFirst().orElseThrow();
         boolean casters = false;
         boolean snapshotAfterCasters = false;
@@ -1836,10 +1836,10 @@ public final class ConformanceHarness {
             assertMixinRegistered(name);
         }
 
-        var pass = nativeClass("net/chimera/render/ChimeraMainPass");
+        var pass = nativeClass("net/chimera/render/PackSessionLifecycle");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
             var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
-                    .orElseThrow(() -> new AssertionError("ChimeraMainPass." + name + " is missing"));
+                    .orElseThrow(() -> new AssertionError("PackSessionLifecycle." + name + " is missing"));
             boolean applies = false;
             for (var instruction : method.instructions) {
                 if (instruction instanceof MethodInsnNode call
@@ -1848,7 +1848,7 @@ public final class ConformanceHarness {
                     applies = true;
                 }
             }
-            assertTrue(applies, "ChimeraMainPass." + name + " applies the terrain shading state");
+            assertTrue(applies, "PackSessionLifecycle." + name + " applies the terrain shading state");
         }
         System.out.println("[chimera] terrain shading oldLighting/separateAo (directives, encoding, mixins, install): PASS");
     }
@@ -1915,10 +1915,10 @@ public final class ConformanceHarness {
                     name + " is served live");
         }
 
-        var pass = nativeClass("net/chimera/render/ChimeraMainPass");
+        var pass = nativeClass("net/chimera/render/PackSessionLifecycle");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
             var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
-                    .orElseThrow(() -> new AssertionError("ChimeraMainPass." + name + " is missing"));
+                    .orElseThrow(() -> new AssertionError("PackSessionLifecycle." + name + " is missing"));
             boolean installs = false;
             for (var instruction : method.instructions) {
                 if (instruction instanceof MethodInsnNode call
@@ -1927,7 +1927,7 @@ public final class ConformanceHarness {
                     installs = true;
                 }
             }
-            assertTrue(installs, "ChimeraMainPass." + name + " installs the held-item map");
+            assertTrue(installs, "PackSessionLifecycle." + name + " installs the held-item map");
         }
         System.out.println("[chimera] held-item uniforms (item.properties, oldHandLight, live catalog, install): PASS");
     }
@@ -2038,7 +2038,7 @@ public final class ConformanceHarness {
         assertMixinRegistered("ChimeraGuiVignetteMixin");
         assertMixinRegistered("ChimeraScreenEffectWaterMixin");
 
-        var pass = nativeClass("net/chimera/render/ChimeraMainPass");
+        var pass = nativeClass("net/chimera/render/PackSessionLifecycle");
         boolean loads = false;
         boolean clears = false;
         for (var method : pass.methods) {
