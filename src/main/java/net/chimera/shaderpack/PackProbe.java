@@ -75,99 +75,174 @@ public final class PackProbe {
 
     /** Builds the report and the immutable runtime plan from one loaded source tree. */
     public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
-        String packName = logicalPackName(packPath);
-        Path shadersDir = loaded.shadersDir();
-        PackSettingsPlan settingsPlan = PackSettingsPlan.parse(loaded.rawProgramsAllVariants(), shadersDir,
-                PackOptionSources.overrides(packPath));
-        loaded.prepare(
-                PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
-                PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false, false));
-        settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
-                loaded.selectedVariantFolder());
-        Map<String, String> metadataHashes = new TreeMap<>();
-        List<String> globalDeviations = new ArrayList<>(loaded.deviations());
-        List<String> settings = new ArrayList<>();
-        List<String> passInventory = new ArrayList<>();
-        Set<String> shadowPropertySettings = new TreeSet<>();
-        Set<String> alphaTestPropertySettings = new TreeSet<>();
-        boolean passListPresent = false;
+        return new Probe(packPath, loaded).analyze();
+    }
 
-        Path passList = shadersDir.resolve("shaders.json");
-        if (Files.isRegularFile(passList)) {
-            passListPresent = true;
-            readMetadata(passList, "shaders.json", metadataHashes, globalDeviations);
-            readPassList(passList, passInventory, globalDeviations);
+    /** One probe of a loaded pack: the report inputs it reads and the plans it builds from them. */
+    private static final class Probe {
+        private final String packName;
+        private final PackSource.LoadResult loaded;
+        private final Path shadersDir;
+        private final Map<String, String> metadataHashes = new TreeMap<>();
+        private final List<String> globalDeviations = new ArrayList<>();
+        private final List<String> settings = new ArrayList<>();
+        private final List<String> passInventory = new ArrayList<>();
+        private final Set<String> shadowPropertySettings = new TreeSet<>();
+        private final Set<String> alphaTestPropertySettings = new TreeSet<>();
+        private final Map<String, Inventory> inventories = new TreeMap<>();
+        private boolean passListPresent;
+        private PackSettingsPlan settingsPlan;
+        private PackEntityIdResolver.ParseResult entityIds;
+        private PackConfig.PackConfigData packConfig;
+        private PackResolutionPlan resolution;
+        private PackPlan initialPlan;
+        private PackResourcePlan resourcePlan;
+        private PackAdvancedResourcePlan advancedPlan;
+
+        Probe(Path packPath, PackSource.LoadResult loaded) {
+            this.packName = logicalPackName(packPath);
+            this.loaded = loaded;
+            this.shadersDir = loaded.shadersDir();
+            this.settingsPlan = PackSettingsPlan.parse(loaded.rawProgramsAllVariants(), shadersDir,
+                    PackOptionSources.overrides(packPath));
         }
 
-        Path properties = shadersDir.resolve("shaders.properties");
-        if (Files.isRegularFile(properties)) {
-            readMetadata(properties, "shaders.properties", metadataHashes, globalDeviations);
-            readProperties(properties, settings, globalDeviations, shadowPropertySettings,
-                    alphaTestPropertySettings);
+        Analysis analyze() {
+            loaded.prepare(
+                    PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
+                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false, false));
+            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
+                    loaded.selectedVariantFolder());
+            globalDeviations.addAll(loaded.deviations());
+            readPackFiles();
+            if (!Files.isDirectory(shadersDir)) {
+                globalDeviations.add("NO_SHADERS_DIRECTORY");
+                return new Analysis(conformanceReport(), new PackPlan(null, List.of()), null,
+                        settingsPlan, PackResolutionPlan.empty());
+            }
+            inventorySources();
+            readBlockProperties();
+            readEntityIds();
+            buildPlans();
+            PackPlan packPlan = new PackPlan(packConfig, initialPlan.programs(), entityIds.resolver(),
+                    settingsPlan, resolution, resourcePlan, advancedPlan);
+            addPackDeviations(packPlan);
+            ConformanceReport report = conformanceReport();
+            inventoryAliases(packPlan);
+            for (Inventory inventory : inventories.values()) {
+                report.addProgram(ProgramReportRules.toProgram(inventory, packConfig,
+                        packPlan.program(inventory.name), resourcePlan, packPlan));
+            }
+            return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
         }
 
-        if (!Files.isDirectory(shadersDir)) {
-            globalDeviations.add("NO_SHADERS_DIRECTORY");
-            return new Analysis(report(packName, passListPresent, passInventory, metadataHashes,
-                    settings, globalDeviations, loaded), new PackPlan(null, List.of()), null,
-                    settingsPlan, PackResolutionPlan.empty());
+        private ConformanceReport conformanceReport() {
+            return report(packName, passListPresent, passInventory, metadataHashes, settings, globalDeviations,
+                    loaded);
         }
 
-        Map<String, Inventory> inventories = new TreeMap<>();
-        addInventories(loaded.programs(), inventories, shadersDir);
-        scanSelectedStageFiles(loaded, inventories);
+        /** Hashes shaders.json and shaders.properties, and reads the passes and settings they declare. */
+        private void readPackFiles() {
+            Path passList = shadersDir.resolve("shaders.json");
+            if (Files.isRegularFile(passList)) {
+                passListPresent = true;
+                readMetadata(passList, "shaders.json", metadataHashes, globalDeviations);
+                readPassList(passList, passInventory, globalDeviations);
+            }
 
-        if (!passListPresent) {
-            passInventory.addAll(inventories.keySet());
-        }
-        for (String pass : passInventory) {
-            inventories.computeIfAbsent(pass, Inventory::new);
-        }
-
-        Path blockProperties = shadersDir.resolve("block.properties");
-        if (Files.isRegularFile(blockProperties)) {
-            readMetadata(blockProperties, "block.properties", metadataHashes, globalDeviations);
-            globalDeviations.addAll(PackMaterialResolver.parse(shadersDir,
-                    PackEngineDefines.forPack(settingsPlan.preprocessorDefines())).deviations());
-        } else {
-            Inventory terrain = inventories.get("gbuffers_terrain");
-            if (terrain != null && terrain.stages.contains("vertex")) {
-                globalDeviations.add("BLOCK_PROPERTIES_MISSING");
+            Path properties = shadersDir.resolve("shaders.properties");
+            if (Files.isRegularFile(properties)) {
+                readMetadata(properties, "shaders.properties", metadataHashes, globalDeviations);
+                readProperties(properties, settings, globalDeviations, shadowPropertySettings,
+                        alphaTestPropertySettings);
             }
         }
 
-        Path entityProperties = shadersDir.resolve("entity.properties");
-        PackEntityIdResolver.ParseResult entityIds = PackEntityIdResolver.parse(shadersDir);
-        if (Files.isRegularFile(entityProperties)) {
-            readMetadata(entityProperties, "entity.properties", metadataHashes, globalDeviations);
-            globalDeviations.addAll(entityIds.deviations());
-        }
-        if (loaded.programs().stream().anyMatch(program ->
-                FamilyAdapterRegistry.isWorldEntityFamily(program.name())
-                        && program.vertexSource() != null
-                        && program.fragmentSource() != null)) {
-            globalDeviations.add(entityIds.present()
-                    ? "ENTITY_ID_MAP_APPLIED" : "ENTITY_ID_DEFAULTED");
+        /** Inventories each program's sources, the stage files on disk, and every pass the pack names. */
+        private void inventorySources() {
+            addInventories(loaded.programs(), inventories, shadersDir);
+            scanSelectedStageFiles(loaded, inventories);
+
+            if (!passListPresent) {
+                passInventory.addAll(inventories.keySet());
+            }
+            for (String pass : passInventory) {
+                inventories.computeIfAbsent(pass, Inventory::new);
+            }
         }
 
-        PackConfig.PackConfigData packConfig = PackConfig.parse(loaded.programs(), shadersDir, settingsPlan);
-        PackResolutionPlan resolution = PackResolutionPlan.build(
-                loaded.selectedDimension(), loaded.selectedVariantFolder(),
-                loaded.programs(), settingsPlan);
-        PackAdvancedResourcePlan bufferCatalog = PackAdvancedResourcePlan.catalog(settingsPlan);
-        PackPlan initialPlan = PackPlanBuilder.build(
-                loaded.programs(), packConfig, entityIds.resolver(), resolution, bufferCatalog);
-        PackResourcePlan resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
-        PackAdvancedResourcePlan advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
+        private void readBlockProperties() {
+            Path blockProperties = shadersDir.resolve("block.properties");
+            if (Files.isRegularFile(blockProperties)) {
+                readMetadata(blockProperties, "block.properties", metadataHashes, globalDeviations);
+                globalDeviations.addAll(PackMaterialResolver.parse(shadersDir,
+                        PackEngineDefines.forPack(settingsPlan.preprocessorDefines())).deviations());
+            } else {
+                Inventory terrain = inventories.get("gbuffers_terrain");
+                if (terrain != null && terrain.stages.contains("vertex")) {
+                    globalDeviations.add("BLOCK_PROPERTIES_MISSING");
+                }
+            }
+        }
 
-        // Some real packs intentionally hide their writable-image producers
-        // behind the Iris custom-image capability. The first plan tells us
-        // whether the pack declares a supported image set and a compute stage;
-        // only then do we negotiate that capability and rebuild every plan
-        // from the same prepared source snapshot. Packs without that contract
-        // retain their original preparation and fallback behavior.
-        if (advancedPlan.hasSupportedImages()
-                && advancedPlan.computeStages().containsKey("shadowcomp")) {
+        /** Parses entity.properties, and records whether world entities draw with its ids or defaults. */
+        private void readEntityIds() {
+            Path entityProperties = shadersDir.resolve("entity.properties");
+            entityIds = PackEntityIdResolver.parse(shadersDir);
+            if (Files.isRegularFile(entityProperties)) {
+                readMetadata(entityProperties, "entity.properties", metadataHashes, globalDeviations);
+                globalDeviations.addAll(entityIds.deviations());
+            }
+            if (loaded.programs().stream().anyMatch(program ->
+                    FamilyAdapterRegistry.isWorldEntityFamily(program.name())
+                            && program.vertexSource() != null
+                            && program.fragmentSource() != null)) {
+                globalDeviations.add(entityIds.present()
+                        ? "ENTITY_ID_MAP_APPLIED" : "ENTITY_ID_DEFAULTED");
+            }
+        }
+
+        private void buildPlans() {
+            planPreparedSources();
+            // Some real packs intentionally hide their writable-image producers
+            // behind the Iris custom-image capability. The first plan tells us
+            // whether the pack declares a supported image set and a compute stage;
+            // only then do we negotiate that capability and rebuild every plan
+            // from the same prepared source snapshot. Packs without that contract
+            // retain their original preparation and fallback behavior.
+            if (advancedPlan.hasSupportedImages()
+                    && advancedPlan.computeStages().containsKey("shadowcomp")) {
+                prepareWithCustomImages();
+                planPreparedSources();
+            }
+            // The first pass admits only property-declared blocks so the full
+            // source scan can build exact stage masks and bindings. Rebuild once
+            // from that immutable result so probing and pipeline construction use
+            // the same storage-buffer eligibility and rewritten GLSL.
+            planPrograms(advancedPlan);
+            advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
+            planPrograms(advancedPlan);
+        }
+
+        /** Parses the config and plans every resource from the current prepared sources and settings. */
+        private void planPreparedSources() {
+            packConfig = PackConfig.parse(loaded.programs(), shadersDir, settingsPlan);
+            resolution = PackResolutionPlan.build(
+                    loaded.selectedDimension(), loaded.selectedVariantFolder(),
+                    loaded.programs(), settingsPlan);
+            planPrograms(PackAdvancedResourcePlan.catalog(settingsPlan));
+            advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
+        }
+
+        /** Plans every program against these advanced resources, and the sampled resources it binds. */
+        private void planPrograms(PackAdvancedResourcePlan advancedResources) {
+            initialPlan = PackPlanBuilder.build(
+                    loaded.programs(), packConfig, entityIds.resolver(), resolution, advancedResources);
+            resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
+        }
+
+        /** Prepares the sources again with custom images negotiated, and inventories them afresh. */
+        private void prepareWithCustomImages() {
             loaded.prepare(
                     PackEngineDefines.forCustomImages(settingsPlan.preprocessorDefines()),
                     PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true, false));
@@ -179,65 +254,37 @@ public final class PackProbe {
                 inventory.deviations.clear();
             });
             addInventories(loaded.programs(), inventories, shadersDir);
-            packConfig = PackConfig.parse(loaded.programs(), shadersDir, settingsPlan);
-            resolution = PackResolutionPlan.build(
-                    loaded.selectedDimension(), loaded.selectedVariantFolder(),
-                    loaded.programs(), settingsPlan);
-            bufferCatalog = PackAdvancedResourcePlan.catalog(settingsPlan);
-            initialPlan = PackPlanBuilder.build(
-                    loaded.programs(), packConfig, entityIds.resolver(), resolution, bufferCatalog);
-            resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
-            advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
         }
-        // The first pass admits only property-declared blocks so the full
-        // source scan can build exact stage masks and bindings. Rebuild once
-        // from that immutable result so probing and pipeline construction use
-        // the same storage-buffer eligibility and rewritten GLSL.
-        initialPlan = PackPlanBuilder.build(
-                loaded.programs(), packConfig, entityIds.resolver(), resolution, advancedPlan);
-        resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
-        advancedPlan = PackAdvancedResourcePlan.build(initialPlan, shadersDir);
-        initialPlan = PackPlanBuilder.build(
-                loaded.programs(), packConfig, entityIds.resolver(), resolution, advancedPlan);
-        resourcePlan = PackResourcePlan.build(initialPlan, shadersDir);
-        PackPlan packPlan = new PackPlan(packConfig, initialPlan.programs(), entityIds.resolver(),
-                settingsPlan, resolution, resourcePlan, advancedPlan);
-        globalDeviations.addAll(packConfig.deviations());
-        // Keep standard sampler aliases program-scoped. Adding every binding
-        // deviation to the pack-wide list changes old fixture support status
-        // even when the alias is already part of that family's contract.
-        globalDeviations.addAll(settingsPlan.resourceDeviations());
-        settingsPlan.deviations().stream()
-                .filter(value -> value.startsWith("CUSTOM_IMAGE_UNSUPPORTED:")
-                        || value.startsWith("STORAGE_RESOURCE_UNSUPPORTED:"))
-                .forEach(globalDeviations::add);
-        applyShadowPropertyReporting(inventories, shadowPropertySettings,
-                packConfig.shadowSettings(), globalDeviations);
-        applyAlphaTestPropertyReporting(packPlan, alphaTestPropertySettings, globalDeviations);
 
-        ConformanceReport report = report(packName, passListPresent, passInventory, metadataHashes,
-                settings, globalDeviations, loaded);
-        // Aliases are real requested-family plans, not synthetic host fallbacks.
-        // Inventory the selected source too so probe and runtime share admission.
-        for (PackProgramPlan planned : packPlan.programs()) {
-            PackProgramResolution resolved = resolution.resolution(planned.name());
-            if (resolved == null || !resolved.executable()
-                    || resolved.requestedProgram().equals(resolved.selectedProgram())) continue;
-            PackProgram program = planned.program();
-            Inventory inventory = new Inventory(program.name());
-            inventory.variantFolder = program.variantFolder();
-            addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
-                    program.preparedFragmentSource(), shadersDir);
-            if (program.vertexSource() != null) addSource(inventory, "vertex", program.vertexPath(),
-                    program.vertexSource(), program.preparedVertexSource(), shadersDir);
-            inventory.deviations.addAll(program.preparationDeviations());
-            inventories.put(program.name(), inventory);
+        /** The pack-wide deviations of the config and settings, and how the shadow and alpha settings apply. */
+        private void addPackDeviations(PackPlan packPlan) {
+            globalDeviations.addAll(packConfig.deviations());
+            // Keep standard sampler aliases program-scoped. Adding every binding
+            // deviation to the pack-wide list changes old fixture support status
+            // even when the alias is already part of that family's contract.
+            globalDeviations.addAll(settingsPlan.resourceDeviations());
+            settingsPlan.deviations().stream()
+                    .filter(value -> value.startsWith("CUSTOM_IMAGE_UNSUPPORTED:")
+                            || value.startsWith("STORAGE_RESOURCE_UNSUPPORTED:"))
+                    .forEach(globalDeviations::add);
+            applyShadowPropertyReporting(inventories, shadowPropertySettings,
+                    packConfig.shadowSettings(), globalDeviations);
+            applyAlphaTestPropertyReporting(packPlan, alphaTestPropertySettings, globalDeviations);
         }
-        for (Inventory inventory : inventories.values()) {
-            report.addProgram(ProgramReportRules.toProgram(inventory, packConfig, packPlan.program(inventory.name),
-                    resourcePlan, packPlan));
+
+        private void inventoryAliases(PackPlan packPlan) {
+            // Aliases are real requested-family plans, not synthetic host fallbacks.
+            // Inventory the selected source too so probe and runtime share admission.
+            for (PackProgramPlan planned : packPlan.programs()) {
+                PackProgramResolution resolved = resolution.resolution(planned.name());
+                if (resolved == null || !resolved.executable()
+                        || resolved.requestedProgram().equals(resolved.selectedProgram())) continue;
+                PackProgram program = planned.program();
+                Inventory inventory = new Inventory(program.name());
+                addProgramSources(inventory, program, shadersDir);
+                inventories.put(program.name(), inventory);
+            }
         }
-        return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
     }
 
     private static ConformanceReport report(
@@ -295,16 +342,19 @@ public final class PackProbe {
     private static void addInventories(List<PackProgram> programs, Map<String, Inventory> inventories,
                                        Path shadersDir) {
         for (PackProgram program : programs) {
-            Inventory inventory = inventories.computeIfAbsent(program.name(), Inventory::new);
-            inventory.variantFolder = program.variantFolder();
-            addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
-                    program.preparedFragmentSource(), shadersDir);
-            if (program.vertexSource() != null) {
-                addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
-                        program.preparedVertexSource(), shadersDir);
-            }
-            inventory.deviations.addAll(program.preparationDeviations());
+            addProgramSources(inventories.computeIfAbsent(program.name(), Inventory::new), program, shadersDir);
         }
+    }
+
+    private static void addProgramSources(Inventory inventory, PackProgram program, Path shadersDir) {
+        inventory.variantFolder = program.variantFolder();
+        addSource(inventory, "fragment", program.fragmentPath(), program.fragmentSource(),
+                program.preparedFragmentSource(), shadersDir);
+        if (program.vertexSource() != null) {
+            addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
+                    program.preparedVertexSource(), shadersDir);
+        }
+        inventory.deviations.addAll(program.preparationDeviations());
     }
 
     private static void addSource(

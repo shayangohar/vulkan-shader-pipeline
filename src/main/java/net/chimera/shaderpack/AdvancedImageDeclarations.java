@@ -23,6 +23,24 @@ import java.util.stream.Collectors;
 final class AdvancedImageDeclarations {
     private AdvancedImageDeclarations() {}
 
+    /** Parses every image.<name> property, then admits the supported images the memory budget fits. */
+    static Map<String, PackAdvancedResourcePlan.ImageSpec> parseImages(
+            PackSettingsPlan settings, List<String> deviations) {
+        Map<String, PackAdvancedResourcePlan.ImageSpec> images = new TreeMap<>();
+        for (Map.Entry<String, String> entry : settings.propertyValues().entrySet()) {
+            if (!entry.getKey().startsWith("image.")) continue;
+            PackAdvancedResourcePlan.ImageSpec spec = parseImage(entry.getKey(), entry.getValue(),
+                    settings.preprocessorDefines());
+            images.put(spec.name(), spec);
+            deviations.addAll(spec.deviations());
+            if (spec.supported()) {
+                deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name());
+            }
+        }
+        applyBudget(images, deviations);
+        return images;
+    }
+
     static PackAdvancedResourcePlan.ImageSpec parseImage(
             String key,
             String raw,
@@ -115,11 +133,9 @@ final class AdvancedImageDeclarations {
             Map<String, UniformRegistry.UniformDescriptor> customDescriptors
     ) {
         if (shadersDir == null) return Map.of();
-        Path root = selectedFolder == null || selectedFolder.isBlank()
-                ? shadersDir : shadersDir.resolve(selectedFolder);
         Map<String, PackAdvancedResourcePlan.ComputeSpec> result = new TreeMap<>();
-        Path source = root.resolve("shadowcomp.csh").normalize();
-        if (!source.startsWith(shadersDir.normalize()) || !Files.isRegularFile(source)) return result;
+        Path source = shadowComputeSource(shadersDir, selectedFolder);
+        if (source == null) return result;
         try {
             String raw = Files.readString(source, StandardCharsets.UTF_8);
             ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
@@ -137,15 +153,7 @@ final class AdvancedImageDeclarations {
             if (!usage.successful()) {
                 localDeviations.add("COMPUTE_RESOURCE_USAGE_UNCLASSIFIABLE");
             }
-            Matcher size = PackAdvancedResourcePlan.LOCAL_SIZE.matcher(text);
-            int x = 0, y = 0, z = 0;
-            if (size.find()) {
-                x = Integer.parseInt(size.group(1));
-                y = Integer.parseInt(size.group(2));
-                z = Integer.parseInt(size.group(3));
-            } else {
-                localDeviations.add("COMPUTE_WORKGROUP_UNSUPPORTED:shadowcomp");
-            }
+            WorkgroupSize size = workgroupSize(text, localDeviations);
             // Compute stages exist from GLSL 430; any profile converts to Chimera's 450 module.
             GlslVersion version = GlslVersion.first(text);
             if (version == null || !version.supported() || version.number() < 430) {
@@ -153,71 +161,106 @@ final class AdvancedImageDeclarations {
             }
             TreeSet<String> names = new TreeSet<>();
             names.addAll(usage.liveImages());
-            TreeSet<String> samplers = new TreeSet<>();
-            for (String sampler : usage.liveSamplers()) {
-                if (images.values().stream().anyMatch(image -> image.sampler().equals(sampler))) {
-                    samplers.add(sampler);
-                }
-            }
-            for (String name : names) {
-                PackAdvancedResourcePlan.ImageSpec dependency = images.get(name);
-                if (dependency == null) {
-                    dependency = images.values().stream()
-                            .filter(spec -> spec.sampler().equals(name))
-                            .findFirst().orElse(null);
-                }
-                boolean declared = dependency != null && dependency.supported();
-                if (!declared) {
-                    localDeviations.add("COMPUTE_IMAGE_UNAVAILABLE:" + name);
-                }
-            }
-            for (String name : samplers) {
-                PackAdvancedResourcePlan.ImageSpec dependency = images.values().stream()
-                        .filter(value -> value.sampler().equals(name))
-                        .findFirst().orElse(null);
-                if (dependency == null || !dependency.supported()) {
-                    localDeviations.add("COMPUTE_SAMPLER_UNAVAILABLE:" + name);
-                } else if (dependency.clear()
-                        && !names.contains(dependency.name())
-                        && !names.contains(name)
-                        && (graphicsProducedImages == null
-                        || !graphicsProducedImages.contains(dependency.name()))) {
-                    // A clear-only image is not a producer. BSL uses its
-                    // voxel image as compute input, but Chimera does not yet
-                    // have the shadow-geometry voxel writer that populates it.
-                    // Do not expose undefined image contents to dependent
-                    // graphics programs.
-                    localDeviations.add("COMPUTE_INPUT_UNAVAILABLE:" + name);
-                }
-            }
+            TreeSet<String> samplers = usage.liveSamplers().stream()
+                    .filter(sampler -> PackAdvancedResourcePlan.imageBySampler(images, sampler) != null)
+                    .collect(Collectors.toCollection(TreeSet::new));
+            addImageDependencyDeviations(names, images, localDeviations);
+            addSamplerDependencyDeviations(samplers, names, images, graphicsProducedImages, localDeviations);
             if (text.matches("(?s).*\\btexelFetch\\s*\\(.*")) {
                 localDeviations.add("COMPUTE_TEXEL_FETCH_CLAMPED");
             }
-            Matcher valueUniform = PackAdvancedResourcePlan.VALUE_UNIFORM_DECLARATION.matcher(text);
-            while (valueUniform.find()) {
-                String name = valueUniform.group(2);
-                if (UniformRegistry.resolve(name, valueUniform.group(1), customDescriptors) != null) {
-                    if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                        localDeviations.add("COMPUTE_UNIFORM_LIVE:" + name);
-                    } else {
-                        localDeviations.add("COMPUTE_UNIFORM_UNUSED:" + name);
-                    }
-                } else if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                    localDeviations.add("COMPUTE_UNIFORM_UNSUPPORTED:" + name);
-                }
-            }
+            addValueUniformDeviations(text, customDescriptors, localDeviations);
             PackAdvancedResourcePlan.Status status = !hasBlockingComputeDeviation(localDeviations) && !names.isEmpty()
                     ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
             if (status == PackAdvancedResourcePlan.Status.SUPPORTED) deviations.add(
                     "COMPUTE_STAGE_SUPPORTED:shadowcomp");
             else deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
             String relative = shadersDir.normalize().relativize(source).toString().replace('\\', '/');
-            result.put("shadowcomp", new PackAdvancedResourcePlan.ComputeSpec("shadowcomp", relative, x, y, z,
+            result.put("shadowcomp", new PackAdvancedResourcePlan.ComputeSpec("shadowcomp", relative,
+                    size.x(), size.y(), size.z(),
                     new ArrayList<>(names), new ArrayList<>(samplers), status, localDeviations));
         } catch (IOException | RuntimeException failure) {
             deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
         }
         return result;
+    }
+
+    /** The selected folder's shadowcomp.csh; null when it is missing or resolves outside the shaders. */
+    private static Path shadowComputeSource(Path shadersDir, String selectedFolder) {
+        Path root = selectedFolder == null || selectedFolder.isBlank()
+                ? shadersDir : shadersDir.resolve(selectedFolder);
+        Path source = root.resolve("shadowcomp.csh").normalize();
+        if (!source.startsWith(shadersDir.normalize()) || !Files.isRegularFile(source)) return null;
+        return source;
+    }
+
+    private record WorkgroupSize(int x, int y, int z) {}
+
+    /** The declared local workgroup size, or zero with a deviation when the stage declares none. */
+    private static WorkgroupSize workgroupSize(String text, List<String> localDeviations) {
+        Matcher size = PackAdvancedResourcePlan.LOCAL_SIZE.matcher(text);
+        if (!size.find()) {
+            localDeviations.add("COMPUTE_WORKGROUP_UNSUPPORTED:shadowcomp");
+            return new WorkgroupSize(0, 0, 0);
+        }
+        return new WorkgroupSize(Integer.parseInt(size.group(1)), Integer.parseInt(size.group(2)),
+                Integer.parseInt(size.group(3)));
+    }
+
+    /** Each image the compute stage writes needs a supported declaration, by image or sampler name. */
+    private static void addImageDependencyDeviations(Set<String> names,
+                                                     Map<String, PackAdvancedResourcePlan.ImageSpec> images,
+                                                     List<String> localDeviations) {
+        for (String name : names) {
+            PackAdvancedResourcePlan.ImageSpec dependency = PackAdvancedResourcePlan.imageBySymbol(images, name);
+            boolean declared = dependency != null && dependency.supported();
+            if (!declared) {
+                localDeviations.add("COMPUTE_IMAGE_UNAVAILABLE:" + name);
+            }
+        }
+    }
+
+    /** Each image the compute stage samples needs a supported declaration and something that fills it. */
+    private static void addSamplerDependencyDeviations(Set<String> samplers, Set<String> names,
+                                                       Map<String, PackAdvancedResourcePlan.ImageSpec> images,
+                                                       Set<String> graphicsProducedImages,
+                                                       List<String> localDeviations) {
+        for (String name : samplers) {
+            PackAdvancedResourcePlan.ImageSpec dependency = PackAdvancedResourcePlan.imageBySampler(images, name);
+            if (dependency == null || !dependency.supported()) {
+                localDeviations.add("COMPUTE_SAMPLER_UNAVAILABLE:" + name);
+            } else if (dependency.clear()
+                    && !names.contains(dependency.name())
+                    && !names.contains(name)
+                    && (graphicsProducedImages == null
+                    || !graphicsProducedImages.contains(dependency.name()))) {
+                // A clear-only image is not a producer. BSL uses its
+                // voxel image as compute input, but Chimera does not yet
+                // have the shadow-geometry voxel writer that populates it.
+                // Do not expose undefined image contents to dependent
+                // graphics programs.
+                localDeviations.add("COMPUTE_INPUT_UNAVAILABLE:" + name);
+            }
+        }
+    }
+
+    /** Each value uniform the compute stage declares: live or unused when resolvable, else unsupported if read. */
+    private static void addValueUniformDeviations(String text,
+                                                  Map<String, UniformRegistry.UniformDescriptor> customDescriptors,
+                                                  List<String> localDeviations) {
+        Matcher valueUniform = PackAdvancedResourcePlan.VALUE_UNIFORM_DECLARATION.matcher(text);
+        while (valueUniform.find()) {
+            String name = valueUniform.group(2);
+            if (UniformRegistry.resolve(name, valueUniform.group(1), customDescriptors) != null) {
+                if (GlslTokenRewriter.identifierCount(text, name) > 1) {
+                    localDeviations.add("COMPUTE_UNIFORM_LIVE:" + name);
+                } else {
+                    localDeviations.add("COMPUTE_UNIFORM_UNUSED:" + name);
+                }
+            } else if (GlslTokenRewriter.identifierCount(text, name) > 1) {
+                localDeviations.add("COMPUTE_UNIFORM_UNSUPPORTED:" + name);
+            }
+        }
     }
 
     static void applyBudget(Map<String, PackAdvancedResourcePlan.ImageSpec> images, List<String> deviations) {

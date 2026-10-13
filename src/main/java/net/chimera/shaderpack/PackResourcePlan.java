@@ -90,23 +90,7 @@ public final class PackResourcePlan {
         deviations.addAll(settings == null ? List.of() : settings.resourceDeviations());
 
         if (settings != null) {
-            Map<String, Integer> customSlots = settings.customSamplerSlots();
-            TreeSet<String> activeSamplers = new TreeSet<>();
-            for (PackProgramPlan programPlan : plan.programs()) {
-                if (programPlan == null || programPlan.interfacePlan() == null) continue;
-                UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(programPlan.name());
-                programPlan.interfacePlan().effective(stage).samplers().stream()
-                        .map(UniformRegistry.SamplerBinding::name)
-                        .forEach(activeSamplers::add);
-            }
-            for (PackResourceDeclaration declaration : declarations.values()) {
-                String sampler = declaration.sampler();
-                if (activeSamplers.contains(sampler)
-                        && !customSlots.containsKey(sampler)
-                        && !UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) {
-                    deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + sampler);
-                }
-            }
+            addSlotLimitDeviations(plan, settings, deviations);
         }
 
         Map<String, Set<Integer>> writtenEarlier = targetsWrittenEarlierInChain(plan);
@@ -135,6 +119,27 @@ public final class PackResourcePlan {
             bindings.put(programPlan.name(), List.copyOf(programBindings));
         }
         return new PackResourcePlan(bindings, declarations, deviations);
+    }
+
+    /** A pack texture that a live sampler reads, but that no selector slot is left to serve. */
+    private static void addSlotLimitDeviations(PackPlan plan, PackSettingsPlan settings, List<String> deviations) {
+        Map<String, Integer> customSlots = settings.customSamplerSlots();
+        TreeSet<String> activeSamplers = new TreeSet<>();
+        for (PackProgramPlan programPlan : plan.programs()) {
+            if (programPlan == null || programPlan.interfacePlan() == null) continue;
+            UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(programPlan.name());
+            programPlan.interfacePlan().effective(stage).samplers().stream()
+                    .map(UniformRegistry.SamplerBinding::name)
+                    .forEach(activeSamplers::add);
+        }
+        for (PackResourceDeclaration declaration : settings.resourceDeclarations().values()) {
+            String sampler = declaration.sampler();
+            if (activeSamplers.contains(sampler)
+                    && !customSlots.containsKey(sampler)
+                    && !UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) {
+                deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + sampler);
+            }
+        }
     }
 
     /**
@@ -294,24 +299,18 @@ public final class PackResourcePlan {
                     canonical.startsWith("depthtex") ? PackResourceKind.DEPTH : PackResourceKind.TARGET,
                     "", slot, "linear", "clamp", PackResourceStatus.HOST_ALIAS, deviations);
         }
-        if (canonical.startsWith("shadowtex")) {
-            if (!canonical.equals("shadowtex0")) {
-                if (canonical.equals("shadowtex1")) {
-                    // Its own image: the casters drawn before translucent terrain.
-                    deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
-                    return new PackResourceBinding(program, name, "shadowtex1",
-                            PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
-                            PackResourceStatus.HOST_ALIAS, deviations);
-                }
-                deviations.add("STANDARD_RESOURCE_UNAVAILABLE:" + name);
-                return new PackResourceBinding(program, name, canonical,
-                        PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
-                        PackResourceStatus.UNAVAILABLE, deviations);
-            }
+        // shadowtex1 is its own image: the casters drawn before translucent terrain.
+        if (canonical.equals("shadowtex0") || canonical.equals("shadowtex1")) {
             deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
             return new PackResourceBinding(program, name, canonical,
                     PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
                     PackResourceStatus.HOST_ALIAS, deviations);
+        }
+        if (canonical.startsWith("shadowtex")) {
+            deviations.add("STANDARD_RESOURCE_UNAVAILABLE:" + name);
+            return new PackResourceBinding(program, name, canonical,
+                    PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
+                    PackResourceStatus.UNAVAILABLE, deviations);
         }
         if (canonical.equals("shadowcolor0") || canonical.equals("shadowcolor1")) {
             deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
@@ -320,34 +319,42 @@ public final class PackResourcePlan {
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
         if (canonical.equals("noisetex")) {
-            String source = "tex/noise.png";
-            Path packFile = resolvePath(shadersDir, source);
-            if (packFile != null) {
-                deviations.add("PACK_TEXTURE_APPLIED:noisetex");
-                return new PackResourceBinding(program, name, "noisetex",
-                        PackResourceKind.NOISE, source, 7, mcmetaFilter(packFile, "linear"),
-                        mcmetaWrap(packFile, "repeat"), PackResourceStatus.PACK_FILE, deviations);
-            }
-            deviations.add(isUnsafePath(source)
-                    ? "PACK_TEXTURE_PATH_UNSAFE:noisetex"
-                    : "PACK_TEXTURE_MISSING:noisetex");
-            return new PackResourceBinding(program, name, "noisetex",
-                    PackResourceKind.NOISE, source, 7, "linear", "repeat",
-                    PackResourceStatus.UNAVAILABLE, deviations);
+            return noiseBinding(program, name, shadersDir, deviations);
         }
-        if (name.equals("normals") || name.equals("specular")) {
-            int expected = name.equals("normals")
-                    ? SelectorNamespace.NORMALS_SLOT : SelectorNamespace.SPECULAR_SLOT;
-            if (slot == expected) {
-                return new PackResourceBinding(program, name, name,
-                        PackResourceKind.MATERIAL_MAP, "", slot, "linear", "repeat",
-                        PackResourceStatus.MATERIAL_MAP, deviations);
-            }
+        if (materialMapAtSlot(name, slot)) {
+            return new PackResourceBinding(program, name, name,
+                    PackResourceKind.MATERIAL_MAP, "", slot, "linear", "repeat",
+                    PackResourceStatus.MATERIAL_MAP, deviations);
         }
         deviations.add("SAMPLER_NOT_MAPPED:" + name);
         return new PackResourceBinding(program, name, name,
                 PackResourceKind.UNSERVED, "", slot, "nearest", "repeat",
                 PackResourceStatus.UNSUPPORTED, deviations);
+    }
+
+    /** The pack's tex/noise.png at its fixed slot, or why it is unavailable. */
+    private static PackResourceBinding noiseBinding(String program, String name, Path shadersDir,
+                                                    List<String> deviations) {
+        String source = "tex/noise.png";
+        Path packFile = resolvePath(shadersDir, source);
+        if (packFile != null) {
+            deviations.add("PACK_TEXTURE_APPLIED:noisetex");
+            return new PackResourceBinding(program, name, "noisetex",
+                    PackResourceKind.NOISE, source, 7, mcmetaFilter(packFile, "linear"),
+                    mcmetaWrap(packFile, "repeat"), PackResourceStatus.PACK_FILE, deviations);
+        }
+        deviations.add(isUnsafePath(source)
+                ? "PACK_TEXTURE_PATH_UNSAFE:noisetex"
+                : "PACK_TEXTURE_MISSING:noisetex");
+        return new PackResourceBinding(program, name, "noisetex",
+                PackResourceKind.NOISE, source, 7, "linear", "repeat",
+                PackResourceStatus.UNAVAILABLE, deviations);
+    }
+
+    /** Whether a normals or specular sampler sits at the selector slot reserved for it. */
+    private static boolean materialMapAtSlot(String name, int slot) {
+        if (name.equals("normals")) return slot == SelectorNamespace.NORMALS_SLOT;
+        return name.equals("specular") && slot == SelectorNamespace.SPECULAR_SLOT;
     }
 
     private static boolean declaresWaterShadow(List<UniformRegistry.SamplerBinding> samplers) {

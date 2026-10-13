@@ -16,6 +16,9 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  * against the catalog and the pack's own values, and binds each sampler to its selector slot.
  */
 final class InterfacePlanner {
+    private static final Set<String> PLANAR_SAMPLER_TYPES = Set.of("sampler2D", "sampler2DShadow");
+    private static final Set<String> VOLUME_SAMPLER_TYPES = Set.of("sampler3D", "isampler3D", "usampler3D");
+
     private InterfacePlanner() {}
 
     static UniformRegistry.ProgramInterface planInternal(
@@ -66,37 +69,12 @@ final class InterfacePlanner {
 
     static Declarations scanDeclarations(
             String stripped, UniformRegistry.Stage stage, boolean allowUnusedDeclarations, Set<String> deviations) {
-        Map<String, UniformRegistry.UniformDeclaration> declarations = new TreeMap<>();
-        Set<String> implicitDeclarations = new TreeSet<>();
-        Set<String> conflicts = new TreeSet<>();
-        Map<String, String> samplerNames = new TreeMap<>();
+        Declarations declared = new Declarations(new TreeMap<>(), new TreeSet<>(), new TreeSet<>(), new TreeMap<>());
         Matcher matcher = UniformRegistry.UNIFORM_DECLARATION.matcher(stripped);
         while (matcher.find()) {
             String type = matcher.group(1);
             for (UniformRegistry.Variable variable : parseVariables(matcher.group(2))) {
-                if (UniformRegistry.isSamplerType(type)) {
-                    samplerNames.putIfAbsent(variable.name(), type);
-                    continue;
-                }
-                // Writable 3D images belong to the advanced-resource plan, not to the ordinary
-                // generated UBO. Keeping them out of this catalog lets the graphics image bridge
-                // assign one explicit storage descriptor later.
-                if (UniformRegistry.isStorageImageType(type)) {
-                    deviations.add("ADVANCED_IMAGE_DECLARATION:" + variable.name());
-                    continue;
-                }
-                // Pack authors write bool for Iris's isElytraFlying; the catalog field is int, so a
-                // bool declaration of that name plans as the live int field rather than failing.
-                String declaredType = variable.name().equals("isElytraFlying") && type.equals("bool")
-                        ? "int" : type;
-                String effectiveType = variable.array() ? declaredType + "[]" : declaredType;
-                UniformRegistry.UniformDeclaration declaration = new UniformRegistry.UniformDeclaration(variable.name(),
-                        effectiveType);
-                UniformRegistry.UniformDeclaration previous = declarations.putIfAbsent(variable.name(), declaration);
-                if (previous != null && !previous.glslType().equals(declaredType)) {
-                    conflicts.add(variable.name());
-                    declarations.put(variable.name(), declaration);
-                }
+                declare(type, variable, declared, deviations);
             }
         }
         Matcher blockMatcher = UniformRegistry.UNIFORM_BLOCK.matcher(stripped);
@@ -108,32 +86,67 @@ final class InterfacePlanner {
         // one accepted type, synthesize the declaration from that catalog entry. This is
         // deliberately table-driven and does not infer arbitrary GLSL types.
         if (allowUnusedDeclarations) {
-            Set<String> referencedValues = referencedValues(stripped, stage);
-            for (UniformRegistry.UniformDescriptor descriptor : UniformRegistry.UNIFORM_SPECS.values()) {
-                if (descriptor.acceptedTypes().size() != 1
-                        || declarations.containsKey(descriptor.name())
-                        || !referencedValues.contains(descriptor.name())
-                        || UniformRegistry.isLocallyDeclared(stripped, descriptor.name())) {
-                    continue;
-                }
-                declarations.put(descriptor.name(), new UniformRegistry.UniformDeclaration(
-                        descriptor.name(), descriptor.acceptedTypes().get(0)));
-                implicitDeclarations.add(descriptor.name());
-                deviations.add("UNIFORM_IMPLICIT_DECLARATION:" + descriptor.name());
-            }
+            declareReferencedCatalogValues(stripped, stage, declared, deviations);
         }
         // The terrain bridge serves the legacy matrix built-ins from gbufferModelView
         // (LegacyGlslConverter.modernTerrainInputReplacements); a pack that only writes
         // gl_ModelViewMatrix never declares it.
         if ((stage == UniformRegistry.Stage.GEOMETRY || stage == UniformRegistry.Stage.TRANSLUCENT)
                 && UniformRegistry.usesLegacyModelView(stripped)
-                && !declarations.containsKey("gbufferModelView")
+                && !declared.uniforms().containsKey("gbufferModelView")
                 && !UniformRegistry.isLocallyDeclared(stripped, "gbufferModelView")) {
-            declarations.put("gbufferModelView", new UniformRegistry.UniformDeclaration("gbufferModelView", "mat4"));
-            implicitDeclarations.add("gbufferModelView");
-            deviations.add("UNIFORM_IMPLICIT_DECLARATION:gbufferModelView");
+            declareImplicit("gbufferModelView", "mat4", declared, deviations);
         }
-        return new Declarations(declarations, implicitDeclarations, conflicts, samplerNames);
+        return declared;
+    }
+
+    /** Records one declared variable as a sampler, an advanced image, or a value whose type may conflict. */
+    private static void declare(
+            String type, UniformRegistry.Variable variable, Declarations declared, Set<String> deviations) {
+        if (UniformRegistry.isSamplerType(type)) {
+            declared.samplers().putIfAbsent(variable.name(), type);
+            return;
+        }
+        // Writable 3D images belong to the advanced-resource plan, not to the ordinary
+        // generated UBO. Keeping them out of this catalog lets the graphics image bridge
+        // assign one explicit storage descriptor later.
+        if (UniformRegistry.isStorageImageType(type)) {
+            deviations.add("ADVANCED_IMAGE_DECLARATION:" + variable.name());
+            return;
+        }
+        // Pack authors write bool for Iris's isElytraFlying; the catalog field is int, so a
+        // bool declaration of that name plans as the live int field rather than failing.
+        String declaredType = variable.name().equals("isElytraFlying") && type.equals("bool")
+                ? "int" : type;
+        String effectiveType = variable.array() ? declaredType + "[]" : declaredType;
+        UniformRegistry.UniformDeclaration declaration = new UniformRegistry.UniformDeclaration(variable.name(),
+                effectiveType);
+        UniformRegistry.UniformDeclaration previous = declared.uniforms().putIfAbsent(variable.name(), declaration);
+        if (previous != null && !previous.glslType().equals(declaredType)) {
+            declared.conflicts().add(variable.name());
+            declared.uniforms().put(variable.name(), declaration);
+        }
+    }
+
+    /** Declares each single-typed catalog value the source reads without declaring it. */
+    private static void declareReferencedCatalogValues(
+            String stripped, UniformRegistry.Stage stage, Declarations declared, Set<String> deviations) {
+        Set<String> referencedValues = referencedValues(stripped, stage);
+        for (UniformRegistry.UniformDescriptor descriptor : UniformRegistry.UNIFORM_SPECS.values()) {
+            if (descriptor.acceptedTypes().size() != 1
+                    || declared.uniforms().containsKey(descriptor.name())
+                    || !referencedValues.contains(descriptor.name())
+                    || UniformRegistry.isLocallyDeclared(stripped, descriptor.name())) {
+                continue;
+            }
+            declareImplicit(descriptor.name(), descriptor.acceptedTypes().get(0), declared, deviations);
+        }
+    }
+
+    private static void declareImplicit(String name, String type, Declarations declared, Set<String> deviations) {
+        declared.uniforms().put(name, new UniformRegistry.UniformDeclaration(name, type));
+        declared.implicit().add(name);
+        deviations.add("UNIFORM_IMPLICIT_DECLARATION:" + name);
     }
 
     /** The catalog values a prepared source reads, with the shadow pass's legacy matrix names. */
@@ -183,8 +196,7 @@ final class InterfacePlanner {
         }
         boolean unused = allowUnusedDeclarations && !UniformRegistry.isReferencedForStage(stripped, name, stage);
         if (stage.perVertexEntityIdentity() && UniformRegistry.isEntityIdentity(name)) {
-            deviations.add(!type.equals("int") && !type.equals("float") ? "ENTITY_ID_UNSUPPORTED:" + type
-                    : unused ? "UNIFORM_DECLARATION_UNUSED:" + name : "ENTITY_ID_VERTEX_DATA");
+            deviations.add(entityIdentityDeviation(name, type, unused));
             return;
         }
         UniformRegistry.UniformDescriptor custom = customDescriptors == null ? null : customDescriptors.get(name);
@@ -192,11 +204,11 @@ final class InterfacePlanner {
         if (custom != null && custom.availability() == UniformRegistry.Availability.REJECTED) {
             // The pack wrote this declaration and Chimera could not honour it. A program that reads
             // the name must not run with a substitute value, so it fails closed here.
-            deviations.add(unused ? "UNIFORM_DECLARATION_UNUSED:" + name : "CUSTOM_VALUE_REJECTED:" + name);
+            deviations.add(unusedOr(name, unused, "CUSTOM_VALUE_REJECTED:" + name));
             return;
         }
         if (!UniformRegistry.SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
-            deviations.add(unused ? "UNIFORM_DECLARATION_UNUSED:" + name : "UNIFORM_TYPE_UNSUPPORTED:" + name);
+            deviations.add(unusedOr(name, unused, "UNIFORM_TYPE_UNSUPPORTED:" + name));
             return;
         }
         if (spec == null) {
@@ -206,13 +218,33 @@ final class InterfacePlanner {
             }
         }
         if (spec == null) {
-            deviations.add(unused ? "UNIFORM_DECLARATION_UNUSED:" + name : "UNIFORM_NAME_UNSUPPORTED:" + name);
+            deviations.add(unusedOr(name, unused, "UNIFORM_NAME_UNSUPPORTED:" + name));
             return;
         }
         if (unused && !declared.implicit().contains(name)) {
             deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
             return;
         }
+        addLiveBridge(name, spec, customDescriptors, deviations);
+    }
+
+    /** A per-vertex entity id plans as vertex data when it is an int or a float. */
+    private static String entityIdentityDeviation(String name, String type, boolean unused) {
+        if (!type.equals("int") && !type.equals("float")) {
+            return "ENTITY_ID_UNSUPPORTED:" + type;
+        }
+        return unusedOr(name, unused, "ENTITY_ID_VERTEX_DATA");
+    }
+
+    /** The deviation for a declaration: only unused when the prepared source never reads it. */
+    private static String unusedOr(String name, boolean unused, String deviation) {
+        return unused ? "UNIFORM_DECLARATION_UNUSED:" + name : deviation;
+    }
+
+    /** Records a value the host serves live, and whether the pack defines it or it is defaulted. */
+    private static void addLiveBridge(String name, UniformRegistry.UniformDescriptor spec,
+                                      Map<String, UniformRegistry.UniformDescriptor> customDescriptors,
+                                      Set<String> deviations) {
         deviations.add("LIVE_UNIFORM_BRIDGE");
         if (customDescriptors != null && customDescriptors.containsKey(name)) {
             deviations.add("CUSTOM_UNIFORM_BRIDGE:" + name);
@@ -245,17 +277,12 @@ final class InterfacePlanner {
             String lookup = PackResourcePlan.isProgramShadowAlias(name)
                     ? PackResourcePlan.programResource(name, waterShadow) : name;
             Integer slot = samplerSlot(name, lookup, stage, customSamplerSlots, deviations);
-            boolean mappedType = type.equals("sampler2D") || type.equals("sampler2DShadow")
-                    || ((type.equals("sampler3D") || type.equals("isampler3D") || type.equals("usampler3D"))
-                    && customSamplerSlots != null && customSamplerSlots.containsKey(name));
-            if (!mappedType || slot == null) {
+            if (!mappedType(name, type, customSamplerSlots) || slot == null) {
                 deviations.add(unmappedSamplerDeviation(name, stage));
                 continue;
             }
             bindings.add(new UniformRegistry.SamplerBinding(name, slot, type));
-            String resource = stage == UniformRegistry.Stage.POST && name.equals("tex") && customSamplerSlots != null
-                    && customSamplerSlots.containsKey(UniformRegistry.PACK_ATLAS_SAMPLER)
-                    ? UniformRegistry.PACK_ATLAS_SAMPLER : UniformRegistry.samplerResource(lookup);
+            String resource = boundResource(name, lookup, stage, customSamplerSlots);
             String previousResource = samplerResources.putIfAbsent(slot, resource);
             if (previousResource != null && !previousResource.equals(resource)) {
                 deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
@@ -265,6 +292,24 @@ final class InterfacePlanner {
             }
         }
         return bindings;
+    }
+
+    /** 2D and shadow samplers always bind; 3D samplers bind only to the pack's own textures. */
+    private static boolean mappedType(String name, String type, Map<String, Integer> customSamplerSlots) {
+        return PLANAR_SAMPLER_TYPES.contains(type)
+                || VOLUME_SAMPLER_TYPES.contains(type) && hasCustomSlot(customSamplerSlots, name);
+    }
+
+    /** The resource a bound sampler reads: post's tex reads the pack's atlas when the pack has one. */
+    private static String boundResource(
+            String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots) {
+        return stage == UniformRegistry.Stage.POST && name.equals("tex")
+                && hasCustomSlot(customSamplerSlots, UniformRegistry.PACK_ATLAS_SAMPLER)
+                ? UniformRegistry.PACK_ATLAS_SAMPLER : UniformRegistry.samplerResource(lookup);
+    }
+
+    private static boolean hasCustomSlot(Map<String, Integer> customSamplerSlots, String name) {
+        return customSamplerSlots != null && customSamplerSlots.containsKey(name);
     }
 
     static Map<String, Integer> stageSlots(UniformRegistry.Stage stage) {
@@ -282,17 +327,10 @@ final class InterfacePlanner {
             String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots,
                     Set<String> deviations) {
         Integer slot = stageSlots(stage).get(lookup);
-        if (stage == UniformRegistry.Stage.POST && slot == null) {
-            slot = UniformRegistry.extendedPostColorSlot(name);
-        }
-        if (stage != UniformRegistry.Stage.POST && !stage.shadowPass() && slot == null) {
+        if (slot == null && stage == UniformRegistry.Stage.POST) {
+            slot = postFallbackSlot(name, customSamplerSlots, deviations);
+        } else if (slot == null && !stage.shadowPass()) {
             slot = UniformRegistry.gbufferColorInputSlot(name);
-        }
-        if (stage == UniformRegistry.Stage.POST && slot == null && name.equals("tex") && customSamplerSlots != null) {
-            slot = customSamplerSlots.get(UniformRegistry.PACK_ATLAS_SAMPLER);
-            if (slot != null) {
-                deviations.add("SAMPLER_ALIAS_TO_PACK_RESOURCE:tex:textureAtlas");
-            }
         }
         if (slot == null && customSamplerSlots != null) {
             slot = customSamplerSlots.get(name);
@@ -300,6 +338,19 @@ final class InterfacePlanner {
         if (slot == null && UniformRegistry.MATERIAL_NAME_TO_SLOT.containsKey(name)
                 && UniformRegistry.MATERIAL_STAGES.contains(stage)) {
             slot = UniformRegistry.MATERIAL_NAME_TO_SLOT.get(name);
+        }
+        return slot;
+    }
+
+    /** Post's fallbacks for a name its stage map lacks: an extended color target, then tex as the pack atlas. */
+    private static Integer postFallbackSlot(String name, Map<String, Integer> customSamplerSlots,
+                                            Set<String> deviations) {
+        Integer slot = UniformRegistry.extendedPostColorSlot(name);
+        if (slot == null && name.equals("tex") && customSamplerSlots != null) {
+            slot = customSamplerSlots.get(UniformRegistry.PACK_ATLAS_SAMPLER);
+            if (slot != null) {
+                deviations.add("SAMPLER_ALIAS_TO_PACK_RESOURCE:tex:textureAtlas");
+            }
         }
         return slot;
     }

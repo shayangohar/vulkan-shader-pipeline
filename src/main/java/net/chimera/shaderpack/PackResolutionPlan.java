@@ -53,16 +53,7 @@ record PackResolutionPlan(
             List<PackProgram> programs,
             PackSettingsPlan settings
     ) {
-        Map<String, PackProgram> shipped = new TreeMap<>();
-        if (programs != null) {
-            for (PackProgram program : programs.stream()
-                    .filter(value -> value != null)
-                    .sorted(Comparator.comparing(PackProgram::name)
-                            .thenComparing(value -> relative(value.sourceRoot(), value.fragmentPath())))
-                    .toList()) {
-                shipped.putIfAbsent(program.name(), program);
-            }
-        }
+        Map<String, PackProgram> shipped = shippedPrograms(programs);
         PackSettingsPlan actualSettings = settings == null ? PackSettingsPlan.empty() : settings;
         Map<String, PackProgramResolution> answers = new TreeMap<>();
         Set<String> allNames = new TreeSet<>(FALLBACKS.keySet());
@@ -73,31 +64,22 @@ record PackResolutionPlan(
         List<String> deviations = new ArrayList<>();
         for (String requested : allNames) {
             List<String> chain = FALLBACKS.getOrDefault(requested, List.of(requested));
-            String selected = "";
-            int depth = 0;
-            PackProgram chosen = null;
-            for (int index = 0; index < chain.size(); index++) {
-                PackProgram candidate = shipped.get(chain.get(index));
-                if (candidate != null && actualSettings.enabled(folder, chain.get(index))) {
-                    selected = chain.get(index);
-                    depth = index;
-                    chosen = candidate;
-                    break;
-                }
-            }
+            int depth = selectedDepth(chain, shipped, actualSettings, folder);
             boolean authoredEnabled = actualSettings.enabled(folder, requested);
-            boolean enabled = authoredEnabled || (chosen != null && requested.startsWith("gbuffers_"));
+            boolean enabled = authoredEnabled || (depth >= 0 && requested.startsWith("gbuffers_"));
             List<String> programDeviations = new ArrayList<>();
             if (!authoredEnabled) {
                 disabled.add(requested);
                 if (!enabled) programDeviations.add("PROGRAM_DISABLED:" + requested);
             }
-            if (chosen == null) {
+            if (depth < 0) {
                 missing.add(requested);
                 answers.put(requested, new PackProgramResolution(requested, "", "", 0,
                         enabled, false, programDeviations));
                 continue;
             }
+            String selected = chain.get(depth);
+            PackProgram chosen = shipped.get(selected);
             boolean exact = depth == 0 && requested.equals(selected);
             boolean executable = enabled && supportsCurrentAdapter(requested);
             if (!exact) {
@@ -113,6 +95,32 @@ record PackResolutionPlan(
         }
         return new PackResolutionPlan(dimension, folder, answers, aliases, missing,
                 disabled, deviations);
+    }
+
+    /** The shipped programs by name; of two with one name, the first by source path. */
+    private static Map<String, PackProgram> shippedPrograms(List<PackProgram> programs) {
+        Map<String, PackProgram> shipped = new TreeMap<>();
+        if (programs != null) {
+            for (PackProgram program : programs.stream()
+                    .filter(value -> value != null)
+                    .sorted(Comparator.comparing(PackProgram::name)
+                            .thenComparing(value -> relative(value.sourceRoot(), value.fragmentPath())))
+                    .toList()) {
+                shipped.putIfAbsent(program.name(), program);
+            }
+        }
+        return shipped;
+    }
+
+    /** How far down its fallback chain a request resolves: the first program shipped and enabled, or -1. */
+    private static int selectedDepth(List<String> chain, Map<String, PackProgram> shipped,
+                                     PackSettingsPlan settings, String folder) {
+        for (int index = 0; index < chain.size(); index++) {
+            if (shipped.get(chain.get(index)) != null && settings.enabled(folder, chain.get(index))) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     PackProgramResolution resolution(String name) {

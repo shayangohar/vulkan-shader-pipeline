@@ -395,9 +395,7 @@ public final class PackPipelines {
             PackProgramPlan plan, UniformRegistry.Stage stage, String pipelineName, VertexFormat format,
             String convertedVertex, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        if (plan == null || !plan.executable() || plan.convertedVertex() == null || convertedVertex == null
-                || plan.convertedFragment() == null || plan.interfacePlan() == null
-                || plan.interfacePlan().effective(stage).stage() != stage) {
+        if (!buildsGeometry(plan, stage, convertedVertex)) {
             return null;
         }
         try {
@@ -442,6 +440,13 @@ public final class PackPipelines {
             handleBuildFailure(pipelineName, e);
             return null;
         }
+    }
+
+    /** Whether an executable plan has both converted stages and an interface planned for {@code stage}. */
+    private static boolean buildsGeometry(PackProgramPlan plan, UniformRegistry.Stage stage, String convertedVertex) {
+        return plan != null && plan.executable() && plan.convertedVertex() != null && convertedVertex != null
+                && plan.convertedFragment() != null && plan.interfacePlan() != null
+                && plan.interfacePlan().effective(stage).stage() == stage;
     }
 
     /**

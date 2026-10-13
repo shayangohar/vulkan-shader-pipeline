@@ -17,7 +17,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -38,10 +37,6 @@ public final class PackAdvancedResourcePlan {
             "layout\\s*\\(\\s*local_size_x\\s*=\\s*(\\d+)\\s*,\\s*"
                     + "local_size_y\\s*=\\s*(\\d+)\\s*,\\s*"
                     + "local_size_z\\s*=\\s*(\\d+)\\s*\\)", Pattern.MULTILINE);
-    private static final Pattern GRAPHICS_IMAGE_DECLARATION = Pattern.compile(
-            "(?:layout\\s*\\([^)]*\\)\\s*)?"
-                    + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
-                    + "\\b(u?i?image3D)\\s+([A-Za-z_]\\w*)");
     static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
                     + "(bool|int|uint|float|double|vec[234]|ivec[234]|uvec[234]|bvec[234]"
@@ -268,38 +263,57 @@ public final class PackAdvancedResourcePlan {
             // Opaque function parameters borrow the caller's resource; they
             // do not declare descriptor slots, even in a global prototype.
             if (braceDepth != 0 || parenDepth != 0) continue;
-            if (word.equals("uniform") && i + 2 < tokens.size()
-                    && tokens.get(i + 1).kind() == GlslLexer.Kind.IDENTIFIER
-                    && tokens.get(i + 2).text().equals("{")) {
-                int start = i - 1;
-                while (start >= 0 && !Set.of(";", "{", "}").contains(tokens.get(start).text())) start--;
-                int set = descriptorInteger(tokens, start + 1, i, "set", 0);
-                int binding = descriptorInteger(tokens, start + 1, i, "binding", -1);
-                if (binding < 0) continue;
-                result.add(new DescriptorBinding(tokens.get(i + 1).text(), set, binding, 8, stage,
-                        "ubo:" + binding));
-                continue;
-            }
-            int type = word.equals("buffer") ? 9
-                    : word.matches("[ui]?image3D") ? 3
-                    : word.matches("(?:[ui]?sampler3D|sampler2D(?:Shadow)?)") ? 1 : -1;
-            if (type < 0 || i + 1 >= tokens.size()) continue;
-            if (tokens.get(i + 1).kind() != GlslLexer.Kind.IDENTIFIER) continue;
-            String symbol = tokens.get(i + 1).text();
-            int start = i - 1;
-            while (start >= 0 && !Set.of(";", "{", "}").contains(tokens.get(start).text())) start--;
-            if (type != 9) {
-                boolean uniform = false;
-                for (int j = start + 1; j < i; j++) {
-                    if (tokens.get(j).identifier("uniform")) uniform = true;
-                }
-                if (!uniform) continue;
-            }
-            int set = descriptorInteger(tokens, start + 1, i, "set", 0);
-            int binding = descriptorInteger(tokens, start + 1, i, "binding", -1);
-            result.add(new DescriptorBinding(symbol, set, binding, type, stage, symbol));
+            DescriptorBinding binding = uniformBlockAt(tokens, i)
+                    ? uniformBlockBinding(tokens, i, stage) : opaqueBinding(tokens, i, stage);
+            if (binding != null) result.add(binding);
         }
         return List.copyOf(result);
+    }
+
+    /** Whether the token at index i opens a uniform block: uniform, the block name, then an opening brace. */
+    private static boolean uniformBlockAt(List<GlslLexer.Token> tokens, int i) {
+        return tokens.get(i).text().equals("uniform") && i + 2 < tokens.size()
+                && tokens.get(i + 1).kind() == GlslLexer.Kind.IDENTIFIER
+                && tokens.get(i + 2).text().equals("{");
+    }
+
+    /** The uniform block opened at index i, or null when it has no explicit binding. */
+    private static DescriptorBinding uniformBlockBinding(List<GlslLexer.Token> tokens, int i, int stage) {
+        int start = declarationStart(tokens, i);
+        int set = descriptorInteger(tokens, start, i, "set", 0);
+        int binding = descriptorInteger(tokens, start, i, "binding", -1);
+        if (binding < 0) return null;
+        return new DescriptorBinding(tokens.get(i + 1).text(), set, binding, 8, stage, "ubo:" + binding);
+    }
+
+    /** The storage block, storage image or sampler the type at index i declares, or null for none. */
+    private static DescriptorBinding opaqueBinding(List<GlslLexer.Token> tokens, int i, int stage) {
+        String word = tokens.get(i).text();
+        int type = word.equals("buffer") ? 9
+                : word.matches("[ui]?image3D") ? 3
+                : word.matches("(?:[ui]?sampler3D|sampler2D(?:Shadow)?)") ? 1 : -1;
+        if (type < 0 || i + 1 >= tokens.size()) return null;
+        if (tokens.get(i + 1).kind() != GlslLexer.Kind.IDENTIFIER) return null;
+        String symbol = tokens.get(i + 1).text();
+        int start = declarationStart(tokens, i);
+        if (type != 9 && !declaresUniform(tokens, start, i)) return null;
+        int set = descriptorInteger(tokens, start, i, "set", 0);
+        int binding = descriptorInteger(tokens, start, i, "binding", -1);
+        return new DescriptorBinding(symbol, set, binding, type, stage, symbol);
+    }
+
+    /** The first token of the declaration that reaches index end: just past the previous ;, { or }. */
+    private static int declarationStart(List<GlslLexer.Token> tokens, int end) {
+        int start = end - 1;
+        while (start >= 0 && !Set.of(";", "{", "}").contains(tokens.get(start).text())) start--;
+        return start + 1;
+    }
+
+    private static boolean declaresUniform(List<GlslLexer.Token> tokens, int start, int end) {
+        for (int j = start; j < end; j++) {
+            if (tokens.get(j).identifier("uniform")) return true;
+        }
+        return false;
     }
 
     private static int descriptorInteger(
@@ -319,6 +333,29 @@ public final class PackAdvancedResourcePlan {
         if (layout == null) return "DESCRIPTOR_LAYOUT_MISMATCH:missing-plan";
         List<DescriptorBinding> declared = new ArrayList<>(shaderBindings(vertex, 1));
         declared.addAll(shaderBindings(fragment, 16));
+        String duplicate = duplicateDescriptor(descriptors);
+        if (duplicate != null) return duplicate;
+        for (DescriptorBinding shader : declared) {
+            if (!uniquelyServed(layout.descriptors(), shader) || !boundAtSlot(descriptors, shader)) {
+                return "DESCRIPTOR_LAYOUT_MISMATCH:" + shader.symbol();
+            }
+        }
+        for (DescriptorBinding expected : layout.descriptors()) {
+            if (!uniquelyServed(descriptors, expected)) {
+                return "DESCRIPTOR_LAYOUT_MISMATCH:" + expected.symbol();
+            }
+        }
+        for (DescriptorBinding actual : descriptors) {
+            boolean planned = layout.descriptors().stream().anyMatch(expected -> sameDescriptor(expected, actual));
+            if (!planned) {
+                return "DESCRIPTOR_LAYOUT_EXTRA:" + actual.binding();
+            }
+        }
+        return null;
+    }
+
+    /** The first resource identity or set and binding that two native descriptors share, or null. */
+    private static String duplicateDescriptor(List<DescriptorBinding> descriptors) {
         Map<String, Integer> nativeIdentities = new TreeMap<>();
         for (DescriptorBinding descriptor : descriptors) {
             String identity = descriptor.identity();
@@ -335,42 +372,28 @@ public final class PackAdvancedResourcePlan {
                 return "DESCRIPTOR_BINDING_DUPLICATE:" + key;
             }
         }
-        for (DescriptorBinding shader : declared) {
-            List<DescriptorBinding> expectedMatches = layout.descriptors().stream()
-                    .filter(value -> value.set() == shader.set()
-                            && value.binding() == shader.binding()
-                            && value.type() == shader.type()).toList();
-            DescriptorBinding expected = expectedMatches.size() == 1
-                    ? expectedMatches.get(0) : null;
-            if (expected == null
-                    || (expected.stages() & shader.stages()) != shader.stages()) {
-                return "DESCRIPTOR_LAYOUT_MISMATCH:" + shader.symbol();
-            }
-            List<DescriptorBinding> matches = descriptors.stream().filter(value ->
-                    value.set() == shader.set() && value.binding() == shader.binding()).toList();
-            if (matches.size() != 1 || matches.get(0).type() != shader.type()
-                    || (matches.get(0).stages() & shader.stages()) != shader.stages()) {
-                return "DESCRIPTOR_LAYOUT_MISMATCH:" + shader.symbol();
-            }
-        }
-        for (DescriptorBinding expected : layout.descriptors()) {
-            List<DescriptorBinding> matches = descriptors.stream().filter(value ->
-                    value.set() == expected.set() && value.binding() == expected.binding()
-                            && value.type() == expected.type()).toList();
-            if (matches.size() != 1
-                    || (matches.get(0).stages() & expected.stages()) != expected.stages()) {
-                return "DESCRIPTOR_LAYOUT_MISMATCH:" + expected.symbol();
-            }
-        }
-        for (DescriptorBinding actual : descriptors) {
-            boolean planned = layout.descriptors().stream().anyMatch(expected ->
-                    expected.set() == actual.set() && expected.binding() == actual.binding()
-                            && expected.type() == actual.type());
-            if (!planned) {
-                return "DESCRIPTOR_LAYOUT_EXTRA:" + actual.binding();
-            }
-        }
         return null;
+    }
+
+    /** Whether exactly one candidate has the wanted set, binding and type, visible to all its stages. */
+    private static boolean uniquelyServed(List<DescriptorBinding> candidates, DescriptorBinding wanted) {
+        List<DescriptorBinding> matches = candidates.stream().filter(value -> sameDescriptor(value, wanted)).toList();
+        return matches.size() == 1 && coversStages(matches.get(0), wanted);
+    }
+
+    /** Whether exactly one native descriptor sits at the declaration's set and binding, with its type and stages. */
+    private static boolean boundAtSlot(List<DescriptorBinding> descriptors, DescriptorBinding shader) {
+        List<DescriptorBinding> matches = descriptors.stream().filter(value ->
+                value.set() == shader.set() && value.binding() == shader.binding()).toList();
+        return matches.size() == 1 && matches.get(0).type() == shader.type() && coversStages(matches.get(0), shader);
+    }
+
+    private static boolean sameDescriptor(DescriptorBinding a, DescriptorBinding b) {
+        return a.set() == b.set() && a.binding() == b.binding() && a.type() == b.type();
+    }
+
+    private static boolean coversStages(DescriptorBinding binding, DescriptorBinding wanted) {
+        return (binding.stages() & wanted.stages()) == wanted.stages();
     }
     private final Map<String, ProgramBindingLayout> bindingLayouts;
 
@@ -512,19 +535,8 @@ public final class PackAdvancedResourcePlan {
     /** Builds only from the existing immutable pack plan and pack properties. */
     public static PackAdvancedResourcePlan build(PackPlan plan, Path shadersDir) {
         if (plan == null) return empty();
-        Map<String, ImageSpec> images = new TreeMap<>();
         List<String> deviations = new ArrayList<>();
-        for (Map.Entry<String, String> entry : plan.settings().propertyValues().entrySet()) {
-            if (!entry.getKey().startsWith("image.")) continue;
-            ImageSpec spec = AdvancedImageDeclarations.parseImage(entry.getKey(), entry.getValue(),
-                    plan.settings() == null ? Map.of() : plan.settings().preprocessorDefines());
-            images.put(spec.name(), spec);
-            deviations.addAll(spec.deviations());
-            if (spec.supported()) {
-                deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name());
-            }
-        }
-        AdvancedImageDeclarations.applyBudget(images, deviations);
+        Map<String, ImageSpec> images = AdvancedImageDeclarations.parseImages(plan.settings(), deviations);
         Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(plan.settings(), deviations);
 
         boolean customImages = images.values().stream().anyMatch(ImageSpec::supported);
@@ -534,90 +546,39 @@ public final class PackAdvancedResourcePlan {
         // The bounded Chimera bridge supports the admitted image subset, so
         // compute preparation must see the same feature or guarded sampler
         // declarations will be removed while their uses remain active.
-        List<String> dependent = new ArrayList<>();
-        List<String> customImageFeaturePrograms = new ArrayList<>();
-        Map<String, List<GraphicsImageBinding>> graphicsImages = new TreeMap<>();
-        Map<String, List<GraphicsImageBinding>> graphicsImageReaders = new TreeMap<>();
-        Set<String> imageSamplerNames = images.values().stream()
-                .map(ImageSpec::sampler)
-                .filter(value -> value != null && !value.isBlank())
-                .collect(Collectors.toCollection(TreeSet::new));
-        Set<String> graphicsProducedImages = new TreeSet<>();
-        for (PackProgramPlan program : plan.programs()) {
-            if (program == null || program.name().isBlank()) continue;
-            boolean usesAdvanced = program.stages().values().stream().anyMatch(value ->
-                    AdvancedImageDeclarations.usesAdvancedResource(value.source(), images));
-            if (usesAdvanced) {
-                dependent.add(program.name());
-            }
-            for (Map.Entry<String, PreparedShaderSource> stageEntry : program.stages().entrySet()) {
-                PreparedShaderSource stage = stageEntry.getValue();
-                if (stage == null || stage.source() == null) continue;
-                GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(
-                        stage.source(), imageSamplerNames);
-                deviations.addAll(usage.deviations());
-                Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(stage.source());
-                while (image.find()) {
-                    if (!usage.liveImages().contains(image.group(2))) {
-                        continue;
-                    }
-                    ImageSpec spec = images.get(image.group(2));
-                    if (spec == null) {
-                        spec = images.values().stream()
-                                .filter(value -> value.sampler().equals(image.group(2)))
-                                .findFirst().orElse(null);
-                    }
-                    if (spec == null || !spec.supported()) continue;
-                    int selectorSlot = plan.settings().customSamplerSlots()
-                            .getOrDefault(spec.sampler(), -1);
-                    if (selectorSlot < 0) {
-                        deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + spec.sampler());
-                        continue;
-                    }
-                    graphicsImages.computeIfAbsent(program.name(), ignored -> new ArrayList<>())
-                            .add(new GraphicsImageBinding(program.name(), image.group(2),
-                                    spec.name(), spec.sampler(), image.group(1), selectorSlot,
-                                    StorageBufferDeclarations.stageMask(stageEntry.getKey())));
-                    graphicsProducedImages.add(spec.name());
-                }
-                // Vulkan GLSL needs a binding for every opaque declaration,
-                // even one in an unreachable helper or one never referenced
-                // (Solas declares voxelSampler in terrain but only the shadow
-                // pass writes voxel_img).  Give every declared or referenced
-                // pack image sampler a descriptor.  Runtime eligibility
-                // remains based on liveSamplers() in usesAdvancedResource;
-                // this does not create a fake alias or make an unrelated
-                // sampler a dependency.
-                Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
-                imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(stage.source()));
-                for (String sampler : imageSamplers) {
-                    ImageSpec spec = images.values().stream()
-                            .filter(value -> value.sampler().equals(sampler))
-                            .findFirst().orElse(null);
-                    if (spec == null || !spec.supported()) continue;
-                    int selectorSlot = plan.settings().customSamplerSlots()
-                            .getOrDefault(spec.sampler(), -1);
-                    if (selectorSlot < 0) {
-                        deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + spec.sampler());
-                        continue;
-                    }
-                    graphicsImageReaders.computeIfAbsent(program.name(), ignored -> new ArrayList<>())
-                            .add(new GraphicsImageBinding(program.name(), spec.name(), spec.name(),
-                                    spec.sampler(), AdvancedImageDeclarations.storageImageType(spec), selectorSlot,
-                                    StorageBufferDeclarations.stageMask(stageEntry.getKey())));
-                }
-                if (stage.source().contains("IRIS_FEATURE_CUSTOM_IMAGES")
-                        && stage.source().contains("OPTIFINE_ACT_ERROR")) {
-                    customImageFeaturePrograms.add(program.name());
-                }
-            }
-        }
+        GraphicsImageScan graphics = GraphicsImageScan.scan(plan, images, deviations);
         Map<String, ComputeSpec> compute = AdvancedImageDeclarations.discoverCompute(
                 shadersDir, plan.resolution().selectedSourceFolder(), images, deviations,
                 computeMacros,
                 PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
-                graphicsProducedImages,
+                graphics.producedImages,
                 plan.settings().runtimeSettings().customDescriptors());
+        addCapabilityDeviations(compute, images, graphics.customImageFeaturePrograms, deviations);
+        List<String> bufferDependent = new ArrayList<>();
+        List<String> storageEligible = new ArrayList<>();
+        Map<String, OrdinaryDescriptorContract> ordinaryContracts =
+                contractsByProgram(plan, shadersDir, graphics.readers);
+        Map<String, Integer> bindingBases = new TreeMap<>();
+        ordinaryContracts.forEach((program, contract) -> bindingBases.put(program, contract.nextBinding()));
+        Map<String, List<StorageBufferBinding>> storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
+                plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
+        Map<Integer, BufferSpec> budgetedBuffers = StorageBufferDeclarations.applyStorageBudget(
+                buffers, storageBuffers, storageEligible, images, deviations);
+        if (!budgetedBuffers.equals(buffers)) {
+            buffers = budgetedBuffers;
+            bufferDependent.clear();
+            storageEligible.clear();
+            storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
+                    plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
+        }
+        return new PackAdvancedResourcePlan(images, compute, graphics.writers, graphics.readers, buffers,
+                storageBuffers, graphics.dependent, bufferDependent, storageEligible,
+                graphics.customImageFeaturePrograms, deviations, ordinaryContracts, bindingBases);
+    }
+
+    /** Whether shadowcomp can negotiate custom images, and the feature-guarded programs that fall back. */
+    private static void addCapabilityDeviations(Map<String, ComputeSpec> compute, Map<String, ImageSpec> images,
+                                                List<String> customImageFeaturePrograms, List<String> deviations) {
         ComputeSpec shadowCompute = compute.get("shadowcomp");
         boolean shadowComputeSupported = shadowCompute != null
                 && shadowCompute.supported()
@@ -632,48 +593,45 @@ public final class PackAdvancedResourcePlan {
                 deviations.add("CUSTOM_IMAGE_FEATURE_FALLBACK:" + program);
             }
         }
-        List<String> bufferDependent = new ArrayList<>();
-        List<String> storageEligible = new ArrayList<>();
+    }
+
+    /** Each program's ordinary descriptors and sampled resources, leaving out the image samplers it reads. */
+    private static Map<String, OrdinaryDescriptorContract> contractsByProgram(
+            PackPlan plan, Path shadersDir, Map<String, List<GraphicsImageBinding>> graphicsImageReaders) {
         Map<String, Set<String>> advancedSamplerNames = new TreeMap<>();
         graphicsImageReaders.forEach((program, bindings) -> advancedSamplerNames.put(program,
                 bindings.stream().map(GraphicsImageBinding::sampler)
                         .filter(value -> value != null && !value.isBlank())
                         .collect(Collectors.toCollection(TreeSet::new))));
         Map<String, OrdinaryDescriptorContract> ordinaryContracts = new TreeMap<>();
-        Map<String, Integer> bindingBases = new TreeMap<>();
         PackResourcePlan sampledResources = PackResourcePlan.build(plan, shadersDir);
         for (PackProgramPlan program : plan.programs()) {
             var contract = PackDescriptorContracts.ordinaryDescriptorContract(program,
                     advancedSamplerNames.getOrDefault(program.name(), Set.of()))
                     .withResources(sampledResources.bindings(program.name()));
             ordinaryContracts.put(program.name(), contract);
-            bindingBases.put(program.name(), contract.nextBinding());
         }
-        Map<String, List<StorageBufferBinding>> storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
-                plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
-        Map<Integer, BufferSpec> budgetedBuffers = StorageBufferDeclarations.applyStorageBudget(
-                buffers, storageBuffers, storageEligible, images, deviations);
-        if (!budgetedBuffers.equals(buffers)) {
-            buffers = budgetedBuffers;
-            bufferDependent.clear();
-            storageEligible.clear();
-            storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
-                    plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
-        }
-        return new PackAdvancedResourcePlan(images, compute, graphicsImages, graphicsImageReaders, buffers,
-                storageBuffers, dependent, bufferDependent, storageEligible,
-                customImageFeaturePrograms, deviations, ordinaryContracts, bindingBases);
+        return ordinaryContracts;
+    }
+
+    /** The image whose sampler has this name, or null. */
+    static ImageSpec imageBySampler(Map<String, ImageSpec> images, String sampler) {
+        return images.values().stream()
+                .filter(value -> value.sampler().equals(sampler))
+                .findFirst().orElse(null);
+    }
+
+    /** The image a shader symbol names: the image itself, or the sampler that reads it. */
+    static ImageSpec imageBySymbol(Map<String, ImageSpec> images, String symbol) {
+        ImageSpec direct = images.get(symbol);
+        return direct != null ? direct : imageBySampler(images, symbol);
     }
 
     public Map<String, ImageSpec> images() { return images; }
 
     /** The image a shader symbol names: the image itself, or the sampler that reads it. */
     public ImageSpec imageForSymbol(String symbol) {
-        ImageSpec direct = images.get(symbol);
-        if (direct != null) return direct;
-        return images.values().stream()
-                .filter(value -> value.sampler().equals(symbol))
-                .findFirst().orElse(null);
+        return imageBySymbol(images, symbol);
     }
 
     public Map<String, ComputeSpec> computeStages() { return computeStages; }
@@ -807,6 +765,25 @@ public final class PackAdvancedResourcePlan {
 
     private String snapshotJson() {
         JsonObject root = new JsonObject();
+        root.add("images", imagesJson(images));
+        root.add("computeStages", computeStagesJson(computeStages));
+        root.add("graphicsImages", programBindingsJson(graphicsImages, PackAdvancedResourcePlan::graphicsBindingJson));
+        if (!graphicsImageReaders.isEmpty()) {
+            root.add("graphicsImageReaders",
+                    programBindingsJson(graphicsImageReaders, PackAdvancedResourcePlan::graphicsBindingJson));
+        }
+        root.add("buffers", buffersJson(buffers));
+        root.add("storageBuffers", programBindingsJson(storageBuffers, PackAdvancedResourcePlan::storageBindingJson));
+        root.add("dependentPrograms", PlanJson.strings(dependentPrograms));
+        root.add("bufferDependentPrograms", PlanJson.strings(bufferDependentPrograms));
+        root.add("storageEligiblePrograms", PlanJson.strings(storageEligiblePrograms));
+        root.add("customImageFeaturePrograms", PlanJson.strings(customImageFeaturePrograms));
+        root.add("deviations", PlanJson.strings(deviations));
+        root.addProperty("capabilityPossible", capabilityPossible());
+        return root.toString();
+    }
+
+    private static JsonArray imagesJson(Map<String, ImageSpec> images) {
         JsonArray imageArray = new JsonArray();
         images.values().stream().sorted(Comparator.comparing(ImageSpec::name)).forEach(value -> {
             JsonObject item = new JsonObject();
@@ -828,7 +805,10 @@ public final class PackAdvancedResourcePlan {
             item.add("deviations", PlanJson.strings(value.deviations()));
             imageArray.add(item);
         });
-        root.add("images", imageArray);
+        return imageArray;
+    }
+
+    private static JsonArray computeStagesJson(Map<String, ComputeSpec> computeStages) {
         JsonArray computeArray = new JsonArray();
         computeStages.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
@@ -846,51 +826,36 @@ public final class PackAdvancedResourcePlan {
             item.add("deviations", PlanJson.strings(value.deviations()));
             computeArray.add(item);
         });
-        root.add("computeStages", computeArray);
-        JsonArray graphicsArray = new JsonArray();
-        graphicsImages.entrySet().stream()
+        return computeArray;
+    }
+
+    /** One entry per program, in name order, with its bindings as the writer renders each. */
+    private static <T> JsonArray programBindingsJson(Map<String, List<T>> bindings, Function<T, JsonObject> writer) {
+        JsonArray programArray = new JsonArray();
+        bindings.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> {
-            String program = entry.getKey();
-            List<GraphicsImageBinding> bindings = entry.getValue();
             JsonObject item = new JsonObject();
-            item.addProperty("program", program);
+            item.addProperty("program", entry.getKey());
             JsonArray entries = new JsonArray();
-            bindings.forEach(binding -> {
-                JsonObject value = new JsonObject();
-                value.addProperty("symbol", binding.symbol());
-                value.addProperty("image", binding.imageName());
-                value.addProperty("sampler", binding.sampler());
-                value.addProperty("type", binding.glslType());
-                value.addProperty("selectorSlot", binding.selectorSlot());
-                entries.add(value);
-            });
+            entry.getValue().forEach(binding -> entries.add(writer.apply(binding)));
             item.add("bindings", entries);
-            graphicsArray.add(item);
+            programArray.add(item);
         });
-        root.add("graphicsImages", graphicsArray);
-        if (!graphicsImageReaders.isEmpty()) {
-            JsonArray readerArray = new JsonArray();
-            graphicsImageReaders.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey())
-                    .forEach(entry -> {
-                JsonObject item = new JsonObject();
-                item.addProperty("program", entry.getKey());
-                JsonArray entries = new JsonArray();
-                entry.getValue().forEach(binding -> {
-                    JsonObject value = new JsonObject();
-                    value.addProperty("symbol", binding.symbol());
-                    value.addProperty("image", binding.imageName());
-                    value.addProperty("sampler", binding.sampler());
-                    value.addProperty("type", binding.glslType());
-                    value.addProperty("selectorSlot", binding.selectorSlot());
-                    entries.add(value);
-                });
-                item.add("bindings", entries);
-                readerArray.add(item);
-            });
-            root.add("graphicsImageReaders", readerArray);
-        }
+        return programArray;
+    }
+
+    private static JsonObject graphicsBindingJson(GraphicsImageBinding binding) {
+        JsonObject value = new JsonObject();
+        value.addProperty("symbol", binding.symbol());
+        value.addProperty("image", binding.imageName());
+        value.addProperty("sampler", binding.sampler());
+        value.addProperty("type", binding.glslType());
+        value.addProperty("selectorSlot", binding.selectorSlot());
+        return value;
+    }
+
+    private static JsonArray buffersJson(Map<Integer, BufferSpec> buffers) {
         JsonArray bufferArray = new JsonArray();
         buffers.values().stream().sorted(Comparator.comparingInt(BufferSpec::logicalIndex)).forEach(value -> {
             JsonObject item = new JsonObject();
@@ -901,57 +866,31 @@ public final class PackAdvancedResourcePlan {
             item.add("deviations", PlanJson.strings(value.deviations()));
             bufferArray.add(item);
         });
-        root.add("buffers", bufferArray);
-        JsonArray storageArray = new JsonArray();
-        storageBuffers.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> {
-            String program = entry.getKey();
-            List<StorageBufferBinding> bindings = entry.getValue();
-            JsonObject item = new JsonObject();
-            item.addProperty("program", program);
-            JsonArray entries = new JsonArray();
-            bindings.forEach(binding -> {
-                JsonObject value = new JsonObject();
-                value.addProperty("block", binding.blockName());
-                value.addProperty("instance", binding.instanceName());
-                value.addProperty("originalBinding", binding.originalBinding());
-                value.addProperty("index", binding.logicalIndex());
-                value.addProperty("binding", binding.rewrittenBinding());
-                value.addProperty("stages", binding.stageMask());
-                value.addProperty("size", binding.size());
-                value.addProperty("status", binding.status().name());
-                value.add("deviations", PlanJson.strings(binding.deviations()));
-                entries.add(value);
-            });
-            item.add("bindings", entries);
-            storageArray.add(item);
-        });
-        root.add("storageBuffers", storageArray);
-        root.add("dependentPrograms", PlanJson.strings(dependentPrograms));
-        root.add("bufferDependentPrograms", PlanJson.strings(bufferDependentPrograms));
-        root.add("storageEligiblePrograms", PlanJson.strings(storageEligiblePrograms));
-        root.add("customImageFeaturePrograms", PlanJson.strings(customImageFeaturePrograms));
-        root.add("deviations", PlanJson.strings(deviations));
-        root.addProperty("capabilityPossible", capabilityPossible());
-        return root.toString();
+        return bufferArray;
+    }
+
+    private static JsonObject storageBindingJson(StorageBufferBinding binding) {
+        JsonObject value = new JsonObject();
+        value.addProperty("block", binding.blockName());
+        value.addProperty("instance", binding.instanceName());
+        value.addProperty("originalBinding", binding.originalBinding());
+        value.addProperty("index", binding.logicalIndex());
+        value.addProperty("binding", binding.rewrittenBinding());
+        value.addProperty("stages", binding.stageMask());
+        value.addProperty("size", binding.size());
+        value.addProperty("status", binding.status().name());
+        value.add("deviations", PlanJson.strings(binding.deviations()));
+        return value;
     }
 
     private static boolean requiredImagesSupported(ComputeSpec compute, Map<String, ImageSpec> images) {
         if (compute == null || !compute.supported() || compute.imageNames().isEmpty()) return false;
         for (String name : compute.imageNames()) {
-            ImageSpec image = images.get(name);
-            if (image == null) {
-                image = images.values().stream()
-                        .filter(value -> value.sampler().equals(name))
-                        .findFirst().orElse(null);
-            }
+            ImageSpec image = imageBySymbol(images, name);
             if (image == null || !image.supported()) return false;
         }
         for (String name : compute.samplerNames()) {
-            ImageSpec image = images.values().stream()
-                    .filter(value -> value.sampler().equals(name))
-                    .findFirst().orElse(null);
+            ImageSpec image = imageBySampler(images, name);
             if (image == null || !image.supported()) return false;
         }
         return true;

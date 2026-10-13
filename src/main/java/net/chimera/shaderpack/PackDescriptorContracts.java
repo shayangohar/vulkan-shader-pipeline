@@ -33,6 +33,10 @@ import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
  * storage images and advanced samplers take, and the proof that the built pipeline matches it.
  */
 final class PackDescriptorContracts {
+    /** Stages whose layout comes from a pipeline JSON; every other stage has a guarded family contract. */
+    private static final Set<UniformRegistry.Stage> PIPELINE_JSON_STAGES = Set.of(UniformRegistry.Stage.SHADOW,
+            UniformRegistry.Stage.GEOMETRY, UniformRegistry.Stage.TRANSLUCENT, UniformRegistry.Stage.POST);
+
     private PackDescriptorContracts() {}
 
     static int nextBinding(JsonObject json, int samplerCount) {
@@ -67,70 +71,74 @@ final class PackDescriptorContracts {
         var iface = plan.interfacePlan().effective(stage);
         int[] slots = ordinarySamplerSlots(iface, stage, advancedSamplerNames);
         for (int slot : slots) PackPipelines.requireSelector(slot);
-        PipelineConfig config;
-        if (stage == UniformRegistry.Stage.SHADOW || stage == UniformRegistry.Stage.GEOMETRY
-                || stage == UniformRegistry.Stage.TRANSLUCENT || stage == UniformRegistry.Stage.POST) {
-            JsonObject json = stage == UniformRegistry.Stage.SHADOW ? PackPipelines.shadowPipelineJson()
-                    : stage == UniformRegistry.Stage.POST ? new JsonObject()
-                    : ChimeraShaderLoader.loadJson("chimera_terrain.json").deepCopy();
-            json.addProperty("fragment", "pack_" + plan.name());
-            json.add("samplers", new JsonArray());
-            if (stage == UniformRegistry.Stage.POST) {
-                json.add("UBOs", PackPipelines.uniformUboArray(iface, 0, "all"));
-                json.add("PushConstants", new JsonArray());
-            } else {
-                json.getAsJsonArray("UBOs").addAll(PackPipelines.uniformUboArray(iface, 3, "all"));
-            }
-            PipelineConfig parsed = PipelineConfig.fromJson("pack_" + plan.name(), json);
-            int base = parsed.ubs.stream().mapToInt(ub -> ub.binding + 1).max().orElse(0);
-            List<PipelineConfig.ImageDescriptorInfo> images = new ArrayList<>();
-            for (int index = 0; index < slots.length; index++) images.add(
-                    new PipelineConfig.ImageDescriptorInfo(base + index, "sampler2D",
-                            "Sampler" + slots[index], slots[index]));
-            config = new PipelineConfig(parsed.shaderPaths, parsed.ubs, images, parsed.pushConstantsInfo);
-        } else {
-            PipelineConfig.Builder builder = PipelineConfig.builder()
-                    .addUB(PipelineConfig.UB.builder(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
-                                    VK_SHADER_STAGE_VERTEX_BIT)
-                            .addUniform("mat4", "ModelViewMat").addUniform("vec4", "ColorModulator")
-                            .addUniform("vec3", "ModelOffset").addUniform("mat4", "TextureMat").build())
-                    .addUB(PipelineConfig.UB.builder(UniformRegistry.PROJECTION_BINDING,
-                            VK_SHADER_STAGE_VERTEX_BIT)
-                            .addUniform("mat4", "ProjMat").build());
-            boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
-            if (!iface.executableUniforms().isEmpty()) {
-                // Entity-family vertex shaders may declare the same pack
-                // uniform block the fragment uses (live cameraPosition; a
-                // shadow vertex reads its shadow matrices). The buffer is
-                // shared, so the binding must be visible to both stages
-                // whenever the converted vertex actually declares it.
-                boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
-                        .contains("layout(binding = 2) uniform ");
-                int uniformStages = vertexUniforms
-                        ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                        : VK_SHADER_STAGE_FRAGMENT_BIT;
-                var uniforms = PipelineConfig.UB.builder(2, uniformStages);
-                // std140 bool occupies an integer word; VulkanMod's native
-                // layout builder accepts int, not GLSL bool. Keep GLSL unchanged.
-                for (var uniform : iface.executableUniforms()) uniforms.addUniform(
-                        uniform.glslType().equals("bool") ? "int" : uniform.glslType(), uniform.name());
-                builder.addUB(uniforms.build());
-            } else if (sky) {
-                builder.addUB(PipelineConfig.UB.builder(2, VK_SHADER_STAGE_FRAGMENT_BIT).setSize(16).build());
-            }
-            int base = sky || !iface.executableUniforms().isEmpty() ? 3 : 2;
-            for (int index = 0; index < slots.length; index++) builder.addImageDescriptor(
-                    base + index, "sampler2D", "Sampler" + slots[index], slots[index]);
-            config = builder.build();
-        }
+        PipelineConfig config = PIPELINE_JSON_STAGES.contains(stage)
+                ? pipelineJsonConfig(plan.name(), stage, iface, slots) : familyConfig(plan, stage, iface, slots);
         // A guarded family contract owns the host transform blocks at bindings
         // 0 and 1, so those two blocks must carry the host semantic names for
         // the bridge's name-based lookups.
-        boolean familyContract = stage != UniformRegistry.Stage.SHADOW
-                && stage != UniformRegistry.Stage.GEOMETRY
-                && stage != UniformRegistry.Stage.TRANSLUCENT
-                && stage != UniformRegistry.Stage.POST;
+        boolean familyContract = !PIPELINE_JSON_STAGES.contains(stage);
         return new OrdinaryDescriptorContract(config, ordinaryResources(config, iface), familyContract);
+    }
+
+    /** A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then samplers. */
+    private static PipelineConfig pipelineJsonConfig(String program, UniformRegistry.Stage stage,
+                                                     UniformRegistry.ProgramInterface iface, int[] slots) {
+        JsonObject json = stage == UniformRegistry.Stage.SHADOW ? PackPipelines.shadowPipelineJson()
+                : stage == UniformRegistry.Stage.POST ? new JsonObject()
+                : ChimeraShaderLoader.loadJson("chimera_terrain.json").deepCopy();
+        json.addProperty("fragment", "pack_" + program);
+        json.add("samplers", new JsonArray());
+        if (stage == UniformRegistry.Stage.POST) {
+            json.add("UBOs", PackPipelines.uniformUboArray(iface, 0, "all"));
+            json.add("PushConstants", new JsonArray());
+        } else {
+            json.getAsJsonArray("UBOs").addAll(PackPipelines.uniformUboArray(iface, 3, "all"));
+        }
+        PipelineConfig parsed = PipelineConfig.fromJson("pack_" + program, json);
+        int base = parsed.ubs.stream().mapToInt(ub -> ub.binding + 1).max().orElse(0);
+        List<PipelineConfig.ImageDescriptorInfo> images = new ArrayList<>();
+        for (int index = 0; index < slots.length; index++) images.add(
+                new PipelineConfig.ImageDescriptorInfo(base + index, "sampler2D",
+                        "Sampler" + slots[index], slots[index]));
+        return new PipelineConfig(parsed.shaderPaths, parsed.ubs, images, parsed.pushConstantsInfo);
+    }
+
+    /** A family layout: the host transform blocks, the pack's uniform block, then samplers. */
+    private static PipelineConfig familyConfig(PackProgramPlan plan, UniformRegistry.Stage stage,
+                                               UniformRegistry.ProgramInterface iface, int[] slots) {
+        PipelineConfig.Builder builder = PipelineConfig.builder()
+                .addUB(PipelineConfig.UB.builder(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
+                                VK_SHADER_STAGE_VERTEX_BIT)
+                        .addUniform("mat4", "ModelViewMat").addUniform("vec4", "ColorModulator")
+                        .addUniform("vec3", "ModelOffset").addUniform("mat4", "TextureMat").build())
+                .addUB(PipelineConfig.UB.builder(UniformRegistry.PROJECTION_BINDING,
+                        VK_SHADER_STAGE_VERTEX_BIT)
+                        .addUniform("mat4", "ProjMat").build());
+        boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
+        if (!iface.executableUniforms().isEmpty()) {
+            // Entity-family vertex shaders may declare the same pack
+            // uniform block the fragment uses (live cameraPosition; a
+            // shadow vertex reads its shadow matrices). The buffer is
+            // shared, so the binding must be visible to both stages
+            // whenever the converted vertex actually declares it.
+            boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
+                    .contains("layout(binding = 2) uniform ");
+            int uniformStages = vertexUniforms
+                    ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                    : VK_SHADER_STAGE_FRAGMENT_BIT;
+            var uniforms = PipelineConfig.UB.builder(2, uniformStages);
+            // std140 bool occupies an integer word; VulkanMod's native
+            // layout builder accepts int, not GLSL bool. Keep GLSL unchanged.
+            for (var uniform : iface.executableUniforms()) uniforms.addUniform(
+                    uniform.glslType().equals("bool") ? "int" : uniform.glslType(), uniform.name());
+            builder.addUB(uniforms.build());
+        } else if (sky) {
+            builder.addUB(PipelineConfig.UB.builder(2, VK_SHADER_STAGE_FRAGMENT_BIT).setSize(16).build());
+        }
+        int base = sky || !iface.executableUniforms().isEmpty() ? 3 : 2;
+        for (int index = 0; index < slots.length; index++) builder.addImageDescriptor(
+                base + index, "sampler2D", "Sampler" + slots[index], slots[index]);
+        return builder.build();
     }
 
     static ProgramImageBindingManifest legacyImageBindings(PipelineConfig config,
@@ -188,19 +196,20 @@ final class PackDescriptorContracts {
     }
 
     static UniformRegistry.Stage stageForProgram(String name) {
-        if (name != null && PostTargetPlan.isPostProgramName(name)) return UniformRegistry.Stage.POST;
-        if ("shadow".equals(name)) return UniformRegistry.Stage.SHADOW;
+        if (name == null) return UniformRegistry.Stage.ENTITY;
+        if (PostTargetPlan.isPostProgramName(name)) return UniformRegistry.Stage.POST;
+        if (name.equals("shadow")) return UniformRegistry.Stage.SHADOW;
         // shadow_entities and the host-layout shadow lanes share the entity-layout shadow descriptors.
-        if (name != null && FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.SHADOW_ENTITY) {
+        if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.SHADOW_ENTITY) {
             return UniformRegistry.Stage.SHADOW_ENTITY;
         }
-        if ("gbuffers_terrain".equals(name)) return UniformRegistry.Stage.GEOMETRY;
-        if ("gbuffers_water".equals(name)) return UniformRegistry.Stage.TRANSLUCENT;
-        if (name != null && FamilyAdapterRegistry.isParticleLike(name)) return UniformRegistry.Stage.PARTICLE;
-        if (name != null && FamilyAdapterRegistry.isSkyFamily(name)) return UniformRegistry.Stage.SKY;
-        if (name != null && FamilyAdapterRegistry.isCloudFamily(name)) return UniformRegistry.Stage.CLOUD;
-        if (name != null && FamilyAdapterRegistry.isBlockFamily(name)) return UniformRegistry.Stage.BLOCK;
-        if (name != null && FamilyAdapterRegistry.isHandFamily(name)) return UniformRegistry.Stage.HAND;
+        if (name.equals("gbuffers_terrain")) return UniformRegistry.Stage.GEOMETRY;
+        if (name.equals("gbuffers_water")) return UniformRegistry.Stage.TRANSLUCENT;
+        if (FamilyAdapterRegistry.isParticleLike(name)) return UniformRegistry.Stage.PARTICLE;
+        if (FamilyAdapterRegistry.isSkyFamily(name)) return UniformRegistry.Stage.SKY;
+        if (FamilyAdapterRegistry.isCloudFamily(name)) return UniformRegistry.Stage.CLOUD;
+        if (FamilyAdapterRegistry.isBlockFamily(name)) return UniformRegistry.Stage.BLOCK;
+        if (FamilyAdapterRegistry.isHandFamily(name)) return UniformRegistry.Stage.HAND;
         return UniformRegistry.Stage.ENTITY;
     }
 
@@ -278,42 +287,68 @@ final class PackDescriptorContracts {
             }
             return source;
         }
+        Set<String> emitted = new TreeSet<>();
+        String rewritten = bindImageDeclarations(source, advancedResources, layout, sourceStage, emitted);
+        Set<String> emittedSamplers = new TreeSet<>();
+        rewritten = bindSamplerDeclarations(rewritten, advancedResources, layout, sourceStage, emittedSamplers);
+        StringBuilder generated = new StringBuilder();
+        for (int index = 0; index < bindings.size(); index++) {
+            PackAdvancedResourcePlan.GraphicsImageBinding binding = bindings.get(index);
+            if (!visibleTo(binding, sourceStage) || emitted.contains(binding.symbol())) continue;
+            PackAdvancedResourcePlan.ImageSpec spec = supportedImage(advancedResources, binding);
+            generated.append(imageDeclaration(spec, binding, layout.imageBase() + index)).append('\n');
+        }
+        for (int index = 0; index < readers.size(); index++) {
+            PackAdvancedResourcePlan.GraphicsImageBinding binding = readers.get(index);
+            if (!visibleTo(binding, sourceStage) || emittedSamplers.contains(binding.sampler())) continue;
+            generated.append(samplerDeclaration(advancedResources, binding, layout.samplerBase() + index))
+                    .append('\n');
+        }
+        if (generated.isEmpty()) return rewritten;
+        int versionEnd = rewritten.indexOf('\n');
+        int insertAt = versionEnd < 0 ? 0 : versionEnd + 1;
+        return rewritten.substring(0, insertAt) + generated + rewritten.substring(insertAt);
+    }
+
+    /** Rewrites each storage image declaration to its planned binding, collecting the symbols it bound. */
+    private static String bindImageDeclarations(String source, PackAdvancedResourcePlan advancedResources,
+                                                ProgramBindingLayout layout, int sourceStage, Set<String> emitted) {
+        List<PackAdvancedResourcePlan.GraphicsImageBinding> bindings = layout.storageImages();
         Map<String, PackAdvancedResourcePlan.GraphicsImageBinding> bySymbol = new TreeMap<>();
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : bindings) {
             bySymbol.put(binding.symbol(), binding);
         }
         Matcher matcher = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source);
         StringBuffer result = new StringBuffer();
-        Set<String> emitted = new TreeSet<>();
         while (matcher.find()) {
             PackAdvancedResourcePlan.GraphicsImageBinding binding = bySymbol.get(matcher.group(2));
             if (binding == null) {
                 throw new PackPipelines.PreparationFailure("resource-rewrite",
                         "STORAGE_IMAGE_UNPLANNED:" + matcher.group(2));
             }
-            if (sourceStage != 0 && (binding.stageMask() & sourceStage) != sourceStage) {
+            if (!visibleTo(binding, sourceStage)) {
                 throw new PackPipelines.PreparationFailure("resource-rewrite",
                         "RESOURCE_STAGE_MISMATCH:" + binding.symbol());
             }
-            PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
-                    .get(binding.imageName());
-            if (spec == null || !spec.supported()) throw new PackPipelines.PreparationFailure(
-                    "resource-rewrite", "STORAGE_IMAGE_UNSUPPORTED:" + binding.imageName());
-            int index = bindings.indexOf(binding);
-            String replacement = "layout(" + spec.internalFormat() + ", binding = "
-                    + (layout.imageBase() + index) + ") uniform " + binding.glslType()
-                    + " " + matcher.group(2) + ";";
+            PackAdvancedResourcePlan.ImageSpec spec = supportedImage(advancedResources, binding);
+            String replacement = imageDeclaration(spec, binding, layout.imageBase() + bindings.indexOf(binding));
             matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
             emitted.add(binding.symbol());
         }
         matcher.appendTail(result);
-        String rewritten = result.toString();
+        return result.toString();
+    }
+
+    /** Rewrites each advanced sampler declaration to its planned binding, collecting the samplers it bound. */
+    private static String bindSamplerDeclarations(String source, PackAdvancedResourcePlan advancedResources,
+                                                  ProgramBindingLayout layout, int sourceStage,
+                                                  Set<String> emittedSamplers) {
+        List<PackAdvancedResourcePlan.GraphicsImageBinding> readers = layout.advancedSamplers();
         Map<String, PackAdvancedResourcePlan.GraphicsImageBinding> readerBySampler = new TreeMap<>();
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : readers) {
             readerBySampler.put(binding.sampler(), binding);
         }
-        Set<String> emittedSamplers = new TreeSet<>();
-        Matcher samplerMatcher = PackPipelines.STORAGE_SAMPLER_DECLARATION.matcher(rewritten);
+        Matcher samplerMatcher = PackPipelines.STORAGE_SAMPLER_DECLARATION.matcher(source);
         StringBuffer samplerResult = new StringBuffer();
         while (samplerMatcher.find()) {
             PackAdvancedResourcePlan.GraphicsImageBinding binding =
@@ -323,48 +358,44 @@ final class PackDescriptorContracts {
                         Matcher.quoteReplacement(samplerMatcher.group()));
                 continue;
             }
-            if (sourceStage != 0 && (binding.stageMask() & sourceStage) != sourceStage) {
+            if (!visibleTo(binding, sourceStage)) {
                 throw new PackPipelines.PreparationFailure("resource-rewrite",
                         "RESOURCE_STAGE_MISMATCH:" + binding.sampler());
             }
-            int index = readers.indexOf(binding);
-            String replacement = "layout(binding = "
-                    + (layout.samplerBase() + index) + ") uniform "
-                    + advancedSamplerType(advancedResources, binding) + " "
-                    + binding.sampler() + ";";
+            String replacement = samplerDeclaration(advancedResources, binding,
+                    layout.samplerBase() + readers.indexOf(binding));
             samplerMatcher.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
             emittedSamplers.add(binding.sampler());
         }
         samplerMatcher.appendTail(samplerResult);
-        rewritten = samplerResult.toString();
-        StringBuilder generated = new StringBuilder();
-        for (int index = 0; index < bindings.size(); index++) {
-            PackAdvancedResourcePlan.GraphicsImageBinding binding = bindings.get(index);
-            if (sourceStage != 0 && (binding.stageMask() & sourceStage) != sourceStage) continue;
-            if (emitted.contains(binding.symbol())) continue;
-            PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
-                    .get(binding.imageName());
-            if (spec == null || !spec.supported()) throw new PackPipelines.PreparationFailure(
-                    "resource-rewrite", "STORAGE_IMAGE_UNSUPPORTED:" + binding.imageName());
-            generated.append("layout(").append(spec.internalFormat())
-                    .append(", binding = ").append(layout.imageBase() + index)
-                    .append(") uniform ").append(binding.glslType()).append(' ')
-                    .append(binding.symbol()).append(";\n");
-        }
-        for (int index = 0; index < readers.size(); index++) {
-            PackAdvancedResourcePlan.GraphicsImageBinding binding = readers.get(index);
-            if (sourceStage != 0 && (binding.stageMask() & sourceStage) != sourceStage) continue;
-            if (emittedSamplers.contains(binding.sampler())) continue;
-            generated.append("layout(binding = ")
-                    .append(layout.samplerBase() + index)
-                    .append(") uniform ")
-                    .append(advancedSamplerType(advancedResources, binding)).append(' ')
-                    .append(binding.sampler()).append(";\n");
-        }
-        if (generated.isEmpty()) return rewritten;
-        int versionEnd = rewritten.indexOf('\n');
-        int insertAt = versionEnd < 0 ? 0 : versionEnd + 1;
-        return rewritten.substring(0, insertAt) + generated + rewritten.substring(insertAt);
+        return samplerResult.toString();
+    }
+
+    /** Whether a binding serves the stage being bound; stage 0 binds them all. */
+    private static boolean visibleTo(PackAdvancedResourcePlan.GraphicsImageBinding binding, int sourceStage) {
+        return sourceStage == 0 || (binding.stageMask() & sourceStage) == sourceStage;
+    }
+
+    /** The admitted image a storage binding writes; an unsupported one fails the rewrite. */
+    private static PackAdvancedResourcePlan.ImageSpec supportedImage(
+            PackAdvancedResourcePlan advancedResources, PackAdvancedResourcePlan.GraphicsImageBinding binding) {
+        PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
+                .get(binding.imageName());
+        if (spec == null || !spec.supported()) throw new PackPipelines.PreparationFailure(
+                "resource-rewrite", "STORAGE_IMAGE_UNSUPPORTED:" + binding.imageName());
+        return spec;
+    }
+
+    private static String imageDeclaration(PackAdvancedResourcePlan.ImageSpec spec,
+                                           PackAdvancedResourcePlan.GraphicsImageBinding binding, int descriptor) {
+        return "layout(" + spec.internalFormat() + ", binding = " + descriptor + ") uniform " + binding.glslType()
+                + " " + binding.symbol() + ";";
+    }
+
+    private static String samplerDeclaration(PackAdvancedResourcePlan advancedResources,
+                                             PackAdvancedResourcePlan.GraphicsImageBinding binding, int descriptor) {
+        return "layout(binding = " + descriptor + ") uniform " + advancedSamplerType(advancedResources, binding)
+                + " " + binding.sampler() + ";";
     }
 
     static String bindPackShader(

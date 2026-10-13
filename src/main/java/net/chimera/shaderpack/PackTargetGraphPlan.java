@@ -209,36 +209,15 @@ public final class PackTargetGraphPlan {
         List<Integer> outputs = new ArrayList<>(post.targetSlots());
         if (outputs.isEmpty()) outputs.add(0);
         List<Integer> writes = outputTargets(post);
-        List<Integer> reads = new ArrayList<>();
-        for (String sampler : samplerNames(program)) {
-            Integer target = colorTarget(program, sampler, inputs.resources());
-            if (target != null && !reads.contains(target)) reads.add(target);
-        }
-        reads.sort(Integer::compareTo);
+        List<Integer> reads = readTargets(inputs, program);
         List<String> stepDeviations = new ArrayList<>(post.deviations());
         if (!program.executable()) {
-            stepDeviations.addAll(program.deviations());
-            for (String deviation : program.deviations()) {
-                if (!deviation.startsWith("SAMPLER_NOT_MAPPED:")) continue;
-                Integer target = PackResourcePlan.targetIndex(deviation.substring("SAMPLER_NOT_MAPPED:".length()));
-                if (target != null && target > MAX_TARGET) {
-                    stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
-                }
-            }
+            addProgramFailures(program, stepDeviations);
         }
         boolean executable = program.executable() && post.executable();
         Set<Integer> referencedTargets = new TreeSet<>(outputs);
         referencedTargets.addAll(reads);
-        for (int target : referencedTargets) {
-            if (target < 0 || target > MAX_TARGET) {
-                stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
-                executable = false;
-            }
-            if (inputs.unavailableFormatTargets().contains(target)) {
-                stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
-                executable = false;
-            }
-        }
+        executable &= targetsSupported(inputs, referencedTargets, stepDeviations);
         // Iris generates mips for every directive whose target exists,
         // read by this program or not; an unallocated target has nothing to mip.
         List<Integer> mipmapTargets = post.mipmappedTargets().stream().filter(preliminary::containsKey).toList();
@@ -251,13 +230,8 @@ public final class PackTargetGraphPlan {
             stepDeviations.add("FINAL_MRT_UNSUPPORTED");
             executable = false;
         }
-        TargetSpec first = preliminary.get(outputs.get(0));
-        int stepWidth = first == null ? inputs.windowWidth() : first.width();
-        int stepHeight = first == null ? inputs.windowHeight() : first.height();
-        boolean sizeConflict = outputs.stream().map(preliminary::get).anyMatch(spec ->
-                spec == null || spec.width() != stepWidth || spec.height() != stepHeight)
-                || post.isFinal() && (stepWidth != inputs.windowWidth() || stepHeight != inputs.windowHeight());
-        if (sizeConflict) {
+        StepExtent extent = StepExtent.of(inputs, post, outputs, preliminary);
+        if (extent.conflict()) {
             stepDeviations.add("POST_TARGET_SIZE_CONFLICT:" + program.name());
             executable = false;
         }
@@ -266,8 +240,77 @@ public final class PackTargetGraphPlan {
                 doubleTargets.put(target, true);
             }
         }
-        Map<String, List<Integer>> preFlips = inputs.config() == null ? Map.of() : inputs.config().preFlips();
-        Map<String, List<Integer>> flips = inputs.config() == null ? Map.of() : inputs.config().flips();
+        applyFlips(inputs.config(), post, doubleTargets, stepDeviations);
+        Map<Integer, Integer> readSides = new TreeMap<>();
+        Map<Integer, Integer> writeSides = new TreeMap<>();
+        for (int target : reads) readSides.put(target, 0);
+        for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
+        return new TargetStep(post.programName(), reads, writes, post.outputFormats(), readSides, writeSides,
+                mipmapTargets, extent.width(), extent.height(), post.isFinal(), executable, stepDeviations);
+    }
+
+    /** The color targets a post program samples, ascending. */
+    private static List<Integer> readTargets(GraphInputs inputs, PackProgramPlan program) {
+        List<Integer> reads = new ArrayList<>();
+        for (String sampler : samplerNames(program)) {
+            Integer target = colorTarget(program, sampler, inputs.resources());
+            if (target != null && !reads.contains(target)) reads.add(target);
+        }
+        reads.sort(Integer::compareTo);
+        return reads;
+    }
+
+    /** A program that cannot execute keeps its own deviations, and names each unmapped target past the range. */
+    private static void addProgramFailures(PackProgramPlan program, List<String> stepDeviations) {
+        stepDeviations.addAll(program.deviations());
+        for (String deviation : program.deviations()) {
+            if (!deviation.startsWith("SAMPLER_NOT_MAPPED:")) continue;
+            Integer target = PackResourcePlan.targetIndex(deviation.substring("SAMPLER_NOT_MAPPED:".length()));
+            if (target != null && target > MAX_TARGET) {
+                stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
+            }
+        }
+    }
+
+    /** Whether every target a step references is in range and in a format the device supports. */
+    private static boolean targetsSupported(GraphInputs inputs, Set<Integer> referencedTargets,
+                                            List<String> stepDeviations) {
+        boolean supported = true;
+        for (int target : referencedTargets) {
+            if (target < 0 || target > MAX_TARGET) {
+                stepDeviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
+                supported = false;
+            }
+            if (inputs.unavailableFormatTargets().contains(target)) {
+                stepDeviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
+                supported = false;
+            }
+        }
+        return supported;
+    }
+
+    /**
+     * The extent a step draws at, its first output's size or the window's, and whether another
+     * output, or a final pass against the window, disagrees with it.
+     */
+    private record StepExtent(int width, int height, boolean conflict) {
+        static StepExtent of(GraphInputs inputs, PostTargetPlan post, List<Integer> outputs,
+                             Map<Integer, TargetSpec> preliminary) {
+            TargetSpec first = preliminary.get(outputs.get(0));
+            int stepWidth = first == null ? inputs.windowWidth() : first.width();
+            int stepHeight = first == null ? inputs.windowHeight() : first.height();
+            boolean sizeConflict = outputs.stream().map(preliminary::get).anyMatch(spec ->
+                    spec == null || spec.width() != stepWidth || spec.height() != stepHeight)
+                    || post.isFinal() && (stepWidth != inputs.windowWidth() || stepHeight != inputs.windowHeight());
+            return new StepExtent(stepWidth, stepHeight, sizeConflict);
+        }
+    }
+
+    /** Double-buffers each target a pre-flip or flip directive names for this pass, recording each. */
+    private static void applyFlips(PackConfig.PackConfigData config, PostTargetPlan post,
+                                   Map<Integer, Boolean> doubleTargets, List<String> stepDeviations) {
+        Map<String, List<Integer>> preFlips = config == null ? Map.of() : config.preFlips();
+        Map<String, List<Integer>> flips = config == null ? Map.of() : config.flips();
         for (int target : preFlips.getOrDefault(post.isFinal() ? "final_pre" : post.programName() + "_pre",
                 List.of())) {
             doubleTargets.put(target, true);
@@ -277,12 +320,6 @@ public final class PackTargetGraphPlan {
             doubleTargets.put(target, true);
             stepDeviations.add("POST_TARGET_FLIP_APPLIED:" + post.programName() + ":" + target);
         }
-        Map<Integer, Integer> readSides = new TreeMap<>();
-        Map<Integer, Integer> writeSides = new TreeMap<>();
-        for (int target : reads) readSides.put(target, 0);
-        for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
-        return new TargetStep(post.programName(), reads, writes, post.outputFormats(), readSides, writeSides,
-                mipmapTargets, stepWidth, stepHeight, post.isFinal(), executable, stepDeviations);
     }
 
     /**

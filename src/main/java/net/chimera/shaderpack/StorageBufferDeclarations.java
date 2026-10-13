@@ -15,6 +15,12 @@ import java.util.TreeSet;
  * declares, which declaration each block binds, and the budget the declarations must fit.
  */
 final class StorageBufferDeclarations {
+    /** Deviations that keep a block from binding even when its bufferObject declaration is supported. */
+    private static final List<String> UNBINDABLE_PREFIXES = List.of(
+            "STORAGE_BUFFER_LAYOUT_UNSUPPORTED:", "STORAGE_BUFFER_BLOCK_UNMAPPED:",
+            "STORAGE_BUFFER_BLOCK_AMBIGUOUS:", "STORAGE_BUFFER_BLOCK_DUPLICATE:", "STORAGE_BUFFER_SIZE_",
+            "STORAGE_BUFFER_ALIGNMENT_", "STORAGE_BUFFER_RELATIVE_");
+
     private StorageBufferDeclarations() {}
 
     static Map<Integer, PackAdvancedResourcePlan.BufferSpec> parseBuffers(
@@ -98,29 +104,7 @@ final class StorageBufferDeclarations {
         if (plan == null) return result;
         for (PackProgramPlan program : plan.programs()) {
             if (program == null || program.name().isBlank()) continue;
-            List<StorageBlock> blocks = new ArrayList<>();
-            for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
-                if (stage.getValue() == null || stage.getValue().source() == null) continue;
-                int stageMask = stage.getKey().equals("vertex")
-                        ? VK10.VK_SHADER_STAGE_VERTEX_BIT
-                        : stage.getKey().equals("fragment")
-                        ? VK10.VK_SHADER_STAGE_FRAGMENT_BIT : 0;
-                if (stageMask == 0) continue;
-                try {
-                    for (StorageBlock block : scanStorageBlocks(stage.getValue().source())) {
-                        blocks.add(new StorageBlock(block.blockName(), block.instanceName(),
-                                block.originalBinding(), block.std430(), stageMask));
-                    }
-                } catch (RuntimeException failure) {
-                    // Keep malformed storage declarations local to this
-                    // program. They must not become an invented executable
-                    // binding, and they must not reject unrelated programs.
-                    String marker = "__parse_error__" + stage.getKey();
-                    blocks.add(new StorageBlock(marker, "", -1, false, stageMask));
-                    deviations.add("STORAGE_BUFFER_PARSE_UNSUPPORTED:" + program.name()
-                            + ":" + stage.getKey());
-                }
-            }
+            List<StorageBlock> blocks = programBlocks(program, deviations);
             if (blocks.isEmpty()) continue;
             dependentPrograms.add(program.name());
             // A structurally valid block is a producer/consumer candidate even
@@ -128,10 +112,53 @@ final class StorageBufferDeclarations {
             // storage bindings. Final eligibility is decided after descriptor
             // construction and shader conversion.
             eligiblePrograms.add(program.name());
+            ProgramBlocks merged = ProgramBlocks.merge(blocks);
+            int bindingBase = bindingBases.getOrDefault(program.name(), 0);
+            result.put(program.name(), bindBlocks(program.name(), merged, specs, bindingBase, deviations));
+        }
+        for (PackAdvancedResourcePlan.BufferSpec spec : specs.values()) {
+            boolean used = result.values().stream().flatMap(List::stream)
+                    .filter(value -> eligiblePrograms.contains(value.program()))
+                    .anyMatch(value -> value.logicalIndex() == spec.logicalIndex());
+            if (!used) {
+                deviations.add("STORAGE_BUFFER_DEFERRED:bufferObject." + spec.logicalIndex());
+            }
+        }
+        return result;
+    }
+
+    /** The blocks a program's vertex and fragment stages declare; a stage that fails to parse adds a marker. */
+    private static List<StorageBlock> programBlocks(PackProgramPlan program, List<String> deviations) {
+        List<StorageBlock> blocks = new ArrayList<>();
+        for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
+            if (stage.getValue() == null || stage.getValue().source() == null) continue;
+            int stageMask = stageMask(stage.getKey());
+            if (stageMask == 0) continue;
+            try {
+                for (StorageBlock block : scanStorageBlocks(stage.getValue().source())) {
+                    blocks.add(new StorageBlock(block.blockName(), block.instanceName(),
+                            block.originalBinding(), block.std430(), stageMask));
+                }
+            } catch (RuntimeException failure) {
+                // Keep malformed storage declarations local to this
+                // program. They must not become an invented executable
+                // binding, and they must not reject unrelated programs.
+                String marker = "__parse_error__" + stage.getKey();
+                blocks.add(new StorageBlock(marker, "", -1, false, stageMask));
+                deviations.add("STORAGE_BUFFER_PARSE_UNSUPPORTED:" + program.name()
+                        + ":" + stage.getKey());
+            }
+        }
+        return blocks;
+    }
+
+    /** A program's blocks merged across stages by block and instance name, and those one stage declares twice. */
+    private record ProgramBlocks(Map<String, StorageBlock> blocks, Set<String> duplicates) {
+        static ProgramBlocks merge(List<StorageBlock> stageBlocks) {
             Map<String, StorageBlock> merged = new TreeMap<>();
             Set<String> duplicateBlocks = new TreeSet<>();
-            for (StorageBlock block : blocks) {
-                String key = block.blockName() + "\\u0000" + block.instanceName();
+            for (StorageBlock block : stageBlocks) {
+                String key = blockKey(block);
                 StorageBlock previous = merged.get(key);
                 if (previous == null) {
                     merged.put(key, block);
@@ -144,66 +171,70 @@ final class StorageBufferDeclarations {
                             previous.stageMask() | block.stageMask()));
                 }
             }
-            Map<Integer, Integer> logicalBindings = new TreeMap<>();
-            List<PackAdvancedResourcePlan.StorageBufferBinding> bindings = new ArrayList<>();
-            for (StorageBlock block : merged.values()) {
-                String blockKey = block.blockName() + "\\u0000" + block.instanceName();
-                List<PackAdvancedResourcePlan.BufferSpec> matches = matchingBufferSpecs(block, specs);
-                PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
-                List<String> local = new ArrayList<>();
-                if (!block.std430()) {
-                    local.add("STORAGE_BUFFER_LAYOUT_UNSUPPORTED:" + block.blockName());
-                }
-                if (duplicateBlocks.contains(blockKey)) {
-                    local.add("STORAGE_BUFFER_BLOCK_DUPLICATE:" + program.name() + ":"
-                            + block.blockName());
-                }
-                if (matches.size() > 1) {
-                    local.add("STORAGE_BUFFER_BLOCK_AMBIGUOUS:" + program.name() + ":"
-                            + block.blockName());
-                } else if (spec == null) {
-                    local.add("STORAGE_BUFFER_BLOCK_UNMAPPED:" + program.name() + ":"
-                            + block.blockName());
-                } else {
-                    local.addAll(spec.deviations());
-                }
-                PackAdvancedResourcePlan.Status status = spec != null && spec.supported() && local.stream().noneMatch(
-                        value -> value.startsWith("STORAGE_BUFFER_LAYOUT_UNSUPPORTED:")
-                                || value.startsWith("STORAGE_BUFFER_BLOCK_UNMAPPED:")
-                                || value.startsWith("STORAGE_BUFFER_BLOCK_AMBIGUOUS:")
-                                || value.startsWith("STORAGE_BUFFER_BLOCK_DUPLICATE:")
-                                || value.startsWith("STORAGE_BUFFER_SIZE_")
-                                || value.startsWith("STORAGE_BUFFER_ALIGNMENT_")
-                                || value.startsWith("STORAGE_BUFFER_RELATIVE_"))
-                        ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
-                int logicalIndex = spec == null ? -1 : spec.logicalIndex();
-                long size = spec == null ? 0L : spec.size();
-                int rewritten = status != PackAdvancedResourcePlan.Status.SUPPORTED ? -1
-                        : logicalBindings.computeIfAbsent(
-                        logicalIndex, ignored -> bindingBases.getOrDefault(program.name(), 0)
-                                + logicalBindings.size());
-                PackAdvancedResourcePlan.StorageBufferBinding binding =
-                        new PackAdvancedResourcePlan.StorageBufferBinding(
-                        program.name(), block.blockName(), block.instanceName(),
-                        block.originalBinding(), logicalIndex, rewritten, block.stageMask(),
-                        size, status, local);
-                bindings.add(binding);
-                deviations.addAll(local);
-                if (!binding.supported()) {
-                    deviations.add("STORAGE_BUFFER_PROGRAM_FALLBACK:" + program.name());
-                }
-            }
-            result.put(program.name(), bindings);
+            return new ProgramBlocks(merged, duplicateBlocks);
         }
-        for (PackAdvancedResourcePlan.BufferSpec spec : specs.values()) {
-            boolean used = result.values().stream().flatMap(List::stream)
-                    .filter(value -> eligiblePrograms.contains(value.program()))
-                    .anyMatch(value -> value.logicalIndex() == spec.logicalIndex());
-            if (!used) {
-                deviations.add("STORAGE_BUFFER_DEFERRED:bufferObject." + spec.logicalIndex());
+    }
+
+    private static String blockKey(StorageBlock block) {
+        return block.blockName() + "\\u0000" + block.instanceName();
+    }
+
+    /**
+     * Binds each merged block to the bufferObject declaration it names. Supported blocks of one
+     * declaration share one rewritten binding, numbered on from the program's binding base.
+     */
+    private static List<PackAdvancedResourcePlan.StorageBufferBinding> bindBlocks(
+            String program, ProgramBlocks merged, Map<Integer, PackAdvancedResourcePlan.BufferSpec> specs,
+            int bindingBase, List<String> deviations) {
+        Map<Integer, Integer> logicalBindings = new TreeMap<>();
+        List<PackAdvancedResourcePlan.StorageBufferBinding> bindings = new ArrayList<>();
+        for (StorageBlock block : merged.blocks().values()) {
+            List<PackAdvancedResourcePlan.BufferSpec> matches = matchingBufferSpecs(block, specs);
+            PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
+            List<String> local = blockDeviations(program, block, merged.duplicates(), matches);
+            PackAdvancedResourcePlan.Status status = spec != null && spec.supported() && local.stream().noneMatch(
+                    value -> UNBINDABLE_PREFIXES.stream().anyMatch(value::startsWith))
+                    ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
+            int logicalIndex = spec == null ? -1 : spec.logicalIndex();
+            long size = spec == null ? 0L : spec.size();
+            int rewritten = status != PackAdvancedResourcePlan.Status.SUPPORTED ? -1
+                    : logicalBindings.computeIfAbsent(
+                    logicalIndex, ignored -> bindingBase + logicalBindings.size());
+            PackAdvancedResourcePlan.StorageBufferBinding binding =
+                    new PackAdvancedResourcePlan.StorageBufferBinding(
+                    program, block.blockName(), block.instanceName(),
+                    block.originalBinding(), logicalIndex, rewritten, block.stageMask(),
+                    size, status, local);
+            bindings.add(binding);
+            deviations.addAll(local);
+            if (!binding.supported()) {
+                deviations.add("STORAGE_BUFFER_PROGRAM_FALLBACK:" + program);
             }
         }
-        return result;
+        return bindings;
+    }
+
+    /** A block's own deviations: its layout, a duplicate declaration, and how it matched a declaration. */
+    private static List<String> blockDeviations(String program, StorageBlock block, Set<String> duplicateBlocks,
+                                                List<PackAdvancedResourcePlan.BufferSpec> matches) {
+        List<String> local = new ArrayList<>();
+        if (!block.std430()) {
+            local.add("STORAGE_BUFFER_LAYOUT_UNSUPPORTED:" + block.blockName());
+        }
+        if (duplicateBlocks.contains(blockKey(block))) {
+            local.add("STORAGE_BUFFER_BLOCK_DUPLICATE:" + program + ":"
+                    + block.blockName());
+        }
+        if (matches.size() > 1) {
+            local.add("STORAGE_BUFFER_BLOCK_AMBIGUOUS:" + program + ":"
+                    + block.blockName());
+        } else if (matches.isEmpty()) {
+            local.add("STORAGE_BUFFER_BLOCK_UNMAPPED:" + program + ":"
+                    + block.blockName());
+        } else {
+            local.addAll(matches.get(0).deviations());
+        }
+        return local;
     }
 
     static List<PackAdvancedResourcePlan.BufferSpec> matchingBufferSpecs(StorageBlock block,

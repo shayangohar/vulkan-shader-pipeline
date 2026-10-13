@@ -331,16 +331,9 @@ public final class PackPlanBuilder {
 
         /** The family, stages, interface, targets and alpha test each allow the program. */
         private boolean interfaceAdmitted() {
-            boolean needsVertex = FamilyAdapterRegistry.isEntityLike(name)
-                    || FamilyAdapterRegistry.isShadowEntityFamily(name)
-                    || FamilyAdapterRegistry.isParticleLike(name)
-                    || FamilyAdapterRegistry.isWeatherFamily(name)
-                    || hostLayoutLane != null
-                    || FamilyAdapterRegistry.isSkyFamily(name)
-                    || FamilyAdapterRegistry.isCloudFamily(name);
             return FamilyAdapterRegistry.isExecutableFamily(name)
                     && fragment != null
-                    && (!needsVertex || vertex != null)
+                    && (!needsVertex() || vertex != null)
                     && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
                     && interfacePlan.executable()
                     && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
@@ -348,6 +341,17 @@ public final class PackPlanBuilder {
                     && (targetPlan == null || targetPlan.executable())
                     && (geometryOutputPlan == null || geometryOutputPlan.executable())
                     && alphaTestPlan.valid();
+        }
+
+        /** The families that draw only through their own vertex stage. */
+        private boolean needsVertex() {
+            return FamilyAdapterRegistry.isEntityLike(name)
+                    || FamilyAdapterRegistry.isShadowEntityFamily(name)
+                    || FamilyAdapterRegistry.isParticleLike(name)
+                    || FamilyAdapterRegistry.isWeatherFamily(name)
+                    || hostLayoutLane != null
+                    || FamilyAdapterRegistry.isSkyFamily(name)
+                    || FamilyAdapterRegistry.isCloudFamily(name);
         }
 
         /** A world draw must not sample its own outputs, and shadow outputs are shadowcolor0 and 1 only. */
@@ -399,16 +403,7 @@ public final class PackPlanBuilder {
 
         /** The vertex stage each family needs: MRT pairs, family bridges, and host layout lanes. */
         private boolean vertexAdmitted() {
-            boolean admitted = true;
-            if (geometryOutputPlan != null && geometryOutputPlan.requiresMrt() && vertex == null
-                    && !FamilyAdapterRegistry.isEntityLike(name)
-                    && !FamilyAdapterRegistry.isParticleLike(name)
-                    && !FamilyAdapterRegistry.isWeatherFamily(name)) {
-                // MRT geometry requires a complete vertex/fragment pair; the fragment-only
-                // single-target adapter stays as it was.
-                deviations.add("MRT_NOT_SUPPORTED");
-                admitted = false;
-            }
+            boolean admitted = mrtPairAdmitted();
             if (vertex == null) {
                 if (FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isShadowEntityFamily(name)) {
                     deviations.add(vertexBridgeDeviation(name));
@@ -420,14 +415,34 @@ public final class PackPlanBuilder {
                     deviations.add("WEATHER_VERTEX_BRIDGE_UNSUPPORTED");
                 }
             }
+            admitted &= hostLayoutVertexAdmitted();
+            return admitted;
+        }
+
+        /** MRT geometry outside the entity, particle and weather families needs its vertex stage. */
+        private boolean mrtPairAdmitted() {
+            if (geometryOutputPlan != null && geometryOutputPlan.requiresMrt() && vertex == null
+                    && !FamilyAdapterRegistry.isEntityLike(name)
+                    && !FamilyAdapterRegistry.isParticleLike(name)
+                    && !FamilyAdapterRegistry.isWeatherFamily(name)) {
+                // MRT geometry requires a complete vertex/fragment pair; the fragment-only
+                // single-target adapter stays as it was.
+                deviations.add("MRT_NOT_SUPPORTED");
+                return false;
+            }
+            return true;
+        }
+
+        /** A host layout lane needs a vertex stage that its preparation did not fail on. */
+        private boolean hostLayoutVertexAdmitted() {
             if (hostLayoutLane != null && (vertex == null || hostLayoutFailure != null)) {
                 deviations.add(hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
                 if (hostLayoutFailure != null) {
                     deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:" + hostLayoutFailure);
                 }
-                admitted = false;
+                return false;
             }
-            return admitted;
+            return true;
         }
 
         /** Records a vertex conversion, or the deviation that keeps the program from executing. */

@@ -28,20 +28,14 @@ final class ProgramReportRules {
             PackPlan packPlan
     ) {
         String name = inventory.name;
-        PackAdvancedResourcePlan.ComputeSpec computeSpec = packPlan == null
-                ? null : packPlan.advancedResources().computeStages().get(name);
-        if (computeSpec != null && inventory.stages.contains("compute")) {
+        PackAdvancedResourcePlan.ComputeSpec computeSpec = nativeComputeSpec(inventory, packPlan);
+        if (computeSpec != null) {
             return computeProgram(inventory, computeSpec, packPlan);
         }
-        boolean relaxed = !inventory.variantFolder.isBlank();
-        Map<String, String> sourceView = relaxed && !inventory.preparedSources.isEmpty()
-                ? inventory.preparedSources : inventory.sources;
-        StringBuilder combinedSource = new StringBuilder();
-        sourceView.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
-        String source = combinedSource.toString();
-        String fragment = sourceView.getOrDefault("fragment", source);
+        ReportSources sources = ReportSources.of(inventory);
+        boolean relaxed = sources.relaxed();
+        String source = sources.source();
+        String fragment = sources.fragment();
         String stripped = stripComments(source);
         boolean postName = PostTargetPlan.isPostProgramName(name);
         boolean hasFragment = inventory.stages.contains("fragment");
@@ -51,19 +45,14 @@ final class ProgramReportRules {
         // The report has historically exposed all uniform declarations,
         // including samplers. Keep that public inventory stable while the
         // shared interface plan continues to separate samplers for bindings.
-        TreeSet<String> uniformNames = new TreeSet<>(samplers);
-        uniformNames.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
-                .map(UniformRegistry.UniformDeclaration::name).toList());
+        List<String> uniformNames = declaredNames(stripped, samplers);
         PostTargetPlan.ParseResult targetResult = targetResult(inventory, fragment, packConfig, programPlan, postName);
         List<Integer> targets = targetResult != null
                 ? targetResult.plan().targetSlots() : scanTargets(fragment);
 
         TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
         if (resourcePlan != null) {
-            resourcePlan.deviationsForProgram(name).stream()
-                    .filter(value -> !value.startsWith("STANDARD_RESOURCE_ALIAS:")
-                            && !value.startsWith("SHADOW_RESOURCE_ALIAS:"))
-                    .forEach(deviations::add);
+            deviations.addAll(reportedResourceDeviations(resourcePlan, name));
         }
         deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
         UniformRegistry.ProgramInterface interfacePlan =
@@ -89,9 +78,50 @@ final class ProgramReportRules {
 
         return new ConformanceReport.ProgramReport(
                 name, PackProbe.familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
-                PackProbe.sorted(inventory.stages), inventory.sourceHashes, samplers, List.copyOf(uniformNames),
+                PackProbe.sorted(inventory.stages), inventory.sourceHashes, samplers, uniformNames,
                 targets, supportStatus(executableName(name, inventory, postName), hasFragment, deviations),
                 ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
+    }
+
+    /** The plan's compute stage for a program that ships compute source; null for a graphics program. */
+    static PackAdvancedResourcePlan.ComputeSpec nativeComputeSpec(PackProbe.Inventory inventory, PackPlan packPlan) {
+        PackAdvancedResourcePlan.ComputeSpec computeSpec = packPlan == null
+                ? null : packPlan.advancedResources().computeStages().get(inventory.name);
+        return computeSpec != null && inventory.stages.contains("compute") ? computeSpec : null;
+    }
+
+    /**
+     * The sources a program's report reads, joined by stage name: a variant's prepared sources when
+     * it has them, else the authored ones.
+     */
+    private record ReportSources(boolean relaxed, String source, String fragment) {
+        static ReportSources of(PackProbe.Inventory inventory) {
+            boolean relaxed = !inventory.variantFolder.isBlank();
+            Map<String, String> sourceView = relaxed && !inventory.preparedSources.isEmpty()
+                    ? inventory.preparedSources : inventory.sources;
+            StringBuilder combinedSource = new StringBuilder();
+            sourceView.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
+            String source = combinedSource.toString();
+            return new ReportSources(relaxed, source, sourceView.getOrDefault("fragment", source));
+        }
+    }
+
+    /** Every declared uniform and sampler name, sorted. */
+    static List<String> declaredNames(String stripped, List<String> samplers) {
+        TreeSet<String> names = new TreeSet<>(samplers);
+        names.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
+                .map(UniformRegistry.UniformDeclaration::name).toList());
+        return List.copyOf(names);
+    }
+
+    /** The resource plan's deviations for a program, without the alias facts its report leaves out. */
+    static List<String> reportedResourceDeviations(PackResourcePlan resourcePlan, String program) {
+        return resourcePlan.deviationsForProgram(program).stream()
+                .filter(value -> !value.startsWith("STANDARD_RESOURCE_ALIAS:")
+                        && !value.startsWith("SHADOW_RESOURCE_ALIAS:"))
+                .toList();
     }
 
     /** A post program without a plan must still convert; say why it cannot. */
@@ -322,21 +352,29 @@ final class ProgramReportRules {
                 case "gbuffers_entities" -> bridge("ENTITY", EntityVertexBridge.supportsEntityVertex(vertex, fragment));
                 case "gbuffers_block" -> bridge("BLOCK", EntityVertexBridge.supportsEntityVertex(vertex, fragment));
                 case "gbuffers_hand" -> bridge("HAND", EntityVertexBridge.supportsHandVertex(vertex, fragment));
-                default -> FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
-                        ? bridge(vertexBridgeLabel(name),
-                        EntityVertexBridge.convertParticleVertex(vertex, null, fragment, Map.of()) != null)
-                        : FamilyAdapterRegistry.isSkyFamily(name)
-                        ? bridge("SKY", HostLayoutVertexBridge.convertSkyVertex(vertex, null, fragment,
-                        name.equals("gbuffers_skytextured")) != null)
-                        : FamilyAdapterRegistry.isCloudFamily(name)
-                        ? bridge("CLOUD", HostLayoutVertexBridge.convertCloudVertex(vertex, null, fragment) != null)
-                        : null;
+                default -> unplannedLaneBridge(name, vertex, fragment);
             };
             if (bridge != null) {
                 return bridge;
             }
         }
         return unbridgedVertex(name, hasVertex);
+    }
+
+    /** The authored bridge of a particle, weather, sky or cloud program without a plan; null for others. */
+    static String unplannedLaneBridge(String name, String vertex, String fragment) {
+        if (FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)) {
+            return bridge(vertexBridgeLabel(name),
+                    EntityVertexBridge.convertParticleVertex(vertex, null, fragment, Map.of()) != null);
+        }
+        if (FamilyAdapterRegistry.isSkyFamily(name)) {
+            return bridge("SKY", HostLayoutVertexBridge.convertSkyVertex(vertex, null, fragment,
+                    name.equals("gbuffers_skytextured")) != null);
+        }
+        if (FamilyAdapterRegistry.isCloudFamily(name)) {
+            return bridge("CLOUD", HostLayoutVertexBridge.convertCloudVertex(vertex, null, fragment) != null);
+        }
+        return null;
     }
 
     /**
@@ -396,29 +434,43 @@ final class ProgramReportRules {
     /** Declared samplers a program without a plan could not bind, by the slot map of its stage. */
     static void addUnmappedSamplerDeviations(String name, List<String> samplers,
                                                      Collection<String> deviations) {
-        boolean entityStage = FamilyAdapterRegistry.isEntityLike(name)
-                || FamilyAdapterRegistry.isParticleLike(name)
-                || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isHostLayoutFamily(name);
-        Map<String, Integer> knownSamplers = name.equals("gbuffers_terrain")
-                ? UniformRegistry.GEOMETRY_NAME_TO_SLOT
-                : FamilyAdapterRegistry.isShadowFamily(name) ? UniformRegistry.SHADOW_NAME_TO_SLOT
-                : name.equals("gbuffers_water") ? UniformRegistry.TRANSLUCENT_NAME_TO_SLOT
-                : entityStage || FamilyAdapterRegistry.isSkyFamily(name) || FamilyAdapterRegistry.isCloudFamily(name)
-                ? UniformRegistry.ENTITY_NAME_TO_SLOT
-                : UniformRegistry.NAME_TO_SLOT;
+        Map<String, Integer> knownSamplers = unplannedSamplerSlots(name);
         for (String sampler : samplers) {
             if (knownSamplers.containsKey(sampler)) {
                 continue;
             }
-            deviations.add(name.equals("gbuffers_water")
-                    ? (sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
-                    ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
-                    : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler)
-                    : FamilyAdapterRegistry.isShadowFamily(name) ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler
-                    : entityStage ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler
-                    : "SAMPLER_NOT_MAPPED:" + sampler);
+            deviations.add(unplannedSamplerDeviation(name, sampler));
         }
+    }
+
+    /** The slot map a program without a plan binds its samplers by, chosen by its family. */
+    static Map<String, Integer> unplannedSamplerSlots(String name) {
+        if (name.equals("gbuffers_terrain")) return UniformRegistry.GEOMETRY_NAME_TO_SLOT;
+        if (FamilyAdapterRegistry.isShadowFamily(name)) return UniformRegistry.SHADOW_NAME_TO_SLOT;
+        if (name.equals("gbuffers_water")) return UniformRegistry.TRANSLUCENT_NAME_TO_SLOT;
+        if (entityStage(name) || FamilyAdapterRegistry.isSkyFamily(name) || FamilyAdapterRegistry.isCloudFamily(name)) {
+            return UniformRegistry.ENTITY_NAME_TO_SLOT;
+        }
+        return UniformRegistry.NAME_TO_SLOT;
+    }
+
+    /** Why a program without a plan cannot bind a sampler its family's slot map lacks. */
+    static String unplannedSamplerDeviation(String name, String sampler) {
+        if (name.equals("gbuffers_water")) {
+            return sampler.startsWith("depthtex") || sampler.startsWith("shadowcolor")
+                    ? "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"
+                    : "TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler;
+        }
+        if (FamilyAdapterRegistry.isShadowFamily(name)) return "SHADOW_SAMPLER_UNSUPPORTED:" + sampler;
+        return entityStage(name) ? "ENTITY_SAMPLER_UNSUPPORTED:" + sampler : "SAMPLER_NOT_MAPPED:" + sampler;
+    }
+
+    /** The entity-like, particle, weather and host-layout families, whose samplers report as entity ones. */
+    static boolean entityStage(String name) {
+        return FamilyAdapterRegistry.isEntityLike(name)
+                || FamilyAdapterRegistry.isParticleLike(name)
+                || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isHostLayoutFamily(name);
     }
 
     /** Builds a truthful report for a native compute stage without applying graphics rules. */
@@ -448,9 +500,6 @@ final class ProgramReportRules {
         String source = inventory.sources.getOrDefault("compute", "");
         String stripped = stripComments(source);
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
-        TreeSet<String> uniforms = new TreeSet<>(samplers);
-        uniforms.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
-                .map(UniformRegistry.UniformDeclaration::name).toList());
         return new ConformanceReport.ProgramReport(
                 inventory.name,
                 "compute",
@@ -458,7 +507,7 @@ final class ProgramReportRules {
                 List.of("compute"),
                 inventory.sourceHashes,
                 samplers,
-                List.copyOf(uniforms),
+                declaredNames(stripped, samplers),
                 List.of(),
                 support,
                 runtime,

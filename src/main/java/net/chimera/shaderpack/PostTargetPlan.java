@@ -109,48 +109,10 @@ public final class PostTargetPlan {
         String text = source == null ? "" : source;
         Map<Integer, Integer> safeFormats = formats == null ? Map.of() : formats;
         List<String> deviations = new ArrayList<>();
-        List<List<Integer>> directives = new ArrayList<>();
-        boolean directiveSeen = false;
-
-        Matcher define = DRAWBUFFERS_DEFINE.matcher(text);
-        while (define.find()) {
-            List<Integer> parsed = parseDigits(define.group(1), deviations);
-            if (parsed.isEmpty()) {
-                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
-            } else {
-                directives.add(parsed);
-            }
-            directiveSeen = true;
-        }
-
-        Matcher comment = TARGET_COMMENT.matcher(text);
-        while (comment.find()) {
-            List<Integer> parsed = parseCommentTargets(comment.group(1), comment.group(2), deviations);
-            if (parsed.isEmpty()) {
-                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
-            } else {
-                directives.add(parsed);
-            }
-            directiveSeen = true;
-        }
-
-        if (DIRECTIVE_WORD.matcher(text).find() && !directiveSeen) {
-            deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
-        }
+        List<List<Integer>> directives = parseDirectives(text, deviations);
 
         List<Integer> targetSlots = selectDirective(directives, deviations);
-        Set<Integer> outputSet = new TreeSet<>();
-        Matcher fragData = FRAG_DATA.matcher(text);
-        while (fragData.find()) {
-            try {
-                outputSet.add(Integer.parseInt(fragData.group(1)));
-            } catch (NumberFormatException e) {
-                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
-            }
-        }
-        if (text.matches("(?s).*\\bgl_FragColor\\b.*")) {
-            outputSet.add(0);
-        }
+        Set<Integer> outputSet = legacyOutputs(text, deviations);
         Map<Integer, String> outputTypes = new TreeMap<>();
         for (ModernOutput output : modernOutputs(text)) {
             if (outputTypes.put(output.location(), output.type()) != null) {
@@ -185,6 +147,58 @@ public final class PostTargetPlan {
                 programName, targetSlots, outputLocations, discardedOutputs, outputFormats,
                 outputTypes, parseMipmappedTargets(text), deviations);
         return new ParseResult(plan, plan.deviations());
+    }
+
+    /**
+     * The routes the DRAWBUFFERS defines, then the target comments, declare. A malformed directive,
+     * or a directive word that no directive parses from, is recorded and declares no route.
+     */
+    private static List<List<Integer>> parseDirectives(String text, List<String> deviations) {
+        List<List<Integer>> directives = new ArrayList<>();
+        boolean directiveSeen = false;
+
+        Matcher define = DRAWBUFFERS_DEFINE.matcher(text);
+        while (define.find()) {
+            addDirective(parseDigits(define.group(1), deviations), directives, deviations);
+            directiveSeen = true;
+        }
+
+        Matcher comment = TARGET_COMMENT.matcher(text);
+        while (comment.find()) {
+            addDirective(parseCommentTargets(comment.group(1), comment.group(2), deviations), directives,
+                    deviations);
+            directiveSeen = true;
+        }
+
+        if (DIRECTIVE_WORD.matcher(text).find() && !directiveSeen) {
+            deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+        }
+        return directives;
+    }
+
+    private static void addDirective(List<Integer> parsed, List<List<Integer>> directives, List<String> deviations) {
+        if (parsed.isEmpty()) {
+            deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+        } else {
+            directives.add(parsed);
+        }
+    }
+
+    /** The output locations gl_FragData and gl_FragColor write. */
+    private static Set<Integer> legacyOutputs(String text, List<String> deviations) {
+        Set<Integer> outputSet = new TreeSet<>();
+        Matcher fragData = FRAG_DATA.matcher(text);
+        while (fragData.find()) {
+            try {
+                outputSet.add(Integer.parseInt(fragData.group(1)));
+            } catch (NumberFormatException e) {
+                deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
+            }
+        }
+        if (text.matches("(?s).*\\bgl_FragColor\\b.*")) {
+            outputSet.add(0);
+        }
+        return outputSet;
     }
 
     /**
