@@ -664,47 +664,10 @@ final class FixturePackTest {
 
         PackSource.LoadResult loaded = PackSource.loadResult(pack);
         PackProgram shadowProgram = loaded.programs().stream()
-                .filter(program -> program.name().equals("shadow"))
-                .findFirst()
+                .filter(program -> program.name().equals("shadow")).findFirst()
                 .orElseThrow(() -> new AssertionError("shadow source is missing"));
         assertTrue(shadowProgram.vertexSource() != null, "shadow vertex source is missing");
-
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
-                shadowProgram.fragmentSource(), UniformRegistry.Stage.SHADOW);
-        assertEquals(List.of(
-                        new UniformRegistry.SamplerBinding("texture", 0),
-                        new UniformRegistry.SamplerBinding("lightmap", 2)),
-                interfacePlan.samplers(), "shadow sampler bindings");
-        assertTrue(interfacePlan.executable(), "shadow interface is not executable");
-
-        LegacyGlslConverter.TerrainVertexConversion vertex = TerrainVertexBridge.convertShadowVertex(
-                shadowProgram.vertexSource(), shadowProgram.vertexPath(), shadowProgram.fragmentSource());
-        assertTrue(vertex != null, "shadow vertex conversion failed");
-        assertTrue(vertex.source().contains("layout(binding = 0) uniform ViewUBO"),
-                "shadow MVP UBO is missing");
-        assertTrue(vertex.source().contains("mat4 MVP;"), "shadow MVP field is missing");
-        assertTrue(!vertex.source().contains("LightMVP"),
-                "pack shadow bridge retained the fixed LightMVP name");
-        assertTrue(vertex.source().contains("layout(binding = 2) uniform SectionData"),
-                "shadow section UBO is missing");
-        assertTrue(vertex.source().contains("layout(location = 3) in int inMaterialId"),
-                "shadow material input is missing");
-        assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
-                "shadow render-type input is missing");
-
-        String convertedFragment = FragmentConverter.FragmentConversionRequest
-                .of(shadowProgram.fragmentSource(), shadowProgram.fragmentPath(), true,
-                        new int[] {0, 2})
-                .withTerrainLayout(vertex.layout())
-                .withInterfacePlan(interfacePlan)
-                .convert();
-        assertTrue(convertedFragment != null, "shadow fragment conversion failed");
-        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
-                "shadow atlas binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
-                "shadow lightmap binding is missing");
-        assertTrue(convertedFragment.contains("layout(location = "),
-                "shadow varying locations are missing");
+        verifyShadowConversion(shadowProgram);
 
         JsonObject shadowConfig = PackPipelines.shadowPipelineJson();
         JsonArray shadowUbos = shadowConfig.getAsJsonArray("UBOs");
@@ -727,6 +690,41 @@ final class FixturePackTest {
         assertTrue(config.shadowSettings().rawValues().get("shadowDistance").equals("256"),
                 "distance raw value");
         verifyFixtureBaseline(report, baselinePath, "shadow");
+    }
+
+    /** The shadow program's sampler interface, terrain vertex bridge and fragment bindings. */
+    private static void verifyShadowConversion(PackProgram shadowProgram) {
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+                shadowProgram.fragmentSource(), UniformRegistry.Stage.SHADOW);
+        assertEquals(List.of(new UniformRegistry.SamplerBinding("texture", 0),
+                        new UniformRegistry.SamplerBinding("lightmap", 2)),
+                interfacePlan.samplers(), "shadow sampler bindings");
+        assertTrue(interfacePlan.executable(), "shadow interface is not executable");
+
+        LegacyGlslConverter.TerrainVertexConversion vertex = TerrainVertexBridge.convertShadowVertex(
+                shadowProgram.vertexSource(), shadowProgram.vertexPath(), shadowProgram.fragmentSource());
+        assertTrue(vertex != null, "shadow vertex conversion failed");
+        assertTrue(vertex.source().contains("layout(binding = 0) uniform ViewUBO"), "shadow MVP UBO is missing");
+        assertTrue(vertex.source().contains("mat4 MVP;"), "shadow MVP field is missing");
+        assertTrue(!vertex.source().contains("LightMVP"), "pack shadow bridge retained the fixed LightMVP name");
+        assertTrue(vertex.source().contains("layout(binding = 2) uniform SectionData"),
+                "shadow section UBO is missing");
+        assertTrue(vertex.source().contains("layout(location = 3) in int inMaterialId"),
+                "shadow material input is missing");
+        assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
+                "shadow render-type input is missing");
+
+        String convertedFragment = FragmentConverter.FragmentConversionRequest
+                .of(shadowProgram.fragmentSource(), shadowProgram.fragmentPath(), true, new int[] {0, 2})
+                .withTerrainLayout(vertex.layout())
+                .withInterfacePlan(interfacePlan)
+                .convert();
+        assertTrue(convertedFragment != null, "shadow fragment conversion failed");
+        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
+                "shadow atlas binding is missing");
+        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
+                "shadow lightmap binding is missing");
+        assertTrue(convertedFragment.contains("layout(location = "), "shadow varying locations are missing");
     }
 
     private static void verifyUnsupportedShadow(Path pack, Path baselinePath) throws IOException {

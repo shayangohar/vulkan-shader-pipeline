@@ -60,31 +60,6 @@ final class AdvancedImagePlanTest {
                         .anyMatch(binding -> binding.imageName().equals("voxel_img")
                                 && binding.symbol().equals("voxel_sampler")),
                 "shadow imageStore binding is missing");
-        String boundedFetch = GlslTokenRewriter.rewriteTexelFetchBounds(
-                "vec4 value = texelFetch(lighttex, pos + ivec3(1, 0, 0), 0);",
-                Set.of("lighttex"));
-        assertTrue(boundedFetch.contains("clamp(pos + ivec3(1, 0, 0), ivec3(0)"),
-                "3D texelFetch was not bounded");
-        String boundedHelperFetch = GlslTokenRewriter.rewriteTexelFetchBounds(
-                "vec4 sample(sampler3D lighttex, ivec3 pos) {"
-                        + " return texelFetch(lighttex, pos, 0); }",
-                Set.of("lighttex"));
-        assertTrue(boundedHelperFetch.contains("textureSize(lighttex, 0) - ivec3(1)"),
-                "helper-function 3D texelFetch was not bounded");
-        UniformRegistry.ProgramInterface shadowedSampler = UniformRegistry.planPrepared(
-                "uniform sampler2D specular;"
-                        + "float readValue() { float specular = 1.0; return specular; }",
-                UniformRegistry.Stage.GEOMETRY);
-        assertTrue(shadowedSampler.deviations().stream().noneMatch(value ->
-                        value.equals("SAMPLER_NOT_MAPPED:specular")),
-                "local sampler shadowing was treated as a resource use");
-        UniformRegistry.ProgramInterface helperSampler = UniformRegistry.planPrepared(
-                "uniform sampler2D customSampler;"
-                        + "vec4 sampleIt(sampler2D value, vec2 uv) { return texture2D(value, uv); }"
-                        + "vec4 readValue(vec2 uv) { return sampleIt(customSampler, uv); }",
-                UniformRegistry.Stage.GEOMETRY);
-        assertTrue(helperSampler.deviations().contains("SAMPLER_NOT_MAPPED:customSampler"),
-                "helper sampler dependency was not detected");
 
         PackProbe.Analysis unsupported = PackProbe.analyze(unsupportedPath);
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
@@ -95,7 +70,21 @@ final class AdvancedImagePlanTest {
         assertTrue(unsupportedPlan.deviations().contains("STORAGE_BUFFER_DEFERRED:bufferObject.0"),
                 "storage-buffer deferral missing");
 
-        Path budgetPath = root.resolve("m8_6/budget_isolation");
+        PackAdvancedResourcePlan budgetPlan = budgetIsolationPlan(root.resolve("m8_6/budget_isolation"));
+        assertNoAbsolutePaths(supportedPlan.snapshot());
+        assertNoAbsolutePaths(budgetPlan.snapshot());
+
+        String baseline = Files.readString(root.resolve("baselines/m8_6.json"));
+        assertTrue(baseline.contains(supportedPlan.fingerprint()),
+                "supported fingerprint baseline mismatch");
+        assertTrue(baseline.contains(unsupportedPlan.fingerprint()),
+                "unsupported fingerprint baseline mismatch");
+        assertTrue(baseline.contains(budgetPlan.fingerprint()),
+                "budget-isolation fingerprint baseline mismatch");
+    }
+
+    /** The budget fixture's plan, which rejects only its oversized image and keeps compute. */
+    private static PackAdvancedResourcePlan budgetIsolationPlan(Path budgetPath) {
         assertTrue(Files.isDirectory(budgetPath), "budget fixture is missing");
         PackProbe.Analysis budget = PackProbe.analyze(budgetPath);
         PackAdvancedResourcePlan budgetPlan = budget.plan().advancedResources();
@@ -112,10 +101,12 @@ final class AdvancedImagePlanTest {
         assertEquals(budgetPlan.snapshot(),
                 PackProbe.analyze(budgetPath).plan().advancedResources().snapshot(),
                 "budget plan is not deterministic");
-        assertNoAbsolutePaths(supportedPlan.snapshot());
-        assertNoAbsolutePaths(budgetPlan.snapshot());
+        return budgetPlan;
+    }
 
-        Path overridePath = root.resolve("m8_6/option_override");
+    @Test
+    void optionOverrideActivatesAdvancedImages() throws Exception {
+        Path overridePath = TestPacks.fixture("m8_6/option_override");
         assertTrue(Files.isDirectory(overridePath), "option override fixture is missing");
         PackAdvancedResourcePlan defaultOverridePlan = PackProbe.analyze(overridePath)
                 .plan().advancedResources();
@@ -141,14 +132,35 @@ final class AdvancedImagePlanTest {
                 "explicit option did not activate shadow compute");
         assertTrue(overridden.settings().deviations().contains("PACK_OPTION_OVERRIDE:ENABLE_ADVANCED"),
                 "explicit option deviation missing");
+    }
 
-        String baseline = Files.readString(root.resolve("baselines/m8_6.json"));
-        assertTrue(baseline.contains(supportedPlan.fingerprint()),
-                "supported fingerprint baseline mismatch");
-        assertTrue(baseline.contains(unsupportedPlan.fingerprint()),
-                "unsupported fingerprint baseline mismatch");
-        assertTrue(baseline.contains(budgetPlan.fingerprint()),
-                "budget-isolation fingerprint baseline mismatch");
+    @Test
+    void advancedSamplerSourceRules() {
+        String boundedFetch = GlslTokenRewriter.rewriteTexelFetchBounds(
+                "vec4 value = texelFetch(lighttex, pos + ivec3(1, 0, 0), 0);",
+                Set.of("lighttex"));
+        assertTrue(boundedFetch.contains("clamp(pos + ivec3(1, 0, 0), ivec3(0)"),
+                "3D texelFetch was not bounded");
+        String boundedHelperFetch = GlslTokenRewriter.rewriteTexelFetchBounds(
+                "vec4 sample(sampler3D lighttex, ivec3 pos) {"
+                        + " return texelFetch(lighttex, pos, 0); }",
+                Set.of("lighttex"));
+        assertTrue(boundedHelperFetch.contains("textureSize(lighttex, 0) - ivec3(1)"),
+                "helper-function 3D texelFetch was not bounded");
+        UniformRegistry.ProgramInterface shadowedSampler = UniformRegistry.planPrepared(
+                "uniform sampler2D specular;"
+                        + "float readValue() { float specular = 1.0; return specular; }",
+                UniformRegistry.Stage.GEOMETRY);
+        assertTrue(shadowedSampler.deviations().stream().noneMatch(value ->
+                        value.equals("SAMPLER_NOT_MAPPED:specular")),
+                "local sampler shadowing was treated as a resource use");
+        UniformRegistry.ProgramInterface helperSampler = UniformRegistry.planPrepared(
+                "uniform sampler2D customSampler;"
+                        + "vec4 sampleIt(sampler2D value, vec2 uv) { return texture2D(value, uv); }"
+                        + "vec4 readValue(vec2 uv) { return sampleIt(customSampler, uv); }",
+                UniformRegistry.Stage.GEOMETRY);
+        assertTrue(helperSampler.deviations().contains("SAMPLER_NOT_MAPPED:customSampler"),
+                "helper sampler dependency was not detected");
     }
 
     @Test
@@ -386,7 +398,6 @@ final class AdvancedImagePlanTest {
 
     /** Complementary's WSR image and buffer, advanced sampler slots, storage readers and composite. */
     private static void verifyComplementaryResources(PackProbe.Analysis analysis, PackAdvancedResourcePlan plan) {
-        PackPlan packPlan = analysis.plan();
         PackAdvancedResourcePlan.ImageSpec wsr = plan.images().get("wsr_img");
         assertTrue(wsr != null && wsr.supported()
                         && wsr.width() == 128 && wsr.height() == 64 && wsr.depth() == 128
@@ -398,6 +409,14 @@ final class AdvancedImagePlanTest {
         assertTrue(wsrBuffer != null && wsrBuffer.supported()
                         && wsrBuffer.size() == 50_855_936L,
                 "Complementary WSR bufferObject.0 was not admitted at its authored size");
+        verifyComplementaryShadowResources(analysis, plan);
+        verifyComplementaryComposite(analysis, plan);
+        verifyComplementaryBlockAtlas(analysis.plan());
+    }
+
+    /** Complementary's advanced sampler slots and its shadow image producer, readers and storage writer. */
+    private static void verifyComplementaryShadowResources(PackProbe.Analysis analysis,
+                                                           PackAdvancedResourcePlan plan) {
         Map<String, Integer> slots = analysis.settings().customSamplerSlots();
         assertTrue(slots.containsKey("voxel_sampler")
                         && slots.containsKey("wsr_sampler")
@@ -428,6 +447,11 @@ final class AdvancedImagePlanTest {
                                 && value.logicalIndex() == 0
                                 && (value.stageMask() & 16) != 0),
                 "Complementary storage reader was not planned");
+    }
+
+    /** Complementary's composite reads storage and normalized fog, without a generated or source-only sampler. */
+    private static void verifyComplementaryComposite(PackProbe.Analysis analysis, PackAdvancedResourcePlan plan) {
+        PackPlan packPlan = analysis.plan();
         PackProgramPlan composite = packPlan.program("composite");
         assertTrue(composite != null && composite.executable()
                         && packPlan.shouldAttempt("composite"),
@@ -453,6 +477,10 @@ final class AdvancedImagePlanTest {
                 "Complementary composite fragment storage reader is missing");
         assertTrue(!analysis.settings().customSamplerSlots().containsKey("tex"),
                 "Complementary source-only tex consumed a custom sampler slot");
+    }
+
+    /** Complementary's generated block atlas resolves as a host alias for an allowed program. */
+    private static void verifyComplementaryBlockAtlas(PackPlan packPlan) {
         PackResourceBinding blockAtlas = packPlan.resources().bindings().values().stream()
                 .flatMap(Collection::stream)
                 .filter(value -> value.source().equals("minecraft:textures/atlas/blocks.png"))

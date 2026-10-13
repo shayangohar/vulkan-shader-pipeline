@@ -76,35 +76,50 @@ final class SpirvLocalInitializerTest {
         int[] original = words(compile(source));
         int[] decorated = SpirvTrigPrecision.apply(original);
         assertTrue(decorated != original, "the hash arithmetic was left contractible");
-        Set<Integer> arithmetic = new HashSet<>();
-        Set<Integer> dots = new HashSet<>();
-        Set<Integer> vectorAdds = new HashSet<>();
-        Set<Integer> noContraction = new HashSet<>();
-        int vec2Type = -1;
-        int floatType = -1;
-        int firstType = -1;
-        int at = 5;
-        for (; at < decorated.length; at += decorated[at] >>> 16) {
-            int opcode = decorated[at] & 0xFFFF;
-            int count = decorated[at] >>> 16;
-            assertTrue(count > 0, "malformed instruction at word " + at);
-            if (firstType < 0 && opcode >= 19 && opcode <= 39) firstType = at;
-            if (opcode == 22) floatType = decorated[at + 1];
-            if (opcode == 23 && decorated[at + 2] == floatType && decorated[at + 3] == 2) vec2Type = decorated[at + 1];
-            if (opcode == 71 && decorated[at + 2] == 42) {
-                assertTrue(firstType < 0, "NoContraction decoration follows a type declaration");
-                noContraction.add(decorated[at + 1]);
-            }
-            if (SpirvTrigPrecision.FLOAT_ARITHMETIC.contains(opcode)) arithmetic.add(decorated[at + 2]);
-            if (opcode == 148) dots.add(decorated[at + 2]);
-            if (opcode == 129 && decorated[at + 1] == vec2Type) vectorAdds.add(decorated[at + 2]);
-        }
-        assertTrue(at == decorated.length, "instruction stream does not end at the module end");
+        PrecisionScan scan = PrecisionScan.of(decorated);
         assertTrue(decorated[3] == original[3], "the id bound must not change");
-        assertTrue(!dots.isEmpty() && noContraction.containsAll(dots), "the hash dot product is contractible");
-        assertTrue(!vectorAdds.isEmpty() && noContraction.containsAll(vectorAdds),
+        assertTrue(!scan.dots().isEmpty() && scan.noContraction().containsAll(scan.dots()),
+                "the hash dot product is contractible");
+        assertTrue(!scan.vectorAdds().isEmpty() && scan.noContraction().containsAll(scan.vectorAdds()),
                 "the lattice corner offset reaching the hash through a parameter is contractible");
-        assertTrue(noContraction.size() < arithmetic.size(), "arithmetic unrelated to sin was decorated");
+        assertTrue(scan.noContraction().size() < scan.arithmetic().size(), "arithmetic unrelated to sin was decorated");
+    }
+
+    /** Result ids of a module's float arithmetic, dot products and vec2 adds, and the ids it marks NoContraction. */
+    private record PrecisionScan(Set<Integer> arithmetic, Set<Integer> dots, Set<Integer> vectorAdds,
+                                 Set<Integer> noContraction) {
+        /** Walks the instruction stream, checking it is well formed and decorates ahead of the types. */
+        static PrecisionScan of(int[] decorated) {
+            var scan = new PrecisionScan(new HashSet<>(), new HashSet<>(), new HashSet<>(), new HashSet<>());
+            int vec2Type = -1;
+            int floatType = -1;
+            int firstType = -1;
+            int at = 5;
+            for (; at < decorated.length; at += decorated[at] >>> 16) {
+                int opcode = decorated[at] & 0xFFFF;
+                int count = decorated[at] >>> 16;
+                assertTrue(count > 0, "malformed instruction at word " + at);
+                if (firstType < 0 && isTypeDeclaration(opcode)) firstType = at;
+                if (opcode == 22) floatType = decorated[at + 1];
+                if (opcode == 23 && decorated[at + 2] == floatType && decorated[at + 3] == 2) {
+                    vec2Type = decorated[at + 1];
+                }
+                if (opcode == 71 && decorated[at + 2] == 42) {
+                    assertTrue(firstType < 0, "NoContraction decoration follows a type declaration");
+                    scan.noContraction.add(decorated[at + 1]);
+                }
+                if (SpirvTrigPrecision.FLOAT_ARITHMETIC.contains(opcode)) scan.arithmetic.add(decorated[at + 2]);
+                if (opcode == 148) scan.dots.add(decorated[at + 2]);
+                if (opcode == 129 && decorated[at + 1] == vec2Type) scan.vectorAdds.add(decorated[at + 2]);
+            }
+            assertTrue(at == decorated.length, "instruction stream does not end at the module end");
+            return scan;
+        }
+
+        /** OpTypeVoid (19) through OpTypeForwardPointer (39). */
+        private static boolean isTypeDeclaration(int opcode) {
+            return opcode >= 19 && opcode <= 39;
+        }
     }
 
     private static void verifyInitializers(int[] words) {

@@ -71,32 +71,7 @@ final class CoreFamilyAdapterTest {
         assertEquals(first.report().toJson(), second.report().toJson(),
                 "supported report stability");
         for (String name : List.of("gbuffers_entities", "gbuffers_block", "gbuffers_hand")) {
-            PackProgramPlan plan = first.plan().program(name);
-            assertTrue(plan != null && plan.executable(),
-                    "entity-like plan was not executable: " + name
-                            + " deviations=" + (plan == null ? "missing" : plan.deviations())
-                            + " vertex=" + (plan == null ? "missing" : plan.convertedVertex() != null)
-                            + " fragment=" + (plan == null ? "missing" : plan.convertedFragment() != null)
-                            + " interface=" + (plan == null ? "missing" : plan.interfacePlan().deviations())
-                            + " resolution=" + (plan == null || first.resolution() == null
-                            ? "missing" : first.resolution().resolution(name))
-                            + " stage=" + (plan == null ? "missing" : plan.interfacePlan().effective(
-                            FamilyAdapterRegistry.stageFor(name)).stage()));
-            FamilyAdapterPlan.VertexContract expectedContract = FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY;
-            assertEquals(expectedContract, plan.familyAdapter().vertexContract(),
-                    "entity-like contract: " + name);
-            assertTrue(plan.convertedVertex() != null && plan.convertedVertex().contains("#version 460"),
-                    "entity-like vertex was not converted: " + name);
-            assertTrue(plan.convertedFragment() != null && plan.convertedFragment().contains("#version 460"),
-                    "entity-like fragment was not converted: " + name);
-            if (name.equals("gbuffers_hand")) {
-                assertTrue(plan.convertedVertex().contains("layout(location = 2) in vec2 UV0"),
-                        "hand primary vertex must use the actual arm entity UV layout");
-                assertTrue(plan.convertedVertex().contains("layout(location = 4) in ivec2 UV2"),
-                        "hand primary vertex omitted the arm lightmap input");
-            }
-            assertTrue(first.report().shouldAttempt(name),
-                    "entity-like report rejected: " + name);
+            assertEntityLikePlan(first, name);
         }
         PackProgramPlan entityPlan = first.plan().program("gbuffers_entities");
         PackProgramPlan blockPlan = first.plan().program("gbuffers_block");
@@ -139,6 +114,36 @@ final class CoreFamilyAdapterTest {
             printBaseline("families", first.report());
         }
         assertNoAbsolutePaths(first.report(), fixture);
+    }
+
+    /** An entity-like program converts onto the extended entity layout and stays eligible. */
+    private static void assertEntityLikePlan(PackProbe.Analysis analysis, String name) {
+        PackProgramPlan plan = analysis.plan().program(name);
+        assertTrue(plan != null && plan.executable(),
+                "entity-like plan was not executable: " + name
+                        + " deviations=" + (plan == null ? "missing" : plan.deviations())
+                        + " vertex=" + (plan == null ? "missing" : plan.convertedVertex() != null)
+                        + " fragment=" + (plan == null ? "missing" : plan.convertedFragment() != null)
+                        + " interface=" + (plan == null ? "missing" : plan.interfacePlan().deviations())
+                        + " resolution=" + (plan == null || analysis.resolution() == null
+                        ? "missing" : analysis.resolution().resolution(name))
+                        + " stage=" + (plan == null ? "missing" : plan.interfacePlan().effective(
+                        FamilyAdapterRegistry.stageFor(name)).stage()));
+        FamilyAdapterPlan.VertexContract expectedContract = FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY;
+        assertEquals(expectedContract, plan.familyAdapter().vertexContract(),
+                "entity-like contract: " + name);
+        assertTrue(plan.convertedVertex() != null && plan.convertedVertex().contains("#version 460"),
+                "entity-like vertex was not converted: " + name);
+        assertTrue(plan.convertedFragment() != null && plan.convertedFragment().contains("#version 460"),
+                "entity-like fragment was not converted: " + name);
+        if (name.equals("gbuffers_hand")) {
+            assertTrue(plan.convertedVertex().contains("layout(location = 2) in vec2 UV0"),
+                    "hand primary vertex must use the actual arm entity UV layout");
+            assertTrue(plan.convertedVertex().contains("layout(location = 4) in ivec2 UV2"),
+                    "hand primary vertex omitted the arm lightmap input");
+        }
+        assertTrue(analysis.report().shouldAttempt(name),
+                "entity-like report rejected: " + name);
     }
 
     private static void verifyUnsupported(Path fixture, Path baseline) throws IOException {

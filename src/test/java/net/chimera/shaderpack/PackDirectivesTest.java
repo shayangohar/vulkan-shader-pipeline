@@ -18,12 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Pack-wide directives: GLSL versions, property syntax, held items and screen overlays. */
 final class PackDirectivesTest {
     /**
-     * One version rule (any desktop 110-460, compatibility or core), modern declarations in the
-     * entity-style converters, Iris core-profile names, and GL's discard of an output past the
-     * route, on a Photon-shaped pack.
+     * One version rule (any desktop 110-460, compatibility or core), Iris's core mode, and the
+     * declaration rewrites the converters rely on.
      */
     @Test
-    void glslBreadth(@TempDir Path root) throws IOException {
+    void glslVersionsAndDeclarations() {
         for (String accepted : List.of("#version 110", "#version 120e", "#version 150", "#version 330 core",
                 "#version 400 compatibility", "#version 430 compatibility", "#version 460")) {
             assertTrue(GlslVersion.declaredAndSupported(accepted + "\nvoid main() {}"),
@@ -49,8 +48,48 @@ final class PackDirectivesTest {
                 GlslMacroAliases.expandStorageQualifierAliases(
                         "/* a comment\nover two lines */\n#define attribute in\nattribute vec3 mc_Entity;"),
                 "a storage-qualifier alias applies after its definition, lexed as one stream");
+    }
 
+    /**
+     * Modern declarations in the entity-style converters, Iris core-profile names, and GL's
+     * discard of an output past the route, on a Photon-shaped pack.
+     */
+    @Test
+    void glslBreadth(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
+        writeModernEntityProgram(shaders);
+        writeCoreProfileBasicProgram(shaders);
+        writeVec3ShadowProgram(shaders);
+        var analysis = PackProbe.analyze(root);
+        for (String name : List.of("gbuffers_entities", "gbuffers_basic", "shadow")) {
+            var plan = analysis.plan().program(name);
+            assertTrue(plan != null && plan.executable(),
+                    name + " must convert: " + (plan == null ? "missing" : plan.deviations()));
+        }
+        var entities = analysis.plan().program("gbuffers_entities");
+        assertTrue(entities.convertedVertex().startsWith("#version 460")
+                        && entities.convertedVertex().contains("gl_VertexIndex")
+                        && !entities.convertedVertex().contains("attribute"),
+                "a 400 compatibility entity vertex converts with its modern declarations: "
+                        + entities.convertedVertex());
+        assertTrue(entities.deviations().contains("FRAGMENT_OUTPUT_DISCARDED:1")
+                        && entities.convertedFragment().contains("vec4 gbuffer_data_1;")
+                        && !entities.convertedFragment().contains("unused_pair"),
+                "an output past the route is written to nothing, and an unread array function goes: "
+                        + entities.deviations() + "\n" + entities.convertedFragment());
+        String basic = analysis.plan().program("gbuffers_basic").convertedVertex();
+        assertTrue(!basic.contains("vaPosition") && !basic.contains("modelViewMatrix")
+                        && basic.contains("ivec2(vec4(vec2(UV2), 0.0, 1.0).xy)"),
+                "Iris core names become the host inputs: " + basic);
+        assertTrue(analysis.plan().program("shadow").convertedFragment()
+                        .contains("layout(location = 0) out vec3 chimeraShadowColor0;"),
+                "a shadow colour keeps the type the pack writes");
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "GLSL breadth compilation: " + compiled.failures());
+    }
+
+    /** A 400 compatibility entity program: aliased attributes, flat integer and matrix varyings, two outputs. */
+    private static void writeModernEntityProgram(Path shaders) throws IOException {
         Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
                 #version 400 compatibility
                 #define attribute in
@@ -82,6 +121,10 @@ final class PackDirectivesTest {
                     gbuffer_data_1 = vec4(tbn[2], 1.0);
                 }
                 """);
+    }
+
+    /** A core-profile basic program that reads Iris's core attribute and matrix names. */
+    private static void writeCoreProfileBasicProgram(Path shaders) throws IOException {
         Files.writeString(shaders.resolve("gbuffers_basic.vsh"), """
                 #version 400
                 in vec3 vaPosition;
@@ -107,6 +150,10 @@ final class PackDirectivesTest {
                     color = tint * light_levels.x;
                 }
                 """);
+    }
+
+    /** A 430 compatibility shadow program that writes a vec3 shadow colour. */
+    private static void writeVec3ShadowProgram(Path shaders) throws IOException {
         Files.writeString(shaders.resolve("shadow.vsh"), """
                 #version 430 compatibility
                 out vec2 uv;
@@ -126,32 +173,6 @@ final class PackDirectivesTest {
                     shadowcolor0_out = texture(gtexture, uv).rgb;
                 }
                 """);
-        var analysis = PackProbe.analyze(root);
-        for (String name : List.of("gbuffers_entities", "gbuffers_basic", "shadow")) {
-            var plan = analysis.plan().program(name);
-            assertTrue(plan != null && plan.executable(),
-                    name + " must convert: " + (plan == null ? "missing" : plan.deviations()));
-        }
-        var entities = analysis.plan().program("gbuffers_entities");
-        assertTrue(entities.convertedVertex().startsWith("#version 460")
-                        && entities.convertedVertex().contains("gl_VertexIndex")
-                        && !entities.convertedVertex().contains("attribute"),
-                "a 400 compatibility entity vertex converts with its modern declarations: "
-                        + entities.convertedVertex());
-        assertTrue(entities.deviations().contains("FRAGMENT_OUTPUT_DISCARDED:1")
-                        && entities.convertedFragment().contains("vec4 gbuffer_data_1;")
-                        && !entities.convertedFragment().contains("unused_pair"),
-                "an output past the route is written to nothing, and an unread array function goes: "
-                        + entities.deviations() + "\n" + entities.convertedFragment());
-        String basic = analysis.plan().program("gbuffers_basic").convertedVertex();
-        assertTrue(!basic.contains("vaPosition") && !basic.contains("modelViewMatrix")
-                        && basic.contains("ivec2(vec4(vec2(UV2), 0.0, 1.0).xy)"),
-                "Iris core names become the host inputs: " + basic);
-        assertTrue(analysis.plan().program("shadow").convertedFragment()
-                        .contains("layout(location = 0) out vec3 chimeraShadowColor0;"),
-                "a shadow colour keeps the type the pack writes");
-        var compiled = PackCompileTest.run(root, analysis);
-        assertTrue(compiled.failures().isEmpty(), "GLSL breadth compilation: " + compiled.failures());
     }
 
     /**
@@ -234,10 +255,8 @@ final class PackDirectivesTest {
 
         var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
-            var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
-                    .orElseThrow(() -> new AssertionError("PackSessionLifecycle." + name + " is missing"));
             boolean installs = false;
-            for (var instruction : method.instructions) {
+            for (var instruction : MixinBytecode.instructionsThrough(pass, name)) {
                 if (instruction instanceof MethodInsnNode call
                         && call.owner.equals("net/chimera/render/shader/PackUniformProvider")
                         && call.name.equals("installHeldItems")) {
@@ -254,7 +273,7 @@ final class PackDirectivesTest {
      * the vignette over Solas's finished image, so a dark room's walls ended about a fifth darker.
      */
     @Test
-    void screenOverlays(@TempDir Path root) throws IOException {
+    void screenOverlayDirectives() {
         assertEquals(ScreenOverlayDirectives.DEFAULTS, ScreenOverlayDirectives.fromProperties(Map.of()),
                 "Iris's vignette and underwaterOverlay default to off");
         for (String key : List.of("vignette", "underwaterOverlay")) {
@@ -273,7 +292,10 @@ final class PackDirectivesTest {
                             && malformed.deviations().contains("SCREEN_OVERLAY_DIRECTIVE_MALFORMED:" + key),
                     "an unexpected " + key + " keeps Iris's default and is reported: " + malformed);
         }
+    }
 
+    @Test
+    void screenOverlays(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), "vignette=true\nunderwaterOverlay=1\n");
         Files.writeString(shaders.resolve("final.fsh"), """
@@ -286,7 +308,10 @@ final class PackDirectivesTest {
         var overlays = PackProbe.analyze(root).plan().screenOverlays();
         assertTrue(overlays.vignette() && overlays.underwaterOverlay(),
                 "the pack plan reads shaders.properties vignette and underwaterOverlay: " + overlays);
+    }
 
+    @Test
+    void screenOverlayHooks() throws IOException {
         MixinBytecode.assertCancellingHeadInject("net/chimera/mixin/ChimeraGuiVignetteMixin",
                 "net/minecraft/client/gui/Gui", "renderVignette", false);
         MixinBytecode.assertCancellingHeadInject("net/chimera/mixin/ChimeraScreenEffectWaterMixin",
@@ -297,16 +322,16 @@ final class PackDirectivesTest {
         var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
         boolean loads = false;
         boolean clears = false;
-        for (var method : pass.methods) {
-            for (var instruction : method.instructions) {
-                if (method.name.equals("loadPackConfig") && instruction instanceof MethodInsnNode call
-                        && call.owner.equals("net/chimera/shaderpack/PackPlan") && call.name.equals("screenOverlays")) {
-                    loads = true;
-                }
-                if (method.name.equals("cleanUpPackVariant") && instruction instanceof FieldInsnNode field
-                        && field.getOpcode() == Opcodes.PUTFIELD && field.name.equals("screenOverlays")) {
-                    clears = true;
-                }
+        for (var instruction : MixinBytecode.instructionsThrough(pass, "loadPackConfig")) {
+            if (instruction instanceof MethodInsnNode call
+                    && call.owner.equals("net/chimera/shaderpack/PackPlan") && call.name.equals("screenOverlays")) {
+                loads = true;
+            }
+        }
+        for (var instruction : MixinBytecode.instructionsThrough(pass, "cleanUpPackVariant")) {
+            if (instruction instanceof FieldInsnNode field
+                    && field.getOpcode() == Opcodes.PUTFIELD && field.name.equals("screenOverlays")) {
+                clears = true;
             }
         }
         assertTrue(loads && clears, "the main pass reads the overlay switches per pack session and drops them with it");

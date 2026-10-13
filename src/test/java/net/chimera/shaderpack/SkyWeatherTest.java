@@ -170,7 +170,7 @@ final class SkyWeatherTest {
     }
 
     @Test
-    void weatherAndSky() throws IOException {
+    void skyProgramVariants() {
         String vertex = """
                 #version 130
                 varying vec4 skyColor;
@@ -198,36 +198,48 @@ final class SkyWeatherTest {
         assertEquals(List.of(1, 4), plan.geometryOutputPlan().targetSlots(), "sky authored outputs lost");
         var variants = new LinkedHashMap<VertexFormat, PackPipelines.PackSky>();
         for (var contract : HostLayoutVertexBridge.SKY_CONTRACTS) {
-            String source = HostLayoutVertexBridge.skyVertexForContract(plan.convertedVertex(), contract);
-            assertTrue(PackCompileTest.compile(source, true) == null, "sky native variant failed: " + contract);
-            assertTrue(source.contains("mat4 mvp = (chimeraSkyProjection() * ModelViewMat);")
-                            && source.contains("(Color * ColorModulator)")
-                            && source.contains("gbufferModelViewInverse[0]")
-                            && source.contains("mat4 gbufferModelViewInverse;")
-                            && source.contains("bool hasSkylight;")
-                            && !source.contains("in uvec4 EntityIds")
-                            && source.contains("void main() { chimeraSkyMain();"
-                                    + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
-                    "sky live inputs, world matrices or early-return clip conversion changed");
-            var format = PackPipelines.skyVertexFormat(contract);
-            var nativeBuilder = new Pipeline.Builder(format, "test_sky");
-            nativeBuilder.setUniformSupplierGetter(info -> () -> null);
-            PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of()).apply(nativeBuilder);
-            var stageInfo = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
-                    .filter(field -> field.getName().equals("renderStage")).findFirst().orElseThrow().getInfo();
-            var supplier = PackUniformProvider.shared().supplier(stageInfo);
-            var previousPhase = PackUniformProvider.setRenderingPhase(PackRenderingPhase.SUN);
-            assertEquals(4, supplier.get().getInt(0), "sun stage UBO value");
-            var enclosing = PackUniformProvider.setRenderingPhase(PackRenderingPhase.MOON);
-            assertEquals(5, supplier.get().getInt(0), "moon stage UBO value");
-            PackUniformProvider.setRenderingPhase(enclosing);
-            assertEquals(4, supplier.get().getInt(0), "nested stage restore");
-            PackUniformProvider.setRenderingPhase(previousPhase);
-            variants.put(format, new PackPipelines.PackSky(null, new int[0], source, plan.convertedFragment(),
-                    format, plan.geometryOutputPlan(), new ProgramImageBindingManifest(List.of())));
+            var sky = skyVariant(plan, contract);
+            variants.put(sky.vertexFormat(), sky);
         }
         String fragmentError = PackCompileTest.compile(plan.convertedFragment(), false);
         assertTrue(fragmentError == null, "sky MRT fragment failed: " + fragmentError);
+        assertSkyBridgeRoutesFamilies(plan, variants);
+    }
+
+    /** One native sky layout's variant: it compiles, keeps live inputs, and reads the nested render stage. */
+    private static PackPipelines.PackSky skyVariant(PackProgramPlan plan, FamilyAdapterPlan.VertexContract contract) {
+        String source = HostLayoutVertexBridge.skyVertexForContract(plan.convertedVertex(), contract);
+        assertTrue(PackCompileTest.compile(source, true) == null, "sky native variant failed: " + contract);
+        assertTrue(source.contains("mat4 mvp = (chimeraSkyProjection() * ModelViewMat);")
+                        && source.contains("(Color * ColorModulator)")
+                        && source.contains("gbufferModelViewInverse[0]")
+                        && source.contains("mat4 gbufferModelViewInverse;")
+                        && source.contains("bool hasSkylight;")
+                        && !source.contains("in uvec4 EntityIds")
+                        && source.contains("void main() { chimeraSkyMain();"
+                                + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
+                "sky live inputs, world matrices or early-return clip conversion changed");
+        var format = PackPipelines.skyVertexFormat(contract);
+        var nativeBuilder = new Pipeline.Builder(format, "test_sky");
+        nativeBuilder.setUniformSupplierGetter(info -> () -> null);
+        PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of()).apply(nativeBuilder);
+        var stageInfo = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
+                .filter(field -> field.getName().equals("renderStage")).findFirst().orElseThrow().getInfo();
+        var supplier = PackUniformProvider.shared().supplier(stageInfo);
+        var previousPhase = PackUniformProvider.setRenderingPhase(PackRenderingPhase.SUN);
+        assertEquals(4, supplier.get().getInt(0), "sun stage UBO value");
+        var enclosing = PackUniformProvider.setRenderingPhase(PackRenderingPhase.MOON);
+        assertEquals(5, supplier.get().getInt(0), "moon stage UBO value");
+        PackUniformProvider.setRenderingPhase(enclosing);
+        assertEquals(4, supplier.get().getInt(0), "nested stage restore");
+        PackUniformProvider.setRenderingPhase(previousPhase);
+        return new PackPipelines.PackSky(null, new int[0], source, plan.convertedFragment(),
+                format, plan.geometryOutputPlan(), new ProgramImageBindingManifest(List.of()));
+    }
+
+    /** The installed sky bridge serves basic and textured sky shapes from their own families, and nothing else. */
+    private static void assertSkyBridgeRoutesFamilies(PackProgramPlan plan,
+                                                      Map<VertexFormat, PackPipelines.PackSky> variants) {
         var basic = new PackPipelines.PackSkyFamily(variants);
         var textured = new PackPipelines.PackSkyFamily(variants.entrySet().stream().collect(Collectors.toMap(
                 Map.Entry::getKey, entry -> new PackPipelines.PackSky(null, new int[0], "", "", entry.getKey(),
@@ -254,6 +266,10 @@ final class SkyWeatherTest {
         } finally {
             ChimeraSkyBridge.disable();
         }
+    }
+
+    @Test
+    void weatherFlushTiming() throws IOException {
         var level = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
                 .filter(method -> method.name.equals("method_62216")).findFirst().orElseThrow();
         boolean submitted = false;
@@ -268,6 +284,10 @@ final class SkyWeatherTest {
         assertEquals("6", PackEngineDefines.standard().get("MC_RENDER_STAGE_STARS"), "Iris star macro ABI");
         assertEquals("21", PackEngineDefines.standard().get("MC_RENDER_STAGE_RAIN_SNOW"), "Iris weather macro ABI");
         assertEquals("8", PackEngineDefines.standard().get("MC_RENDER_STAGE_TERRAIN_SOLID"), "Iris terrain macro ABI");
+    }
+
+    @Test
+    void skyPhaseHooks() throws IOException {
         var skyClass = MixinBytecode.nativeClass("net/minecraft/client/renderer/SkyRenderer");
         for (String signature : List.of("renderSkyDisc(I)V", "renderDarkDisc()V",
                 "renderSun(FLcom/mojang/blaze3d/vertex/PoseStack;)V",
@@ -300,10 +320,13 @@ final class SkyWeatherTest {
         } finally {
             PackUniformProvider.installSunPath(previousRotation, 0.0F);
         }
-        var immediate = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
-                .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
+    }
+
+    @Test
+    void skyAndWeatherDrawsOwnAttachments() throws IOException {
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin");
         boolean weather = false;
-        for (var instruction : immediate.instructions) {
+        for (var instruction : MixinBytecode.instructionsThrough(mixin, "chimera$immediateFamilyWindow")) {
             if (instruction instanceof MethodInsnNode call && call.name.equals("beginHostLayoutDraw")) weather = true;
         }
         assertTrue(weather, "weather must own its actual immediate draw");

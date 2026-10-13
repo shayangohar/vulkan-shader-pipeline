@@ -3,13 +3,18 @@ package net.chimera.shaderpack;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,6 +29,33 @@ final class MixinBytecode {
             new ClassReader(input).accept(result, 0);
             return result;
         }
+    }
+
+    /**
+     * The instructions of {@code method} in bytecode order, with each call to another method of the
+     * same class followed by that method's own instructions. A check on what a method calls then
+     * still holds when the method is split into helpers of its class.
+     */
+    static List<AbstractInsnNode> instructionsThrough(ClassNode owner, String method) {
+        var root = owner.methods.stream().filter(candidate -> candidate.name.equals(method)).findFirst()
+                .orElseThrow(() -> new AssertionError(owner.name + "." + method + " is missing"));
+        List<AbstractInsnNode> instructions = new ArrayList<>();
+        appendThrough(owner, root, new HashSet<>(), instructions);
+        return instructions;
+    }
+
+    private static void appendThrough(ClassNode owner, MethodNode method, Set<MethodNode> path,
+                                      List<AbstractInsnNode> instructions) {
+        if (!path.add(method)) return;
+        for (var instruction : method.instructions) {
+            instructions.add(instruction);
+            if (instruction instanceof MethodInsnNode call && call.owner.equals(owner.name)) {
+                owner.methods.stream()
+                        .filter(candidate -> candidate.name.equals(call.name) && candidate.desc.equals(call.desc))
+                        .findFirst().ifPresent(callee -> appendThrough(owner, callee, path, instructions));
+            }
+        }
+        path.remove(method);
     }
 
     static boolean mixinTargets(ClassNode mixin, String target) {

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.io.IOException;
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -66,6 +67,24 @@ final class StorageBufferPlanTest {
         PackAdvancedResourcePlan plan = supported.plan().advancedResources();
         PackAdvancedResourcePlan repeatPlan = supportedAgain.plan().advancedResources();
 
+        assertBufferSpecsParsed(plan);
+        PackProgramPlan shadow = supported.plan().program("shadow");
+        assertStorageProgramsAdmitted(supported, shadow, plan);
+        assertStorageBindingsCompact(plan, shadow);
+
+        verifyMixedBindingAgreement(supportedPath);
+        assertTrue(PackStorageBufferOwner.unsignedStorageBufferRange(-1)
+                        == 4_294_967_295L,
+                "unsigned Vulkan storage range conversion is incorrect");
+
+        assertInvalidStorageStaysScoped(PackProbe.analyze(unsupportedPath));
+
+        assertEquals(plan.snapshot(), repeatPlan.snapshot(), "plan is not deterministic");
+        assertEquals(plan.fingerprint(), repeatPlan.fingerprint(), "fingerprint is not deterministic");
+        assertNoAbsolutePaths(plan.snapshot());
+    }
+
+    private static void assertBufferSpecsParsed(PackAdvancedResourcePlan plan) {
         PackAdvancedResourcePlan.BufferSpec named = plan.buffers().get(0);
         PackAdvancedResourcePlan.BufferSpec unnamed = plan.buffers().get(1);
         PackAdvancedResourcePlan.BufferSpec upper = plan.buffers().get(12);
@@ -76,8 +95,10 @@ final class StorageBufferPlanTest {
                 "unnamed absolute buffer was not parsed");
         assertTrue(upper != null && upper.supported(),
                 "logical buffer index 12 was not accepted");
+    }
 
-        PackProgramPlan shadow = supported.plan().program("shadow");
+    private static void assertStorageProgramsAdmitted(PackProbe.Analysis supported, PackProgramPlan shadow,
+                                                      PackAdvancedResourcePlan plan) {
         PackProgramPlan composite = supported.plan().program("composite");
         assertTrue(shadow != null && shadow.executable() && supported.plan().shouldAttempt("shadow"),
                 "shadow program is not executable: "
@@ -93,7 +114,10 @@ final class StorageBufferPlanTest {
                 "supported storage program was reported as generic fallback: "
                         + (supportedShadowReport == null ? "missing"
                         : supportedShadowReport.support() + " " + supportedShadowReport.deviations()));
+    }
 
+    /** Storage blocks bind compactly after the generated descriptors, as dynamic std430 storage buffers. */
+    private static void assertStorageBindingsCompact(PackAdvancedResourcePlan plan, PackProgramPlan shadow) {
         List<PackAdvancedResourcePlan.StorageBufferBinding> shadowBindings = plan.storageBuffers("shadow");
         assertTrue(shadowBindings.size() == 1, "shadow binding count");
         PackAdvancedResourcePlan.StorageBufferBinding shadowBinding = shadowBindings.get(0);
@@ -124,13 +148,10 @@ final class StorageBufferPlanTest {
                 "descriptor is not dynamic storage-buffer type");
         assertTrue(descriptor.getSize() == 64 && !descriptor.useGlobalBuffer(),
                 "descriptor range or global-buffer policy is incorrect");
+    }
 
-        verifyMixedBindingAgreement(supportedPath);
-        assertTrue(PackStorageBufferOwner.unsignedStorageBufferRange(-1)
-                        == 4_294_967_295L,
-                "unsigned Vulkan storage range conversion is incorrect");
-
-        PackProbe.Analysis unsupported = PackProbe.analyze(unsupportedPath);
+    /** Invalid storage disables only the program that depends on it. */
+    private static void assertInvalidStorageStaysScoped(PackProbe.Analysis unsupported) {
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
         PackAdvancedResourcePlan.BufferSpec invalidZero = unsupportedPlan.buffers().get(0);
         PackAdvancedResourcePlan.BufferSpec invalidIndex = unsupportedPlan.buffers().get(13);
@@ -156,10 +177,6 @@ final class StorageBufferPlanTest {
         assertTrue(unrelatedFinal != null && unrelatedFinal.executable()
                         && unsupported.plan().shouldAttempt("final"),
                 "unrelated final program was disabled by storage fallback");
-
-        assertEquals(plan.snapshot(), repeatPlan.snapshot(), "plan is not deterministic");
-        assertEquals(plan.fingerprint(), repeatPlan.fingerprint(), "fingerprint is not deterministic");
-        assertNoAbsolutePaths(plan.snapshot());
     }
 
     /** Run independently so one broken shadow contract cannot hide the other. */
@@ -394,82 +411,8 @@ final class StorageBufferPlanTest {
             try {
                 Path packPath = TestPacks.path(configured[1]);
                 PackProbe.Analysis probe = PackProbe.analyze(packPath);
-                // The pinned packs colour their atmosphere from the pack-facing sky state, and a
-                // program handed the zero default cannot do it. These manifest rows are per
-                // program, so scan them rather than the aggregate, and count the declarations so
-                // the check cannot pass by finding nothing to look at.
-                List<String> skyColourDefaulted = probe.report().programs().stream()
-                        .filter(program -> program.deviations().contains("UNIFORM_DEFAULTED:skyColor"))
-                        .map(program -> program.name()).toList();
-                assertTrue(skyColourDefaulted.isEmpty(),
-                        label + ": sky colour is still a default in " + skyColourDefaulted);
-                skyColourDeclarations += probe.report().programs().stream()
-                        .filter(program -> program.uniforms().contains("skyColor")).count();
-                PackPlan pack = probe.plan();
-                PackProgramPlan shadow = pack.program("shadow");
-                PackProgramPlan composite = pack.program("composite");
-                PackAdvancedResourcePlan resources = pack.advancedResources();
-                assertTrue(shadow != null && shadow.executable(), label + ": shadow not executable");
-                assertTrue(composite != null && composite.executable(), label + ": composite not executable");
-                for (var sampler : composite.interfacePlan().samplers()) {
-                    assertTrue(SelectorNamespace.isAddressable(sampler.slot()),
-                            label + ": unaddressable composite sampler " + sampler);
-                }
-                if (shadow != null && shadow.executable()) {
-                    PackPipelines.PreparedPipeline prepared = PackPipelines.prepareShadow(shadow, resources);
-                    var builder = PackPipelines.prepareBuilder(prepared, shadow.name(), resources, null,
-                            info -> () -> null);
-                    var actual = PackDescriptorContracts.builderDescriptors(builder);
-                    assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
-                            prepared.vertex(), prepared.fragment(), actual), label);
-                    prepared.imageBindings().verify(actual);
-                    assertTrue(actual.stream().filter(d -> d.type() == 8).count() >= 3,
-                            label + ": shadow UBO contract lost base blocks");
-                    for (var sampler : resources.bindingLayout("shadow").advancedSamplers()) {
-                        var descriptor = actual.stream()
-                                .filter(d -> d.identity().equals("resource:" + sampler.selectorSlot() + ":1"))
-                                .findFirst().orElseThrow();
-                        assertEquals(sampler.stageMask(), descriptor.stages() & sampler.stageMask(),
-                                label + ": advanced stage mask for " + sampler.sampler());
-                    }
-                }
-                for (PackProgramPlan post : pack.programs()) {
-                    if (!post.executable() || !PostTargetPlan.isPostProgramName(post.name())) continue;
-                    PackPipelines.PreparedPipeline prepared = PackPipelines.preparePost(post, "", resources);
-                    var builder = PackPipelines.prepareBuilder(prepared, post.name(), resources, null,
-                            info -> () -> null);
-                    var actual = PackDescriptorContracts.builderDescriptors(builder);
-                    assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
-                            prepared.vertex(), prepared.fragment(), actual), label + " " + post.name());
-                    prepared.imageBindings().verify(actual);
-                    assertEquals(actual.stream().filter(d -> d.type() == 1 || d.type() == 3).count(),
-                            (long) prepared.imageBindings().entries().size(),
-                                    label + " image bijection " + post.name());
-                    if (configured[0].equals("Complementary") && post.name().equals("composite")) {
-                        var descriptor = actual.stream().filter(d -> d.symbol().equals("Sampler18") && d.type() == 1)
-                                .findFirst().orElseThrow();
-                        var entry = prepared.imageBindings().entries().stream()
-                                .filter(e -> e.slot() == 18 && e.descriptorType() == 1).findFirst().orElseThrow();
-                        assertEquals(descriptor.binding(), entry.binding(), "voxel descriptor binding");
-                        assertEquals("voxel_sampler", entry.sourceSymbol(), "voxel source sampler");
-                        assertEquals("voxel_img", entry.resourceKey(), "voxel allocated image resolver");
-                        assertEquals(ProgramImageBindingManifest.Kind.ADVANCED_IMAGE, entry.kind(),
-                                "voxel resolver kind");
-                        verifyImageTransaction(prepared.imageBindings());
-                    }
-                    int extraBinding = actual.stream().mapToInt(PackAdvancedResourcePlan.DescriptorBinding::binding)
-                            .max().orElse(0) + 1;
-                    builder.addImageDescriptor(new ImageDescriptor(
-                            extraBinding, "sampler2D", "Sampler24", 24, 1));
-                    try {
-                        PackPipelines.createNative(builder, prepared.imageBindings());
-                        throw new AssertionError("Unresolved actual builder descriptor reached native creation");
-                    } catch (PackPipelines.PreparationFailure failure) {
-                        assertEquals("descriptor-contract", failure.phase, "unresolved descriptor phase");
-                        assertEquals("IMAGE_RESOLVER_MISSING:Sampler24", failure.reason,
-                                "unresolved descriptor reason");
-                    }
-                }
+                skyColourDeclarations += countSkyColourDeclarations(label, probe.report());
+                verifyBuilderParity(configured[0], label, probe.plan());
             } catch (AssertionError | Exception failure) {
                 failures.add(label + ": " + failure + (failure.getCause() == null ? ""
                         : " caused by " + failure.getCause()));
@@ -483,6 +426,106 @@ final class StorageBufferPlanTest {
         assertTrue(skyColourDeclarations > 0L,
                 "no exact pack program declares skyColor, so the manifest check proved nothing");
         assertTrue(failures.isEmpty(), "Exact pack builder parity failed: " + String.join("; ", failures));
+    }
+
+    /** Asserts no program has skyColor defaulted, and counts the programs that declare it. */
+    private static long countSkyColourDeclarations(String label, ConformanceReport report) {
+        // The pinned packs colour their atmosphere from the pack-facing sky state, and a
+        // program handed the zero default cannot do it. These manifest rows are per
+        // program, so scan them rather than the aggregate, and count the declarations so
+        // the check cannot pass by finding nothing to look at.
+        List<String> skyColourDefaulted = report.programs().stream()
+                .filter(program -> program.deviations().contains("UNIFORM_DEFAULTED:skyColor"))
+                .map(program -> program.name()).toList();
+        assertTrue(skyColourDefaulted.isEmpty(),
+                label + ": sky colour is still a default in " + skyColourDefaulted);
+        return report.programs().stream()
+                .filter(program -> program.uniforms().contains("skyColor")).count();
+    }
+
+    /** The exact pack's shadow and post programs prepare builders whose real metadata matches the plan. */
+    private static void verifyBuilderParity(String packName, String label, PackPlan pack) {
+        PackProgramPlan shadow = pack.program("shadow");
+        PackProgramPlan composite = pack.program("composite");
+        PackAdvancedResourcePlan resources = pack.advancedResources();
+        assertTrue(shadow != null && shadow.executable(), label + ": shadow not executable");
+        assertTrue(composite != null && composite.executable(), label + ": composite not executable");
+        for (var sampler : composite.interfacePlan().samplers()) {
+            assertTrue(SelectorNamespace.isAddressable(sampler.slot()),
+                    label + ": unaddressable composite sampler " + sampler);
+        }
+        if (shadow != null && shadow.executable()) {
+            verifyShadowBuilderParity(label, shadow, resources);
+        }
+        for (PackProgramPlan post : pack.programs()) {
+            if (!post.executable() || !PostTargetPlan.isPostProgramName(post.name())) continue;
+            verifyPostBuilderParity(packName, label, post, resources);
+        }
+    }
+
+    private static void verifyShadowBuilderParity(String label, PackProgramPlan shadow,
+                                                  PackAdvancedResourcePlan resources) {
+        PackPipelines.PreparedPipeline prepared = PackPipelines.prepareShadow(shadow, resources);
+        var builder = PackPipelines.prepareBuilder(prepared, shadow.name(), resources, null,
+                info -> () -> null);
+        var actual = PackDescriptorContracts.builderDescriptors(builder);
+        assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
+                prepared.vertex(), prepared.fragment(), actual), label);
+        prepared.imageBindings().verify(actual);
+        assertTrue(actual.stream().filter(d -> d.type() == 8).count() >= 3,
+                label + ": shadow UBO contract lost base blocks");
+        for (var sampler : resources.bindingLayout("shadow").advancedSamplers()) {
+            var descriptor = actual.stream()
+                    .filter(d -> d.identity().equals("resource:" + sampler.selectorSlot() + ":1"))
+                    .findFirst().orElseThrow();
+            assertEquals(sampler.stageMask(), descriptor.stages() & sampler.stageMask(),
+                    label + ": advanced stage mask for " + sampler.sampler());
+        }
+    }
+
+    /** One post program's builder matches its plan, and an unresolved extra descriptor fails closed. */
+    private static void verifyPostBuilderParity(String packName, String label, PackProgramPlan post,
+                                                PackAdvancedResourcePlan resources) {
+        PackPipelines.PreparedPipeline prepared = PackPipelines.preparePost(post, "", resources);
+        var builder = PackPipelines.prepareBuilder(prepared, post.name(), resources, null,
+                info -> () -> null);
+        var actual = PackDescriptorContracts.builderDescriptors(builder);
+        assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
+                prepared.vertex(), prepared.fragment(), actual), label + " " + post.name());
+        prepared.imageBindings().verify(actual);
+        assertEquals(actual.stream().filter(d -> d.type() == 1 || d.type() == 3).count(),
+                (long) prepared.imageBindings().entries().size(),
+                        label + " image bijection " + post.name());
+        if (packName.equals("Complementary") && post.name().equals("composite")) {
+            verifyVoxelImageBinding(prepared.imageBindings(), actual);
+        }
+        int extraBinding = actual.stream().mapToInt(PackAdvancedResourcePlan.DescriptorBinding::binding)
+                .max().orElse(0) + 1;
+        builder.addImageDescriptor(new ImageDescriptor(
+                extraBinding, "sampler2D", "Sampler24", 24, 1));
+        try {
+            PackPipelines.createNative(builder, prepared.imageBindings());
+            throw new AssertionError("Unresolved actual builder descriptor reached native creation");
+        } catch (PackPipelines.PreparationFailure failure) {
+            assertEquals("descriptor-contract", failure.phase, "unresolved descriptor phase");
+            assertEquals("IMAGE_RESOLVER_MISSING:Sampler24", failure.reason,
+                    "unresolved descriptor reason");
+        }
+    }
+
+    /** Complementary's composite reads selector 18 from the allocated voxel image. */
+    private static void verifyVoxelImageBinding(ProgramImageBindingManifest bindings,
+                                                List<PackAdvancedResourcePlan.DescriptorBinding> actual) {
+        var descriptor = actual.stream().filter(d -> d.symbol().equals("Sampler18") && d.type() == 1)
+                .findFirst().orElseThrow();
+        var entry = bindings.entries().stream()
+                .filter(e -> e.slot() == 18 && e.descriptorType() == 1).findFirst().orElseThrow();
+        assertEquals(descriptor.binding(), entry.binding(), "voxel descriptor binding");
+        assertEquals("voxel_sampler", entry.sourceSymbol(), "voxel source sampler");
+        assertEquals("voxel_img", entry.resourceKey(), "voxel allocated image resolver");
+        assertEquals(ProgramImageBindingManifest.Kind.ADVANCED_IMAGE, entry.kind(),
+                "voxel resolver kind");
+        verifyImageTransaction(bindings);
     }
 
     @SuppressWarnings("try")
@@ -560,29 +603,8 @@ final class StorageBufferPlanTest {
     private static void verifyMixedBindingAgreement(Path supportedPath) throws Exception {
         Path fixture = Files.createTempDirectory("chimera-mixed-bindings-");
         try {
-            try (var paths = Files.walk(supportedPath)) {
-                for (Path source : paths.toList()) {
-                    Path destination = fixture.resolve(supportedPath.relativize(source));
-                    if (Files.isDirectory(source)) Files.createDirectories(destination);
-                    else Files.copy(source, destination);
-                }
-            }
-            Path shaders = fixture.resolve("shaders");
-            Files.writeString(shaders.resolve("shaders.properties"),
-                    "bufferObject.0=64 blockDataBuffer\n"
-                    + "image.voxel_img=voxel_sampler red_integer r8ui unsigned_int true false 8 4 8\n"
-                    + "image.light_img=light_sampler rgba rgba16f half_float false false 8 4 8\n");
-            Files.writeString(shaders.resolve("shadow.vsh"),
-                    "#version 120\nlayout(std430, binding=0) buffer blockDataBuffer { uint values[];"
-                            + " } blockDataBuffer;\n"
-                    + "uniform uimage3D voxel_img;\nuniform image3D light_img;\nuniform usampler3D voxel_sampler;\n"
-                    + "uniform sampler3D light_sampler;\n"
-                    + "vec4 GetComplexLightVolume(vec3 pos, sampler3D ff_sampler);\n"
-                    + "vec4 GetComplexLightVolume(vec3 pos, sampler3D ff_sampler) { return texture(ff_sampler, pos);"
-                            + " }\n"
-                    + "void main() { imageStore(voxel_img, ivec3(0), uvec4(blockDataBuffer.values[0]));"
-                    + "imageStore(light_img, ivec3(0), GetComplexLightVolume(vec3(0), light_sampler)"
-                    + " + vec4(texture(voxel_sampler, vec3(0)))); gl_Position=ftransform(); }\n");
+            copyTree(supportedPath, fixture);
+            writeMixedResourceShadow(fixture.resolve("shaders"));
             PackPlan pack = PackProbe.analyze(fixture).plan();
             PackAdvancedResourcePlan resources = pack.advancedResources();
             var layout = resources.bindingLayout("shadow");
@@ -614,60 +636,96 @@ final class StorageBufferPlanTest {
             }
             assertTrue(!vertex.isBlank() && !fragment.isBlank(),
                     "Mixed resource rewrite lost a stage: " + resources.deviations());
-            List<PackAdvancedResourcePlan.DescriptorBinding> descriptors =
-                    new ArrayList<>(layout.descriptors());
-            try (PackStorageBufferOwner owner = new PackStorageBufferOwner(resources)) {
-                assertEquals(null, owner.verifyLayout("shadow", vertex, fragment, descriptors),
-                        "Mixed rewritten shader disagrees with descriptor layout: planned=" + layout.descriptors()
-                                + " vertex=" + PackAdvancedResourcePlan.shaderBindings(vertex, 1)
-                                + " fragment=" + PackAdvancedResourcePlan.shaderBindings(fragment, 16)
-                                + " native=" + descriptors);
-                assertTrue(owner.layoutVerified("shadow"), "Matching layout was not admitted");
-                var light = layout.descriptors().stream().filter(value -> value.symbol().equals("light_sampler"))
-                        .findFirst().orElseThrow();
-                String samplerCollision = vertex.replace("binding = " + light.binding()
-                        + ") uniform sampler3D light_sampler",
-                        "binding = " + layout.storageBase() + ") uniform sampler3D light_sampler");
-                assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
-                        owner.verifyLayout("shadow", samplerCollision, fragment, descriptors),
-                        "Real sampler/SSBO collision was not rejected by sampler name");
-                assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:ff_sampler",
-                        owner.verifyLayout("shadow", vertex + "\nuniform sampler3D ff_sampler;\n", fragment,
-                                descriptors),
-                        "Unplanned global sampler sharing a helper parameter name escaped verification");
-                var wrongSamplerType = new ArrayList<>(descriptors);
-                wrongSamplerType.replaceAll(value -> value.binding() == light.binding()
-                        ? new PackAdvancedResourcePlan.DescriptorBinding(value.symbol(), value.set(),
-                                value.binding(), 3, value.stages(), value.symbol()) : value);
-                assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
-                        owner.verifyLayout("shadow", vertex, fragment, wrongSamplerType),
-                        "Storage image descriptor was accepted for a combined sampler");
-                var wrongSamplerStages = new ArrayList<>(descriptors);
-                wrongSamplerStages.replaceAll(value -> value.binding() == light.binding()
-                        ? new PackAdvancedResourcePlan.DescriptorBinding(value.symbol(), value.set(),
-                                value.binding(), value.type(), VK_SHADER_STAGE_FRAGMENT_BIT, value.symbol()) : value);
-                assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
-                        owner.verifyLayout("shadow", vertex, fragment, wrongSamplerStages),
-                        "Fragment-only sampler descriptor was accepted for a vertex sampler");
-                var voxel = layout.descriptors().stream().filter(value -> value.symbol().equals("voxel_img"))
-                        .findFirst().orElseThrow();
-                String broken = vertex.replace("binding = " + voxel.binding() + ") uniform uimage3D voxel_img",
-                        "binding = " + layout.storageBase() + ") uniform uimage3D voxel_img");
-                assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img",
-                        owner.verifyLayout("shadow", broken, fragment, descriptors),
-                        "SSBO/image collision was not rejected by shader symbol");
-                assertTrue(!owner.layoutVerified("shadow") && !owner.storagePathReady("shadow", "shadow")
-                                && owner.storagePathStatus("shadow",
-                                        "shadow").contains("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img"),
-                        "Rejected layout remained ready or lost its named reason");
-                assertEquals(null, owner.verifyLayout("shadow", vertex, fragment, descriptors),
-                        "Corrected layout failed to recover");
-                assertTrue(owner.layoutVerified("shadow"), "Corrected layout remains rejected");
-            }
+            verifyOwnerRejectsCollisions(resources, layout, vertex, fragment);
         } finally {
             try (var paths = Files.walk(fixture)) {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
             }
+        }
+    }
+
+    private static void copyTree(Path from, Path to) throws IOException {
+        try (var paths = Files.walk(from)) {
+            for (Path source : paths.toList()) {
+                Path destination = to.resolve(from.relativize(source));
+                if (Files.isDirectory(source)) Files.createDirectories(destination);
+                else Files.copy(source, destination);
+            }
+        }
+    }
+
+    /** A shadow vertex stage mixing a storage buffer, two storage images and their samplers. */
+    private static void writeMixedResourceShadow(Path shaders) throws IOException {
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "bufferObject.0=64 blockDataBuffer\n"
+                + "image.voxel_img=voxel_sampler red_integer r8ui unsigned_int true false 8 4 8\n"
+                + "image.light_img=light_sampler rgba rgba16f half_float false false 8 4 8\n");
+        Files.writeString(shaders.resolve("shadow.vsh"),
+                "#version 120\nlayout(std430, binding=0) buffer blockDataBuffer { uint values[];"
+                        + " } blockDataBuffer;\n"
+                + "uniform uimage3D voxel_img;\nuniform image3D light_img;\nuniform usampler3D voxel_sampler;\n"
+                + "uniform sampler3D light_sampler;\n"
+                + "vec4 GetComplexLightVolume(vec3 pos, sampler3D ff_sampler);\n"
+                + "vec4 GetComplexLightVolume(vec3 pos, sampler3D ff_sampler) { return texture(ff_sampler, pos);"
+                        + " }\n"
+                + "void main() { imageStore(voxel_img, ivec3(0), uvec4(blockDataBuffer.values[0]));"
+                + "imageStore(light_img, ivec3(0), GetComplexLightVolume(vec3(0), light_sampler)"
+                + " + vec4(texture(voxel_sampler, vec3(0)))); gl_Position=ftransform(); }\n");
+    }
+
+    /** The storage owner admits the matching layout, names each collision it rejects, then recovers. */
+    private static void verifyOwnerRejectsCollisions(PackAdvancedResourcePlan resources,
+                                                     PackAdvancedResourcePlan.ProgramBindingLayout layout,
+                                                     String vertex, String fragment) {
+        List<PackAdvancedResourcePlan.DescriptorBinding> descriptors =
+                new ArrayList<>(layout.descriptors());
+        try (PackStorageBufferOwner owner = new PackStorageBufferOwner(resources)) {
+            assertEquals(null, owner.verifyLayout("shadow", vertex, fragment, descriptors),
+                    "Mixed rewritten shader disagrees with descriptor layout: planned=" + layout.descriptors()
+                            + " vertex=" + PackAdvancedResourcePlan.shaderBindings(vertex, 1)
+                            + " fragment=" + PackAdvancedResourcePlan.shaderBindings(fragment, 16)
+                            + " native=" + descriptors);
+            assertTrue(owner.layoutVerified("shadow"), "Matching layout was not admitted");
+            var light = layout.descriptors().stream().filter(value -> value.symbol().equals("light_sampler"))
+                    .findFirst().orElseThrow();
+            String samplerCollision = vertex.replace("binding = " + light.binding()
+                    + ") uniform sampler3D light_sampler",
+                    "binding = " + layout.storageBase() + ") uniform sampler3D light_sampler");
+            assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
+                    owner.verifyLayout("shadow", samplerCollision, fragment, descriptors),
+                    "Real sampler/SSBO collision was not rejected by sampler name");
+            assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:ff_sampler",
+                    owner.verifyLayout("shadow", vertex + "\nuniform sampler3D ff_sampler;\n", fragment,
+                            descriptors),
+                    "Unplanned global sampler sharing a helper parameter name escaped verification");
+            var wrongSamplerType = new ArrayList<>(descriptors);
+            wrongSamplerType.replaceAll(value -> value.binding() == light.binding()
+                    ? new PackAdvancedResourcePlan.DescriptorBinding(value.symbol(), value.set(),
+                            value.binding(), 3, value.stages(), value.symbol()) : value);
+            assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
+                    owner.verifyLayout("shadow", vertex, fragment, wrongSamplerType),
+                    "Storage image descriptor was accepted for a combined sampler");
+            var wrongSamplerStages = new ArrayList<>(descriptors);
+            wrongSamplerStages.replaceAll(value -> value.binding() == light.binding()
+                    ? new PackAdvancedResourcePlan.DescriptorBinding(value.symbol(), value.set(),
+                            value.binding(), value.type(), VK_SHADER_STAGE_FRAGMENT_BIT, value.symbol()) : value);
+            assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:light_sampler",
+                    owner.verifyLayout("shadow", vertex, fragment, wrongSamplerStages),
+                    "Fragment-only sampler descriptor was accepted for a vertex sampler");
+            var voxel = layout.descriptors().stream().filter(value -> value.symbol().equals("voxel_img"))
+                    .findFirst().orElseThrow();
+            String broken = vertex.replace("binding = " + voxel.binding() + ") uniform uimage3D voxel_img",
+                    "binding = " + layout.storageBase() + ") uniform uimage3D voxel_img");
+            assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img",
+                    owner.verifyLayout("shadow", broken, fragment, descriptors),
+                    "SSBO/image collision was not rejected by shader symbol");
+            assertTrue(!owner.layoutVerified("shadow") && !owner.storagePathReady("shadow", "shadow")
+                            && owner.storagePathStatus("shadow",
+                                    "shadow").contains("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img"),
+                    "Rejected layout remained ready or lost its named reason");
+            assertEquals(null, owner.verifyLayout("shadow", vertex, fragment, descriptors),
+                    "Corrected layout failed to recover");
+            assertTrue(owner.layoutVerified("shadow"), "Corrected layout remains rejected");
         }
     }
 
@@ -712,23 +770,19 @@ final class StorageBufferPlanTest {
         assertTrue(helperUsage.referencedSamplers().contains("helperSampler")
                         && !helperUsage.liveSamplers().contains("helperSampler"),
                 "sampler references in unreachable helpers were lost");
-        PostTargetPlan.ParseResult targetResult = PostTargetPlan.parse("composite",
-                "#version 120\n/* DRAWBUFFERS:0 */\n"
-                        + "uniform sampler2D helperSampler;\n"
-                        + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
-                        + "void main() { gl_FragColor = vec4(1.0); }\n");
+    }
+
+    @Test
+    void helperSamplerPlanning() {
+        String deadHelperSource = "#version 120\n/* DRAWBUFFERS:0 */\n"
+                + "uniform sampler2D helperSampler;\n"
+                + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
+                + "void main() { gl_FragColor = vec4(1.0); }\n";
+        PostTargetPlan.ParseResult targetResult = PostTargetPlan.parse("composite", deadHelperSource);
         UniformRegistry.ProgramInterface deadPlan = UniformRegistry.planPreparedPost(
-                "#version 120\n/* DRAWBUFFERS:0 */\n"
-                        + "uniform sampler2D helperSampler;\n"
-                        + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
-                        + "void main() { gl_FragColor = vec4(1.0); }\n",
-                targetResult.plan());
+                deadHelperSource, targetResult.plan());
         String deadConverted = FragmentConverter.convertPostFragment(
-                "#version 120\n/* DRAWBUFFERS:0 */\n"
-                        + "uniform sampler2D helperSampler;\n"
-                        + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
-                        + "void main() { gl_FragColor = vec4(1.0); }\n",
-                null, deadPlan, targetResult.plan(), Map.of());
+                deadHelperSource, null, deadPlan, targetResult.plan(), Map.of());
         assertTrue(deadConverted != null && !deadConverted.contains("unreachable")
                         && !deadConverted.contains("helperSampler")
                         && deadPlan.samplers().isEmpty()
@@ -744,7 +798,10 @@ final class StorageBufferPlanTest {
                 liveHelperSource, PostTargetPlan.parse("composite", liveHelperSource).plan());
         assertTrue(livePlan.deviations().contains("SAMPLER_NOT_MAPPED:helperSampler"),
                 "reachable unmapped sampler did not fail closed");
+    }
 
+    @Test
+    void helperReachabilityIsConservative() {
         String overloadSource = "uniform sampler2D overloadedSampler;\n"
                 + "vec4 read(int value) { return texture2D(overloadedSampler, vec2(0.0)); }\n"
                 + "vec4 read(float value) { return read(1); }\n"
@@ -762,6 +819,23 @@ final class StorageBufferPlanTest {
                         .contains("recursiveSampler"),
                 "recursive helper reachability was not retained");
 
+        String shadowedSource = "uniform sampler2D shadowedSampler;\n"
+                + "vec4 local() { float shadowedSampler = 1.0; return vec4(shadowedSampler); }\n"
+                + "void main() { gl_FragColor = local(); }\n";
+        assertTrue(!GlslResourceUsage.analyze(shadowedSource).liveSamplers()
+                        .contains("shadowedSampler"),
+                "local resource shadowing was misclassified");
+
+        String snippetSource = "uniform sampler2D snippetSampler;\n"
+                + "vec4 snippet() { return texture2D(snippetSampler, vec2(0.0)); }\n";
+        GlslResourceUsage.Analysis snippetUsage = GlslResourceUsage.analyze(snippetSource);
+        assertTrue(snippetUsage.liveSamplers().contains("snippetSampler")
+                        && snippetUsage.unreachableFunctions().isEmpty(),
+                "no-main source was pruned instead of retained conservatively");
+    }
+
+    @Test
+    void macroDependenciesSurvivePruning() {
         String macroSource = "float Bayer2(vec2 value) { return value.x; }\n"
                 + "#define Bayer4(value) (Bayer2(value * 0.5))\n"
                 + "#define Bayer8(value) (Bayer4(value * 0.5))\n"
@@ -779,7 +853,10 @@ final class StorageBufferPlanTest {
                         && macroConverted.contains("#define Bayer8")
                         && !macroConverted.contains("BayerCloud2"),
                 "function-like macro dependencies were pruned");
+    }
 
+    @Test
+    void callableBuiltinsAreNotUniforms() {
         Set<String> callableUniforms = GlslResourceUsage.referencedValueIdentifiers(
                 "uniform sampler2D textureAtlas; void main() {"
                         + "ivec2 size = textureSize(textureAtlas, 0); }",
@@ -800,7 +877,14 @@ final class StorageBufferPlanTest {
         assertTrue(callablePlan.deviations().stream().noneMatch(value ->
                         value.equals("UNIFORM_IMPLICIT_DECLARATION:textureSize")),
                 "textureSize was added to the generated UBO");
+        UniformRegistry.UniformDescriptor blindness =
+                UniformRegistry.descriptor("blindness", "float");
+        assertTrue(blindness != null && blindness.sourceKey().equals("blindness"),
+                "blindness uniform alias is not in the live catalog");
+    }
 
+    @Test
+    void legacyFogNormalization() {
         String fogSource = "#version 120\n"
                 + "void main() { float value = (gl_Fog.start + gl_Fog.end) * gl_Fog.scale;"
                 + " gl_FragColor = vec4(value); }\n";
@@ -825,23 +909,5 @@ final class StorageBufferPlanTest {
                         && unsupportedFog.deviations().contains(
                         "LEGACY_FOG_FIELD_UNSUPPORTED:density"),
                 "unsupported gl_Fog field did not fail closed");
-
-        String shadowedSource = "uniform sampler2D shadowedSampler;\n"
-                + "vec4 local() { float shadowedSampler = 1.0; return vec4(shadowedSampler); }\n"
-                + "void main() { gl_FragColor = local(); }\n";
-        assertTrue(!GlslResourceUsage.analyze(shadowedSource).liveSamplers()
-                        .contains("shadowedSampler"),
-                "local resource shadowing was misclassified");
-
-        String snippetSource = "uniform sampler2D snippetSampler;\n"
-                + "vec4 snippet() { return texture2D(snippetSampler, vec2(0.0)); }\n";
-        GlslResourceUsage.Analysis snippetUsage = GlslResourceUsage.analyze(snippetSource);
-        assertTrue(snippetUsage.liveSamplers().contains("snippetSampler")
-                        && snippetUsage.unreachableFunctions().isEmpty(),
-                "no-main source was pruned instead of retained conservatively");
-        UniformRegistry.UniformDescriptor blindness =
-                UniformRegistry.descriptor("blindness", "float");
-        assertTrue(blindness != null && blindness.sourceKey().equals("blindness"),
-                "blindness uniform alias is not in the live catalog");
     }
 }

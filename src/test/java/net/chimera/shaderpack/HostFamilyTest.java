@@ -26,6 +26,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Host program families: requested-family fallback, particles, lines, glint, host-layout lanes and hands. */
 final class HostFamilyTest {
+    /** The line lane's fragment stage, shared by the gbuffers_basic fallback and an authored gbuffers_line. */
+    private static final String LINE_FRAGMENT = """
+            #version 120
+            /* DRAWBUFFERS:0 */
+            varying vec4 tint;
+            varying vec3 normal;
+            void main() {
+                gl_FragData[0] = tint + vec4(normal * 0.001, 0.0);
+            }
+            """;
+
     @Test
     void handInputsAndProjection() {
         String vertex = """
@@ -104,7 +115,7 @@ final class HostFamilyTest {
     }
 
     @Test
-    void handNativeHooks() throws IOException {
+    void opaqueHandSeamPrecedesTranslucency() throws IOException {
         var level = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer");
         var opaque = level.methods.stream().filter(method ->
                 method.name.equals("method_62214")).findFirst().orElseThrow();
@@ -118,6 +129,10 @@ final class HostFamilyTest {
             }
         }
         assertTrue(flushes >= 2 && translucentAfterSolidHand, "opaque hand seam must precede terrain translucency");
+    }
+
+    @Test
+    void lateHandHooksMatchNativeApi() throws IOException {
         var game = MixinBytecode.nativeClass("net/minecraft/client/renderer/GameRenderer");
         var late = game.methods.stream().filter(method ->
                 method.name.equals("renderItemInHand")).findFirst().orElseThrow();
@@ -138,6 +153,10 @@ final class HostFamilyTest {
                                         + "FLnet/minecraft/world/item/ItemStack;FLcom/mojang/blaze3d/vertex/PoseStack;"
                                         + "Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V")),
                 "hand partition hook must match the native arm submission API");
+    }
+
+    @Test
+    void immediateHandDrawOwnsAttachmentWindow() throws IOException {
         // Check the installed renderer's overwrite, not just vanilla bytecode.
         var immediate = MixinBytecode.nativeClass("net/vulkanmod/mixin/render/RenderTypeM").methods.stream()
                 .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
@@ -149,11 +168,10 @@ final class HostFamilyTest {
             }
         }
         assertTrue(directDrawer, "expected VulkanMod immediate Drawer.draw path");
-        var owner = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
-                .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
+        var owner = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin");
         boolean handScope = false;
         boolean attachments = false;
-        for (var instruction : owner.instructions) {
+        for (var instruction : MixinBytecode.instructionsThrough(owner, "chimera$immediateFamilyWindow")) {
             if (instruction instanceof MethodInsnNode call) {
                 if (call.owner.equals("net/chimera/render/ChimeraHandRenderer")
                         && call.name.equals("active")) handScope = true;
@@ -193,51 +211,9 @@ final class HostFamilyTest {
                     + "alphaTest.gbuffers_entities=GREATER 0.2\n";
             Files.writeString(properties, directives);
             PackProbe.Analysis analysis = PackProbe.analyze(root);
-            PackProgramPlan handWater = analysis.plan().program("gbuffers_hand_water");
-            assertEquals("gbuffers_textured_lit", analysis.resolution()
-                    .resolution("gbuffers_hand_water").selectedProgram(), "missing hand inherited source");
-            assertTrue(analysis.plan().shouldAttempt("gbuffers_hand")
-                            && analysis.plan().shouldAttempt("gbuffers_hand_water"),
-                    "inherited hand phases must be executable");
-            assertEquals(FamilyAdapterPlan.Family.HAND_WATER, handWater.familyAdapter().family(),
-                    "hand alias must retain the requested translucent hand adapter");
-            assertEquals(List.of(1), handWater.geometryOutputPlan().targetSlots(), "hand alias lost source outputs");
-            for (String name : List.of("gbuffers_hand", "gbuffers_hand_water")) {
-                var handPlan = analysis.plan().program(name);
-                assertTrue(handPlan.convertedFragment().contains("bool hasSkylight;"), "GLSL bool semantics changed");
-                var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(handPlan, Set.of());
-                var nativeBuilder = new Pipeline.Builder(
-                        ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
-                nativeBuilder.setUniformSupplierGetter(info -> () -> null);
-                ordinary.apply(nativeBuilder); // Regression used to throw "not admitted type: bool".
-                var boolField = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
-                        .filter(field -> field.getName().equals("hasSkylight")).findFirst().orElseThrow();
-                assertEquals("int", boolField.getInfo().type, "native std140 bool storage");
-                assertEquals(1, boolField.getSize(), "native std140 bool word count");
-            }
-            PackProgramPlan trans = analysis.plan().program("gbuffers_entities_translucent");
-            assertEquals("gbuffers_entities", analysis.resolution()
-                    .resolution(trans.name()).selectedProgram(), "disabled child must use enabled parent");
-            assertTrue(analysis.report().shouldAttempt(trans.name()) && analysis.plan().shouldAttempt(trans.name()),
-                    "requested translucent adapter was not admitted: " + trans.deviations()
-                            + "/" + analysis.report().program(trans.name()).deviations());
-            assertEquals(FamilyAdapterPlan.Family.ENTITY_TRANSLUCENT, trans.familyAdapter().family(),
-                    "alias borrowed the opaque family");
-            assertEquals(List.of(1), trans.geometryOutputPlan().targetSlots(), "alias lost source outputs");
-            assertEquals(PackBlendPlan.Mode.OFF, trans.blendPlan().buffers().get(1), "alias lost source blend");
-            assertTrue(trans.alphaTestPlan().reference() == 0.2F, "alias lost source alpha directive");
-            assertTrue(!analysis.plan().activePrograms().stream().anyMatch(p -> p.name().equals("final")),
-                    "disabled post program became a fallback producer");
-            PackProgramPlan damage = analysis.plan().program("gbuffers_damagedblock");
-            assertTrue(analysis.report().shouldAttempt(damage.name()) && damage.executable(),
-                    "host BLOCK crumbling adapter not admitted: " + damage.deviations());
-            assertEquals(FamilyAdapterPlan.VertexContract.HOST_BLOCK, damage.familyAdapter().vertexContract(),
-                    "crumbling reused entity format");
-            assertTrue(damage.convertedVertex().contains("layout(location = 3) in ivec2 UV2;")
-                            && damage.convertedVertex().contains("layout(location = 4) in vec3 Normal;")
-                            && damage.convertedVertex().contains("TextureMat * vec4(UV0")
-                            && !damage.convertedVertex().contains("in uvec4 EntityIds"),
-                    "crumbling host attribute/texture-matrix contract changed");
+            assertHandAliasesKeepHandFamily(analysis);
+            assertTranslucentAliasKeepsRequestedFamily(analysis);
+            assertCrumblingKeepsHostBlockLayout(analysis);
             Files.writeString(properties, directives + "program.gbuffers_entities.enabled=false\n");
             analysis = PackProbe.analyze(root);
             assertEquals("gbuffers_textured_lit", analysis.resolution()
@@ -262,13 +238,77 @@ final class HostFamilyTest {
         }
     }
 
+    /** Both hand phases inherit gbuffers_textured_lit yet keep the hand family and its bool uniform. */
+    private static void assertHandAliasesKeepHandFamily(PackProbe.Analysis analysis) {
+        PackProgramPlan handWater = analysis.plan().program("gbuffers_hand_water");
+        assertEquals("gbuffers_textured_lit", analysis.resolution()
+                .resolution("gbuffers_hand_water").selectedProgram(), "missing hand inherited source");
+        assertTrue(analysis.plan().shouldAttempt("gbuffers_hand")
+                        && analysis.plan().shouldAttempt("gbuffers_hand_water"),
+                "inherited hand phases must be executable");
+        assertEquals(FamilyAdapterPlan.Family.HAND_WATER, handWater.familyAdapter().family(),
+                "hand alias must retain the requested translucent hand adapter");
+        assertEquals(List.of(1), handWater.geometryOutputPlan().targetSlots(), "hand alias lost source outputs");
+        for (String name : List.of("gbuffers_hand", "gbuffers_hand_water")) {
+            var handPlan = analysis.plan().program(name);
+            assertTrue(handPlan.convertedFragment().contains("bool hasSkylight;"), "GLSL bool semantics changed");
+            var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(handPlan, Set.of());
+            var nativeBuilder = new Pipeline.Builder(
+                    ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
+            nativeBuilder.setUniformSupplierGetter(info -> () -> null);
+            ordinary.apply(nativeBuilder); // Regression used to throw "not admitted type: bool".
+            var boolField = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
+                    .filter(field -> field.getName().equals("hasSkylight")).findFirst().orElseThrow();
+            assertEquals("int", boolField.getInfo().type, "native std140 bool storage");
+            assertEquals(1, boolField.getSize(), "native std140 bool word count");
+        }
+    }
+
+    /** A disabled translucent child runs its parent's source under its own requested family. */
+    private static void assertTranslucentAliasKeepsRequestedFamily(PackProbe.Analysis analysis) {
+        PackProgramPlan trans = analysis.plan().program("gbuffers_entities_translucent");
+        assertEquals("gbuffers_entities", analysis.resolution()
+                .resolution(trans.name()).selectedProgram(), "disabled child must use enabled parent");
+        assertTrue(analysis.report().shouldAttempt(trans.name()) && analysis.plan().shouldAttempt(trans.name()),
+                "requested translucent adapter was not admitted: " + trans.deviations()
+                        + "/" + analysis.report().program(trans.name()).deviations());
+        assertEquals(FamilyAdapterPlan.Family.ENTITY_TRANSLUCENT, trans.familyAdapter().family(),
+                "alias borrowed the opaque family");
+        assertEquals(List.of(1), trans.geometryOutputPlan().targetSlots(), "alias lost source outputs");
+        assertEquals(PackBlendPlan.Mode.OFF, trans.blendPlan().buffers().get(1), "alias lost source blend");
+        assertTrue(trans.alphaTestPlan().reference() == 0.2F, "alias lost source alpha directive");
+        assertTrue(!analysis.plan().activePrograms().stream().anyMatch(p -> p.name().equals("final")),
+                "disabled post program became a fallback producer");
+    }
+
+    private static void assertCrumblingKeepsHostBlockLayout(PackProbe.Analysis analysis) {
+        PackProgramPlan damage = analysis.plan().program("gbuffers_damagedblock");
+        assertTrue(analysis.report().shouldAttempt(damage.name()) && damage.executable(),
+                "host BLOCK crumbling adapter not admitted: " + damage.deviations());
+        assertEquals(FamilyAdapterPlan.VertexContract.HOST_BLOCK, damage.familyAdapter().vertexContract(),
+                "crumbling reused entity format");
+        assertTrue(damage.convertedVertex().contains("layout(location = 3) in ivec2 UV2;")
+                        && damage.convertedVertex().contains("layout(location = 4) in vec3 Normal;")
+                        && damage.convertedVertex().contains("TextureMat * vec4(UV0")
+                        && !damage.convertedVertex().contains("in uvec4 EntityIds"),
+                "crumbling host attribute/texture-matrix contract changed");
+    }
+
+    /** The named program's plan, asserted present, executable and attempted. */
+    private static PackProgramPlan executablePlan(PackProbe.Analysis analysis, String name, String subject) {
+        var plan = analysis.plan().program(name);
+        assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(name),
+                subject + " rejected: " + (plan == null ? "missing" : plan.deviations()));
+        return plan;
+    }
+
     /**
      * Iris ShaderKey.LINES: a pack's own gbuffers_line runs as authored on the core inputs
      * and widens its own line; a gbuffers_basic fallback is widened by Iris (main runs at
      * both segment ends, VIEW_SHRINK, +Z normal). Both compile on the host line layout.
      */
     @Test
-    void lineLane(@TempDir Path fallback, @TempDir Path packLine) throws IOException {
+    void lineLane() {
         for (var host : List.of(RenderPipelines.LINES,
                 RenderPipelines.LINES_TRANSLUCENT,
                 RenderPipelines.SECONDARY_BLOCK_OUTLINE)) {
@@ -279,15 +319,10 @@ final class HostFamilyTest {
             assertEquals(0.0F, ChimeraEntityBridge.alphaReference(host),
                     "Iris LINES uses AlphaTests.OFF");
         }
-        String fragment = """
-                #version 120
-                /* DRAWBUFFERS:0 */
-                varying vec4 tint;
-                varying vec3 normal;
-                void main() {
-                    gl_FragData[0] = tint + vec4(normal * 0.001, 0.0);
-                }
-                """;
+    }
+
+    @Test
+    void basicFallbackLine(@TempDir Path fallback) throws IOException {
         Path shaders = Files.createDirectory(fallback.resolve("shaders"));
         Files.writeString(shaders.resolve("gbuffers_basic.vsh"), """
                 #version 120
@@ -299,11 +334,9 @@ final class HostFamilyTest {
                     gl_Position = ftransform();
                 }
                 """);
-        Files.writeString(shaders.resolve("gbuffers_basic.fsh"), fragment);
+        Files.writeString(shaders.resolve("gbuffers_basic.fsh"), LINE_FRAGMENT);
         var analysis = PackProbe.analyze(fallback);
-        var plan = analysis.plan().program("gbuffers_line");
-        assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("gbuffers_line"),
-                "basic fallback line rejected: " + (plan == null ? "missing" : plan.deviations()));
+        var plan = executablePlan(analysis, "gbuffers_line", "basic fallback line");
         assertEquals("gbuffers_basic", analysis.resolution().resolution("gbuffers_line").selectedProgram(),
                 "line fallback source");
         assertEquals(FamilyAdapterPlan.VertexContract.HOST_LINE, plan.familyAdapter().vertexContract(),
@@ -318,8 +351,11 @@ final class HostFamilyTest {
                 "fallback line lost Iris widening: " + converted);
         var compiled = PackCompileTest.run(fallback, analysis);
         assertTrue(compiled.failures().isEmpty(), "fallback line compilation: " + compiled.failures());
+    }
 
-        shaders = Files.createDirectory(packLine.resolve("shaders"));
+    @Test
+    void authoredLine(@TempDir Path packLine) throws IOException {
+        Path shaders = Files.createDirectory(packLine.resolve("shaders"));
         Files.writeString(shaders.resolve("gbuffers_line.vsh"), """
                 #version 130
                 uniform float viewWidth;
@@ -336,18 +372,16 @@ final class HostFamilyTest {
                     normal = gl_NormalMatrix * gl_Normal;
                 }
                 """);
-        Files.writeString(shaders.resolve("gbuffers_line.fsh"), fragment.replace("varying", "in"));
-        analysis = PackProbe.analyze(packLine);
-        plan = analysis.plan().program("gbuffers_line");
-        assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("gbuffers_line"),
-                "authored line rejected: " + (plan == null ? "missing" : plan.deviations()));
-        converted = plan.convertedVertex();
+        Files.writeString(shaders.resolve("gbuffers_line.fsh"), LINE_FRAGMENT.replace("varying", "in"));
+        var analysis = PackProbe.analyze(packLine);
+        var plan = executablePlan(analysis, "gbuffers_line", "authored line");
+        String converted = plan.convertedVertex();
         assertTrue(!converted.contains("chimeraLineMain")
                         && converted.contains("chimeraLineVertexIndex % 2")
                         && converted.contains("ProjMat * ModelViewMat")
                         && converted.contains("Normal.xyz"),
                 "authored line lost Iris core inputs: " + converted);
-        compiled = PackCompileTest.run(packLine, analysis);
+        var compiled = PackCompileTest.run(packLine, analysis);
         assertTrue(compiled.failures().isEmpty(), "authored line compilation: " + compiled.failures());
     }
 
@@ -392,9 +426,7 @@ final class HostFamilyTest {
                 }
                 """);
         var analysis = PackProbe.analyze(root);
-        var plan = analysis.plan().program("gbuffers_armor_glint");
-        assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("gbuffers_armor_glint"),
-                "glint rejected: " + (plan == null ? "missing" : plan.deviations()));
+        var plan = executablePlan(analysis, "gbuffers_armor_glint", "glint");
         assertEquals(FamilyAdapterPlan.VertexContract.HOST_GLINT, plan.familyAdapter().vertexContract(),
                 "glint keeps the host layout");
         String converted = plan.convertedVertex();
@@ -416,13 +448,9 @@ final class HostFamilyTest {
         assertTrue(compiled.failures().isEmpty(), "glint compilation: " + compiled.failures());
     }
 
-    /**
-     * The HostLayoutLane table against Iris IrisPipelines and the pack-side contracts, then
-     * LIGHTNING (through the entity fallback), BEACON and LEASH converted and compiled with
-     * Iris's host-layout inputs and identity: entityId per draw, blockEntityId -1.
-     */
+    /** The HostLayoutLane table against Iris IrisPipelines and the pack-side contracts. */
     @Test
-    void hostLayoutLanes(@TempDir Path root) throws IOException {
+    void hostLayoutLanes() {
         var lanes = HostLayoutLane.values();
         Set<String> servedPrograms = new HashSet<>();
         for (var lane : lanes) {
@@ -451,6 +479,10 @@ final class HostFamilyTest {
         }
         assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size(),
                 "every host-layout program needs a lane");
+    }
+
+    @Test
+    void hostLayoutLaneDrawState() {
         var table = HostLayoutLane.class;
         assertTrue(HostLayoutLane.LINE.whiteAlbedo()
                         && HostLayoutLane.LIGHTNING.whiteAlbedo()
@@ -474,7 +506,14 @@ final class HostFamilyTest {
             assertEquals(0.0F, ChimeraEntityBridge.alphaReference(host),
                     "Iris LIGHTNING, BEACON and LEASH use AlphaTests.OFF");
         }
+    }
 
+    /**
+     * LIGHTNING (through the entity fallback), BEACON and LEASH converted and compiled with
+     * Iris's host-layout inputs and identity: entityId per draw, blockEntityId -1.
+     */
+    @Test
+    void hostLayoutLanePrograms(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         // No gbuffers_lightning: lightning falls back to gbuffers_entities, as in BSL and MakeUp.
         Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
@@ -530,29 +569,32 @@ final class HostFamilyTest {
                         "const vec2 UV0 = vec2(0.5);", "layout(location = 2) in ivec2 UV2;",
                         "const vec3 Normal = vec3(0.0, 0.0, 1.0);"));
         for (var entry : expected.entrySet()) {
-            var plan = analysis.plan().program(entry.getKey());
-            assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(entry.getKey()),
-                    entry.getKey() + " rejected: " + (plan == null ? "missing" : plan.deviations()));
-            String vertex = plan.convertedVertex();
-            for (String line : entry.getValue()) {
-                assertTrue(vertex.contains(line), entry.getKey() + " lost Iris host input " + line + ": " + vertex);
-            }
-            // Iris draws these batches with its fallback entityId already reset to 0.
-            assertTrue(vertex.contains("(Color * ColorModulator)")
-                            && vertex.contains("(0) == 10101")
-                            && vertex.contains("float((-1))")
-                            && !vertex.contains("chimeraEntityId")
-                            && plan.convertedFragment().contains("(0) == 10101"),
-                    entry.getKey() + " must read entityId 0 and blockEntityId -1: " + vertex);
-            assertTrue(!plan.alphaTestPlan().perDrawReference(),
-                    entry.getKey() + " has no Iris alpha test (AlphaTests.OFF)");
+            assertHostLayoutProgram(analysis, entry.getKey(), entry.getValue());
         }
         var compiled = PackCompileTest.run(root, analysis);
         assertTrue(compiled.failures().isEmpty(), "host-layout lane compilation: " + compiled.failures());
     }
 
+    /** One host-layout program reads Iris's host inputs, entityId 0 and blockEntityId -1, with no alpha test. */
+    private static void assertHostLayoutProgram(PackProbe.Analysis analysis, String program, List<String> inputs) {
+        var plan = executablePlan(analysis, program, program);
+        String vertex = plan.convertedVertex();
+        for (String line : inputs) {
+            assertTrue(vertex.contains(line), program + " lost Iris host input " + line + ": " + vertex);
+        }
+        // Iris draws these batches with its fallback entityId already reset to 0.
+        assertTrue(vertex.contains("(Color * ColorModulator)")
+                        && vertex.contains("(0) == 10101")
+                        && vertex.contains("float((-1))")
+                        && !vertex.contains("chimeraEntityId")
+                        && plan.convertedFragment().contains("(0) == 10101"),
+                program + " must read entityId 0 and blockEntityId -1: " + vertex);
+        assertTrue(!plan.alphaTestPlan().perDrawReference(),
+                program + " has no Iris alpha test (AlphaTests.OFF)");
+    }
+
     @Test
-    void particleFallbackAndTargets(@TempDir Path root) throws IOException {
+    void particleAndTextAlphaReferences() {
         for (var host : List.of(RenderPipelines.OPAQUE_PARTICLE,
                 RenderPipelines.TRANSLUCENT_PARTICLE,
                 RenderPipelines.WEATHER_DEPTH_WRITE,
@@ -565,6 +607,10 @@ final class HostFamilyTest {
             assertEquals(0.1F, ChimeraEntityBridge.alphaReference(host),
                     "world text tests ONE_TENTH_ALPHA as Iris TEXT/TEXT_BE; untested glyph quads fill solid");
         }
+    }
+
+    @Test
+    void particleFallbackAndTargets(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Path vertex = shaders.resolve("gbuffers_textured.vsh");
         Path fragment = shaders.resolve("gbuffers_textured.fsh");
@@ -608,52 +654,11 @@ final class HostFamilyTest {
             Files.writeString(properties, "blend.gbuffers_textured.colortex1=off\n");
             var analysis = PackProbe.analyze(root);
             for (String name : List.of("gbuffers_particles", "gbuffers_particles_translucent")) {
-                var plan = analysis.plan().program(name);
-                assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(name),
-                        name + " parent-source particle adapter rejected: "
-                                + (plan == null ? "missing" : plan.deviations()));
-                assertEquals("gbuffers_textured", analysis.resolution().resolution(name).selectedProgram(),
-                        name + " selected source");
-                assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE, plan.familyAdapter().vertexContract(),
-                        name + " must retain native particle format");
-                var output = plan.geometryOutputPlan();
-                assertEquals(List.of(1), output.targetSlots(), name + " authored target");
-                var runtime = new PackPipelines.PackParticle(null, new int[0], plan.convertedVertex(),
-                        plan.convertedFragment(), output, new ProgramImageBindingManifest(List.of()));
-                assertTrue(runtime.requiresDynamicAttachments(), name + " singleton target1 lost its draw window");
-                assertEquals(PackBlendPlan.Mode.OFF, plan.blendPlan().buffers().get(1),
-                        name + " lost selected-source blend directive");
-                String converted = plan.convertedVertex();
-                assertTrue(converted.contains("layout(location = 1) in vec2 UV0;")
-                                && converted.contains("layout(location = 2) in vec4 Color;")
-                                && converted.contains("layout(location = 3) in ivec2 UV2;")
-                                && !converted.contains("in uvec4 EntityIds")
-                                && !converted.contains("in vec3 Normal")
-                                && converted.contains("const vec3 Normal = vec3(0.0, 0.0, 1.0);")
-                                && converted.contains("tint = (Color * ColorModulator);")
-                                && converted.contains("transpose(inverse(mat3(ModelViewMat)))"),
-                        name + " Iris host-particle input semantics");
-                assertTrue(plan.alphaTestPlan().perDrawReference()
-                                && plan.convertedFragment().contains("discard;"),
-                        name + " lost native/pack alpha cutout");
+                assertParentSourceParticle(analysis, name);
             }
             var compiled = PackCompileTest.run(root, analysis);
             assertTrue(compiled.failures().isEmpty(), "particle alias compilation: " + compiled.failures());
-            var uniforms = analysis.plan().program("gbuffers_particles").interfacePlan()
-                    .effective(UniformRegistry.Stage.PARTICLE).executableUniforms();
-            assertTrue(EntityVertexBridge.convertParticleVertex(source.replace("void main() {",
-                            "attribute vec2 mc_midTexCoord;\nvoid main() {\nuv = mc_midTexCoord;"),
-                            null, "", Map.of()) == null,
-                    "particle material attributes must not be fabricated");
-            try {
-                EntityVertexBridge.convertParticleVertexChecked(source.replace("frameTimeCounter", "unknownTime"),
-                        null, Files.readString(fragment), Map.of(), false, uniforms);
-                throw new AssertionError("referenced unknown particle uniform was admitted");
-            } catch (IllegalArgumentException expected) {
-                assertTrue(expected.getMessage().contains("unknownTime"), "particle rejection lost concrete symbol");
-            }
-            assertTrue(TerrainVertexBridge.convertTerrainVertex(source, null, "") == null,
-                    "particle repair weakened terrain admission");
+            assertParticleAdmissionStaysStrict(analysis, source, fragment);
         } finally {
             Files.deleteIfExists(properties);
             Files.deleteIfExists(fragment);
@@ -661,5 +666,54 @@ final class HostFamilyTest {
             Files.deleteIfExists(shaders);
             Files.deleteIfExists(root);
         }
+    }
+
+    /** A particle phase runs gbuffers_textured on the native particle layout, keeping its target and blend. */
+    private static void assertParentSourceParticle(PackProbe.Analysis analysis, String name) {
+        var plan = executablePlan(analysis, name, name + " parent-source particle adapter");
+        assertEquals("gbuffers_textured", analysis.resolution().resolution(name).selectedProgram(),
+                name + " selected source");
+        assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE, plan.familyAdapter().vertexContract(),
+                name + " must retain native particle format");
+        var output = plan.geometryOutputPlan();
+        assertEquals(List.of(1), output.targetSlots(), name + " authored target");
+        var runtime = new PackPipelines.PackParticle(null, new int[0], plan.convertedVertex(),
+                plan.convertedFragment(), output, new ProgramImageBindingManifest(List.of()));
+        assertTrue(runtime.requiresDynamicAttachments(), name + " singleton target1 lost its draw window");
+        assertEquals(PackBlendPlan.Mode.OFF, plan.blendPlan().buffers().get(1),
+                name + " lost selected-source blend directive");
+        String converted = plan.convertedVertex();
+        assertTrue(converted.contains("layout(location = 1) in vec2 UV0;")
+                        && converted.contains("layout(location = 2) in vec4 Color;")
+                        && converted.contains("layout(location = 3) in ivec2 UV2;")
+                        && !converted.contains("in uvec4 EntityIds")
+                        && !converted.contains("in vec3 Normal")
+                        && converted.contains("const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+                        && converted.contains("tint = (Color * ColorModulator);")
+                        && converted.contains("transpose(inverse(mat3(ModelViewMat)))"),
+                name + " Iris host-particle input semantics");
+        assertTrue(plan.alphaTestPlan().perDrawReference()
+                        && plan.convertedFragment().contains("discard;"),
+                name + " lost native/pack alpha cutout");
+    }
+
+    /** The particle repair fabricates no material attributes, admits no unknown uniform and leaves terrain alone. */
+    private static void assertParticleAdmissionStaysStrict(PackProbe.Analysis analysis, String source,
+                                                           Path fragment) throws IOException {
+        var uniforms = analysis.plan().program("gbuffers_particles").interfacePlan()
+                .effective(UniformRegistry.Stage.PARTICLE).executableUniforms();
+        assertTrue(EntityVertexBridge.convertParticleVertex(source.replace("void main() {",
+                        "attribute vec2 mc_midTexCoord;\nvoid main() {\nuv = mc_midTexCoord;"),
+                        null, "", Map.of()) == null,
+                "particle material attributes must not be fabricated");
+        try {
+            EntityVertexBridge.convertParticleVertexChecked(source.replace("frameTimeCounter", "unknownTime"),
+                    null, Files.readString(fragment), Map.of(), false, uniforms);
+            throw new AssertionError("referenced unknown particle uniform was admitted");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("unknownTime"), "particle rejection lost concrete symbol");
+        }
+        assertTrue(TerrainVertexBridge.convertTerrainVertex(source, null, "") == null,
+                "particle repair weakened terrain admission");
     }
 }

@@ -50,54 +50,7 @@ final class TerrainInputsTest {
         String fragment = "#version 120\nvarying vec2 uv;\nvarying vec2 light1;\n"
                 + "varying vec2 light2;\nvoid main() { gl_FragColor = vec4(uv + light1 + light2, 0, 1); }\n";
         for (String family : List.of("entity", "block", "crumbling", "hand", "particle")) {
-            var conversion = switch (family) {
-                case "block" -> EntityVertexBridge.convertBlockVertexChecked(
-                        vertex, null, fragment, Map.of(), false, List.of());
-                case "crumbling" -> EntityVertexBridge.convertCrumblingVertexChecked(
-                        vertex, null, fragment, Map.of(), false, List.of());
-                case "hand" -> EntityVertexBridge.convertHandVertexChecked(
-                        vertex, null, fragment, Map.of(), false, List.of());
-                case "particle" -> EntityVertexBridge.convertParticleVertex(
-                        vertex, null, fragment, Map.of(), false);
-                default -> EntityVertexBridge.convertEntityVertexChecked(
-                        vertex, null, fragment, Map.of(), false, List.of());
-            };
-            assertTrue(conversion != null, family + " typed legacy matrices rejected");
-            String source = conversion.source();
-            String compileError = PackCompileTest.compile(source, true);
-            assertTrue(compileError == null, family + " typed legacy matrices: " + compileError);
-            String projectionName = family.equals("hand") ? "chimeraHandProjection()" : "ProjMat";
-            assertTrue(source.contains("mat4 mvp = (" + projectionName + " * ModelViewMat);")
-                            && source.contains("vec4 direct = (" + projectionName
-                                    + " * ModelViewMat) * chimeraEntityVertexValue();")
-                            && source.contains("vec4 typed = mvp * chimeraEntityVertexValue();")
-                            && source.contains("vec4 helper = chimeraEntityFtransform();")
-                            && source.contains("return " + projectionName
-                                    + " * ModelViewMat * chimeraEntityVertexValue();"),
-                    family + " explicit MVP and ftransform disagree");
-            boolean offset = family.equals("block") || family.equals("crumbling");
-            assertTrue(source.contains(offset ? "return vec4(Position + ModelOffset, 1.0);"
-                            : "return vec4(Position, 1.0);"), family + " host position offset");
-            assertTrue(source.contains("mat4 textureMatrix = TextureMat;")
-                            && source.contains("light1 = (lightMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
-                            && source.contains("light2 = (lightAliasMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
-                            && !source.contains("vec2(UV2) / 256.0"),
-                    family + " texture/lightmap contract");
-            var matrix = Pattern.compile("mat4 lightMatrix = mat4\\(([^)]+)\\);")
-                    .matcher(source);
-            assertTrue(matrix.find(), family + " missing Iris light matrix");
-            String[] coefficients = matrix.group(1).split(",");
-            float[] values = new float[coefficients.length];
-            for (int i = 0; i < values.length; i++) values[i] = Float.parseFloat(coefficients[i].trim());
-            assertEquals(16, values.length, family + " light matrix dimensions");
-            var actual = new Matrix4f().set(values)
-                    .transform(new Vector4f(80, 240, 0, 1));
-            assertTrue(Math.abs(actual.x - 0.34375F) < 1.0e-7F
-                            && Math.abs(actual.y - 0.96875F) < 1.0e-7F
-                            && actual.z == 0.03125F && actual.w == 1.0F,
-                    family + " raw UV2=(80,240) must receive scale and half-texel offset once: " + actual);
-            assertTrue(source.contains("mat4 lightAliasMatrix = mat4(" + matrix.group(1) + ");"),
-                    family + " light texture matrix aliases differ");
+            assertLegacyMatrices(family, legacyConversion(family, vertex, fragment));
         }
         String overlayFragment = EntityOverlayColor.inject("#version 120\n"
                 + "uniform vec4 entityColor;\nvoid main() { gl_FragColor = entityColor; }\n");
@@ -118,6 +71,68 @@ final class TerrainInputsTest {
         assertTrue(sequential.distance(matrixProduct) < 1.0e-5F
                         && new Vector4f(sequential).mul(position).distance(matrixProduct) > 1,
                 "projection fixture must expose component-wise vertex multiplication");
+    }
+
+    /** The family's conversion of a legacy vertex stage; the particle family has no checked variant. */
+    private static LegacyGlslConverter.TerrainVertexConversion legacyConversion(String family, String vertex,
+                                                                               String fragment) {
+        return switch (family) {
+            case "block" -> EntityVertexBridge.convertBlockVertexChecked(
+                    vertex, null, fragment, Map.of(), false, List.of());
+            case "crumbling" -> EntityVertexBridge.convertCrumblingVertexChecked(
+                    vertex, null, fragment, Map.of(), false, List.of());
+            case "hand" -> EntityVertexBridge.convertHandVertexChecked(
+                    vertex, null, fragment, Map.of(), false, List.of());
+            case "particle" -> EntityVertexBridge.convertParticleVertex(
+                    vertex, null, fragment, Map.of(), false);
+            default -> EntityVertexBridge.convertEntityVertexChecked(
+                    vertex, null, fragment, Map.of(), false, List.of());
+        };
+    }
+
+    /** One family's conversion compiles and keeps the legacy MVP, position, texture and lightmap semantics. */
+    private static void assertLegacyMatrices(String family, LegacyGlslConverter.TerrainVertexConversion conversion) {
+        assertTrue(conversion != null, family + " typed legacy matrices rejected");
+        String source = conversion.source();
+        String compileError = PackCompileTest.compile(source, true);
+        assertTrue(compileError == null, family + " typed legacy matrices: " + compileError);
+        String projectionName = family.equals("hand") ? "chimeraHandProjection()" : "ProjMat";
+        assertTrue(source.contains("mat4 mvp = (" + projectionName + " * ModelViewMat);")
+                        && source.contains("vec4 direct = (" + projectionName
+                                + " * ModelViewMat) * chimeraEntityVertexValue();")
+                        && source.contains("vec4 typed = mvp * chimeraEntityVertexValue();")
+                        && source.contains("vec4 helper = chimeraEntityFtransform();")
+                        && source.contains("return " + projectionName
+                                + " * ModelViewMat * chimeraEntityVertexValue();"),
+                family + " explicit MVP and ftransform disagree");
+        boolean offset = family.equals("block") || family.equals("crumbling");
+        assertTrue(source.contains(offset ? "return vec4(Position + ModelOffset, 1.0);"
+                        : "return vec4(Position, 1.0);"), family + " host position offset");
+        assertTrue(source.contains("mat4 textureMatrix = TextureMat;")
+                        && source.contains("light1 = (lightMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
+                        && source.contains("light2 = (lightAliasMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
+                        && !source.contains("vec2(UV2) / 256.0"),
+                family + " texture/lightmap contract");
+        assertLightMatrixScalesOnce(family, source);
+    }
+
+    /** Iris's light texture matrix scales raw UV2 and adds the half-texel offset exactly once. */
+    private static void assertLightMatrixScalesOnce(String family, String source) {
+        var matrix = Pattern.compile("mat4 lightMatrix = mat4\\(([^)]+)\\);")
+                .matcher(source);
+        assertTrue(matrix.find(), family + " missing Iris light matrix");
+        String[] coefficients = matrix.group(1).split(",");
+        float[] values = new float[coefficients.length];
+        for (int i = 0; i < values.length; i++) values[i] = Float.parseFloat(coefficients[i].trim());
+        assertEquals(16, values.length, family + " light matrix dimensions");
+        var actual = new Matrix4f().set(values)
+                .transform(new Vector4f(80, 240, 0, 1));
+        assertTrue(Math.abs(actual.x - 0.34375F) < 1.0e-7F
+                        && Math.abs(actual.y - 0.96875F) < 1.0e-7F
+                        && actual.z == 0.03125F && actual.w == 1.0F,
+                family + " raw UV2=(80,240) must receive scale and half-texel offset once: " + actual);
+        assertTrue(source.contains("mat4 lightAliasMatrix = mat4(" + matrix.group(1) + ");"),
+                family + " light texture matrix aliases differ");
     }
 
     /**
@@ -176,7 +191,7 @@ final class TerrainInputsTest {
      * nobody read, so BSL, Complementary, Bliss, Photon and Solas darkened corners twice.
      */
     @Test
-    void terrainShading(@TempDir Path root) throws IOException {
+    void terrainShadingDirectives() {
         assertEquals(new TerrainShadingDirectives(false, false, List.of()),
                 TerrainShadingDirectives.fromProperties(Map.of()),
                 "Iris's oldLighting and separateAo default to off");
@@ -201,7 +216,10 @@ final class TerrainInputsTest {
                         && malformed.deviations().containsAll(List.of(
                                 "OLD_LIGHTING_DIRECTIVE_MALFORMED", "SEPARATE_AO_DIRECTIVE_MALFORMED")),
                 "unexpected values keep Iris's defaults and are reported: " + malformed);
+    }
 
+    @Test
+    void terrainShading(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), "oldLighting=true\nseparateAo=true\n");
         Files.writeString(shaders.resolve("final.fsh"), """
@@ -214,7 +232,10 @@ final class TerrainInputsTest {
         var shading = PackProbe.analyze(root).plan().terrainShading();
         assertTrue(shading.oldLighting() && shading.separateAo(),
                 "the pack plan reads shaders.properties oldLighting and separateAo: " + shading);
+    }
 
+    @Test
+    void separateAoColour() throws IOException {
         // Iris XHFPTerrainVertex: ColorABGR.withAlpha(tint, brightness) instead of mulRGB.
         assertEquals(0x7F336699, SeparateAoColor.argb(0xFF336699, 0.5F),
                 "a block quad keeps its tint and carries the brightness in alpha");
@@ -229,7 +250,10 @@ final class TerrainInputsTest {
                                 "\n").startsWith("#version 460\n#define CHIMERA_SEPARATE_AO\n"),
                 "Chimera's own terrain pipeline folds the alpha brightness back into RGB under separateAo");
         compileVertex(separateAoVertex, "chimera_terrain_separate_ao.vsh");
+    }
 
+    @Test
+    void terrainShadingHooks() throws IOException {
         var shadeMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraClientLevelShadeMixin");
         boolean shadeArgument = false;
         for (var method : shadeMixin.methods) {
@@ -260,13 +284,14 @@ final class TerrainInputsTest {
                 : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin", "FluidRendererMixin")) {
             MixinBytecode.assertMixinRegistered(name);
         }
+    }
 
+    @Test
+    void packSessionAppliesTerrainShading() throws IOException {
         var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
-            var method = pass.methods.stream().filter(value -> value.name.equals(name)).findFirst()
-                    .orElseThrow(() -> new AssertionError("PackSessionLifecycle." + name + " is missing"));
             boolean applies = false;
-            for (var instruction : method.instructions) {
+            for (var instruction : MixinBytecode.instructionsThrough(pass, name)) {
                 if (instruction instanceof MethodInsnNode call
                         && call.owner.equals("net/chimera/render/shader/ChimeraTerrainPipelines")
                         && call.name.equals("setTerrainShading")) {
@@ -297,7 +322,7 @@ final class TerrainInputsTest {
     }
 
     @Test
-    void nonzeroGeometryAndPrepare(@TempDir Path root) throws IOException {
+    void nonzeroGeometryRoutes() {
         ProgramImageBindingManifest manifest = new ProgramImageBindingManifest(List.of());
         for (String targets : List.of("0", "1", "01", "14")) {
             int count = targets.length();
@@ -336,27 +361,17 @@ final class TerrainInputsTest {
                 MrtPipelineContext.end();
             }
         }
+    }
 
+    @Test
+    void prepareStages(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         List<String> names = List.of("prepare", "prepare2", "prepare10", "gbuffers_terrain", "deferred", "final");
         try {
             for (String name : names) {
                 Files.writeString(shaders.resolve(name + ".vsh"),
                         "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
-                String fragment = switch (name) {
-                    case "prepare" -> "/* DRAWBUFFERS:17 */\nvoid main() {"
-                            + " gl_FragData[0] = vec4(0.25); gl_FragData[1] = vec4(0.5); }";
-                    case "prepare2", "prepare10" -> "/* DRAWBUFFERS:7 */\nuniform sampler2D colortex7;"
-                            + " void main() { gl_FragColor = texture2D(colortex7, vec2(0.5)); }";
-                    case "gbuffers_terrain" -> "/* DRAWBUFFERS:1 */\nuniform sampler2D gaux4;"
-                            + " void main() { gl_FragColor = texture2D(gaux4, vec2(0.5)); }";
-                    case "deferred" -> "/* DRAWBUFFERS:1 */\nuniform sampler2D colortex1;"
-                            + " void main() { gl_FragColor = texture2D(colortex1, vec2(0.5)); }";
-                    default -> "const bool colortex1Clear = false;\nconst bool colortex7Clear = false;\n"
-                            + " uniform sampler2D colortex1;"
-                            + " void main() { gl_FragColor = texture2D(colortex1, vec2(0.5)); }";
-                };
-                Files.writeString(shaders.resolve(name + ".fsh"), "#version 120\n" + fragment);
+                Files.writeString(shaders.resolve(name + ".fsh"), "#version 120\n" + prepareFixtureFragment(name));
             }
             PackProbe.Analysis analysis = PackProbe.analyze(root);
             for (String name : names) {
@@ -398,5 +413,22 @@ final class TerrainInputsTest {
             Files.deleteIfExists(shaders);
             Files.deleteIfExists(root);
         }
+    }
+
+    /** Prepare-fixture fragments: prepare writes 1 and 7, terrain reads 7 as gaux4, final keeps both uncleared. */
+    private static String prepareFixtureFragment(String name) {
+        return switch (name) {
+            case "prepare" -> "/* DRAWBUFFERS:17 */\nvoid main() {"
+                    + " gl_FragData[0] = vec4(0.25); gl_FragData[1] = vec4(0.5); }";
+            case "prepare2", "prepare10" -> "/* DRAWBUFFERS:7 */\nuniform sampler2D colortex7;"
+                    + " void main() { gl_FragColor = texture2D(colortex7, vec2(0.5)); }";
+            case "gbuffers_terrain" -> "/* DRAWBUFFERS:1 */\nuniform sampler2D gaux4;"
+                    + " void main() { gl_FragColor = texture2D(gaux4, vec2(0.5)); }";
+            case "deferred" -> "/* DRAWBUFFERS:1 */\nuniform sampler2D colortex1;"
+                    + " void main() { gl_FragColor = texture2D(colortex1, vec2(0.5)); }";
+            default -> "const bool colortex1Clear = false;\nconst bool colortex7Clear = false;\n"
+                    + " uniform sampler2D colortex1;"
+                    + " void main() { gl_FragColor = texture2D(colortex1, vec2(0.5)); }";
+        };
     }
 }

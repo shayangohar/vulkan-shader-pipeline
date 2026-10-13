@@ -16,7 +16,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -44,6 +43,28 @@ final class ShadowPassTest {
         var plan = analysis.plan().program("shadow_entities");
         assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt("shadow_entities"),
                 "shadow_entities rejected: " + (plan == null ? "missing" : plan.deviations()));
+        assertShadowEntitiesReadEntityLayout(plan);
+        String terrain = analysis.plan().program("shadow").convertedVertex();
+        assertTrue(terrain.contains("MVP") && !terrain.contains("EntityIds"),
+                "the terrain shadow program keeps its own inputs: " + terrain);
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "shadow_entities compilation: " + compiled.failures());
+
+        ShadowCasterDirectives directives = analysis.plan().shadowCasters();
+        assertTrue(directives.entities() && directives.player() && !directives.blockEntities()
+                        && !directives.lightBlockEntities()
+                        && directives.deviations().contains("SHADOW_DIRECTIVE_MALFORMED:shadowLightBlockEntities"),
+                "Iris reads true/1 and false/0 and keeps its default otherwise: " + directives);
+        assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.ADVANCED, 32.0, 0.0),
+                analysis.plan().shadowCulling().entities(192),
+                "Iris entity frustum: advanced, BoxCuller(shadowDistance * shadowDistanceRenderMul"
+                        + " * entityShadowDistanceMul)");
+        assertEquals(ShadowCasterDirectives.DEFAULTS, ShadowCasterDirectives.fromProperties(Map.of()),
+                "Iris defaults: entities and block entities on, player and light block entities off");
+    }
+
+    /** The shadow program converted onto the entity layout: host matrices, per-vertex ids, per-draw alpha. */
+    private static void assertShadowEntitiesReadEntityLayout(PackProgramPlan plan) {
         String vertex = plan.convertedVertex();
         for (String line : List.of("layout(location = 6) in uvec4 EntityIds;",
                 "return ProjMat * ModelViewMat * chimeraEntityVertexValue();",
@@ -62,41 +83,29 @@ final class ShadowPassTest {
                         && fragment.contains("chimeraShadowColor1")
                         && plan.alphaTestPlan().perDrawReference(),
                 "shadow_entities fragment must read blockEntityId per vertex and test alpha per draw: " + fragment);
-        String terrain = analysis.plan().program("shadow").convertedVertex();
-        assertTrue(terrain.contains("MVP") && !terrain.contains("EntityIds"),
-                "the terrain shadow program keeps its own inputs: " + terrain);
-        var compiled = PackCompileTest.run(root, analysis);
-        assertTrue(compiled.failures().isEmpty(), "shadow_entities compilation: " + compiled.failures());
+    }
 
-        ShadowCasterDirectives directives = analysis.plan().shadowCasters();
-        assertTrue(directives.entities() && directives.player() && !directives.blockEntities()
-                        && !directives.lightBlockEntities()
-                        && directives.deviations().contains("SHADOW_DIRECTIVE_MALFORMED:shadowLightBlockEntities"),
-                "Iris reads true/1 and false/0 and keeps its default otherwise: " + directives);
-        assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.ADVANCED, 32.0, 0.0),
-                analysis.plan().shadowCulling().entities(192),
-                "Iris entity frustum: advanced, BoxCuller(shadowDistance * shadowDistanceRenderMul"
-                        + " * entityShadowDistanceMul)");
-        assertEquals(ShadowCasterDirectives.DEFAULTS, ShadowCasterDirectives.fromProperties(Map.of()),
-                "Iris defaults: entities and block entities on, player and light block entities off");
-
-        var shadowMap = MixinBytecode.nativeClass("net/chimera/render/PackShadowPass").methods.stream()
-                .filter(method -> method.name.equals("renderShadowMap")).findFirst().orElseThrow();
+    @Test
+    void shadowEntityCastersDrawBeforeSnapshot() throws IOException {
+        var shadowPass = MixinBytecode.nativeClass("net/chimera/render/PackShadowPass");
         boolean casters = false;
         boolean snapshotAfterCasters = false;
-        for (var instruction : shadowMap.instructions) {
+        for (var instruction : MixinBytecode.instructionsThrough(shadowPass, "renderShadowMap")) {
             if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("renderShadowCasters")) casters = true;
                 if (casters && call.name.equals("captureOpaqueDepth")) snapshotAfterCasters = true;
             }
         }
         assertTrue(snapshotAfterCasters, "entity casters must draw before the shadowtex1 snapshot, as in Iris");
-        var draw = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin").methods.stream()
-                .filter(method -> method.name.equals("chimera$immediateFamilyWindow")).findFirst().orElseThrow();
+    }
+
+    @Test
+    void shadowDrawWithoutLaneIsDropped() throws IOException {
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin");
         boolean lane = false;
         boolean guard = false;
         boolean dropped = false;
-        for (var instruction : draw.instructions) {
+        for (var instruction : MixinBytecode.instructionsThrough(mixin, "chimera$immediateFamilyWindow")) {
             if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("beginHostLayoutDraw")) lane = true;
                 if (lane && call.name.equals("isShadowCasterPass")) guard = true;
@@ -117,7 +126,7 @@ final class ShadowPassTest {
      * Lines are widened. Every lane tests alpha per draw and compiles.
      */
     @Test
-    void shadowLanes(@TempDir Path root) throws IOException {
+    void shadowLaneRoutes() {
         var shadowPass = HostLayoutLane.Pass.SHADOW;
         Map<RenderPipeline, HostLayoutLane> routes = Map.of(
                 RenderPipelines.LINES, HostLayoutLane.SHADOW_LINES,
@@ -159,7 +168,10 @@ final class ShadowPassTest {
                 HostLayoutLane.SHADOW_BASIC)) {
             assertEquals(0.0F, lane.alphaReference(), lane + ": Iris AlphaTests.OFF");
         }
+    }
 
+    @Test
+    void shadowLanes(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         writeLegacyShadowProgram(shaders);
         // A pack file named like a shader key is not an Iris program and is never selected.
@@ -177,40 +189,7 @@ final class ShadowPassTest {
                 "shadow_glint", List.of("layout(location = 1) in vec2 UV0;",
                         "const vec4 Color = vec4(0.0, 0.0, 0.0, 1.0);"));
         for (var entry : inputs.entrySet()) {
-            String key = entry.getKey();
-            var plan = analysis.plan().program(key);
-            assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(key),
-                    key + " rejected: " + (plan == null ? "missing" : plan.deviations()));
-            assertEquals("shadow", analysis.resolution().resolution(key).selectedProgram(),
-                    key + " must run Iris's shadow program through its fallback chain");
-            String vertex = plan.convertedVertex();
-            for (String line : entry.getValue()) {
-                assertTrue(vertex.contains(line), key + " lost Iris host input " + line + ": " + vertex);
-            }
-            for (String line : List.of("return Color * ColorModulator;",
-                    "return ProjMat * ModelViewMat * chimeraEntityVertexValue();",
-                    "layout(binding = 2) uniform ChimeraShadowUniforms",
-                    "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);")) {
-                assertTrue(vertex.contains(line), key + " lost the shadow bridge " + line + ": " + vertex);
-            }
-            assertTrue(!vertex.contains("decoy") && !vertex.contains("MVP") && !vertex.contains("inPositionLight"),
-                    key + " must convert the shadow program on its host layout: " + vertex);
-            String fragment = plan.convertedFragment();
-            if (FamilyAdapterRegistry.readsEntityIdsPerVertex(key)) {
-                assertTrue(vertex.contains("const uvec4 EntityIds = uvec4(0);")
-                                && vertex.contains("chimeraEntityId = EntityIds.x;")
-                                && fragment.contains("int(chimeraBlockEntityId) / 100 == 155"),
-                        key + " reads Iris's entity-patched ids, unbound on the host mesh: " + vertex);
-            } else {
-                assertTrue(vertex.contains("(0) == 10001")
-                                && !vertex.contains("chimeraEntityId")
-                                && fragment.contains("(-1) / 100 == 155"),
-                        key + " must read entityId 0 and blockEntityId -1: " + vertex + "\n" + fragment);
-            }
-            assertTrue(fragment.contains("chimeraShadowColor1") && plan.alphaTestPlan().perDrawReference(),
-                    key + " must write both shadow colours and test alpha per draw: " + fragment);
-            assertTrue(plan.deviations().contains(FamilyAdapterRegistry.hostLayoutLane(key) + "_VERTEX_BRIDGE"),
-                    key + " must record its vertex bridge: " + plan.deviations());
+            assertShadowLaneProgram(analysis, entry.getKey(), entry.getValue());
         }
         var compiled = PackCompileTest.run(root, analysis);
         assertTrue(compiled.failures().isEmpty(), "shadow lane compilation: " + compiled.failures());
@@ -226,7 +205,52 @@ final class ShadowPassTest {
             assertEquals("shadow_entities", authored.resolution(key).selectedProgram(),
                     key + " is Iris ProgramId.ShadowEntities (shadow_lightning falls back to it)");
         }
+    }
 
+    /** One shadow lane runs the shadow program on its host layout with Iris's inputs, ids and alpha test. */
+    private static void assertShadowLaneProgram(PackProbe.Analysis analysis, String key, List<String> inputs) {
+        var plan = analysis.plan().program(key);
+        assertTrue(plan != null && plan.executable() && analysis.report().shouldAttempt(key),
+                key + " rejected: " + (plan == null ? "missing" : plan.deviations()));
+        assertEquals("shadow", analysis.resolution().resolution(key).selectedProgram(),
+                key + " must run Iris's shadow program through its fallback chain");
+        String vertex = plan.convertedVertex();
+        for (String line : inputs) {
+            assertTrue(vertex.contains(line), key + " lost Iris host input " + line + ": " + vertex);
+        }
+        for (String line : List.of("return Color * ColorModulator;",
+                "return ProjMat * ModelViewMat * chimeraEntityVertexValue();",
+                "layout(binding = 2) uniform ChimeraShadowUniforms",
+                "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);")) {
+            assertTrue(vertex.contains(line), key + " lost the shadow bridge " + line + ": " + vertex);
+        }
+        assertTrue(!vertex.contains("decoy") && !vertex.contains("MVP") && !vertex.contains("inPositionLight"),
+                key + " must convert the shadow program on its host layout: " + vertex);
+        String fragment = plan.convertedFragment();
+        assertShadowLaneIds(key, vertex, fragment);
+        assertTrue(fragment.contains("chimeraShadowColor1") && plan.alphaTestPlan().perDrawReference(),
+                key + " must write both shadow colours and test alpha per draw: " + fragment);
+        assertTrue(plan.deviations().contains(FamilyAdapterRegistry.hostLayoutLane(key) + "_VERTEX_BRIDGE"),
+                key + " must record its vertex bridge: " + plan.deviations());
+    }
+
+    /** Glint and text read the unbound per-vertex ids; every other lane reads entityId 0, blockEntityId -1. */
+    private static void assertShadowLaneIds(String key, String vertex, String fragment) {
+        if (FamilyAdapterRegistry.readsEntityIdsPerVertex(key)) {
+            assertTrue(vertex.contains("const uvec4 EntityIds = uvec4(0);")
+                            && vertex.contains("chimeraEntityId = EntityIds.x;")
+                            && fragment.contains("int(chimeraBlockEntityId) / 100 == 155"),
+                    key + " reads Iris's entity-patched ids, unbound on the host mesh: " + vertex);
+        } else {
+            assertTrue(vertex.contains("(0) == 10001")
+                            && !vertex.contains("chimeraEntityId")
+                            && fragment.contains("(-1) / 100 == 155"),
+                    key + " must read entityId 0 and blockEntityId -1: " + vertex + "\n" + fragment);
+        }
+    }
+
+    @Test
+    void burningEntityFireDrawsThroughEntityFamily() throws IOException {
         var flames = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraFlameFeatureRendererMixin").methods.stream()
                 .filter(method -> method.name.equals("chimera$packFlames")).findFirst().orElseThrow();
         boolean flameId = false;
@@ -242,21 +266,15 @@ final class ShadowPassTest {
                 "burning-entity fire must draw through the entity family with Iris's entity_flame id");
     }
 
-    /**
-     * Iris ShadowRenderer.createShadowFrustum: the culling each shadow.culling state picks, with
-     * its distances, and the advanced frustum's planes against known casters.
-     */
+    /** Iris ShadowRenderer.createShadowFrustum: the culling each shadow.culling state picks, with its distances. */
     @Test
     void shadowCulling() {
         int renderDistance = 192;
-        BiFunction<Map<String, String>, Map<String, String>, ShadowCullingPlan> plan =
-                (properties, constants) -> ShadowCullingPlan.of(properties,
-                        new PackConfig.ShadowSettings(2048, 128.0F, constants, List.of()));
         Map<String, String> unitRender = Map.of("shadowDistanceRenderMul", "1.0");
         var advanced = ShadowCullingPlan.Mode.ADVANCED;
         double none = Double.POSITIVE_INFINITY;
 
-        ShadowCullingPlan unset = plan.apply(Map.of(), unitRender);
+        ShadowCullingPlan unset = cullingPlan(Map.of(), unitRender);
         assertEquals(ShadowCullingPlan.State.DEFAULT, unset.state(), "no shadow.culling is Iris DEFAULT");
         assertEquals(new ShadowCullingPlan.Culler(advanced, 128.0, 0.0), unset.terrain(renderDistance),
                 "DEFAULT without a geometry stage is advanced, BoxCuller(shadowDistance * renderMul)");
@@ -265,43 +283,55 @@ final class ShadowPassTest {
         assertEquals(new ShadowCullingPlan.Culler(advanced, none, 0.0), unset.terrain(96),
                 "a box at or past the render distance is no box");
         assertEquals(new ShadowCullingPlan.Culler(advanced, none, 0.0),
-                plan.apply(Map.of(), Map.of()).terrain(renderDistance),
+                cullingPlan(Map.of(), Map.of()).terrain(renderDistance),
                 "renderMul unset (Iris -1) means the player's shadow distance, 32 chunks by default");
         assertEquals(new ShadowCullingPlan.Culler(advanced, 0.0, 0.0),
-                plan.apply(Map.of(), Map.of("shadowDistanceRenderMul", "0.0")).terrain(renderDistance),
+                cullingPlan(Map.of(), Map.of("shadowDistanceRenderMul", "0.0")).terrain(renderDistance),
                 "a zero distance keeps Iris's BoxCuller(0)");
         assertEquals(unset.terrain(renderDistance),
-                plan.apply(Map.of("shadow.culling", "true"), unitRender).terrain(renderDistance), "true is ADVANCED");
+                cullingPlan(Map.of("shadow.culling", "true"), unitRender).terrain(renderDistance), "true is ADVANCED");
 
-        ShadowCullingPlan distance = plan.apply(Map.of("shadow.culling", "false"), unitRender);
+        ShadowCullingPlan distance = cullingPlan(Map.of("shadow.culling", "false"), unitRender);
         assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.DISTANCE, 128.0, 0.0),
                 distance.terrain(renderDistance), "false culls by distance only");
         assertEquals(ShadowCullingPlan.Culler.NONE, distance.terrain(96),
                 "a distance past the render distance culls nothing");
         assertEquals(ShadowCullingPlan.Culler.NONE,
-                plan.apply(Map.of("shadow.culling", "false"), Map.of()).terrain(renderDistance),
+                cullingPlan(Map.of("shadow.culling", "false"), Map.of()).terrain(renderDistance),
                 "a negative distance culls nothing");
 
-        ShadowCullingPlan safeZone = plan.apply(Map.of("shadow.culling", "reversed"), Map.of("voxelDistance", "32.0"));
+        ShadowCullingPlan safeZone = cullingPlan(Map.of("shadow.culling", "reversed"), Map.of("voxelDistance", "32.0"));
         assertEquals(new ShadowCullingPlan.Culler(ShadowCullingPlan.Mode.SAFE_ZONE, 128.0, 32.0),
                 safeZone.terrain(renderDistance),
                 "reversed: voxelDistance box always drawn, outer box shadowDistance (renderMul -1 taken as 1)");
         assertEquals(safeZone.terrain(renderDistance),
-                plan.apply(Map.of("shadow.culling", "safe_zone"),
+                cullingPlan(Map.of("shadow.culling", "safe_zone"),
                         Map.of("voxelDistance", "32.0")).terrain(renderDistance),
                 "safe_zone is reversed");
 
         assertEquals(new ShadowCullingPlan.Culler(advanced, 32.0, 0.0),
-                plan.apply(Map.of(), Map.of("shadowDistanceRenderMul", "1.0", "entityShadowDistanceMul", "0.25"))
+                cullingPlan(Map.of(), Map.of("shadowDistanceRenderMul", "1.0", "entityShadowDistanceMul", "0.25"))
                         .entities(renderDistance), "entities: BoxCuller(shadowDistance * renderMul * entityMul)");
         assertEquals(new ShadowCullingPlan.Culler(advanced, none, 0.0),
-                plan.apply(Map.of(), Map.of("entityShadowDistanceMul", "0.25")).entities(renderDistance),
+                cullingPlan(Map.of(), Map.of("entityShadowDistanceMul", "0.25")).entities(renderDistance),
                 "a negative entity multiplier product is the player's shadow distance");
-        ShadowCullingPlan malformed = plan.apply(Map.of("shadow.culling", "maybe"), unitRender);
+        ShadowCullingPlan malformed = cullingPlan(Map.of("shadow.culling", "maybe"), unitRender);
         assertTrue(malformed.state() == ShadowCullingPlan.State.DEFAULT
                         && malformed.deviations().contains("SHADOW_CULLING_DIRECTIVE_MALFORMED:maybe"),
                 "Iris keeps the default for an unrecognized value: " + malformed);
+    }
 
+    /** The shadow culling plan for these shaders.properties entries and shadow constants. */
+    private static ShadowCullingPlan cullingPlan(Map<String, String> properties, Map<String, String> constants) {
+        return ShadowCullingPlan.of(properties, new PackConfig.ShadowSettings(2048, 128.0F, constants, List.of()));
+    }
+
+    /** The advanced shadow frustum's planes, box and safe zone against known casters. */
+    @Test
+    void shadowCullingFrustum() {
+        var advanced = ShadowCullingPlan.Mode.ADVANCED;
+        double none = Double.POSITIVE_INFINITY;
+        ShadowCullingPlan safeZone = cullingPlan(Map.of("shadow.culling", "reversed"), Map.of("voxelDistance", "32.0"));
         // A camera at the origin looking down -Z, 70 degree vertical field, 16:9; planes only.
         Matrix4f camera = new Matrix4f()
                 .perspective((float) Math.toRadians(70.0), 16.0F / 9.0F, 0.05F, 1000.0F);

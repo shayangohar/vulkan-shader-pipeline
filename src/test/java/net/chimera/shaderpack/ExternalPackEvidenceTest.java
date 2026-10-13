@@ -91,14 +91,34 @@ final class ExternalPackEvidenceTest {
             verifyConversionBoundary(spec, report, analysis.plan());
         }
 
-        List<ConformanceReport.ProgramReport> executable = new ArrayList<>();
-        List<ConformanceReport.ProgramReport> fallback = new ArrayList<>();
-        List<ConformanceReport.ProgramReport> unsupported = new ArrayList<>();
-        TreeSet<String> deviations = new TreeSet<>(report.deviations());
-        Map<String, List<String>> programDeviations = new TreeMap<>();
+        assertStaticRuntimeDispositions(spec, report);
+        ProgramClasses classes = ProgramClasses.of(report);
+        String statusSummary = report.programs().stream()
+                .map(program -> program.name() + "=" + program.support())
+                .sorted()
+                .toList()
+                .toString();
+        if (requireExecutable) {
+            assertTrue(!classes.executable().isEmpty(),
+                    spec.label() + " has no executable program in the Chimera subset; programs="
+                            + statusSummary + ", deviations=" + classes.deviations());
+        }
+
+        JsonObject result = new JsonObject();
+        result.addProperty("logicalName", PackProbe.logicalPackName(spec.path()));
+        result.addProperty("version", spec.version());
+        result.addProperty("fullPackFingerprint", fingerprint);
+        result.addProperty("reportSha256", report.sha256());
+        classes.addTo(result);
+        result.add("expectedCaptures", strings(List.of("captures/m5_7_" + spec.label() + ".rdc")));
+        result.add("runtimeEvidence", strings(List.of("latest.log", "RenderDoc CLI capture analysis")));
+        return result;
+    }
+
+    /** A static probe attempts exactly the supported programs, and has run none of them yet. */
+    private static void assertStaticRuntimeDispositions(PackSpec spec, ConformanceReport report) {
         for (ConformanceReport.ProgramReport program : report.programs()) {
-            boolean eligible = program.support() == ConformanceReport.SupportStatus.SUPPORTED
-                    || program.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
+            boolean eligible = eligible(program);
             assertEquals(eligible, report.shouldAttempt(program.name()),
                     spec.label() + " static eligibility: " + program.name());
             if (eligible) {
@@ -110,42 +130,12 @@ final class ExternalPackEvidenceTest {
                                 || program.runtime() == ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         spec.label() + " fallback static runtime: " + program.name());
             }
-            deviations.addAll(program.deviations());
-            if (!program.deviations().isEmpty()) {
-                programDeviations.put(program.name(), program.deviations());
-            }
-            if (eligible) {
-                executable.add(program);
-            } else if (program.support() == ConformanceReport.SupportStatus.IDENTITY_FALLBACK) {
-                fallback.add(program);
-            } else if (program.support() == ConformanceReport.SupportStatus.UNSUPPORTED) {
-                unsupported.add(program);
-            }
         }
-        String statusSummary = report.programs().stream()
-                .map(program -> program.name() + "=" + program.support())
-                .sorted()
-                .toList()
-                .toString();
-        if (requireExecutable) {
-            assertTrue(!executable.isEmpty(),
-                    spec.label() + " has no executable program in the Chimera subset; programs="
-                            + statusSummary + ", deviations=" + deviations);
-        }
+    }
 
-        JsonObject result = new JsonObject();
-        result.addProperty("logicalName", PackProbe.logicalPackName(spec.path()));
-        result.addProperty("version", spec.version());
-        result.addProperty("fullPackFingerprint", fingerprint);
-        result.addProperty("reportSha256", report.sha256());
-        result.add("executablePrograms", strings(names(executable)));
-        result.add("fallbackPrograms", strings(names(fallback)));
-        result.add("unsupportedPrograms", strings(names(unsupported)));
-        result.add("deviations", strings(deviations));
-        result.add("programDeviations", programDeviationJson(programDeviations));
-        result.add("expectedCaptures", strings(List.of("captures/m5_7_" + spec.label() + ".rdc")));
-        result.add("runtimeEvidence", strings(List.of("latest.log", "RenderDoc CLI capture analysis")));
-        return result;
+    private static boolean eligible(ConformanceReport.ProgramReport program) {
+        return program.support() == ConformanceReport.SupportStatus.SUPPORTED
+                || program.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
     }
 
     /** Uses the same source, interface, and converter inputs as PackPipelines. */
@@ -196,35 +186,48 @@ final class ExternalPackEvidenceTest {
     }
 
     private static JsonObject snapshotFromReport(ConformanceReport report, PackSpec spec) {
-        List<ConformanceReport.ProgramReport> executable = new ArrayList<>();
-        List<ConformanceReport.ProgramReport> fallback = new ArrayList<>();
-        List<ConformanceReport.ProgramReport> unsupported = new ArrayList<>();
-        TreeSet<String> deviations = new TreeSet<>(report.deviations());
-        Map<String, List<String>> programDeviations = new TreeMap<>();
-        for (ConformanceReport.ProgramReport program : report.programs()) {
-            boolean eligible = program.support() == ConformanceReport.SupportStatus.SUPPORTED
-                    || program.support() == ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
-            deviations.addAll(program.deviations());
-            if (!program.deviations().isEmpty()) {
-                programDeviations.put(program.name(), program.deviations());
-            }
-            if (eligible) {
-                executable.add(program);
-            } else if (program.support() == ConformanceReport.SupportStatus.IDENTITY_FALLBACK) {
-                fallback.add(program);
-            } else if (program.support() == ConformanceReport.SupportStatus.UNSUPPORTED) {
-                unsupported.add(program);
-            }
-        }
         JsonObject result = new JsonObject();
         result.addProperty("logicalName", PackProbe.logicalPackName(spec.path()));
         result.addProperty("reportSha256", report.sha256());
-        result.add("executablePrograms", strings(names(executable)));
-        result.add("fallbackPrograms", strings(names(fallback)));
-        result.add("unsupportedPrograms", strings(names(unsupported)));
-        result.add("deviations", strings(deviations));
-        result.add("programDeviations", programDeviationJson(programDeviations));
+        ProgramClasses.of(report).addTo(result);
         return result;
+    }
+
+    /** A report's programs by support class, with the pack's deviations and each program's own. */
+    private record ProgramClasses(
+            List<ConformanceReport.ProgramReport> executable,
+            List<ConformanceReport.ProgramReport> fallback,
+            List<ConformanceReport.ProgramReport> unsupported,
+            TreeSet<String> deviations,
+            Map<String, List<String>> programDeviations
+    ) {
+        static ProgramClasses of(ConformanceReport report) {
+            var classes = new ProgramClasses(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
+                    new TreeSet<>(report.deviations()), new TreeMap<>());
+            for (ConformanceReport.ProgramReport program : report.programs()) {
+                classes.deviations.addAll(program.deviations());
+                if (!program.deviations().isEmpty()) {
+                    classes.programDeviations.put(program.name(), program.deviations());
+                }
+                if (eligible(program)) {
+                    classes.executable.add(program);
+                } else if (program.support() == ConformanceReport.SupportStatus.IDENTITY_FALLBACK) {
+                    classes.fallback.add(program);
+                } else if (program.support() == ConformanceReport.SupportStatus.UNSUPPORTED) {
+                    classes.unsupported.add(program);
+                }
+            }
+            return classes;
+        }
+
+        /** Adds the snapshot fields from executablePrograms to programDeviations, in baseline order. */
+        void addTo(JsonObject result) {
+            result.add("executablePrograms", strings(names(executable)));
+            result.add("fallbackPrograms", strings(names(fallback)));
+            result.add("unsupportedPrograms", strings(names(unsupported)));
+            result.add("deviations", strings(deviations));
+            result.add("programDeviations", programDeviationJson(programDeviations));
+        }
     }
 
     private static void emitBaseline(List<PackSpec> packs) throws IOException {
@@ -290,31 +293,7 @@ final class ExternalPackEvidenceTest {
     @Test
     void preparedSourceEdges(@TempDir Path root) throws IOException {
         Path shaders = root.resolve("shaders");
-        Path world0 = shaders.resolve("world0");
-        Path program = shaders.resolve("program");
-        Files.createDirectories(world0);
-        Files.createDirectories(program);
-        Files.createDirectories(shaders.resolve("tex"));
-        Files.writeString(world0.resolve("final.fsh"), """
-                #version 130
-                #define FRAGMENT_SHADER
-                #define DIMENSION_OVERWORLD
-                #include "/program/final.glsl"
-                """, StandardCharsets.UTF_8);
-        Files.writeString(program.resolve("final.glsl"), """
-                #if defined(FRAGMENT_SHADER) && (2 > 1)
-                uniform sampler2D colortex0;
-                uniform sampler2D noisetex;
-                #else
-                uniform sampler2D inactiveSampler;
-                #endif
-                void main() {
-                    gl_FragColor = texture2D(colortex0, vec2(0.0)) +
-                            texture2D(noisetex, vec2(0.0));
-                }
-                """, StandardCharsets.UTF_8);
-        Files.writeString(shaders.resolve("tex/noise.png"), "fixture-noise",
-                StandardCharsets.UTF_8);
+        writePreparedSources(shaders);
 
         try (PackSource.LoadResult loaded = PackSource.loadResult(root)) {
             assertEquals("world0", loaded.selectedVariantFolder(),
@@ -344,6 +323,65 @@ final class ExternalPackEvidenceTest {
                     "custom dimension fallback deviation");
         }
 
+        verifyPreparedZip(root.resolve("prepared.zip"), shaders);
+        verifyMacroNormalization(shaders);
+        verifyConverterEdges(shaders);
+    }
+
+    /** A world0 final stage that includes a root-relative program file with a conditional, and a noise texture. */
+    private static void writePreparedSources(Path shaders) throws IOException {
+        Path world0 = shaders.resolve("world0");
+        Path program = shaders.resolve("program");
+        Files.createDirectories(world0);
+        Files.createDirectories(program);
+        Files.createDirectories(shaders.resolve("tex"));
+        Files.writeString(world0.resolve("final.fsh"), """
+                #version 130
+                #define FRAGMENT_SHADER
+                #define DIMENSION_OVERWORLD
+                #include "/program/final.glsl"
+                """, StandardCharsets.UTF_8);
+        Files.writeString(program.resolve("final.glsl"), """
+                #if defined(FRAGMENT_SHADER) && (2 > 1)
+                uniform sampler2D colortex0;
+                uniform sampler2D noisetex;
+                #else
+                uniform sampler2D inactiveSampler;
+                #endif
+                void main() {
+                    gl_FragColor = texture2D(colortex0, vec2(0.0)) +
+                            texture2D(noisetex, vec2(0.0));
+                }
+                """, StandardCharsets.UTF_8);
+        Files.writeString(shaders.resolve("tex/noise.png"), "fixture-noise",
+                StandardCharsets.UTF_8);
+    }
+
+    /** The same prepared sources, zipped, expand the same way and clean up their extraction. */
+    private static void verifyPreparedZip(Path zip, Path shaders) throws IOException {
+        writeZip(zip, Map.of(
+                "ShaderPack/shaders/world0/final.fsh",
+                Files.readString(shaders.resolve("world0").resolve("final.fsh"), StandardCharsets.UTF_8),
+                "ShaderPack/shaders/program/final.glsl",
+                Files.readString(shaders.resolve("program").resolve("final.glsl"), StandardCharsets.UTF_8),
+                "ShaderPack/shaders/tex/noise.png", "fixture-noise\n"));
+        Path extracted;
+        try (PackSource.LoadResult loaded = PackSource.loadResult(zip)) {
+            extracted = loaded.shadersDir();
+            assertEquals("world0", loaded.selectedVariantFolder(),
+                    "prepared ZIP dimension selection");
+            assertTrue(loaded.programs().stream().anyMatch(
+                            programEntry -> programEntry.name().equals("final")
+                                    && programEntry.executableFragmentSource().contains("colortex0")),
+                    "prepared ZIP source was not expanded");
+            assertTrue(loaded.findNoiseTexture() != null,
+                    "prepared ZIP noise resource is missing");
+        }
+        assertTrue(!Files.exists(extracted), "prepared ZIP extraction was not cleaned up");
+    }
+
+    @Test
+    void glsl130PostConversion() {
         String simple130 = """
                 #version 130
                 noperspective in vec2 texCoord;
@@ -364,30 +402,6 @@ final class ExternalPackEvidenceTest {
                 "GLSL 130 input varying bridge is missing");
         assertTrue(converted.contains("texture(colortex0"),
                 "texture2D conversion is missing");
-
-        Path zip = root.resolve("prepared.zip");
-        writeZip(zip, Map.of(
-                "ShaderPack/shaders/world0/final.fsh",
-                Files.readString(world0.resolve("final.fsh"), StandardCharsets.UTF_8),
-                "ShaderPack/shaders/program/final.glsl",
-                Files.readString(program.resolve("final.glsl"), StandardCharsets.UTF_8),
-                "ShaderPack/shaders/tex/noise.png", "fixture-noise\n"));
-        Path extracted;
-        try (PackSource.LoadResult loaded = PackSource.loadResult(zip)) {
-            extracted = loaded.shadersDir();
-            assertEquals("world0", loaded.selectedVariantFolder(),
-                    "prepared ZIP dimension selection");
-            assertTrue(loaded.programs().stream().anyMatch(
-                            programEntry -> programEntry.name().equals("final")
-                                    && programEntry.executableFragmentSource().contains("colortex0")),
-                    "prepared ZIP source was not expanded");
-            assertTrue(loaded.findNoiseTexture() != null,
-                    "prepared ZIP noise resource is missing");
-        }
-        assertTrue(!Files.exists(extracted), "prepared ZIP extraction was not cleaned up");
-
-        verifyMacroNormalization(shaders);
-        verifyConverterEdges(shaders);
     }
 
     private static void verifyMacroNormalization(Path shaders) throws IOException {
