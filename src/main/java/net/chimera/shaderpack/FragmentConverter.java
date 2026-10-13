@@ -183,109 +183,124 @@ public final class FragmentConverter {
     }
 
     static String convertFragment(FragmentConversionRequest request) {
-        String source = request.source();
-        Path sourceFile = request.sourceFile();
-        boolean geometryStage = request.geometryStage();
-        int[] geometrySamplerSlots = request.geometrySamplerSlots();
-        LegacyGlslConverter.TerrainVaryingLayout terrainLayout = request.terrainLayout();
-        UniformRegistry.ProgramInterface interfacePlan = request.interfacePlan();
-        PostTargetPlan targetPlan = request.targetPlan();
-        GeometryOutputPlan geometryOutputPlan = request.geometryOutputPlan();
-        Map<String, String> packConstants = request.packConstants();
-        PostVertexBridge.PostVaryingLayout postVaryingLayout = request.postVaryingLayout();
-        Set<String> atlasSamplers = request.atlasSamplers();
-        PackAlphaTestPlan alphaTestPlan = request.alphaTestPlan();
         try {
-            boolean geometryInterface = interfacePlan != null
-                    && (interfacePlan.stage() == UniformRegistry.Stage.GEOMETRY
-                    || interfacePlan.stage().shadowPass()
-                    || interfacePlan.stage() == UniformRegistry.Stage.TRANSLUCENT
-                    || interfacePlan.stage() == UniformRegistry.Stage.ENTITY
-                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
-                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
-                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE
-                    || interfacePlan.stage() == UniformRegistry.Stage.SKY
-                    || interfacePlan.stage() == UniformRegistry.Stage.CLOUD);
-            if (interfacePlan == null || !interfacePlan.executable()
-                    || geometryInterface != geometryStage) {
+            return new FragmentConversion(request).convert();
+        } catch (Exception e) {
+            // The planner reports POST_CONVERTER_UNSUPPORTED; the cause belongs in the log.
+            LoggerFactory.getLogger("chimera").warn(
+                    "[chimera] fragment conversion failed: {}", e.toString());
+            return null;
+        }
+    }
+
+    /** One fragment stage's conversion: the request, and its source as each step rewrites it. */
+    private static final class FragmentConversion {
+        private final FragmentConversionRequest request;
+        private final UniformRegistry.ProgramInterface interfacePlan;
+        private final UniformRegistry.Stage stage;
+        private final boolean geometryStage;
+        private String src;
+        /** A world stage authored for 450 and later keeps its own version line and layout. */
+        private boolean modern;
+
+        FragmentConversion(FragmentConversionRequest request) {
+            this.request = request;
+            this.interfacePlan = request.interfacePlan();
+            this.geometryStage = request.geometryStage();
+            boolean geometryInterface = interfacePlan != null && interfacePlan.stage() != UniformRegistry.Stage.POST;
+            if (interfacePlan == null || !interfacePlan.executable() || geometryInterface != geometryStage) {
                 throw new IllegalArgumentException("pack interface is outside the executable contract");
             }
-            if (targetPlan != null && (geometryStage || interfacePlan.stage() != UniformRegistry.Stage.POST
+            this.stage = interfacePlan.stage();
+            PostTargetPlan targetPlan = request.targetPlan();
+            if (targetPlan != null && (geometryStage || stage != UniformRegistry.Stage.POST
                     || !targetPlan.executable())) {
                 throw new IllegalArgumentException("post target plan is outside the executable contract");
             }
+            GeometryOutputPlan geometryOutputPlan = request.geometryOutputPlan();
             if (geometryOutputPlan != null && (!geometryStage || !geometryOutputPlan.executable())) {
                 throw new IllegalArgumentException("geometry output plan is outside the executable contract");
             }
-            PackAlphaTestPlan alpha = alphaTestPlan;
-            String src = source;
-            if (src == null) {
+            if (request.source() == null) {
                 throw new IllegalArgumentException("pack fragment source is missing");
             }
-            src = LegacyGlslConverter.prepareSource(src, sourceFile, false);
+        }
+
+        String convert() {
+            prepare();
+            rewriteDeclarations();
+            bindSamplers();
+            String outputDeclarations = rewriteOutputs();
+            String terrainHostInstance = appendAlphaRejection();
+            return assemble(outputDeclarations, uniformBlock(terrainHostInstance));
+        }
+
+        /** Inlines includes, drops unreachable functions and settles the version line. */
+        private void prepare() {
+            src = LegacyGlslConverter.prepareSource(request.source(), request.sourceFile(), false);
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(src);
             if (!usage.successful()) {
                 throw new IllegalArgumentException(usage.deviations().toString());
             }
             src = GlslTokenRewriter.removeUnreachableFunctions(src, usage);
-
-            boolean modern = false;
             if (!geometryStage) {
                 PostVertexBridge.validatePostVersion(src);
                 src = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
-            } else {
-                GlslVersion version = GlslVersion.first(src);
-                modern = (version != null && version.number() >= 450)
-                        || (interfacePlan.stage().shadowPass()
-                        && TerrainVertexBridge.MODERN_TERRAIN_DECL.matcher(src).find());
-                // One version line for Vulkan, where an authored profile means nothing.
-                src = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
-                if (modern) {
-                    src = "#version 460\n" + src;
-                }
+                return;
             }
+            GlslVersion version = GlslVersion.first(src);
+            modern = (version != null && version.number() >= 450)
+                    || (stage.shadowPass() && TerrainVertexBridge.MODERN_TERRAIN_DECL.matcher(src).find());
+            // One version line for Vulkan, where an authored profile means nothing.
+            src = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
+            if (modern) {
+                src = "#version 460\n" + src;
+            }
+        }
 
+        /** Drops what the host serves (metadata constants, uniforms, entity ids) and maps the varyings. */
+        private void rewriteDeclarations() {
+            Map<String, String> packConstants = request.packConstants();
             src = LegacyGlslConverter.removePackMetadataConstants(src);
             src = LegacyGlslConverter.stripUnusedConsumedConsts(src, packConstants);
             src = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
-            if (interfacePlan.stage().perVertexEntityIdentity()) {
+            if (stage.perVertexEntityIdentity()) {
                 src = EntityVertexBridge.removeEntityIdDeclarations(src, interfacePlan);
-                src = EntityVertexBridge.replaceEntityIdReferences(src, terrainLayout);
+                src = EntityVertexBridge.replaceEntityIdReferences(src, request.terrainLayout());
             }
-            if (interfacePlan.stage() == UniformRegistry.Stage.ENTITY
-                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
-                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
-                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE) {
+            if (entityStage(stage)) {
                 src = rewriteElytraFlyingBool(src, interfacePlan);
             }
-            if (geometryStage && modern && geometryOutputPlan == null
-                    && !interfacePlan.stage().shadowPass()) {
+            if (geometryStage && modern && request.geometryOutputPlan() == null && !stage.shadowPass()) {
                 src = convertModernGeometryOutputs(src);
             }
-            src = LegacyGlslConverter.convertVaryings(src, geometryStage, terrainLayout, postVaryingLayout,
-                    interfacePlan.stage());
+            src = LegacyGlslConverter.convertVaryings(src, geometryStage, request.terrainLayout(),
+                    request.postVaryingLayout(), stage);
             src = LegacyGlslConverter.injectPackConstants(src, packConstants);
+        }
 
-            // Emit only the projected stage resources. Descriptor positions still
-            // come from the canonical program layout, never the filtered stage order.
+        /**
+         * Rewrites texture calls and binds each sampler to its descriptor. Only the projected
+         * stage resources are emitted; descriptor positions still come from the canonical program
+         * layout, never the filtered stage order.
+         */
+        private void bindSamplers() {
             List<UniformRegistry.SamplerBinding> samplers = interfacePlan.samplers();
             int bindingBase = geometryStage
                     ? geometrySamplerBindingBase(interfacePlan)
                     : (interfacePlan.executableUniforms().isEmpty() ? 0 : 1);
             if (geometryStage) {
-                // GLSL 460: 'texture' is the sampling function name, so a pack
-                // sampler declared as 'uniform sampler2D texture;' (the OptiFine
-                // atlas convention) is renamed uniformly. Runs BEFORE
-                // convertTextureCalls so the function-name rewrite below
-                // creates texture(chimeraTexture, ...) instead of renaming
-                // the function into a variable call.
+                // GLSL 460: 'texture' is the sampling function name, so a pack sampler declared as
+                // 'uniform sampler2D texture;' (the OptiFine atlas convention) is renamed uniformly.
+                // Runs BEFORE convertTextureCalls so the function-name rewrite below creates
+                // texture(chimeraTexture, ...) instead of renaming the function into a variable call.
                 src = GlslTokenRewriter.renameSamplerIdentifier(src, "texture", "chimeraTexture");
             }
             src = LegacyGlslConverter.convertTextureCalls(src);
-            if (terrainContract(interfacePlan.stage())) {
+            if (terrainContract(stage)) {
                 Set<String> emittedAtlasSamplers = new HashSet<>();
-                for (String name : atlasSamplers) {
+                for (String name : request.atlasSamplers()) {
                     emittedAtlasSamplers.add(name.equals("texture") ? "chimeraTexture" : name);
                 }
                 src = GlslTokenRewriter.rewriteTerrainAtlasSamples(src, emittedAtlasSamplers);
@@ -300,11 +315,11 @@ public final class FragmentConverter {
                 samplerTypes.put(sampler.name(), sampler.glslType());
             }
             src = GlslTokenRewriter.rewriteShadowCalls(src, samplerTypes);
-            for (int i = 0; i < samplers.size(); i++) {
-                String name = samplers.get(i).name();
+            for (UniformRegistry.SamplerBinding sampler : samplers) {
+                String name = sampler.name();
                 String srcName = geometryStage && name.equals("texture") ? "chimeraTexture" : name;
                 int binding = geometryStage
-                        ? geometrySamplerBinding(name, geometrySamplerSlots, interfacePlan)
+                        ? geometrySamplerBinding(name, request.geometrySamplerSlots(), interfacePlan)
                         : bindingBase + interfacePlan.samplerIndex(name);
                 if (binding < bindingBase) {
                     throw new IllegalArgumentException("sampler is missing from the generated config: " + name);
@@ -313,107 +328,120 @@ public final class FragmentConverter {
                     src = rewriteSamplerDeclaration(src, srcName, binding);
                 }
             }
+        }
 
-            String outDecl = null;
-            if (targetPlan != null) {
-                src = convertPostOutputs(src, targetPlan);
-                outDecl = postOutputDeclarations(targetPlan);
-            } else if (geometryOutputPlan != null) {
-                src = convertGeometryOutputs(src, geometryOutputPlan);
-                outDecl = geometryOutputDeclarations(geometryOutputPlan);
-            } else if (interfacePlan.stage().shadowPass()) {
-                PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", src).plan();
-                if (!shadowOutputs.executable() || shadowOutputs.targetSlots().stream()
-                        .anyMatch(target -> target < 0 || target > 1)) {
-                    throw new IllegalArgumentException("SHADOW_OUTPUT_TARGET_UNSUPPORTED");
-                }
-                src = convertPostOutputs(src, shadowOutputs);
-                Map<String, String> outputs = new TreeMap<>();
-                // Each shadow colour keeps the type the pack writes (Photon writes a vec3), as
-                // post outputs do; a colour the pack does not write is declared vec4.
-                String[] types = {"vec4", "vec4"};
-                for (int location : shadowOutputs.outputLocations()) {
-                    int target = shadowOutputs.targetForOutput(location);
-                    outputs.put("chimeraFragColor" + location, "chimeraShadowColor" + target);
-                    types[target] = shadowOutputs.outputType(location);
-                }
-                src = GlslTokenRewriter.replaceIdentifiers(src, outputs);
-                outDecl = "layout(location = 0) out " + types[0] + " chimeraShadowColor0;\n"
-                        + "layout(location = 1) out " + types[1] + " chimeraShadowColor1;"
-                        + (shadowOutputs.discardedOutputs().isEmpty() ? ""
-                        : "\n" + discardedOutputDeclarations(shadowOutputs).stripTrailing());
-            } else if (src.contains("gl_FragColor") || src.contains("gl_FragData")) {
+        /** Routes the authored outputs to their attachments; returns their declarations, or null. */
+        private String rewriteOutputs() {
+            if (request.targetPlan() != null) {
+                src = convertPostOutputs(src, request.targetPlan());
+                return postOutputDeclarations(request.targetPlan());
+            }
+            if (request.geometryOutputPlan() != null) {
+                src = convertGeometryOutputs(src, request.geometryOutputPlan());
+                return geometryOutputDeclarations(request.geometryOutputPlan());
+            }
+            if (stage.shadowPass()) {
+                return rewriteShadowOutputs();
+            }
+            if (src.contains("gl_FragColor") || src.contains("gl_FragData")) {
                 src = GlslTokenRewriter.rewriteSingleOutput(src);
-                // Targets beyond 0 are consumed by nothing in M4's single-attachment passes.
+                // A single-attachment pass consumes nothing beyond target 0.
                 src = src.replaceAll("gl_FragData\\s*\\[\\s*[1-9][0-9]*\\s*\\]\\s*=\\s*[^;]+;\\s*", "");
-                outDecl = "layout(location = 0) out vec4 fragColor;";
+                return "layout(location = 0) out vec4 fragColor;";
             }
+            return null;
+        }
 
-            String terrainHostInstance = null;
-            if (geometryStage && terrainContract(interfacePlan.stage())
-                    && geometryOutputPlan != null && alpha.active()) {
-                terrainHostInstance = alpha.needsHostThreshold()
-                        ? GlslTokenRewriter.uniqueIdentifier(src, "chimeraTerrainHost") : null;
-                String rejection = alpha.rejection(geometryOutputPlan.locationZeroOutputName(),
-                        terrainHostInstance);
-                if (!rejection.isBlank()) {
-                    src = GlslTokenRewriter.appendMainEpilogue(src, rejection);
-                }
+        /**
+         * Shadow colours keep the type the pack writes (Photon writes a vec3), as post outputs
+         * do; a colour the pack does not write is declared vec4.
+         */
+        private String rewriteShadowOutputs() {
+            PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", src).plan();
+            if (!shadowOutputs.executable() || shadowOutputs.targetSlots().stream()
+                    .anyMatch(target -> target < 0 || target > 1)) {
+                throw new IllegalArgumentException("SHADOW_OUTPUT_TARGET_UNSUPPORTED");
             }
+            src = convertPostOutputs(src, shadowOutputs);
+            Map<String, String> outputs = new TreeMap<>();
+            String[] types = {"vec4", "vec4"};
+            for (int location : shadowOutputs.outputLocations()) {
+                int target = shadowOutputs.targetForOutput(location);
+                outputs.put("chimeraFragColor" + location, "chimeraShadowColor" + target);
+                types[target] = shadowOutputs.outputType(location);
+            }
+            src = GlslTokenRewriter.replaceIdentifiers(src, outputs);
+            return "layout(location = 0) out " + types[0] + " chimeraShadowColor0;\n"
+                    + "layout(location = 1) out " + types[1] + " chimeraShadowColor1;"
+                    + (shadowOutputs.discardedOutputs().isEmpty() ? ""
+                    : "\n" + discardedOutputDeclarations(shadowOutputs).stripTrailing());
+        }
 
-            // GLSL requires global declarations to precede their first use;
-            // an output declared at the end of the file is a forward reference
-            // and glslang rejects it ("'fragColor' : undeclared identifier").
-            // Emit the declaration directly after the version line.
-            String uniformBlock;
-            if (interfacePlan.stage().shadowPass()
-                    && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = generatedShadowUniformBlock(interfacePlan.executableUniforms(),
-                        shadowUniformBinding(interfacePlan.stage()));
-                src = qualifyShadowUniformReferences(src, interfacePlan.executableUniforms());
-            } else if (geometryStage && terrainContract(interfacePlan.stage())) {
+        /**
+         * Appends the pack's alpha test to a routed terrain stage; returns the host block
+         * instance its threshold reads, or null when it reads none.
+         */
+        private String appendAlphaRejection() {
+            PackAlphaTestPlan alpha = request.alphaTestPlan();
+            GeometryOutputPlan geometryOutputPlan = request.geometryOutputPlan();
+            if (!geometryStage || !terrainContract(stage) || geometryOutputPlan == null || !alpha.active()) {
+                return null;
+            }
+            String terrainHostInstance = alpha.needsHostThreshold()
+                    ? GlslTokenRewriter.uniqueIdentifier(src, "chimeraTerrainHost") : null;
+            String rejection = alpha.rejection(geometryOutputPlan.locationZeroOutputName(), terrainHostInstance);
+            if (!rejection.isBlank()) {
+                src = GlslTokenRewriter.appendMainEpilogue(src, rejection);
+            }
+            return terrainHostInstance;
+        }
+
+        /** The generated uniform block of the stage's family, empty when it reads no uniforms. */
+        private String uniformBlock(String terrainHostInstance) {
+            List<UniformRegistry.UniformDeclaration> uniforms = interfacePlan.executableUniforms();
+            if (stage.shadowPass() && !uniforms.isEmpty()) {
+                src = qualifyShadowUniformReferences(src, uniforms);
+                return generatedShadowUniformBlock(uniforms, shadowUniformBinding(stage));
+            }
+            if (geometryStage && terrainContract(stage)) {
                 StringBuilder geometryBlocks = new StringBuilder();
                 if (terrainHostInstance != null) {
                     geometryBlocks.append(terrainHostUniformBlock(src, terrainHostInstance));
                 }
-                if (!interfacePlan.executableUniforms().isEmpty()) {
-                    geometryBlocks.append(generatedGeometryUniformBlock(interfacePlan.executableUniforms()));
+                if (!uniforms.isEmpty()) {
+                    geometryBlocks.append(generatedGeometryUniformBlock(uniforms));
                 }
-                uniformBlock = geometryBlocks.toString();
-            } else if ((interfacePlan.stage() == UniformRegistry.Stage.ENTITY
-                    || interfacePlan.stage() == UniformRegistry.Stage.BLOCK
-                    || interfacePlan.stage() == UniformRegistry.Stage.HAND
-                    || interfacePlan.stage() == UniformRegistry.Stage.PARTICLE)
-                    && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = entityUniformBlock(interfacePlan.executableUniforms());
-            } else if ((interfacePlan.stage() == UniformRegistry.Stage.SKY
-                    || interfacePlan.stage() == UniformRegistry.Stage.CLOUD)
-                    && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = entityUniformBlock(interfacePlan.executableUniforms());
-            } else if (!geometryStage && !interfacePlan.executableUniforms().isEmpty()) {
-                uniformBlock = generatedUniformBlock(interfacePlan.executableUniforms(), src);
-            } else {
-                uniformBlock = "";
+                return geometryBlocks.toString();
             }
-            String chimeraVaryingDeclaration = interfacePlan.stage().perVertexEntityIdentity()
-                    ? chimeraFragmentVaryings(terrainLayout) : "";
-            String declarations = chimeraVaryingDeclaration
-                    + (outDecl != null ? outDecl + "\n" : "") + uniformBlock;
-            if (interfacePlan.stage().shadowPass()) {
+            if ((entityStage(stage) || stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD)
+                    && !uniforms.isEmpty()) {
+                return entityUniformBlock(uniforms);
+            }
+            return !geometryStage && !uniforms.isEmpty() ? generatedUniformBlock(uniforms, src) : "";
+        }
+
+        /**
+         * GLSL requires global declarations to precede their first use; an output declared at the
+         * end of the file is a forward reference glslang rejects ("'fragColor' : undeclared
+         * identifier"). The declarations go directly after the version line.
+         */
+        private String assemble(String outputDeclarations, String uniformBlock) {
+            String declarations = (stage.perVertexEntityIdentity()
+                    ? chimeraFragmentVaryings(request.terrainLayout()) : "")
+                    + (outputDeclarations != null ? outputDeclarations + "\n" : "") + uniformBlock;
+            if (stage.shadowPass()) {
                 declarations = SHADOW_RENDER_STAGE_DEFINES + declarations;
             }
             if (!geometryStage || !modern) {
-                src = "#version 460\n" + declarations + src;
-            } else if (!declarations.isEmpty()) {
-                src = LegacyGlslConverter.insertAfterFirstLine(src, declarations);
+                return "#version 460\n" + declarations + src;
             }
-            return src;
-        } catch (Exception e) {
-            // The planner reports POST_CONVERTER_UNSUPPORTED; the cause belongs in the log.
-            LoggerFactory.getLogger("chimera").warn(
-                    "[chimera] fragment conversion failed: {}", e.toString());
-            return null;
+            return declarations.isEmpty() ? src : LegacyGlslConverter.insertAfterFirstLine(src, declarations);
         }
+    }
+
+    private static boolean entityStage(UniformRegistry.Stage stage) {
+        return stage == UniformRegistry.Stage.ENTITY || stage == UniformRegistry.Stage.BLOCK
+                || stage == UniformRegistry.Stage.HAND || stage == UniformRegistry.Stage.PARTICLE;
     }
 
     static String convertPostOutputs(String source, PostTargetPlan targetPlan) {
