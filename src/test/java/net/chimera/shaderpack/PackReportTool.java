@@ -77,7 +77,7 @@ public final class PackReportTool {
     }
 
     private static void compileExecutablePrograms(Path pack, PackProbe.Analysis analysis) {
-        PackCompileCheck.Result result = PackCompileCheck.run(pack, analysis);
+        PackCompileTest.Result result = PackCompileTest.run(pack, analysis);
         System.out.printf("  -- shader compile: %d programs compile, %d failures%n",
                 result.compiled(), result.failures().size());
         result.failures().forEach(failure -> System.out.println("  COMPILE_FAILED " + failure));

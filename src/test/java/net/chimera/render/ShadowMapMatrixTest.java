@@ -1,0 +1,210 @@
+package net.chimera.render;
+
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
+import org.joml.Vector4f;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** Pure matrix and snapshot-state checks for the M8.7 pack shadow contract. */
+final class ShadowMapMatrixTest {
+    @Test
+    void projectionRanges() {
+        float near = ChimeraShadowMap.SHADOW_NEAR;
+        float far = ChimeraShadowMap.SHADOW_FAR;
+        Matrix4f legacy = new Matrix4f();
+        Matrix4f host = new Matrix4f();
+        ChimeraShadowMap.createLightProjection(legacy, 256.0f, false);
+        ChimeraShadowMap.createLightProjection(host, 256.0f, true);
+        // Iris 1.10.7 shadowProjection for shadowDistance 256, read from a
+        // RenderDoc capture of BSL: 1/256 across, -2/256.05 and -0.218512 in depth.
+        assertNear(1.0f / 256.0f, legacy.m00(), "Iris shadow half extent is shadowDistance");
+        assertNear(-0.00781097f, legacy.m22(), "Iris shadow depth scale");
+        assertNear(-0.21851201f, legacy.m32(), "Iris shadow depth offset");
+        assertNear(-1.0f, legacy.transformPosition(new Vector3f(0.0f, 0.0f, -near)).z,
+                "legacy projection near plane");
+        assertNear(1.0f, legacy.transformPosition(new Vector3f(0.0f, 0.0f, -far)).z,
+                "legacy projection far plane");
+        assertNear(0.0f, host.transformPosition(new Vector3f(0.0f, 0.0f, -near)).z,
+                "host forward-Z near plane");
+        assertNear(1.0f, host.transformPosition(new Vector3f(0.0f, 0.0f, -far)).z,
+                "host forward-Z far plane");
+    }
+
+    /** Iris's ShadowMatrices baseline rotation, built independently of CelestialSnapshot. */
+    private static Matrix4f irisRotation(float sunPathRotation, float skyAngleDegrees) {
+        return new Matrix4f().rotateX((float) Math.toRadians(90.0))
+                .rotateZ((float) Math.toRadians(-skyAngleDegrees))
+                .rotateX((float) Math.toRadians(sunPathRotation));
+    }
+
+    @Test
+    void packMvpInverseCancellation() {
+        Matrix4f rotation = irisRotation(-40.0f, 20.0f);
+        Vector3f light = new Matrix4f(rotation).invert().transformDirection(new Vector3f(0.0f, 0.0f, 1.0f));
+        ChimeraShadowMap map = new ChimeraShadowMap();
+        // With the default interval of 2, a camera whose coordinates leave remainder 1 needs no shift.
+        map.updateLight(rotation, 1.0, 65.0, 3.0);
+        Matrix4f view = new Matrix4f(map.getLightView());
+        Matrix4f projection = new Matrix4f(map.getPackLightProjection());
+        Matrix4f mvp = new Matrix4f(projection).mul(view);
+        Matrix4f inverseRoundTrip = new Matrix4f(view).invert()
+                .mul(new Matrix4f(projection).invert()).mul(mvp);
+        Vector3f point = new Vector3f(7.25f, -3.5f, 19.0f);
+        Vector3f reconstructed = inverseRoundTrip.transformPosition(new Vector3f(point));
+        assertVectorNear(point, reconstructed, "inverse shadow V/P cancellation");
+        // Like Iris's shadowModelView: no translation, and view z is the
+        // distance toward the sun, so casters above a receiver are nearer.
+        assertVectorNear(new Vector3f(), view.getTranslation(new Vector3f()), "light view translation");
+        assertVectorNear(new Vector3f(0.0f, 0.0f, 1.0f), view.transformDirection(new Vector3f(light)),
+                "light view depth axis");
+    }
+
+    /**
+     * Iris snaps the shadow view to a grid so texels stay put in the world. Within one cell a
+     * camera move must leave every world point at the same shadow-space position; that is what
+     * keeps a glass pane's thin frame shadow from sliding and changing width as the player walks.
+     */
+    @Test
+    void gridSnapping() {
+        Matrix4f rotation = irisRotation(-40.0f, 35.0f);
+        double[][] sameCell = {{10.3, 64.2, -5.7}, {10.9, 64.9, -5.1}, {10.05, 64.6, -5.95}};
+        double worldX = 21.4, worldY = 70.1, worldZ = -12.6;
+        Vector3f reference = null;
+        for (double[] camera : sameCell) {
+            ChimeraShadowMap map = new ChimeraShadowMap();
+            map.updateLight(rotation, camera[0], camera[1], camera[2]);
+            Vector3f shadowSpace = new Matrix4f(map.getLightView()).transformPosition(new Vector3f(
+                    (float) (worldX - camera[0]), (float) (worldY - camera[1]), (float) (worldZ - camera[2])));
+            if (reference == null) {
+                reference = shadowSpace;
+            } else {
+                assertVectorNear(reference, shadowSpace, "snapped shadow view moved a world point within one cell");
+            }
+        }
+        // Iris's own arithmetic, Java's truncating remainder included, for one negative camera.
+        Matrix4f expected = new Matrix4f(rotation).translate(
+                (float) (10.3 % 2.0) - 1.0f, (float) (64.2 % 2.0) - 1.0f, (float) (-5.7 % 2.0) - 1.0f);
+        ChimeraShadowMap map = new ChimeraShadowMap();
+        map.updateLight(rotation, 10.3, 64.2, -5.7);
+        assertMatrixNear(expected, map.getLightView(), "Iris snapModelViewToGrid");
+    }
+
+    @Test
+    void cameraOriginCompensation() {
+        // Large world coordinates retain sub-block motion until the final local
+        // delta is converted to float, matching the section-relative renderer.
+        double mapX = 30_000_000.25;
+        double mapY = 64.75;
+        double mapZ = -20_000_000.125;
+        double nowX = 30_000_002.25;
+        double nowY = 65.5;
+        double nowZ = -20_000_004.125;
+        double worldX = mapX + 12.25;
+        double worldY = mapY + 4.5;
+        double worldZ = mapZ - 7.75;
+
+        Matrix4f mapView = new Matrix4f().rotateY(0.63f).rotateX(-0.27f)
+                .translate(3.0f, -2.0f, 8.0f);
+        Matrix4f atMap = new Matrix4f(mapView);
+        Matrix4f atNow = ChimeraShadowMap.compensatedView(new Matrix4f(), mapView,
+                mapX, mapY, mapZ, nowX, nowY, nowZ);
+        Vector3f relativeAtMap = new Vector3f((float) (worldX - mapX),
+                (float) (worldY - mapY), (float) (worldZ - mapZ));
+        Vector3f relativeNow = new Vector3f((float) (worldX - nowX),
+                (float) (worldY - nowY), (float) (worldZ - nowZ));
+        Vector3f mapped = atMap.transformPosition(relativeAtMap);
+        Vector3f compensated = atNow.transformPosition(relativeNow);
+        assertVectorNear(mapped, compensated, "stationary world point across camera motion");
+    }
+
+    @Test
+    void snapshotPublicationAndInvalidation() {
+        ChimeraShadowMap map = new ChimeraShadowMap();
+        assertTrue(!map.hasMapSnapshot(), "new shadow map must not advertise a snapshot");
+        // init() creates image handles and sets this flag. Model that resource
+        // generation without creating Vulkan objects in this pure state test.
+        map.invalidateMapSnapshot();
+        assertTrue(map.needsInitialSamplingLayout(), "new shadow map must require a clear");
+
+        double cameraX = 128.25;
+        double cameraY = 72.0;
+        double cameraZ = -64.5;
+        map.updateLight(irisRotation(-40.0f, 30.0f), 0.0, 64.0, 0.0);
+        map.seedClearedMap(cameraX, cameraY, cameraZ);
+        assertTrue(map.hasMapSnapshot() && !map.needsInitialSamplingLayout(),
+                "cleared all-lit depth must seed the first valid snapshot");
+        assertTrue(map.mapGeneration() == 1L, "clear seed must create one map generation");
+        Matrix4f seededView = new Matrix4f(map.mapViewAt(cameraX, cameraY, cameraZ));
+
+        map.updateLight(irisRotation(-40.0f, 75.0f), 0.0, 64.0, 0.0);
+        Matrix4f beforeCommit = new Matrix4f(map.mapViewAt(cameraX, cameraY, cameraZ));
+        assertMatrixNear(seededView, beforeCommit,
+                "current sun change must not relabel the already bound map");
+        map.commitRenderedMap(cameraX, cameraY, cameraZ);
+        Matrix4f afterCommit = new Matrix4f(map.mapViewAt(cameraX, cameraY, cameraZ));
+        assertTrue(!seededView.equals(afterCommit),
+                "successful new shadow draw must publish its changed light view");
+        assertTrue(map.mapGeneration() == 2L, "successful draw must advance map generation");
+
+        map.invalidateMapSnapshot();
+        assertTrue(!map.hasMapSnapshot() && map.needsInitialSamplingLayout(),
+                "partial write must invalidate the snapshot and require reinitialization");
+        map.seedClearedMap(cameraX, cameraY, cameraZ);
+        assertTrue(map.hasMapSnapshot() && map.mapGeneration() == 3L,
+                "successful clear must reseed after invalidation");
+
+        map.invalidatePackMapSnapshot();
+        assertTrue(!map.hasMapSnapshot() && !map.needsInitialSamplingLayout(),
+                "host-produced shadow data must invalidate only the pack matrix association");
+    }
+
+    /**
+     * The fixed receiver may decode only a map the fixed caster wrote. After
+     * a pack-caster commit every receiver point lands outside the map, which
+     * chimera_terrain.fsh treats as lit; a host write restores the light MVP.
+     */
+    @Test
+    void fixedReceiverFollowsMapWriter() {
+        ChimeraShadowMap map = new ChimeraShadowMap();
+        map.updateLight(irisRotation(-40.0f, 30.0f), 0.0, 64.0, 0.0);
+        Matrix4f hostMvp = new Matrix4f(map.getHostLightProjection()).mul(map.getLightView());
+        assertMatrixNear(hostMvp, map.hostReceiverMatrix(), "host-written map uses the host light MVP");
+
+        map.commitRenderedMap(0.0, 64.0, 0.0);
+        for (Vector3f point : new Vector3f[] {new Vector3f(), new Vector3f(40f, -12f, 7f),
+                new Vector3f(-300f, 90f, 512f)}) {
+            Vector4f clip = map.hostReceiverMatrix().transform(
+                    new Vector4f(point, 1.0f));
+            float u = clip.x / clip.w * 0.5f + 0.5f;
+            assertTrue(clip.w == 1.0f && u > 1.0f, "pack-written map must read as outside for the fixed receiver");
+        }
+        map.updateLight(irisRotation(-40.0f, 75.0f), 0.0, 64.0, 0.0);
+        assertTrue(map.hostReceiverMatrix().m30() == 2.0f, "a new sun must not re-expose a pack-written map");
+
+        map.invalidatePackMapSnapshot();
+        hostMvp.set(map.getHostLightProjection()).mul(map.getLightView());
+        assertMatrixNear(hostMvp, map.hostReceiverMatrix(), "host rewrite restores the host light MVP");
+    }
+
+    private static void assertMatrixNear(Matrix4f expected, Matrix4f actual, String message) {
+        for (int row = 0; row < 4; row++) {
+            for (int column = 0; column < 4; column++) {
+                assertNear(expected.get(row, column), actual.get(row, column), message);
+            }
+        }
+    }
+
+    private static void assertVectorNear(Vector3f expected, Vector3f actual, String message) {
+        assertNear(expected.x, actual.x, message + " x");
+        assertNear(expected.y, actual.y, message + " y");
+        assertNear(expected.z, actual.z, message + " z");
+    }
+
+    private static void assertNear(float expected, float actual, String message) {
+        if (!Float.isFinite(actual) || Math.abs(expected - actual) > 1.0e-4f) {
+            throw new AssertionError(message + ": expected " + expected + ", got " + actual);
+        }
+    }
+}
