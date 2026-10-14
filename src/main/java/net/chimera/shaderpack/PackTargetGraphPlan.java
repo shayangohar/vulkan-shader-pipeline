@@ -242,13 +242,14 @@ public final class PackTargetGraphPlan {
                 doubleTargets.put(target, true);
             }
         }
-        applyFlips(inputs.config(), post, doubleTargets, stepDeviations);
+        StepFlips flips = applyFlips(inputs.config(), post, preliminary, doubleTargets, stepDeviations);
         Map<Integer, Integer> readSides = new TreeMap<>();
         Map<Integer, Integer> writeSides = new TreeMap<>();
         for (int target : reads) readSides.put(target, 0);
         for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
         return new TargetStep(post.programName(), reads, writes, post.outputFormats(), readSides, writeSides,
-                mipmapTargets, extent.width(), extent.height(), post.isFinal(), executable, stepDeviations);
+                mipmapTargets, extent.width(), extent.height(), post.isFinal(), executable, stepDeviations,
+                flips.before(), flips.after());
     }
 
     /** The color targets a post program samples, ascending. */
@@ -308,20 +309,28 @@ public final class PackTargetGraphPlan {
         }
     }
 
+    /** The allocated targets a step's pre-flip and flip directives flip before and after it runs. */
+    private record StepFlips(List<Integer> before, List<Integer> after) {}
+
     /** Double-buffers each target a pre-flip or flip directive names for this pass, recording each. */
-    private static void applyFlips(PackConfig.PackConfigData config, PostTargetPlan post,
-                                   Map<Integer, Boolean> doubleTargets, List<String> stepDeviations) {
+    private static StepFlips applyFlips(PackConfig.PackConfigData config, PostTargetPlan post,
+                                        Map<Integer, TargetSpec> preliminary, Map<Integer, Boolean> doubleTargets,
+                                        List<String> stepDeviations) {
         Map<String, List<Integer>> preFlips = config == null ? Map.of() : config.preFlips();
         Map<String, List<Integer>> flips = config == null ? Map.of() : config.flips();
-        for (int target : preFlips.getOrDefault(post.isFinal() ? "final_pre" : post.programName() + "_pre",
-                List.of())) {
+        List<Integer> before = preFlips.getOrDefault(post.isFinal() ? "final_pre" : post.programName() + "_pre",
+                List.of()).stream().filter(preliminary::containsKey).toList();
+        List<Integer> after = flips.getOrDefault(post.programName(), List.of()).stream()
+                .filter(preliminary::containsKey).toList();
+        for (int target : before) {
             doubleTargets.put(target, true);
             stepDeviations.add("POST_TARGET_FLIP_PRE_APPLIED:" + post.programName() + ":" + target);
         }
-        for (int target : flips.getOrDefault(post.programName(), List.of())) {
+        for (int target : after) {
             doubleTargets.put(target, true);
             stepDeviations.add("POST_TARGET_FLIP_APPLIED:" + post.programName() + ":" + target);
         }
+        return new StepFlips(before, after);
     }
 
     /**

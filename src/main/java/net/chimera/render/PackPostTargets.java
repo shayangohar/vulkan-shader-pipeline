@@ -549,6 +549,7 @@ public final class PackPostTargets {
             throw new IllegalStateException("post step is not executable: " + post.name());
         }
         pendingWriteSideReset();
+        flip(step.flipsBefore());
         this.currentStep = step;
         this.currentPlan = plan;
         int attachmentCount = plan.targetSlots().size();
@@ -663,6 +664,7 @@ public final class PackPostTargets {
                         this.temporal.stageWrite(target);
                     }
                 }
+                if (this.currentStep != null) flip(this.currentStep.flipsAfter());
             }
             clearPendingState();
             finishRendererState();
@@ -810,9 +812,35 @@ public final class PackPostTargets {
         return this.images[safeSide][target];
     }
 
+    /**
+     * Iris BufferFlipper.flip for explicit flip directives: each target's other image, the one
+     * written before its current one, becomes current for later passes and the next frame. After
+     * a pass that wrote the target this restores the pre-pass image, as Iris's write flip and the
+     * explicit flip cancel. Photon's flip.composite1.colortex6 hands deferred3 back its AO
+     * history after composite wrote fog transmittance there. Target 0 is the HDR identity source.
+     */
+    private void flip(List<Integer> targets) {
+        for (int target : targets) {
+            if (target <= 0 || target >= TARGET_COUNT || !this.doubled[target]) continue;
+            swapSides(this.activeSide, this.previousSide, target);
+            if (this.valid[target]) this.sourceImages[target] = imageFor(target, this.activeSide[target]);
+        }
+    }
+
+    /** Makes a target's previous side current, and its current side previous. */
+    static void swapSides(int[] activeSide, int[] previousSide, int target) {
+        int side = activeSide[target];
+        activeSide[target] = previousSide[target];
+        previousSide[target] = side;
+    }
+
+    /** The side a write to a target with {@code sideCount} sides goes to after {@code activeSide}. */
+    static int nextSide(int activeSide, int sideCount) {
+        return sideCount <= 1 ? 0 : Math.floorMod(activeSide + 1, sideCount);
+    }
+
     private int nextWriteSide(int target) {
-        int count = this.sideCounts[target];
-        return count <= 1 ? 0 : Math.floorMod(this.activeSide[target] + 1, count);
+        return nextSide(this.activeSide[target], this.sideCounts[target]);
     }
 
     private void pendingWriteSideReset() {

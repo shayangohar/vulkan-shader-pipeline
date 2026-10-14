@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Which pack post targets a pass may sample, and which persist across frames. */
@@ -149,6 +150,60 @@ final class PackPostTargetsTest {
                 "clear=false read-before-write target must persist across frames");
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(retainedGraph.target(2), retainedGraph.steps()),
                 "clear=false feedback target must seed its first frame");
+    }
+
+    /**
+     * Iris's explicit flip, as Photon uses flip.composite1.colortex6: deferred3 keeps AO history
+     * in colortex6, composite then writes fog transmittance there for composite1, and the flip
+     * after composite1 makes the AO image current again for the next frame's deferred3.
+     */
+    @Test
+    void explicitFlipRestoresHistory(@TempDir Path root) throws Exception {
+        writeFlipFixture(root);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(2), graph.step("composite2").flipsAfter(), "the flip directive did not reach its step");
+        assertEquals(List.of(), graph.step("composite").flipsAfter(), "a step without a directive flipped");
+        assertTrue(graph.target(2).doubled() && graph.target(2).requiresHistory(),
+                "the flipped history target must keep three sides");
+
+        int sides = 3;
+        int[] active = new int[3];
+        int[] previous = new int[3];
+        int history = active[2];
+        for (int frame = 0; frame < 4; frame++) {
+            assertEquals(history, active[2], "frame " + frame + ": the AO pass must read last frame's AO");
+            previous[2] = active[2];
+            active[2] = PackPostTargets.nextSide(active[2], sides);
+            int ambient = active[2];
+            previous[2] = active[2];
+            active[2] = PackPostTargets.nextSide(active[2], sides);
+            assertTrue(active[2] != ambient, "the fog write must not overwrite this frame's AO");
+            PackPostTargets.swapSides(active, previous, 2);
+            assertEquals(ambient, active[2], "the flip must make this frame's AO current");
+            history = ambient;
+        }
+    }
+
+    private static void writeFlipFixture(Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String header = "#version 120\nuniform sampler2D colortex2;\nvarying vec2 texcoord;\n";
+        Files.writeString(shaders.resolve("composite.fsh"), header + "const bool colortex2Clear = false;\n"
+                + "/* RENDERTARGETS: 2 */\nvoid main() {\n"
+                + "    gl_FragColor = texture2D(colortex2, texcoord) * 0.5;\n}\n");
+        Files.writeString(shaders.resolve("composite1.fsh"),
+                "#version 120\n/* RENDERTARGETS: 2 */\nvoid main() {\n    gl_FragColor = vec4(1.0);\n}\n");
+        Files.writeString(shaders.resolve("composite2.fsh"), header
+                + "/* RENDERTARGETS: 0 */\nvoid main() {\n    gl_FragColor = texture2D(colortex2, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "flip.composite2.colortex2 = true\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"},"
+                        + "{\"name\":\"composite1\",\"fragment\":\"composite1.fsh\"},"
+                        + "{\"name\":\"composite2\",\"fragment\":\"composite2.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
     }
 
     private static void writeFeedbackFixture(Path root, boolean clear) throws Exception {
