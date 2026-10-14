@@ -21,6 +21,7 @@ import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackSource;
+import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.SelectorNamespace;
 import net.chimera.shaderpack.TerrainMaterialPlan;
@@ -192,6 +193,8 @@ final class PackSessionLifecycle {
         pass.pipelines.destroy();
         if (pass.packShadowCompute != null) pass.packShadowCompute.close();
         pass.packShadowCompute = null;
+        if (pass.packPassComputes != null) pass.packPassComputes.close();
+        pass.packPassComputes = null;
         if (pass.packStorageBufferOwner != null) {
             LOGGER.info("[chimera] storage buffers: cleanup planned={} allocated={} initialized={} failed={}",
                     pass.packStorageBufferOwner.plannedBytes(),
@@ -590,6 +593,8 @@ final class PackSessionLifecycle {
                 pass.packPlan.settingsPreprocessorDefines(),
                 pass.packPlan.settingsOverriddenNames());
         recordShadowComputeDisposition();
+        pass.packPassComputes = PackPassComputes.load(PassComputePlan.build(pass.packPlan, shadersDir),
+                pass.packResourceOwner);
     }
 
     /** Records whether shadowcomp installed natively, or why it fell back, in the conformance report. */

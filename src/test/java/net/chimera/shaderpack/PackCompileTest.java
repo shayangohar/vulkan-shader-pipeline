@@ -38,7 +38,11 @@ import java.util.TreeSet;
  */
 @Tag("packs")
 final class PackCompileTest {
-    record Result(int compiled, List<String> failures) {}
+    record Result(int compiled, List<String> failures, List<String> passComputes) {
+        Result(int compiled, List<String> failures) {
+            this(compiled, failures, List.of());
+        }
+    }
 
     static Result run(Path pack, PackProbe.Analysis analysis) {
         if (analysis.plan() == null) return new Result(0, List.of());
@@ -64,7 +68,39 @@ final class PackCompileTest {
         } else if (hasShadowCompute(analysis.plan())) {
             compiled++;
         }
-        return new Result(compiled, List.copyOf(failures));
+        List<String> passComputes = new ArrayList<>();
+        compiled += compilePassComputes(pack, analysis.plan(), failures, passComputes);
+        return new Result(compiled, List.copyOf(failures), List.copyOf(passComputes));
+    }
+
+    /**
+     * Translates every pass compute the plan runs exactly as the runtime does, compiles it, and
+     * checks its value block; returns how many compiled. Photon's deferred4_a writes the sky
+     * light the deferred pass reads.
+     */
+    static int compilePassComputes(Path pack, PackPlan plan, List<String> failures, List<String> compiledNames) {
+        int compiled = 0;
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
+            for (var compute : PassComputePlan.build(plan, loaded.shadersDir()).computes()) {
+                if (!compute.supported()) continue;
+                Map<String, Integer> written = new LinkedHashMap<>();
+                for (var value : compute.values()) written.put(value.name(), value.offset());
+                String error = compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, written);
+                if (compute.name().equals(System.getProperty("chimera.packCompile.dumpProgram"))) {
+                    dump(pack, compute.name() + ".csh", compute.source());
+                }
+                if (error == null) {
+                    compiled++;
+                    compiledNames.add(compute.name());
+                } else {
+                    failures.add(compute.name() + ": " + error + " ["
+                            + dump(pack, compute.name() + ".csh", compute.source()) + "]");
+                }
+            }
+        } catch (RuntimeException failure) {
+            failures.add("pass computes: " + failure);
+        }
+        return compiled;
     }
 
     /** Compiles programs as the runtime prepares them, with each input variant it builds, recording failures. */
@@ -195,7 +231,7 @@ final class PackCompileTest {
                     plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
             Map<String, Integer> written = new LinkedHashMap<>();
             for (var uniform : module.uniforms()) written.put(uniform.name(), uniform.offset());
-            String error = compileComputeValues(module.source(), written);
+            String error = compileComputeValues(module.source(), "ChimeraShadowComputeValues", written);
             if (error != null) error += " [" + dump(pack, "shadowcomp.csh", module.source()) + "]";
             return error;
         } catch (IOException | RuntimeException failure) {
@@ -204,15 +240,15 @@ final class PackCompileTest {
     }
 
     /**
-     * Compiles a compute source and checks that its ChimeraShadowComputeValues block reads each
-     * value at the byte offset dispatch writes it. Returns the first error or disagreement, or
-     * null. Solas's frameCounter, declared after a vec3, read the vec3's padding word under
-     * implicit std140 packing and stayed 0, so its floodfill wrote one image only and flickered.
+     * Compiles a compute source and checks that its value block reads each value at the byte
+     * offset dispatch writes it. Returns the first error or disagreement, or null. Solas's
+     * frameCounter, declared after a vec3, read the vec3's padding word under implicit std140
+     * packing and stayed 0, so its floodfill wrote one image only and flickered.
      */
-    static String compileComputeValues(String source, Map<String, Integer> written) {
+    static String compileComputeValues(String source, String block, Map<String, Integer> written) {
         Compiled compiled = spirv(source, Shaderc.shaderc_glsl_compute_shader, "pack.csh");
         if (compiled.error() != null) return compiled.error();
-        Map<String, Integer> read = blockMemberOffsets(compiled.words(), "ChimeraShadowComputeValues");
+        Map<String, Integer> read = blockMemberOffsets(compiled.words(), block);
         for (var value : written.entrySet()) {
             Integer offset = read.get(value.getKey());
             if (!value.getValue().equals(offset)) {
@@ -336,12 +372,17 @@ final class PackCompileTest {
         }
     }
 
-    /** Programs of the selected dimension the plan will not attempt, sorted. */
-    static SortedSet<String> rejectedPrograms(PackProbe.Analysis analysis) {
+    /** Programs and pass computes of the selected dimension the plan will not run, sorted. */
+    static SortedSet<String> rejectedPrograms(Path pack, PackProbe.Analysis analysis) {
         SortedSet<String> rejected = new TreeSet<>();
         if (analysis.plan() == null) return rejected;
         for (PackProgramPlan program : analysis.plan().activePrograms()) {
             if (!analysis.plan().shouldAttempt(program.name())) rejected.add(program.name());
+        }
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
+            PassComputePlan.build(analysis.plan(), loaded.shadersDir()).computes().stream()
+                    .filter(compute -> !compute.supported())
+                    .forEach(compute -> rejected.add(compute.name()));
         }
         return rejected;
     }
@@ -380,9 +421,10 @@ final class PackCompileTest {
             String key = pack.getFileName().toString();
             PackProbe.Analysis analysis = PackProbe.analyze(pack);
             Result result = run(pack, analysis);
-            SortedSet<String> rejected = rejectedPrograms(analysis);
-            System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected%n",
-                    key, result.compiled(), result.failures().size(), rejected.size());
+            SortedSet<String> rejected = rejectedPrograms(pack, analysis);
+            System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected,"
+                    + " pass computes %s%n", key, result.compiled(), result.failures().size(), rejected.size(),
+                    result.passComputes());
             if (result.compiled() == 0) failures.add(key + ": no program compiled");
             result.failures().forEach(failure -> failures.add(key + " " + failure));
             if (update) {

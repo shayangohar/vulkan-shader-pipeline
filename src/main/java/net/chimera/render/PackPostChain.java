@@ -226,6 +226,11 @@ final class PackPostChain {
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
         boolean attempted = false;
         try {
+            // Iris runs a pass's computes first, over the images the pass then reads.
+            if (pass.packPassComputes != null) {
+                pass.packPassComputes.dispatchBefore(post.name(), commandBuffer,
+                        pass.packPostTargets.sourceImages(), hdrColor.width, hdrColor.height);
+            }
             pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
             pass.prepareProgramImages(post.pipeline());
             previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
@@ -581,7 +586,8 @@ final class PackPostChain {
                     pass.packPlan.activePrograms(), pass.packTargetGraph);
             pass.packNeedsHdrDepth = pass.packTargetGraph.depth().any();
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
-            pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph);
+            pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph,
+                    pass.packPassComputes == null ? Set.of() : pass.packPassComputes.storageTargets());
             pass.packPostChainActive = pass.packTargetResourcesReady
                     && !pass.packTargetGraph.steps().isEmpty();
             if (pass.packPostChainActive) {

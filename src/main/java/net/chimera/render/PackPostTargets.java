@@ -64,6 +64,7 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
@@ -113,6 +114,11 @@ public final class PackPostTargets {
 
     /** Installs the validated graph and allocates only required physical sides. */
     public boolean configure(PackTargetGraphPlan graph) {
+        return configure(graph, Set.of());
+    }
+
+    /** As {@link #configure(PackTargetGraphPlan)}, with the targets a pass compute writes allowing storage. */
+    public boolean configure(PackTargetGraphPlan graph, Set<Integer> storageTargets) {
         trace("configure begin oldTarget0=" + imageId(this.images[0][0])
                 + " oldTarget1=" + imageId(this.images[1][0]));
         cleanUp();
@@ -142,12 +148,13 @@ public final class PackPostTargets {
             this.used[index] = true;
             this.doubled[index] = target.doubled();
             this.sideCounts[index] = target.doubled() ? (target.requiresHistory() ? 3 : 2) : 1;
-            this.images[0][index] = createTargetImage(target, "Side0");
+            boolean storage = storageTargets.contains(index);
+            this.images[0][index] = createTargetImage(target, "Side0", storage);
             if (this.doubled[index]) {
-                this.images[1][index] = createTargetImage(target, "Side1");
+                this.images[1][index] = createTargetImage(target, "Side1", storage);
             }
             if (this.sideCounts[index] == 3) {
-                this.images[2][index] = createTargetImage(target, "History");
+                this.images[2][index] = createTargetImage(target, "History", storage);
             }
         }
         if (this.images[0][0] == null) {
@@ -162,12 +169,15 @@ public final class PackPostTargets {
         return true;
     }
 
-    private static VulkanImage createTargetImage(TargetSpec target, String side) {
+    /** A target image; one a pass compute writes through {@code colorimgN} also allows storage. */
+    private static VulkanImage createTargetImage(TargetSpec target, String side, boolean storage) {
         VulkanImage image = VulkanImage.builder(target.width(), target.height())
                 .setName("chimeraPackColortex" + target.index() + side)
                 .setFormat(target.format())
                 .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                        | (storage && PackPassComputes.storageSupported(target.format())
+                        ? VK_IMAGE_USAGE_STORAGE_BIT : 0))
                 .setMipLevels(target.mipLevels())
                 .setLinearFiltering(true)
                 .setClamp(true)

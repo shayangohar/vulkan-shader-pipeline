@@ -209,10 +209,20 @@ public final class PackResourcePlan {
     /** Whether a pack raw texture serves this sampler, of this GLSL type, in this program. */
     static boolean rawTextureServes(String program, String sampler, String samplerType,
                                     Map<String, PackResourceDeclaration> declarations) {
-        PackResourceDeclaration declaration = declarationFor(program,
-                new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations, Set.of(),
-                new ArrayList<>());
+        PackResourceDeclaration declaration = declaration(program, sampler, samplerType, declarations);
         return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE;
+    }
+
+    /** Whether any pack declaration replaces this sampler, of this GLSL type, in this program. */
+    static boolean declaresTexture(String program, String sampler, String samplerType,
+                                   Map<String, PackResourceDeclaration> declarations) {
+        return declaration(program, sampler, samplerType, declarations) != null;
+    }
+
+    private static PackResourceDeclaration declaration(String program, String sampler, String samplerType,
+                                                       Map<String, PackResourceDeclaration> declarations) {
+        return declarationFor(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations,
+                Set.of(), new ArrayList<>());
     }
 
     /** The pack declaration that serves this sampler, if any; an override a pass deactivated is none. */

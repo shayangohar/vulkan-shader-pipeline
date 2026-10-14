@@ -3,13 +3,18 @@ package net.chimera.shaderpack;
 import net.chimera.render.PackShadowCompute;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -72,26 +77,34 @@ final class ComputePassTest {
     }
 
     /**
-     * The shadowcomp uniform block is written while a frame is recorded, so each frame in flight
+     * A compute's uniform block is written while a frame is recorded, so each frame in flight
      * owns one: a single block could be rewritten while the GPU still ran the previous frame's
-     * dispatch.
+     * dispatch. Shadowcomp and the pass computes both bind ComputeKernel's current frame slot.
      */
     @Test
     void computeFrameSlots() throws IOException {
-        var compute = MixinBytecode.nativeClass("net/chimera/render/PackShadowCompute");
-        var dispatch = compute.methods.stream().filter(method -> method.name.equals("dispatch"))
-                .findFirst().orElseThrow(() -> new AssertionError("PackShadowCompute.dispatch is missing"));
-        boolean frameSlot = false;
-        for (var instruction : dispatch.instructions) {
-            if (instruction instanceof MethodInsnNode call
-                    && call.owner.equals("net/vulkanmod/vulkan/Renderer") && call.name.equals("getCurrentFrame")) {
-                frameSlot = true;
+        var kernel = MixinBytecode.nativeClass("net/chimera/render/ComputeKernel");
+        assertTrue(calls(kernel, "currentFrame", "net/vulkanmod/vulkan/Renderer", "getCurrentFrame"),
+                "the kernel's current slot follows the frame in flight");
+        assertTrue(kernel.fields.stream().noneMatch(field -> field.name.equals("uniformData")
+                        || field.name.equals("descriptorSet")),
+                "the kernel keeps no uniform block or descriptor set shared across frames in flight");
+        for (String owner : List.of("PackShadowCompute", "PackPassComputes")) {
+            var compute = MixinBytecode.nativeClass("net/chimera/render/" + owner);
+            assertTrue(calls(compute, "dispatch", "net/chimera/render/ComputeKernel", "currentFrame"),
+                    owner + " must bind the current frame slot's uniform block");
+        }
+    }
+
+    private static boolean calls(ClassNode type, String method, String owner, String name) {
+        var body = type.methods.stream().filter(value -> value.name.equals(method))
+                .findFirst().orElseThrow(() -> new AssertionError(type.name + "." + method + " is missing"));
+        for (var instruction : body.instructions) {
+            if (instruction instanceof MethodInsnNode call && call.owner.equals(owner) && call.name.equals(name)) {
+                return true;
             }
         }
-        assertTrue(frameSlot, "shadowcomp must bind the current frame slot's uniform block");
-        assertTrue(compute.fields.stream().noneMatch(field -> field.name.equals("uniformData")
-                        || field.name.equals("descriptorSet")),
-                "shadowcomp keeps no uniform block or descriptor set shared across frames in flight");
+        return false;
     }
 
     /**
@@ -157,10 +170,68 @@ final class ComputePassTest {
                     imageStore(target, ivec3(0), vec4(cameraPosition, float(frameCounter)));
                 }
                 """;
-        String mismatch = PackCompileTest.compileComputeValues(implicit,
+        String mismatch = PackCompileTest.compileComputeValues(implicit, "ChimeraShadowComputeValues",
                 Map.of("cameraPosition", 0, "frameCounter", 16));
         assertTrue(mismatch != null && mismatch.contains("frameCounter"),
                 "the offset check reports the implicit layout's frameCounter: " + mismatch);
+    }
+
+    /**
+     * Iris reads {@code <pass>.csh}, then {@code _a} on until a suffix is missing or disabled, and
+     * binds colorimgN and colortexN to the image the pass reads. Photon's deferred4_a writes the
+     * sky light deferred4 reads.
+     */
+    @Test
+    void passComputes(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "program.deferred1_b.enabled = false\n");
+        for (String pass : List.of("deferred", "deferred1")) {
+            Files.writeString(shaders.resolve(pass + ".fsh"), "#version 120\nuniform sampler2D colortex4;\n"
+                    + "void main() {\n/* RENDERTARGETS: 4 */\n gl_FragData[0] = texture2D(colortex4, vec2(0.5));\n}\n");
+        }
+        Files.writeString(shaders.resolve("deferred1_a.csh"), """
+                #version 430 compatibility
+                layout(local_size_x = 8, local_size_y = 8) in;
+                const vec2 workGroupsRender = vec2(0.5, 0.5);
+                layout(rgba16f) writeonly uniform image2D colorimg4;
+                uniform sampler2D colortex4;
+                uniform sampler2D colortex9;
+                uniform sampler2D depthtex0;
+                uniform vec3 cameraPosition;
+                uniform int frameCounter;
+                float unusedDepth() { return texture2D(depthtex0, vec2(0.5)).r; }
+                void main() {
+                    vec4 sky = texture2D(colortex4, vec2(0.5)) + vec4(cameraPosition, float(frameCounter));
+                    imageStore(colorimg4, ivec2(gl_GlobalInvocationID.xy), sky);
+                }
+                """);
+        String other = "#version 430\nlayout(local_size_x = 1) in;\nuniform sampler3D lut;\n"
+                + "layout(rgba16f) writeonly uniform image2D colorimg4;\n"
+                + "void main() { imageStore(colorimg4, ivec2(0), texture(lut, vec3(0.5))); }\n";
+        for (String name : List.of("deferred1_b", "deferred1_c", "deferred_a", "composite_a")) {
+            Files.writeString(shaders.resolve(name + ".csh"), other);
+        }
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PassComputePlan computes = PassComputePlan.build(plan, shaders);
+        Map<String, List<String>> deviations = new TreeMap<>();
+        computes.computes().forEach(compute -> deviations.put(compute.name(), compute.deviations()));
+        assertEquals(List.of("deferred_a", "deferred1_a", "composite_a"),
+                computes.computes().stream().map(PassComputePlan.PassCompute::name).toList(),
+                "pass order, and nothing after the disabled deferred1_b: " + deviations);
+        assertEquals(List.of("PASS_COMPUTE_SAMPLER_UNSUPPORTED:lut"), deviations.get("deferred_a"));
+        assertEquals(List.of("PASS_COMPUTE_WITHOUT_PROGRAM:composite"), deviations.get("composite_a"));
+        PassComputePlan.PassCompute sky = computes.before("deferred1").get(0);
+        assertEquals(List.of(new PassComputePlan.Binding("colorimg4", 0, true, 4, "rgba16f"),
+                new PassComputePlan.Binding("colortex4", 1, false, 4, null)), sky.bindings());
+        assertEquals(List.of("cameraPosition", "frameCounter"),
+                sky.values().stream().map(ComputeValueBlock.Value::name).toList());
+        assertEquals(Set.of(4), computes.storageTargets());
+        assertTrue(Arrays.equals(new int[] {160, 90, 1}, sky.groups(2560, 1440)),
+                "workGroupsRender halves the screen over 8x8 groups");
+        Map<String, Integer> written = new LinkedHashMap<>();
+        sky.values().forEach(value -> written.put(value.name(), value.offset()));
+        String error = PackCompileTest.compileComputeValues(sky.source(), PassComputePlan.VALUES_BLOCK, written);
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + sky.source());
     }
 
     @Test

@@ -177,6 +177,8 @@ public final class ChimeraMainPass implements MainPass {
     boolean packTargetFrameNotStartedLogged;
     /** Optional bounded shadow compute pipeline for the active pack session. */
     PackShadowCompute packShadowCompute;
+    /** The pack's computes that run before their deferred, composite or prepare pass. */
+    PackPassComputes packPassComputes;
     /** Static pack inventory plus the actual compile/install disposition. */
     ConformanceReport conformanceReport;
     /** Pack pipelines are retained until the renderer session is torn down. */
