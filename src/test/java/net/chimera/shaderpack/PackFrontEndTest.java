@@ -385,6 +385,46 @@ final class PackFrontEndTest {
     }
 
     @Test
+    void vertexOutputsStartAtZero() {
+        // BSL gbuffers_basic writes isSelection only for the selection outline. GL drivers leave it
+        // 0 elsewhere; Vulkan leaves it undefined, and leads took the unlit outline path at random.
+        String bsl = """
+                #version 120
+                varying float isSelection;
+                varying vec2 texCoord, lmCoord;
+                flat varying int blockId;
+                varying vec4 taps[2];
+                varying vec3 unread;
+                void main() {
+                    texCoord = gl_MultiTexCoord0.xy;
+                    lmCoord = gl_MultiTexCoord1.xy;
+                    blockId = 3;
+                    taps[0] = gl_Color;
+                    if (gl_Color.a > 0.399 && gl_Color.a < 0.401) {
+                        isSelection = 1.0;
+                    }
+                    gl_Position = ftransform();
+                }
+                """;
+        LegacyShaderNormalizer.Result vertex = LegacyShaderNormalizer.normalize(bsl, true);
+        String source = vertex.source();
+        assertTrue(vertex.successful() && source.indexOf("isSelection = float(0);") >= 0
+                        && source.indexOf("isSelection = float(0);") < source.indexOf("isSelection = 1.0;")
+                        && source.contains("texCoord = vec2(0);") && source.contains("lmCoord = vec2(0);")
+                        && source.contains("blockId = int(0);")
+                        && source.contains(
+                                "chimeraZeroIndex < 2; chimeraZeroIndex++) taps[chimeraZeroIndex] = vec4(0);")
+                        && !source.contains("unread ="),
+                "referenced vertex outputs start at zero, before the authored writes:\n" + source);
+        assertTrue(LegacyShaderNormalizer.normalize(source, true).source().equals(source),
+                "zeroing vertex outputs must be idempotent");
+        String fragment = LegacyShaderNormalizer.normalize(
+                "#version 120\nvarying float isSelection;\nvoid main() { gl_FragColor = vec4(isSelection); }",
+                false).source();
+        assertTrue(!fragment.contains("= float(0)"), "fragment inputs are not written:\n" + fragment);
+    }
+
+    @Test
     void uniformDeclaratorLists() {
         // Solas declares samplers in lists; every per-name rewriter needs one declaration per name.
         String lists = GlslTokenRewriter.splitUniformDeclarators("""

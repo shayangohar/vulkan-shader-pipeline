@@ -13,7 +13,9 @@ import java.util.regex.Pattern;
  * Small token-safe normalization pass shared by planning and conversion.
  * It contains only legacy built-ins that Iris rewrites the same way in every
  * program: gl_Fog fields to Chimera's fog uniforms, and gl_FogFragCoord to
- * an ordinary varying. It also gives every uniform its own declaration, so
+ * an ordinary varying. In the vertex stage it starts every referenced output
+ * at zero, the value GL drivers leave in one a path never writes. It also
+ * gives every uniform its own declaration, so
  * per-name rewriters never meet a declarator list, and expands macros that
  * alias a sampler, so planning sees every sampler a program uses, or a
  * storage qualifier, so every converter reads declarations in one spelling.
@@ -47,6 +49,9 @@ final class LegacyShaderNormalizer {
             "packSnorm4x8", "unpackSnorm4x8", "bitfieldExtract", "bitfieldInsert",
             "bitfieldReverse", "bitCount", "findLSB", "findMSB");
     private static final Pattern VERSION_NUMBER = Pattern.compile("(?m)^[ \\t]*#version[ \\t]+(\\d+)");
+    /** Interface types whose {@code T(0)} constructor is zero: scalars, vectors and matrices. */
+    private static final Pattern ZEROABLE_TYPE = Pattern.compile(
+            "(?:float|double|int|uint|bool|[biud]?vec[234]|d?mat[234](?:x[234])?)");
 
     /** The authored #version; GLSL treats a source without one as 110. */
     private static int authoredVersion(String source) {
@@ -117,6 +122,9 @@ final class LegacyShaderNormalizer {
             boolean fogFragCoord = renameFogFragCoord(tokens);
 
             String normalized = GlslLexer.render(tokens);
+            if (vertexStage) {
+                normalized = zeroReferencedOutputs(normalized);
+            }
             List<String> missing = new ArrayList<>();
             List<GlslLexer.Token> normalizedTokens = GlslLexer.lex(normalized);
             for (Map.Entry<String, String> uniform : required.entrySet()) {
@@ -196,6 +204,51 @@ final class LegacyShaderNormalizer {
             }
             default -> null;
         };
+    }
+
+    /**
+     * Starts every vertex output the shader references at zero. An output written on some paths
+     * only (BSL's gbuffers_basic sets isSelection for the selection outline alone) reads 0 under
+     * GL drivers in practice, but is undefined in Vulkan: the lead took BSL's unlit outline path
+     * on random fragments, a different set each frame. A source whose interface the scanner
+     * cannot read, or that has no main, is left as it is; re-normalizing adds nothing.
+     */
+    private static String zeroReferencedOutputs(String source) {
+        GlslInterfaceScanner.StageInterface stage = GlslInterfaceScanner.scan(source, true);
+        if (!stage.deviations().isEmpty()) {
+            return source;
+        }
+        List<String> statements = new ArrayList<>();
+        for (GlslInterfaceScanner.Declaration output : stage.outputs()) {
+            String statement = zeroStatement(output);
+            if (statement != null && !source.contains(statement)) {
+                statements.add(statement);
+            }
+        }
+        if (statements.isEmpty()) {
+            return source;
+        }
+        try {
+            return GlslTokenRewriter.prependMainPrologue(source, String.join("\n", statements));
+        } catch (IllegalArgumentException noMain) {
+            return source;
+        }
+    }
+
+    /** {@code name = T(0);} for a referenced output of a built-in type, or null to leave it alone. */
+    private static String zeroStatement(GlslInterfaceScanner.Declaration output) {
+        // An unread output is dropped as dead, so it gets no write that would keep it alive;
+        // iris_FogFragCoord has Iris's own zero, added with its declaration.
+        if (!output.referenced() || output.name().startsWith("gl_") || output.name().equals(FOG_FRAG_COORD)
+                || !ZEROABLE_TYPE.matcher(output.type()).matches()) {
+            return null;
+        }
+        String zero = output.type() + "(0)";
+        if (output.arraySize() == 0) {
+            return output.name() + " = " + zero + ";";
+        }
+        return "for (int chimeraZeroIndex = 0; chimeraZeroIndex < " + output.arraySize()
+                + "; chimeraZeroIndex++) " + output.name() + "[chimeraZeroIndex] = " + zero + ";";
     }
 
     /** Renames gl_FogFragCoord to Iris's ordinary varying; true when the source uses it. */
