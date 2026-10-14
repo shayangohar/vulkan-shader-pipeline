@@ -78,6 +78,7 @@
     "ChimeraPipelineFrontFaceMixin",
     "ChimeraPipelineStateAccessor",
     "ChimeraProjectionFarMixin",
+    "ChimeraModelViewBobbingMixin",
     "ChimeraSpirvLocalInitMixin",
     "ChimeraSpirvAccessor"
   ],
