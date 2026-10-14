@@ -87,7 +87,11 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_BEACON),
             // Iris LEASH (ProgramId.Basic) on the host POSITION_COLOR_LIGHTMAP lead strip.
             plan("gbuffers_basic", FamilyAdapterPlan.Family.BASIC,
-                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LEASH)
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LEASH),
+            // Iris TEXT_BG (TEXT_BACKGROUND, TEXT_BACKGROUND_SEE_THROUGH): a shader key that runs
+            // gbuffers_entities_translucent's chain on the host POSITION_COLOR_LIGHTMAP quads.
+            plan("text_bg", FamilyAdapterPlan.Family.TEXT_BG,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_TEXT_BACKGROUND)
     ).collect(Collectors.toUnmodifiableMap(FamilyAdapterPlan::programName, plan -> plan));
 
     private FamilyAdapterRegistry() {}

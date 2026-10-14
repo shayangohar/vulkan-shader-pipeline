@@ -50,9 +50,11 @@ record PackAlphaTestPlan(
     static PackAlphaTestPlan forProgram(String programName, String sourceProgram, PackSettingsPlan settings) {
         String name = programName == null ? "" : programName;
         boolean geometry = name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
+        // Iris TEXT_BG tests ONE_TENTH_ALPHA, the lane's per-draw reference.
         boolean entity = FamilyAdapterRegistry.isEntityLike(name)
                 || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isGlintFamily(name);
+                || FamilyAdapterRegistry.isGlintFamily(name)
+                || FamilyAdapterRegistry.forProgram(name).family() == FamilyAdapterPlan.Family.TEXT_BG;
         boolean shadow = FamilyAdapterRegistry.isShadowFamily(name);
         if (!geometry && !entity && !shadow) {
             return off(false);

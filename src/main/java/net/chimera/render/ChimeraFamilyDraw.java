@@ -8,6 +8,8 @@ import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.rendertype.RenderType;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -84,6 +86,42 @@ public final class ChimeraFamilyDraw {
                 FamilyDrawTrace.noteFamilyHostFallback(selected, renderType);
             }
         }
+    }
+
+    /**
+     * Draws one text node (sign text, outlined glowing text, a name tag) the way Iris routes its
+     * render types. The font draw is replayed once to learn them; then each type draws on its
+     * own, in the order the font first used it. Text types draw through their family window
+     * (Iris TEXT, TEXT_BE). The rest go to the host buffers and are flushed at once, where a
+     * host-layout lane (TEXT_BG) may own them, so a see-through background never lands on its
+     * text. A node no world entity submitted keeps its host draw.
+     */
+    public static void emitText(SubmissionIdentity identity, MultiBufferSource buffers,
+                                Consumer<MultiBufferSource> draw) {
+        if (identity == null || !ChimeraRenderer.segmentsActive() || !ChimeraEntityBridge.isInstalled()
+                || ChimeraEntityBridge.isDrawActive()) {
+            draw.accept(buffers);
+            return;
+        }
+        Set<RenderType> types = new LinkedHashSet<>();
+        draw.accept(type -> {
+            types.add(type);
+            return DISCARD;
+        });
+        for (RenderType renderType : types) {
+            boolean packed = ChimeraEntityBridge.familyForRenderType(identity.baseFamily(), renderType)
+                    != ChimeraEntityBridge.Family.HOST_FALLBACK
+                    && ChimeraEntityBridge.isTextPipeline(renderType.pipeline())
+                    && emitSubmission(identity, renderType, source -> draw.accept(only(renderType, source)));
+            if (!packed) {
+                draw.accept(only(renderType, buffers));
+                if (buffers instanceof MultiBufferSource.BufferSource source) source.endBatch(renderType);
+            }
+        }
+    }
+
+    private static MultiBufferSource only(RenderType renderType, MultiBufferSource buffers) {
+        return type -> type == renderType ? buffers.getBuffer(type) : DISCARD;
     }
 
     /**

@@ -7,19 +7,19 @@
     "reportSha256": "e1302904dafc4811e3e397da3940cc902dbe79fdfb5deb17cf3752f05f1cc5fa",
     "sourceHashDigest": "1897bdc8bf09ae511e10ecda1c7735dae6dfdd6f7267bcd0d7e0ee4ed9d9dbce",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "96d48b7521ac2f99b72812a8f69e49fd21e0b3961584a662f38151e437763b71",
+    "resolutionFingerprint": "5707ddcdeb8175c16af5f9ab1e8ee719ec659b4fe5423bbf7efaa04b1126cd06",
     "aliases": ["gbuffers_block->gbuffers_terrain","gbuffers_block_translucent->gbuffers_terrain","gbuffers_damagedblock->gbuffers_terrain","gbuffers_terrain_cutout->gbuffers_terrain","gbuffers_terrain_solid->gbuffers_terrain","gbuffers_water->gbuffers_terrain"],
-    "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
+    "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water","text_bg"],
     "disabledPrograms": ["final"]
   },
   "nether": {
     "dimension": "minecraft:the_nether",
     "folder": "nether",
-    "reportSha256": "be5ca0aad84fd29247b4c0354f1c349713afb5ce767f55a24087583520675825",
-    "sourceHashDigest": "b4537d15c75fcb420b968e929ee708ce55c42dbc4bf081c9cd65ef3854e30829",
+    "reportSha256": "793eea4e936840514876226198fa594b996f926dea99bc90c00f8455d08a01a2",
+    "sourceHashDigest": "a13f9c7763133fe2e779de75b935ab143bbd3a5c7750e6afdf0ed7ccb83bab8c",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "32fe3e7de7d2bd5623f8ce172e737c261b01b9d77487f0fbdc83aadb7273ea78",
-    "aliases": ["gbuffers_block->gbuffers_textured_lit","gbuffers_block_translucent->gbuffers_textured_lit","gbuffers_damagedblock->gbuffers_textured_lit","gbuffers_entities->gbuffers_textured_lit","gbuffers_entities_glowing->gbuffers_textured_lit","gbuffers_entities_translucent->gbuffers_textured_lit","gbuffers_hand->gbuffers_textured_lit","gbuffers_hand_water->gbuffers_textured_lit","gbuffers_item->gbuffers_textured_lit","gbuffers_lightning->gbuffers_textured_lit","gbuffers_particles->gbuffers_textured_lit","gbuffers_particles_translucent->gbuffers_textured_lit","gbuffers_terrain->gbuffers_textured_lit","gbuffers_terrain_cutout->gbuffers_textured_lit","gbuffers_terrain_solid->gbuffers_textured_lit","gbuffers_water->gbuffers_textured_lit","gbuffers_weather->gbuffers_textured_lit"],
+    "resolutionFingerprint": "5ae9636ac03249528704ccb41581ddbf46e12f46851ebadf162be92c51a80518",
+    "aliases": ["gbuffers_block->gbuffers_textured_lit","gbuffers_block_translucent->gbuffers_textured_lit","gbuffers_damagedblock->gbuffers_textured_lit","gbuffers_entities->gbuffers_textured_lit","gbuffers_entities_glowing->gbuffers_textured_lit","gbuffers_entities_translucent->gbuffers_textured_lit","gbuffers_hand->gbuffers_textured_lit","gbuffers_hand_water->gbuffers_textured_lit","gbuffers_item->gbuffers_textured_lit","gbuffers_lightning->gbuffers_textured_lit","gbuffers_particles->gbuffers_textured_lit","gbuffers_particles_translucent->gbuffers_textured_lit","gbuffers_terrain->gbuffers_textured_lit","gbuffers_terrain_cutout->gbuffers_textured_lit","gbuffers_terrain_solid->gbuffers_textured_lit","gbuffers_water->gbuffers_textured_lit","gbuffers_weather->gbuffers_textured_lit","text_bg->gbuffers_textured_lit"],
     "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_line","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
     "disabledPrograms": ["final"]
   },
@@ -29,9 +29,9 @@
     "reportSha256": "ce8dde50f1a4d660a047ffd13bacfe4d98981139b6a383b9aef1d439bb163f4d",
     "sourceHashDigest": "1a6a5bae0fc8bd1635e86e702d27e7c0a1f560291c0eee75052bc7487decbac6",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "cac0811a797cc706e99bd6412f07cee851c1d010b4c8b9315cb5753bcfa59b86",
+    "resolutionFingerprint": "2a06f975ea1b58887f6d554f1222e572b10e79f5f76ff2dbaaf6b06ea273e4e6",
     "aliases": ["gbuffers_block->gbuffers_terrain","gbuffers_block_translucent->gbuffers_terrain","gbuffers_damagedblock->gbuffers_terrain","gbuffers_terrain_cutout->gbuffers_terrain","gbuffers_terrain_solid->gbuffers_terrain","gbuffers_water->gbuffers_terrain"],
-    "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
+    "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water","text_bg"],
     "disabledPrograms": ["final"]
   },
   "custom": {
@@ -40,9 +40,9 @@
     "reportSha256": "fecb887053a32ca7a0dabe66fd875ceafa89d56afe03ea63db4fbfe444abc977",
     "sourceHashDigest": "1897bdc8bf09ae511e10ecda1c7735dae6dfdd6f7267bcd0d7e0ee4ed9d9dbce",
     "settingsFingerprint": "5b2fa8e364bb9d06b53498801513c645c950f0038695adcb45cc7722727616d8",
-    "resolutionFingerprint": "2d94d2c303647b4792e1ff9a76cab71e2d475a827bf0c54b1a5355e216ab07e3",
+    "resolutionFingerprint": "c9238afea290df086544a151d169dbdc91520e2f9032667b4f6b018fec08e114",
     "aliases": ["gbuffers_block->gbuffers_terrain","gbuffers_block_translucent->gbuffers_terrain","gbuffers_damagedblock->gbuffers_terrain","gbuffers_terrain_cutout->gbuffers_terrain","gbuffers_terrain_solid->gbuffers_terrain","gbuffers_water->gbuffers_terrain"],
-    "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water"],
+    "missingPrograms": ["dh_generic","dh_shadow","dh_terrain","dh_water","final","gbuffers_armor_glint","gbuffers_basic","gbuffers_beaconbeam","gbuffers_clouds","gbuffers_entities","gbuffers_entities_glowing","gbuffers_entities_translucent","gbuffers_hand","gbuffers_hand_water","gbuffers_item","gbuffers_lightning","gbuffers_line","gbuffers_particles","gbuffers_particles_translucent","gbuffers_skybasic","gbuffers_skytextured","gbuffers_spidereyes","gbuffers_textured","gbuffers_textured_lit","gbuffers_weather","shadow","shadow_basic","shadow_block","shadow_cutout","shadow_entities","shadow_glint","shadow_leash","shadow_lightning","shadow_lines","shadow_solid","shadow_text","shadow_text_bg","shadow_water","text_bg"],
     "disabledPrograms": ["final"]
   }
 }

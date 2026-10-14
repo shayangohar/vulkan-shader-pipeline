@@ -51,6 +51,8 @@
     "ChimeraItemFeatureRendererMixin",
     "ChimeraTextSubmitMixin",
     "ChimeraTextFeatureRendererMixin",
+    "ChimeraNameTagSubmitMixin",
+    "ChimeraNameTagFeatureRendererMixin",
     "ChimeraFlameFeatureRendererMixin",
     "ChimeraBlockModelSubmitMixin",
     "ChimeraBlockSubmitMixin",

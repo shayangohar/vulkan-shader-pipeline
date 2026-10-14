@@ -3,7 +3,7 @@
   "fixture": "m7_6/families",
   "fixtures": {
     "families": {
-      "reportSha256": "47ec01e680979e6136483d32188b3cc6e6ae295aa4ddc4be0b43fb5570bcd589",
+      "reportSha256": "6bb4eacb5f2d72d001f8c95787f5d17b4d531efcccdff455805aa2f6ccb089b9",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "80d96b5eab7d4baeee89f8f0a4d9a268fa79bfd7466b21ea0b608bed6f4219da",
@@ -26,7 +26,8 @@
         "gbuffers_hand_water",
         "gbuffers_lightning",
         "gbuffers_particles",
-        "gbuffers_particles_translucent"
+        "gbuffers_particles_translucent",
+        "text_bg"
       ],
       "expectedFallbackPrograms": [],
       "expectedUnsupportedPrograms": [
@@ -58,7 +59,10 @@
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_hand_water->gbuffers_hand",
         "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_particles_translucent->gbuffers_particles"
+        "PROGRAM_ALIAS_RECORDED:gbuffers_particles_translucent->gbuffers_particles",
+        "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
+        "TEXT_BG_STATE_FIXED_TO_HOST",
+        "TEXT_BG_VERTEX_BRIDGE"
       ]
     },
     "unsupported_families": {

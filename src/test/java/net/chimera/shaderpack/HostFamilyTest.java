@@ -483,7 +483,7 @@ final class HostFamilyTest {
         }
         for (String program : List.of("gbuffers_line", "gbuffers_armor_glint", "gbuffers_lightning",
                 "gbuffers_beaconbeam", "gbuffers_basic", "shadow_lines", "shadow_leash", "shadow_lightning",
-                "shadow_glint", "shadow_text", "shadow_text_bg", "shadow_basic")) {
+                "shadow_glint", "shadow_text", "shadow_text_bg", "shadow_basic", "text_bg")) {
             assertTrue(servedPrograms.contains(program), program + " has no host-layout lane");
         }
         assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size(),
@@ -496,6 +496,7 @@ final class HostFamilyTest {
         assertTrue(HostLayoutLane.LINE.whiteAlbedo()
                         && HostLayoutLane.LIGHTNING.whiteAlbedo()
                         && HostLayoutLane.LEASH.whiteAlbedo()
+                        && HostLayoutLane.TEXT_BG.whiteAlbedo()
                         && HostLayoutLane.SHADOW_TEXT_BG.whiteAlbedo()
                         && HostLayoutLane.SHADOW_BASIC.whiteAlbedo()
                         && !HostLayoutLane.GLINT.whiteAlbedo()
@@ -580,6 +581,17 @@ final class HostFamilyTest {
         for (var entry : expected.entrySet()) {
             assertHostLayoutProgram(analysis, entry.getKey(), entry.getValue());
         }
+        // No gbuffers_entities_translucent: Iris TEXT_BG runs EntitiesTrans's chain, here gbuffers_entities.
+        assertEquals("gbuffers_entities", analysis.resolution().resolution("text_bg").selectedProgram(),
+                "text_bg resolves through gbuffers_entities_translucent's chain");
+        var textBackground = executablePlan(analysis, "text_bg", "text_bg");
+        for (String line : List.of("layout(location = 1) in vec4 Color;", "const vec2 UV0 = vec2(0.5);",
+                "layout(location = 2) in ivec2 UV2;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")) {
+            assertTrue(textBackground.convertedVertex().contains(line),
+                    "text_bg lost Iris host input " + line + ": " + textBackground.convertedVertex());
+        }
+        assertTrue(textBackground.alphaTestPlan().perDrawReference(),
+                "text_bg tests the lane's ONE_TENTH_ALPHA per draw");
         var compiled = PackCompileTest.run(root, analysis);
         assertTrue(compiled.failures().isEmpty(), "host-layout lane compilation: " + compiled.failures());
     }
@@ -602,6 +614,44 @@ final class HostFamilyTest {
                 program + " has no Iris alpha test (AlphaTests.OFF)");
     }
 
+    /**
+     * Every text draw Iris routes has a hook on the game's own call, as many times as it requires:
+     * plain and outlined (glowing) text, and both name-tag passes (see-through, then normal).
+     */
+    @Test
+    void textHooks() throws IOException {
+        String feature = "net/minecraft/client/renderer/feature/";
+        String buffers = "Lorg/joml/Matrix4f;Lnet/minecraft/client/renderer/MultiBufferSource;";
+        String text = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/util/FormattedCharSequence;FFIZ"
+                + buffers + "Lnet/minecraft/client/gui/Font$DisplayMode;II)V";
+        String outlined = "Lnet/minecraft/client/gui/Font;drawInBatch8xOutline("
+                + "Lnet/minecraft/util/FormattedCharSequence;FFII" + buffers + "I)V";
+        String nameTag = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/network/chat/Component;FFIZ"
+                + buffers + "Lnet/minecraft/client/gui/Font$DisplayMode;II)V";
+        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", text, 1);
+        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", outlined, 1);
+        assertWrapsCalls("ChimeraNameTagFeatureRendererMixin", feature + "NameTagFeatureRenderer", nameTag, 2);
+        MixinBytecode.assertMixinRegistered("ChimeraNameTagSubmitMixin");
+        assertTrue(MixinBytecode.mixinTargets(MixinBytecode.nativeClass("net/chimera/mixin/ChimeraNameTagSubmitMixin"),
+                "net/minecraft/client/renderer/SubmitNodeStorage$NameTagSubmit"),
+                "name tag nodes carry their entity's identity");
+    }
+
+    private static void assertWrapsCalls(String mixinName, String owner, String target, int calls)
+            throws IOException {
+        MixinBytecode.assertMixinRegistered(mixinName);
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/" + mixinName);
+        assertTrue(MixinBytecode.mixinTargets(mixin, owner)
+                        && MixinBytecode.injects(mixin,
+                        "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;", "render", target),
+                mixinName + " wraps " + target);
+        long found = MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), "render").stream()
+                .filter(instruction -> instruction instanceof MethodInsnNode call
+                        && ("L" + call.owner + ";" + call.name + call.desc).equals(target))
+                .count();
+        assertEquals(calls, found, owner + ".render calls " + target);
+    }
+
     @Test
     void particleAndTextAlphaReferences() {
         for (var host : List.of(RenderPipelines.OPAQUE_PARTICLE,
@@ -612,10 +662,15 @@ final class HostFamilyTest {
                     "particle/weather fixed core cutout must not depend on an absent ALPHA_CUTOUT define");
         }
         for (var host : List.of(RenderPipelines.TEXT,
-                RenderPipelines.TEXT_POLYGON_OFFSET)) {
+                RenderPipelines.TEXT_POLYGON_OFFSET,
+                RenderPipelines.TEXT_SEE_THROUGH)) {
             assertEquals(0.1F, ChimeraEntityBridge.alphaReference(host),
                     "world text tests ONE_TENTH_ALPHA as Iris TEXT/TEXT_BE; untested glyph quads fill solid");
         }
+        assertEquals(0.1F, HostLayoutLane.TEXT_BG.alphaReference(), "Iris TEXT_BG tests ONE_TENTH_ALPHA");
+        assertTrue(!ChimeraEntityBridge.isTextPipeline(RenderPipelines.TEXT_INTENSITY)
+                        && !ChimeraEntityBridge.isTextPipeline(RenderPipelines.TEXT_INTENSITY_SEE_THROUGH),
+                "intensity text keeps its host draw: Iris swizzles its glyph texture to RRRR");
     }
 
     @Test

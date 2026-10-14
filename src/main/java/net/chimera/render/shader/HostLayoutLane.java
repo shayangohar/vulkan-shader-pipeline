@@ -49,6 +49,10 @@ public enum HostLayoutLane {
     /** Iris LEASH: leads, drawn with gbuffers_basic. */
     LEASH(ChimeraEntityBridge.Family.LEASH, "gbuffers_basic", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, RenderPipelines.LEASH),
+    /** Iris TEXT_BG: text and name-tag backgrounds, with gbuffers_entities_translucent's chain. */
+    TEXT_BG(ChimeraEntityBridge.Family.TEXT_BG, "text_bg", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
+            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.ONE_TENTH,
+            RenderPipelines.TEXT_BACKGROUND, RenderPipelines.TEXT_BACKGROUND_SEE_THROUGH),
     /*
      * The shadow pass. Iris ShadowRenderer holds the ENTITIES phase while it draws entity and
      * block-entity features, so every shadow lane reports it. Iris assigns no shadow key to

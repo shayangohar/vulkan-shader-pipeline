@@ -64,6 +64,11 @@ public record FamilyAdapterPlan(
         BEACON_BEAM,
         /** gbuffers_basic: leads (Iris ShaderKey.LEASH, ProgramId.Basic). */
         BASIC,
+        /**
+         * text_bg: text and name-tag backgrounds (Iris ShaderKey.TEXT_BG), drawn with
+         * gbuffers_entities_translucent on the host POSITION_COLOR_LIGHTMAP quads.
+         */
+        TEXT_BG,
         SPECIAL,
         POST,
         UNKNOWN

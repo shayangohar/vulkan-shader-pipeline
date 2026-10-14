@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "5ed692ab4646b7ddde2fe8c51f072e11a13c5a4d95f30dfa2a046041d62ef102",
+      "reportSha256": "f747949e79388441f6f1d20259960f78dadec0b0560d5fe978cb4f1268a07b40",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -41,7 +41,8 @@
         "gbuffers_particles",
         "gbuffers_particles_translucent",
         "gbuffers_spidereyes",
-        "gbuffers_weather"
+        "gbuffers_weather",
+        "text_bg"
       ],
       "expectedFallbackPrograms": [],
       "expectedUnsupportedPrograms": [
@@ -73,12 +74,15 @@
         "PARTICLE_VERTEX_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_block",
         "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities_translucent",
+        "TEXT_BG_STATE_FIXED_TO_HOST",
+        "TEXT_BG_VERTEX_BRIDGE",
         "WEATHER_STATE_FIXED_TO_HOST",
         "WEATHER_VERTEX_BRIDGE"
       ]
     },
     "unsupported_families": {
-      "reportSha256": "b753b75b1933d5fee2ec243f99b0c2c82cac8ee76fdcb4b7d2657f96bc7fce06",
+      "reportSha256": "57323eb11bcd1c847780b5c84bc3555741b0741f31edc1c9ffe9b7f0ec59a561",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -94,7 +98,8 @@
       "expectedFallbackPrograms": [
         "gbuffers_entities",
         "gbuffers_entities_translucent",
-        "gbuffers_lightning"
+        "gbuffers_lightning",
+        "text_bg"
       ],
       "expectedUnsupportedPrograms": [
         "gbuffers_skybasic"
@@ -109,7 +114,9 @@
         "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
         "LIVE_UNIFORM_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
+        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
+        "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
       ]
     }
   }

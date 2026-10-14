@@ -197,6 +197,9 @@ record PackResolutionPlan(
         addKeyChain(result, "shadow_glint", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text_bg", "shadow_entities", "shadow");
+        // Iris TEXT_BG: ProgramId.EntitiesTrans on the host text-background quads.
+        addKeyChain(result, "text_bg", "gbuffers_entities_translucent", "gbuffers_entities",
+                "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_basic");
         addChain(result, "gbuffers_line", "gbuffers_basic");
         addChain(result, "gbuffers_textured", "gbuffers_basic");

@@ -122,7 +122,7 @@ final class HostLayoutVertexBridge {
             case HOST_GLINT -> GlslVertexPreambles.GLINT_VERTEX_PREAMBLE;
             case HOST_LIGHTNING -> GlslVertexPreambles.LIGHTNING_VERTEX_PREAMBLE;
             case HOST_BEACON -> GlslVertexPreambles.BEACON_VERTEX_PREAMBLE;
-            case HOST_LEASH -> GlslVertexPreambles.LEASH_VERTEX_PREAMBLE;
+            case HOST_LEASH, HOST_TEXT_BACKGROUND -> GlslVertexPreambles.LEASH_VERTEX_PREAMBLE;
             default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
         };
         return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), null, fragmentSource,

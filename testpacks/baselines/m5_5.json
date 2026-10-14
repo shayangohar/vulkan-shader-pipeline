@@ -39,7 +39,7 @@
       }
     },
     "unsupported_water": {
-      "reportSha256": "2dda6be4142e73b250b80d12531c27ef54ede124be74c576e874d1baa034313d",
+      "reportSha256": "5d8a8e2757cc825157a847fe12dc3e0b48cf6ebedbb109f249f57b3b3710078c",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -64,6 +64,9 @@
         "gbuffers_water": [
           "fragment",
           "vertex"
+        ],
+        "text_bg": [
+          "fragment"
         ]
       },
       "expectedDeviations": {
@@ -85,6 +88,10 @@
           "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",
           "TRANSLUCENT_VERTEX_BRIDGE"
+        ],
+        "text_bg": [
+          "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
+          "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
         ]
       },
       "sourceHashes": {

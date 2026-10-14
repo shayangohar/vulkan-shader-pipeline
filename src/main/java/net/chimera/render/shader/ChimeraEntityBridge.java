@@ -45,6 +45,8 @@ public final class ChimeraEntityBridge {
         LIGHTNING,
         BEACON_BEAM,
         LEASH,
+        /** Text and name-tag backgrounds (Iris TEXT_BG), drawn with gbuffers_entities_translucent. */
+        TEXT_BG,
         /** Every entity-format caster in the shadow pass (Iris SHADOW_ENTITIES_CUTOUT). */
         SHADOW_ENTITIES,
         /** The shadow pass's host-layout lanes (HostLayoutLane, Pass.SHADOW). */
@@ -661,9 +663,14 @@ public final class ChimeraEntityBridge {
         blockTranslucentTextPipeline = blockTranslucentText == null ? null : blockTranslucentText.pipeline();
     }
 
-    /** World and sign text pipelines Iris routes through getText (see-through and intensity stay host). */
+    /**
+     * The glyph pipelines Iris routes through getText: world, sign and see-through text. Intensity
+     * text stays host-drawn: Iris swizzles its one-channel glyph texture to RRRR, a texture state
+     * Chimera has no counterpart for, and only TrueType resource-pack fonts use it.
+     */
     public static boolean isTextPipeline(RenderPipeline pipeline) {
-        return pipeline == RenderPipelines.TEXT || pipeline == RenderPipelines.TEXT_POLYGON_OFFSET;
+        return pipeline == RenderPipelines.TEXT || pipeline == RenderPipelines.TEXT_POLYGON_OFFSET
+                || pipeline == RenderPipelines.TEXT_SEE_THROUGH;
     }
 
     private static boolean isGlyphFormat(VertexFormat format) {
@@ -750,7 +757,7 @@ public final class ChimeraEntityBridge {
                     || format == ChimeraVertexFormats.EXTENDED_ENTITY;
             case HAND, HAND_WATER -> ChimeraVertexFormats.handHostFormat(format) != null;
             case PARTICLE, PARTICLE_TRANSLUCENT -> format == DefaultVertexFormat.PARTICLE;
-            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH,
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG,
                  SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG,
                  SHADOW_BASIC -> HostLayoutLane.of(activeFamily).serves(pipeline);
             // Block-entity text is the only draw of its family, admitted above.
@@ -780,7 +787,7 @@ public final class ChimeraEntityBridge {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, BLOCK_TRANSLUCENT, HAND, HAND_WATER,
                  SHADOW_ENTITIES -> true;
             case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
-                 LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
+                 LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
                  SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC, HOST_FALLBACK -> false;
         };
     }
@@ -803,7 +810,7 @@ public final class ChimeraEntityBridge {
                     ? ChimeraVertexFormats.EXTENDED_ENTITY : format;
             case HAND, HAND_WATER -> ChimeraVertexFormats.handFormats().getOrDefault(format, format);
             case BLOCK_TRANSLUCENT, DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT,
-                 HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING,
+                 HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING,
                  SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC -> format;
             case HOST_FALLBACK -> format;
         };
@@ -913,7 +920,7 @@ public final class ChimeraEntityBridge {
             case HAND_WATER -> handWaterPipeline;
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
-            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH,
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG,
                  SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG,
                  SHADOW_BASIC -> hostLayoutPipelines.get(family);
             case SHADOW_ENTITIES -> shadowCasterPass ? shadowCasterPipeline : null;
