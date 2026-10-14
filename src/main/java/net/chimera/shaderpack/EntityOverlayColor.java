@@ -18,6 +18,11 @@ import java.util.regex.Pattern;
 final class EntityOverlayColor {
     static final String UV_VARYING = "chimeraOverlayUV";
 
+    private static final String OVERLAY_FETCH = "vec4 chimeraOverlayTexel = texelFetch("
+            + PackResourcePlan.OVERLAY_SAMPLER + ", " + UV_VARYING + ", 0);";
+    /** An opaque empty texel: entityColor comes out (0, 0, 0, 0). */
+    private static final String NO_OVERLAY_TEXEL = "vec4 chimeraOverlayTexel = vec4(0.0, 0.0, 0.0, 1.0);";
+
     private static final Pattern DECLARATION =
             Pattern.compile("(?m)^[ \\t]*uniform\\s+vec4\\s+entityColor\\s*;");
     private static final Pattern MAIN =
@@ -38,10 +43,20 @@ final class EntityOverlayColor {
         // Iris's three lines: the texture stores how much of the mob shows
         // through, so the alpha turns around, and a pack reading only rgb
         // sees black where there is no overlay.
-        String prologue = "\n    vec4 chimeraOverlayTexel = texelFetch(" + PackResourcePlan.OVERLAY_SAMPLER
-                + ", " + UV_VARYING + ", 0);"
+        String prologue = "\n    " + OVERLAY_FETCH
                 + "\n    entityColor = vec4(chimeraOverlayTexel.rgb, 1.0 - chimeraOverlayTexel.a);"
                 + "\n    entityColor.rgb *= float(entityColor.a != 0.0);";
         return declared.substring(0, main.end()) + prologue + declared.substring(main.end());
+    }
+
+    /**
+     * The converted fragment for a host layout without overlay coordinates (text, a held map's
+     * background, particles in the hand). Iris patches the overlay fetch only where the layout
+     * has UV1 (VanillaTransformer, hasOverlay); elsewhere entityColor stays the uniform
+     * CommonUniforms sets to zero. Those host draws bind no overlay, so the fetch read whatever
+     * texture slot 1 last held, and tinted name tags with it from frame to frame.
+     */
+    static String withoutOverlay(String fragment) {
+        return fragment == null ? null : fragment.replace(OVERLAY_FETCH, NO_OVERLAY_TEXEL);
     }
 }

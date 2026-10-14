@@ -22,6 +22,10 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 import org.joml.Matrix4f;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.SequencedMap;
+
 /** Iris's solid-before-deferred and translucent-before-composite hand schedule. */
 public final class ChimeraHandRenderer implements AutoCloseable {
     public static final float DEPTH = 0.125F;
@@ -34,13 +38,15 @@ public final class ChimeraHandRenderer implements AutoCloseable {
      * and its own layer at once (VertexMultiConsumer); in one shared buffer, opening
      * the second ends the first ("Not building!").
      */
-    private final java.util.SequencedMap<RenderType, ByteBufferBuilder> fixed = fixedBuffers();
+    private final SequencedMap<RenderType, ByteBufferBuilder> fixed = fixedBuffers();
     private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediateWithBuffers(fixed, vertices);
     private final SubmitNodeStorage submits = new SubmitNodeStorage();
     private final FeatureRenderDispatcher dispatcher;
     // Separate buffers: a later upload must not overwrite an earlier draw's projection.
-    private final PerspectiveProjectionMatrixBuffer solidProjection = new PerspectiveProjectionMatrixBuffer("Chimera solid hand");
-    private final PerspectiveProjectionMatrixBuffer translucentProjection = new PerspectiveProjectionMatrixBuffer("Chimera translucent hand");
+    private final PerspectiveProjectionMatrixBuffer solidProjection = new PerspectiveProjectionMatrixBuffer(
+            "Chimera solid hand");
+    private final PerspectiveProjectionMatrixBuffer translucentProjection = new PerspectiveProjectionMatrixBuffer(
+            "Chimera translucent hand");
 
     private ChimeraHandRenderer(Minecraft minecraft) {
         dispatcher = new FeatureRenderDispatcher(submits, minecraft.getBlockRenderer(), buffers,
@@ -57,7 +63,8 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     }
     public static boolean translucent(ItemStack item) {
         return item.getItem() instanceof BlockItem block
-                && ItemBlockRenderTypes.getChunkRenderType(block.getBlock().defaultBlockState()) == ChunkSectionLayer.TRANSLUCENT;
+                && ItemBlockRenderTypes.getChunkRenderType(
+                        block.getBlock().defaultBlockState()) == ChunkSectionLayer.TRANSLUCENT;
     }
 
     /** Iris's depth squeeze expressed in VulkanMod's forward-Z [0,1] range. */
@@ -103,7 +110,8 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         translucentPhase = translucent;
         boolean draw = false;
         try {
-            RenderSystem.setProjectionMatrix((translucent ? translucentProjection : solidProjection).getBuffer(projection), ProjectionType.PERSPECTIVE);
+            RenderSystem.setProjectionMatrix((translucent ? translucentProjection
+                    : solidProjection).getBuffer(projection), ProjectionType.PERSPECTIVE);
             RenderSystem.getModelViewStack().set(bob.last().pose());
             draw = ChimeraEntityBridge.beginHandDraw(translucent);
             if (!draw) throw new IllegalStateException("installed hand schedule lost its family pipeline");
@@ -137,9 +145,9 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         translucentPhase = null;
     }
     /** Vanilla RenderBuffers' fixed buffers, for any Chimera-owned source a foil item may write to. */
-    static java.util.SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
-        var result = new java.util.LinkedHashMap<RenderType, ByteBufferBuilder>();
-        for (RenderType type : java.util.List.of(Sheets.solidBlockSheet(), Sheets.cutoutBlockSheet(),
+    static SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
+        var result = new LinkedHashMap<RenderType, ByteBufferBuilder>();
+        for (RenderType type : List.of(Sheets.solidBlockSheet(), Sheets.cutoutBlockSheet(),
                 Sheets.translucentItemSheet(), Sheets.translucentBlockItemSheet(), Sheets.shieldSheet(),
                 Sheets.bedSheet(), Sheets.shulkerBoxSheet(), Sheets.signSheet(), Sheets.hangingSignSheet(),
                 Sheets.chestSheet(), RenderTypes.armorEntityGlint(), RenderTypes.glint(),

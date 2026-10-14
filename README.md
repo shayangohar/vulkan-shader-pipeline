@@ -75,6 +75,8 @@ You need JDK 21.
 
 The mod jar is written to `build/libs/`.
 
+`build` also runs the tests. The fixture tests (`./gradlew test`) need nothing else. `packTest` checks the pinned Complementary Reimagined and BSL packs, so pass their zips: `-Pchimera.pack.complementary=<zip> -Pchimera.pack.bsl=<zip>`. To build the jar without tests, run `./gradlew assemble`.
+
 Bug reports are welcome. Please include your `latest.log`, the pack name and version, and a screenshot. A [RenderDoc](https://renderdoc.org/) capture helps a lot with rendering bugs.
 
 ## License

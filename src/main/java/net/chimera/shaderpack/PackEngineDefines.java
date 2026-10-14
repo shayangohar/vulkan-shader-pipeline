@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -53,7 +54,7 @@ public final class PackEngineDefines {
     }
 
     private static String osMacro() {
-        String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("win")) return "MC_OS_WINDOWS";
         if (os.contains("mac")) return "MC_OS_MAC";
         if (os.contains("nux") || os.contains("nix")) return "MC_OS_LINUX";

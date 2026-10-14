@@ -36,10 +36,10 @@ record PackResolutionPlan(
         selectedSourceFolder = selectedSourceFolder == null ? "" : selectedSourceFolder;
         resolutions = resolutions == null ? Map.of()
                 : Collections.unmodifiableMap(new TreeMap<>(resolutions));
-        aliases = sorted(aliases);
-        missingPrograms = sorted(missingPrograms);
-        disabledPrograms = sorted(disabledPrograms);
-        deviations = sorted(deviations);
+        aliases = PlanJson.sorted(aliases);
+        missingPrograms = PlanJson.sorted(missingPrograms);
+        disabledPrograms = PlanJson.sorted(disabledPrograms);
+        deviations = PlanJson.sorted(deviations);
     }
 
     static PackResolutionPlan empty() {
@@ -53,16 +53,7 @@ record PackResolutionPlan(
             List<PackProgram> programs,
             PackSettingsPlan settings
     ) {
-        Map<String, PackProgram> shipped = new TreeMap<>();
-        if (programs != null) {
-            for (PackProgram program : programs.stream()
-                    .filter(value -> value != null)
-                    .sorted(Comparator.comparing(PackProgram::name)
-                            .thenComparing(value -> relative(value.sourceRoot(), value.fragmentPath())))
-                    .toList()) {
-                shipped.putIfAbsent(program.name(), program);
-            }
-        }
+        Map<String, PackProgram> shipped = shippedPrograms(programs);
         PackSettingsPlan actualSettings = settings == null ? PackSettingsPlan.empty() : settings;
         Map<String, PackProgramResolution> answers = new TreeMap<>();
         Set<String> allNames = new TreeSet<>(FALLBACKS.keySet());
@@ -73,31 +64,22 @@ record PackResolutionPlan(
         List<String> deviations = new ArrayList<>();
         for (String requested : allNames) {
             List<String> chain = FALLBACKS.getOrDefault(requested, List.of(requested));
-            String selected = "";
-            int depth = 0;
-            PackProgram chosen = null;
-            for (int index = 0; index < chain.size(); index++) {
-                PackProgram candidate = shipped.get(chain.get(index));
-                if (candidate != null && actualSettings.enabled(folder, chain.get(index))) {
-                    selected = chain.get(index);
-                    depth = index;
-                    chosen = candidate;
-                    break;
-                }
-            }
+            int depth = selectedDepth(chain, shipped, actualSettings, folder);
             boolean authoredEnabled = actualSettings.enabled(folder, requested);
-            boolean enabled = authoredEnabled || (chosen != null && requested.startsWith("gbuffers_"));
+            boolean enabled = authoredEnabled || (depth >= 0 && requested.startsWith("gbuffers_"));
             List<String> programDeviations = new ArrayList<>();
             if (!authoredEnabled) {
                 disabled.add(requested);
                 if (!enabled) programDeviations.add("PROGRAM_DISABLED:" + requested);
             }
-            if (chosen == null) {
+            if (depth < 0) {
                 missing.add(requested);
                 answers.put(requested, new PackProgramResolution(requested, "", "", 0,
                         enabled, false, programDeviations));
                 continue;
             }
+            String selected = chain.get(depth);
+            PackProgram chosen = shipped.get(selected);
             boolean exact = depth == 0 && requested.equals(selected);
             boolean executable = enabled && supportsCurrentAdapter(requested);
             if (!exact) {
@@ -113,6 +95,32 @@ record PackResolutionPlan(
         }
         return new PackResolutionPlan(dimension, folder, answers, aliases, missing,
                 disabled, deviations);
+    }
+
+    /** The shipped programs by name; of two with one name, the first by source path. */
+    private static Map<String, PackProgram> shippedPrograms(List<PackProgram> programs) {
+        Map<String, PackProgram> shipped = new TreeMap<>();
+        if (programs != null) {
+            for (PackProgram program : programs.stream()
+                    .filter(value -> value != null)
+                    .sorted(Comparator.comparing(PackProgram::name)
+                            .thenComparing(value -> relative(value.sourceRoot(), value.fragmentPath())))
+                    .toList()) {
+                shipped.putIfAbsent(program.name(), program);
+            }
+        }
+        return shipped;
+    }
+
+    /** How far down its fallback chain a request resolves: the first program shipped and enabled, or -1. */
+    private static int selectedDepth(List<String> chain, Map<String, PackProgram> shipped,
+                                     PackSettingsPlan settings, String folder) {
+        for (int index = 0; index < chain.size(); index++) {
+            if (shipped.get(chain.get(index)) != null && settings.enabled(folder, chain.get(index))) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     PackProgramResolution resolution(String name) {
@@ -158,14 +166,14 @@ record PackResolutionPlan(
                     entry.addProperty("fallbackDepth", value.fallbackDepth());
                     entry.addProperty("enabled", value.enabled());
                     entry.addProperty("executable", value.executable());
-                    entry.add("deviations", strings(value.deviations()));
+                    entry.add("deviations", PlanJson.strings(value.deviations()));
                     entries.add(entry);
                 });
         root.add("resolutions", entries);
-        root.add("aliases", strings(aliases));
-        root.add("missingPrograms", strings(missingPrograms));
-        root.add("disabledPrograms", strings(disabledPrograms));
-        root.add("deviations", strings(deviations));
+        root.add("aliases", PlanJson.strings(aliases));
+        root.add("missingPrograms", PlanJson.strings(missingPrograms));
+        root.add("disabledPrograms", PlanJson.strings(disabledPrograms));
+        root.add("deviations", PlanJson.strings(deviations));
         return JSON.toJson(root);
     }
 
@@ -189,6 +197,9 @@ record PackResolutionPlan(
         addKeyChain(result, "shadow_glint", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text_bg", "shadow_entities", "shadow");
+        // Iris TEXT_BG: ProgramId.EntitiesTrans on the host text-background quads.
+        addKeyChain(result, "text_bg", "gbuffers_entities_translucent", "gbuffers_entities",
+                "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_basic");
         addChain(result, "gbuffers_line", "gbuffers_basic");
         addChain(result, "gbuffers_textured", "gbuffers_basic");
@@ -197,25 +208,36 @@ record PackResolutionPlan(
         addChain(result, "gbuffers_skytextured", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_clouds", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_terrain_solid", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_terrain_cutout", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_damagedblock", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_block_translucent", "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_terrain_solid", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_terrain_cutout", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_damagedblock", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_block_translucent", "gbuffers_block", "gbuffers_terrain", "gbuffers_textured_lit",
+                "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_beaconbeam", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_item", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_entities_translucent", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_entities_glowing", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_lightning", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_entities_translucent", "gbuffers_entities", "gbuffers_textured_lit",
+                "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_entities_glowing", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_lightning", "gbuffers_entities", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
         addChain(result, "gbuffers_particles", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_particles_translucent", "gbuffers_particles", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_particles_translucent", "gbuffers_particles", "gbuffers_textured_lit",
+                "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_armor_glint", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_spidereyes", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_hand", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
         addChain(result, "gbuffers_weather", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_water", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
-        addChain(result, "gbuffers_hand_water", "gbuffers_hand", "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
+        addChain(result, "gbuffers_water", "gbuffers_terrain", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
+        addChain(result, "gbuffers_hand_water", "gbuffers_hand", "gbuffers_textured_lit", "gbuffers_textured",
+                "gbuffers_basic");
         addChain(result, "dh_terrain");
         addChain(result, "dh_water", "dh_terrain");
         addChain(result, "dh_generic", "dh_terrain");
@@ -249,24 +271,6 @@ record PackResolutionPlan(
 
     private static boolean supportsCurrentAdapter(String name) {
         return FamilyAdapterRegistry.isExecutableFamily(name);
-    }
-
-    private static List<String> sorted(Iterable<String> values) {
-        TreeSet<String> result = new TreeSet<>();
-        if (values != null) {
-            for (String value : values) {
-                if (value != null && !value.isBlank()) {
-                    result.add(value);
-                }
-            }
-        }
-        return List.copyOf(result);
-    }
-
-    private static JsonArray strings(Iterable<String> values) {
-        JsonArray result = new JsonArray();
-        sorted(values).forEach(result::add);
-        return result;
     }
 
     private static String relative(Path root, Path path) {

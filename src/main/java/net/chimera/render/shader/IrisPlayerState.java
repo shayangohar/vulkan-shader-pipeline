@@ -67,6 +67,30 @@ final class IrisPlayerState {
     void capture(Minecraft minecraft, float partialTick, double cameraX, double cameraY, double cameraZ,
                  float frameTime) {
         this.lastFrameTime = frameTime;
+        captureOptions(minecraft);
+        capturePlayerStats(minecraft);
+
+        LocalPlayer player = minecraft.player;
+        Entity vehicle = player == null ? null : player.getVehicle();
+        this.vehicleInWater = vehicle != null && vehicle.isInShallowWater();
+        set(this.vehicleLook, vehicle == null ? null : vehicle.getForward());
+        if (vehicle == null) {
+            set(this.relativeVehicle, null);
+        } else {
+            Vec3 position = vehicle.getPosition(partialTick);
+            this.relativeVehicle[0] = (float) (cameraX - position.x);
+            this.relativeVehicle[1] = (float) (cameraY - position.y);
+            this.relativeVehicle[2] = (float) (cameraZ - position.z);
+        }
+        Entity cameraEntity = minecraft.getCameraEntity();
+        set(this.bodyVector, cameraEntity == null ? null : cameraEntity.getForward());
+        this.mood = cameraEntity instanceof LocalPlayer local
+                ? Math.clamp(local.getCurrentMood(), 0.0f, 1.0f) : 0.0f;
+        captureClock();
+    }
+
+    /** The HUD, hand, camera, filtering, fog and spectator state from the options and game mode. */
+    private void captureOptions(Minecraft minecraft) {
         this.hideGui = minecraft.options.hideGui;
         this.rightHanded = minecraft.options.mainHand().get() == HumanoidArm.RIGHT;
         CameraType camera = minecraft.options.getCameraType();
@@ -85,7 +109,10 @@ final class IrisPlayerState {
                 && minecraft.gui.getBossOverlay().shouldCreateWorldFog();
         this.spectator = minecraft.gameMode != null
                 && minecraft.gameMode.getPlayerMode() == GameType.SPECTATOR;
+    }
 
+    /** Iris's player stats, -1 outside survival, and the player's water and riding flags. */
+    private void capturePlayerStats(Minecraft minecraft) {
         LocalPlayer player = minecraft.player;
         boolean survival = player != null && minecraft.gameMode != null
                 && minecraft.gameMode.getPlayerMode().isSurvival();
@@ -98,23 +125,10 @@ final class IrisPlayerState {
         this.feetInWater = player != null && player.isInShallowWater();
         this.swimming = player != null && player.isSwimming();
         this.riding = player != null && player.isPassenger();
+    }
 
-        Entity vehicle = player == null ? null : player.getVehicle();
-        this.vehicleInWater = vehicle != null && vehicle.isInShallowWater();
-        set(this.vehicleLook, vehicle == null ? null : vehicle.getForward());
-        if (vehicle == null) {
-            set(this.relativeVehicle, null);
-        } else {
-            Vec3 position = vehicle.getPosition(partialTick);
-            this.relativeVehicle[0] = (float) (cameraX - position.x);
-            this.relativeVehicle[1] = (float) (cameraY - position.y);
-            this.relativeVehicle[2] = (float) (cameraZ - position.z);
-        }
-        Entity cameraEntity = minecraft.getCameraEntity();
-        set(this.bodyVector, cameraEntity == null ? null : cameraEntity.getForward());
-        this.mood = cameraEntity instanceof LocalPlayer local
-                ? Math.clamp(local.getCurrentMood(), 0.0f, 1.0f) : 0.0f;
-
+    /** Iris's clock uniforms: the local date and time, and the seconds gone and left in the year. */
+    private void captureClock() {
         LocalDateTime now = LocalDateTime.now();
         this.date[0] = now.getYear();
         this.date[1] = now.getMonthValue();

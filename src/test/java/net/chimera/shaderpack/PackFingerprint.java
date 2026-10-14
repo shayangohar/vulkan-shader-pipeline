@@ -64,7 +64,7 @@ final class PackFingerprint {
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
                 String name = entry.getName().replace('\\', '/');
-                if (unsafe(name)) {
+                if (PackSource.unsafeZipName(name)) {
                     throw new IOException("unsafe ZIP entry path: " + name);
                 }
                 if (!seen.add(name)) {
@@ -78,20 +78,6 @@ final class PackFingerprint {
             }
         }
         return result;
-    }
-
-    private static boolean unsafe(String name) {
-        if (name.isBlank() || name.startsWith("/")
-                || (name.length() >= 3 && Character.isLetter(name.charAt(0))
-                && name.charAt(1) == ':' && name.charAt(2) == '/')) {
-            return true;
-        }
-        for (String component : name.split("/", -1)) {
-            if (component.equals("..") || component.indexOf('\0') >= 0) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static String hex(byte[] bytes) {

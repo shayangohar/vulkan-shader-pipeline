@@ -23,7 +23,8 @@ public abstract class ChimeraVideoSettingsScreenMixin extends Screen {
             method = "addOptions",
             at = @At(
                     value = "INVOKE",
-                    target = "Lnet/minecraft/client/gui/components/OptionsList;addSmall([Lnet/minecraft/client/OptionInstance;)V"
+                    target = "Lnet/minecraft/client/gui/components/OptionsList;"
+                            + "addSmall([Lnet/minecraft/client/OptionInstance;)V"
             ),
             index = 0,
             require = 0

@@ -34,10 +34,6 @@ public record TargetSpec(
         return clearColor.clone();
     }
 
-    public boolean sameExtent(TargetSpec other) {
-        return other != null && width == other.width && height == other.height;
-    }
-
     /** A full chain down to 1x1, as glGenerateMipmap builds, or the base level alone. */
     public int mipLevels() {
         return mipmapped ? 32 - Integer.numberOfLeadingZeros(Math.max(1, Math.max(width, height))) : 1;

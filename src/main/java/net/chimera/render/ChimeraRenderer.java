@@ -1,9 +1,12 @@
 package net.chimera.render;
 
+import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.vulkanmod.vulkan.Renderer;
@@ -196,7 +199,7 @@ public final class ChimeraRenderer {
      * world is not pack-rendered and Minecraft's overlays draw as usual (Iris checks its active
      * pipeline the same way in MixinGui and MixinScreenEffectRenderer).
      */
-    public static net.chimera.shaderpack.ScreenOverlayDirectives packScreenOverlays() {
+    public static ScreenOverlayDirectives packScreenOverlays() {
         return packProjectionActive() ? chimeraPass.screenOverlays() : null;
     }
 
@@ -223,26 +226,26 @@ public final class ChimeraRenderer {
         return chimeraPass;
     }
 
-    private static com.mojang.blaze3d.textures.GpuTextureView hostColorView;
+    private static GpuTextureView hostColorView;
 
     /** True when the view is a main-target-family view (chimera or host). */
-    public static boolean isMainFamilyView(com.mojang.blaze3d.textures.GpuTextureView view) {
+    public static boolean isMainFamilyView(GpuTextureView view) {
         if (view == null) {
             return false;
         }
         if (chimeraPass != null && chimeraPass.isFamilyView(view)) {
             return true;
         }
-        com.mojang.blaze3d.textures.GpuTexture texture = view.texture();
+        GpuTexture texture = view.texture();
         if (hostColorView != null && texture == hostColorView.texture()) {
             return true;
         }
-        com.mojang.blaze3d.textures.GpuTexture current = getCurrentMainColorTexture();
+        GpuTexture current = getCurrentMainColorTexture();
         return current != null && texture == current;
     }
 
     /** The live main-target color texture for the current phase. */
-    public static com.mojang.blaze3d.textures.GpuTexture getCurrentMainColorTexture() {
+    public static GpuTexture getCurrentMainColorTexture() {
         return chimeraPass != null ? chimeraPass.currentMainColorTexture() : null;
     }
 

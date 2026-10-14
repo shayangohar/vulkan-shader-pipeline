@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "16e414bc13907e690d2c578f00baa402f29d727a5a57dd93a6b143e5468463eb",
+      "reportSha256": "07e619d194d8034594c17e02931224c3230ce2040c1e26a522de842ea428512e",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -31,6 +31,7 @@
       "expectedExecutablePrograms": [
         "final",
         "gbuffers_block",
+        "gbuffers_block_translucent",
         "gbuffers_damagedblock",
         "gbuffers_entities",
         "gbuffers_entities_translucent",
@@ -40,7 +41,8 @@
         "gbuffers_particles",
         "gbuffers_particles_translucent",
         "gbuffers_spidereyes",
-        "gbuffers_weather"
+        "gbuffers_weather",
+        "text_bg"
       ],
       "expectedFallbackPrograms": [],
       "expectedUnsupportedPrograms": [
@@ -49,6 +51,7 @@
       "expectedDeviations": [
         "BLEND_PROGRAM_DEFAULT:gbuffers_spidereyes",
         "BLOCK_ENTITY_ID_DEFAULTED",
+        "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
         "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
         "ENTITY_BATCH_ORIGIN_SPLIT",
@@ -59,7 +62,6 @@
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",
         "FIXED_VERTEX_SUBSTITUTION",
-        "HAND_ITEM_ID_DEFAULTED",
         "HAND_STATE_FIXED_TO_HOST",
         "HAND_TRANSLUCENT_ITEM_PHASE",
         "HAND_VERTEX_BRIDGE",
@@ -69,13 +71,17 @@
         "PARTICLE_STATE_FIXED_TO_HOST",
         "PARTICLE_TRANSLUCENT_INSTALLED",
         "PARTICLE_VERTEX_BRIDGE",
+        "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_block",
         "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities_translucent",
+        "TEXT_BG_STATE_FIXED_TO_HOST",
+        "TEXT_BG_VERTEX_BRIDGE",
         "WEATHER_STATE_FIXED_TO_HOST",
         "WEATHER_VERTEX_BRIDGE"
       ]
     },
     "unsupported_families": {
-      "reportSha256": "b753b75b1933d5fee2ec243f99b0c2c82cac8ee76fdcb4b7d2657f96bc7fce06",
+      "reportSha256": "57323eb11bcd1c847780b5c84bc3555741b0741f31edc1c9ffe9b7f0ec59a561",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -91,7 +97,8 @@
       "expectedFallbackPrograms": [
         "gbuffers_entities",
         "gbuffers_entities_translucent",
-        "gbuffers_lightning"
+        "gbuffers_lightning",
+        "text_bg"
       ],
       "expectedUnsupportedPrograms": [
         "gbuffers_skybasic"
@@ -106,7 +113,9 @@
         "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
         "LIVE_UNIFORM_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
+        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
+        "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
       ]
     }
   }

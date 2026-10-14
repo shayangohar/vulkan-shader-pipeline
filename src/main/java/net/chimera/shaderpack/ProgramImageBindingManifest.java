@@ -28,57 +28,91 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
             OrdinaryDescriptorContract ordinary) {
         List<Entry> entries = new ArrayList<>();
         for (var descriptor : ordinary.descriptors()) {
-            if (descriptor.type() != 1 && descriptor.type() != 3) continue;
-            int slot = selector(descriptor);
-            PackResourceBinding resource = ordinary.resources().stream()
-                    .filter(value -> value.slot() == slot).findFirst().orElse(null);
-            if (resource == null) throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
-            Kind kind = switch (resource.kind()) {
-                case TARGET -> PackResourcePlan.isHostTexture(resource.resourceKey())
-                        ? Kind.HOST_TEXTURE : Kind.COLOR_TARGET;
-                case DEPTH -> Kind.DEPTH_TARGET;
-                case SHADOW_DEPTH -> Kind.SHADOW_DEPTH;
-                case SHADOW_COLOR -> Kind.SHADOW_COLOR;
-                case PACK_TEXTURE, NOISE, GAME_RESOURCE -> Kind.PACK_TEXTURE;
-                case MATERIAL_MAP -> Kind.MATERIAL_MAP;
-                default -> throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
-            };
-            entries.add(new Entry(descriptor.symbol(), slot, descriptor.type(), descriptor.stages(),
-                    kind, resource.resourceKey(), descriptor.set(), descriptor.binding(), resource.sampler()));
+            if (isImage(descriptor)) entries.add(ordinaryEntry(descriptor, ordinary.resources()));
         }
         if (layout != null) {
-            for (int i = 0; i < layout.storageImages().size(); i++) {
-                var image = layout.storageImages().get(i);
-                entries.add(new Entry("Sampler" + image.selectorSlot(), image.selectorSlot(), 3, 63,
-                        Kind.ADVANCED_IMAGE, image.imageName(), 0, layout.imageBase() + i, image.symbol()));
-            }
-            for (int i = 0; i < layout.advancedSamplers().size(); i++) {
-                var image = layout.advancedSamplers().get(i);
-                entries.add(new Entry("Sampler" + image.selectorSlot(), image.selectorSlot(), 1, 63,
-                        Kind.ADVANCED_IMAGE, image.imageName(), 0, layout.samplerBase() + i, image.sampler()));
-            }
+            addAdvancedEntries(layout, entries);
         }
         ProgramImageBindingManifest manifest = new ProgramImageBindingManifest(entries);
         if (layout != null) {
             for (var descriptor : layout.descriptors()) {
-                if (descriptor.type() != 1 && descriptor.type() != 3) continue;
-                Entry entry = entries.stream().filter(value -> value.set() == descriptor.set()
-                        && value.binding() == descriptor.binding()).findFirst().orElse(null);
-                if (entry == null || entry.slot() != selector(descriptor) || entry.descriptorType() != descriptor.type()
-                        || (entry.stageMask() & descriptor.stages()) != descriptor.stages()
-                        || !(entry.symbol().equals(descriptor.symbol()) || entry.sourceSymbol().equals(descriptor.symbol())))
+                if (isImage(descriptor) && !matchesEntry(entries, descriptor))
                     throw failure("IMAGE_MANIFEST_MISMATCH:" + descriptor.symbol());
             }
         }
         return manifest;
     }
 
+    /** An ordinary sampler's entry: the resource at its selector, as the kind of image it reads. */
+    private static Entry ordinaryEntry(PackAdvancedResourcePlan.DescriptorBinding descriptor,
+                                       List<PackResourceBinding> resources) {
+        int slot = selector(descriptor);
+        PackResourceBinding resource = resources.stream()
+                .filter(value -> value.slot() == slot).findFirst().orElse(null);
+        if (resource == null) throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
+        Kind kind = switch (resource.kind()) {
+            case TARGET -> PackResourcePlan.isHostTexture(resource.resourceKey())
+                    ? Kind.HOST_TEXTURE : Kind.COLOR_TARGET;
+            case DEPTH -> Kind.DEPTH_TARGET;
+            case SHADOW_DEPTH -> Kind.SHADOW_DEPTH;
+            case SHADOW_COLOR -> Kind.SHADOW_COLOR;
+            case PACK_TEXTURE, NOISE, GAME_RESOURCE, RAW_TEXTURE -> Kind.PACK_TEXTURE;
+            case MATERIAL_MAP -> Kind.MATERIAL_MAP;
+            default -> throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
+        };
+        return new Entry(descriptor.symbol(), slot, descriptor.type(), descriptor.stages(),
+                kind, resource.resourceKey(), descriptor.set(), descriptor.binding(), resource.sampler());
+    }
+
+    /** The storage images, then the advanced samplers, at the bindings the advanced plan gives them. */
+    private static void addAdvancedEntries(PackAdvancedResourcePlan.ProgramBindingLayout layout, List<Entry> entries) {
+        for (int i = 0; i < layout.storageImages().size(); i++) {
+            var image = layout.storageImages().get(i);
+            entries.add(new Entry("Sampler" + image.selectorSlot(), image.selectorSlot(), 3, 63,
+                    Kind.ADVANCED_IMAGE, image.imageName(), 0, layout.imageBase() + i, image.symbol()));
+        }
+        for (int i = 0; i < layout.advancedSamplers().size(); i++) {
+            var image = layout.advancedSamplers().get(i);
+            entries.add(new Entry("Sampler" + image.selectorSlot(), image.selectorSlot(), 1, 63,
+                    Kind.ADVANCED_IMAGE, image.imageName(), 0, layout.samplerBase() + i, image.sampler()));
+        }
+    }
+
+    /** Whether the entry at a planned descriptor's set and binding agrees with its selector, type and stages. */
+    private static boolean matchesEntry(List<Entry> entries, PackAdvancedResourcePlan.DescriptorBinding descriptor) {
+        Entry entry = entries.stream().filter(value -> value.set() == descriptor.set()
+                && value.binding() == descriptor.binding()).findFirst().orElse(null);
+        return entry != null && entry.slot() == selector(descriptor) && entry.descriptorType() == descriptor.type()
+                && (entry.stageMask() & descriptor.stages()) == descriptor.stages()
+                && (entry.symbol().equals(descriptor.symbol()) || entry.sourceSymbol().equals(descriptor.symbol()));
+    }
+
+    private static boolean isImage(PackAdvancedResourcePlan.DescriptorBinding descriptor) {
+        return descriptor.type() == 1 || descriptor.type() == 3;
+    }
+
     /** Exact bijection against the actual builder inventory, before native allocation. */
     public void verify(List<PackAdvancedResourcePlan.DescriptorBinding> actual) {
+        Map<String, Entry> remaining = entriesByBinding();
+        for (var descriptor : actual) {
+            if (!isImage(descriptor)) continue;
+            Entry entry = remaining.remove(descriptor.set() + ":" + descriptor.binding());
+            if (entry == null) throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
+            if (!entry.symbol().equals(descriptor.symbol()) || entry.slot() != selector(descriptor)
+                    || entry.descriptorType() != descriptor.type() || entry.stageMask() != descriptor.stages())
+                throw failure("IMAGE_MANIFEST_MISMATCH:" + descriptor.symbol());
+        }
+        if (!remaining.isEmpty()) throw failure("IMAGE_DESCRIPTOR_MISSING:"
+                + remaining.values().iterator().next().symbol());
+    }
+
+    /** The entries by set and binding, once each is checked to be addressable and to agree on its slot. */
+    private Map<String, Entry> entriesByBinding() {
         Map<String, Entry> remaining = new HashMap<>();
         Map<Integer, Entry> slots = new HashMap<>();
         for (Entry entry : entries) {
-            if (!SelectorNamespace.isAddressable(entry.slot())) throw failure("SELECTOR_SLOT_UNSUPPORTED:" + entry.slot());
+            if (!SelectorNamespace.isAddressable(entry.slot())) throw failure("SELECTOR_SLOT_UNSUPPORTED:"
+                    + entry.slot());
             Entry previous = slots.putIfAbsent(entry.slot(), entry);
             if (previous != null && (previous.kind() != entry.kind()
                     || !previous.resourceKey().equals(entry.resourceKey())))
@@ -86,15 +120,7 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
             if (remaining.put(entry.set() + ":" + entry.binding(), entry) != null)
                 throw failure("IMAGE_MANIFEST_DUPLICATE:" + entry.symbol());
         }
-        for (var descriptor : actual) {
-            if (descriptor.type() != 1 && descriptor.type() != 3) continue;
-            Entry entry = remaining.remove(descriptor.set() + ":" + descriptor.binding());
-            if (entry == null) throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
-            if (!entry.symbol().equals(descriptor.symbol()) || entry.slot() != selector(descriptor)
-                    || entry.descriptorType() != descriptor.type() || entry.stageMask() != descriptor.stages())
-                throw failure("IMAGE_MANIFEST_MISMATCH:" + descriptor.symbol());
-        }
-        if (!remaining.isEmpty()) throw failure("IMAGE_DESCRIPTOR_MISSING:" + remaining.values().iterator().next().symbol());
+        return remaining;
     }
 
     private static int selector(PackAdvancedResourcePlan.DescriptorBinding descriptor) {

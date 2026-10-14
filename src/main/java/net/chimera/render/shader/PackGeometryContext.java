@@ -2,13 +2,14 @@ package net.chimera.render.shader;
 
 import net.chimera.render.PackPostTargets;
 import net.vulkanmod.vulkan.texture.VulkanImage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -105,32 +106,46 @@ public final class PackGeometryContext {
         }
         depth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-        VkRenderingAttachmentInfo.Buffer colorAttachments =
-                VkRenderingAttachmentInfo.calloc(colors.size(), stack);
-        for (int index = 0; index < colors.size(); index++) {
-            VkRenderingAttachmentInfo info = colorAttachments.get(index);
-            info.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
-                    .imageView(PackPostTargets.attachmentView(colors.get(index)))
-                    .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-                    .loadOp(clearShadowAttachments || (!geometryWindow && index == 0 && clearFirstColor)
-                            ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)
-                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
-            if (clearShadowAttachments || (!geometryWindow && index == 0 && clearFirstColor)) {
-                VkClearValue clear = VkClearValue.calloc(stack);
-                float value = clearShadowAttachments ? 1.0f : 0.0f;
-                clear.color().float32(stack.floats(value, value, value, value));
-                info.clearValue(clear);
-            }
-        }
+        VkRenderingAttachmentInfo.Buffer colorAttachments = colorAttachments(stack);
 
         VkRenderingInfo rendering = VkRenderingInfo.calloc(stack);
-        org.lwjgl.vulkan.VkRect2D renderArea = org.lwjgl.vulkan.VkRect2D.calloc(stack);
+        VkRect2D renderArea = VkRect2D.calloc(stack);
         renderArea.offset().set(0, 0);
         renderArea.extent().set(colors.get(0).width, colors.get(0).height);
         rendering.sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR)
                 .renderArea(renderArea)
                 .layerCount(1)
                 .pColorAttachments(colorAttachments);
+        rendering.pDepthAttachment(depthAttachment(stack));
+        vkCmdBeginRenderingKHR(commandBuffer, rendering);
+        clearFirstColor = false;
+        clearShadowAttachments = false;
+    }
+
+    /** The color attachments: shadow colors clear to 1, a fresh coverage window's target to 0, the rest load. */
+    private static VkRenderingAttachmentInfo.Buffer colorAttachments(MemoryStack stack) {
+        VkRenderingAttachmentInfo.Buffer colorAttachments =
+                VkRenderingAttachmentInfo.calloc(colors.size(), stack);
+        for (int index = 0; index < colors.size(); index++) {
+            boolean clears = clearShadowAttachments || (!geometryWindow && index == 0 && clearFirstColor);
+            VkRenderingAttachmentInfo info = colorAttachments.get(index);
+            info.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
+                    .imageView(PackPostTargets.attachmentView(colors.get(index)))
+                    .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                    .loadOp(clears ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)
+                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
+            if (clears) {
+                VkClearValue clear = VkClearValue.calloc(stack);
+                float value = clearShadowAttachments ? 1.0f : 0.0f;
+                clear.color().float32(stack.floats(value, value, value, value));
+                info.clearValue(clear);
+            }
+        }
+        return colorAttachments;
+    }
+
+    /** The depth attachment: cleared to 1 when a shadow window opens, loaded otherwise. */
+    private static VkRenderingAttachmentInfo depthAttachment(MemoryStack stack) {
         VkRenderingAttachmentInfo depthInfo = VkRenderingAttachmentInfo.calloc(stack);
         depthInfo.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
                 .imageView(depth.getImageView())
@@ -142,10 +157,7 @@ public final class PackGeometryContext {
             clear.depthStencil().set(1.0f, 0);
             depthInfo.clearValue(clear);
         }
-        rendering.pDepthAttachment(depthInfo);
-        vkCmdBeginRenderingKHR(commandBuffer, rendering);
-        clearFirstColor = false;
-        clearShadowAttachments = false;
+        return depthInfo;
     }
 
     public static void endRendering(VkCommandBuffer commandBuffer, MemoryStack stack) {

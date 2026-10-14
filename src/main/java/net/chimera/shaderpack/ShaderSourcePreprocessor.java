@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -111,7 +112,7 @@ public final class ShaderSourcePreprocessor {
         private final StringBuilder output = new StringBuilder();
         private final PackConditionals.State conditionState;
         private final Map<String, String> lockedMacros;
-        private final Set<String> lockedUndefined = new java.util.TreeSet<>();
+        private final Set<String> lockedUndefined = new TreeSet<>();
         private final Set<Path> includeStack = new HashSet<>();
         private final Set<String> deviations = new TreeSet<>();
         private final Set<String> dependencies = new TreeSet<>();
@@ -128,7 +129,7 @@ public final class ShaderSourcePreprocessor {
             this.shadersRoot = shadersRoot == null ? Path.of(".").toAbsolutePath().normalize()
                     : shadersRoot.toAbsolutePath().normalize();
             this.conditionState = new PackConditionals.State(initialMacros);
-            this.lockedMacros = new java.util.TreeMap<>();
+            this.lockedMacros = new TreeMap<>();
             if (lockedMacroNames != null) {
                 for (String name : lockedMacroNames) {
                     if (name != null && name.matches("[A-Za-z_]\\w*")) {
@@ -203,33 +204,40 @@ public final class ShaderSourcePreprocessor {
                 case "else" -> switchElse();
                 case "endif" -> popCondition();
                 case "define" -> define(argument);
-                case "undef" -> {
-                    if (active()) {
-                        if (!argument.matches("[A-Za-z_]\\w*")) {
-                            throw new PreparationFailure("PREPROCESSOR_DEFINE_UNSUPPORTED");
-                        }
-                        if (lockedMacros.containsKey(argument)) {
-                            emitLockedDefinitions();
-                            return;
-                        }
-                        conditionState.undefine(argument);
-                        emit("#undef " + argument);
-                    }
-                }
+                case "undef" -> undefine(argument);
                 case "include" -> include(argument, sourceFile, depth);
-                case "version", "extension", "pragma", "line" -> {
-                    if (active()) {
-                        emit(line);
-                        if (directive.equals("version")) {
-                            emitLockedDefinitions();
-                        }
-                    }
-                }
+                case "version", "extension", "pragma", "line" -> passThrough(directive, line);
                 default -> {
                     if (active()) {
                         throw new PreparationFailure("PREPROCESSOR_DIRECTIVE_UNSUPPORTED:" + directive);
                     }
                 }
+            }
+        }
+
+        private void undefine(String argument) {
+            if (!active()) {
+                return;
+            }
+            if (!argument.matches("[A-Za-z_]\\w*")) {
+                throw new PreparationFailure("PREPROCESSOR_DEFINE_UNSUPPORTED");
+            }
+            if (lockedMacros.containsKey(argument)) {
+                emitLockedDefinitions();
+                return;
+            }
+            conditionState.undefine(argument);
+            emit("#undef " + argument);
+        }
+
+        /** Keeps a version, extension, pragma or line directive as written; locked macros follow #version. */
+        private void passThrough(String directive, String line) {
+            if (!active()) {
+                return;
+            }
+            emit(line);
+            if (directive.equals("version")) {
+                emitLockedDefinitions();
             }
         }
 

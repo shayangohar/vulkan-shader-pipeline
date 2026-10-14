@@ -6,8 +6,8 @@ import net.vulkanmod.render.chunk.RenderSection;
 import net.vulkanmod.render.chunk.buffer.DrawBuffers;
 import net.vulkanmod.render.chunk.cull.QuadFacing;
 import org.joml.Vector3d;
-import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VK10;
+import org.lwjgl.vulkan.VkCommandBuffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -42,7 +42,8 @@ public abstract class ChimeraDrawBuffersMixin {
     }
 
     @Redirect(method = "buildDrawBatchesIndirect", at = @At(value = "INVOKE",
-            target = "Lorg/lwjgl/vulkan/VK10;vkCmdDrawIndexedIndirect(Lorg/lwjgl/vulkan/VkCommandBuffer;JJII)V"), require = 1)
+            target = "Lorg/lwjgl/vulkan/VK10;vkCmdDrawIndexedIndirect(Lorg/lwjgl/vulkan/VkCommandBuffer;JJII)V"),
+                    require = 1)
     private void chimera$indirect(VkCommandBuffer cmd, long buffer, long offset, int count, int stride) {
         VK10.vkCmdDrawIndexedIndirect(cmd, buffer, offset, count, stride);
         if (count > 0 && ChimeraRenderer.getMainPass() != null)

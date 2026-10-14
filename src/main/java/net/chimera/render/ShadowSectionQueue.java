@@ -8,6 +8,9 @@ import net.vulkanmod.render.chunk.util.StaticQueue;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * The chunk sections the shadow pass draws, chosen from the light's view.
  *
@@ -33,7 +36,7 @@ public final class ShadowSectionQueue {
     private AreaSetQueue areas;
     private StaticQueue<RenderSection>[] sections;
     /** Kept sections holding block entities, which the caster pass draws. */
-    private final java.util.List<RenderSection> blockEntitySections = new java.util.ArrayList<>();
+    private final List<RenderSection> blockEntitySections = new ArrayList<>();
     private boolean active;
 
     private ShadowSectionQueue() {}
@@ -46,8 +49,8 @@ public final class ShadowSectionQueue {
      * The kept sections that hold block entities, as Iris extracts block entities from its
      * shadow-culled section list. Valid while the queue is active.
      */
-    public static java.util.List<RenderSection> blockEntitySections() {
-        return INSTANCE.active ? INSTANCE.blockEntitySections : java.util.List.of();
+    public static List<RenderSection> blockEntitySections() {
+        return INSTANCE.active ? INSTANCE.blockEntitySections : List.of();
     }
 
     public static AreaSetQueue areas() {
@@ -74,12 +77,31 @@ public final class ShadowSectionQueue {
         INSTANCE.blockEntitySections.clear();
     }
 
-    @SuppressWarnings("unchecked")
     private boolean fill(SectionGrid grid, int areaCount, Matrix4f lightProjection, Matrix4f lightView,
                          ShadowCullingFrustum culling, double cameraX, double cameraY, double cameraZ) {
         this.active = false;
         this.blockEntitySections.clear();
         if (grid == null || grid.sections == null || areaCount <= 0) return false;
+        resetQueues(areaCount);
+
+        this.frustum.set(this.lightMatrix.set(lightProjection).mul(lightView));
+        for (RenderSection section : grid.sections) {
+            // A chest alone bakes no geometry: its section is empty but still casts.
+            if (section == null || (section.isCompletelyEmpty() && !section.containsBlockEntities())) continue;
+            ChunkArea area = section.getChunkArea();
+            if (area == null || area.index < 0 || area.index >= areaCount) continue;
+            if (!keptByShadowCulling(section, culling, cameraX, cameraY, cameraZ)) continue;
+            if (section.containsBlockEntities()) this.blockEntitySections.add(section);
+            if (section.isCompletelyEmpty()) continue;
+            enqueue(area, section);
+        }
+        this.active = true;
+        return true;
+    }
+
+    /** Empties the per-area queues, or allocates them anew when the area count changed. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void resetQueues(int areaCount) {
         if (this.areas == null || this.areas.size() != areaCount) {
             this.areas = new AreaSetQueue(areaCount);
             this.sections = new StaticQueue[areaCount];
@@ -89,36 +111,34 @@ public final class ShadowSectionQueue {
             }
             this.areas.clear();
         }
+    }
 
-        this.frustum.set(this.lightMatrix.set(lightProjection).mul(lightView));
-        for (RenderSection section : grid.sections) {
-            // A chest alone bakes no geometry: its section is empty but still casts.
-            if (section == null || (section.isCompletelyEmpty() && !section.containsBlockEntities())) continue;
-            ChunkArea area = section.getChunkArea();
-            if (area == null || area.index < 0 || area.index >= areaCount) continue;
-            float x = (float) (section.xOffset - cameraX);
-            float y = (float) (section.yOffset - cameraY);
-            float z = (float) (section.zOffset - cameraZ);
-            // Iris tests sections with the reach of their block models.
-            float m = ShadowCullingFrustum.SECTION_MARGIN;
-            float minX = x - m, minY = y - m, minZ = z - m;
-            float maxX = x + 16.0f + m, maxY = y + 16.0f + m, maxZ = z + 16.0f + m;
-            if (!culling.forced(minX, minY, minZ, maxX, maxY, maxZ)
-                    && (!this.frustum.testAab(x, y, z, x + 16.0f, y + 16.0f, z + 16.0f)
-                    || !culling.visible(minX, minY, minZ, maxX, maxY, maxZ))) {
-                continue;
-            }
-            if (section.containsBlockEntities()) this.blockEntitySections.add(section);
-            if (section.isCompletelyEmpty()) continue;
-            StaticQueue<RenderSection> queue = this.sections[area.index];
-            if (queue == null) {
-                queue = new StaticQueue<>(SECTIONS_PER_AREA);
-                this.sections[area.index] = queue;
-            }
-            this.areas.add(area);
-            queue.add(section);
+    /**
+     * True when the section lies in Iris's safe zone, or inside both the light volume and the
+     * culling frustum. Section coordinates are made camera-relative, like the matrices.
+     */
+    private boolean keptByShadowCulling(RenderSection section, ShadowCullingFrustum culling,
+                                        double cameraX, double cameraY, double cameraZ) {
+        float x = (float) (section.xOffset - cameraX);
+        float y = (float) (section.yOffset - cameraY);
+        float z = (float) (section.zOffset - cameraZ);
+        // Iris tests sections with the reach of their block models.
+        float m = ShadowCullingFrustum.SECTION_MARGIN;
+        float minX = x - m, minY = y - m, minZ = z - m;
+        float maxX = x + 16.0f + m, maxY = y + 16.0f + m, maxZ = z + 16.0f + m;
+        return culling.forced(minX, minY, minZ, maxX, maxY, maxZ)
+                || (this.frustum.testAab(x, y, z, x + 16.0f, y + 16.0f, z + 16.0f)
+                && culling.visible(minX, minY, minZ, maxX, maxY, maxZ));
+    }
+
+    /** Adds a section to its area's queue, creating the queue on the area's first section. */
+    private void enqueue(ChunkArea area, RenderSection section) {
+        StaticQueue<RenderSection> queue = this.sections[area.index];
+        if (queue == null) {
+            queue = new StaticQueue<>(SECTIONS_PER_AREA);
+            this.sections[area.index] = queue;
         }
-        this.active = true;
-        return true;
+        this.areas.add(area);
+        queue.add(section);
     }
 }

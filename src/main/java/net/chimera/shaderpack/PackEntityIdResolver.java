@@ -16,7 +16,7 @@ import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Immutable resolver for the basic entity.properties subset used by M6.3. */
+/** Immutable resolver for the basic entity.properties subset the entity adapter uses. */
 public final class PackEntityIdResolver {
     private static final Pattern MAPPING = Pattern.compile(
             "^\\s*entity\\.(-?\\d+)\\s*=\\s*(.*?)\\s*$");

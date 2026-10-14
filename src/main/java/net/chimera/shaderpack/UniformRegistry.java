@@ -2,8 +2,9 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -11,6 +12,9 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
  * The small, shared interface model for pack shader declarations.
@@ -20,9 +24,9 @@ import java.util.regex.Pattern;
  * and compatibility decisions deterministic.</p>
  */
 public final class UniformRegistry {
-    private static final Pattern UNIFORM_DECLARATION = Pattern.compile(
+    static final Pattern UNIFORM_DECLARATION = Pattern.compile(
             "\\buniform\\s+([A-Za-z_]\\w*)\\s+([^;{}]+);");
-    private static final Pattern UNIFORM_BLOCK = Pattern.compile(
+    static final Pattern UNIFORM_BLOCK = Pattern.compile(
             "\\buniform\\s+([A-Za-z_]\\w*)\\s*\\{");
 
     /**
@@ -81,7 +85,7 @@ public final class UniformRegistry {
             return this == SHADOW || this == SHADOW_ENTITY;
         }
 
-        /** Stages whose entityId and blockEntityId come from the EntityIds input, not the pack UBO. */
+        /** Stages whose entity identities (entityId, blockEntityId, currentRenderedItemId) come from EntityIds. */
         public boolean perVertexEntityIdentity() {
             return this == ENTITY || this == BLOCK || this == HAND || this == SHADOW_ENTITY;
         }
@@ -238,7 +242,7 @@ public final class UniformRegistry {
         public ProgramInterfacePlan {
             stages = stages == null
                     ? Map.of()
-                    : java.util.Collections.unmodifiableMap(new TreeMap<>(stages));
+                    : Collections.unmodifiableMap(new TreeMap<>(stages));
             uniforms = sortedUniforms(uniforms);
             samplers = sortedSamplers(samplers);
             deviations = sortedStrings(reconcileStageUnused(stages, deviations));
@@ -314,9 +318,9 @@ public final class UniformRegistry {
     ) {
         Stage effectiveStage = stage == null ? Stage.POST : stage;
         ProgramInterface fragment = effectiveStage == Stage.POST && targetPlan != null
-                ? planInternal(fragmentSource, Stage.POST, true, prepared,
+                ? InterfacePlanner.planInternal(fragmentSource, Stage.POST, true, prepared,
                 customDescriptors, customSamplerSlots)
-                : planInternal(fragmentSource, effectiveStage, false, prepared,
+                : InterfacePlanner.planInternal(fragmentSource, effectiveStage, false, prepared,
                 customDescriptors, customSamplerSlots);
         Map<String, ProgramInterface> stagePlans = new TreeMap<>();
         stagePlans.put("fragment", fragment);
@@ -324,7 +328,7 @@ public final class UniformRegistry {
         List<SamplerBinding> samplers = new ArrayList<>(fragment.samplers());
         List<String> deviations = new ArrayList<>(fragment.deviations());
         if (vertexSource != null) {
-            ProgramInterface vertex = planInternal(vertexSource, effectiveStage, false, prepared,
+            ProgramInterface vertex = InterfacePlanner.planInternal(vertexSource, effectiveStage, false, prepared,
                     customDescriptors, customSamplerSlots);
             stagePlans.put("vertex", vertex);
             uniforms.addAll(vertex.uniforms());
@@ -360,7 +364,7 @@ public final class UniformRegistry {
      * resolved only when the pack has already allocated textureAtlas; it is
      * not a host-texture fallback and does not consume a second selector slot.
      */
-    private static final String PACK_ATLAS_SAMPLER = "textureAtlas";
+    static final String PACK_ATLAS_SAMPLER = "textureAtlas";
 
     /** Geometry stage: the host's registry slots the terrain draw path fills. */
     public static final Map<String, Integer> GEOMETRY_NAME_TO_SLOT = Map.ofEntries(
@@ -422,8 +426,10 @@ public final class UniformRegistry {
             // post, geometry, and shadow tables and the resource plan. A
             // custom pack-selector allocation here leaves the ordinary
             // descriptor without a same-slot manifest resource and rejects
-            // the pipeline (DOC-348 repair 1).
-            Map.entry("noisetex", 7)
+            // the pipeline.
+            Map.entry("noisetex", 7),
+            // The opaque depth snapshot, on the slot post and gbuffers_water read it from.
+            Map.entry("depthtex1", 12)
     );
     /**
      * Resource-pack material maps ride fixed extended selectors, but only in
@@ -442,12 +448,12 @@ public final class UniformRegistry {
             Stage.BLOCK, Stage.HAND, Stage.PARTICLE
     );
 
-    private static final Set<String> SUPPORTED_TYPES = Set.of(
+    static final Set<String> SUPPORTED_TYPES = Set.of(
             "float", "int", "bool", "vec2", "vec3", "vec4",
             "ivec2", "ivec3", "ivec4", "mat4");
 
     /** The only catalog used by declaration planning and the runtime provider. */
-    private static final Map<String, UniformDescriptor> UNIFORM_SPECS = uniformSpecs();
+    static final Map<String, UniformDescriptor> UNIFORM_SPECS = UniformCatalog.uniformSpecs();
 
     /** Returns the canonical descriptor for a name, or null for an unknown name. */
     public static UniformDescriptor descriptor(String name) {
@@ -463,7 +469,7 @@ public final class UniformRegistry {
     /** Returns the complete deterministic catalog for diagnostics and tests. */
     public static List<UniformDescriptor> catalog() {
         return UNIFORM_SPECS.values().stream()
-                .sorted(java.util.Comparator.comparing(UniformDescriptor::name))
+                .sorted(Comparator.comparing(UniformDescriptor::name))
                 .toList();
     }
 
@@ -473,23 +479,23 @@ public final class UniformRegistry {
      * deviation list and make the plan ineligible for pipeline construction.
      */
     public static ProgramInterface plan(String source, Stage stage) {
-        return planInternal(source, stage, false, false);
+        return InterfacePlanner.planInternal(source, stage, false, false);
     }
 
     /**
-     * Plans a post program whose colortex bindings are backed by M5.6 target
+     * Plans a post program whose colortex bindings are backed by post target
      * images rather than the older single-image seam aliases.
      */
     public static ProgramInterface planPost(String source, PostTargetPlan targetPlan) {
         if (targetPlan == null) {
             throw new IllegalArgumentException("post target plan is required");
         }
-        return planInternal(source, Stage.POST, true, false);
+        return InterfacePlanner.planInternal(source, Stage.POST, true, false);
     }
 
     /** Plans a source snapshot after the pack preprocessor has removed inactive declarations. */
     public static ProgramInterface planPrepared(String source, Stage stage) {
-        return planInternal(source, stage, false, true);
+        return InterfacePlanner.planInternal(source, stage, false, true);
     }
 
     /** Prepared post source variant used by the real-pack loader. */
@@ -497,315 +503,7 @@ public final class UniformRegistry {
         if (targetPlan == null) {
             throw new IllegalArgumentException("post target plan is required");
         }
-        return planInternal(source, Stage.POST, true, true);
-    }
-
-    private static ProgramInterface planInternal(
-            String source, Stage stage, boolean targetedPost, boolean allowUnusedDeclarations) {
-        return planInternal(source, stage, targetedPost, allowUnusedDeclarations, Map.of());
-    }
-
-    private static ProgramInterface planInternal(
-            String source,
-            Stage stage,
-            boolean targetedPost,
-            boolean allowUnusedDeclarations,
-            Map<String, UniformDescriptor> customDescriptors
-    ) {
-        return planInternal(source, stage, targetedPost, allowUnusedDeclarations,
-                customDescriptors, Map.of());
-    }
-
-    private static ProgramInterface planInternal(
-            String source,
-            Stage stage,
-            boolean targetedPost,
-            boolean allowUnusedDeclarations,
-            Map<String, UniformDescriptor> customDescriptors,
-            Map<String, Integer> customSamplerSlots
-    ) {
-        String stripped = stripComments(source == null ? "" : source);
-        Map<String, UniformDeclaration> declarations = new TreeMap<>();
-        Set<String> implicitDeclarations = new TreeSet<>();
-        Set<String> conflicts = new TreeSet<>();
-        Map<String, String> samplerNames = new TreeMap<>();
-        Map<Integer, String> samplerResources = new TreeMap<>();
-        Set<String> deviations = new TreeSet<>();
-        Set<String> referencedValues = new TreeSet<>(allowUnusedDeclarations
-                ? GlslResourceUsage.referencedValueIdentifiers(stripped, UNIFORM_SPECS.keySet())
-                : Set.of());
-        if (allowUnusedDeclarations && stage == Stage.SHADOW) {
-            if (containsIdentifier(stripped, "gl_ModelViewMatrix")) {
-                referencedValues.add("shadowModelView");
-            }
-            if (containsIdentifier(stripped, "gl_NormalMatrix")) {
-                referencedValues.add("shadowModelViewInverse");
-            }
-            if (containsIdentifier(stripped, "gl_ProjectionMatrix")) {
-                referencedValues.add("shadowProjection");
-            }
-        }
-
-        Matcher matcher = UNIFORM_DECLARATION.matcher(stripped);
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            for (Variable variable : parseVariables(matcher.group(2))) {
-                if (isSamplerType(type)) {
-                    samplerNames.putIfAbsent(variable.name(), type);
-                    continue;
-                }
-                // Writable 3D images belong to the M8.6 advanced-resource
-                // plan, not to the ordinary generated UBO. Keeping them out
-                // of this catalog lets the graphics image bridge assign one
-                // explicit storage descriptor later.
-                if (isStorageImageType(type)) {
-                    deviations.add("ADVANCED_IMAGE_DECLARATION:" + variable.name());
-                    continue;
-                }
-                // Pack authors write bool for Iris's isElytraFlying; the
-                // catalog field is int, so a bool declaration of that name
-                // plans as the live int field rather than failing type
-                // support.
-                String declaredType = type;
-                if (variable.name().equals("isElytraFlying") && type.equals("bool")) {
-                    declaredType = "int";
-                }
-                String effectiveType = variable.array() ? declaredType + "[]" : declaredType;
-                UniformDeclaration declaration = new UniformDeclaration(
-                        variable.name(), effectiveType);
-                UniformDeclaration previous = declarations.putIfAbsent(variable.name(), declaration);
-                if (previous != null && !previous.glslType().equals(declaredType)) {
-                    conflicts.add(variable.name());
-                    declarations.put(variable.name(), declaration);
-                }
-            }
-        }
-
-        Matcher blockMatcher = UNIFORM_BLOCK.matcher(stripped);
-        while (blockMatcher.find()) {
-            deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + blockMatcher.group(1));
-        }
-
-        // Real packs sometimes expose standard Iris uniforms through a
-        // conditional include that is absent from the prepared snapshot. If
-        // the name is in the canonical catalog and has exactly one accepted
-        // type, synthesize the declaration from that catalog entry. This is
-        // deliberately table-driven and does not infer arbitrary GLSL types.
-        if (allowUnusedDeclarations) {
-            for (UniformDescriptor descriptor : UNIFORM_SPECS.values()) {
-                if (descriptor.acceptedTypes().size() != 1
-                        || declarations.containsKey(descriptor.name())
-                        || !referencedValues.contains(descriptor.name())
-                        || isLocallyDeclared(stripped, descriptor.name())) {
-                    continue;
-                }
-                declarations.put(descriptor.name(), new UniformDeclaration(
-                        descriptor.name(), descriptor.acceptedTypes().get(0)));
-                implicitDeclarations.add(descriptor.name());
-                deviations.add("UNIFORM_IMPLICIT_DECLARATION:" + descriptor.name());
-            }
-        }
-        // The terrain bridge serves the legacy matrix built-ins from
-        // gbufferModelView (LegacyGlslConverter.modernTerrainInputReplacements);
-        // a pack that only writes gl_ModelViewMatrix never declares it.
-        if ((stage == Stage.GEOMETRY || stage == Stage.TRANSLUCENT)
-                && usesLegacyModelView(stripped)
-                && !declarations.containsKey("gbufferModelView")
-                && !isLocallyDeclared(stripped, "gbufferModelView")) {
-            declarations.put("gbufferModelView", new UniformDeclaration("gbufferModelView", "mat4"));
-            implicitDeclarations.add("gbufferModelView");
-            deviations.add("UNIFORM_IMPLICIT_DECLARATION:gbufferModelView");
-        }
-
-        for (UniformDeclaration declaration : declarations.values()) {
-            String name = declaration.name();
-            String type = declaration.glslType();
-            if (conflicts.contains(name)) {
-                deviations.add("UNIFORM_CONFLICT:" + name);
-            }
-            if (stage.perVertexEntityIdentity() && isEntityIdentity(name)) {
-                if (!type.equals("int") && !type.equals("float")) {
-                    deviations.add("ENTITY_ID_UNSUPPORTED:" + type);
-                } else if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
-                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
-                } else {
-                    deviations.add("ENTITY_ID_VERTEX_DATA");
-                }
-                continue;
-            }
-            UniformDescriptor custom = customDescriptors == null ? null : customDescriptors.get(name);
-            // A pack value of a VulkanMod host name is the pack's own, as under Iris.
-            UniformDescriptor spec = HOST_ONLY.contains(name) && custom != null ? custom : UNIFORM_SPECS.get(name);
-            if (spec == null) {
-                spec = custom;
-            }
-            if (custom != null && custom.availability() == Availability.REJECTED) {
-                // The pack wrote this declaration and Chimera could not honour it. A program that
-                // reads the name must not run with a substitute value, so it fails closed here.
-                if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
-                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
-                } else {
-                    deviations.add("CUSTOM_VALUE_REJECTED:" + name);
-                }
-                continue;
-            }
-            if (!SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
-                if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
-                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
-                } else {
-                    deviations.add("UNIFORM_TYPE_UNSUPPORTED:" + name);
-                }
-                continue;
-            }
-            if (spec == null) {
-                spec = unsetDescriptor(name, type);
-                if (spec != null) {
-                    deviations.add("UNIFORM_UNSET_ZERO:" + name);
-                }
-            }
-            if (spec == null) {
-                if (allowUnusedDeclarations && !isReferencedForStage(stripped, name, stage)) {
-                    deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
-                } else {
-                    deviations.add("UNIFORM_NAME_UNSUPPORTED:" + name);
-                }
-                continue;
-            }
-            if (allowUnusedDeclarations && !implicitDeclarations.contains(name)
-                    && !isReferencedForStage(stripped, name, stage)) {
-                deviations.add("UNIFORM_DECLARATION_UNUSED:" + name);
-                continue;
-            }
-            deviations.add("LIVE_UNIFORM_BRIDGE");
-            if (customDescriptors != null && customDescriptors.containsKey(name)) {
-                deviations.add("CUSTOM_UNIFORM_BRIDGE:" + name);
-            }
-            if (spec.availability() == Availability.DEFAULTED) {
-                deviations.add("UNIFORM_DEFAULTED:" + name);
-            }
-        }
-
-        Map<String, Integer> slots = switch (stage) {
-            case POST -> NAME_TO_SLOT;
-            case GEOMETRY -> GEOMETRY_NAME_TO_SLOT;
-            case SHADOW, SHADOW_ENTITY -> SHADOW_NAME_TO_SLOT;
-            case TRANSLUCENT -> TRANSLUCENT_NAME_TO_SLOT;
-            case ENTITY, BLOCK, HAND -> ENTITY_NAME_TO_SLOT;
-            case PARTICLE -> ENTITY_NAME_TO_SLOT;
-            case SKY, CLOUD -> GEOMETRY_NAME_TO_SLOT;
-        };
-        boolean waterShadow = samplerNames.containsKey("watershadow");
-        List<SamplerBinding> bindings = new ArrayList<>();
-        for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
-            if (allowUnusedDeclarations && isSamplerUnused(stripped, sampler.getKey())) {
-                deviations.add("SAMPLER_DECLARATION_UNUSED:" + sampler.getKey());
-                continue;
-            }
-            // Iris gives the legacy shadow names a per-program meaning; look them up by it.
-            String lookup = PackResourcePlan.isProgramShadowAlias(sampler.getKey())
-                    ? PackResourcePlan.programResource(sampler.getKey(), waterShadow) : sampler.getKey();
-            Integer slot = slots.get(lookup);
-            if (stage == Stage.POST && slot == null) {
-                slot = extendedPostColorSlot(sampler.getKey());
-            }
-            if (stage != Stage.POST && !stage.shadowPass() && slot == null) {
-                slot = gbufferColorInputSlot(sampler.getKey());
-            }
-            if (stage == Stage.POST && slot == null && sampler.getKey().equals("tex")
-                    && customSamplerSlots != null) {
-                slot = customSamplerSlots.get(PACK_ATLAS_SAMPLER);
-                if (slot != null) {
-                    deviations.add("SAMPLER_ALIAS_TO_PACK_RESOURCE:tex:textureAtlas");
-                }
-            }
-            if (slot == null && customSamplerSlots != null) {
-                slot = customSamplerSlots.get(sampler.getKey());
-            }
-            if (slot == null && MATERIAL_NAME_TO_SLOT.containsKey(sampler.getKey())
-                    && MATERIAL_STAGES.contains(stage)) {
-                slot = MATERIAL_NAME_TO_SLOT.get(sampler.getKey());
-            }
-            boolean mappedType = sampler.getValue().equals("sampler2D")
-                    || sampler.getValue().equals("sampler2DShadow")
-                    || ((sampler.getValue().equals("sampler3D")
-                    || sampler.getValue().equals("isampler3D")
-                    || sampler.getValue().equals("usampler3D"))
-                    && customSamplerSlots != null
-                    && customSamplerSlots.containsKey(sampler.getKey()));
-            if (!mappedType || slot == null) {
-                if (stage.shadowPass() && sampler.getKey().startsWith("shadowcolor")) {
-                    deviations.add("SHADOW_COLOR_INPUT_UNSUPPORTED");
-                } else if (stage == Stage.TRANSLUCENT
-                        && (sampler.getKey().startsWith("depthtex")
-                        || sampler.getKey().startsWith("shadowcolor"))) {
-                    deviations.add("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED");
-                } else if (stage == Stage.ENTITY || stage == Stage.BLOCK || stage == Stage.HAND
-                        || stage == Stage.PARTICLE) {
-                    deviations.add("ENTITY_SAMPLER_UNSUPPORTED:" + sampler.getKey());
-                } else if (stage == Stage.TRANSLUCENT) {
-                    deviations.add("TRANSLUCENT_SAMPLER_UNSUPPORTED:" + sampler.getKey());
-                } else {
-                    deviations.add(stage.shadowPass()
-                            ? "SHADOW_SAMPLER_UNSUPPORTED:" + sampler.getKey()
-                            : "SAMPLER_NOT_MAPPED:" + sampler.getKey());
-                }
-                continue;
-            }
-            bindings.add(new SamplerBinding(sampler.getKey(), slot, sampler.getValue()));
-            String resource = stage == Stage.POST && sampler.getKey().equals("tex")
-                    && customSamplerSlots != null
-                    && customSamplerSlots.containsKey(PACK_ATLAS_SAMPLER)
-                    ? PACK_ATLAS_SAMPLER : samplerResource(lookup);
-            String previousResource = samplerResources.putIfAbsent(slot, resource);
-            if (previousResource != null && !previousResource.equals(resource)) {
-                deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
-            }
-            if (stage == Stage.POST && isHostAlias(sampler.getKey())) {
-                deviations.add("SAMPLER_ALIAS_TO_HOST:" + sampler.getKey());
-            }
-            if (stage == Stage.POST && sampler.getKey().equals("noisetex")) {
-                deviations.add("NOISETEX_PACK_RESOURCE");
-            }
-            if (stage == Stage.POST && sampler.getKey().startsWith("depthtex")) {
-                // Keep the M5.3 single-depth report stable while the new
-                // graph is introduced. M7.4 graph snapshots carry the
-                // authoritative semantic correction.
-                if (sampler.getKey().equals("depthtex0")) {
-                    deviations.add("DEPTH_INPUT_FIXED_TO_HDR");
-                } else {
-                    deviations.add("DEPTH_INPUT_GRAPH:" + sampler.getKey());
-                }
-            }
-            if (stage == Stage.POST && !targetedPost && sampler.getKey().matches("colortex[1-3]")) {
-                deviations.add("COLORTEX_ALIAS_TO_SEAM");
-            }
-        }
-
-        return new ProgramInterface(stage, List.copyOf(declarations.values()), bindings, List.copyOf(deviations));
-    }
-
-    private static List<Variable> parseVariables(String body) {
-        List<Variable> result = new ArrayList<>();
-        for (String part : body.split(",")) {
-            String value = part.trim();
-            int equals = value.indexOf('=');
-            if (equals >= 0) {
-                value = value.substring(0, equals).trim();
-            }
-            Matcher name = Pattern.compile("^([A-Za-z_]\\w*)(\\s*\\[[^]]*\\])?$")
-                    .matcher(value);
-            if (name.matches()) {
-                result.add(new Variable(name.group(1), name.group(2) != null));
-            }
-        }
-        return result;
-    }
-
-    private static boolean compatibleType(String name, String type, UniformDescriptor spec) {
-        if (spec == null) {
-            return SUPPORTED_TYPES.contains(type);
-        }
-        return spec.accepts(type);
+        return InterfacePlanner.planInternal(source, Stage.POST, true, true);
     }
 
     /**
@@ -842,7 +540,7 @@ public final class UniformRegistry {
      * Iris has none of them, so a pack that authors one (Bliss's {@code texelSize}) gets its own
      * value, as it would under Iris.
      */
-    private static final Set<String> HOST_ONLY = Set.of(
+    static final Set<String> HOST_ONLY = Set.of(
             "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd",
             "FogEnvironmentalStart", "FogEnvironmentalEnd", "FogRenderDistanceStart",
             "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE, GLINT_ALPHA,
@@ -934,11 +632,11 @@ public final class UniformRegistry {
 
     /** Iris EntityPatcher names served per vertex from EntityIds, not from the pack UBO. */
     static boolean isEntityIdentity(String name) {
-        return name.equals("entityId") || name.equals("blockEntityId");
+        return EntityVertexBridge.ENTITY_ID_NAMES.contains(name);
     }
 
     /** Accounts for stage-local legacy shadow matrix aliases during planning. */
-    private static boolean isReferencedForStage(String source, String name, Stage stage) {
+    static boolean isReferencedForStage(String source, String name, Stage stage) {
         if (isReferenced(source, name)) {
             return true;
         }
@@ -956,57 +654,31 @@ public final class UniformRegistry {
         };
     }
 
-    private static boolean usesLegacyModelView(String source) {
+    static boolean usesLegacyModelView(String source) {
         return containsIdentifier(source, "gl_ModelViewMatrix") || containsIdentifier(source, "gl_NormalMatrix")
                 || containsIdentifier(source, "gl_ProjectionMatrix");
     }
 
-    private static boolean containsIdentifier(String source, String name) {
+    static boolean containsIdentifier(String source, String name) {
         return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source).find();
     }
 
-    private static boolean isSamplerUnused(String source, String name) {
+    static boolean isSamplerUnused(String source, String name) {
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source);
         return usage.successful() && !usage.liveSamplers().contains(name);
     }
 
-    private static String removeUniformDeclaration(String source, String name) {
-        Matcher matcher = UNIFORM_DECLARATION.matcher(maskComments(source));
-        StringBuilder result = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            boolean contains = parseVariables(matcher.group(2)).stream()
-                    .anyMatch(value -> value.name().equals(name));
-            if (contains) {
-                result.append(source, last, matcher.start());
-                last = matcher.end();
-            }
-        }
-        if (last == 0) return source;
-        result.append(source, last, source.length());
-        return result.toString();
-    }
-
-    private static boolean isLocallyDeclared(String source, String name) {
+    static boolean isLocallyDeclared(String source, String name) {
         return Pattern.compile("\\b(?:const\\s+)?[A-Za-z_]\\w*\\s+"
                 + Pattern.quote(name) + "\\b").matcher(source).find();
     }
 
-    private static boolean isHostAlias(String name) {
+    static boolean isHostAlias(String name) {
         return name.equals("shadowtex1")
                 || name.equals("shadowcolor0") || name.equals("shadowcolor1");
     }
 
-    private record Variable(String name, boolean array) {}
-
-    /**
-     * The OptiFine sampler names a fragment program declares, in ascending
-     * slot order, resolved against the stage's map. Unknown names are omitted
-     * from this compatibility list but remain a deviation in {@link #plan}.
-     */
-    public static List<String> scanSamplerNames(String fragmentSource, Stage stage) {
-        return plan(fragmentSource, stage).samplers().stream().map(SamplerBinding::name).toList();
-    }
+    record Variable(String name, boolean array) {}
 
     /** Returns all declared sampler names, including unsupported names, sorted. */
     public static List<String> scanDeclaredSamplerNames(String source) {
@@ -1015,7 +687,7 @@ public final class UniformRegistry {
         Matcher matcher = UNIFORM_DECLARATION.matcher(stripped);
         while (matcher.find()) {
             if (isSamplerType(matcher.group(1))) {
-                for (Variable variable : parseVariables(matcher.group(2))) {
+                for (Variable variable : InterfacePlanner.parseVariables(matcher.group(2))) {
                     names.add(variable.name());
                 }
             }
@@ -1054,8 +726,8 @@ public final class UniformRegistry {
     public static String removeUniformDeclarations(String source, ProgramInterface plan) {
         String result = source == null ? "" : source;
         Set<String> executable = plan.executableUniforms().stream()
-                .map(UniformDeclaration::name).collect(java.util.stream.Collectors.toSet());
-        Set<String> unusedSamplers = new java.util.HashSet<>();
+                .map(UniformDeclaration::name).collect(Collectors.toSet());
+        Set<String> unusedSamplers = new HashSet<>();
         for (String deviation : plan.deviations()) {
             if (deviation.startsWith("UNIFORM_DECLARATION_UNUSED:")) {
                 executable.add(deviation.substring("UNIFORM_DECLARATION_UNUSED:".length()));
@@ -1068,37 +740,19 @@ public final class UniformRegistry {
         int last = 0;
         boolean changed = false;
         while (matcher.find()) {
-            if (isSamplerType(matcher.group(1))) {
-                List<Variable> variables = parseVariables(matcher.group(2));
-                if (!variables.isEmpty()) {
-                    List<Variable> retained = variables.stream()
-                            .filter(variable -> !unusedSamplers.contains(variable.name()))
-                            .toList();
-                    if (retained.size() != variables.size()) {
-                        out.append(result, last, matcher.start());
-                        if (!retained.isEmpty()) {
-                            out.append("uniform ").append(matcher.group(1)).append(' ')
-                                    .append(retained.stream().map(Variable::name)
-                                            .collect(java.util.stream.Collectors.joining(", ")))
-                                    .append(';');
-                        }
-                        last = matcher.end();
-                        changed = true;
-                    }
-                }
-                continue;
-            }
-            List<Variable> variables = parseVariables(matcher.group(2));
+            // Samplers stay declared for the binding rewrite unless the pack never reads them.
+            Set<String> removed = isSamplerType(matcher.group(1)) ? unusedSamplers : executable;
+            List<Variable> variables = InterfacePlanner.parseVariables(matcher.group(2));
             if (!variables.isEmpty()) {
                 List<Variable> retained = variables.stream()
-                        .filter(variable -> !executable.contains(variable.name()))
+                        .filter(variable -> !removed.contains(variable.name()))
                         .toList();
                 if (retained.size() != variables.size()) {
                     out.append(result, last, matcher.start());
                     if (!retained.isEmpty()) {
                         out.append("uniform ").append(matcher.group(1)).append(' ')
                                 .append(retained.stream().map(Variable::name)
-                                        .collect(java.util.stream.Collectors.joining(", ")))
+                                        .collect(Collectors.joining(", ")))
                                 .append(';');
                     }
                     last = matcher.end();
@@ -1128,15 +782,15 @@ public final class UniformRegistry {
                 || deviation.startsWith("ENTITY_ID_UNSUPPORTED:");
     }
 
-    private static boolean isSamplerType(String type) {
+    static boolean isSamplerType(String type) {
         return type.startsWith("sampler") || type.startsWith("isampler") || type.startsWith("usampler");
     }
 
-    private static boolean isStorageImageType(String type) {
+    static boolean isStorageImageType(String type) {
         return "image3D".equals(type) || "iimage3D".equals(type) || "uimage3D".equals(type);
     }
 
-    private static String samplerResource(String name) {
+    static String samplerResource(String name) {
         return PackResourcePlan.canonicalResource(name);
     }
 
@@ -1145,7 +799,7 @@ public final class UniformRegistry {
      * ({@link SelectorNamespace#colorTargetSlot}), so aliases such as gcolor
      * and gaux1 resolve to the same slot as their colortex names.
      */
-    private static Integer extendedPostColorSlot(String name) {
+    static Integer extendedPostColorSlot(String name) {
         Integer target = PackResourcePlan.targetIndex(name);
         if (target == null || target > PostTargetPlan.MAX_TARGET) {
             return null;
@@ -1162,7 +816,7 @@ public final class UniformRegistry {
      * the host atlas, overlay, lightmap and shadowcolor0 selectors, so they
      * stay unmapped.
      */
-    private static Integer gbufferColorInputSlot(String name) {
+    static Integer gbufferColorInputSlot(String name) {
         Integer target = PackResourcePlan.targetIndex(name);
         if (target == null || target < 4 || target > PostTargetPlan.MAX_TARGET) {
             return null;
@@ -1176,191 +830,6 @@ public final class UniformRegistry {
             String name
     ) {
         return deviations.contains(prefix + name);
-    }
-
-    private static Map<String, UniformDescriptor> uniformSpecs() {
-        Map<String, UniformDescriptor> specs = new LinkedHashMap<>();
-        addLive(specs, "cameraPosition", "vec3");
-        addLive(specs, "worldTime", "int");
-        addLive(specs, "frameTimeCounter", "float");
-        addLive(specs, "rainStrength", "float");
-        addLive(specs, "thunderStrength", "float");
-        addLive(specs, "isEyeInWater", "int");
-        addLive(specs, "moonPhase", "int");
-        addLive(specs, "sunPosition", "vec3");
-        addLive(specs, "moonPosition", "vec3");
-        addLive(specs, "shadowLightPosition", "vec3");
-        addLive(specs, "shadowModelView", "mat4");
-        addLive(specs, "shadowProjection", "mat4");
-        addLive(specs, "viewWidth", "float");
-        addLive(specs, "viewHeight", "float");
-        addLive(specs, "aspectRatio", "float");
-        addLive(specs, "near", "float");
-        addLive(specs, "far", "float");
-        addLive(specs, "wetness", "float");
-        addLive(specs, "sunAngle", "float");
-        addLive(specs, "shadowAngle", "float");
-        addLive(specs, "upPosition", "vec3");
-        addLive(specs, "skyColor", "vec3");
-        addLive(specs, "frameCounter", "int");
-        addLive(specs, "cameraPositionInt", "ivec3");
-        addLive(specs, "previousCameraPositionInt", "ivec3");
-        addLive(specs, "cameraPositionFract", "vec3");
-        addLive(specs, "previousCameraPositionFract", "vec3");
-        addLive(specs, "previousCameraPosition", "vec3");
-        addLive(specs, "cloudHeight", "float");
-
-        // Common standard Iris values used by real legacy post sources. The
-        // provider supplies live values where Chimera has a source of truth;
-        // the remaining values are explicit zero or identity defaults.
-        addLive(specs, "bedrockLevel", "int");
-        addLive(specs, "blindness", "float", "blindness");
-        addLive(specs, "darknessFactor", "float");
-        addLive(specs, "darknessLightFactor", "float");
-        addLive(specs, "isElytraFlying", "int");
-        addDefault(specs, "endFlashIntensity", "float");
-        addDefault(specs, "previousEndFlashIntensity", "float");
-        addDefault(specs, "endFlashPosition", "vec3");
-        addLive(specs, "frameTime", "float");
-        addLive(specs, "nightVision", "float");
-        addLive(specs, "screenBrightness", "float");
-        addDefault(specs, "velocity", "float");
-        addLive(specs, "worldDay", "int");
-        addLive(specs, "atlasSize", "ivec2");
-        addLive(specs, "eyeBrightness", "ivec2");
-        addLive(specs, "eyeBrightnessSmooth", "ivec2");
-        addLive(specs, "eyeAltitude", "float");
-        addLive(specs, "eyePosition", "vec3");
-        addLive(specs, "playerLookVector", "vec3");
-        addLive(specs, "relativeEyePosition", "vec3");
-        addLive(specs, "biome", "int");
-        addLive(specs, "biome_category", "int");
-        addLive(specs, "biome_precipitation", "int");
-        addLive(specs, "dimension", "int");
-        addLive(specs, "heightLimit", "int");
-        addLive(specs, "logicalHeightLimit", "int");
-        addLive(specs, "seaLevel", "int");
-        // Iris serves these through uniform1b; packs declare them bool or int.
-        addLive(specs, "hasCeiling", List.of("int", "bool"), "hasCeiling");
-        addLive(specs, "hasSkylight", List.of("int", "bool"), "hasSkylight");
-        addLive(specs, "ambientLight", "float");
-        addLive(specs, "temperature", "float");
-        addLive(specs, "rainfall", "float");
-        addDefault(specs, "centerDepthSmooth", "float");
-        addDefault(specs, "entityColor", "vec4");
-        addDefault(specs, "lightningBoltPosition", "vec4");
-        addDefault(specs, "blockEntityId", "int");
-        addDefault(specs, "currentRenderedItemId", "int");
-        addDefault(specs, "entityId", "int");
-        // IdMapUniforms: each hand's item.properties id, its light and that light's colour.
-        addLive(specs, "heldBlockLightValue", "int");
-        addLive(specs, "heldBlockLightValue2", "int");
-        addLive(specs, "heldItemId", "int");
-        addLive(specs, "heldItemId2", "int");
-        addLive(specs, "heldBlockLightColor", "vec3");
-        addLive(specs, "heldBlockLightColor2", "vec3");
-        addLive(specs, "gbufferModelView", "mat4");
-        addLive(specs, "gbufferModelViewInverse", "mat4");
-        addLive(specs, "gbufferPreviousModelView", "mat4");
-        addLive(specs, "gbufferPreviousProjection", "mat4");
-        addLive(specs, "gbufferProjection", "mat4");
-        addLive(specs, "gbufferProjectionInverse", "mat4");
-        addLive(specs, "shadowModelViewInverse", "mat4");
-        addLive(specs, "shadowProjectionInverse", "mat4");
-        addLive(specs, "renderStage", "int");
-
-        addIrisPlayerState(specs);
-
-        addLive(specs, "MVP", "mat4");
-        addLive(specs, "ModelViewMat", "mat4");
-        addLive(specs, "ProjMat", "mat4");
-        addLive(specs, "TextureMat", "mat4");
-        addLive(specs, "FogColor", "vec4");
-        addLive(specs, "FogStart", "float");
-        addLive(specs, "FogEnd", "float");
-        addLive(specs, "FogEnvironmentalStart", "float");
-        addLive(specs, "FogEnvironmentalEnd", "float");
-        addLive(specs, "FogRenderDistanceStart", "float");
-        addLive(specs, "FogRenderDistanceEnd", "float");
-        addLive(specs, "FogSkyEnd", "float");
-        addLive(specs, "FogCloudsEnd", "float");
-        addLive(specs, "AlphaCutout", "float");
-        addLive(specs, ENTITY_ALPHA_REFERENCE, "float");
-        addLive(specs, GLINT_ALPHA, "float");
-        addLive(specs, "ScreenSize", "vec2");
-        addLive(specs, "TextureSize", "ivec2");
-        addLive(specs, "TexelSize", "vec2");
-        addLive(specs, "Light0_Direction", "vec3");
-        addLive(specs, "Light1_Direction", "vec3");
-        addLive(specs, "ColorModulator", "vec4");
-        addLive(specs, "ModelOffset", "vec3");
-        addLive(specs, "ChunkOffset", "vec3");
-        addLive(specs, "UseRgss", "int");
-        addLive(specs, "CurrentTime", "int");
-        addLive(specs, "EndPortalLayers", "int");
-
-        addLive(specs, "fogColor", List.of("vec3", "vec4"), "fogColor");
-        addLive(specs, "fogStart", "float");
-        addLive(specs, "fogEnd", "float");
-        addLive(specs, "screenSize", "vec2");
-        addLive(specs, "textureSize", "ivec2");
-        addLive(specs, "texelSize", "vec2");
-        return Map.copyOf(specs);
-    }
-
-    /**
-     * Iris's player, HUD, vehicle, clock and Distant Horizons uniforms (see IrisPlayerState).
-     * Booleans take bool or int, as Iris's uniform1b serves either.
-     */
-    private static void addIrisPlayerState(Map<String, UniformDescriptor> specs) {
-        for (String flag : List.of("hideGUI", "isRightHanded", "feetInWater", "inSwimmingAnimation",
-                "isRiding", "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog")) {
-            addLive(specs, flag, List.of("bool", "int"), flag);
-        }
-        for (String value : List.of("currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger",
-                "maxPlayerHunger", "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir",
-                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "chunkFadeTimeInv",
-                "dhNearPlane", "dhFarPlane")) {
-            addLive(specs, value, "float");
-        }
-        for (String value : List.of("textureFilteringMode", "anisotropicFiltering", "currentColorSpace",
-                "dhRenderDistance")) {
-            addLive(specs, value, "int");
-        }
-        for (String vector : List.of("vehicleLookVector", "relativeVehiclePosition", "playerBodyVector")) {
-            addLive(specs, vector, "vec3");
-        }
-        addLive(specs, "currentDate", "ivec3");
-        addLive(specs, "currentTime", "ivec3");
-        addLive(specs, "currentYearTime", "ivec2");
-        addLive(specs, "dhProjection", "mat4");
-        addLive(specs, "dhProjectionInverse", "mat4");
-        addLive(specs, "dhPreviousProjection", "mat4");
-    }
-
-    private static void addLive(Map<String, UniformDescriptor> specs, String name, String type) {
-        addLive(specs, name, List.of(type), name);
-    }
-
-    private static void addLive(Map<String, UniformDescriptor> specs, String name,
-                                String type, String sourceKey) {
-        addLive(specs, name, List.of(type), sourceKey);
-    }
-
-    private static void addLive(Map<String, UniformDescriptor> specs, String name,
-                                List<String> types, String sourceKey) {
-        specs.put(name, new UniformDescriptor(name, types, Availability.LIVE,
-                sourceKey, DefaultPolicy.ZERO));
-    }
-
-    private static void addDefault(Map<String, UniformDescriptor> specs, String name, String type) {
-        addDefault(specs, name, type, DefaultPolicy.ZERO);
-    }
-
-    private static void addDefault(Map<String, UniformDescriptor> specs, String name,
-                                   String type, DefaultPolicy policy) {
-        specs.put(name, new UniformDescriptor(name, List.of(type), Availability.DEFAULTED,
-                name, policy));
     }
 
     private static List<UniformDeclaration> sortedUniforms(Collection<UniformDeclaration> values) {
@@ -1444,9 +913,5 @@ public final class UniformRegistry {
             }
         }
         return masked.toString();
-    }
-
-    private static String stripComments(String source) {
-        return GlslLexer.stripComments(source);
     }
 }

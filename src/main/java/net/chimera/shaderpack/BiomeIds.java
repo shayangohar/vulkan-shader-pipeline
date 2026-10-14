@@ -1,6 +1,9 @@
 package net.chimera.shaderpack;
 
+import net.minecraft.core.Holder;
 import net.minecraft.resources.Identifier;
+import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.biome.Biome;
 
 import java.util.List;
 import java.util.Locale;
@@ -84,24 +87,24 @@ public final class BiomeIds {
      * tag that matches in this order, else {@code PLAINS}. Iris never answers {@code SAVANNA} or
      * {@code UNDERGROUND} on this version, and neither does this.
      */
-    public static Category category(net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> biome) {
+    public static Category category(Holder<Biome> biome) {
         if (biome == null) return Category.NONE;
-        if (biome.is(net.minecraft.tags.BiomeTags.WITHOUT_WANDERING_TRADER_SPAWNS)) return Category.NONE;
-        if (biome.is(net.minecraft.tags.BiomeTags.HAS_VILLAGE_SNOWY)) return Category.ICY;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_HILL)) return Category.EXTREME_HILLS;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_TAIGA)) return Category.TAIGA;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_OCEAN)) return Category.OCEAN;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_JUNGLE)) return Category.JUNGLE;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_FOREST)) return Category.FOREST;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_BADLANDS)) return Category.MESA;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_NETHER)) return Category.NETHER;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_END)) return Category.THE_END;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_BEACH)) return Category.BEACH;
-        if (biome.is(net.minecraft.tags.BiomeTags.HAS_DESERT_PYRAMID)) return Category.DESERT;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_RIVER)) return Category.RIVER;
-        if (biome.is(net.minecraft.tags.BiomeTags.ALLOWS_SURFACE_SLIME_SPAWNS)) return Category.SWAMP;
-        if (biome.is(net.minecraft.tags.BiomeTags.WITHOUT_ZOMBIE_SIEGES)) return Category.MUSHROOM;
-        if (biome.is(net.minecraft.tags.BiomeTags.IS_MOUNTAIN)) return Category.MOUNTAIN;
+        if (biome.is(BiomeTags.WITHOUT_WANDERING_TRADER_SPAWNS)) return Category.NONE;
+        if (biome.is(BiomeTags.HAS_VILLAGE_SNOWY)) return Category.ICY;
+        if (biome.is(BiomeTags.IS_HILL)) return Category.EXTREME_HILLS;
+        if (biome.is(BiomeTags.IS_TAIGA)) return Category.TAIGA;
+        if (biome.is(BiomeTags.IS_OCEAN)) return Category.OCEAN;
+        if (biome.is(BiomeTags.IS_JUNGLE)) return Category.JUNGLE;
+        if (biome.is(BiomeTags.IS_FOREST)) return Category.FOREST;
+        if (biome.is(BiomeTags.IS_BADLANDS)) return Category.MESA;
+        if (biome.is(BiomeTags.IS_NETHER)) return Category.NETHER;
+        if (biome.is(BiomeTags.IS_END)) return Category.THE_END;
+        if (biome.is(BiomeTags.IS_BEACH)) return Category.BEACH;
+        if (biome.is(BiomeTags.HAS_DESERT_PYRAMID)) return Category.DESERT;
+        if (biome.is(BiomeTags.IS_RIVER)) return Category.RIVER;
+        if (biome.is(BiomeTags.ALLOWS_SURFACE_SLIME_SPAWNS)) return Category.SWAMP;
+        if (biome.is(BiomeTags.WITHOUT_ZOMBIE_SIEGES)) return Category.MUSHROOM;
+        if (biome.is(BiomeTags.IS_MOUNTAIN)) return Category.MOUNTAIN;
         return Category.PLAINS;
     }
 

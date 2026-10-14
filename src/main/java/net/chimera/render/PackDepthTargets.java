@@ -9,11 +9,18 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkClearValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
 
+import java.util.Arrays;
+
+import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
+import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_CLEAR;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -22,10 +29,6 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.vkCmdDraw;
-import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
-import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
-import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
-import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
 
 /** Owns converted pack-visible depth snapshots for one pack variant. */
 public final class PackDepthTargets {
@@ -41,8 +44,8 @@ public final class PackDepthTargets {
         cleanUp();
         this.plan = plan == null ? DepthGraphPlan.empty() : plan;
         if (!this.plan.any()) return false;
-        java.util.Arrays.fill(this.valid, false);
-        java.util.Arrays.fill(this.previousValid, false);
+        Arrays.fill(this.valid, false);
+        Arrays.fill(this.previousValid, false);
         MrtPipelineContext.begin(new int[] {this.plan.format()}, 1);
         try {
             this.conversionPipeline = ChimeraPostPipelines.createDepthPipeline();
@@ -93,7 +96,7 @@ public final class PackDepthTargets {
     /** Starts a new world frame while retaining the previous capture validity. */
     public void beginFrame() {
         System.arraycopy(this.valid, 0, this.previousValid, 0, this.valid.length);
-        java.util.Arrays.fill(this.valid, false);
+        Arrays.fill(this.valid, false);
     }
 
     /** Publishes the captures made during the current world frame. */
@@ -108,17 +111,7 @@ public final class PackDepthTargets {
             boolean restoreDepthAttachment
     ) {
         Renderer renderer = Renderer.getInstance();
-        // A depth snapshot owns a separate fullscreen render pass. It cannot
-        // be recorded while the guarded terrain context is active because the
-        // RenderPass mixin intentionally redirects dynamic rendering in that
-        // context. Refuse the nested operation and keep the host depth path.
-        if (PackGeometryContext.active()
-                || commandBuffer == null
-                || commandBuffer.address() == 0L
-                || rawDepth.getId() == 0L
-                || images[index] == null
-                || images[index].getId() == 0L
-                || conversionPipeline == null) {
+        if (!canRecordConversion(commandBuffer, rawDepth, index)) {
             return false;
         }
         VulkanImage previousDepthBinding = VTextureSelector.getImage(6);
@@ -142,25 +135,7 @@ public final class PackDepthTargets {
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             ChimeraDepthViewOverride.bind(rawDepth, depthView);
             VTextureSelector.bindTexture(6, rawDepth);
-            org.lwjgl.vulkan.VkClearValue clear = org.lwjgl.vulkan.VkClearValue.calloc(stack);
-            clear.color().float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
-            VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
-            attachments.get(0)
-                    .sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
-                    .imageView(images[index].getImageView())
-                    .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-                    .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
-                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
-                    .clearValue(clear);
-            VkRect2D area = VkRect2D.calloc(stack);
-            area.offset().set(0, 0);
-            area.extent().set(images[index].width, images[index].height);
-            VkRenderingInfo rendering = VkRenderingInfo.calloc(stack)
-                    .sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR)
-                    .renderArea(area)
-                    .layerCount(1)
-                    .pColorAttachments(attachments);
-            vkCmdBeginRenderingKHR(commandBuffer, rendering);
+            vkCmdBeginRenderingKHR(commandBuffer, snapshotRendering(stack, images[index]));
             renderingActive = true;
             Renderer.setViewport(0, 0, images[index].width, images[index].height, stack);
             renderer.bindGraphicsPipeline(this.conversionPipeline);
@@ -205,6 +180,44 @@ public final class PackDepthTargets {
         }
     }
 
+    /**
+     * A depth snapshot owns a separate fullscreen render pass. It cannot
+     * be recorded while the guarded terrain context is active because the
+     * RenderPass mixin intentionally redirects dynamic rendering in that
+     * context. Refuse the nested operation and keep the host depth path.
+     */
+    private boolean canRecordConversion(VkCommandBuffer commandBuffer, VulkanImage rawDepth, int index) {
+        return !PackGeometryContext.active()
+                && commandBuffer != null
+                && commandBuffer.address() != 0L
+                && rawDepth.getId() != 0L
+                && images[index] != null
+                && images[index].getId() != 0L
+                && conversionPipeline != null;
+    }
+
+    /** Dynamic rendering that clears one snapshot image and draws over its whole extent. */
+    private static VkRenderingInfo snapshotRendering(MemoryStack stack, VulkanImage snapshot) {
+        VkClearValue clear = VkClearValue.calloc(stack);
+        clear.color().float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
+        VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
+        attachments.get(0)
+                .sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
+                .imageView(snapshot.getImageView())
+                .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
+                .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
+                .clearValue(clear);
+        VkRect2D area = VkRect2D.calloc(stack);
+        area.offset().set(0, 0);
+        area.extent().set(snapshot.width, snapshot.height);
+        return VkRenderingInfo.calloc(stack)
+                .sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR)
+                .renderArea(area)
+                .layerCount(1)
+                .pColorAttachments(attachments);
+    }
+
     public VulkanImage image(String name) {
         return switch (name) {
             case "depthtex0" -> valid[0] ? images[0] : null;
@@ -241,9 +254,9 @@ public final class PackDepthTargets {
         // VulkanImage.free() is deferred by VulkanMod, but this view is a raw
         // handle owned by Chimera; destroy() waits for idle first.
         this.depthSampleView.destroy();
-        java.util.Arrays.fill(images, null);
-        java.util.Arrays.fill(valid, false);
-        java.util.Arrays.fill(previousValid, false);
+        Arrays.fill(images, null);
+        Arrays.fill(valid, false);
+        Arrays.fill(previousValid, false);
         conversionPipeline = null;
         configured = false;
         plan = DepthGraphPlan.empty();

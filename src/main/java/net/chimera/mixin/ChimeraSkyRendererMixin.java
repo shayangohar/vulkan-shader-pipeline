@@ -3,6 +3,7 @@ package net.chimera.mixin;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackRenderingPhase;
@@ -24,7 +25,7 @@ public abstract class ChimeraSkyRendererMixin {
     private void chimera$sunPath(PoseStack pose, float sun, float moon, float stars, MoonPhase phase,
                                 float alpha, float brightness, CallbackInfo callback) {
         if (ChimeraRenderer.segmentsActive()) {
-            pose.mulPose(com.mojang.math.Axis.ZP.rotationDegrees(PackUniformProvider.currentSunPathRotation()));
+            pose.mulPose(Axis.ZP.rotationDegrees(PackUniformProvider.currentSunPathRotation()));
         }
     }
     @WrapMethod(method = "renderSkyDisc")

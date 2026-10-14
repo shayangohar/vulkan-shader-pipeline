@@ -3,7 +3,7 @@
   "fixture": "m6_3/entities",
   "fixtures": {
     "entities": {
-      "reportSha256": "4ee3fdaf7d515c257d33007bd9850df578df7b58f415d16458e5ab1d9e4eacf3",
+      "reportSha256": "664c2c13b236f7a7449d7ecd423c3eb285b3b12dfb8b48955626b36687f13884",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "1d9fc1ec14a079ee287fabc03344c028032138b1383189c3cff26c06c0c458f5",
@@ -13,7 +13,8 @@
         "final",
         "gbuffers_entities",
         "gbuffers_entities_translucent",
-        "gbuffers_lightning"
+        "gbuffers_lightning",
+        "text_bg"
       ],
       "expectedFallbackPrograms": [],
       "expectedDeviations": [
@@ -29,11 +30,14 @@
         "LIGHTNING_VERTEX_BRIDGE",
         "LIVE_UNIFORM_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
+        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
+        "TEXT_BG_STATE_FIXED_TO_HOST",
+        "TEXT_BG_VERTEX_BRIDGE"
       ]
     },
     "unsupported_entities": {
-      "reportSha256": "7086a6f08d4b4096ace95b4c4a88fa7c86aac55369c30601af81417be40fc0bf",
+      "reportSha256": "efae98e5aabe195470f519cefb26eaa0ffdcc5071b5a9ae5cd1865734cb1f925",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "f66ceb456c20495e724ea97e83a138a48fb5fd80668857f4b7d0c108179576a4",
@@ -45,7 +49,8 @@
       "expectedFallbackPrograms": [
         "gbuffers_entities",
         "gbuffers_entities_translucent",
-        "gbuffers_lightning"
+        "gbuffers_lightning",
+        "text_bg"
       ],
       "expectedDeviations": [
         "ENTITY_ID_DEFAULTED",
@@ -55,7 +60,9 @@
         "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
         "LIVE_UNIFORM_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
-        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
+        "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
+        "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
+        "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
       ]
     }
   }

@@ -34,9 +34,9 @@ public record TerrainMaterialPlan(
             return legacy();
         }
         boolean supportedModern = name.equals("shadow")
-                ? LegacyGlslConverter.supportsModernShadow(vertexSource, fragmentSource)
-                : LegacyGlslConverter.requiresExtendedTerrain(vertexSource)
-                || LegacyGlslConverter.requiresExtendedTerrain(fragmentSource);
+                ? TerrainVertexBridge.supportsModernShadow(vertexSource, fragmentSource)
+                : TerrainVertexBridge.requiresExtendedTerrain(vertexSource)
+                || TerrainVertexBridge.requiresExtendedTerrain(fragmentSource);
         if (!supportedModern) {
             return legacy();
         }

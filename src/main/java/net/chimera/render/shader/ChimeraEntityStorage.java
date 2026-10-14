@@ -8,9 +8,9 @@ import java.util.Map;
 
 /** Access to the second, entity-only delayed model batch. */
 public interface ChimeraEntityStorage {
-    Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$entitySubmits();
+    Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> chimera$entitySubmits();
 
-    Map<RenderType, List<SubmitNodeStorage.ModelSubmit>> chimera$blockSubmits();
+    Map<RenderType, List<SubmitNodeStorage.ModelSubmit<?>>> chimera$blockSubmits();
 
     void chimera$clearEntitySubmits();
 }

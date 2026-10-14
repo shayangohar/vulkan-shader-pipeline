@@ -1,16 +1,17 @@
 package net.chimera.mixin;
 
-import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
-import net.chimera.render.ChimeraHandRenderer;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.FamilyDrawTrace;
 import net.chimera.render.shader.HostLayoutLane;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -38,23 +39,7 @@ public abstract class ChimeraRenderTypeMixin {
         HostLayoutLane lane = HostLayoutLane.forDraw(type.pipeline(), format, HostLayoutLane.Pass.current());
         if (pass != null && lane != null && ChimeraEntityBridge.isWorldSubmissionWindow()
                 && ChimeraEntityBridge.beginHostLayoutDraw(lane.family())) {
-            var lanePipeline = pass.particlePipeline(lane.family());
-            boolean window = false;
-            try {
-                pass.prepareProgramImages(lanePipeline.pipeline());
-                if (lanePipeline.requiresDynamicAttachments()) {
-                    window = pass.beginPackFamilyWindow(lanePipeline.outputPlan());
-                    if (!window) {
-                        ChimeraEntityBridge.endDraw();
-                        original.call(mesh);
-                        return;
-                    }
-                }
-                original.call(mesh);
-            } finally {
-                if (window) pass.endPackFamilyWindow(lanePipeline.outputPlan());
-                ChimeraEntityBridge.endDraw();
-            }
+            chimera$drawHostLayoutLane(pass, lane, mesh, original);
             return;
         }
         if (ChimeraEntityBridge.isShadowCasterPass() && !ChimeraEntityBridge.shouldUsePackPipeline(type.pipeline())) {
@@ -65,14 +50,39 @@ public abstract class ChimeraRenderTypeMixin {
             if (mesh != null) mesh.close();
             return;
         }
+        chimera$drawHandOrCrumbling(type, pass, mesh, original);
+    }
+
+    /** Draws a host-layout lane whose draw is open, inside its authored targets when it has them. */
+    private static void chimera$drawHostLayoutLane(ChimeraMainPass pass, HostLayoutLane lane, MeshData mesh,
+                                                   Operation<Void> original) {
+        var lanePipeline = pass.particlePipeline(lane.family());
+        boolean window = false;
+        try {
+            pass.prepareProgramImages(lanePipeline.pipeline());
+            if (lanePipeline.requiresDynamicAttachments()) {
+                window = pass.beginPackFamilyWindow(lanePipeline.outputPlan());
+                if (!window) {
+                    ChimeraEntityBridge.endDraw();
+                    original.call(mesh);
+                    return;
+                }
+            }
+            original.call(mesh);
+        } finally {
+            if (window) pass.endPackFamilyWindow(lanePipeline.outputPlan());
+            ChimeraEntityBridge.endDraw();
+        }
+    }
+
+    /** Draws a pack hand mesh or a world crumbling mesh in its family window; anything else stays host. */
+    private static void chimera$drawHandOrCrumbling(RenderType type, ChimeraMainPass pass, MeshData mesh,
+                                                    Operation<Void> original) {
         boolean hand = ChimeraHandRenderer.active()
                 && ChimeraEntityBridge.shouldUsePackPipeline(type.pipeline());
         var family = pass == null ? null : pass.familyPipeline(hand
                 ? ChimeraEntityBridge.activeFamily() : ChimeraEntityBridge.Family.DAMAGED_BLOCK);
-        boolean crumbling = !ChimeraHandRenderer.active()
-                && ChimeraEntityBridge.isWorldSubmissionWindow() && type.pipeline() == RenderPipelines.CRUMBLING
-                && family != null && mesh != null && mesh.drawState().format() == DefaultVertexFormat.BLOCK
-                && ChimeraEntityBridge.beginCrumblingDraw();
+        boolean crumbling = family != null && chimera$beginCrumblingDraw(type, mesh);
         if (family == null || (!hand && !crumbling)) {
             original.call(mesh);
             return;
@@ -98,11 +108,19 @@ public abstract class ChimeraRenderTypeMixin {
         }
     }
 
+    /** Opens the crumbling draw for a world crumbling mesh still on the host BLOCK format. */
+    private static boolean chimera$beginCrumblingDraw(RenderType type, MeshData mesh) {
+        return !ChimeraHandRenderer.active()
+                && ChimeraEntityBridge.isWorldSubmissionWindow() && type.pipeline() == RenderPipelines.CRUMBLING
+                && mesh != null && mesh.drawState().format() == DefaultVertexFormat.BLOCK
+                && ChimeraEntityBridge.beginCrumblingDraw();
+    }
+
     @Inject(method = "draw", at = @At("HEAD"), require = 1)
     private void chimera$traceEntityMesh(MeshData mesh, CallbackInfo callback) {
         if (ChimeraEntityBridge.isDrawActive() && mesh != null) {
             MeshData.DrawState state = mesh.drawState();
-            ChimeraEntityBridge.noteMeshDraw(state.vertexCount(), state.indexCount(),
+            FamilyDrawTrace.noteMeshDraw(state.vertexCount(), state.indexCount(),
                     state.format().getVertexSize());
         }
     }

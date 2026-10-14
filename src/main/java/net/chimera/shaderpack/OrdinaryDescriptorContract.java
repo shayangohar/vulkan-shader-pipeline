@@ -4,7 +4,10 @@ import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
 import net.vulkanmod.vulkan.shader.layout.AlignedStruct;
+
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
 
 /** Finalized config and its descriptor inventory; no Vulkan objects are allocated here. */
@@ -35,7 +38,7 @@ final class OrdinaryDescriptorContract {
         var ubs = input.ubs.stream().map(ub -> new PipelineConfig.UB(
                 ub.binding, ub.stage, ub.size, List.copyOf(ub.uniforms))).toList();
         var push = input.pushConstantsInfo;
-        config = new PipelineConfig(new java.util.EnumMap<>(input.shaderPaths), ubs,
+        config = new PipelineConfig(new EnumMap<>(input.shaderPaths), ubs,
                 List.copyOf(input.imageDescriptors), push == null ? null : new PipelineConfig.UB(
                         push.binding, push.stage, push.size, List.copyOf(push.uniforms)));
         List<PackAdvancedResourcePlan.DescriptorBinding> inventory = new ArrayList<>();
@@ -50,7 +53,7 @@ final class OrdinaryDescriptorContract {
             inventory.add(new PackAdvancedResourcePlan.DescriptorBinding(image.name(), 0, image.binding(),
                     type, 63, "resource:" + image.imageIdx() + ":" + type));
         }
-        inventory.sort(java.util.Comparator.comparingInt(PackAdvancedResourcePlan.DescriptorBinding::binding));
+        inventory.sort(Comparator.comparingInt(PackAdvancedResourcePlan.DescriptorBinding::binding));
         descriptors = List.copyOf(inventory);
         nextBinding = inventory.stream().mapToInt(value -> value.binding() + 1).max().orElse(0);
     }

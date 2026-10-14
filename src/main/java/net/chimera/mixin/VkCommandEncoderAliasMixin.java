@@ -30,10 +30,13 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 public abstract class VkCommandEncoderAliasMixin {
 
     @Redirect(
-            method = "createRenderPass(Ljava/util/function/Supplier;Lcom/mojang/blaze3d/textures/GpuTextureView;Ljava/util/OptionalInt;Lcom/mojang/blaze3d/textures/GpuTextureView;Ljava/util/OptionalDouble;)Lcom/mojang/blaze3d/systems/RenderPass;",
+            method = "createRenderPass(Ljava/util/function/Supplier;Lcom/mojang/blaze3d/textures/GpuTextureView;"
+                    + "Ljava/util/OptionalInt;Lcom/mojang/blaze3d/textures/GpuTextureView;Ljava/util/OptionalDouble;"
+                    + ")Lcom/mojang/blaze3d/systems/RenderPass;",
             at = @At(
                     value = "INVOKE",
-                    target = "Lcom/mojang/blaze3d/textures/GpuTextureView;texture()Lcom/mojang/blaze3d/textures/GpuTexture;"
+                    target = "Lcom/mojang/blaze3d/textures/GpuTextureView;"
+                            + "texture()Lcom/mojang/blaze3d/textures/GpuTexture;"
             )
     )
     private GpuTexture chimera$mainFamilyAlias(GpuTextureView view) {

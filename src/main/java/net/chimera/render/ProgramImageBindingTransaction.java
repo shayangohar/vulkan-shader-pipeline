@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.SelectorNamespace;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Function;

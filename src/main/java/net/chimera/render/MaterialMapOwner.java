@@ -1,12 +1,9 @@
 package net.chimera.render;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.vulkanmod.render.engine.VkSampler;
 import net.vulkanmod.render.engine.VkTextureView;
@@ -17,7 +14,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -26,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.Set;
 
 /**
@@ -41,7 +38,7 @@ import java.util.Set;
  * only their own slots.</p>
  */
 public final class MaterialMapOwner implements AutoCloseable {
-    private static final Logger LOGGER = LoggerFactory.getLogger(MaterialMapOwner.class);
+    static final Logger LOGGER = LoggerFactory.getLogger(MaterialMapOwner.class);
 
     /** Material sampler name, resource-pack suffix, and canonical flat texel. */
     public enum MaterialMapKind {
@@ -289,15 +286,15 @@ public final class MaterialMapOwner implements AutoCloseable {
         LOGGER.info("[chimera] material maps: flat fallbacks ready normals={} specular={}",
                 normals.image().getId(), specular.image().getId());
         return new MaterialMapOwner(normals.texture(), normals.image(),
-                specular.texture(), specular.image(), MaterialMapOwner::buildGpuCompanions,
+                specular.texture(), specular.image(), MaterialCompanionPixels::buildGpuCompanions,
                 MaterialMapOwner::buildMaterialSampler);
     }
 
     private static OwnedMaterialSampler buildMaterialSampler(
             AddressMode addressU, AddressMode addressV,
             FilterMode minFilter, FilterMode magFilter, int anisotropy, float maxLod) {
-        java.util.OptionalDouble lod =
-                maxLod >= 1000.0f ? java.util.OptionalDouble.empty() : java.util.OptionalDouble.of(maxLod);
+        OptionalDouble lod =
+                maxLod >= 1000.0f ? OptionalDouble.empty() : OptionalDouble.of(maxLod);
         VkSampler sampler = new VkSampler(addressU, addressV, minFilter, magFilter, anisotropy, lod);
         LOGGER.info("[chimera] material maps: owned sampler {} min={} mag={} address={}/{} "
                         + "anisotropy={} maxLod={}",
@@ -345,8 +342,8 @@ public final class MaterialMapOwner implements AutoCloseable {
     /**
      * Resolves one material sampler to its current image. Atlas companions
      * build beside this path, but descriptors keep answering the flat
-     * fallbacks until Slice C joins the transaction on exact albedo
-     * identity (see {@link #companionFor}). Unknown names fail loudly so
+     * fallbacks; draws that know their albedo image resolve the companion
+     * by exact identity (see {@link #companionFor}). Unknown names fail loudly so
      * a bad manifest entry can never silently bind the wrong map.
      */
     public VulkanImage image(String sampler) {
@@ -420,7 +417,7 @@ public final class MaterialMapOwner implements AutoCloseable {
             due = new ArrayList<>(pendingUploads.values());
             pendingUploads.clear();
         }
-        boolean labPbr = detectLabPbr(lookup);
+        boolean labPbr = MaterialCompanionPixels.detectLabPbr(lookup);
         for (PendingUpload pending : due) {
             try {
                 buildAtlas(pending.upload(), pending.baseImage(), lookup, decoder, labPbr);
@@ -581,8 +578,7 @@ public final class MaterialMapOwner implements AutoCloseable {
         boolean labSpecular = kind == MaterialMapKind.SPECULAR && match.labPbr();
         if (!match.simple() && !labSpecular) {
             // Atlas normals and non-labPBR specular reuse the exact albedo sampler.
-            if (profile != null && profile.id() != 0) return profile.id();
-            return fallbackSampler(base, match);
+            return drawSampler(profile, base, match);
         }
         if (profile == null) {
             return fallbackSampler(base, match);
@@ -594,18 +590,20 @@ public final class MaterialMapOwner implements AutoCloseable {
         FilterMode minFilter = labSpecular ? FilterMode.NEAREST : profile.minFilter();
         FilterMode magFilter = labSpecular ? FilterMode.NEAREST : profile.magFilter();
         float maxLod = match.simple() ? 0.0f : profile.maxLod();
-        if (profile == null) {
-            return fallbackSampler(base, match);
-        }
         if (profile.addressU() == null || profile.addressV() == null
                 || minFilter == null || magFilter == null) {
             // The draw sampler ID is still meaningful; only derivation is impossible.
-            if (profile.id() != 0) return profile.id();
-            return fallbackSampler(base, match);
+            return drawSampler(profile, base, match);
         }
         Long owned = ownedSamplerId(profile.addressU(), profile.addressV(),
                 minFilter, magFilter, profile.anisotropy(), maxLod);
         if (owned != null) return owned;
+        return fallbackSampler(base, match);
+    }
+
+    /** The draw's own sampler ID when it has one, else the fallback. */
+    private static long drawSampler(SamplerProfile profile, VulkanImage base, CompanionMatch match) {
+        if (profile != null && profile.id() != 0) return profile.id();
         return fallbackSampler(base, match);
     }
 
@@ -659,7 +657,7 @@ public final class MaterialMapOwner implements AutoCloseable {
         return simpleCompanions.containsKey(base);
     }
 
-    /** Slice C seam: the companion for an exact albedo image, or null when it has none. */
+    /** The companion for an exact albedo image, or null when it has none. */
     public ChimeraTextureBindingState.Snapshot companionFor(VulkanImage baseImage, String sampler) {
         MaterialMapKind kind = MaterialMapKind.forSampler(sampler);
         if (kind == null) {
@@ -695,13 +693,7 @@ public final class MaterialMapOwner implements AutoCloseable {
 
     private void buildSimple(VulkanImage albedo, ResourceLookup lookup, MapImageDecoder decoder,
             SimpleTextureSource source, boolean labPbr) {
-        SimpleEntry match = null;
-        for (SimpleEntry entry : source.entries()) {
-            if (entry.image() == albedo) {
-                match = entry;
-                break;
-            }
-        }
+        SimpleEntry match = findSimpleEntry(source, albedo);
         synchronized (companionsLock) {
             if (closed) return;
             if (isKnownBaseLocked(albedo)) return;
@@ -735,24 +727,12 @@ public final class MaterialMapOwner implements AutoCloseable {
                 }
             }
         } catch (RuntimeException | Error failure) {
-            for (CompanionSet set : sets.values()) {
-                try {
-                    set.close();
-                } catch (RuntimeException closeFailure) {
-                    failure.addSuppressed(closeFailure);
-                }
-            }
+            closeAfterFailure(sets, failure);
             throw failure;
         }
         synchronized (companionsLock) {
             if (closed || isKnownBaseLocked(albedo)) {
-                for (CompanionSet set : sets.values()) {
-                    try {
-                        set.close();
-                    } catch (RuntimeException failure) {
-                        LOGGER.warn("[chimera] material maps: late simple close failed", failure);
-                    }
-                }
+                closeUnused(sets, "[chimera] material maps: late simple close failed");
                 return;
             }
             if (sets.isEmpty()) {
@@ -780,38 +760,27 @@ public final class MaterialMapOwner implements AutoCloseable {
                     .sorted(Comparator.comparing(AtlasSprite::id))
                     .toList();
             for (MaterialMapKind kind : MaterialMapKind.values()) {
-                List<PlacedSprite> placed = decodeKind(sprites, kind, lookup, decoder,
+                List<MaterialCompanionPixels.PlacedSprite> placed = MaterialCompanionPixels.decodeKind(sprites, kind,
+                        lookup, decoder,
                         upload.mipLevels(), labPbr);
                 if (placed.isEmpty()) continue;
                 mappedSprites = Math.max(mappedSprites, placed.size());
-                List<LevelPixels> levels = buildLevels(upload, kind, placed);
+                List<LevelPixels> levels = MaterialCompanionPixels.buildLevels(upload, kind, placed);
                 sets.put(kind, companionFactory.build(
                         upload.location(), kind, upload.width(), upload.height(), levels));
-                for (PlacedSprite sprite : placed) {
+                for (MaterialCompanionPixels.PlacedSprite sprite : placed) {
                     if (sprite.animation() != null) {
                         animated.add(new AnimatedSlot(kind, sprite.sprite(), sprite.animation()));
                     }
                 }
             }
         } catch (RuntimeException | Error failure) {
-            for (CompanionSet set : sets.values()) {
-                try {
-                    set.close();
-                } catch (RuntimeException closeFailure) {
-                    failure.addSuppressed(closeFailure);
-                }
-            }
+            closeAfterFailure(sets, failure);
             throw failure;
         }
         synchronized (companionsLock) {
             if (closed) {
-                for (CompanionSet set : sets.values()) {
-                    try {
-                        set.close();
-                    } catch (RuntimeException failure) {
-                        LOGGER.warn("[chimera] material maps: late companion close failed", failure);
-                    }
-                }
+                closeUnused(sets, "[chimera] material maps: late companion close failed");
                 return;
             }
             // The albedo has been ticking since its upload; catch the maps up
@@ -840,249 +809,33 @@ public final class MaterialMapOwner implements AutoCloseable {
         }
     }
 
-    private static boolean detectLabPbr(ResourceLookup lookup) {
-        try (InputStream in = lookup.open("minecraft", "optifine/texture.properties")
-                .orElse(null)) {
-            if (in == null) return false;
-            return MaterialMapPixels.detectLabPbr(in);
-        } catch (IOException | RuntimeException failure) {
-            LOGGER.warn("[chimera] material maps: texture.properties unreadable, "
-                    + "assuming linear mips", failure);
-            return false;
+    /** The live simple texture whose albedo is exactly this image, or null. */
+    private static SimpleEntry findSimpleEntry(SimpleTextureSource source, VulkanImage albedo) {
+        for (SimpleEntry entry : source.entries()) {
+            if (entry.image() == albedo) return entry;
         }
+        return null;
     }
 
-    /**
-     * One sprite whose material file decoded cleanly: its logical mip chain
-     * as the slot shows it at build time, plus its animation when the map
-     * carries its own cycling schedule.
-     */
-    private record PlacedSprite(AtlasSprite sprite, int[][] chain, MaterialAnimation animation) {}
-
-    private static List<PlacedSprite> decodeKind(List<AtlasSprite> sprites, MaterialMapKind kind,
-            ResourceLookup lookup, MapImageDecoder decoder, int mipLevels, boolean labPbr) {
-        List<PlacedSprite> placed = new ArrayList<>();
-        for (AtlasSprite sprite : sprites) {
-            if (sprite.padX() != sprite.padY()) {
-                LOGGER.warn("[chimera] material maps: skipping {} with asymmetric padding {}x{}",
-                        sprite.id(), sprite.padX(), sprite.padY());
-                continue;
-            }
-            if (sprite.padX() < 0) {
-                LOGGER.warn("[chimera] material maps: skipping {} with negative padding {}",
-                        sprite.id(), sprite.padX());
-                continue;
-            }
-            if (sprite.width() <= 0 || sprite.height() <= 0) {
-                LOGGER.warn("[chimera] material maps: skipping {} with empty slot {}x{}",
-                        sprite.id(), sprite.width(), sprite.height());
-                continue;
-            }
-            String resource = MaterialMapPixels.siblingResource(
-                    sprite.namespace(), sprite.path(), kind.suffix());
-            int separator = resource.indexOf(':');
-            String namespace = resource.substring(0, separator);
-            String path = resource.substring(separator + 1);
+    /** Closes the sets of a failed build, attaching each close failure to the build failure. */
+    private static void closeAfterFailure(Map<MaterialMapKind, CompanionSet> sets, Throwable failure) {
+        for (CompanionSet set : sets.values()) {
             try {
-                DecodedImage decoded;
-                try (InputStream in = lookup.open(namespace, path).orElse(null)) {
-                    if (in == null) continue;
-                    decoded = decoder.decode(in);
-                }
-                MaterialMapPixels.checkSize(decoded.width(), decoded.height(), resource);
-                MaterialAnimationSchedule schedule = readSchedule(lookup, namespace, path,
-                        decoded.width(), decoded.height());
-                placed.add(place(sprite, kind, decoded, schedule, mipLevels, labPbr));
-            } catch (IOException | IllegalArgumentException failure) {
-                LOGGER.warn("[chimera] material maps: skipping {} for {}: {}",
-                        resource, sprite.id(), failure.toString());
+                set.close();
+            } catch (RuntimeException closeFailure) {
+                failure.addSuppressed(closeFailure);
             }
         }
-        return placed;
     }
 
-    /** The map's own {@code .mcmeta} animation table, or null when it has none. */
-    private static MaterialAnimationSchedule readSchedule(ResourceLookup lookup, String namespace,
-            String path, int width, int height) throws IOException {
-        try (InputStream in = lookup.open(namespace, path + ".mcmeta").orElse(null)) {
-            if (in == null) return null;
-            return MaterialAnimationSchedule.parse(
-                    new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8), width, height);
-        }
-    }
-
-    /**
-     * Places one decoded map in its slot. Without a schedule the whole image
-     * is the map, as for a static sprite. A single-entry schedule shows the
-     * strip's first frame. A cycling schedule keeps every frame it names as
-     * its own scaled mip chain and starts on its first entry.
-     */
-    private static PlacedSprite place(AtlasSprite sprite, MaterialMapKind kind, DecodedImage decoded,
-            MaterialAnimationSchedule schedule, int mipLevels, boolean labPbr) {
-        if (schedule == null) {
-            return new PlacedSprite(sprite, chain(kind, labPbr, decoded.pixels(), decoded.width(),
-                    decoded.height(), sprite, mipLevels), null);
-        }
-        if (!schedule.animated()) {
-            int[] first = schedule.crop(decoded.pixels(), decoded.width(), 0);
-            return new PlacedSprite(sprite, chain(kind, labPbr, first, schedule.frameWidth(),
-                    schedule.frameHeight(), sprite, mipLevels), null);
-        }
-        int[][][] frameLevels = new int[schedule.frameCount(decoded.height())][][];
-        for (MaterialAnimation.Frame frame : schedule.frames()) {
-            if (frameLevels[frame.index()] != null) continue;
-            int[] pixels = schedule.crop(decoded.pixels(), decoded.width(), frame.index());
-            frameLevels[frame.index()] = chain(kind, labPbr, pixels, schedule.frameWidth(),
-                    schedule.frameHeight(), sprite, mipLevels);
-        }
-        MaterialAnimation animation = new MaterialAnimation(schedule.frames(), schedule.interpolate(),
-                frameLevels, sprite.width(), sprite.height());
-        int[][] initial = new int[mipLevels][];
-        for (int level = 0; level < mipLevels; level++) {
-            initial[level] = animation.level(level);
-        }
-        return new PlacedSprite(sprite, initial, animation);
-    }
-
-    /**
-     * One frame's logical mip chain: scaled to the slot's logical size, then
-     * reduced sprite-locally level by level with the kind's mip policy.
-     */
-    private static int[][] chain(MaterialMapKind kind, boolean labPbr, int[] pixels, int width,
-            int height, AtlasSprite sprite, int mipLevels) {
-        int[][] chain = new int[mipLevels][];
-        chain[0] = MaterialMapPixels.scale(pixels, width, height, sprite.width(), sprite.height());
-        for (int level = 1; level < mipLevels; level++) {
-            chain[level] = reduceFor(kind, labPbr, chain[level - 1],
-                    MaterialMapPixels.levelSize(sprite.width(), level - 1),
-                    MaterialMapPixels.levelSize(sprite.height(), level - 1),
-                    MaterialMapPixels.levelSize(sprite.width(), level),
-                    MaterialMapPixels.levelSize(sprite.height(), level));
-        }
-        return chain;
-    }
-
-    /**
-     * Builds one exact-layout mip chain per kind. Each sprite contributes
-     * its own padded image: its logical level grows a replicated border of
-     * {@code pad >> level}, and the complete padded image lands at the slot
-     * origin shifted by level. The canvas starts at fallback, so missing
-     * sprites leave their whole padded slot untouched. Sprites never
-     * negotiate shared pixels, so no occupancy map or ring algorithm exists.
-     */
-    private static List<LevelPixels> buildLevels(AtlasUpload upload, MaterialMapKind kind,
-            List<PlacedSprite> placed) {
-        List<LevelPixels> levels = new ArrayList<>(upload.mipLevels());
-        for (int level = 0; level < upload.mipLevels(); level++) {
-            int canvasWidth = MaterialMapPixels.levelSize(upload.width(), level);
-            int canvasHeight = MaterialMapPixels.levelSize(upload.height(), level);
-            int[] canvas = new int[canvasWidth * canvasHeight];
-            Arrays.fill(canvas, kind.fallbackAbgr());
-            for (PlacedSprite sprite : placed) {
-                int pad = sprite.sprite().padX() >> level;
-                int logicalWidth = MaterialMapPixels.levelSize(sprite.sprite().width(), level);
-                int logicalHeight = MaterialMapPixels.levelSize(sprite.sprite().height(), level);
-                int[] padded = MaterialMapPixels.padReplicate(
-                        sprite.chain()[level], logicalWidth, logicalHeight, pad);
-                MaterialMapPixels.placeRect(canvas, canvasWidth, canvasHeight,
-                        sprite.sprite().x() >> level, sprite.sprite().y() >> level,
-                        padded, logicalWidth + pad * 2, logicalHeight + pad * 2);
-            }
-            levels.add(new LevelPixels(canvas, canvasWidth, canvasHeight));
-        }
-        return levels;
-    }
-
-    private static int[] reduceFor(MaterialMapKind kind, boolean labPbr, int[] src,
-            int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
-        if (kind == MaterialMapKind.SPECULAR && labPbr) {
-            return MaterialMapPixels.reduceLabPbr(src, srcWidth, srcHeight, dstWidth, dstHeight);
-        }
-        return MaterialMapPixels.reduceLinear(src, srcWidth, srcHeight, dstWidth, dstHeight);
-    }
-    /** Production decoder over {@code NativeImage}; the caller closes the stream. */
-    public static DecodedImage decodeNative(InputStream in) throws IOException {
-        NativeImage image = NativeImage.read(in);
-        try {
-            MaterialMapPixels.checkSize(image.getWidth(), image.getHeight(), "decoded");
-            return new DecodedImage(image.getPixelsABGR(), image.getWidth(), image.getHeight());
-        } finally {
-            image.close();
-        }
-    }
-
-    private static CompanionSet buildGpuCompanions(String location, MaterialMapKind kind,
-            int width, int height, List<LevelPixels> levels) {
-        GpuTexture texture = RenderSystem.getDevice().createTexture(
-                () -> "chimera_material_" + kind.sampler() + "_" + location,
-                GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_COPY_DST
-                        | GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_RENDER_ATTACHMENT,
-                TextureFormat.RGBA8, width, height, 1, levels.size());
-        boolean installed = false;
-        try {
-            List<NativeImage> retained = new ArrayList<>(levels.size());
-            for (int level = 0; level < levels.size(); level++) {
-                LevelPixels pixels = levels.get(level);
-                NativeImage nativeLevel = toNative(pixels.pixels(), pixels.width(), pixels.height());
-                retained.add(nativeLevel);
-                RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, nativeLevel,
-                        level, 0, 0, 0, pixels.width(), pixels.height(), 0, 0);
-            }
-            GpuTextureView view = RenderSystem.getDevice().createTextureView(texture);
-            if (!(view instanceof VkTextureView vulkanView)
-                    || vulkanView.texture().getVulkanImage() == null) {
-                view.close();
-                throw new IllegalStateException("material companion has no Vulkan image: "
-                        + location + "/" + kind.sampler());
-            }
-            installed = true;
-            return new GpuCompanionSet(texture, view,
-                    vulkanView.texture().getVulkanImage(), retained);
-        } finally {
-            if (!installed) texture.close();
-        }
-    }
-
-    private record GpuCompanionSet(GpuTexture texture, GpuTextureView view, VulkanImage image,
-            List<NativeImage> retainedLevels) implements CompanionSet {
-        @Override
-        public void writeRegion(int level, int x, int y, int width, int height, int[] pixels) {
-            // VulkanMod copies the pixels into its staging buffer during the
-            // call, so the temporary image closes as soon as it returns.
-            try (NativeImage region = toNative(pixels, width, height)) {
-                RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, region,
-                        level, 0, x, y, width, height, 0, 0);
-            }
-        }
-
-        @Override
-        public void close() {
-            for (NativeImage level : retainedLevels) {
-                try {
-                    level.close();
-                } catch (RuntimeException failure) {
-                    LOGGER.warn("[chimera] material maps: level close failed", failure);
-                }
-            }
+    /** Closes freshly built sets nothing will use, warning with {@code message} on a close failure. */
+    private static void closeUnused(Map<MaterialMapKind, CompanionSet> sets, String message) {
+        for (CompanionSet set : sets.values()) {
             try {
-                view.close();
-            } finally {
-                texture.close();
+                set.close();
+            } catch (RuntimeException failure) {
+                LOGGER.warn(message, failure);
             }
-        }
-    }
-
-    private static NativeImage toNative(int[] pixels, int width, int height) {
-        NativeImage image = new NativeImage(width, height, false);
-        boolean filled = false;
-        try {
-            for (int i = 0; i < pixels.length; i++) {
-                image.setPixelABGR(i % width, i / width, pixels[i]);
-            }
-            filled = true;
-            return image;
-        } finally {
-            if (!filled) image.close();
         }
     }
 

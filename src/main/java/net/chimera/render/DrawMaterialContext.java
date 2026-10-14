@@ -3,7 +3,6 @@ package net.chimera.render;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
-import java.util.Objects;
 
 /**
  * Immutable draw context for one material program transaction.

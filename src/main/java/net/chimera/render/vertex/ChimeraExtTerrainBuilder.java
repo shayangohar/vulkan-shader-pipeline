@@ -1,6 +1,7 @@
 package net.chimera.render.vertex;
 
 import net.chimera.shaderpack.PackMaterialResolver;
+import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.vulkanmod.render.vertex.TerrainBuilder;
@@ -14,13 +15,13 @@ public final class ChimeraExtTerrainBuilder extends TerrainBuilder {
     private int blockZ;
 
     public ChimeraExtTerrainBuilder(int size, PackMaterialResolver materialResolver) {
-        this(size, materialResolver, net.chimera.shaderpack.TerrainMaterialPlan.legacy());
+        this(size, materialResolver, TerrainMaterialPlan.legacy());
     }
 
     public ChimeraExtTerrainBuilder(
             int size,
             PackMaterialResolver materialResolver,
-            net.chimera.shaderpack.TerrainMaterialPlan materialPlan
+            TerrainMaterialPlan materialPlan
     ) {
         super(size, new ChimeraExtVertexBuilder(materialPlan));
         this.materialResolver = materialResolver == null ? PackMaterialResolver.empty() : materialResolver;

@@ -3,15 +3,17 @@ package net.chimera.mixin;
 import net.vulkanmod.vulkan.device.Device;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 
-/** Enables only supported core features needed by the bounded M8.6a image path. */
+/** Enables only the supported core features the pack image path needs. */
 @Mixin(value = DeviceManager.class, remap = false)
 public abstract class ChimeraDeviceFeaturesMixin {
-    private static final org.slf4j.Logger LOGGER =
-            org.slf4j.LoggerFactory.getLogger("chimera");
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger("chimera");
 
     @ModifyArg(
             method = "createLogicalDevice",

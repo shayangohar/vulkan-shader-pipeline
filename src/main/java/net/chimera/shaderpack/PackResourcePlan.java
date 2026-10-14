@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -10,8 +11,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -89,29 +90,13 @@ public final class PackResourcePlan {
         deviations.addAll(settings == null ? List.of() : settings.resourceDeviations());
 
         if (settings != null) {
-            Map<String, Integer> customSlots = settings.customSamplerSlots();
-            TreeSet<String> activeSamplers = new TreeSet<>();
-            for (PackProgramPlan programPlan : plan.programs()) {
-                if (programPlan == null || programPlan.interfacePlan() == null) continue;
-                UniformRegistry.Stage stage = stageFor(programPlan.name());
-                programPlan.interfacePlan().effective(stage).samplers().stream()
-                        .map(UniformRegistry.SamplerBinding::name)
-                        .forEach(activeSamplers::add);
-            }
-            for (PackResourceDeclaration declaration : declarations.values()) {
-                String sampler = declaration.sampler();
-                if (activeSamplers.contains(sampler)
-                        && !customSlots.containsKey(sampler)
-                        && !UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) {
-                    deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + sampler);
-                }
-            }
+            addSlotLimitDeviations(plan, settings, deviations);
         }
 
         Map<String, Set<Integer>> writtenEarlier = targetsWrittenEarlierInChain(plan);
         for (PackProgramPlan programPlan : plan.programs()) {
             if (programPlan == null || programPlan.interfacePlan() == null) continue;
-            UniformRegistry.Stage stage = stageFor(programPlan.name());
+            UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(programPlan.name());
             List<UniformRegistry.SamplerBinding> samplers = programPlan.interfacePlan()
                     .effective(stage).samplers();
             Set<Integer> deactivatedOverrides = writtenEarlier.getOrDefault(programPlan.name(), Set.of());
@@ -136,18 +121,39 @@ public final class PackResourcePlan {
         return new PackResourcePlan(bindings, declarations, deviations);
     }
 
+    /** A pack texture that a live sampler reads, but that no selector slot is left to serve. */
+    private static void addSlotLimitDeviations(PackPlan plan, PackSettingsPlan settings, List<String> deviations) {
+        Map<String, Integer> customSlots = settings.customSamplerSlots();
+        TreeSet<String> activeSamplers = new TreeSet<>();
+        for (PackProgramPlan programPlan : plan.programs()) {
+            if (programPlan == null || programPlan.interfacePlan() == null) continue;
+            UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(programPlan.name());
+            programPlan.interfacePlan().effective(stage).samplers().stream()
+                    .map(UniformRegistry.SamplerBinding::name)
+                    .forEach(activeSamplers::add);
+        }
+        for (PackResourceDeclaration declaration : settings.resourceDeclarations().values()) {
+            String sampler = declaration.sampler();
+            if (activeSamplers.contains(sampler)
+                    && !customSlots.containsKey(sampler)
+                    && !UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) {
+                deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + sampler);
+            }
+        }
+    }
+
     /**
      * Resolve the live block atlas and its stitched material companions,
      * honoring pack texture overrides. Terrain normals/specular share the
      * atlas texel topology and UVs, so they take the same magnification
      * reconstruction as the albedo (Iris samples all three nearest).
      */
-    static java.util.Set<String> terrainAtlasSamplers(String program,
+    static Set<String> terrainAtlasSamplers(String program,
             UniformRegistry.ProgramInterface iface, PackSettingsPlan settings) {
         if (iface == null || (iface.stage() != UniformRegistry.Stage.GEOMETRY
-                && iface.stage() != UniformRegistry.Stage.TRANSLUCENT)) return java.util.Set.of();
+                && iface.stage() != UniformRegistry.Stage.TRANSLUCENT)) return Set.of();
         PackSettingsPlan resources = settings == null ? PackSettingsPlan.empty() : settings;
-        java.util.Set<String> names = new TreeSet<>();
+        Set<String> names = new TreeSet<>();
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
             if (!sampler.glslType().equals("sampler2D")) continue;
             PackResourceBinding binding = resolve(program, sampler, declaresWaterShadow(iface.samplers()),
@@ -158,7 +164,7 @@ public final class PackResourcePlan {
                     && binding.resourceKey().equals("texture");
             if (albedo || binding.status() == PackResourceStatus.MATERIAL_MAP) names.add(sampler.name());
         }
-        return java.util.Set.copyOf(names);
+        return Set.copyOf(names);
     }
 
     private static PackResourceBinding resolve(
@@ -171,78 +177,14 @@ public final class PackResourcePlan {
             Set<Integer> deactivatedOverrides
     ) {
         String name = sampler.name();
-        String canonical = programResource(name, waterShadow);
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
-
-        String samplerType = sampler.glslType();
-        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name, samplerType);
-        String textureStage = textureStage(program);
-        if (declaration == null && textureStage != null) {
-            declaration = textureDeclaration(declarations, textureStage, name, samplerType);
-        }
-        if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
-        Integer overriddenTarget = declaration == null ? null : targetIndex(name);
-        if (overriddenTarget != null && deactivatedOverrides.contains(overriddenTarget)) {
-            // An earlier pass of this chain wrote the target: it now samples the target.
-            deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
-            declaration = null;
-        }
-        if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
-            declaration = declarations.get("customTexture." + name);
-        }
-        if (declaration == null && name.equals("tex") && stageFor(program) == UniformRegistry.Stage.POST) {
-            declaration = declarations.get("customTexture.textureAtlas");
-        }
-        if (declaration == null && name.equals("noisetex")) {
-            declaration = declarations.get("texture.noise");
-        }
+        PackResourceDeclaration declaration =
+                declarationFor(program, sampler, declarations, deactivatedOverrides, deviations);
         // Pack declarations take precedence over canonical aliases. This is
         // important for a stage that deliberately replaces a logical target
         // with a sampled pack texture.
-        if (declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE) {
-            // Planned and matched by type, but no raw upload path serves it yet: the program
-            // must not sample something else in its place.
-            deviations.add("PACK_RAW_TEXTURE_UNSUPPORTED:" + declaration.key());
-            return new PackResourceBinding(program, name, declaration.key(),
-                    PackResourceKind.RAW_TEXTURE, declaration.source(), slot, "linear", "repeat",
-                    PackResourceStatus.UNSUPPORTED, deviations);
-        }
-        if (declaration != null) {
-            boolean game = isNamespacedSource(declaration.source());
-            String key = name.equals("noisetex") ? "noisetex" : declaration.key();
-            PackResourceKind kind = name.equals("noisetex")
-                    ? PackResourceKind.NOISE : PackResourceKind.PACK_TEXTURE;
-            String filter = name.equals("noisetex") ? "linear" : "nearest";
-            String wrap = "repeat";
-            int resolvedSlot = name.equals("noisetex") ? 7 : slot;
-            if (isHostBlockAtlasSource(declaration.source())) {
-                deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":texture");
-                return new PackResourceBinding(program, name, "texture",
-                        PackResourceKind.TARGET, declaration.source(), resolvedSlot,
-                        "linear", "repeat", PackResourceStatus.HOST_ALIAS, deviations);
-            }
-            if (game) {
-                deviations.add("PACK_TEXTURE_DECLARED:" + key);
-                return new PackResourceBinding(program, name, key, kind,
-                        declaration.source(), resolvedSlot, filter, wrap,
-                        PackResourceStatus.GAME_RESOURCE, deviations);
-            }
-            Path packFile = resolvePath(shadersDir, declaration.source());
-            if (packFile != null) {
-                deviations.add("PACK_TEXTURE_APPLIED:" + key);
-                return new PackResourceBinding(program, name, key, kind,
-                        declaration.source(), resolvedSlot, mcmetaFilter(packFile, filter),
-                        mcmetaWrap(packFile, wrap), PackResourceStatus.PACK_FILE, deviations);
-            }
-            deviations.add(isUnsafePath(declaration.source())
-                    ? "PACK_TEXTURE_PATH_UNSAFE:" + key
-                    : "PACK_TEXTURE_MISSING:" + key);
-            return new PackResourceBinding(program, name, key, kind,
-                    declaration.source(), resolvedSlot, filter, wrap,
-                    PackResourceStatus.UNAVAILABLE, deviations);
-        }
-
+        if (declaration != null) return declaredBinding(program, name, slot, declaration, shadersDir, deviations);
         if (name.equals("tex") || name.equals("gtexture") || isHostTexture(name)) {
             String hostResource = name.equals("tex") || name.equals("gtexture") ? "texture" : name;
             // The overlay is Chimera's own declaration, not a pack alias.
@@ -261,7 +203,147 @@ public final class PackResourcePlan {
                     PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
+        return standardBinding(program, name, programResource(name, waterShadow), slot, shadersDir, deviations);
+    }
 
+    /** Whether a pack raw texture serves this sampler, of this GLSL type, in this program. */
+    static boolean rawTextureServes(String program, String sampler, String samplerType,
+                                    Map<String, PackResourceDeclaration> declarations) {
+        PackResourceDeclaration declaration = declaration(program, sampler, samplerType, declarations);
+        return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE;
+    }
+
+    /** Whether any pack declaration replaces this sampler, of this GLSL type, in this program. */
+    static boolean declaresTexture(String program, String sampler, String samplerType,
+                                   Map<String, PackResourceDeclaration> declarations) {
+        return declaration(program, sampler, samplerType, declarations) != null;
+    }
+
+    private static PackResourceDeclaration declaration(String program, String sampler, String samplerType,
+                                                       Map<String, PackResourceDeclaration> declarations) {
+        return declarationFor(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations,
+                Set.of(), new ArrayList<>());
+    }
+
+    /** The pack declaration that serves this sampler, if any; an override a pass deactivated is none. */
+    private static PackResourceDeclaration declarationFor(String program, UniformRegistry.SamplerBinding sampler,
+                                                          Map<String, PackResourceDeclaration> declarations,
+                                                          Set<Integer> deactivatedOverrides, List<String> deviations) {
+        String name = sampler.name();
+        String samplerType = sampler.glslType();
+        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name, samplerType);
+        String textureStage = textureStage(program);
+        if (declaration == null && textureStage != null) {
+            declaration = textureDeclaration(declarations, textureStage, name, samplerType);
+        }
+        if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
+        // A 1D or 3D raw texture is its own uniform under Iris (TextureTransformer renames it by
+        // type), so a pass writing the same-named target never takes it back.
+        Integer overriddenTarget = declaration == null || !appliesTo(declaration, "sampler2D") ? null
+                : targetIndex(name);
+        if (overriddenTarget != null && deactivatedOverrides.contains(overriddenTarget)) {
+            // An earlier pass of this chain wrote the target: it now samples the target.
+            deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
+            declaration = null;
+        }
+        if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
+            declaration = declarations.get("customTexture." + name);
+        }
+        if (declaration == null && name.equals("tex")
+                && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
+            declaration = declarations.get("customTexture.textureAtlas");
+        }
+        if (declaration == null && name.equals("noisetex")) {
+            declaration = declarations.get("texture.noise");
+        }
+        return declaration;
+    }
+
+    /** A sampler the pack declares a texture for. */
+    private static PackResourceBinding declaredBinding(String program, String name, int slot,
+                                                       PackResourceDeclaration declaration, Path shadersDir,
+                                                       List<String> deviations) {
+        if (declaration.kind() == PackResourceKind.RAW_TEXTURE) {
+            return rawBinding(program, name, slot, declaration, shadersDir, deviations);
+        }
+        boolean game = isNamespacedSource(declaration.source());
+        String key = name.equals("noisetex") ? "noisetex" : declaration.key();
+        PackResourceKind kind = name.equals("noisetex")
+                ? PackResourceKind.NOISE : PackResourceKind.PACK_TEXTURE;
+        String filter = name.equals("noisetex") ? "linear" : "nearest";
+        String wrap = "repeat";
+        int resolvedSlot = name.equals("noisetex") ? 7 : slot;
+        if (isHostBlockAtlasSource(declaration.source())) {
+            deviations.add("STANDARD_RESOURCE_ALIAS:" + name + ":texture");
+            return new PackResourceBinding(program, name, "texture",
+                    PackResourceKind.TARGET, declaration.source(), resolvedSlot,
+                    "linear", "repeat", PackResourceStatus.HOST_ALIAS, deviations);
+        }
+        if (game) {
+            deviations.add("PACK_TEXTURE_DECLARED:" + key);
+            return new PackResourceBinding(program, name, key, kind,
+                    declaration.source(), resolvedSlot, filter, wrap,
+                    PackResourceStatus.GAME_RESOURCE, deviations);
+        }
+        Path packFile = resolvePath(shadersDir, declaration.source());
+        if (packFile != null) {
+            deviations.add("PACK_TEXTURE_APPLIED:" + key);
+            return new PackResourceBinding(program, name, key, kind,
+                    declaration.source(), resolvedSlot, mcmetaFilter(packFile, filter),
+                    mcmetaWrap(packFile, wrap), PackResourceStatus.PACK_FILE, deviations);
+        }
+        deviations.add(isUnsafePath(declaration.source())
+                ? "PACK_TEXTURE_PATH_UNSAFE:" + key
+                : "PACK_TEXTURE_MISSING:" + key);
+        return new PackResourceBinding(program, name, key, kind,
+                declaration.source(), resolvedSlot, filter, wrap,
+                PackResourceStatus.UNAVAILABLE, deviations);
+    }
+
+    /**
+     * A raw texture (RawTextureSpec): the file's bytes uploaded as a 1D, 2D or 3D image and
+     * sampled as its .mcmeta says (Iris GlTexture: nearest and repeat without it). A format
+     * Chimera cannot upload unchanged stays unsupported, so the program never samples something
+     * else in its place.
+     */
+    private static PackResourceBinding rawBinding(String program, String name, int slot,
+                                                  PackResourceDeclaration declaration, Path shadersDir,
+                                                  List<String> deviations) {
+        String key = declaration.key();
+        RawTextureSpec spec = RawTextureSpec.parse(declaration.source());
+        if (spec == null || spec.unsupportedReason() != null) {
+            deviations.add("PACK_RAW_TEXTURE_UNSUPPORTED:" + key);
+            return new PackResourceBinding(program, name, key, PackResourceKind.RAW_TEXTURE,
+                    declaration.source(), slot, "linear", "repeat", PackResourceStatus.UNSUPPORTED, deviations);
+        }
+        Path file = resolvePath(shadersDir, spec.file());
+        String status;
+        if (file == null) {
+            status = isUnsafePath(spec.file()) ? "PACK_TEXTURE_PATH_UNSAFE:" : "PACK_TEXTURE_MISSING:";
+        } else {
+            status = rawSize(file) < spec.requiredBytes() ? "PACK_RAW_TEXTURE_SIZE_MISMATCH:"
+                    : "PACK_RAW_TEXTURE_APPLIED:";
+        }
+        deviations.add(status + key);
+        boolean applied = status.equals("PACK_RAW_TEXTURE_APPLIED:");
+        // Vulkan filters an integer image with nearest only.
+        String filter = spec.storage().integer() ? "nearest" : mcmetaFilter(file, "nearest");
+        return new PackResourceBinding(program, name, key, PackResourceKind.RAW_TEXTURE, declaration.source(),
+                slot, filter, mcmetaWrap(file, "repeat"),
+                applied ? PackResourceStatus.PACK_FILE : PackResourceStatus.UNAVAILABLE, deviations);
+    }
+
+    private static long rawSize(Path file) {
+        try {
+            return Files.size(file);
+        } catch (IOException unreadable) {
+            return -1;
+        }
+    }
+
+    /** A sampler named for a logical target, shadow map, noise texture or material map. */
+    private static PackResourceBinding standardBinding(String program, String name, String canonical, int slot,
+                                                       Path shadersDir, List<String> deviations) {
         Integer target = targetIndex(canonical);
         if (target != null && target > PostTargetPlan.MAX_TARGET) {
             deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
@@ -275,24 +357,18 @@ public final class PackResourcePlan {
                     canonical.startsWith("depthtex") ? PackResourceKind.DEPTH : PackResourceKind.TARGET,
                     "", slot, "linear", "clamp", PackResourceStatus.HOST_ALIAS, deviations);
         }
-        if (canonical.startsWith("shadowtex")) {
-            if (!canonical.equals("shadowtex0")) {
-                if (canonical.equals("shadowtex1")) {
-                    // Its own image: the casters drawn before translucent terrain.
-                    deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
-                    return new PackResourceBinding(program, name, "shadowtex1",
-                            PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
-                            PackResourceStatus.HOST_ALIAS, deviations);
-                }
-                deviations.add("STANDARD_RESOURCE_UNAVAILABLE:" + name);
-                return new PackResourceBinding(program, name, canonical,
-                        PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
-                        PackResourceStatus.UNAVAILABLE, deviations);
-            }
+        // shadowtex1 is its own image: the casters drawn before translucent terrain.
+        if (canonical.equals("shadowtex0") || canonical.equals("shadowtex1")) {
             deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
             return new PackResourceBinding(program, name, canonical,
                     PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
                     PackResourceStatus.HOST_ALIAS, deviations);
+        }
+        if (canonical.startsWith("shadowtex")) {
+            deviations.add("STANDARD_RESOURCE_UNAVAILABLE:" + name);
+            return new PackResourceBinding(program, name, canonical,
+                    PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
+                    PackResourceStatus.UNAVAILABLE, deviations);
         }
         if (canonical.equals("shadowcolor0") || canonical.equals("shadowcolor1")) {
             deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
@@ -301,34 +377,42 @@ public final class PackResourcePlan {
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
         if (canonical.equals("noisetex")) {
-            String source = "tex/noise.png";
-            Path packFile = resolvePath(shadersDir, source);
-            if (packFile != null) {
-                deviations.add("PACK_TEXTURE_APPLIED:noisetex");
-                return new PackResourceBinding(program, name, "noisetex",
-                        PackResourceKind.NOISE, source, 7, mcmetaFilter(packFile, "linear"),
-                        mcmetaWrap(packFile, "repeat"), PackResourceStatus.PACK_FILE, deviations);
-            }
-            deviations.add(isUnsafePath(source)
-                    ? "PACK_TEXTURE_PATH_UNSAFE:noisetex"
-                    : "PACK_TEXTURE_MISSING:noisetex");
-            return new PackResourceBinding(program, name, "noisetex",
-                    PackResourceKind.NOISE, source, 7, "linear", "repeat",
-                    PackResourceStatus.UNAVAILABLE, deviations);
+            return noiseBinding(program, name, shadersDir, deviations);
         }
-        if (name.equals("normals") || name.equals("specular")) {
-            int expected = name.equals("normals")
-                    ? SelectorNamespace.NORMALS_SLOT : SelectorNamespace.SPECULAR_SLOT;
-            if (slot == expected) {
-                return new PackResourceBinding(program, name, name,
-                        PackResourceKind.MATERIAL_MAP, "", slot, "linear", "repeat",
-                        PackResourceStatus.MATERIAL_MAP, deviations);
-            }
+        if (materialMapAtSlot(name, slot)) {
+            return new PackResourceBinding(program, name, name,
+                    PackResourceKind.MATERIAL_MAP, "", slot, "linear", "repeat",
+                    PackResourceStatus.MATERIAL_MAP, deviations);
         }
         deviations.add("SAMPLER_NOT_MAPPED:" + name);
         return new PackResourceBinding(program, name, name,
                 PackResourceKind.UNSERVED, "", slot, "nearest", "repeat",
                 PackResourceStatus.UNSUPPORTED, deviations);
+    }
+
+    /** The pack's tex/noise.png at its fixed slot, or why it is unavailable. */
+    private static PackResourceBinding noiseBinding(String program, String name, Path shadersDir,
+                                                    List<String> deviations) {
+        String source = "tex/noise.png";
+        Path packFile = resolvePath(shadersDir, source);
+        if (packFile != null) {
+            deviations.add("PACK_TEXTURE_APPLIED:noisetex");
+            return new PackResourceBinding(program, name, "noisetex",
+                    PackResourceKind.NOISE, source, 7, mcmetaFilter(packFile, "linear"),
+                    mcmetaWrap(packFile, "repeat"), PackResourceStatus.PACK_FILE, deviations);
+        }
+        deviations.add(isUnsafePath(source)
+                ? "PACK_TEXTURE_PATH_UNSAFE:noisetex"
+                : "PACK_TEXTURE_MISSING:noisetex");
+        return new PackResourceBinding(program, name, "noisetex",
+                PackResourceKind.NOISE, source, 7, "linear", "repeat",
+                PackResourceStatus.UNAVAILABLE, deviations);
+    }
+
+    /** Whether a normals or specular sampler sits at the selector slot reserved for it. */
+    private static boolean materialMapAtSlot(String name, int slot) {
+        if (name.equals("normals")) return slot == SelectorNamespace.NORMALS_SLOT;
+        return name.equals("specular") && slot == SelectorNamespace.SPECULAR_SLOT;
     }
 
     private static boolean declaresWaterShadow(List<UniformRegistry.SamplerBinding> samplers) {
@@ -483,7 +567,7 @@ public final class PackResourcePlan {
             return declaration != null;
         }
         String[] parts = declaration.source().trim().split("\\s+");
-        String dimension = switch (parts[1].toUpperCase(java.util.Locale.ROOT)) {
+        String dimension = switch (parts[1].toUpperCase(Locale.ROOT)) {
             case "TEXTURE_1D" -> "1D";
             case "TEXTURE_2D", "TEXTURE_RECTANGLE" -> "2D";
             case "TEXTURE_3D" -> "3D";
@@ -510,10 +594,6 @@ public final class PackResourcePlan {
         if (program.startsWith("gbuffers_") || program.startsWith("dh_")
                 || program.equals("shadow") || program.startsWith("shadow_")) return "gbuffers";
         return null;
-    }
-
-    private static UniformRegistry.Stage stageFor(String name) {
-        return FamilyAdapterRegistry.stageFor(name);
     }
 
     private String snapshotJson() {
@@ -588,7 +668,7 @@ public final class PackResourcePlan {
         Path meta = file == null ? null : file.resolveSibling(file.getFileName() + ".mcmeta");
         if (meta == null || !Files.isRegularFile(meta)) return null;
         try {
-            JsonObject root = com.google.gson.JsonParser.parseString(
+            JsonObject root = JsonParser.parseString(
                     Files.readString(meta, StandardCharsets.UTF_8)).getAsJsonObject();
             JsonObject texture = root.has("texture") && root.get("texture").isJsonObject()
                     ? root.getAsJsonObject("texture") : null;

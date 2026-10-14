@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +31,7 @@ public final class PackReportTool {
             throw new IllegalArgumentException("set -Dchimera.packReport.packs=<pack>[;<pack>...]");
         }
         boolean verbose = Boolean.getBoolean("chimera.packReport.verbose");
-        for (String pack : packs.split(java.io.File.pathSeparator)) {
+        for (String pack : packs.split(File.pathSeparator)) {
             report(Path.of(pack.trim()), verbose);
         }
     }
@@ -76,7 +77,7 @@ public final class PackReportTool {
     }
 
     private static void compileExecutablePrograms(Path pack, PackProbe.Analysis analysis) {
-        PackCompileCheck.Result result = PackCompileCheck.run(pack, analysis);
+        PackCompileTest.Result result = PackCompileTest.run(pack, analysis);
         System.out.printf("  -- shader compile: %d programs compile, %d failures%n",
                 result.compiled(), result.failures().size());
         result.failures().forEach(failure -> System.out.println("  COMPILE_FAILED " + failure));

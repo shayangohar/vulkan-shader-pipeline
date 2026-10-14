@@ -2,7 +2,7 @@ package net.chimera.shaderpack;
 
 import java.util.List;
 
-/** Immutable load-time decision for the M8.2 scene seed contract. */
+/** Immutable load-time decision for the scene seed contract. */
 public record PackCoveragePlan(
         boolean enabled,
         boolean windowSizedTarget,

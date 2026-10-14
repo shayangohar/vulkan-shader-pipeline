@@ -87,56 +87,23 @@ public final class PackFrameSchedulePlan {
                                               PackTargetGraphPlan graph) {
         List<PostStage> stages = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
-        boolean[] earlyDepth0 = {false};
+        boolean earlyDepth0 = false;
         boolean depth0 = graph != null && graph.depth().depthtex0();
         boolean depth1 = graph != null && graph.depth().depthtex1();
         boolean depth2 = graph != null && graph.depth().depthtex2();
 
-        if (programs != null) {
-            programs.stream()
-                    .filter(Objects::nonNull)
-                    .filter(program -> program.targetPlan() != null
-                            && PostTargetPlan.isPostProgramName(program.name()))
-                    .sorted(Comparator.comparing(PackProgramPlan::name,
-                            PostTargetPlan.programComparator()))
-                    .forEach(program -> {
-                        PostTargetPlan target = program.targetPlan();
-                        List<String> samplers = program.interfacePlan() == null ? List.of()
-                                : program.interfacePlan().effective(UniformRegistry.Stage.POST)
-                                .samplers().stream()
-                                .map(UniformRegistry.SamplerBinding::name).toList();
-                        boolean deferred = program.name().startsWith("deferred");
-                        boolean prepare = program.name().startsWith("prepare");
-                        // Iris runs every deferred pass, in order, between opaque and
-                        // translucent geometry (beginTranslucents), after beginHand has
-                        // copied depthtex2; there depthtex0 is the opaque depth. A
-                        // deferred pass never moves late: Bliss's deferred computes the
-                        // sky light its deferred1/2 and composites read.
-                        boolean requiresLateDepth = !prepare && !deferred
-                                && (samplers.contains("depthtex0") || samplers.contains("depthtex2"));
-                        PostWindow window = target.isFinal()
-                                ? PostWindow.FINAL
-                                : prepare ? PostWindow.PREPARE
-                                : deferred && !requiresLateDepth
-                                ? PostWindow.EARLY : PostWindow.LATE;
-                        if (requiresLateDepth && !target.isFinal()) {
-                            deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
-                        }
-                        if (window == PostWindow.EARLY && samplers.contains("depthtex0")) {
-                            earlyDepth0[0] = true;
-                            deviations.add("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:" + program.name());
-                        }
-                        TargetStep step = graph == null ? null : graph.step(program.name());
-                        List<Integer> inputs = step == null ? List.of() : step.readTargets();
-                        List<Integer> outputs = step == null
-                                ? target.targetSlots() : step.outputTargets();
-                        boolean executable = program.executable() && target.executable()
-                                && (step == null || step.executable());
-                        stages.add(new PostStage(program.name(), window, executable, inputs, outputs));
-                        if (!executable) {
-                            deviations.add("SCHEDULE_STAGE_UNAVAILABLE:" + program.name());
-                        }
-                    });
+        for (PackProgramPlan program : postPrograms(programs)) {
+            List<String> samplers = samplerNames(program);
+            PostWindow window = postWindow(program, samplers, deviations);
+            if (window == PostWindow.EARLY && samplers.contains("depthtex0")) {
+                earlyDepth0 = true;
+                deviations.add("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:" + program.name());
+            }
+            PostStage stage = scheduledStage(program, window, graph);
+            stages.add(stage);
+            if (!stage.executable()) {
+                deviations.add("SCHEDULE_STAGE_UNAVAILABLE:" + program.name());
+            }
         }
 
         if (depth1) deviations.add("SCHEDULE_DEPTH_TEX1_BEFORE_TRANSLUCENT");
@@ -152,15 +119,68 @@ public final class PackFrameSchedulePlan {
             deviations.add("SCHEDULE_LATE_POST_AFTER_WORLD");
         }
         deviations.add("HAND_PHASE_HOST_BOUNDARY");
-        return new PackFrameSchedulePlan(stages, depth0, depth1, depth2, earlyDepth0[0],
+        return new PackFrameSchedulePlan(stages, depth0, depth1, depth2, earlyDepth0,
                 false, true, deviations);
+    }
+
+    /** The post programs with a target plan, in Iris's pass order. */
+    private static List<PackProgramPlan> postPrograms(List<PackProgramPlan> programs) {
+        if (programs == null) return List.of();
+        return programs.stream()
+                .filter(Objects::nonNull)
+                .filter(program -> program.targetPlan() != null
+                        && PostTargetPlan.isPostProgramName(program.name()))
+                .sorted(Comparator.comparing(PackProgramPlan::name,
+                        PostTargetPlan.programComparator()))
+                .toList();
+    }
+
+    private static List<String> samplerNames(PackProgramPlan program) {
+        return program.interfacePlan() == null ? List.of()
+                : program.interfacePlan().effective(UniformRegistry.Stage.POST)
+                .samplers().stream()
+                .map(UniformRegistry.SamplerBinding::name).toList();
+    }
+
+    /** The window a post pass runs in, recording a pass that must wait for the late depth. */
+    private static PostWindow postWindow(PackProgramPlan program, List<String> samplers, List<String> deviations) {
+        PostTargetPlan target = program.targetPlan();
+        boolean deferred = program.name().startsWith("deferred");
+        boolean prepare = program.name().startsWith("prepare");
+        // Iris runs every deferred pass, in order, between opaque and
+        // translucent geometry (beginTranslucents), after beginHand has
+        // copied depthtex2; there depthtex0 is the opaque depth. A
+        // deferred pass never moves late: Bliss's deferred computes the
+        // sky light its deferred1/2 and composites read.
+        boolean requiresLateDepth = !prepare && !deferred
+                && (samplers.contains("depthtex0") || samplers.contains("depthtex2"));
+        PostWindow window = target.isFinal()
+                ? PostWindow.FINAL
+                : prepare ? PostWindow.PREPARE
+                : deferred && !requiresLateDepth
+                ? PostWindow.EARLY : PostWindow.LATE;
+        if (requiresLateDepth && !target.isFinal()) {
+            deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
+        }
+        return window;
+    }
+
+    /** A pass's stage in the schedule: the targets its graph step reads and writes, and whether it runs. */
+    private static PostStage scheduledStage(PackProgramPlan program, PostWindow window, PackTargetGraphPlan graph) {
+        PostTargetPlan target = program.targetPlan();
+        TargetStep step = graph == null ? null : graph.step(program.name());
+        List<Integer> inputs = step == null ? List.of() : step.readTargets();
+        List<Integer> outputs = step == null
+                ? target.targetSlots() : step.outputTargets();
+        boolean executable = program.executable() && target.executable()
+                && (step == null || step.executable());
+        return new PostStage(program.name(), window, executable, inputs, outputs);
     }
 
     public List<Phase> phases() { return phases; }
     public List<PostStage> postStages() { return postStages; }
     public boolean requiresDepthtex0() { return depthtex0; }
     public boolean requiresDepthtex1() { return depthtex1; }
-    public boolean requiresDepthtex2() { return depthtex2; }
     /** An early (deferred) pass reads depthtex0, the opaque depth at that seam. */
     public boolean earlyReadsDepthtex0() { return earlyDepthtex0; }
     public boolean handBeforeEarlyPost() { return handBeforeEarlyPost; }
@@ -187,10 +207,6 @@ public final class PackFrameSchedulePlan {
 
     public int phaseIndex(Phase phase) {
         return phases.indexOf(phase);
-    }
-
-    public boolean hasPhase(Phase phase) {
-        return phases.contains(phase);
     }
 
     public String snapshot() {

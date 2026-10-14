@@ -1,8 +1,10 @@
 package net.chimera.render.shader;
 
 import net.chimera.ChimeraMod;
-import net.chimera.shaderpack.UniformRegistry;
+import net.chimera.shaderpack.PackItemIdResolver;
+import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.PackRuntimeSettings;
+import net.chimera.shaderpack.UniformRegistry;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -12,12 +14,14 @@ import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
 /**
@@ -78,7 +82,7 @@ public final class PackUniformProvider {
     /** Captures the matrices supplied to LevelRenderer.renderLevel as well as game state. */
     public static void beginFrame(Camera camera, float partialTick,
                                   Matrix4f modelView, Matrix4f projection) {
-        setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase.NONE);
+        setRenderingPhase(PackRenderingPhase.NONE);
         INSTANCE.updateFrame(camera, partialTick, modelView, projection);
     }
 
@@ -91,8 +95,8 @@ public final class PackUniformProvider {
      * Debug: every bound float uniform whose current value holds NaN or infinity, as
      * {@code name[component]=value}, sorted. These are the exact values the pack programs read.
      */
-    public static java.util.List<String> nonFiniteUniforms() {
-        java.util.List<String> result = new java.util.ArrayList<>();
+    public static List<String> nonFiniteUniforms() {
+        List<String> result = new ArrayList<>();
         for (Binding binding : INSTANCE.bindings.values()) {
             if (!"float".equals(UniformRegistry.pipelineType(binding.type))
                     && !"mat4".equals(binding.type)) {
@@ -107,7 +111,7 @@ public final class PackUniformProvider {
                 }
             }
         }
-        java.util.Collections.sort(result);
+        Collections.sort(result);
         return result;
     }
 
@@ -158,7 +162,7 @@ public final class PackUniformProvider {
     }
 
     /** Returns the enclosing phase for an exception-safe draw-scope restore. */
-    public static net.chimera.shaderpack.PackRenderingPhase setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase phase) {
+    public static PackRenderingPhase setRenderingPhase(PackRenderingPhase phase) {
         var previous = INSTANCE.frameState.setRenderingPhase(phase);
         Binding binding = INSTANCE.bindings.get(new UniformKey("renderStage", "int"));
         if (binding != null && previous != phase) {
@@ -203,7 +207,7 @@ public final class PackUniformProvider {
      * The pack's item.properties ids and oldHandLight for the held-item uniforms; an empty
      * resolver when no pack is installed.
      */
-    public static void installHeldItems(net.chimera.shaderpack.PackItemIdResolver items, boolean oldHandLight) {
+    public static void installHeldItems(PackItemIdResolver items, boolean oldHandLight) {
         INSTANCE.frameState.installHeldItems(items, oldHandLight);
     }
 
@@ -216,7 +220,7 @@ public final class PackUniformProvider {
 
     /** Drops frame history when the pack session is destroyed or reloaded. */
     public static void resetSession() {
-        setRenderingPhase(net.chimera.shaderpack.PackRenderingPhase.NONE);
+        setRenderingPhase(PackRenderingPhase.NONE);
         INSTANCE.lastFrameNanos = 0L;
         INSTANCE.runtimeSettings = PackRuntimeSettings.empty();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);

@@ -1,10 +1,10 @@
 package net.chimera.shaderpack;
 
-import java.util.List;
-import java.util.Map;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -46,46 +46,50 @@ final class PackConditionals {
             switch (directive.toLowerCase()) {
                 case "if", "ifdef", "ifndef" -> {
                     boolean parent = active();
-                    String test = directive.equalsIgnoreCase("ifdef")
-                            ? "defined(" + argument + ")"
-                            : directive.equalsIgnoreCase("ifndef")
-                            ? "!defined(" + argument + ")" : argument;
-                    boolean result = parent && evaluate(test, macros);
+                    boolean result = parent && evaluate(condition(directive, argument), macros);
                     branches.push(new Branch(parent, parent && result, result, false));
                 }
-                case "elif" -> {
-                    if (branches.isEmpty()) {
-                        throw new IllegalArgumentException("missing conditional");
-                    }
-                    Branch previous = branches.pop();
-                    if (previous.elseSeen()) {
-                        throw new IllegalArgumentException("conditional after else");
-                    }
-                    boolean result = previous.parentActive() && !previous.taken()
-                            && evaluate(argument, macros);
-                    branches.push(new Branch(previous.parentActive(),
-                            previous.parentActive() && result,
-                            previous.taken() || result, false));
-                }
-                case "else" -> {
-                    if (branches.isEmpty()) {
-                        throw new IllegalArgumentException("missing conditional");
-                    }
-                    Branch previous = branches.pop();
-                    if (previous.elseSeen()) {
-                        throw new IllegalArgumentException("duplicate else");
-                    }
-                    branches.push(new Branch(previous.parentActive(),
-                            previous.parentActive() && !previous.taken(), true, true));
-                }
-                case "endif" -> {
-                    if (branches.isEmpty()) {
-                        throw new IllegalArgumentException("missing conditional");
-                    }
-                    branches.pop();
-                }
+                case "elif" -> elseIf(argument);
+                case "else" -> otherwise();
+                case "endif" -> closeBranch();
                 default -> throw new IllegalArgumentException("unsupported conditional");
             }
+        }
+
+        /** The expression an if, ifdef or ifndef directive tests. */
+        private static String condition(String directive, String argument) {
+            if (directive.equalsIgnoreCase("ifdef")) return "defined(" + argument + ")";
+            if (directive.equalsIgnoreCase("ifndef")) return "!defined(" + argument + ")";
+            return argument;
+        }
+
+        private void elseIf(String argument) {
+            Branch previous = closeBranch();
+            if (previous.elseSeen()) {
+                throw new IllegalArgumentException("conditional after else");
+            }
+            boolean result = previous.parentActive() && !previous.taken()
+                    && evaluate(argument, macros);
+            branches.push(new Branch(previous.parentActive(),
+                    previous.parentActive() && result,
+                    previous.taken() || result, false));
+        }
+
+        private void otherwise() {
+            Branch previous = closeBranch();
+            if (previous.elseSeen()) {
+                throw new IllegalArgumentException("duplicate else");
+            }
+            branches.push(new Branch(previous.parentActive(),
+                    previous.parentActive() && !previous.taken(), true, true));
+        }
+
+        /** Pops the innermost open branch; there must be one. */
+        private Branch closeBranch() {
+            if (branches.isEmpty()) {
+                throw new IllegalArgumentException("missing conditional");
+            }
+            return branches.pop();
         }
 
         void finish() {

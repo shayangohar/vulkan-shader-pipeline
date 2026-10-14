@@ -3,12 +3,14 @@ package net.chimera.mixin;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.ChimeraTextureBindingState;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraVkRenderPassAccess;
-import net.chimera.render.ChimeraTextureBindingState;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.vulkanmod.render.engine.VkGpuTexture;
 import net.vulkanmod.render.engine.VkRenderPass;
 import net.vulkanmod.render.engine.VkSampler;
@@ -21,6 +23,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.HashMap;
+import java.util.Set;
 
 /** Copies only host entity texture bindings into the fixed Chimera slots. */
 @Mixin(value = VkRenderPass.class, remap = false)
@@ -34,12 +37,12 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
 
     @Shadow
     @Final
-    protected java.util.Set<String> dirtyUniforms;
+    protected Set<String> dirtyUniforms;
 
     /** Sky has both indexed celestial/star draws and non-indexed sky fans. */
     @WrapMethod(method = "draw")
     private void chimera$skyAttachments(int firstVertex, int vertexCount, Operation<Void> original) {
-        var pass = net.chimera.render.ChimeraRenderer.getMainPass();
+        var pass = ChimeraRenderer.getMainPass();
         if (pass == null || !ChimeraSkyBridge.shouldUsePackPipeline(this.pipeline)) {
             original.call(firstVertex, vertexCount);
             return;
@@ -63,7 +66,7 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
     @WrapMethod(method = "drawIndexed")
     private void chimera$familyAttachments(int vertexOffset, int firstIndex, int vertexCount,
                                             int instanceCount, Operation<Void> original) {
-        var pass = net.chimera.render.ChimeraRenderer.getMainPass();
+        var pass = ChimeraRenderer.getMainPass();
         boolean sky = pass != null && ChimeraSkyBridge.shouldUsePackPipeline(this.pipeline);
         if (pass == null || (!sky && (!ChimeraEntityBridge.isParticleDrawActive()
                 || !ChimeraEntityBridge.shouldUsePackPipeline(this.pipeline)))) {
@@ -121,7 +124,7 @@ public abstract class ChimeraVkRenderPassMixin implements ChimeraVkRenderPassAcc
     private void chimera$bindEntityTexture(
             String name,
             GpuTextureView view,
-            com.mojang.blaze3d.textures.GpuSampler sampler,
+            GpuSampler sampler,
             CallbackInfo callback
     ) {
         if (view == null || sampler == null

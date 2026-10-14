@@ -1,9 +1,9 @@
 package net.chimera.shaderpack;
 
-import java.util.List;
-import java.util.Map;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,8 +40,8 @@ public record GeometryOutputPlan(
             Map<Integer, Integer> formats
     ) {
         String text = source == null ? "" : source;
-        // Preserve the legacy one-output form used by the pre-M8 terrain
-        // fixtures. Explicit DRAWBUFFERS comments remain target lists.
+        // Preserve the legacy one-output form the older terrain fixtures
+        // use. Explicit DRAWBUFFERS comments remain target lists.
         if (text.matches("(?s).*#define\\s+DRAWBUFFERS1\\s*(?:\\r?\\n|$).*")
                 && !text.matches("(?is).*DRAWBUFFERS\\s*:.*")) {
             text = text.replaceFirst("(?m)(^\\s*#define\\s+DRAWBUFFERS)1(\\s*$)", "$1" + "0$2");

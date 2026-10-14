@@ -1,22 +1,26 @@
 package net.chimera.render.shader;
 
-import net.chimera.ChimeraMod;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.minecraft.client.renderer.MultiBufferSource;
+import net.chimera.ChimeraMod;
+import net.chimera.render.ChimeraTextureBindingState;
+import net.chimera.render.EntityTransformBinding;
+import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.PackEntityIdResolver;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.UniformRegistry;
-import net.chimera.render.EntityTransformBinding;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.rendertype.RenderType;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
-import java.util.EnumSet;
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /** Render-thread bridge for the guarded core geometry family lanes. */
@@ -26,6 +30,8 @@ public final class ChimeraEntityBridge {
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,
         BLOCK,
+        /** A block entity's text (signs), drawn with gbuffers_block_translucent (Iris TEXT_BE). */
+        BLOCK_TRANSLUCENT,
         DAMAGED_BLOCK,
         HAND,
         HAND_WATER,
@@ -39,6 +45,8 @@ public final class ChimeraEntityBridge {
         LIGHTNING,
         BEACON_BEAM,
         LEASH,
+        /** Text and name-tag backgrounds (Iris TEXT_BG), drawn with gbuffers_entities_translucent. */
+        TEXT_BG,
         /** Every entity-format caster in the shadow pass (Iris SHADOW_ENTITIES_CUTOUT). */
         SHADOW_ENTITIES,
         /** The shadow pass's host-layout lanes (HostLayoutLane, Pass.SHADOW). */
@@ -62,14 +70,14 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline handWaterPipeline;
     private static PackPipelines.PackHand handVariants;
     private static PackPipelines.PackHand handWaterVariants;
-    /** The translucent-entity and block programs built for Iris's GLYPH text layout. */
+    /** The translucent-entity and block-translucent programs built for Iris's GLYPH text layout. */
     private static GraphicsPipeline translucentEntityTextPipeline;
-    private static GraphicsPipeline blockTextPipeline;
+    private static GraphicsPipeline blockTranslucentTextPipeline;
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
     /** The installed lanes of {@link HostLayoutLane}, keyed by their family. */
-    private static final java.util.EnumMap<Family, GraphicsPipeline> hostLayoutPipelines =
-            new java.util.EnumMap<>(Family.class);
+    private static final EnumMap<Family, GraphicsPipeline> hostLayoutPipelines =
+            new EnumMap<>(Family.class);
     /** shadow_entities, drawing every entity-format caster in the shadow pass. */
     private static GraphicsPipeline shadowCasterPipeline;
     /**
@@ -77,9 +85,9 @@ public final class ChimeraEntityBridge {
      * ShadowRenderer.ACTIVE): entity-format batches select shadow_entities, nothing else draws.
      */
     private static boolean shadowCasterPass;
-    private static final java.util.Set<RenderPipeline> droppedShadowPipelines = new java.util.HashSet<>();
+    private static final Set<RenderPipeline> droppedShadowPipelines = new HashSet<>();
     private static GraphicsPipeline activePipeline;
-    private static Family activeFamily;
+    static Family activeFamily;
     /** The family requested for the current guarded draw, even if host fallback is selected. */
     private static Family requestedFamily;
     private static boolean enabled;
@@ -100,19 +108,6 @@ public final class ChimeraEntityBridge {
     private static boolean textureSnapshot;
     private static boolean entityBufferUnavailable;
     private static boolean submissionTraceLogged;
-    private static final EnumSet<Family> drawTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> separatedTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> hostFallbackTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> modelTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> pipelineTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> meshTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> hostTransformBindingTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> hostTransformAbandonTraceFamilies = EnumSet.noneOf(Family.class);
-    private static final EnumSet<Family> transformContractTraceFamilies = EnumSet.noneOf(Family.class);
-    private static boolean separatedBatchTraceLogged;
-    private static boolean unsupportedPipelineTraceLogged;
-    private static final java.util.Set<String> submissionHostTraces = new java.util.HashSet<>();
-    private static boolean flushTraceLogged;
     private static ByteBufferBuilder entityBuffer;
     private static MultiBufferSource.BufferSource entityBufferSource;
     private static final VulkanImage[] previousTextures =
@@ -131,10 +126,6 @@ public final class ChimeraEntityBridge {
             // gbuffer data, and deferred lighting erased them to a ghost.
             RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
     );
-    /** Fixed core particle/weather, item and crumbling discard threshold. */
-    private static final float FIXED_ALPHA_CUTOUT = 0.1F;
-    /** Iris AlphaTests.NON_ZERO_ALPHA: GREATER 0.0001. */
-    private static final float NON_ZERO_ALPHA = 0.0001F;
     private ChimeraEntityBridge() {}
 
     public static void install(PackPipelines.PackEntity entity,
@@ -174,7 +165,7 @@ public final class ChimeraEntityBridge {
         handVariants = hand;
         handWaterVariants = handWater;
         translucentEntityTextPipeline = null;
-        blockTextPipeline = null;
+        blockTranslucentTextPipeline = null;
         handPipeline = hand == null ? null : hand.primary().pipeline();
         handWaterPipeline = handWater == null ? null : handWater.primary().pipeline();
         particlePipeline = particle == null ? null : particle.pipeline();
@@ -192,25 +183,13 @@ public final class ChimeraEntityBridge {
         submittingDepth = 0;
         entitySubmissionDepth = 0;
         blockSubmissionDepth = 0;
-        submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
+        submissionFamily = SubmissionIdentity.FAMILY_NONE;
         modelIdDepth = 0;
         worldSubmissionWindow = false;
         textureSnapshot = false;
         entityBufferUnavailable = false;
         submissionTraceLogged = false;
-        drawTraceFamilies.clear();
-        separatedTraceFamilies.clear();
-        hostFallbackTraceFamilies.clear();
-        modelTraceFamilies.clear();
-        pipelineTraceFamilies.clear();
-        meshTraceFamilies.clear();
-        hostTransformBindingTraceFamilies.clear();
-        hostTransformAbandonTraceFamilies.clear();
-        transformContractTraceFamilies.clear();
-        separatedBatchTraceLogged = false;
-        unsupportedPipelineTraceLogged = false;
-        submissionHostTraces.clear();
-        flushTraceLogged = false;
+        FamilyDrawTrace.reset();
         clearScopedState();
         ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
                         + "block={}, damagedBlock={}, hand={}, handWater={}, particle={}, particleTranslucent={}",
@@ -223,7 +202,7 @@ public final class ChimeraEntityBridge {
      * Installs the host-layout lanes after {@link #install}. A lane without a pipeline keeps
      * its host draw.
      */
-    public static void installHostLayout(java.util.Map<Family, PackPipelines.PackParticle> lanes) {
+    public static void installHostLayout(Map<Family, PackPipelines.PackParticle> lanes) {
         hostLayoutPipelines.clear();
         if (lanes != null) {
             lanes.forEach((family, lane) -> {
@@ -242,10 +221,6 @@ public final class ChimeraEntityBridge {
         shadowCasterPass = false;
         droppedShadowPipelines.clear();
         ChimeraMod.LOGGER.info("[chimera] family bridge: shadow casters={}", status(shadowCasterPipeline));
-    }
-
-    public static boolean shadowCastersInstalled() {
-        return shadowCasterPipeline != null;
     }
 
     /**
@@ -291,7 +266,7 @@ public final class ChimeraEntityBridge {
             entitySubmissionDepth = 0;
             blockSubmissionDepth = 0;
             clearScopedState();
-            submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
+            submissionFamily = SubmissionIdentity.FAMILY_NONE;
             worldSubmissionWindow = false;
             shadowCasterPass = false;
         }
@@ -311,7 +286,7 @@ public final class ChimeraEntityBridge {
         clearScopedState();
         currentEntityId = 0;
         worldSubmissionWindow = false;
-        submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
+        submissionFamily = SubmissionIdentity.FAMILY_NONE;
         entityPipeline = null;
         translucentEntityPipeline = null;
         spiderEyesPipeline = null;
@@ -322,7 +297,7 @@ public final class ChimeraEntityBridge {
         handVariants = null;
         handWaterVariants = null;
         translucentEntityTextPipeline = null;
-        blockTextPipeline = null;
+        blockTranslucentTextPipeline = null;
         particlePipeline = null;
         translucentParticlePipeline = null;
         hostLayoutPipelines.clear();
@@ -370,7 +345,7 @@ public final class ChimeraEntityBridge {
         entitySubmissionDepth++;
         currentEntityId = resolver.resolveName(name);
         currentBlockEntityId = 0;
-        submissionFamily = ChimeraEntitySubmission.FAMILY_ENTITY;
+        submissionFamily = SubmissionIdentity.FAMILY_ENTITY;
         if (!submissionTraceLogged) {
             submissionTraceLogged = true;
             ChimeraMod.LOGGER.info("[chimera] entity bridge: captured world entity type={} id={}",
@@ -403,7 +378,7 @@ public final class ChimeraEntityBridge {
         blockSubmissionDepth++;
         currentEntityId = 0;
         currentBlockEntityId = blockEntityId;
-        submissionFamily = ChimeraEntitySubmission.FAMILY_BLOCK;
+        submissionFamily = SubmissionIdentity.FAMILY_BLOCK;
     }
 
     public static void endBlockEntity() {
@@ -418,7 +393,7 @@ public final class ChimeraEntityBridge {
     }
 
     public static int currentSubmissionFamily() {
-        return enabled ? submissionFamily : ChimeraEntitySubmission.FAMILY_NONE;
+        return enabled ? submissionFamily : SubmissionIdentity.FAMILY_NONE;
     }
 
     public static boolean beginDraw() {
@@ -441,21 +416,10 @@ public final class ChimeraEntityBridge {
         if (!EntityTransformBinding.canServeHostTransforms(widensVertexFormat(family),
                 selected.getUBO(UniformRegistry.DYNAMIC_TRANSFORMS_UBO) != null,
                 selected.getUBO(UniformRegistry.PROJECTION_UBO) != null)) {
-            noteTransformContractMissing(family, selected);
+            FamilyDrawTrace.noteTransformContractMissing(family, selected);
             return false;
         }
-        requestedFamily = family;
-        activeFamily = family;
-        activePipeline = selected;
-        for (int index = 0; index < VTextureSelector.SIZE; index++) {
-            previousTextures[index] = VTextureSelector.getBoundTexture(index);
-        }
-        textureSnapshot = true;
-        drawActive = true;
-        if (drawTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} batch",
-                    family.name().toLowerCase());
-        }
+        activate(family, selected, "batch");
         return true;
     }
 
@@ -491,23 +455,10 @@ public final class ChimeraEntityBridge {
                 && beginSimpleDraw(family);
     }
 
-    /** True when this host-layout lane has an installed pack pipeline. */
-    public static boolean hostLayoutInstalled(HostLayoutLane lane) {
-        return lane != null && hostLayoutPipelines.containsKey(lane.family());
-    }
-
-    public static boolean isHandDrawActive() {
-        return isDrawActive(Family.HAND) || isDrawActive(Family.HAND_WATER);
-    }
-
     public static boolean isParticleDrawActive() {
         return enabled && drawActive
                 && (requestedFamily == Family.PARTICLE
                 || requestedFamily == Family.PARTICLE_TRANSLUCENT);
-    }
-
-    public static boolean isWeatherDrawActive() {
-        return isDrawActive(Family.WEATHER);
     }
 
     public static boolean beginCrumblingDraw() {
@@ -525,9 +476,15 @@ public final class ChimeraEntityBridge {
         if (family == Family.DAMAGED_BLOCK && !EntityTransformBinding.canServeHostTransforms(true,
                 selected.getUBO(UniformRegistry.DYNAMIC_TRANSFORMS_UBO) != null,
                 selected.getUBO(UniformRegistry.PROJECTION_UBO) != null)) {
-            noteTransformContractMissing(family, selected);
+            FamilyDrawTrace.noteTransformContractMissing(family, selected);
             return false;
         }
+        activate(family, selected, "draw");
+        return true;
+    }
+
+    /** Makes {@code selected} the active pipeline for {@code family}, saving the bound textures to restore. */
+    private static void activate(Family family, GraphicsPipeline selected, String kind) {
         requestedFamily = family;
         activeFamily = family;
         activePipeline = selected;
@@ -536,11 +493,10 @@ public final class ChimeraEntityBridge {
         }
         textureSnapshot = true;
         drawActive = true;
-        if (drawTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} draw",
-                    family.name().toLowerCase());
+        if (FamilyDrawTrace.drawTraceFamilies.add(family)) {
+            ChimeraMod.LOGGER.info("[chimera] entity bridge: rendering family={} {}", family.name().toLowerCase(),
+                    kind);
         }
-        return true;
     }
 
     /** Saves the submission identity while one delayed model emits vertices. */
@@ -586,8 +542,8 @@ public final class ChimeraEntityBridge {
         if (entityBufferSource == null || !drawActive) {
             return;
         }
-        if (!flushTraceLogged) {
-            flushTraceLogged = true;
+        if (!FamilyDrawTrace.flushTraceLogged) {
+            FamilyDrawTrace.flushTraceLogged = true;
             ChimeraMod.LOGGER.info("[chimera] entity bridge: flushing separated world batch");
         }
         if (renderType == null) {
@@ -598,11 +554,6 @@ public final class ChimeraEntityBridge {
             // guarded family window closes.
             entityBufferSource.endBatch(renderType);
         }
-    }
-
-    /** Compatibility overload for lifecycle cleanup and older callers. */
-    public static void endEntityBatch() {
-        endEntityBatch(null);
     }
 
     public static int currentEntityId() {
@@ -621,10 +572,11 @@ public final class ChimeraEntityBridge {
         return enabled ? currentBlockEntityId : 0;
     }
 
-    public static void setCurrentEntityId(int value) {
-        if (enabled) {
-            currentEntityId = value;
-        }
+    /** Iris setCurrentBlockEntity: replaces the current block entity id and returns the one replaced. */
+    public static int replaceBlockEntityId(int blockEntityId) {
+        int previous = currentBlockEntityId;
+        if (enabled) currentBlockEntityId = blockEntityId;
+        return previous;
     }
 
     /** Marks the LevelRenderer interval in which world entities are submitted. */
@@ -647,7 +599,7 @@ public final class ChimeraEntityBridge {
         entitySubmissionDepth = 0;
         blockSubmissionDepth = 0;
         clearScopedState();
-        submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
+        submissionFamily = SubmissionIdentity.FAMILY_NONE;
     }
 
     public static boolean isWorldSubmissionWindow() {
@@ -664,12 +616,12 @@ public final class ChimeraEntityBridge {
 
     public static boolean supportsSubmissionFamily(int family) {
         if (isShadowCasterPass()) {
-            return family == ChimeraEntitySubmission.FAMILY_ENTITY || family == ChimeraEntitySubmission.FAMILY_BLOCK;
+            return family == SubmissionIdentity.FAMILY_ENTITY || family == SubmissionIdentity.FAMILY_BLOCK;
         }
         return switch (family) {
-            case ChimeraEntitySubmission.FAMILY_ENTITY -> entityPipeline != null
+            case SubmissionIdentity.FAMILY_ENTITY -> entityPipeline != null
                     || translucentEntityPipeline != null || spiderEyesPipeline != null;
-            case ChimeraEntitySubmission.FAMILY_BLOCK -> blockPipeline != null
+            case SubmissionIdentity.FAMILY_BLOCK -> blockPipeline != null
                     || damagedBlockPipeline != null;
             default -> false;
         };
@@ -689,46 +641,15 @@ public final class ChimeraEntityBridge {
     }
 
     /**
-     * The host pipeline's discard threshold (fixed core value or ALPHA_CUTOUT
-     * define), or 0 for a pipeline that never discards. The pack program tests
-     * against it per draw, as Iris does with iris_currentAlphaTest.
-     *
-     * <p>The item pipeline declares no define: its core shader discards below
-     * a fixed 0.1, and Iris tests held items against 0.1 too. Without it the
-     * transparent texels of a flat item wrote depth and gbuffer data across
-     * the whole quad, and its glint lit that box.</p>
+     * The discard threshold the pack program tests this draw against, as Iris does with
+     * iris_currentAlphaTest: a host-layout lane's own Iris ShaderKey test, else the host
+     * pipeline's ({@link HostAlphaTest}).
      */
     public static float alphaReference(RenderPipeline pipeline) {
-        // A host-layout lane tests at its Iris ShaderKey's alpha test.
         HostLayoutLane lane = isDrawActive() ? HostLayoutLane.of(activeFamily) : null;
         if (lane != null) return lane.alphaReference();
-        // Iris SHADOW_ENTITIES_CUTOUT tests every entity caster at ONE_TENTH_ALPHA.
-        if (isShadowCasterPass()) return FIXED_ALPHA_CUTOUT;
-        if (pipeline == RenderPipelines.CRUMBLING
-                || pipeline == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL
-                || pipeline == RenderPipelines.OPAQUE_PARTICLE
-                || pipeline == RenderPipelines.TRANSLUCENT_PARTICLE
-                || pipeline == RenderPipelines.WEATHER_DEPTH_WRITE
-                || pipeline == RenderPipelines.WEATHER_NO_DEPTH_WRITE
-                // Iris ENTITIES_EYES_TRANS: ONE_TENTH_ALPHA.
-                || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) return FIXED_ALPHA_CUTOUT;
-        // Iris ENTITIES_EYES and GLINT: NON_ZERO_ALPHA.
-        if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.GLINT) return NON_ZERO_ALPHA;
-        // Iris TEXT and TEXT_BE: ONE_TENTH_ALPHA; HAND_TEXT: NON_ZERO_ALPHA. The core
-        // text shader discards below 0.1 without a define; untested, every glyph
-        // quad wrote its transparent texels.
-        if (isTextPipeline(pipeline)) {
-            return activeFamily == Family.HAND || activeFamily == Family.HAND_WATER
-                    ? NON_ZERO_ALPHA : FIXED_ALPHA_CUTOUT;
-        }
-        String cutout = pipeline == null ? null : pipeline.getShaderDefines().values().get("ALPHA_CUTOUT");
-        if (cutout == null) return 0.0F;
-        try {
-            float value = Float.parseFloat(cutout.trim().replaceFirst("[fF]$", ""));
-            return Float.isFinite(value) && value > 0.0F ? value : 0.0F;
-        } catch (NumberFormatException malformed) {
-            return 0.0F;
-        }
+        return HostAlphaTest.reference(pipeline, isShadowCasterPass(),
+                activeFamily == Family.HAND || activeFamily == Family.HAND_WATER);
     }
 
     public static boolean supportsWorldPipeline(RenderPipeline pipeline) {
@@ -739,36 +660,41 @@ public final class ChimeraEntityBridge {
         return pipeline != null && SUPPORTED_WORLD_PIPELINES.contains(pipeline);
     }
 
-    /** Selects the most specific installed entity lane for one host render type. */
     /**
      * Installs the text layout variants after {@link #install}: Iris draws TEXT with
-     * gbuffers_entities_translucent and a block entity's TEXT_BE with its block program.
+     * gbuffers_entities_translucent and a block entity's TEXT_BE with gbuffers_block_translucent.
      */
     public static void installTextVariants(PackPipelines.PackEntity translucentEntityText,
-                                           PackPipelines.PackEntity blockText) {
+                                           PackPipelines.PackEntity blockTranslucentText) {
         translucentEntityTextPipeline = translucentEntityText == null ? null : translucentEntityText.pipeline();
-        blockTextPipeline = blockText == null ? null : blockText.pipeline();
+        blockTranslucentTextPipeline = blockTranslucentText == null ? null : blockTranslucentText.pipeline();
     }
 
-    /** World and sign text pipelines Iris routes through getText (see-through and intensity stay host). */
+    /**
+     * The glyph pipelines Iris routes through getText: world, sign and see-through text. Intensity
+     * text stays host-drawn: Iris swizzles its one-channel glyph texture to RRRR, a texture state
+     * Chimera has no counterpart for, and only TrueType resource-pack fonts use it.
+     */
     public static boolean isTextPipeline(RenderPipeline pipeline) {
-        return pipeline == RenderPipelines.TEXT || pipeline == RenderPipelines.TEXT_POLYGON_OFFSET;
+        return pipeline == RenderPipelines.TEXT || pipeline == RenderPipelines.TEXT_POLYGON_OFFSET
+                || pipeline == RenderPipelines.TEXT_SEE_THROUGH;
     }
 
     private static boolean isGlyphFormat(VertexFormat format) {
         return format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP
-                || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH;
+                || format == ChimeraVertexFormats.EXTENDED_GLYPH;
     }
 
     private static GraphicsPipeline textPipelineFor(Family family) {
         if (family == null) return null;
         return switch (family) {
             case ENTITY_TRANSLUCENT -> translucentEntityTextPipeline;
-            case BLOCK -> blockTextPipeline;
+            case BLOCK_TRANSLUCENT -> blockTranslucentTextPipeline;
             default -> null;
         };
     }
 
+    /** Selects the most specific installed entity lane for one host render type. */
     public static Family familyForRenderType(Family base, RenderType renderType) {
         if (isShadowCasterPass()) {
             // One shadow program for every entity-format caster. A batch on another layout
@@ -777,26 +703,29 @@ public final class ChimeraEntityBridge {
                     ? Family.SHADOW_ENTITIES : Family.HOST_FALLBACK;
         }
         if (renderType != null && isTextPipeline(renderType.pipeline())) {
-            // Iris IrisPipelines.getText: TEXT_BE (block program) inside a block entity,
-            // TEXT (gbuffers_entities_translucent) otherwise.
-            Family text = base == Family.BLOCK ? Family.BLOCK : Family.ENTITY_TRANSLUCENT;
+            // Iris IrisPipelines.getText: TEXT_BE (gbuffers_block_translucent) inside a block entity,
+            // TEXT (gbuffers_entities_translucent) otherwise. Each draws in its program's own targets.
+            Family text = base == Family.BLOCK ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
             return textPipelineFor(text) != null ? text : Family.HOST_FALLBACK;
         }
         if (base == Family.ENTITY && renderType != null) {
-            if (renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT
-                    || renderType.pipeline() == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) {
-                return translucentEntityPipeline != null
-                        ? Family.ENTITY_TRANSLUCENT : Family.HOST_FALLBACK;
-            }
-            // Iris IrisPipelines: EYES -> ENTITIES_EYES and ENTITY_TRANSLUCENT_EMISSIVE ->
-            // ENTITIES_EYES_TRANS, both ProgramId.SpiderEyes (gbuffers_entities_glowing is unused).
-            if (renderType.pipeline() == RenderPipelines.EYES
-                    || renderType.pipeline() == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
-                return spiderEyesPipeline != null
-                        ? Family.SPIDER_EYES : Family.HOST_FALLBACK;
-            }
+            return entityFamilyFor(renderType.pipeline());
         }
         return base;
+    }
+
+    /** Moves an ENTITY batch to the translucent or eyes lane its host pipeline belongs to. */
+    private static Family entityFamilyFor(RenderPipeline pipeline) {
+        if (pipeline == RenderPipelines.ENTITY_TRANSLUCENT
+                || pipeline == RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL) {
+            return translucentEntityPipeline != null ? Family.ENTITY_TRANSLUCENT : Family.HOST_FALLBACK;
+        }
+        // Iris IrisPipelines: EYES -> ENTITIES_EYES and ENTITY_TRANSLUCENT_EMISSIVE ->
+        // ENTITIES_EYES_TRANS, both ProgramId.SpiderEyes (gbuffers_entities_glowing is unused).
+        if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
+            return spiderEyesPipeline != null ? Family.SPIDER_EYES : Family.HOST_FALLBACK;
+        }
+        return Family.ENTITY;
     }
 
     /**
@@ -811,34 +740,35 @@ public final class ChimeraEntityBridge {
             return false;
         }
         selectParticleFamily(pipeline);
-        if (requestedFamily == Family.HAND || requestedFamily == Family.HAND_WATER) {
-            var variants = requestedFamily == Family.HAND ? handVariants : handWaterVariants;
-            var selected = variants == null ? null : variants.forFormat(pipeline.getVertexFormat());
-            activeFamily = selected == null ? Family.HOST_FALLBACK : requestedFamily;
-            activePipeline = selected == null ? null : selected.pipeline();
-        }
+        selectHandVariant(pipeline);
         if (activePipeline == null) return false;
         VertexFormat format = pipeline.getVertexFormat();
         if (isGlyphFormat(format) && isTextPipeline(pipeline)
-                && (activeFamily == Family.ENTITY_TRANSLUCENT || activeFamily == Family.BLOCK)) {
-            // Text keeps its family window and outputs; only its native layout differs.
+                && (activeFamily == Family.ENTITY_TRANSLUCENT || activeFamily == Family.BLOCK_TRANSLUCENT)) {
+            // Text draws in its family's window and outputs; only its native layout differs.
             GraphicsPipeline text = textPipelineFor(activeFamily);
             if (text == null) return false;
             activePipeline = text;
             return true;
         }
+        return activeFamilyAccepts(pipeline, format);
+    }
+
+    /** True when the active family's pack pipeline can draw this host pipeline and vertex format. */
+    private static boolean activeFamilyAccepts(RenderPipeline pipeline, VertexFormat format) {
         return switch (activeFamily) {
             case DAMAGED_BLOCK -> pipeline == RenderPipelines.CRUMBLING
                     && format == DefaultVertexFormat.BLOCK;
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, SHADOW_ENTITIES ->
                     format == DefaultVertexFormat.NEW_ENTITY
-                    || format == net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY;
-            case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handHostFormat(format) != null;
+                    || format == ChimeraVertexFormats.EXTENDED_ENTITY;
+            case HAND, HAND_WATER -> ChimeraVertexFormats.handHostFormat(format) != null;
             case PARTICLE, PARTICLE_TRANSLUCENT -> format == DefaultVertexFormat.PARTICLE;
-            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH,
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG,
                  SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG,
                  SHADOW_BASIC -> HostLayoutLane.of(activeFamily).serves(pipeline);
-            case HOST_FALLBACK -> false;
+            // Block-entity text is the only draw of its family, admitted above.
+            case BLOCK_TRANSLUCENT, HOST_FALLBACK -> false;
         };
     }
 
@@ -861,9 +791,10 @@ public final class ChimeraEntityBridge {
     /** Families that append pack inputs to the host format instead of drawing it directly. */
     private static boolean widensVertexFormat(Family family) {
         return switch (family) {
-            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, HAND, HAND_WATER, SHADOW_ENTITIES -> true;
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, BLOCK_TRANSLUCENT, HAND, HAND_WATER,
+                 SHADOW_ENTITIES -> true;
             case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
-                 LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
+                 LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
                  SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC, HOST_FALLBACK -> false;
         };
     }
@@ -872,22 +803,22 @@ public final class ChimeraEntityBridge {
     public static VertexFormat extendedFormat(VertexFormat format) {
         if (enabled && drawActive && (requestedFamily == Family.HAND || requestedFamily == Family.HAND_WATER)
                 && format != null) {
-            return net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
+            return ChimeraVertexFormats.handFormats().getOrDefault(format, format);
         }
         if (!isDrawActive() || format == null) {
             return format;
         }
         if (format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP && textPipelineFor(activeFamily) != null) {
-            return net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_GLYPH;
+            return ChimeraVertexFormats.EXTENDED_GLYPH;
         }
         return switch (activeFamily) {
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, SHADOW_ENTITIES ->
                     format == DefaultVertexFormat.NEW_ENTITY
-                    ? net.chimera.render.vertex.ChimeraVertexFormats.EXTENDED_ENTITY : format;
-            case HAND, HAND_WATER -> net.chimera.render.vertex.ChimeraVertexFormats.handFormats().getOrDefault(format, format);
-            case DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT, HAND_GLINT,
-                 LIGHTNING, BEACON_BEAM, LEASH, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT,
-                 SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC -> format;
+                    ? ChimeraVertexFormats.EXTENDED_ENTITY : format;
+            case HAND, HAND_WATER -> ChimeraVertexFormats.handFormats().getOrDefault(format, format);
+            case BLOCK_TRANSLUCENT, DAMAGED_BLOCK, PARTICLE, PARTICLE_TRANSLUCENT, WEATHER, LINE, GLINT,
+                 HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG, SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING,
+                 SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC -> format;
             case HOST_FALLBACK -> format;
         };
     }
@@ -897,125 +828,12 @@ public final class ChimeraEntityBridge {
         return extendedFormat(format) != format;
     }
 
-    /** Records which separated family is about to emit a model batch. */
-    public static void noteFamilyBatch(Family family, int renderTypeCount) {
-        if (family == null || !separatedTraceFamilies.add(family)) {
-            return;
-        }
-        ChimeraMod.LOGGER.info("[chimera] entity bridge: family={} separated render types={}",
-                family.name().toLowerCase(), renderTypeCount);
-    }
-
-    /** Emits one diagnostic for the first separated pack entity batch. */
-    public static void noteSeparatedBatch(RenderType renderType, int count) {
-        if (!separatedBatchTraceLogged) {
-            separatedBatchTraceLogged = true;
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: separated world batch type={} count={}",
-                    renderType == null ? "unknown" : renderType, count);
-        }
-    }
-
-    /** Emits one diagnostic when a world entity uses a lane outside the contract. */
-    /** Emits one diagnostic per reason a world block or block-model submission keeps its host draw. */
-    public static void noteSubmissionKeptOnHost(String reason, RenderType renderType) {
-        if (submissionHostTraces.add(reason)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: block submission kept on host reason={} type={}",
-                    reason, renderType == null ? "unknown" : renderType);
-        }
-    }
-
-    public static void noteUnsupportedWorldPipeline(RenderType renderType) {
-        if (!unsupportedPipelineTraceLogged) {
-            unsupportedPipelineTraceLogged = true;
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: world entity lane kept on host type={} pipeline={}",
-                    renderType == null ? "unknown" : renderType,
-                    renderType == null ? "unknown" : renderType.pipeline());
-        }
-    }
-
-    /**
-     * Records a family batch that stayed on the host path because admission
-     * failed before the mesh was built, once per family. The mesh therefore
-     * keeps the host vertex format and the host pipeline draws it.
-     */
-    public static void noteFamilyHostFallback(Family family, RenderType renderType) {
-        if (hostFallbackTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: family={} kept on the host path type={}",
-                    family.name().toLowerCase(), renderType == null ? "unknown" : renderType);
-        }
-    }
-
-    /** Emits one diagnostic when a delayed world entity reaches model emission. */
-    public static void noteModelDraw(RenderType renderType) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (modelTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: model emission reached type={}",
-                    renderType == null ? "unknown" : renderType);
-        }
-    }
-
-    /** Emits one diagnostic after the Vulkan seam binds the pack entity pipeline. */
-    public static void notePipelineBound(RenderPipeline hostPipeline) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (pipelineTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: pack pipeline bound family={} hostPipeline={}",
-                    activeFamily == null ? "unknown" : activeFamily.name().toLowerCase(),
-                    hostPipeline == null ? "unknown" : hostPipeline);
-        }
-    }
-
-    /** Records the per-draw host transform routes for one family. */
-    public static void noteHostTransformRoutes(String detail) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (hostTransformBindingTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: host raster UBOs family={} {}",
-                    family.name().toLowerCase(), detail);
-        }
-    }
-
-    /**
-     * Records an abandoned guarded draw for one family.
-     *
-     * <p>A widened batch keeps its append-only mesh, so an unusable or missing
-     * depth contract drops the draw. Routing it back to the host pipeline would
-     * make that pipeline read the widened layout.</p>
-     */
-    public static void noteDrawAbandoned(String detail) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (hostTransformAbandonTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.warn("[chimera] entity bridge: abandoned guarded draw family={} {}",
-                    family.name().toLowerCase(), detail);
-        }
-    }
-
-    /** Records a family whose pack pipeline cannot serve the host transform blocks. */
-    public static void noteTransformContractMissing(Family family, GraphicsPipeline pipeline) {
-        if (transformContractTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.warn("[chimera] entity bridge: pack pipeline cannot serve host "
-                            + "transforms family={} pipeline={} DynamicTransforms={} Projection={}; "
-                            + "batch kept on the host format",
-                    family.name().toLowerCase(), pipeline,
-                    pipeline.getUBO(UniformRegistry.DYNAMIC_TRANSFORMS_UBO) != null,
-                    pipeline.getUBO(UniformRegistry.PROJECTION_UBO) != null);
-        }
-    }
-
-    /** Emits one diagnostic for the mesh handed to the guarded Vulkan draw. */
-    public static void noteMeshDraw(int vertexCount, int indexCount, int stride) {
-        Family family = activeFamily == null ? Family.HOST_FALLBACK : activeFamily;
-        if (meshTraceFamilies.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] entity bridge: mesh ready family={} vertices={} indices={} stride={}B",
-                    activeFamily == null ? "unknown" : activeFamily.name().toLowerCase(),
-                    vertexCount, indexCount, stride);
-        }
-    }
-
     private static void restoreTextures() {
         if (!textureSnapshot) {
             return;
         }
         for (int index = 0; index < VTextureSelector.SIZE; index++) {
-            net.chimera.render.ChimeraTextureBindingState.clearPackBinding(index);
+            ChimeraTextureBindingState.clearPackBinding(index);
             VTextureSelector.bindTexture(index, previousTextures[index]);
             previousTextures[index] = null;
         }
@@ -1064,7 +882,7 @@ public final class ChimeraEntityBridge {
         modelIdDepth = 0;
         for (int index = 0; index < previousEntityIds.length; index++) {
             previousEntityIds[index] = 0;
-            previousSubmissionFamilies[index] = ChimeraEntitySubmission.FAMILY_NONE;
+            previousSubmissionFamilies[index] = SubmissionIdentity.FAMILY_NONE;
             previousModelEntityIds[index] = 0;
             previousBlockEntityIds[index] = 0;
             previousModelBlockEntityIds[index] = 0;
@@ -1074,7 +892,7 @@ public final class ChimeraEntityBridge {
 
     private static void popSubmission() {
         if (submittingDepth <= 0) {
-            submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
+            submissionFamily = SubmissionIdentity.FAMILY_NONE;
             currentEntityId = 0;
             currentBlockEntityId = 0;
             return;
@@ -1089,13 +907,13 @@ public final class ChimeraEntityBridge {
                 : submittingDepth < previousBlockEntityIds.length
                 ? previousBlockEntityIds[submittingDepth] : 0;
         submissionFamily = submittingDepth == 0
-                ? ChimeraEntitySubmission.FAMILY_NONE
+                ? SubmissionIdentity.FAMILY_NONE
                 : submittingDepth < previousSubmissionFamilies.length
                 ? previousSubmissionFamilies[submittingDepth]
-                : ChimeraEntitySubmission.FAMILY_NONE;
+                : SubmissionIdentity.FAMILY_NONE;
     }
 
-    private static int submissionFamily = ChimeraEntitySubmission.FAMILY_NONE;
+    private static int submissionFamily = SubmissionIdentity.FAMILY_NONE;
 
     private static GraphicsPipeline pipelineFor(Family family) {
         return switch (family) {
@@ -1103,12 +921,13 @@ public final class ChimeraEntityBridge {
             case ENTITY_TRANSLUCENT -> translucentEntityPipeline;
             case SPIDER_EYES -> spiderEyesPipeline;
             case BLOCK -> blockPipeline;
+            case BLOCK_TRANSLUCENT -> blockTranslucentTextPipeline;
             case DAMAGED_BLOCK -> damagedBlockPipeline;
             case HAND -> handPipeline;
             case HAND_WATER -> handWaterPipeline;
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
-            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH,
+            case WEATHER, LINE, GLINT, HAND_GLINT, LIGHTNING, BEACON_BEAM, LEASH, TEXT_BG,
                  SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_GLINT, SHADOW_TEXT, SHADOW_TEXT_BG,
                  SHADOW_BASIC -> hostLayoutPipelines.get(family);
             case SHADOW_ENTITIES -> shadowCasterPass ? shadowCasterPipeline : null;
@@ -1135,6 +954,17 @@ public final class ChimeraEntityBridge {
             activeFamily = Family.HOST_FALLBACK;
             activePipeline = null;
         }
+    }
+
+    /** Picks the hand variant built for the host draw's vertex format, or host fallback. */
+    private static void selectHandVariant(RenderPipeline hostPipeline) {
+        if (requestedFamily != Family.HAND && requestedFamily != Family.HAND_WATER) {
+            return;
+        }
+        var variants = requestedFamily == Family.HAND ? handVariants : handWaterVariants;
+        var selected = variants == null ? null : variants.forFormat(hostPipeline.getVertexFormat());
+        activeFamily = selected == null ? Family.HOST_FALLBACK : requestedFamily;
+        activePipeline = selected == null ? null : selected.pipeline();
     }
 
     private static String status(GraphicsPipeline value) {

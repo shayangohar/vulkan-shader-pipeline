@@ -71,22 +71,55 @@ public final class SpirvTrigPrecision {
 
     static int[] apply(int[] words) {
         if (words.length < HEADER_WORDS || words[0] != MAGIC) return words;
-        Set<Integer> glslStd = new HashSet<>();
-        Map<Integer, Integer> definition = new HashMap<>();        // result id -> instruction offset
-        Map<Integer, Integer> baseOf = new HashMap<>();            // access chain -> base pointer
-        Map<Integer, List<Integer>> stores = new HashMap<>();      // pointer -> stored values
-        Map<Integer, List<Integer>> returns = new HashMap<>();     // function -> returned values
-        Map<Integer, int[]> parameterSlot = new HashMap<>();       // parameter -> {function, index}
-        Map<Integer, Integer> parameterCount = new HashMap<>();
-        Map<Integer, List<int[]>> calls = new HashMap<>();         // function -> call instructions
-        List<Integer> seeds = new ArrayList<>();
-        int firstType = -1;
-        int function = -1;
-        for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
-            int opcode = words[at] & 0xFFFF;
-            int count = words[at] >>> 16;
-            if (count == 0) return words;
-            if (firstType < 0 && opcode >= FIRST_TYPE_OPCODE && opcode <= LAST_TYPE_OPCODE) firstType = at;
+        DataFlow flow = new DataFlow(words);
+        if (!flow.scan() || flow.seeds.isEmpty() || flow.firstType < 0) return words;
+        Set<Integer> decorate = flow.trigSlice();
+        if (decorate.isEmpty()) return words;
+        // Annotations precede every type declaration.
+        int[] out = new int[words.length + decorate.size() * 3];
+        System.arraycopy(words, 0, out, 0, flow.firstType);
+        int w = flow.firstType;
+        for (int id : decorate) {
+            out[w++] = (3 << 16) | OP_DECORATE;
+            out[w++] = id;
+            out[w++] = DECORATION_NO_CONTRACTION;
+        }
+        System.arraycopy(words, flow.firstType, out, w, words.length - flow.firstType);
+        return out;
+    }
+
+    /** How values flow through one module, from a single pass over its instructions. */
+    private static final class DataFlow {
+        private final int[] words;
+        private final Set<Integer> glslStd = new HashSet<>();
+        private final Map<Integer, Integer> definition = new HashMap<>();        // result id -> instruction offset
+        private final Map<Integer, Integer> baseOf = new HashMap<>();            // access chain -> base pointer
+        private final Map<Integer, List<Integer>> stores = new HashMap<>();      // pointer -> stored values
+        private final Map<Integer, List<Integer>> returns = new HashMap<>();     // function -> returned values
+        private final Map<Integer, int[]> parameterSlot = new HashMap<>();       // parameter -> {function, index}
+        private final Map<Integer, Integer> parameterCount = new HashMap<>();
+        private final Map<Integer, List<int[]>> calls = new HashMap<>();         // function -> call instructions
+        private final List<Integer> seeds = new ArrayList<>();
+        private int firstType = -1;
+        private int function = -1;
+
+        private DataFlow(int[] words) {
+            this.words = words;
+        }
+
+        /** Records every instruction; false when one has a word count of zero. */
+        private boolean scan() {
+            for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
+                int opcode = words[at] & 0xFFFF;
+                int count = words[at] >>> 16;
+                if (count == 0) return false;
+                if (firstType < 0 && opcode >= FIRST_TYPE_OPCODE && opcode <= LAST_TYPE_OPCODE) firstType = at;
+                record(opcode, at, count);
+            }
+            return true;
+        }
+
+        private void record(int opcode, int at, int count) {
             switch (opcode) {
                 case OP_EXT_INST_IMPORT -> {
                     if ("GLSL.std.450".equals(literal(words, at + 2, count - 2))) glslStd.add(words[at + 1]);
@@ -119,61 +152,57 @@ public final class SpirvTrigPrecision {
                 }
             }
         }
-        if (seeds.isEmpty() || firstType < 0) return words;
-        // A store through an access chain is a store into its root variable.
-        Map<Integer, List<Integer>> rootStores = new HashMap<>();
-        stores.forEach((pointer, values) ->
-                rootStores.computeIfAbsent(root(baseOf, pointer), p -> new ArrayList<>()).addAll(values));
 
-        Set<Integer> visited = new HashSet<>();
-        Set<Integer> decorate = new TreeSet<>();
-        ArrayDeque<Integer> work = new ArrayDeque<>(seeds);
-        while (!work.isEmpty()) {
-            int id = work.pop();
-            if (!visited.add(id)) continue;
+        /** The float arithmetic results in the backward slice of every trigonometric argument. */
+        private Set<Integer> trigSlice() {
+            // A store through an access chain is a store into its root variable.
+            Map<Integer, List<Integer>> rootStores = new HashMap<>();
+            stores.forEach((pointer, values) ->
+                    rootStores.computeIfAbsent(root(baseOf, pointer), p -> new ArrayList<>()).addAll(values));
+
+            Set<Integer> visited = new HashSet<>();
+            Set<Integer> decorate = new TreeSet<>();
+            ArrayDeque<Integer> work = new ArrayDeque<>(seeds);
+            while (!work.isEmpty()) {
+                int id = work.pop();
+                if (!visited.add(id)) continue;
+                addCallerArguments(id, work);
+                Integer at = definition.get(id);
+                if (at == null) continue;
+                int opcode = words[at] & 0xFFFF;
+                int count = words[at] >>> 16;
+                switch (opcode) {
+                    case OP_LOAD -> {
+                        // The root may be a parameter, whose value comes from each caller.
+                        int pointer = root(baseOf, words[at + 3]);
+                        work.addAll(rootStores.getOrDefault(pointer, List.of()));
+                        work.add(pointer);
+                        for (int i = at + 3; i < at + count; i++) work.add(words[i]);
+                    }
+                    case OP_FUNCTION_CALL -> {
+                        work.addAll(returns.getOrDefault(words[at + 3], List.of()));
+                        for (int i = at + 4; i < at + count; i++) work.add(words[i]);
+                    }
+                    case OP_FUNCTION_PARAMETER, OP_VARIABLE -> work.addAll(rootStores.getOrDefault(id, List.of()));
+                    default -> {
+                        if (FLOAT_ARITHMETIC.contains(opcode)) decorate.add(id);
+                        // Operands after the result id; literals that happen to match an id
+                        // only widen the slice.
+                        for (int i = at + 3; i < at + count; i++) work.add(words[i]);
+                    }
+                }
+            }
+            return decorate;
+        }
+
+        /** When {@code id} is a parameter, queues the argument every call passes for it. */
+        private void addCallerArguments(int id, ArrayDeque<Integer> work) {
             int[] slot = parameterSlot.get(id);
-            if (slot != null) {
-                for (int[] call : calls.getOrDefault(slot[0], List.of())) {
-                    if (4 + slot[1] < call.length) work.add(call[4 + slot[1]]);
-                }
-            }
-            Integer at = definition.get(id);
-            if (at == null) continue;
-            int opcode = words[at] & 0xFFFF;
-            int count = words[at] >>> 16;
-            switch (opcode) {
-                case OP_LOAD -> {
-                    // The root may be a parameter, whose value comes from each caller.
-                    int pointer = root(baseOf, words[at + 3]);
-                    work.addAll(rootStores.getOrDefault(pointer, List.of()));
-                    work.add(pointer);
-                    for (int i = at + 3; i < at + count; i++) work.add(words[i]);
-                }
-                case OP_FUNCTION_CALL -> {
-                    work.addAll(returns.getOrDefault(words[at + 3], List.of()));
-                    for (int i = at + 4; i < at + count; i++) work.add(words[i]);
-                }
-                case OP_FUNCTION_PARAMETER, OP_VARIABLE -> work.addAll(rootStores.getOrDefault(id, List.of()));
-                default -> {
-                    if (FLOAT_ARITHMETIC.contains(opcode)) decorate.add(id);
-                    // Operands after the result id; literals that happen to match an id
-                    // only widen the slice.
-                    for (int i = at + 3; i < at + count; i++) work.add(words[i]);
-                }
+            if (slot == null) return;
+            for (int[] call : calls.getOrDefault(slot[0], List.of())) {
+                if (4 + slot[1] < call.length) work.add(call[4 + slot[1]]);
             }
         }
-        if (decorate.isEmpty()) return words;
-        // Annotations precede every type declaration.
-        int[] out = new int[words.length + decorate.size() * 3];
-        System.arraycopy(words, 0, out, 0, firstType);
-        int w = firstType;
-        for (int id : decorate) {
-            out[w++] = (3 << 16) | OP_DECORATE;
-            out[w++] = id;
-            out[w++] = DECORATION_NO_CONTRACTION;
-        }
-        System.arraycopy(words, firstType, out, w, words.length - firstType);
-        return out;
     }
 
     private static int root(Map<Integer, Integer> baseOf, int pointer) {

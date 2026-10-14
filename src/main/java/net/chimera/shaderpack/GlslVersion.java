@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -25,7 +26,7 @@ public record GlslVersion(int number, String profile) {
     private static final Set<Integer> DESKTOP = Set.of(110, 120, 130, 140, 150, 330, 400, 410, 420, 430, 440, 450, 460);
 
     public GlslVersion {
-        profile = profile == null ? "" : profile.toLowerCase(java.util.Locale.ROOT);
+        profile = profile == null ? "" : profile.toLowerCase(Locale.ROOT);
     }
 
     /** Every directive in the source, in order: a prepared source can carry more than one. */

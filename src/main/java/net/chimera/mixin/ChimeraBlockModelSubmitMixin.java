@@ -1,11 +1,11 @@
 package net.chimera.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.chimera.render.shader.ChimeraEntitySubmission;
+import net.chimera.render.shader.SubmissionIdentity;
+import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.block.model.BlockStateModel;
 import net.minecraft.client.renderer.rendertype.RenderType;
-import net.chimera.render.shader.ChimeraEntityBridge;
-import net.chimera.render.shader.ChimeraEntitySubmission;
-import net.minecraft.client.renderer.SubmitNodeStorage;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -19,13 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(SubmitNodeStorage.BlockModelSubmit.class)
 public abstract class ChimeraBlockModelSubmitMixin implements ChimeraEntitySubmission {
     @Unique
-    private boolean chimera$worldEntity;
-    @Unique
-    private int chimera$entityId;
-    @Unique
-    private int chimera$blockEntityId;
-    @Unique
-    private int chimera$family;
+    private SubmissionIdentity chimera$identity;
 
     @Inject(method = "<init>", at = @At("RETURN"), require = 1)
     private void chimera$capture(
@@ -40,29 +34,11 @@ public abstract class ChimeraBlockModelSubmitMixin implements ChimeraEntitySubmi
             int outlineColor,
             CallbackInfo callback
     ) {
-        this.chimera$worldEntity = ChimeraEntityBridge.isSubmittingEntity();
-        this.chimera$entityId = ChimeraEntityBridge.currentEntityId();
-        this.chimera$blockEntityId = ChimeraEntityBridge.currentBlockEntityId();
-        this.chimera$family = ChimeraEntityBridge.currentSubmissionFamily();
+        this.chimera$identity = SubmissionIdentity.current();
     }
 
     @Override
-    public boolean chimera$isWorldEntity() {
-        return chimera$worldEntity;
-    }
-
-    @Override
-    public int chimera$blockEntityId() {
-        return chimera$blockEntityId;
-    }
-
-    @Override
-    public int chimera$entityId() {
-        return chimera$entityId;
-    }
-
-    @Override
-    public int chimera$family() {
-        return chimera$family;
+    public SubmissionIdentity chimera$identity() {
+        return chimera$identity;
     }
 }

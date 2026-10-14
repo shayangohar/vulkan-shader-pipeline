@@ -40,7 +40,7 @@ public final class MrtPipelineContext {
     public static void begin(int[] formats, int deviceMaxColorAttachments, PackBlendPlan.Mode[] blends) {
         int limit = Math.min(LOGICAL_LIMIT, Math.max(0, deviceMaxColorAttachments));
         if (formats == null || formats.length < 1 || formats.length > limit) {
-            throw new IllegalArgumentException("M7.4 post MRT exceeds the safe attachment limit " + limit);
+            throw new IllegalArgumentException("post MRT exceeds the safe attachment limit " + limit);
         }
         CURRENT.set(contract(formats, blends));
     }

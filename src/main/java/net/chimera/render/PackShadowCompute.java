@@ -1,47 +1,27 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.ComputeValueBlock;
+import net.chimera.shaderpack.GlslTokenRewriter;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackEngineDefines;
-import net.chimera.shaderpack.GlslTokenRewriter;
-import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.ShaderSourcePreprocessor;
-import net.chimera.shaderpack.UniformRegistry;
-import net.chimera.render.shader.PackUniformProvider;
-import net.vulkanmod.vulkan.Renderer;
-import net.vulkanmod.vulkan.Vulkan;
-import org.lwjgl.PointerBuffer;
-import org.lwjgl.system.MemoryStack;
-import org.lwjgl.system.MemoryUtil;
-import org.lwjgl.util.shaderc.Shaderc;
-import org.lwjgl.util.vma.Vma;
-import org.lwjgl.util.vma.VmaAllocationCreateInfo;
-import org.lwjgl.util.vma.VmaAllocationInfo;
-import org.lwjgl.vulkan.VkCommandBuffer;
 import net.vulkanmod.vulkan.texture.VulkanImage;
-import org.lwjgl.vulkan.VkBufferCreateInfo;
-import org.lwjgl.vulkan.VkComputePipelineCreateInfo;
-import org.lwjgl.vulkan.VkDescriptorBufferInfo;
-import org.lwjgl.vulkan.VkDescriptorImageInfo;
-import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
-import org.lwjgl.vulkan.VkDescriptorPoolSize;
-import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
-import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
-import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
-import org.lwjgl.vulkan.VkPipelineLayoutCreateInfo;
-import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo;
-import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
-import org.lwjgl.vulkan.VkWriteDescriptorSet;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkCommandBuffer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.LongBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -49,34 +29,13 @@ import java.util.regex.Pattern;
 
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_BIND_POINT_COMPUTE;
-import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_COMPUTE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.vkCmdBindPipeline;
-import static org.lwjgl.vulkan.VK10.vkCmdBindDescriptorSets;
-import static org.lwjgl.vulkan.VK10.vkAllocateDescriptorSets;
 import static org.lwjgl.vulkan.VK10.vkCmdDispatch;
-import static org.lwjgl.vulkan.VK10.vkCreateComputePipelines;
-import static org.lwjgl.vulkan.VK10.vkCreateDescriptorPool;
-import static org.lwjgl.vulkan.VK10.vkCreateDescriptorSetLayout;
-import static org.lwjgl.vulkan.VK10.vkCreatePipelineLayout;
-import static org.lwjgl.vulkan.VK10.vkCreateShaderModule;
-import static org.lwjgl.vulkan.VK10.vkDestroyDescriptorPool;
-import static org.lwjgl.vulkan.VK10.vkDestroyPipeline;
-import static org.lwjgl.vulkan.VK10.vkDestroyPipelineLayout;
-import static org.lwjgl.vulkan.VK10.vkDestroyDescriptorSetLayout;
-import static org.lwjgl.vulkan.VK10.vkDestroyShaderModule;
-import static org.lwjgl.vulkan.VK10.vkUpdateDescriptorSets;
 
 /** Native compute bridge for the bounded shadowcomp image contract. */
 public final class PackShadowCompute implements AutoCloseable {
-    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final Pattern IMAGE_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
@@ -102,29 +61,10 @@ public final class PackShadowCompute implements AutoCloseable {
     private final List<String> imageNames;
     private final List<String> samplerNames;
     private final List<String> sampled2dNames;
-    private final List<ComputeUniform> computeUniforms;
-    private final int uniformBufferSize;
-    private long shaderModule;
-    private long setLayout;
-    private long descriptorPool;
-    private long pipelineLayout;
-    private long pipeline;
-    private FrameSlot[] frames = new FrameSlot[0];
+    private final List<ComputeValueBlock.Value> computeUniforms;
+    private ComputeKernel kernel;
     private boolean failed;
     private boolean dispatchObserved;
-
-    /**
-     * One frame in flight's uniform block and the descriptor set that binds it. Values are
-     * written while the frame is recorded, so a block shared across frames in flight could be
-     * rewritten while the GPU still runs an earlier frame's dispatch.
-     */
-    private static final class FrameSlot {
-        long descriptorSet;
-        long uniformBuffer;
-        long uniformAllocation;
-        ByteBuffer uniformData;
-        boolean uniformMappedByChimera;
-    }
 
     private PackShadowCompute(
             PackAdvancedResourcePlan.ComputeSpec spec,
@@ -133,7 +73,7 @@ public final class PackShadowCompute implements AutoCloseable {
             List<String> imageNames,
             List<String> samplerNames,
             List<String> sampled2dNames,
-            List<ComputeUniform> computeUniforms
+            List<ComputeValueBlock.Value> computeUniforms
     ) {
         this.spec = spec;
         this.owner = owner;
@@ -142,7 +82,6 @@ public final class PackShadowCompute implements AutoCloseable {
         this.samplerNames = samplerNames;
         this.sampled2dNames = sampled2dNames;
         this.computeUniforms = computeUniforms == null ? List.of() : List.copyOf(computeUniforms);
-        this.uniformBufferSize = uniformBufferSize(this.computeUniforms);
     }
 
     /** A translated shadowcomp module and the resources it binds, in binding order. */
@@ -151,8 +90,9 @@ public final class PackShadowCompute implements AutoCloseable {
             List<String> imageNames,
             List<String> samplerNames,
             List<String> sampled2dNames,
-            List<ComputeUniform> uniforms
+            List<ComputeValueBlock.Value> uniforms
     ) {}
+
 
     public static PackShadowCompute load(
             PackAdvancedResourcePlan plan,
@@ -178,11 +118,7 @@ public final class PackShadowCompute implements AutoCloseable {
                     spec, owner, sampledResourceOwner, module.imageNames(), module.samplerNames(),
                     module.sampled2dNames(), module.uniforms());
             compute.create(module.source());
-            if (compute.pipeline == 0L) {
-                compute.close();
-                return null;
-            }
-            return compute;
+            return compute.kernel == null ? null : compute;
         } catch (RuntimeException failure) {
             LOGGER.warn("[chimera] shadowcomp load failed: {}", failure.getMessage(), failure);
             return null;
@@ -242,14 +178,15 @@ public final class PackShadowCompute implements AutoCloseable {
             throw new IllegalArgumentException("no image owner for " + unowned);
         }
         List<String> sampled2d = standardSampledResources(prepared.source(), sampledResourceOwner);
-        List<ComputeUniform> uniforms = computeUniforms(prepared.source());
+        List<ComputeValueBlock.Value> uniforms = computeUniforms(prepared.source());
         int uniformBinding = spec.imageNames().size() + spec.samplerNames().size() + sampled2d.size();
         String translated = translate(prepared.source(), plan, spec.imageNames(), spec.samplerNames(),
                 sampled2d, uniforms, uniformBinding);
         return new Module(translated, spec.imageNames(), spec.samplerNames(), sampled2d, uniforms);
     }
 
-    public boolean isInstalled() { return pipeline != 0L && !failed; }
+
+    public boolean isInstalled() { return kernel != null && !failed; }
 
     public boolean dispatch(VkCommandBuffer commandBuffer) {
         if (!isInstalled() || commandBuffer == null) return false;
@@ -259,7 +196,6 @@ public final class PackShadowCompute implements AutoCloseable {
                 LOGGER.info("[chimera] shadowcomp dispatch recording");
             }
             PackVulkanBarriers.beforeCompute(commandBuffer, stack);
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
             Set<String> transitioned = new HashSet<>();
             for (String name : imageNames) {
                 if (!transitioned.add(name)) continue;
@@ -271,19 +207,7 @@ public final class PackShadowCompute implements AutoCloseable {
                 PackStorageImage image = owner.imageForSymbol(name);
                 if (image != null) image.transitionToGeneral(stack, commandBuffer);
             }
-            // This frame slot's fence has signalled, so its block is free to rewrite.
-            FrameSlot frame = frames[Renderer.getCurrentFrame() % frames.length];
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-                    pipelineLayout, 0, stack.longs(frame.descriptorSet), null);
-            if (!computeUniforms.isEmpty() && frame.uniformData != null) {
-                MemoryUtil.memSet(frame.uniformData, 0);
-                List<UniformRegistry.UniformDeclaration> declarations = computeUniforms.stream()
-                        .map(value -> new UniformRegistry.UniformDeclaration(value.name(), value.type()))
-                        .toList();
-                int[] offsets = computeUniforms.stream().mapToInt(ComputeUniform::offset).toArray();
-                int[] sizes = computeUniforms.stream().mapToInt(ComputeUniform::size).toArray();
-                PackUniformProvider.writeComputeUniforms(declarations, offsets, sizes, frame.uniformData);
-            }
+            kernel.bind(commandBuffer, stack, kernel.currentFrame(), computeUniforms);
             int x = groups(imageNames.get(0), spec.localSizeX(), true);
             int y = groups(imageNames.get(0), spec.localSizeY(), false);
             int z = Math.max(1, (owner.imageForSymbol(imageNames.get(0)).depth()
@@ -310,220 +234,41 @@ public final class PackShadowCompute implements AutoCloseable {
         return Math.max(1, (extent + local - 1) / local);
     }
 
+    /** Builds the kernel: storage images, then 3D samplers, then 2D samplers, then the uniform block. */
     private void create(String source) {
-        ByteBuffer code = compileSpirv(source);
-        if (code == null) return;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            int frameCount = Math.max(1, Renderer.getFramesNum());
-            frames = new FrameSlot[frameCount];
-            for (int index = 0; index < frameCount; index++) {
-                frames[index] = new FrameSlot();
-                if (!createUniformBuffer(stack, frames[index])) return;
-            }
-            VkShaderModuleCreateInfo moduleInfo = VkShaderModuleCreateInfo.calloc(stack)
-                    .sType$Default().pCode(code);
-            LongBuffer module = stack.mallocLong(1);
-            if (vkCreateShaderModule(Vulkan.getVkDevice(), moduleInfo, null, module) != VK_SUCCESS) return;
-            shaderModule = module.get(0);
-
-            int resourceCount = imageNames.size() + samplerNames.size() + sampled2dNames.size();
-            int uniformBinding = resourceCount;
-            int bindingCount = resourceCount + (uniformBufferSize > 0 ? 1 : 0);
-            VkDescriptorSetLayoutBinding.Buffer bindings =
-                    VkDescriptorSetLayoutBinding.calloc(bindingCount, stack);
-            for (int index = 0; index < imageNames.size(); index++) {
-                bindings.get(index).binding(index).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            for (int index = 0; index < samplerNames.size(); index++) {
-                bindings.get(imageNames.size() + index)
-                        .binding(imageNames.size() + index)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            for (int index = 0; index < sampled2dNames.size(); index++) {
-                int binding = imageNames.size() + samplerNames.size() + index;
-                bindings.get(binding).binding(binding)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            if (uniformBufferSize > 0) {
-                bindings.get(uniformBinding).binding(uniformBinding)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
-            }
-            VkDescriptorSetLayoutCreateInfo layoutInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
-                    .sType$Default()
-                    .pBindings(bindings);
-            LongBuffer layout = stack.mallocLong(1);
-            if (vkCreateDescriptorSetLayout(Vulkan.getVkDevice(), layoutInfo, null, layout) != VK_SUCCESS) return;
-            setLayout = layout.get(0);
-
-            boolean hasCombinedSamplers = !samplerNames.isEmpty() || !sampled2dNames.isEmpty();
-            boolean hasUniformBuffer = uniformBufferSize > 0;
-            int poolSizeCount = 1 + (hasCombinedSamplers ? 1 : 0) + (hasUniformBuffer ? 1 : 0);
-            VkDescriptorPoolSize.Buffer poolSizes = VkDescriptorPoolSize.calloc(poolSizeCount, stack);
-            poolSizes.get(0).type(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                    .descriptorCount(imageNames.size() * frames.length);
-            int poolIndex = 1;
-            if (hasCombinedSamplers) {
-                poolSizes.get(poolIndex++).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .descriptorCount((samplerNames.size() + sampled2dNames.size()) * frames.length);
-            }
-            if (hasUniformBuffer) {
-                poolSizes.get(poolIndex).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .descriptorCount(frames.length);
-            }
-            VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-                    .sType$Default().maxSets(frames.length).pPoolSizes(poolSizes);
-            LongBuffer pool = stack.mallocLong(1);
-            if (vkCreateDescriptorPool(Vulkan.getVkDevice(), poolInfo, null, pool) != VK_SUCCESS) return;
-            descriptorPool = pool.get(0);
-
-            LongBuffer layouts = stack.mallocLong(frames.length);
-            for (int index = 0; index < frames.length; index++) layouts.put(index, setLayout);
-            VkDescriptorSetAllocateInfo allocateInfo = VkDescriptorSetAllocateInfo.calloc(stack)
-                    .sType$Default().descriptorPool(descriptorPool).pSetLayouts(layouts);
-            LongBuffer descriptors = stack.mallocLong(frames.length);
-            if (vkAllocateDescriptorSets(Vulkan.getVkDevice(), allocateInfo, descriptors) != VK_SUCCESS) return;
-            for (int index = 0; index < frames.length; index++) {
-                frames[index].descriptorSet = descriptors.get(index);
-                if (!writeDescriptors(frames[index], resourceCount, bindingCount, uniformBinding)) return;
-            }
-
-            VkPipelineLayoutCreateInfo pipelineLayoutInfo = VkPipelineLayoutCreateInfo.calloc(stack)
-                    .sType$Default().pSetLayouts(stack.longs(setLayout));
-            LongBuffer pipelineLayout = stack.mallocLong(1);
-            if (vkCreatePipelineLayout(Vulkan.getVkDevice(), pipelineLayoutInfo, null, pipelineLayout) != VK_SUCCESS) return;
-            this.pipelineLayout = pipelineLayout.get(0);
-            VkPipelineShaderStageCreateInfo stage = VkPipelineShaderStageCreateInfo.calloc(stack)
-                    .sType$Default().stage(VK_SHADER_STAGE_COMPUTE_BIT)
-                    .module(shaderModule).pName(stack.UTF8("main"));
-            VkComputePipelineCreateInfo.Buffer pipelineInfo = VkComputePipelineCreateInfo.calloc(1, stack);
-            pipelineInfo.get(0).sType$Default().stage(stage).layout(this.pipelineLayout);
-            LongBuffer pipeline = stack.mallocLong(1);
-            if (vkCreateComputePipelines(Vulkan.getVkDevice(), 0L, pipelineInfo, null, pipeline) == VK_SUCCESS) {
-                this.pipeline = pipeline.get(0);
-            }
-        } finally {
-            MemoryUtil.memFree(code);
+        int[] types = new int[imageNames.size() + samplerNames.size() + sampled2dNames.size()];
+        Arrays.fill(types, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        Arrays.fill(types, 0, imageNames.size(), VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        kernel = ComputeKernel.create("chimera_shadowcomp.csh", source, types,
+                ComputeValueBlock.bufferSize(computeUniforms));
+        if (kernel != null && !writeDescriptors()) {
+            kernel.close();
+            kernel = null;
         }
     }
 
-    /**
-     * Points one frame slot's set at the shared images and samplers and at the slot's own
-     * uniform block. False when a sampled resource has no owner.
-     */
-    private boolean writeDescriptors(FrameSlot frame, int resourceCount, int bindingCount, int uniformBinding) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkDescriptorImageInfo.Buffer images = VkDescriptorImageInfo.calloc(resourceCount, stack);
-            VkWriteDescriptorSet.Buffer writes = VkWriteDescriptorSet.calloc(bindingCount, stack);
-            for (int index = 0; index < imageNames.size(); index++) {
-                PackStorageImage image = owner.imageForSymbol(imageNames.get(index));
-                images.get(index).imageView(image.getImageView()).imageLayout(VK_IMAGE_LAYOUT_GENERAL);
-                writes.get(index).sType$Default().dstSet(frame.descriptorSet).dstBinding(index)
-                        .dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                        .pImageInfo(images.slice(index, 1));
+    /** Points every frame slot's set at the shared images and samplers. False when a sampled resource has no owner. */
+    private boolean writeDescriptors() {
+        for (int index = 0; index < kernel.frameCount(); index++) {
+            ComputeKernel.FrameSlot frame = kernel.frame(index);
+            for (int binding = 0; binding < imageNames.size(); binding++) {
+                PackStorageImage image = owner.imageForSymbol(imageNames.get(binding));
+                kernel.writeImage(frame, binding, image.getImageView(), 0L, VK_IMAGE_LAYOUT_GENERAL);
             }
-            for (int index = 0; index < samplerNames.size(); index++) {
-                int binding = imageNames.size() + index;
-                PackStorageImage image = owner.imageForSymbol(samplerNames.get(index));
-                images.get(binding).sampler(image.getSampler()).imageView(image.getImageView())
-                        .imageLayout(VK_IMAGE_LAYOUT_GENERAL);
-                writes.get(binding).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
-                        .dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .pImageInfo(images.slice(binding, 1));
+            for (int sampler = 0; sampler < samplerNames.size(); sampler++) {
+                PackStorageImage image = owner.imageForSymbol(samplerNames.get(sampler));
+                kernel.writeImage(frame, imageNames.size() + sampler, image.getImageView(), image.getSampler(),
+                        VK_IMAGE_LAYOUT_GENERAL);
             }
-            for (int index = 0; index < sampled2dNames.size(); index++) {
-                int binding = imageNames.size() + samplerNames.size() + index;
+            for (int sampler = 0; sampler < sampled2dNames.size(); sampler++) {
                 VulkanImage image = sampledResourceOwner == null
-                        ? null : sampledResourceOwner.image(sampled2dNames.get(index));
+                        ? null : sampledResourceOwner.image(sampled2dNames.get(sampler));
                 if (image == null) return false;
-                images.get(binding).sampler(image.getSampler()).imageView(image.getImageView())
-                        .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                writes.get(binding).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
-                        .dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                        .pImageInfo(images.slice(binding, 1));
+                kernel.writeImage(frame, imageNames.size() + samplerNames.size() + sampler, image.getImageView(),
+                        image.getSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
-            if (uniformBufferSize > 0) {
-                VkDescriptorBufferInfo.Buffer buffer = VkDescriptorBufferInfo.calloc(1, stack)
-                        .buffer(frame.uniformBuffer).offset(0L).range(uniformBufferSize);
-                writes.get(uniformBinding).sType$Default().dstSet(frame.descriptorSet)
-                        .dstBinding(uniformBinding).dstArrayElement(0).descriptorCount(1)
-                        .descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                        .pBufferInfo(buffer);
-            }
-            vkUpdateDescriptorSets(Vulkan.getVkDevice(), writes, null);
-            return true;
         }
-    }
-
-    /** Allocates one frame slot's host-visible uniform block for all live compute values. */
-    private boolean createUniformBuffer(MemoryStack stack, FrameSlot frame) {
-        if (uniformBufferSize <= 0) return true;
-        VkBufferCreateInfo bufferInfo = VkBufferCreateInfo.calloc(stack)
-                .sType$Default()
-                .size(uniformBufferSize)
-                .usage(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
-                .sharingMode(org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE);
-        VmaAllocationCreateInfo allocationInfo = VmaAllocationCreateInfo.calloc(stack)
-                .usage(Vma.VMA_MEMORY_USAGE_AUTO_PREFER_HOST)
-                .flags(Vma.VMA_ALLOCATION_CREATE_MAPPED_BIT
-                        | Vma.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT)
-                .requiredFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        LongBuffer buffer = stack.mallocLong(1);
-        PointerBuffer allocation = stack.mallocPointer(1);
-        VmaAllocationInfo info = VmaAllocationInfo.calloc(stack);
-        if (Vma.vmaCreateBuffer(Vulkan.getAllocator(), bufferInfo, allocationInfo,
-                buffer, allocation, info) != VK_SUCCESS) {
-            return false;
-        }
-        frame.uniformBuffer = buffer.get(0);
-        frame.uniformAllocation = allocation.get(0);
-        long mappedAddress = info.pMappedData();
-        if (mappedAddress == 0L) {
-            PointerBuffer mapped = stack.mallocPointer(1);
-            if (Vma.vmaMapMemory(Vulkan.getAllocator(), frame.uniformAllocation, mapped) != VK_SUCCESS) {
-                return false;
-            }
-            mappedAddress = mapped.get(0);
-            frame.uniformMappedByChimera = true;
-        }
-        frame.uniformData = MemoryUtil.memByteBuffer(mappedAddress, uniformBufferSize);
         return true;
-    }
-
-    private static ByteBuffer compileSpirv(String source) {
-        long compiler = Shaderc.shaderc_compiler_initialize();
-        long options = Shaderc.shaderc_compile_options_initialize();
-        long result = 0L;
-        try {
-            Shaderc.shaderc_compile_options_set_target_env(options,
-                    Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
-            Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
-            Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
-            result = Shaderc.shaderc_compile_into_spv(compiler, source,
-                    Shaderc.shaderc_glsl_compute_shader, "chimera_shadowcomp.csh", "main", options);
-            if (result == 0L || Shaderc.shaderc_result_get_compilation_status(result)
-                    != Shaderc.shaderc_compilation_status_success) {
-                if (result != 0L) {
-                    LOGGER.warn("[chimera] shadowcomp shaderc compile failed: {}",
-                            Shaderc.shaderc_result_get_error_message(result));
-                }
-                return null;
-            }
-            ByteBuffer bytes = SpirvLocalInitializer.apply(Shaderc.shaderc_result_get_bytes(result));
-            ByteBuffer copy = MemoryUtil.memAlloc(bytes.remaining());
-            MemoryUtil.memCopy(bytes, copy);
-            return copy;
-        } finally {
-            if (result != 0L) Shaderc.shaderc_result_release(result);
-            if (options != 0L) Shaderc.shaderc_compile_options_release(options);
-            if (compiler != 0L) Shaderc.shaderc_compiler_release(compiler);
-        }
     }
 
     /** Throws IllegalArgumentException naming the first declaration the module cannot bind. */
@@ -533,166 +278,197 @@ public final class PackShadowCompute implements AutoCloseable {
             List<String> imageNames,
             List<String> samplerNames,
             List<String> sampled2dNames,
-            List<ComputeUniform> computeUniforms,
+            List<ComputeValueBlock.Value> computeUniforms,
             int uniformBinding
     ) {
         String body = normalizeVersion(source);
         body = removeLegacyExtensions(body);
         body = GlslTokenRewriter.splitUniformDeclarators(body);
         body = GlslTokenRewriter.rewriteTextureCalls(body);
+        body = boundTexelFetches(body, samplerNames);
+        ResourceDeclarations resources = new ResourceDeclarations(plan, imageNames, samplerNames, sampled2dNames);
+        body = resources.bindSamplers(body);
+        body = resources.bindImages(body);
+        body = removeValueUniforms(body, computeUniforms);
+        body = resources.removeUnsupportedUniforms(body);
+        body = addDispatchBoundsGuard(body, imageNames);
+        String generated = resources.undeclaredSamplers(body);
+        return "#version 450\n" + ComputeValueBlock.declaration("ChimeraShadowComputeValues", computeUniforms,
+                uniformBinding) + generated + body;
+    }
+
+    /** Bounds texelFetch on the bound 3D samplers and on every sampler3D function parameter. */
+    private static String boundTexelFetches(String body, List<String> samplerNames) {
         Set<String> boundedSamplers = new TreeSet<>(samplerNames);
         Matcher samplerParameter = SAMPLER_3D_PARAMETER.matcher(body);
         while (samplerParameter.find()) {
             boundedSamplers.add(samplerParameter.group(1));
         }
-        body = GlslTokenRewriter.rewriteTexelFetchBounds(body, boundedSamplers);
+        return GlslTokenRewriter.rewriteTexelFetchBounds(body, boundedSamplers);
+    }
 
-        Set<String> declaredSamplers = new TreeSet<>();
-        Set<String> declaredSampled2d = new TreeSet<>();
-        Matcher sampler = SAMPLER_DECLARATION.matcher(body);
-        StringBuffer samplerResult = new StringBuffer();
-        while (sampler.find()) {
-            String type = sampler.group(1);
-            String name = sampler.group(2);
-            if (type.endsWith("2D") || type.equals("sampler2DShadow")) {
-                if (!sampled2dNames.contains(name)) {
+    /**
+     * Drops every value uniform declaration; the generated block declares the live ones. Throws on
+     * one the block cannot serve that the source still uses.
+     */
+    private static String removeValueUniforms(String body, List<ComputeValueBlock.Value> computeUniforms) {
+        Matcher valueUniform = VALUE_UNIFORM_DECLARATION.matcher(body);
+        StringBuffer uniformResult = new StringBuffer();
+        while (valueUniform.find()) {
+            String declarators = valueUniform.group(2).trim();
+            for (String declarator : declarators.split(",")) {
+                String name = declarator.trim();
+                int initializer = name.indexOf('=');
+                if (initializer >= 0) name = name.substring(0, initializer).trim();
+                String uniformName = name;
+                boolean live = computeUniforms.stream().anyMatch(value -> value.name().equals(uniformName));
+                if (!live && GlslTokenRewriter.identifierCount(body, name) > 1) {
+                    throw new IllegalArgumentException("unsupported compute uniform: " + name);
+                }
+            }
+            valueUniform.appendReplacement(uniformResult, "");
+        }
+        valueUniform.appendTail(uniformResult);
+        return uniformResult.toString();
+    }
+
+
+    /**
+     * The module's image and sampler declarations: binds the ones it owns in binding order (storage
+     * images, 3D samplers, 2D samplers), drops unused ones, and declares any the source uses
+     * without declaring. Throws on a used declaration it cannot bind.
+     */
+    private static final class ResourceDeclarations {
+        private final PackAdvancedResourcePlan plan;
+        private final List<String> imageNames;
+        private final List<String> samplerNames;
+        private final List<String> sampled2dNames;
+        private final Set<String> declaredSamplers = new TreeSet<>();
+        private final Set<String> declaredSampled2d = new TreeSet<>();
+
+        ResourceDeclarations(PackAdvancedResourcePlan plan, List<String> imageNames, List<String> samplerNames,
+                List<String> sampled2dNames) {
+            this.plan = plan;
+            this.imageNames = imageNames;
+            this.samplerNames = samplerNames;
+            this.sampled2dNames = sampled2dNames;
+        }
+
+        /** Binds each declared sampler the module owns, 2D ones after the 3D ones, and drops the rest. */
+        String bindSamplers(String body) {
+            Matcher sampler = SAMPLER_DECLARATION.matcher(body);
+            StringBuffer samplerResult = new StringBuffer();
+            while (sampler.find()) {
+                String type = sampler.group(1);
+                String name = sampler.group(2);
+                if (type.endsWith("2D") || type.equals("sampler2DShadow")) {
+                    if (!sampled2dNames.contains(name)) {
+                        if (GlslTokenRewriter.identifierCount(body, name) > 1) {
+                            throw new IllegalArgumentException("unsupported compute sampler: " + name);
+                        }
+                        sampler.appendReplacement(samplerResult, "");
+                        continue;
+                    }
+                    // sampled2dNames holds only resources the pack owner has loaded.
+                    int binding = imageNames.size() + samplerNames.size()
+                            + sampled2dNames.indexOf(name);
+                    String replacement = "layout(binding = " + binding
+                            + ") uniform sampler2D " + name + ";";
+                    declaredSampled2d.add(name);
+                    sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
+                    continue;
+                }
+                if (!samplerNames.contains(name)) {
                     if (GlslTokenRewriter.identifierCount(body, name) > 1) {
                         throw new IllegalArgumentException("unsupported compute sampler: " + name);
                     }
                     sampler.appendReplacement(samplerResult, "");
                     continue;
                 }
-                // sampled2dNames holds only resources the pack owner has loaded.
-                int binding = imageNames.size() + samplerNames.size()
-                        + sampled2dNames.indexOf(name);
-                String replacement = "layout(binding = " + binding
-                        + ") uniform sampler2D " + name + ";";
-                declaredSampled2d.add(name);
+                int binding = imageNames.size() + samplerNames.indexOf(name);
+                PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(name);
+                String replacement = "layout(binding = " + binding + ") uniform "
+                        + samplerType(image) + " " + name + ";";
+                declaredSamplers.add(name);
                 sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
-                continue;
             }
-            if (!samplerNames.contains(name)) {
-                if (GlslTokenRewriter.identifierCount(body, name) > 1) {
-                    throw new IllegalArgumentException("unsupported compute sampler: " + name);
+            sampler.appendTail(samplerResult);
+            return samplerResult.toString();
+        }
+
+        /** Binds each declared storage image, by its own name or by the sampler that aliases it. */
+        String bindImages(String body) {
+            Matcher image = IMAGE_DECLARATION.matcher(body);
+            StringBuffer imageResult = new StringBuffer();
+            while (image.find()) {
+                String type = image.group(1);
+                String name = image.group(2);
+                int binding = imageNames.indexOf(name);
+                if (binding < 0) binding = indexBySampler(imageNames, name, plan);
+                if (binding < 0) {
+                    throw new IllegalArgumentException("unsupported compute image: " + name);
                 }
-                sampler.appendReplacement(samplerResult, "");
-                continue;
+                PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(name);
+                String replacement = "layout(" + spec.internalFormat() + ", binding = " + binding
+                        + ") uniform " + imageType(spec, type) + " " + name + ";";
+                image.appendReplacement(imageResult, Matcher.quoteReplacement(replacement));
             }
-            int binding = imageNames.size() + samplerNames.indexOf(name);
-            PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(name);
-            String replacement = "layout(binding = " + binding + ") uniform "
-                    + samplerType(image) + " " + name + ";";
-            declaredSamplers.add(name);
-            sampler.appendReplacement(samplerResult, Matcher.quoteReplacement(replacement));
+            image.appendTail(imageResult);
+            return imageResult.toString();
         }
-        sampler.appendTail(samplerResult);
-        body = samplerResult.toString();
 
-        Matcher image = IMAGE_DECLARATION.matcher(body);
-        StringBuffer imageResult = new StringBuffer();
-        while (image.find()) {
-            String type = image.group(1);
-            String name = image.group(2);
-            int binding = imageNames.indexOf(name);
-            if (binding < 0) binding = indexBySampler(imageNames, name, plan);
-            if (binding < 0) {
-                throw new IllegalArgumentException("unsupported compute image: " + name);
-            }
-            PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(name);
-            String replacement = "layout(" + spec.internalFormat() + ", binding = " + binding
-                    + ") uniform " + imageType(spec, type) + " " + name + ";";
-            image.appendReplacement(imageResult, Matcher.quoteReplacement(replacement));
-        }
-        image.appendTail(imageResult);
-        body = imageResult.toString();
-
-        Matcher valueUniform = VALUE_UNIFORM_DECLARATION.matcher(body);
-        StringBuffer uniformResult = new StringBuffer();
-        while (valueUniform.find()) {
-            String type = valueUniform.group(1);
-            String declarators = valueUniform.group(2).trim();
-            StringBuilder replacement = new StringBuilder();
-            for (String declarator : declarators.split(",")) {
-                String name = declarator.trim();
-                int initializer = name.indexOf('=');
-                if (initializer >= 0) name = name.substring(0, initializer).trim();
-                String uniformName = name;
-                ComputeUniform uniform = computeUniforms.stream()
-                        .filter(value -> value.name().equals(uniformName))
-                        .findFirst().orElse(null);
-                if (uniform == null) {
+        /** Keeps the bound resource declarations and drops every other uniform the source does not use. */
+        String removeUnsupportedUniforms(String body) {
+            Matcher unsupportedUniform = ANY_UNIFORM_DECLARATION.matcher(body);
+            StringBuffer unsupportedResult = new StringBuffer();
+            while (unsupportedUniform.find()) {
+                String type = unsupportedUniform.group(1);
+                String declarators = unsupportedUniform.group(2).trim();
+                if (isTranslatedResourceDeclaration(type, declarators, imageNames, samplerNames,
+                        sampled2dNames)) {
+                    unsupportedUniform.appendReplacement(unsupportedResult,
+                            Matcher.quoteReplacement(unsupportedUniform.group()));
+                    continue;
+                }
+                for (String declarator : declarators.split(",")) {
+                    String name = declarator.trim();
+                    int initializer = name.indexOf('=');
+                    if (initializer >= 0) name = name.substring(0, initializer).trim();
+                    name = name.replaceFirst("\\[.*$", "").trim();
+                    if (!name.matches("[A-Za-z_]\\w*")) {
+                        throw new IllegalArgumentException("unsupported compute uniform declaration: "
+                                + type + " " + declarators);
+                    }
                     if (GlslTokenRewriter.identifierCount(body, name) > 1) {
                         throw new IllegalArgumentException("unsupported compute uniform: " + name);
                     }
-                    continue;
                 }
+                unsupportedUniform.appendReplacement(unsupportedResult, "");
             }
-            valueUniform.appendReplacement(uniformResult,
-                    Matcher.quoteReplacement(replacement.toString()));
+            unsupportedUniform.appendTail(unsupportedResult);
+            return unsupportedResult.toString();
         }
-        valueUniform.appendTail(uniformResult);
-        body = uniformResult.toString();
 
-        Matcher unsupportedUniform = ANY_UNIFORM_DECLARATION.matcher(body);
-        StringBuffer unsupportedResult = new StringBuffer();
-        while (unsupportedUniform.find()) {
-            String type = unsupportedUniform.group(1);
-            String declarators = unsupportedUniform.group(2).trim();
-            if (isTranslatedResourceDeclaration(type, declarators, imageNames, samplerNames,
-                    sampled2dNames)) {
-                unsupportedUniform.appendReplacement(unsupportedResult,
-                        Matcher.quoteReplacement(unsupportedUniform.group()));
-                continue;
+        /** Declarations for the bound samplers the body uses but never declared. */
+        String undeclaredSamplers(String body) {
+            StringBuilder generated = new StringBuilder();
+            for (String name : samplerNames) {
+                if (declaredSamplers.contains(name)) continue;
+                if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
+                int binding = imageNames.size() + samplerNames.indexOf(name);
+                PackAdvancedResourcePlan.ImageSpec imageSpec = plan.imageForSymbol(name);
+                generated.append("layout(binding = ").append(binding).append(") uniform ")
+                        .append(samplerType(imageSpec)).append(' ').append(name).append(";\n");
             }
-            for (String declarator : declarators.split(",")) {
-                String name = declarator.trim();
-                int initializer = name.indexOf('=');
-                if (initializer >= 0) name = name.substring(0, initializer).trim();
-                name = name.replaceFirst("\\[.*$", "").trim();
-                if (!name.matches("[A-Za-z_]\\w*")) {
-                    throw new IllegalArgumentException("unsupported compute uniform declaration: "
-                            + type + " " + declarators);
-                }
-                if (GlslTokenRewriter.identifierCount(body, name) > 1) {
-                    throw new IllegalArgumentException("unsupported compute uniform: " + name);
-                }
+            for (String name : sampled2dNames) {
+                if (declaredSampled2d.contains(name)) continue;
+                if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
+                int binding = imageNames.size() + samplerNames.size() + sampled2dNames.indexOf(name);
+                generated.append("layout(binding = ").append(binding)
+                        .append(") uniform sampler2D ").append(name).append(";\n");
             }
-            unsupportedUniform.appendReplacement(unsupportedResult, "");
+            return generated.toString();
         }
-        unsupportedUniform.appendTail(unsupportedResult);
-        body = unsupportedResult.toString();
-        body = addDispatchBoundsGuard(body, imageNames);
-
-        StringBuilder generated = new StringBuilder();
-        for (String name : samplerNames) {
-            if (declaredSamplers.contains(name)) continue;
-            if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
-            int binding = imageNames.size() + samplerNames.indexOf(name);
-            PackAdvancedResourcePlan.ImageSpec imageSpec = plan.imageForSymbol(name);
-            generated.append("layout(binding = ").append(binding).append(") uniform ")
-                    .append(samplerType(imageSpec)).append(' ').append(name).append(";\n");
-        }
-        for (String name : sampled2dNames) {
-            if (declaredSampled2d.contains(name)) continue;
-            if (!GlslTokenRewriter.containsIdentifier(body, name)) continue;
-            int binding = imageNames.size() + samplerNames.size() + sampled2dNames.indexOf(name);
-            generated.append("layout(binding = ").append(binding)
-                    .append(") uniform sampler2D ").append(name).append(";\n");
-        }
-        StringBuilder values = new StringBuilder();
-        if (!computeUniforms.isEmpty()) {
-            // Each member states the offset dispatch writes it at. Implicit std140 packs a scalar
-            // into a vec3's fourth word, which this layout leaves empty: Solas's frameCounter,
-            // declared after cameraPosition, read that empty word and stayed 0.
-            values.append("layout(std140, binding = ").append(uniformBinding)
-                    .append(") uniform ChimeraShadowComputeValues {\n");
-            for (ComputeUniform uniform : computeUniforms) {
-                values.append("    layout(offset = ").append(uniform.offset()).append(") ")
-                        .append(uniform.type()).append(' ').append(uniform.name()).append(";\n");
-            }
-            values.append("};\n");
-        }
-        return "#version 450\n" + values + generated + body;
     }
 
     private static String normalizeVersion(String source) {
@@ -718,9 +494,9 @@ public final class PackShadowCompute implements AutoCloseable {
                 + "(?:enable|require|warn)\\s*(?:\\r?\\n|$)", "");
     }
 
-    private static List<ComputeUniform> computeUniforms(String source) {
+    private static List<ComputeValueBlock.Value> computeUniforms(String source) {
         if (source == null) return List.of();
-        Map<String, String> declarations = new java.util.TreeMap<>();
+        Map<String, String> declarations = new TreeMap<>();
         Matcher matcher = VALUE_UNIFORM_DECLARATION.matcher(source);
         while (matcher.find()) {
             String type = matcher.group(1);
@@ -739,54 +515,9 @@ public final class PackShadowCompute implements AutoCloseable {
                 }
             }
         }
-        int offset = 0;
-        List<ComputeUniform> result = new java.util.ArrayList<>();
-        for (Map.Entry<String, String> entry : declarations.entrySet()) {
-            int alignment = computeAlignment(entry.getValue());
-            int size = computeSize(entry.getValue());
-            offset = align(offset, alignment);
-            result.add(new ComputeUniform(entry.getKey(), entry.getValue(), offset, size));
-            offset += size;
-        }
-        return List.copyOf(result);
+        return ComputeValueBlock.layout(declarations);
     }
 
-    private static int uniformBufferSize(List<ComputeUniform> uniforms) {
-        if (uniforms == null || uniforms.isEmpty()) return 0;
-        ComputeUniform last = uniforms.get(uniforms.size() - 1);
-        return align(last.offset() + last.size(), 16);
-    }
-
-    private static int computeAlignment(String type) {
-        if (type.startsWith("vec3") || type.startsWith("vec4")
-                || type.startsWith("ivec3") || type.startsWith("ivec4")
-                || type.startsWith("uvec3") || type.startsWith("uvec4")
-                || type.startsWith("bvec3") || type.startsWith("bvec4")
-                || type.startsWith("mat")) return 16;
-        if (type.endsWith("vec2") || type.equals("vec2") || type.equals("ivec2")
-                || type.equals("uvec2") || type.equals("bvec2")) return 8;
-        return 4;
-    }
-
-    private static int computeSize(String type) {
-        if (type.equals("mat2")) return 32;
-        if (type.equals("mat3")) return 48;
-        if (type.equals("mat4")) return 64;
-        if (type.startsWith("vec3") || type.startsWith("vec4")
-                || type.startsWith("ivec3") || type.startsWith("ivec4")
-                || type.startsWith("uvec3") || type.startsWith("uvec4")
-                || type.startsWith("bvec3") || type.startsWith("bvec4")) return 16;
-        if (type.equals("vec2") || type.equals("ivec2") || type.equals("uvec2")
-                || type.equals("bvec2")) return 8;
-        return 4;
-    }
-
-    private static int align(int value, int alignment) {
-        return (value + alignment - 1) / alignment * alignment;
-    }
-
-    /** One live value of the uniform block: dispatch writes it at offset, and the block declares it there. */
-    public record ComputeUniform(String name, String type, int offset, int size) {}
 
     private static boolean isTranslatedResourceDeclaration(
             String type,
@@ -840,27 +571,10 @@ public final class PackShadowCompute implements AutoCloseable {
         return List.of();
     }
 
+
     @Override
     public void close() {
-        if (pipeline != 0L) vkDestroyPipeline(Vulkan.getVkDevice(), pipeline, null);
-        if (pipelineLayout != 0L) vkDestroyPipelineLayout(Vulkan.getVkDevice(), pipelineLayout, null);
-        if (descriptorPool != 0L) vkDestroyDescriptorPool(Vulkan.getVkDevice(), descriptorPool, null);
-        if (setLayout != 0L) vkDestroyDescriptorSetLayout(Vulkan.getVkDevice(), setLayout, null);
-        if (shaderModule != 0L) vkDestroyShaderModule(Vulkan.getVkDevice(), shaderModule, null);
-        for (FrameSlot frame : frames) {
-            if (frame == null) continue;
-            if (frame.uniformMappedByChimera && frame.uniformAllocation != 0L) {
-                Vma.vmaUnmapMemory(Vulkan.getAllocator(), frame.uniformAllocation);
-            }
-            if (frame.uniformBuffer != 0L) {
-                Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.uniformBuffer, frame.uniformAllocation);
-            }
-        }
-        pipeline = 0L;
-        pipelineLayout = 0L;
-        descriptorPool = 0L;
-        setLayout = 0L;
-        shaderModule = 0L;
-        frames = new FrameSlot[0];
+        if (kernel != null) kernel.close();
+        kernel = null;
     }
 }

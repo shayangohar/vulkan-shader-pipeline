@@ -2,6 +2,8 @@ package net.chimera.render;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 
 /**
@@ -60,7 +62,7 @@ public final class MaterialMapPixels {
         if (dstWidth % srcWidth == 0 && dstHeight % srcHeight == 0) {
             return scalePoint(src, srcWidth, srcHeight, dstWidth, dstHeight);
         }
-        return boxAverage(src, srcWidth, srcHeight, dstWidth, dstHeight);
+        return downscale(src, srcWidth, srcHeight, dstWidth, dstHeight, MaterialMapPixels::averageFootprint);
     }
 
     private static int[] scalePoint(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
@@ -81,7 +83,7 @@ public final class MaterialMapPixels {
     public static int[] reduceLinear(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
         checkSize(srcWidth, srcHeight, "reduce-src");
         checkSize(dstWidth, dstHeight, "reduce-dst");
-        return boxAverage(src, srcWidth, srcHeight, dstWidth, dstHeight);
+        return downscale(src, srcWidth, srcHeight, dstWidth, dstHeight, MaterialMapPixels::averageFootprint);
     }
 
     /**
@@ -97,23 +99,13 @@ public final class MaterialMapPixels {
     public static int[] reduceLabPbr(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
         checkSize(srcWidth, srcHeight, "labpbr-src");
         checkSize(dstWidth, dstHeight, "labpbr-dst");
-        int[] dst = new int[dstWidth * dstHeight];
-        for (int y = 0; y < dstHeight; y++) {
-            int y0 = y * srcHeight / dstHeight;
-            int y1 = Math.max(y0 + 1, (y + 1) * srcHeight / dstHeight);
-            for (int x = 0; x < dstWidth; x++) {
-                int x0 = x * srcWidth / dstWidth;
-                int x1 = Math.max(x0 + 1, (x + 1) * srcWidth / dstWidth);
-                dst[y * dstWidth + x] = reduceLabFootprint(src, srcWidth, x0, y0, x1, y1);
-            }
-        }
-        return dst;
+        return downscale(src, srcWidth, srcHeight, dstWidth, dstHeight, MaterialMapPixels::reduceLabFootprint);
     }
 
     private static int reduceLabFootprint(int[] src, int srcWidth, int x0, int y0, int x1, int y1) {
         int redSum = 0;
         int count = 0;
-        java.util.LinkedHashMap<Integer, int[]> greenClasses = new java.util.LinkedHashMap<>();
+        LinkedHashMap<Integer, int[]> greenClasses = new LinkedHashMap<>();
         int blueLow = 0;
         int alphaLow = 0;
         int first = src[y0 * srcWidth + x0];
@@ -123,32 +115,20 @@ public final class MaterialMapPixels {
                 int texel = src[row + x];
                 redSum += red(texel);
                 count++;
-                int greenClass = green(texel) < LAB_GREEN_SPLIT ? -1 : green(texel);
-                int[] tally = greenClasses.get(greenClass);
-                if (tally == null) {
-                    greenClasses.put(greenClass, new int[]{1, green(texel)});
-                } else {
-                    tally[0]++;
-                    tally[1] += green(texel);
-                }
+                // Tally {count, sum} per green class: -1 for every dielectric, else the metal index.
+                int[] tally = greenClasses.computeIfAbsent(green(texel) < LAB_GREEN_SPLIT ? -1 : green(texel),
+                        ignored -> new int[2]);
+                tally[0]++;
+                tally[1] += green(texel);
                 if (blue(texel) < LAB_BLUE_SPLIT) blueLow++;
                 if (alpha(texel) < LAB_ALPHA_OPAQUE) alphaLow++;
             }
         }
-        int chosenGreen = -1;
-        int chosenCount = -1;
-        for (var entry : greenClasses.entrySet()) {
-            if (entry.getValue()[0] > chosenCount) {
-                chosenCount = entry.getValue()[0];
-                chosenGreen = entry.getKey();
-            }
-        }
-        int greenSum = greenClasses.get(chosenGreen)[1];
-        int greenCount = chosenCount;
-        boolean blueIsLow = blueLow * 2 > count
-                || (blueLow * 2 == count && blue(first) < LAB_BLUE_SPLIT);
-        boolean alphaIsLow = alphaLow * 2 > count
-                || (alphaLow * 2 == count && alpha(first) < LAB_ALPHA_OPAQUE);
+        int[] greenTally = majorityTally(greenClasses);
+        int greenSum = greenTally[1];
+        int greenCount = greenTally[0];
+        boolean blueIsLow = lowClassWins(blueLow, count, blue(first) < LAB_BLUE_SPLIT);
+        boolean alphaIsLow = lowClassWins(alphaLow, count, alpha(first) < LAB_ALPHA_OPAQUE);
         int blueSum = 0;
         int blueCount = 0;
         int alphaSum = 0;
@@ -170,7 +150,28 @@ public final class MaterialMapPixels {
         return pack(alphaSum / alphaCount, blueSum / blueCount, greenSum / greenCount, redSum / count);
     }
 
-    private static int[] boxAverage(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
+    /** The {count, sum} tally of the most populated class; a tie keeps the earliest class seen. */
+    private static int[] majorityTally(Map<Integer, int[]> classes) {
+        int[] chosen = null;
+        for (int[] tally : classes.values()) {
+            if (chosen == null || tally[0] > chosen[0]) chosen = tally;
+        }
+        return chosen;
+    }
+
+    /** True when the low threshold class holds the majority; a tie keeps the first texel's class. */
+    private static boolean lowClassWins(int lowCount, int count, boolean firstIsLow) {
+        return lowCount * 2 > count || (lowCount * 2 == count && firstIsLow);
+    }
+
+    /** Reduces the source footprint [x0, x1) x [y0, y1) to one destination texel. */
+    private interface FootprintReducer {
+        int reduce(int[] src, int srcWidth, int x0, int y0, int x1, int y1);
+    }
+
+    /** Downscales by reducing, for each destination texel, the source footprint it covers. */
+    private static int[] downscale(int[] src, int srcWidth, int srcHeight, int dstWidth, int dstHeight,
+                                   FootprintReducer reducer) {
         int[] dst = new int[dstWidth * dstHeight];
         for (int y = 0; y < dstHeight; y++) {
             int y0 = y * srcHeight / dstHeight;
@@ -178,27 +179,30 @@ public final class MaterialMapPixels {
             for (int x = 0; x < dstWidth; x++) {
                 int x0 = x * srcWidth / dstWidth;
                 int x1 = Math.max(x0 + 1, (x + 1) * srcWidth / dstWidth);
-                long a = 0;
-                long b = 0;
-                long g = 0;
-                long r = 0;
-                int count = 0;
-                for (int sy = y0; sy < y1; sy++) {
-                    int row = sy * srcWidth;
-                    for (int sx = x0; sx < x1; sx++) {
-                        int texel = src[row + sx];
-                        a += alpha(texel);
-                        b += blue(texel);
-                        g += green(texel);
-                        r += red(texel);
-                        count++;
-                    }
-                }
-                dst[y * dstWidth + x] = pack((int) (a / count), (int) (b / count),
-                        (int) (g / count), (int) (r / count));
+                dst[y * dstWidth + x] = reducer.reduce(src, srcWidth, x0, y0, x1, y1);
             }
         }
         return dst;
+    }
+
+    private static int averageFootprint(int[] src, int srcWidth, int x0, int y0, int x1, int y1) {
+        long a = 0;
+        long b = 0;
+        long g = 0;
+        long r = 0;
+        int count = 0;
+        for (int sy = y0; sy < y1; sy++) {
+            int row = sy * srcWidth;
+            for (int sx = x0; sx < x1; sx++) {
+                int texel = src[row + sx];
+                a += alpha(texel);
+                b += blue(texel);
+                g += green(texel);
+                r += red(texel);
+                count++;
+            }
+        }
+        return pack((int) (a / count), (int) (b / count), (int) (g / count), (int) (r / count));
     }
 
     /** Copies a sprite rectangle into a level canvas, clipping defensively. */

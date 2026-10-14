@@ -1,15 +1,15 @@
 package net.chimera.mixin;
 
-import net.chimera.render.shader.ChimeraEntityBridge;
-import net.chimera.render.ChimeraRenderer;
+import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.chimera.render.ChimeraMainPass;
-import com.llamalad7.mixinextras.injector.WrapWithCondition;
-import net.minecraft.core.registries.BuiltInRegistries;
+import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.shader.ChimeraEntityBridge;
+import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
-import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.renderer.state.CameraRenderState;
-import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.core.registries.BuiltInRegistries;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -50,7 +50,8 @@ public abstract class ChimeraEntityRenderDispatcherMixin {
      * pass the decal stays.
      */
     @WrapWithCondition(method = "submit", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitShadow(Lcom/mojang/blaze3d/vertex/PoseStack;FLjava/util/List;)V"),
+            target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;"
+                    + "submitShadow(Lcom/mojang/blaze3d/vertex/PoseStack;FLjava/util/List;)V"),
             require = 1)
     private boolean chimera$vanillaEntityShadow(
             SubmitNodeCollector collector,

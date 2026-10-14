@@ -37,60 +37,71 @@ final class GlslStorageBufferParser {
             int instance = GlslLexer.nextSignificant(tokens, close);
             String instanceName = instance >= 0 && tokens.get(instance).kind() == GlslLexer.Kind.IDENTIFIER
                     ? tokens.get(instance).text() : "";
-
-            // Macro state is evaluated at the declaration. A later #define or
-            // #undef must not change the meaning of an earlier storage block.
-            Map<String, String> macros = objectMacrosAt(tokens, index);
-            int before = findLayoutClose(tokens, index, macros);
-            String macro = "";
-            boolean std430 = false;
-            int binding = -1;
-            if (before >= 0 && tokens.get(before).symbol(")")) {
-                int layout = matchingOpen(tokens, before, "(", ")");
-                int layoutName = layout < 0 ? -1 : GlslLexer.previousSignificant(tokens, layout);
-                if (layout >= 0 && layoutName >= 0 && tokens.get(layoutName).identifier("layout")) {
-                    List<Integer> layoutTokens = significantBetween(tokens, layout + 1, before);
-                    boolean expectBinding = false;
-                    for (int position : layoutTokens) {
-                        GlslLexer.Token token = tokens.get(position);
-                        if (token.identifier("std430")) std430 = true;
-                        if (token.identifier("binding")) expectBinding = true;
-                        else if (expectBinding && token.kind() == GlslLexer.Kind.NUMBER) {
-                            binding = parseInt(token.text());
-                            expectBinding = false;
-                        } else if (!token.symbol("=")) {
-                            expectBinding = token.symbol(",") ? false : expectBinding;
-                        }
-                    }
-                    int qualifier = GlslLexer.nextSignificant(tokens, before);
-                    while (qualifier >= 0 && qualifier < index
-                            && !tokens.get(qualifier).identifier("buffer")) {
-                        GlslLexer.Token value = tokens.get(qualifier);
-                        if (value.kind() != GlslLexer.Kind.IDENTIFIER) {
-                            qualifier = GlslLexer.nextSignificant(tokens, qualifier);
-                            continue;
-                        }
-                        if (MEMORY_QUALIFIERS.contains(value.text())) {
-                            qualifier = GlslLexer.nextSignificant(tokens, qualifier);
-                            continue;
-                        }
-                        String expansion = macros.get(value.text());
-                        if (expansion == null || !supportedMacroExpansion(expansion, macros,
-                                new HashSet<>())) {
-                            throw new IllegalArgumentException("unsupported storage qualifier: " + value.text());
-                        }
-                        macro = value.text();
-                        qualifier = GlslLexer.nextSignificant(tokens, qualifier);
-                    }
-                }
-            } else {
-                // A block without layout is inventory-only. The caller will
-                // report it as unsupported rather than inventing a binding.
-                std430 = false;
-            }
-            result.add(new Block(tokens.get(blockName).text(), instanceName, binding, std430, macro));
+            result.add(block(tokens, index, tokens.get(blockName).text(), instanceName));
         }
         return List.copyOf(result);
+    }
+
+    /** The block declared at {@code buffer}, as its layout(...) and qualifiers describe it. */
+    private static Block block(List<GlslLexer.Token> tokens, int buffer, String blockName, String instanceName) {
+        // Macro state is evaluated at the declaration. A later #define or
+        // #undef must not change the meaning of an earlier storage block.
+        Map<String, String> macros = objectMacrosAt(tokens, buffer);
+        int before = findLayoutClose(tokens, buffer, macros);
+        if (before < 0 || !tokens.get(before).symbol(")")) {
+            // A block without layout is inventory-only. The caller will
+            // report it as unsupported rather than inventing a binding.
+            return new Block(blockName, instanceName, -1, false, "");
+        }
+        int layout = matchingOpen(tokens, before, "(", ")");
+        int layoutName = layout < 0 ? -1 : GlslLexer.previousSignificant(tokens, layout);
+        if (layout < 0 || layoutName < 0 || !tokens.get(layoutName).identifier("layout")) {
+            return new Block(blockName, instanceName, -1, false, "");
+        }
+        List<Integer> layoutTokens = significantBetween(tokens, layout + 1, before);
+        boolean std430 = layoutTokens.stream().anyMatch(position -> tokens.get(position).identifier("std430"));
+        int binding = layoutBinding(tokens, layoutTokens);
+        String macro = qualifierMacro(tokens, before, buffer, macros);
+        return new Block(blockName, instanceName, binding, std430, macro);
+    }
+
+    /** The binding number a layout list names, or -1 when it names none. */
+    private static int layoutBinding(List<GlslLexer.Token> tokens, List<Integer> layoutTokens) {
+        int binding = -1;
+        boolean expectBinding = false;
+        for (int position : layoutTokens) {
+            GlslLexer.Token token = tokens.get(position);
+            if (token.identifier("binding")) expectBinding = true;
+            else if (expectBinding && token.kind() == GlslLexer.Kind.NUMBER) {
+                binding = parseInt(token.text());
+                expectBinding = false;
+            } else if (token.symbol(",")) {
+                expectBinding = false;
+            }
+        }
+        return binding;
+    }
+
+    /**
+     * The qualifier macro written between the layout's closing parenthesis and {@code buffer}, or ""
+     * when there is none; a macro that does not expand to memory qualifiers is refused.
+     */
+    private static String qualifierMacro(List<GlslLexer.Token> tokens, int layoutClose, int buffer,
+                                         Map<String, String> macros) {
+        String macro = "";
+        int qualifier = GlslLexer.nextSignificant(tokens, layoutClose);
+        while (qualifier >= 0 && qualifier < buffer && !tokens.get(qualifier).identifier("buffer")) {
+            GlslLexer.Token value = tokens.get(qualifier);
+            if (value.kind() == GlslLexer.Kind.IDENTIFIER && !MEMORY_QUALIFIERS.contains(value.text())) {
+                String expansion = macros.get(value.text());
+                if (expansion == null || !supportedMacroExpansion(expansion, macros, new HashSet<>())) {
+                    throw new IllegalArgumentException("unsupported storage qualifier: " + value.text());
+                }
+                macro = value.text();
+            }
+            qualifier = GlslLexer.nextSignificant(tokens, qualifier);
+        }
+        return macro;
     }
 
     static boolean hasBlock(String source) {
@@ -108,34 +119,44 @@ final class GlslStorageBufferParser {
         for (Block block : blocks) {
             Integer replacement = bindings.get(key(block));
             if (replacement == null) continue;
-            for (int index = 0; index < tokens.size(); index++) {
-                if (!tokens.get(index).identifier("buffer")) continue;
-                int blockName = GlslLexer.nextSignificant(tokens, index);
-                if (blockName < 0 || !tokens.get(blockName).text().equals(block.blockName())) continue;
-                int open = GlslLexer.nextSignificant(tokens, blockName);
-                if (open < 0 || !tokens.get(open).symbol("{")) continue;
-                int before = findLayoutClose(tokens, index, objectMacrosAt(tokens, index));
-                if (before < 0 || !tokens.get(before).symbol(")")) continue;
-                int layout = matchingOpen(tokens, before, "(", ")");
-                if (layout < 0) continue;
-                int binding = -1;
-                for (int cursor = layout + 1; cursor < before; cursor++) {
-                    if (!tokens.get(cursor).identifier("binding")) continue;
-                    int equals = GlslLexer.nextSignificant(tokens, cursor);
-                    int number = equals < 0 ? -1 : GlslLexer.nextSignificant(tokens, equals);
-                    if (number >= 0 && tokens.get(number).kind() == GlslLexer.Kind.NUMBER) {
-                        binding = number;
-                        break;
-                    }
-                }
-                if (binding >= 0) {
-                    tokens.set(binding, new GlslLexer.Token(GlslLexer.Kind.NUMBER,
-                            Integer.toString(replacement)));
-                }
-                break;
+            int binding = bindingNumber(tokens, block.blockName());
+            if (binding >= 0) {
+                tokens.set(binding, new GlslLexer.Token(GlslLexer.Kind.NUMBER,
+                        Integer.toString(replacement)));
             }
         }
         return GlslLexer.render(tokens);
+    }
+
+    /**
+     * The binding number token in the layout of the first declaration of {@code blockName} that
+     * has one, or -1 when that layout names no binding or no declaration has a layout.
+     */
+    private static int bindingNumber(List<GlslLexer.Token> tokens, String blockName) {
+        for (int index = 0; index < tokens.size(); index++) {
+            if (!tokens.get(index).identifier("buffer")) continue;
+            int name = GlslLexer.nextSignificant(tokens, index);
+            if (name < 0 || !tokens.get(name).text().equals(blockName)) continue;
+            int open = GlslLexer.nextSignificant(tokens, name);
+            if (open < 0 || !tokens.get(open).symbol("{")) continue;
+            int before = findLayoutClose(tokens, index, objectMacrosAt(tokens, index));
+            if (before < 0 || !tokens.get(before).symbol(")")) continue;
+            int layout = matchingOpen(tokens, before, "(", ")");
+            if (layout < 0) continue;
+            return bindingNumberBetween(tokens, layout, before);
+        }
+        return -1;
+    }
+
+    /** The first {@code binding = N} number token between the layout's parentheses, or -1. */
+    private static int bindingNumberBetween(List<GlslLexer.Token> tokens, int open, int close) {
+        for (int cursor = open + 1; cursor < close; cursor++) {
+            if (!tokens.get(cursor).identifier("binding")) continue;
+            int equals = GlslLexer.nextSignificant(tokens, cursor);
+            int number = equals < 0 ? -1 : GlslLexer.nextSignificant(tokens, equals);
+            if (number >= 0 && tokens.get(number).kind() == GlslLexer.Kind.NUMBER) return number;
+        }
+        return -1;
     }
 
     static String key(Block block) {

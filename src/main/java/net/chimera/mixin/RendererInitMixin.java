@@ -2,11 +2,11 @@ package net.chimera.mixin;
 
 import net.chimera.render.ChimeraRenderer;
 import net.vulkanmod.vulkan.Renderer;
+import org.lwjgl.system.MemoryStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.lwjgl.system.MemoryStack;
 
 /**
  * Fires once VulkanMod's Renderer singleton is fully constructed (swapchain,

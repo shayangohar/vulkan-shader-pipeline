@@ -1,0 +1,11 @@
+# Limits the sources may not regress past; check fails on a regression.
+# A listed method or file may shrink, not grow. Rewrite with gradlew metricsRecord.
+# method <file> <Type.method/arity> <complexity> <lines> <reason>: over 15 complexity or 80 lines
+# file <file> <lines> <reason>: over 1000 lines
+main-duplication-percent 0.1
+test-duplication-percent 1.5
+qualified-names 0
+lines-over-120 0
+method src/main/java/net/chimera/render/shader/IrisPlayerState.java IrisPlayerState.value/2 39 39 flat switch: one case per Iris player-state uniform name
+method src/main/java/net/chimera/render/shader/PackFrameState.java PackFrameState.buildValues/0 2 99 the frame uniform table: one line per uniform name, no branching
+method src/main/java/net/chimera/shaderpack/BiomeIds.java BiomeIds.category/1 18 20 ordered first-match biome tag ladder, line for line with Iris

@@ -1,18 +1,22 @@
 package net.chimera.render;
 
+import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.memory.MemoryTypes;
 import net.vulkanmod.vulkan.memory.buffer.Buffer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.HashMap;
 
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -54,10 +58,11 @@ public final class PackStorageBufferOwner implements AutoCloseable {
             if (stage == VK_SHADER_STAGE_VERTEX_BIT) {
                 drawnWriters.put(index, program);
                 synchronizedWrites.remove(index);
-            } else if (stage == org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT
+            } else if (stage == VK10.VK_SHADER_STAGE_FRAGMENT_BIT
                     && drawnWriters.containsKey(index) && synchronizedWrites.contains(index)
                     && reportedReaders.add(program + ":" + index)) {
-                net.chimera.ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
+                ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},"
+                        + "writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
                         drawnWriters.get(index), program, binding.size(), dispatchCount);
             }
         }
@@ -72,7 +77,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
                 .distinct()
                 .map(this.plan.buffers()::get)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
                 .sum();
     }
@@ -114,10 +119,6 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /** Vulkan exposes this limit as an unsigned 32-bit value. */
     public static long unsignedStorageBufferRange(int rawValue) {
         return Integer.toUnsignedLong(rawValue);
-    }
-
-    public boolean hasBuffers() {
-        return !buffers.isEmpty();
     }
 
     /** Returns the session-owned buffer for an admitted logical index. */
@@ -209,7 +210,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     public long failedBytes() {
         return failures.keySet().stream()
                 .map(plan.buffers()::get)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
                 .sum();
     }
@@ -244,10 +245,9 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return true;
     }
 
-
     /** Records shader/layout agreement before native pipeline creation. */
     public String verifyLayout(String program, String vertex, String fragment,
-            java.util.List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
+            List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
         String mismatch = PackAdvancedResourcePlan.layoutMismatch(
                 plan.bindingLayout(program), vertex, fragment, descriptors);
         if (mismatch == null) {
@@ -322,18 +322,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 && descriptorAttached(writer) && descriptorAttached(reader)
                 && pipelineInstalled(writer) && pipelineInstalled(reader)
                 && layoutVerified(writer) && layoutVerified(reader);
-        String missing = ready ? "none"
-                : programFailures.containsKey(writer) ? programFailures.get(writer)
-                : programFailures.containsKey(reader) ? programFailures.get(reader)
-                : !layoutVerified(writer) ? "DESCRIPTOR_LAYOUT_UNVERIFIED:" + writer
-                : !layoutVerified(reader) ? "DESCRIPTOR_LAYOUT_UNVERIFIED:" + reader
-                : !planned ? "MISSING_DECLARATION"
-                : !allocated ? "MISSING_ALLOCATION"
-                : !initialized ? "MISSING_INITIALIZATION"
-                : !descriptorAttached(writer) ? "MISSING_WRITER_DESCRIPTOR"
-                : !descriptorAttached(reader) ? "MISSING_READER:" + reader
-                : !pipelineInstalled(writer) ? "MISSING_WRITER_PIPELINE"
-                : "MISSING_READER:" + reader;
+        String missing = ready ? "none" : missingLink(writer, reader, planned, allocated);
         return "writer=" + writer + ",reader=" + reader
                 + ",planned=" + planned
                 + ",allocated=" + allocated
@@ -344,6 +333,21 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 + ",readerPipeline=" + pipelineInstalled(reader)
                 + ",writerLayout=" + layoutVerified(writer) + ",readerLayout=" + layoutVerified(reader)
                 + ",ready=" + ready + ",missing=" + missing;
+    }
+
+    /** The first unready link of a storage path, a program's recorded failure first. */
+    private String missingLink(String writer, String reader, boolean planned, boolean allocated) {
+        if (programFailures.containsKey(writer)) return programFailures.get(writer);
+        if (programFailures.containsKey(reader)) return programFailures.get(reader);
+        if (!layoutVerified(writer)) return "DESCRIPTOR_LAYOUT_UNVERIFIED:" + writer;
+        if (!layoutVerified(reader)) return "DESCRIPTOR_LAYOUT_UNVERIFIED:" + reader;
+        if (!planned) return "MISSING_DECLARATION";
+        if (!allocated) return "MISSING_ALLOCATION";
+        if (!initialized) return "MISSING_INITIALIZATION";
+        if (!descriptorAttached(writer)) return "MISSING_WRITER_DESCRIPTOR";
+        if (!descriptorAttached(reader)) return "MISSING_READER:" + reader;
+        if (!pipelineInstalled(writer)) return "MISSING_WRITER_PIPELINE";
+        return "MISSING_READER:" + reader;
     }
 
     public boolean storagePathReady(String writer, String reader) {

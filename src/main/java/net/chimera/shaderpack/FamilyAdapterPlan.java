@@ -41,6 +41,11 @@ public record FamilyAdapterPlan(
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,
         BLOCK,
+        /**
+         * gbuffers_block_translucent: text drawn by block entities, such as signs (Iris TEXT_BE,
+         * ProgramId.BlockTrans). Iris 1.21.11 assigns it no block-entity model draws.
+         */
+        BLOCK_TRANSLUCENT,
         DAMAGED_BLOCK,
         HAND,
         HAND_WATER,
@@ -59,6 +64,11 @@ public record FamilyAdapterPlan(
         BEACON_BEAM,
         /** gbuffers_basic: leads (Iris ShaderKey.LEASH, ProgramId.Basic). */
         BASIC,
+        /**
+         * text_bg: text and name-tag backgrounds (Iris ShaderKey.TEXT_BG), drawn with
+         * gbuffers_entities_translucent on the host POSITION_COLOR_LIGHTMAP quads.
+         */
+        TEXT_BG,
         SPECIAL,
         POST,
         UNKNOWN
@@ -91,7 +101,7 @@ public record FamilyAdapterPlan(
         SKY_POSITION_UV,
         SKY_POSITION_COLOR_UV,
         CLOUD_POSITION_COLOR,
-        /** @deprecated retained for reports produced by older M8.5b builds. */
+        /** @deprecated retained so reports from older builds still parse. */
         @Deprecated
         CLOUD_GENERATED,
         FULLSCREEN,

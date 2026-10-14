@@ -1,8 +1,10 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -11,7 +13,9 @@ import java.util.regex.Pattern;
  * Small token-safe normalization pass shared by planning and conversion.
  * It contains only legacy built-ins that Iris rewrites the same way in every
  * program: gl_Fog fields to Chimera's fog uniforms, and gl_FogFragCoord to
- * an ordinary varying. It also gives every uniform its own declaration, so
+ * an ordinary varying. In the vertex stage it starts every referenced output
+ * at zero, the value GL drivers leave in one a path never writes. It also
+ * gives every uniform its own declaration, so
  * per-name rewriters never meet a declarator list, and expands macros that
  * alias a sampler, so planning sees every sampler a program uses, or a
  * storage qualifier, so every converter reads declarations in one spelling.
@@ -36,7 +40,7 @@ final class LegacyShaderNormalizer {
      * {@code float tanh(float)}); every call in that source means the pack's function, but the
      * #version 460 Chimera compiles at rejects the redefinition, so the pack's copy is renamed.
      */
-    private static final java.util.Set<String> LATE_BUILTINS = java.util.Set.of(
+    private static final Set<String> LATE_BUILTINS = Set.of(
             "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "trunc", "round", "roundEven",
             "modf", "isnan", "isinf", "floatBitsToInt", "floatBitsToUint", "intBitsToFloat",
             "uintBitsToFloat", "determinant", "inverse", "fma", "frexp", "ldexp",
@@ -45,6 +49,9 @@ final class LegacyShaderNormalizer {
             "packSnorm4x8", "unpackSnorm4x8", "bitfieldExtract", "bitfieldInsert",
             "bitfieldReverse", "bitCount", "findLSB", "findMSB");
     private static final Pattern VERSION_NUMBER = Pattern.compile("(?m)^[ \\t]*#version[ \\t]+(\\d+)");
+    /** Interface types whose {@code T(0)} constructor is zero: scalars, vectors and matrices. */
+    private static final Pattern ZEROABLE_TYPE = Pattern.compile(
+            "(?:float|double|int|uint|bool|[biud]?vec[234]|d?mat[234](?:x[234])?)");
 
     /** The authored #version; GLSL treats a source without one as 110. */
     private static int authoredVersion(String source) {
@@ -71,7 +78,7 @@ final class LegacyShaderNormalizer {
 
     private static void renameLateBuiltinDefinitions(List<GlslLexer.Token> tokens, int version) {
         if (version >= 130) return;
-        java.util.Set<String> defined = new java.util.HashSet<>();
+        Set<String> defined = new HashSet<>();
         int depth = 0;
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
@@ -101,65 +108,23 @@ final class LegacyShaderNormalizer {
             return new Result(null, List.of(), false);
         }
         try {
-            List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(GlslTokenRewriter.expandSamplerAliases(
+            List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(GlslMacroAliases.expandSamplerAliases(
                     GlslTokenRewriter.splitUniformDeclarators(
-                            GlslTokenRewriter.expandStorageQualifierAliases(source)))));
+                            GlslMacroAliases.expandStorageQualifierAliases(source)))));
             int version = authoredVersion(source);
             renameLateBuiltinDefinitions(tokens, version);
             endLineCommentsAtTheirLine(tokens, version);
             Map<String, String> required = new TreeMap<>();
-            boolean fogFragCoord = false;
-            for (int index = 0; index < tokens.size(); index++) {
-                GlslLexer.Token token = tokens.get(index);
-                if (token.identifier("gl_FogFragCoord")) {
-                    tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, FOG_FRAG_COORD));
-                    fogFragCoord = true;
-                    continue;
-                }
-                if (!token.identifier("gl_Fog")) {
-                    continue;
-                }
-                int dot = GlslLexer.nextSignificant(tokens, index);
-                int field = dot < 0 ? -1 : GlslLexer.nextSignificant(tokens, dot);
-                if (dot < 0 || field < 0 || !tokens.get(dot).symbol(".")
-                        || tokens.get(field).kind() != GlslLexer.Kind.IDENTIFIER) {
-                    return unsupported("unknown");
-                }
-                String fieldName = tokens.get(field).text();
-                String replacement = switch (fieldName) {
-                    case "start" -> {
-                        required.put("fogStart", "float");
-                        yield "fogStart";
-                    }
-                    case "end" -> {
-                        required.put("fogEnd", "float");
-                        yield "fogEnd";
-                    }
-                    case "scale" -> {
-                        required.put("fogStart", "float");
-                        required.put("fogEnd", "float");
-                        yield "(1.0 / (fogEnd - fogStart))";
-                    }
-                    // Iris's iris_FogParameters.color is the fog RGBA, iris_FogColor. Chimera's fogColor is
-                    // the same value; a pack that already declares it vec3 keeps its declaration.
-                    case "color" -> {
-                        String declared = declaredUniformType(tokens, "fogColor");
-                        if (declared == null) {
-                            required.put("fogColor", "vec4");
-                        }
-                        yield "vec3".equals(declared) ? "vec4(fogColor, 1.0)" : "fogColor";
-                    }
-                    default -> null;
-                };
-                if (replacement == null) {
-                    return unsupported(fieldName);
-                }
-                tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.TRIVIA, replacement));
-                tokens.set(dot, new GlslLexer.Token(GlslLexer.Kind.TRIVIA, ""));
-                tokens.set(field, new GlslLexer.Token(GlslLexer.Kind.TRIVIA, ""));
+            String unsupportedField = rewriteFogFields(tokens, required);
+            if (unsupportedField != null) {
+                return unsupported(unsupportedField);
             }
+            boolean fogFragCoord = renameFogFragCoord(tokens);
 
             String normalized = GlslLexer.render(tokens);
+            if (vertexStage) {
+                normalized = zeroReferencedOutputs(normalized);
+            }
             List<String> missing = new ArrayList<>();
             List<GlslLexer.Token> normalizedTokens = GlslLexer.lex(normalized);
             for (Map.Entry<String, String> uniform : required.entrySet()) {
@@ -182,6 +147,120 @@ final class LegacyShaderNormalizer {
             String reason = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
             return new Result(null, List.of("SOURCE_NORMALIZATION_FAILED:" + reason), false);
         }
+    }
+
+    /**
+     * Rewrites each {@code gl_Fog.<field>} to Chimera's fog uniforms and records the uniforms the
+     * rewrites read. Returns the first field it cannot serve, or null when it serves them all.
+     */
+    private static String rewriteFogFields(List<GlslLexer.Token> tokens, Map<String, String> required) {
+        for (int index = 0; index < tokens.size(); index++) {
+            if (!tokens.get(index).identifier("gl_Fog")) {
+                continue;
+            }
+            int dot = GlslLexer.nextSignificant(tokens, index);
+            int field = dot < 0 ? -1 : GlslLexer.nextSignificant(tokens, dot);
+            if (dot < 0 || field < 0 || !tokens.get(dot).symbol(".")
+                    || tokens.get(field).kind() != GlslLexer.Kind.IDENTIFIER) {
+                return "unknown";
+            }
+            String fieldName = tokens.get(field).text();
+            String replacement = fogFieldValue(fieldName, tokens, required);
+            if (replacement == null) {
+                return fieldName;
+            }
+            tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.TRIVIA, replacement));
+            tokens.set(dot, new GlslLexer.Token(GlslLexer.Kind.TRIVIA, ""));
+            tokens.set(field, new GlslLexer.Token(GlslLexer.Kind.TRIVIA, ""));
+        }
+        return null;
+    }
+
+    /** The expression that serves one gl_Fog field, or null for a field Chimera does not serve. */
+    private static String fogFieldValue(String fieldName, List<GlslLexer.Token> tokens,
+                                        Map<String, String> required) {
+        return switch (fieldName) {
+            case "start" -> {
+                required.put("fogStart", "float");
+                yield "fogStart";
+            }
+            case "end" -> {
+                required.put("fogEnd", "float");
+                yield "fogEnd";
+            }
+            case "scale" -> {
+                required.put("fogStart", "float");
+                required.put("fogEnd", "float");
+                yield "(1.0 / (fogEnd - fogStart))";
+            }
+            // Iris's iris_FogParameters.color is the fog RGBA, iris_FogColor. Chimera's fogColor is
+            // the same value; a pack that already declares it vec3 keeps its declaration.
+            case "color" -> {
+                String declared = declaredUniformType(tokens, "fogColor");
+                if (declared == null) {
+                    required.put("fogColor", "vec4");
+                }
+                yield "vec3".equals(declared) ? "vec4(fogColor, 1.0)" : "fogColor";
+            }
+            default -> null;
+        };
+    }
+
+    /**
+     * Starts every vertex output the shader references at zero. An output written on some paths
+     * only (BSL's gbuffers_basic sets isSelection for the selection outline alone) reads 0 under
+     * GL drivers in practice, but is undefined in Vulkan: the lead took BSL's unlit outline path
+     * on random fragments, a different set each frame. A source whose interface the scanner
+     * cannot read, or that has no main, is left as it is; re-normalizing adds nothing.
+     */
+    private static String zeroReferencedOutputs(String source) {
+        GlslInterfaceScanner.StageInterface stage = GlslInterfaceScanner.scan(source, true);
+        if (!stage.deviations().isEmpty()) {
+            return source;
+        }
+        List<String> statements = new ArrayList<>();
+        for (GlslInterfaceScanner.Declaration output : stage.outputs()) {
+            String statement = zeroStatement(output);
+            if (statement != null && !source.contains(statement)) {
+                statements.add(statement);
+            }
+        }
+        if (statements.isEmpty()) {
+            return source;
+        }
+        try {
+            return GlslTokenRewriter.prependMainPrologue(source, String.join("\n", statements));
+        } catch (IllegalArgumentException noMain) {
+            return source;
+        }
+    }
+
+    /** {@code name = T(0);} for a referenced output of a built-in type, or null to leave it alone. */
+    private static String zeroStatement(GlslInterfaceScanner.Declaration output) {
+        // An unread output is dropped as dead, so it gets no write that would keep it alive;
+        // iris_FogFragCoord has Iris's own zero, added with its declaration.
+        if (!output.referenced() || output.name().startsWith("gl_") || output.name().equals(FOG_FRAG_COORD)
+                || !ZEROABLE_TYPE.matcher(output.type()).matches()) {
+            return null;
+        }
+        String zero = output.type() + "(0)";
+        if (output.arraySize() == 0) {
+            return output.name() + " = " + zero + ";";
+        }
+        return "for (int chimeraZeroIndex = 0; chimeraZeroIndex < " + output.arraySize()
+                + "; chimeraZeroIndex++) " + output.name() + "[chimeraZeroIndex] = " + zero + ";";
+    }
+
+    /** Renames gl_FogFragCoord to Iris's ordinary varying; true when the source uses it. */
+    private static boolean renameFogFragCoord(List<GlslLexer.Token> tokens) {
+        boolean found = false;
+        for (int index = 0; index < tokens.size(); index++) {
+            if (tokens.get(index).identifier("gl_FogFragCoord")) {
+                tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, FOG_FRAG_COORD));
+                found = true;
+            }
+        }
+        return found;
     }
 
     private static Result unsupported(String field) {

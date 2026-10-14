@@ -16,9 +16,10 @@ import org.lwjgl.util.shaderc.Shaderc;
 import org.lwjgl.util.vma.Vma;
 import org.lwjgl.util.vma.VmaAllocationCreateInfo;
 import org.lwjgl.util.vma.VmaAllocationInfo;
-import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkBufferCopy;
+import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkBufferMemoryBarrier;
+import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkComputePipelineCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorBufferInfo;
@@ -29,11 +30,14 @@ import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
+import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkPipelineLayoutCreateInfo;
 import org.lwjgl.vulkan.VkPushConstantRange;
 import org.lwjgl.vulkan.VkSamplerCreateInfo;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 import org.lwjgl.vulkan.VkWriteDescriptorSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
@@ -55,7 +59,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * then accumulate into device-local memory. Only one small summary is copied to the host per frame.
  */
 public final class PackNanTripwire {
-    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("chimera");
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final int MAX_CHECKS = 96;
     /** Per check: NaN texels, infinite texels, first bad texel (y << 16 | x), NaN/Inf channel bits. */
     private static final int WORDS_PER_CHECK = 4;
@@ -181,10 +185,10 @@ public final class PackNanTripwire {
                         .setLinearFiltering(false).setClamp(true).createVulkanImage();
             }
             this.selfTestImage.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-            org.lwjgl.vulkan.VkClearColorValue nan = org.lwjgl.vulkan.VkClearColorValue.calloc(stack);
+            VkClearColorValue nan = VkClearColorValue.calloc(stack);
             nan.float32(0, Float.NaN).float32(1, 0.0f).float32(2, 0.0f).float32(3, 1.0f);
-            org.lwjgl.vulkan.VkImageSubresourceRange.Buffer range =
-                    org.lwjgl.vulkan.VkImageSubresourceRange.calloc(1, stack);
+            VkImageSubresourceRange.Buffer range =
+                    VkImageSubresourceRange.calloc(1, stack);
             range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
             vkCmdClearColorImage(commandBuffer, this.selfTestImage.getId(),
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, nan, range);
@@ -280,7 +284,8 @@ public final class PackNanTripwire {
         if (frame == null || image == null || !isFloatFormat(image.format)) return;
         int slot = frame.labels.size();
         if (slot >= MAX_CHECKS) {
-            if (!frame.truncated) LOGGER.warn("[chimera] NaN tripwire: check limit reached; frame {} is incomplete", frame.number);
+            if (!frame.truncated) LOGGER.warn("[chimera] NaN tripwire: check limit reached; frame {} is incomplete",
+                    frame.number);
             frame.truncated = true;
             return;
         }
@@ -306,7 +311,8 @@ public final class PackNanTripwire {
                     .newLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .image(image.getId())
-                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT
+                            | VK_ACCESS_TRANSFER_WRITE_BIT)
                     .dstAccessMask(VK_ACCESS_SHADER_READ_BIT);
             readable.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
             vkCmdPipelineBarrier(commandBuffer, IMAGE_WRITE_STAGES, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -344,20 +350,10 @@ public final class PackNanTripwire {
         List<String> dirty = new ArrayList<>();
         int firstDirty = -1;
         for (int slot = 0; slot < frame.labels.size(); slot++) {
-            int base = slot * WORDS_PER_CHECK * 4;
-            int nan = frame.data.getInt(base);
-            int inf = frame.data.getInt(base + 4);
-            if (nan == 0 && inf == 0) continue;
-            int first = frame.data.getInt(base + 8);
-            int bits = frame.data.getInt(base + 12);
-            int x = first & 0xFFFF;
-            int y = first >>> 16;
-            int[] size = frame.sizes.get(slot);
+            String description = describeDirty(frame, slot);
+            if (description == null) continue;
             if (firstDirty < 0) firstDirty = slot;
-            dirty.add(String.format(
-                    "#%d %s %dx%d: nan=%d inf=%d channels=%s first=(%d,%d) image, (%d,%d) screen",
-                    slot, frame.labels.get(slot), size[0], size[1], nan, inf, channels(bits),
-                    x, y, x, size[1] - 1 - y));
+            dirty.add(description);
         }
         if (dirty.isEmpty() && frame.badUniforms.isEmpty() && !frame.truncated) {
             if (!this.armed) {
@@ -369,6 +365,36 @@ public final class PackNanTripwire {
         if (dirty.isEmpty() && frame.badUniforms.isEmpty()) return;
         if (!this.armed) return;
         this.armed = false;
+        boolean capture = triggerRenderDocCapture();
+        LOGGER.warn(report(frame, dirty, capture));
+        String first = firstDirty < 0 ? "uniforms"
+                : frame.labels.get(firstDirty);
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.gui != null) {
+            minecraft.gui.getChat().addMessage(Component.literal("[Chimera] NaN: "
+                    + first + (capture ? ". Capture queued." : ".") + " See latest.log."));
+        }
+    }
+
+    /** One check's report line, or null when its target held no non-finite texel. */
+    private static String describeDirty(Frame frame, int slot) {
+        int base = slot * WORDS_PER_CHECK * 4;
+        int nan = frame.data.getInt(base);
+        int inf = frame.data.getInt(base + 4);
+        if (nan == 0 && inf == 0) return null;
+        int first = frame.data.getInt(base + 8);
+        int bits = frame.data.getInt(base + 12);
+        int x = first & 0xFFFF;
+        int y = first >>> 16;
+        int[] size = frame.sizes.get(slot);
+        return String.format(
+                "#%d %s %dx%d: nan=%d inf=%d channels=%s first=(%d,%d) image, (%d,%d) screen",
+                slot, frame.labels.get(slot), size[0], size[1], nan, inf, channels(bits),
+                x, y, x, size[1] - 1 - y);
+    }
+
+    /** The fired frame's report: its checks in order, the dirty ones, the bad uniforms and the capture. */
+    private String report(Frame frame, List<String> dirty, boolean capture) {
         StringBuilder report = new StringBuilder();
         report.append("[chimera] NaN tripwire fired on frame ").append(frame.number)
                 .append(" (pack ").append(frame.pack).append(", ").append(frame.labels.size())
@@ -385,19 +411,11 @@ public final class PackNanTripwire {
         }
         report.append("\n  non-finite uniforms: ")
                 .append(frame.badUniforms.isEmpty() ? "none" : String.join(", ", frame.badUniforms));
-        boolean capture = triggerRenderDocCapture();
         report.append("\n  Results read at frame-slot reuse (ring size ").append(this.frames.length)
                 .append("); an automatic capture records later propagation, not the original seed");
         report.append("\n  RenderDoc capture: ").append(capture ? "triggered for the next frame"
                 : "not available (not running under RenderDoc)");
-        LOGGER.warn(report.toString());
-        String first = firstDirty < 0 ? "uniforms"
-                : frame.labels.get(firstDirty);
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.gui != null) {
-            minecraft.gui.getChat().addMessage(Component.literal("[Chimera] NaN: "
-                    + first + (capture ? ". Capture queued." : ".") + " See latest.log."));
-        }
+        return report.toString();
     }
 
     private static String channels(int bits) {
@@ -575,7 +593,8 @@ public final class PackNanTripwire {
         try {
             Shaderc.shaderc_compile_options_set_target_env(options,
                     Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
-            Shaderc.shaderc_compile_options_set_optimization_level(options, Shaderc.shaderc_optimization_level_performance);
+            Shaderc.shaderc_compile_options_set_optimization_level(options,
+                    Shaderc.shaderc_optimization_level_performance);
             result = Shaderc.shaderc_compile_into_spv(compiler, SHADER,
                     Shaderc.shaderc_glsl_compute_shader, "chimera_nan_tripwire.csh", "main", options);
             if (result == 0L || Shaderc.shaderc_result_get_compilation_status(result)
@@ -602,8 +621,10 @@ public final class PackNanTripwire {
 
     private static void destroyFrame(Frame frame) {
         if (frame == null) return;
-        if (frame.readbackBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.readbackBuffer, frame.readbackAllocation);
-        if (frame.resultBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.resultBuffer, frame.resultAllocation);
+        if (frame.readbackBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.readbackBuffer,
+                frame.readbackAllocation);
+        if (frame.resultBuffer != 0L) Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.resultBuffer,
+                frame.resultAllocation);
     }
 
     /** Releases everything; the device must be idle. */

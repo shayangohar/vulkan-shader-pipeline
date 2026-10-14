@@ -1,9 +1,13 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.DoubleBinaryOperator;
 
 /**
  * The pack-authored expression language behind {@code shaders.properties} custom values.
@@ -79,8 +83,8 @@ public final class PackExpression {
 
         /** Drops every accumulator, as a pack reload must. */
         public void reset() {
-            java.util.Arrays.fill(this.accumulators, 0.0F);
-            java.util.Arrays.fill(this.started, false);
+            Arrays.fill(this.accumulators, 0.0F);
+            Arrays.fill(this.started, false);
         }
     }
 
@@ -135,7 +139,7 @@ public final class PackExpression {
          */
         public void evaluate(Inputs inputs, State state, float frameDelta, double[] out, int offset) {
             Context context = new Context(inputs, state, frameDelta,
-                    this.root.width() > 1 ? new java.util.IdentityHashMap<>() : null);
+                    this.root.width() > 1 ? new IdentityHashMap<>() : null);
             for (int lane = 0; lane < this.root.width(); lane++) {
                 out[offset + lane] = this.root.evaluate(context, lane);
             }
@@ -184,7 +188,7 @@ public final class PackExpression {
      * lane by lane, so each is computed once per frame; it is null for a scalar result.
      */
     private record Context(Inputs inputs, State state, float frameDelta,
-                           java.util.IdentityHashMap<Node, Double> scalars) {
+                           IdentityHashMap<Node, Double> scalars) {
         double scalar(Node node) {
             if (this.scalars == null) {
                 return node.evaluate(this, 0);
@@ -329,15 +333,22 @@ public final class PackExpression {
                 case "*" -> a * b;
                 case "/" -> b == 0.0 ? 0.0 : a / b;
                 case "%" -> b == 0.0 ? 0.0 : a % b;
-                case "==" -> a == b ? 1.0 : 0.0;
-                case "!=" -> a != b ? 1.0 : 0.0;
-                case ">" -> a > b ? 1.0 : 0.0;
-                case ">=" -> a >= b ? 1.0 : 0.0;
-                case "<" -> a < b ? 1.0 : 0.0;
-                case "<=" -> a <= b ? 1.0 : 0.0;
-                case "&&" -> a != 0.0 && b != 0.0 ? 1.0 : 0.0;
-                case "||" -> a != 0.0 || b != 0.0 ? 1.0 : 0.0;
-                default -> throw new IllegalStateException("unknown operator " + this.operator);
+                default -> holds(this.operator, a, b) ? 1.0 : 0.0;
+            };
+        }
+
+        /** Whether a comparison or logical operator holds between two scalars. */
+        private static boolean holds(String operator, double a, double b) {
+            return switch (operator) {
+                case "==" -> a == b;
+                case "!=" -> a != b;
+                case ">" -> a > b;
+                case ">=" -> a >= b;
+                case "<" -> a < b;
+                case "<=" -> a <= b;
+                case "&&" -> a != 0.0 && b != 0.0;
+                case "||" -> a != 0.0 || b != 0.0;
+                default -> throw new IllegalStateException("unknown operator " + operator);
             };
         }
 
@@ -368,84 +379,63 @@ public final class PackExpression {
      * A call. {@code if} evaluates one branch, because a {@code smooth} in the other branch must
      * not advance; the rest fold every argument, component by component.
      */
-    private record Call(Function function, List<Node> arguments, int smoothSlot, int width)
+    private record Call(PackFunction function, List<Node> arguments, int smoothSlot, int width)
             implements Node {
         @Override
         public double evaluate(Context context, int lane) {
-            if (this.function == Function.IF) {
-                // if(c1, v1, c2, v2, ..., else): the first true condition's value.
-                int last = this.arguments.size() - 1;
-                for (int index = 0; index < last; index += 2) {
-                    if (context.scalar(this.arguments.get(index)) != 0.0) {
-                        return lane(this.arguments.get(index + 1), context, lane);
-                    }
-                }
-                return lane(this.arguments.get(last), context, lane);
-            }
-            if (this.function == Function.RANDOM) {
-                return java.util.concurrent.ThreadLocalRandom.current().nextDouble();
-            }
-            if (this.function == Function.IN) {
-                double needle = context.scalar(this.arguments.get(0));
-                for (int index = 1; index < this.arguments.size(); index++) {
-                    if (context.scalar(this.arguments.get(index)) == needle) {
-                        return 1.0;
-                    }
-                }
-                return 0.0;
-            }
-            if (this.function == Function.SMOOTH) {
-                int first = this.arguments.size() - 3;
-                double value = lane(this.arguments.get(first), context, lane);
-                float rise = (float) context.scalar(this.arguments.get(first + 1));
-                float fall = (float) context.scalar(this.arguments.get(first + 2));
-                return smooth(context, this.smoothSlot + lane, value, rise, fall);
-            }
-            double first = lane(this.arguments.get(0), context, lane);
             return switch (this.function) {
-                case ABS -> Math.abs(first);
-                case SIN -> Math.sin(first);
-                case COS -> Math.cos(first);
-                case ASIN -> Math.asin(first);
-                case ACOS -> Math.acos(first);
-                case TAN -> Math.tan(first);
-                case ATAN -> this.arguments.size() == 2
-                        ? Math.atan2(first, lane(this.arguments.get(1), context, lane))
-                        : Math.atan(first);
-                case TORAD -> Math.toRadians(first);
-                case TODEG -> Math.toDegrees(first);
-                case FLOOR -> Math.floor(first);
-                case CEIL -> Math.ceil(first);
-                case FRAC -> first - Math.floor(first);
-                case ROUND -> (double) Math.round(first);
-                case SIGNUM -> Math.signum(first);
-                case EXP -> Math.exp(first);
-                case LOG -> Math.log(first);
-                case POW -> Math.pow(first, lane(this.arguments.get(1), context, lane));
-                case SQRT -> Math.sqrt(first);
-                case FMOD -> {
-                    // OptiFine's fmod is a floor modulo: the result takes the divisor's sign.
-                    double divisor = lane(this.arguments.get(1), context, lane);
-                    yield divisor == 0.0 ? 0.0 : first - divisor * Math.floor(first / divisor);
+                case IF -> select(context, lane);
+                case RANDOM -> ThreadLocalRandom.current().nextDouble();
+                case IN -> matchesAny(context);
+                case SMOOTH -> {
+                    int first = this.arguments.size() - 3;
+                    double value = lane(this.arguments.get(first), context, lane);
+                    float rise = (float) context.scalar(this.arguments.get(first + 1));
+                    float fall = (float) context.scalar(this.arguments.get(first + 2));
+                    yield smooth(context, this.smoothSlot + lane, value, rise, fall);
                 }
+                default -> fold(context, lane);
+            };
+        }
+
+        /** {@code if(c1, v1, c2, v2, ..., else)}: the first true condition's value. */
+        private double select(Context context, int lane) {
+            int last = this.arguments.size() - 1;
+            for (int index = 0; index < last; index += 2) {
+                if (context.scalar(this.arguments.get(index)) != 0.0) {
+                    return lane(this.arguments.get(index + 1), context, lane);
+                }
+            }
+            return lane(this.arguments.get(last), context, lane);
+        }
+
+        /** {@code in(x, a, b, ...)}: one when x equals any of the rest. */
+        private double matchesAny(Context context) {
+            double needle = context.scalar(this.arguments.get(0));
+            for (int index = 1; index < this.arguments.size(); index++) {
+                if (context.scalar(this.arguments.get(index)) == needle) {
+                    return 1.0;
+                }
+            }
+            return 0.0;
+        }
+
+        /** The math functions, folding one lane of the first argument with the rest. */
+        private double fold(Context context, int lane) {
+            double first = lane(this.arguments.get(0), context, lane);
+            if (this.function.unary() != null && this.arguments.size() == 1) {
+                return this.function.unary().applyAsDouble(first);
+            }
+            return switch (this.function) {
+                case ATAN -> Math.atan2(first, lane(this.arguments.get(1), context, lane));
+                case POW -> Math.pow(first, lane(this.arguments.get(1), context, lane));
+                case FMOD -> floorModulo(first, lane(this.arguments.get(1), context, lane));
                 case BETWEEN -> first >= context.scalar(this.arguments.get(1))
                         && first <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
                 case EQUALS -> Math.abs(first - context.scalar(this.arguments.get(1)))
                         <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
-                case MAX -> {
-                    double result = first;
-                    for (int index = 1; index < this.arguments.size(); index++) {
-                        result = Math.max(result, lane(this.arguments.get(index), context, lane));
-                    }
-                    yield result;
-                }
-                case MIN -> {
-                    double result = first;
-                    for (int index = 1; index < this.arguments.size(); index++) {
-                        result = Math.min(result, lane(this.arguments.get(index), context, lane));
-                    }
-                    yield result;
-                }
+                case MAX -> reduce(first, context, lane, Math::max);
+                case MIN -> reduce(first, context, lane, Math::min);
                 case CLAMP -> {
                     double low = lane(this.arguments.get(1), context, lane);
                     double high = lane(this.arguments.get(2), context, lane);
@@ -453,6 +443,15 @@ public final class PackExpression {
                 }
                 default -> throw new IllegalStateException("unfolded function " + this.function);
             };
+        }
+
+        /** {@code first} combined with one lane of each further argument in turn. */
+        private double reduce(double first, Context context, int lane, DoubleBinaryOperator combine) {
+            double result = first;
+            for (int index = 1; index < this.arguments.size(); index++) {
+                result = combine.applyAsDouble(result, lane(this.arguments.get(index), context, lane));
+            }
+            return result;
         }
 
         @Override
@@ -493,72 +492,9 @@ public final class PackExpression {
                 : 1.0 / (halfLife * HALF_LIFE_UNIT_SECONDS / LN_OF_2);
     }
 
-    /** How a function types its arguments. */
-    private enum Shape {
-        /** Every argument component-wise, a scalar widening to the others' width. */
-        LANES,
-        /** Scalars only. */
-        SCALAR,
-        /** {@code if}: scalar conditions, values of one width. */
-        SELECT,
-        /** {@code smooth}: a component-wise value, scalar id and half lives. */
-        SMOOTH,
-        /** {@code vecN}: components in order, or one scalar widened. */
-        CONSTRUCT
-    }
-
-    /** The functions the packs reach for, with the arity each one accepts. */
-    private enum Function {
-        ABS(1, 1, Shape.LANES),
-        SIN(1, 1, Shape.LANES),
-        COS(1, 1, Shape.LANES),
-        ASIN(1, 1, Shape.LANES),
-        ACOS(1, 1, Shape.LANES),
-        TAN(1, 1, Shape.LANES),
-        ATAN(1, 2, Shape.LANES),
-        TORAD(1, 1, Shape.LANES),
-        TODEG(1, 1, Shape.LANES),
-        FLOOR(1, 1, Shape.LANES),
-        CEIL(1, 1, Shape.LANES),
-        FRAC(1, 1, Shape.LANES),
-        ROUND(1, 1, Shape.LANES),
-        SIGNUM(1, 1, Shape.LANES),
-        EXP(1, 1, Shape.LANES),
-        LOG(1, 1, Shape.LANES),
-        POW(2, 2, Shape.LANES),
-        SQRT(1, 1, Shape.LANES),
-        FMOD(2, 2, Shape.LANES),
-        RANDOM(0, 0, Shape.SCALAR),
-        MAX(2, Integer.MAX_VALUE, Shape.LANES),
-        MIN(2, Integer.MAX_VALUE, Shape.LANES),
-        CLAMP(3, 3, Shape.LANES),
-        BETWEEN(3, 3, Shape.SCALAR),
-        EQUALS(3, 3, Shape.SCALAR),
-        IF(3, Integer.MAX_VALUE, Shape.SELECT),
-        IN(2, Integer.MAX_VALUE, Shape.SCALAR),
-        SMOOTH(3, 4, Shape.SMOOTH),
-        VEC2(1, 4, Shape.CONSTRUCT),
-        VEC3(1, 4, Shape.CONSTRUCT),
-        VEC4(1, 4, Shape.CONSTRUCT);
-
-        private final int minimum;
-        private final int maximum;
-        private final Shape shape;
-
-        Function(int minimum, int maximum, Shape shape) {
-            this.minimum = minimum;
-            this.maximum = maximum;
-            this.shape = shape;
-        }
-
-        private static Function named(String name) {
-            for (Function function : values()) {
-                if (function.name().equalsIgnoreCase(name)) {
-                    return function;
-                }
-            }
-            return null;
-        }
+    /** OptiFine's fmod is a floor modulo: the result takes the divisor's sign. */
+    private static double floorModulo(double value, double divisor) {
+        return divisor == 0.0 ? 0.0 : value - divisor * Math.floor(value / divisor);
     }
 
     private static final class Parser {
@@ -785,7 +721,7 @@ public final class PackExpression {
         }
 
         private Node call(String name) {
-            Function function = Function.named(name);
+            PackFunction function = PackFunction.named(name);
             if (function == null) {
                 throw new Unsupported("CUSTOM_EXPRESSION_UNKNOWN_FUNCTION", name);
             }
@@ -797,25 +733,25 @@ public final class PackExpression {
                 } while (take(","));
             }
             require(")");
-            if (arguments.size() < function.minimum || arguments.size() > function.maximum
-                    || (function == Function.IF && arguments.size() % 2 == 0)) {
+            if (arguments.size() < function.minimum() || arguments.size() > function.maximum()
+                    || (function == PackFunction.IF && arguments.size() % 2 == 0)) {
                 throw new Unsupported("CUSTOM_EXPRESSION_ARITY", name);
             }
             int width = width(function, name, arguments);
             int slot = -1;
-            if (function == Function.SMOOTH) {
+            if (function == PackFunction.SMOOTH) {
                 slot = this.smoothSites[0];
                 this.smoothSites[0] += width;
             }
-            if (function.shape == Shape.CONSTRUCT) {
+            if (function.shape() == PackFunction.Shape.CONSTRUCT) {
                 return new Construct(width, List.copyOf(arguments));
             }
             return new Call(function, List.copyOf(arguments), slot, width);
         }
 
         /** Types one call by its shape, or refuses it. */
-        private int width(Function function, String name, List<Node> arguments) {
-            return switch (function.shape) {
+        private int width(PackFunction function, String name, List<Node> arguments) {
+            return switch (function.shape()) {
                 case SCALAR -> {
                     for (Node argument : arguments) {
                         scalar(argument, name);
@@ -838,36 +774,42 @@ public final class PackExpression {
                     }
                     yield width;
                 }
-                case SMOOTH -> {
-                    int first = arguments.size() - 3;
-                    for (int index = 0; index < arguments.size(); index++) {
-                        if (index != first) {
-                            scalar(arguments.get(index), name);
-                        }
-                    }
-                    int width = arguments.get(first).width();
-                    if (width == MATRIX_WIDTH) {
-                        throw new Unsupported("CUSTOM_EXPRESSION_TYPE", name + " of mat4");
-                    }
-                    yield width;
-                }
-                case CONSTRUCT -> {
-                    int width = function.ordinal() - Function.VEC2.ordinal() + 2;
-                    int total = 0;
-                    for (Node argument : arguments) {
-                        if (argument.width() == MATRIX_WIDTH) {
-                            throw new Unsupported("CUSTOM_EXPRESSION_TYPE", name + " of mat4");
-                        }
-                        total += argument.width();
-                    }
-                    boolean widened = arguments.size() == 1 && arguments.get(0).width() == 1;
-                    if (!widened && total != width) {
-                        throw new Unsupported("CUSTOM_EXPRESSION_TYPE",
-                                name + " given " + total + " components");
-                    }
-                    yield width;
-                }
+                case SMOOTH -> smoothWidth(name, arguments);
+                case CONSTRUCT -> constructWidth(function, name, arguments);
             };
+        }
+
+        /** {@code smooth}: scalar id and half lives around a value of any width but a matrix's. */
+        private static int smoothWidth(String name, List<Node> arguments) {
+            int first = arguments.size() - 3;
+            for (int index = 0; index < arguments.size(); index++) {
+                if (index != first) {
+                    scalar(arguments.get(index), name);
+                }
+            }
+            int width = arguments.get(first).width();
+            if (width == MATRIX_WIDTH) {
+                throw new Unsupported("CUSTOM_EXPRESSION_TYPE", name + " of mat4");
+            }
+            return width;
+        }
+
+        /** {@code vecN}: exactly N components in order, or one scalar widened to all N. */
+        private static int constructWidth(PackFunction function, String name, List<Node> arguments) {
+            int width = function.ordinal() - PackFunction.VEC2.ordinal() + 2;
+            int total = 0;
+            for (Node argument : arguments) {
+                if (argument.width() == MATRIX_WIDTH) {
+                    throw new Unsupported("CUSTOM_EXPRESSION_TYPE", name + " of mat4");
+                }
+                total += argument.width();
+            }
+            boolean widened = arguments.size() == 1 && arguments.get(0).width() == 1;
+            if (!widened && total != width) {
+                throw new Unsupported("CUSTOM_EXPRESSION_TYPE",
+                        name + " given " + total + " components");
+            }
+            return width;
         }
 
         private static void scalar(Node node, String operator) {

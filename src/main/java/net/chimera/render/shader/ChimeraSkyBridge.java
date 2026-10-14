@@ -2,11 +2,13 @@ package net.chimera.render.shader;
 
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import net.chimera.ChimeraMod;
+import net.chimera.shaderpack.GeometryOutputPlan;
+import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.renderer.RenderPipelines;
-import net.chimera.shaderpack.PackPipelines;
 import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
+import net.vulkanmod.vulkan.shader.Pipeline;
 
 /**
  * Small host-aware bridge for sky and cloud passes. It deliberately selects
@@ -97,11 +99,11 @@ public final class ChimeraSkyBridge {
         return enabled && skyBasic != null;
     }
 
-    public static net.chimera.shaderpack.GeometryOutputPlan outputPlan() {
+    public static GeometryOutputPlan outputPlan() {
         return active == null ? null : active.outputPlan();
     }
 
-    public static boolean isCloudPipeline(net.vulkanmod.vulkan.shader.Pipeline pipeline) {
+    public static boolean isCloudPipeline(Pipeline pipeline) {
         return enabled && clouds != null && pipeline == clouds.pipeline();
     }
 

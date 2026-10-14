@@ -8,6 +8,7 @@ import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.renderer.RenderPipelines;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -39,7 +40,8 @@ public enum HostLayoutLane {
             PackRenderingPhase.HAND_SOLID, Pass.HAND, AlphaTest.NON_ZERO, RenderPipelines.GLINT),
     /** Iris LIGHTNING: lightning bolts and dragon death rays. */
     LIGHTNING(ChimeraEntityBridge.Family.LIGHTNING, "gbuffers_lightning", DefaultVertexFormat.POSITION_COLOR,
-            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, RenderPipelines.LIGHTNING, RenderPipelines.DRAGON_RAYS),
+            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, RenderPipelines.LIGHTNING,
+                    RenderPipelines.DRAGON_RAYS),
     /** Iris BEACON: beacon and end gateway beams. */
     BEACON_BEAM(ChimeraEntityBridge.Family.BEACON_BEAM, "gbuffers_beaconbeam", DefaultVertexFormat.BLOCK,
             PackRenderingPhase.BLOCK_ENTITIES, Pass.WORLD, AlphaTest.OFF,
@@ -47,6 +49,10 @@ public enum HostLayoutLane {
     /** Iris LEASH: leads, drawn with gbuffers_basic. */
     LEASH(ChimeraEntityBridge.Family.LEASH, "gbuffers_basic", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, RenderPipelines.LEASH),
+    /** Iris TEXT_BG: text and name-tag backgrounds, with gbuffers_entities_translucent's chain. */
+    TEXT_BG(ChimeraEntityBridge.Family.TEXT_BG, "text_bg", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
+            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.ONE_TENTH,
+            RenderPipelines.TEXT_BACKGROUND, RenderPipelines.TEXT_BACKGROUND_SEE_THROUGH),
     /*
      * The shadow pass. Iris ShadowRenderer holds the ENTITIES phase while it draws entity and
      * block-entity features, so every shadow lane reports it. Iris assigns no shadow key to
@@ -61,7 +67,8 @@ public enum HostLayoutLane {
     SHADOW_LEASH(ChimeraEntityBridge.Family.SHADOW_LEASH, "shadow_leash", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, RenderPipelines.LEASH),
     /** Iris SHADOW_LIGHTNING: lightning bolts, through shadow_lightning, shadow_entities and shadow. */
-    SHADOW_LIGHTNING(ChimeraEntityBridge.Family.SHADOW_LIGHTNING, "shadow_lightning", DefaultVertexFormat.POSITION_COLOR,
+    SHADOW_LIGHTNING(ChimeraEntityBridge.Family.SHADOW_LIGHTNING, "shadow_lightning",
+            DefaultVertexFormat.POSITION_COLOR,
             PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, RenderPipelines.LIGHTNING),
     /** Iris GLINT -> SHADOW_ENTITIES_CUTOUT: glint layers on items already in the map. */
     SHADOW_GLINT(ChimeraEntityBridge.Family.SHADOW_GLINT, "shadow_glint", DefaultVertexFormat.POSITION_TEX,
@@ -71,7 +78,8 @@ public enum HostLayoutLane {
             PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO,
             RenderPipelines.TEXT, RenderPipelines.TEXT_POLYGON_OFFSET, RenderPipelines.TEXT_SEE_THROUGH),
     /** Iris SHADOW_TEXT_BG: text and name tag backgrounds. */
-    SHADOW_TEXT_BG(ChimeraEntityBridge.Family.SHADOW_TEXT_BG, "shadow_text_bg", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
+    SHADOW_TEXT_BG(ChimeraEntityBridge.Family.SHADOW_TEXT_BG, "shadow_text_bg",
+            DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO,
             RenderPipelines.TEXT_BACKGROUND, RenderPipelines.TEXT_BACKGROUND_SEE_THROUGH),
     /** Iris SHADOW_BASIC: the boat water mask, depth only like its host pipeline. */
@@ -192,6 +200,6 @@ public enum HostLayoutLane {
 
     /** The lanes one pack program serves, world lane first. */
     public static List<HostLayoutLane> forProgram(String program) {
-        return java.util.Arrays.stream(values()).filter(lane -> lane.program.equals(program)).toList();
+        return Arrays.stream(values()).filter(lane -> lane.program.equals(program)).toList();
     }
 }

@@ -1,5 +1,6 @@
 package net.chimera.render.vertex;
 
+import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.vulkanmod.render.vertex.VertexBuilder;
 import org.lwjgl.system.MemoryUtil;
 
@@ -7,7 +8,7 @@ import java.util.Arrays;
 
 /** Compressed host vertex writer with two scalar material attributes. */
 public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVertexBuilder {
-    private final net.chimera.shaderpack.TerrainMaterialPlan materialPlan;
+    private final TerrainMaterialPlan materialPlan;
     private final int vertexSize;
     private int materialId = -1;
     private int renderType = -1;
@@ -23,12 +24,12 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     private long lastPointer;
 
     public ChimeraExtVertexBuilder() {
-        this(net.chimera.shaderpack.TerrainMaterialPlan.legacy());
+        this(TerrainMaterialPlan.legacy());
     }
 
-    public ChimeraExtVertexBuilder(net.chimera.shaderpack.TerrainMaterialPlan materialPlan) {
+    public ChimeraExtVertexBuilder(TerrainMaterialPlan materialPlan) {
         this.materialPlan = materialPlan == null
-                ? net.chimera.shaderpack.TerrainMaterialPlan.legacy() : materialPlan;
+                ? TerrainMaterialPlan.legacy() : materialPlan;
         this.vertexSize = this.materialPlan.stride();
     }
 
