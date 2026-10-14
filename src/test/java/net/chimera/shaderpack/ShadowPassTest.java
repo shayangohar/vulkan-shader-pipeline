@@ -68,7 +68,8 @@ final class ShadowPassTest {
         String vertex = plan.convertedVertex();
         for (String line : List.of("layout(location = 6) in uvec4 EntityIds;",
                 "return ProjMat * ModelViewMat * chimeraEntityVertexValue();",
-                "mat3(ModelViewMat) * chimeraNormalValue()", "TextureMat * chimeraTexCoord0Value()",
+                "transpose(inverse(mat3(ModelViewMat))) * chimeraNormalValue()",
+                "TextureMat * chimeraTexCoord0Value()",
                 "chimeraEntityId = EntityIds.x;", "chimeraBlockEntityId = EntityIds.y;",
                 "layout(binding = 2) uniform ChimeraShadowUniforms",
                 "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);")) {

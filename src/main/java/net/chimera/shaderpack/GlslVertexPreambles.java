@@ -582,9 +582,17 @@ final class GlslVertexPreambles {
     }
 
     /**
+     * gl_NormalMatrix for a model view: its inverse transpose, as Iris serves iris_NormalMat and
+     * iris_NormalMatrix. mat3 of the model view is the same only for a pure rotation; nausea and
+     * the portal warp stretch the model view, and then it tilts every normal a pack reads.
+     */
+    static String normalMatrix(String modelView) {
+        return "transpose(inverse(mat3(" + modelView + ")))";
+    }
+
+    /**
      * Lanes drawn on the host's own vertex layout (particles, weather, sky and the host-layout
-     * lanes): as in Iris's VanillaTransformer, gl_Color carries the host ColorModulator and
-     * gl_NormalMatrix is the model-view normal matrix.
+     * lanes): as in Iris's VanillaTransformer, gl_Color carries the host ColorModulator.
      */
     static boolean nativeLayoutPreamble(String preamble) {
         return preamble == PARTICLE_VERTEX_PREAMBLE || preamble == LINE_VERTEX_PREAMBLE

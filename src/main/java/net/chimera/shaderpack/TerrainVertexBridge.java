@@ -733,7 +733,7 @@ final class TerrainVertexBridge {
         replacements.putIfAbsent("at_midBlock", "chimeraMidBlockValue().xyz");
         replacements.putIfAbsent("at_tangent", "chimeraTangentValue()");
         replacements.putIfAbsent("gl_ModelViewMatrix", "gbufferModelView");
-        replacements.putIfAbsent("gl_NormalMatrix", "mat3(gbufferModelView)");
+        replacements.putIfAbsent("gl_NormalMatrix", GlslVertexPreambles.normalMatrix("gbufferModelView"));
         replacements.putIfAbsent("gl_ProjectionMatrix", "(MVP * inverse(gbufferModelView))");
         replacements.putIfAbsent("gl_ModelViewProjectionMatrix", "MVP");
         Matcher legacyAttributes = TERRAIN_ATTRIBUTE_DECL.matcher(source == null ? "" : source);

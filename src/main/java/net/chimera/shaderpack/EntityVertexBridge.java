@@ -80,7 +80,7 @@ public final class EntityVertexBridge {
     static Map<String, String> entityShadowMatrixBuiltinReplacements() {
         return Map.of(
                 "gl_ModelViewMatrix", "ModelViewMat",
-                "gl_NormalMatrix", "mat3(ModelViewMat)",
+                "gl_NormalMatrix", GlslVertexPreambles.normalMatrix("ModelViewMat"),
                 "gl_ProjectionMatrix", "ProjMat",
                 "gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)");
     }
@@ -460,8 +460,7 @@ public final class EntityVertexBridge {
                 Map.entry("gl_MultiTexCoord1", "vec4(vec2(UV2), 0.0, 1.0)"),
                 Map.entry("gl_MultiTexCoord2", "vec4(vec2(UV2), 0.0, 1.0)"),
                 Map.entry("gl_Normal", "Normal.xyz"),
-                Map.entry("gl_NormalMatrix", GlslVertexPreambles.nativeLayoutPreamble(vertexPreamble)
-                        ? "transpose(inverse(mat3(ModelViewMat)))" : "mat3(ModelViewMat)"),
+                Map.entry("gl_NormalMatrix", GlslVertexPreambles.normalMatrix("ModelViewMat")),
                 Map.entry("gl_ModelViewMatrix", "ModelViewMat"),
                 Map.entry("gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)"),
                 Map.entry("gl_ProjectionMatrix", "ProjMat"),

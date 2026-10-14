@@ -60,6 +60,24 @@ final class HostFamilyTest {
         }
     }
 
+    /**
+     * Iris serves gl_NormalMatrix as the model view's inverse transpose on every lane. Nausea and
+     * the portal warp stretch the model view, and mat3 of it then tilts the normals packs read.
+     */
+    @Test
+    void normalMatrixIsTheInverseTranspose() {
+        assertEquals("transpose(inverse(mat3(gbufferModelView)))",
+                TerrainVertexBridge.modernTerrainInputReplacements("").get("gl_NormalMatrix"), "terrain and water");
+        assertEquals("transpose(inverse(mat3(ModelViewMat)))",
+                EntityVertexBridge.entityShadowMatrixBuiltinReplacements().get("gl_NormalMatrix"), "shadow entities");
+        String vertex = "#version 120\nvarying vec3 normal;\n"
+                + "void main() { normal = gl_NormalMatrix * gl_Normal; gl_Position = ftransform(); }\n";
+        String fragment = "#version 120\nvarying vec3 normal;\nvoid main() { gl_FragColor = vec4(normal, 1); }\n";
+        var entity = EntityVertexBridge.convertEntityVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        assertTrue(entity.source().contains("normal = transpose(inverse(mat3(ModelViewMat))) * Normal.xyz;"),
+                "entities: " + entity.source());
+    }
+
     @Test
     void handInputsAndProjection() {
         String vertex = """
