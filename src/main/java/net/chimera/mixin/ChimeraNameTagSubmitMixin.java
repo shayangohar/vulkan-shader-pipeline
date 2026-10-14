@@ -12,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Stores the submitting entity's identity on a name tag node, as text nodes do: the name tag
- * renders later, in NameTagFeatureRenderer, through the entity's text family (Iris TEXT).
+ * Marks a name tag a world entity submitted: it renders later, in NameTagFeatureRenderer, as
+ * Iris TEXT. Unlike a text node it keeps none of the submitter's ids (SubmissionIdentity.NAME_TAG).
  */
 @Mixin(SubmitNodeStorage.NameTagSubmit.class)
 public abstract class ChimeraNameTagSubmitMixin implements ChimeraEntitySubmission {
@@ -32,7 +32,7 @@ public abstract class ChimeraNameTagSubmitMixin implements ChimeraEntitySubmissi
             double distanceToCameraSq,
             CallbackInfo callback
     ) {
-        this.chimera$identity = SubmissionIdentity.current();
+        this.chimera$identity = SubmissionIdentity.current().worldEntity() ? SubmissionIdentity.NAME_TAG : null;
     }
 
     @Override

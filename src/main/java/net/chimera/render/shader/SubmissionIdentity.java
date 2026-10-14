@@ -12,6 +12,13 @@ public record SubmissionIdentity(boolean worldEntity, int entityId, int blockEnt
     /** A node no world entity submitted; its ids are never read. */
     public static final SubmissionIdentity NONE = new SubmissionIdentity(false, 0, 0, FAMILY_NONE);
 
+    /**
+     * A world entity's name tag. Iris 1.21.11 gives it no ids: NameTagFeatureRenderer runs after
+     * the model-part and flame renderers reset the current entity and block entity to 0, and
+     * nothing restores the submitter's, so its glyphs draw as plain TEXT.
+     */
+    public static final SubmissionIdentity NAME_TAG = new SubmissionIdentity(true, 0, 0, FAMILY_ENTITY);
+
     /** The identity of whatever ChimeraEntityBridge is submitting now. */
     public static SubmissionIdentity current() {
         if (!ChimeraEntityBridge.isSubmittingEntity()) return NONE;
