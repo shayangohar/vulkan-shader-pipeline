@@ -22,7 +22,7 @@ import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_REPEAT;
 import static org.lwjgl.vulkan.VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST;
 
 /** One pack-owned noisetex image for the narrow real-pack post path. */
-public final class PackNoiseTexture implements AutoCloseable {
+public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
     private static final int MAX_ENCODED_BYTES = 8 * 1024 * 1024;
     private static final int MAX_DIMENSION = 4096;
     private static final long MAX_PIXELS = 16L * 1024L * 1024L;

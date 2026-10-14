@@ -53,9 +53,6 @@
     "gbuffers_textured"
   ],
   "photon_v1.3b.zip": [
-    "deferred",
-    "deferred1",
-    "deferred4",
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",

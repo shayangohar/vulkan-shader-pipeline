@@ -1,7 +1,10 @@
 package net.chimera.shaderpack;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -115,6 +118,55 @@ final class PackFrontEndTest {
         PackResourceDeclaration png = new PackResourceDeclaration("texture.composite.colortex13",
                 "composite", "colortex13", "image/galaxy.png", PackResourceKind.PACK_TEXTURE);
         assertTrue(PackResourcePlan.appliesTo(png, "sampler2D"), "a PNG declaration applies as before");
+    }
+
+    /** Iris raw declarations: words name the dimension; Chimera uploads only an unconverted layout. */
+    @Test
+    void rawTextureSpecs() {
+        RawTextureSpec scattering = RawTextureSpec.parse(
+                "image/atmosphere/scattering.dat TEXTURE_3D RGB16F 32 64 32 RGB HALF_FLOAT");
+        assertTrue(scattering != null && scattering.dimensions() == 3 && scattering.unsupportedReason() == null
+                        && scattering.storage().uploadedChannels() == 4 && scattering.requiredBytes() == 393216,
+                "Photon scattering LUT: " + scattering);
+        RawTextureSpec worley = RawTextureSpec.parse("image/worley.dat TEXTURE_3D R8 64 64 64 RED UNSIGNED_BYTE");
+        assertTrue(worley != null && worley.unsupportedReason() == null && worley.requiredBytes() == 262144,
+                "Photon worley noise: " + worley);
+        // GL_UNPACK_ALIGNMENT 4: a 3-byte row is read from a 4-byte stride, the last row unpadded.
+        RawTextureSpec odd = RawTextureSpec.parse("lut.dat TEXTURE_2D R8 3 2 RED UNSIGNED_BYTE");
+        assertTrue(odd != null && odd.dimensions() == 2 && odd.rowStride() == 4 && odd.requiredBytes() == 7,
+                "row alignment: " + odd);
+        assertTrue(RawTextureSpec.parse("line.dat TEXTURE_1D RGBA8 16 RGBA UNSIGNED_BYTE").dimensions() == 1,
+                "six words are 1D");
+        for (String unsupported : List.of("a.dat TEXTURE_2D RGB16F 4 4 RGB FLOAT",
+                "a.dat TEXTURE_2D RGBA8 4 4 BGRA UNSIGNED_BYTE", "a.dat TEXTURE_2D R32 4 4 RED UNSIGNED_INT",
+                "a.dat TEXTURE_3D R8 4 4 RED UNSIGNED_BYTE")) {
+            RawTextureSpec spec = RawTextureSpec.parse(unsupported);
+            assertTrue(spec == null || spec.unsupportedReason() != null, "converted or malformed: " + unsupported);
+        }
+    }
+
+    /** A volume a deferred pass samples binds as a pack file, sampled as its .mcmeta says. */
+    @Test
+    void rawTextureBinding(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Path lut = Files.createDirectories(shaders.resolve("image")).resolve("lut.dat");
+        Files.writeString(shaders.resolve("deferred.fsh"), "#version 120\nuniform sampler3D depthtex0;\n"
+                + "varying vec2 texcoord;\n"
+                + "void main() { gl_FragData[0] = texture3D(depthtex0, vec3(texcoord, 0.5)); }\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "texture.deferred.depthtex0 = image/lut.dat TEXTURE_3D RGB16F 2 2 2 RGB HALF_FLOAT\n");
+        Files.writeString(shaders.resolve("image/lut.dat.mcmeta"), "{\"texture\": {\"blur\": true, \"clamp\": true}}");
+        Files.write(lut, new byte[48]);
+        PackResourceBinding volume = PackProbe.analyze(root).plan().resources().binding("deferred", "depthtex0");
+        assertTrue(volume != null && volume.kind() == PackResourceKind.RAW_TEXTURE
+                        && volume.status() == PackResourceStatus.PACK_FILE
+                        && volume.filter().equals("linear") && volume.wrap().equals("clamp"),
+                "raw volume binding: " + volume);
+        Files.write(lut, new byte[40]);
+        PackResourceBinding truncated = PackProbe.analyze(root).plan().resources().binding("deferred", "depthtex0");
+        assertTrue(truncated != null && truncated.status() == PackResourceStatus.UNAVAILABLE
+                        && truncated.deviations().contains("PACK_RAW_TEXTURE_SIZE_MISMATCH:texture.deferred.depthtex0"),
+                "a short file must not upload: " + truncated);
     }
 
     /** program.<folder>/<name>.enabled with a declared-but-off toggle disables, as in Iris. */

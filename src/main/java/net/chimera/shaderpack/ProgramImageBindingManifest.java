@@ -56,7 +56,7 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
             case DEPTH -> Kind.DEPTH_TARGET;
             case SHADOW_DEPTH -> Kind.SHADOW_DEPTH;
             case SHADOW_COLOR -> Kind.SHADOW_COLOR;
-            case PACK_TEXTURE, NOISE, GAME_RESOURCE -> Kind.PACK_TEXTURE;
+            case PACK_TEXTURE, NOISE, GAME_RESOURCE, RAW_TEXTURE -> Kind.PACK_TEXTURE;
             case MATERIAL_MAP -> Kind.MATERIAL_MAP;
             default -> throw failure("IMAGE_RESOLVER_MISSING:" + descriptor.symbol());
         };

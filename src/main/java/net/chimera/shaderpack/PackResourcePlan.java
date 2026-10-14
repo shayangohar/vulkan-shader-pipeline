@@ -218,7 +218,10 @@ public final class PackResourcePlan {
             declaration = textureDeclaration(declarations, textureStage, name, samplerType);
         }
         if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
-        Integer overriddenTarget = declaration == null ? null : targetIndex(name);
+        // A 1D or 3D raw texture is its own uniform under Iris (TextureTransformer renames it by
+        // type), so a pass writing the same-named target never takes it back.
+        Integer overriddenTarget = declaration == null || !appliesTo(declaration, "sampler2D") ? null
+                : targetIndex(name);
         if (overriddenTarget != null && deactivatedOverrides.contains(overriddenTarget)) {
             // An earlier pass of this chain wrote the target: it now samples the target.
             deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
@@ -242,12 +245,7 @@ public final class PackResourcePlan {
                                                        PackResourceDeclaration declaration, Path shadersDir,
                                                        List<String> deviations) {
         if (declaration.kind() == PackResourceKind.RAW_TEXTURE) {
-            // Planned and matched by type, but no raw upload path serves it yet: the program
-            // must not sample something else in its place.
-            deviations.add("PACK_RAW_TEXTURE_UNSUPPORTED:" + declaration.key());
-            return new PackResourceBinding(program, name, declaration.key(),
-                    PackResourceKind.RAW_TEXTURE, declaration.source(), slot, "linear", "repeat",
-                    PackResourceStatus.UNSUPPORTED, deviations);
+            return rawBinding(program, name, slot, declaration, shadersDir, deviations);
         }
         boolean game = isNamespacedSource(declaration.source());
         String key = name.equals("noisetex") ? "noisetex" : declaration.key();
@@ -281,6 +279,47 @@ public final class PackResourcePlan {
         return new PackResourceBinding(program, name, key, kind,
                 declaration.source(), resolvedSlot, filter, wrap,
                 PackResourceStatus.UNAVAILABLE, deviations);
+    }
+
+    /**
+     * A raw texture (RawTextureSpec): the file's bytes uploaded as a 1D, 2D or 3D image and
+     * sampled as its .mcmeta says (Iris GlTexture: nearest and repeat without it). A format
+     * Chimera cannot upload unchanged stays unsupported, so the program never samples something
+     * else in its place.
+     */
+    private static PackResourceBinding rawBinding(String program, String name, int slot,
+                                                  PackResourceDeclaration declaration, Path shadersDir,
+                                                  List<String> deviations) {
+        String key = declaration.key();
+        RawTextureSpec spec = RawTextureSpec.parse(declaration.source());
+        if (spec == null || spec.unsupportedReason() != null) {
+            deviations.add("PACK_RAW_TEXTURE_UNSUPPORTED:" + key);
+            return new PackResourceBinding(program, name, key, PackResourceKind.RAW_TEXTURE,
+                    declaration.source(), slot, "linear", "repeat", PackResourceStatus.UNSUPPORTED, deviations);
+        }
+        Path file = resolvePath(shadersDir, spec.file());
+        String status;
+        if (file == null) {
+            status = isUnsafePath(spec.file()) ? "PACK_TEXTURE_PATH_UNSAFE:" : "PACK_TEXTURE_MISSING:";
+        } else {
+            status = rawSize(file) < spec.requiredBytes() ? "PACK_RAW_TEXTURE_SIZE_MISMATCH:"
+                    : "PACK_RAW_TEXTURE_APPLIED:";
+        }
+        deviations.add(status + key);
+        boolean applied = status.equals("PACK_RAW_TEXTURE_APPLIED:");
+        // Vulkan filters an integer image with nearest only.
+        String filter = spec.storage().integer() ? "nearest" : mcmetaFilter(file, "nearest");
+        return new PackResourceBinding(program, name, key, PackResourceKind.RAW_TEXTURE, declaration.source(),
+                slot, filter, mcmetaWrap(file, "repeat"),
+                applied ? PackResourceStatus.PACK_FILE : PackResourceStatus.UNAVAILABLE, deviations);
+    }
+
+    private static long rawSize(Path file) {
+        try {
+            return Files.size(file);
+        } catch (IOException unreadable) {
+            return -1;
+        }
     }
 
     /** A sampler named for a logical target, shadow map, noise texture or material map. */

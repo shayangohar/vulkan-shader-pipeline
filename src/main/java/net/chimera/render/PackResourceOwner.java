@@ -4,6 +4,7 @@ import net.chimera.shaderpack.PackResourceBinding;
 import net.chimera.shaderpack.PackResourceKind;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackResourceStatus;
+import net.chimera.shaderpack.RawTextureSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.Resource;
@@ -20,8 +21,16 @@ import java.util.Optional;
 
 /** Owns immutable pack-sampled images for one pack session. */
 public final class PackResourceOwner implements AutoCloseable {
+    /** One loaded pack image: a PNG or game texture, or a raw texture. */
+    interface LoadedTexture extends AutoCloseable {
+        VulkanImage image();
+
+        @Override
+        void close();
+    }
+
     private final PackResourcePlan plan;
-    private final Map<String, PackNoiseTexture> textures = new HashMap<>();
+    private final Map<String, LoadedTexture> textures = new HashMap<>();
     private final Map<String, String> failures = new HashMap<>();
     private boolean closed;
 
@@ -44,7 +53,7 @@ public final class PackResourceOwner implements AutoCloseable {
                 continue;
             }
             try {
-                PackNoiseTexture texture = binding.status() == PackResourceStatus.PACK_FILE
+                LoadedTexture texture = binding.status() == PackResourceStatus.PACK_FILE
                         ? loadPackFile(binding, shadersDir)
                         : loadGameResource(binding);
                 if (texture == null) {
@@ -59,12 +68,17 @@ public final class PackResourceOwner implements AutoCloseable {
         return owner;
     }
 
-    private static PackNoiseTexture loadPackFile(PackResourceBinding binding, Path shadersDir)
+    private static LoadedTexture loadPackFile(PackResourceBinding binding, Path shadersDir)
             throws IOException {
+        String name = "chimera_pack_" + binding.resourceKey();
+        if (binding.kind() == PackResourceKind.RAW_TEXTURE) {
+            RawTextureSpec spec = RawTextureSpec.parse(binding.source());
+            Path path = spec == null ? null : PackResourcePlan.resolvePath(shadersDir, spec.file());
+            return path == null ? null : PackRawTexture.load(path, spec, name, binding.filter(), binding.wrap());
+        }
         Path path = PackResourcePlan.resolvePath(shadersDir, binding.source());
         if (path == null) return null;
-        return PackNoiseTexture.load(path, "chimera_pack_" + binding.resourceKey(),
-                binding.filter(), binding.wrap());
+        return PackNoiseTexture.load(path, name, binding.filter(), binding.wrap());
     }
 
     private static PackNoiseTexture loadGameResource(PackResourceBinding binding) throws IOException {
@@ -102,7 +116,7 @@ public final class PackResourceOwner implements AutoCloseable {
     }
 
     public VulkanImage image(String resourceKey) {
-        PackNoiseTexture texture = textures.get(resourceKey);
+        LoadedTexture texture = textures.get(resourceKey);
         return texture == null ? null : texture.image();
     }
 
@@ -134,7 +148,7 @@ public final class PackResourceOwner implements AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
-        for (PackNoiseTexture texture : textures.values()) {
+        for (LoadedTexture texture : textures.values()) {
             texture.close();
         }
         textures.clear();
