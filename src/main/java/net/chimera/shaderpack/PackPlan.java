@@ -73,7 +73,7 @@ public record PackPlan(
         return program != null && program.executable() && resolution.shouldAttempt(name)
                 && resources.programAllowed(name)
                 && (!advancedResources.dependentPrograms().contains(name)
-                || advancedResources.capabilityPossible())
+                || advancedResources.imageProgramsServable())
                 && (!advancedResources.bufferDependentPrograms().contains(name)
                 || advancedResources.storageBufferProgramSupported(name))
                 && (!advancedResources.customImageFeaturePrograms().contains(name)

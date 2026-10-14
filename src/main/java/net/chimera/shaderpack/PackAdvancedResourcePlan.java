@@ -750,6 +750,11 @@ public final class PackAdvancedResourcePlan {
         return shadowCompute != null && shadowCompute.supported()
                 && requiredImagesSupported(shadowCompute, images);
     }
+    /**
+     * Whether a program that uses pack images can run. The runtime serves them only once shadowcomp
+     * installs (PackPipelineInstaller.advancedImagesAllowed); without one such a program falls back.
+     */
+    public boolean imageProgramsServable() { return hasSupportedCompute(); }
     public boolean capabilityPossible() {
         ComputeSpec shadowCompute = computeStages.get("shadowcomp");
         boolean imageCompute = images.isEmpty() && computeStages.isEmpty()

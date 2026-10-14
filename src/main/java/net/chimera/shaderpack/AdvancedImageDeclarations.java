@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -301,7 +302,12 @@ final class AdvancedImageDeclarations {
                         && !value.equals("COMPUTE_TEXEL_FETCH_CLAMPED")));
     }
 
-    static boolean usesAdvancedResource(String source, Map<String, PackAdvancedResourcePlan.ImageSpec> images) {
+    /**
+     * Whether a stage reads or writes a pack image: a live image, an image's sampler, or a live
+     * 3D sampler. A 3D sampler a pack raw texture serves ({@code packVolume}) is an ordinary texture.
+     */
+    static boolean usesAdvancedResource(String source, Map<String, PackAdvancedResourcePlan.ImageSpec> images,
+                                        Predicate<String> packVolume) {
         if (source == null) return false;
         Set<String> injectedSamplers = images == null ? Set.of() : images.values().stream()
                 .map(PackAdvancedResourcePlan.ImageSpec::sampler)
@@ -313,7 +319,8 @@ final class AdvancedImageDeclarations {
         Matcher sampler3D = Pattern.compile("\\b(?:sampler3D|isampler3D|usampler3D)\\s+([A-Za-z_]\\w*)")
                 .matcher(source);
         while (sampler3D.find()) {
-            if (usage.liveSamplers().contains(sampler3D.group(1))) return true;
+            String name = sampler3D.group(1);
+            if (usage.liveSamplers().contains(name) && !packVolume.test(name)) return true;
         }
         return usage.liveSamplers().stream().anyMatch(injectedSamplers::contains);
     }

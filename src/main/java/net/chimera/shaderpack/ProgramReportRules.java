@@ -534,7 +534,7 @@ final class ProgramReportRules {
         if (!usesImages && !usesStorage) {
             return false;
         }
-        boolean imagesReady = !usesImages || advanced.capabilityPossible();
+        boolean imagesReady = !usesImages || advanced.imageProgramsServable();
         boolean storageReady = !usesStorage || advanced.storageBufferProgramSupported(program);
         return imagesReady && storageReady;
     }

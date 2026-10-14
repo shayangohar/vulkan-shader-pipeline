@@ -153,15 +153,24 @@ final class PackFrontEndTest {
         Files.writeString(shaders.resolve("deferred.fsh"), "#version 120\nuniform sampler3D depthtex0;\n"
                 + "varying vec2 texcoord;\n"
                 + "void main() { gl_FragData[0] = texture3D(depthtex0, vec3(texcoord, 0.5)); }\n");
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler3D colortex5;\n"
+                + "varying vec2 texcoord;\n"
+                + "void main() { gl_FragData[0] = texture3D(colortex5, vec3(texcoord, 0.5)); }\n");
         Files.writeString(shaders.resolve("shaders.properties"),
                 "texture.deferred.depthtex0 = image/lut.dat TEXTURE_3D RGB16F 2 2 2 RGB HALF_FLOAT\n");
         Files.writeString(shaders.resolve("image/lut.dat.mcmeta"), "{\"texture\": {\"blur\": true, \"clamp\": true}}");
         Files.write(lut, new byte[48]);
-        PackResourceBinding volume = PackProbe.analyze(root).plan().resources().binding("deferred", "depthtex0");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackResourceBinding volume = plan.resources().binding("deferred", "depthtex0");
         assertTrue(volume != null && volume.kind() == PackResourceKind.RAW_TEXTURE
                         && volume.status() == PackResourceStatus.PACK_FILE
                         && volume.filter().equals("linear") && volume.wrap().equals("clamp"),
                 "raw volume binding: " + volume);
+        // A raw volume is an ordinary texture, not an image only an installed shadowcomp serves.
+        assertTrue(!plan.advancedResources().dependentPrograms().contains("deferred")
+                && plan.shouldAttempt("deferred"), "raw volume taken for a pack image");
+        assertTrue(plan.advancedResources().dependentPrograms().contains("composite")
+                && !plan.shouldAttempt("composite"), "an unserved volume needs shadowcomp, as at runtime");
         Files.write(lut, new byte[40]);
         PackResourceBinding truncated = PackProbe.analyze(root).plan().resources().binding("deferred", "depthtex0");
         assertTrue(truncated != null && truncated.status() == PackResourceStatus.UNAVAILABLE

@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -53,8 +54,12 @@ final class GraphicsImageScan {
     }
 
     private void scanProgram(PackProgramPlan program) {
+        // Photon's scattering and worley volumes are raw 3D textures, not images shadowcomp produces.
+        Map<String, PackResourceDeclaration> declarations = plan.settings().resourceDeclarations();
+        Predicate<String> packVolume = sampler ->
+                PackResourcePlan.rawTextureServes(program.name(), sampler, "sampler3D", declarations);
         boolean usesAdvanced = program.stages().values().stream().anyMatch(value ->
-                AdvancedImageDeclarations.usesAdvancedResource(value.source(), images));
+                AdvancedImageDeclarations.usesAdvancedResource(value.source(), images, packVolume));
         if (usesAdvanced) {
             dependent.add(program.name());
         }

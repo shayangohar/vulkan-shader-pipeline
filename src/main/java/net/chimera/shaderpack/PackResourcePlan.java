@@ -206,6 +206,15 @@ public final class PackResourcePlan {
         return standardBinding(program, name, programResource(name, waterShadow), slot, shadersDir, deviations);
     }
 
+    /** Whether a pack raw texture serves this sampler, of this GLSL type, in this program. */
+    static boolean rawTextureServes(String program, String sampler, String samplerType,
+                                    Map<String, PackResourceDeclaration> declarations) {
+        PackResourceDeclaration declaration = declarationFor(program,
+                new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations, Set.of(),
+                new ArrayList<>());
+        return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE;
+    }
+
     /** The pack declaration that serves this sampler, if any; an override a pass deactivated is none. */
     private static PackResourceDeclaration declarationFor(String program, UniformRegistry.SamplerBinding sampler,
                                                           Map<String, PackResourceDeclaration> declarations,
