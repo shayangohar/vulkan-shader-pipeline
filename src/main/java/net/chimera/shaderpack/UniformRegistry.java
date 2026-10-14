@@ -85,7 +85,7 @@ public final class UniformRegistry {
             return this == SHADOW || this == SHADOW_ENTITY;
         }
 
-        /** Stages whose entityId and blockEntityId come from the EntityIds input, not the pack UBO. */
+        /** Stages whose entity identities (entityId, blockEntityId, currentRenderedItemId) come from EntityIds. */
         public boolean perVertexEntityIdentity() {
             return this == ENTITY || this == BLOCK || this == HAND || this == SHADOW_ENTITY;
         }
@@ -632,7 +632,7 @@ public final class UniformRegistry {
 
     /** Iris EntityPatcher names served per vertex from EntityIds, not from the pack UBO. */
     static boolean isEntityIdentity(String name) {
-        return name.equals("entityId") || name.equals("blockEntityId");
+        return EntityVertexBridge.ENTITY_ID_NAMES.contains(name);
     }
 
     /** Accounts for stage-local legacy shadow matrix aliases during planning. */

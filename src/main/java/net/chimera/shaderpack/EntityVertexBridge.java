@@ -19,29 +19,38 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
  * Converts entity, block, hand, crumbling and particle vertex stages onto the extended entity
- * vertex contract, and rewrites Iris's per-vertex entity identities (entityId, blockEntityId).
+ * vertex contract, and rewrites Iris's per-vertex entity identities (entityId, blockEntityId,
+ * currentRenderedItemId).
  */
 public final class EntityVertexBridge {
     private EntityVertexBridge() {}
 
     static final Pattern ENTITY_ID_DECLARATION = Pattern.compile(
             "(?m)\\b(uniform|attribute|in)\\s+(int|float)\\s+"
-                    + "([^;{}]*\\b(?:entityId|blockEntityId)\\b[^;{}]*);\\s*");
+                    + "([^;{}]*\\b(?:entityId|blockEntityId|currentRenderedItemId)\\b[^;{}]*);\\s*");
 
     /**
      * Iris EntityPatcher identities: each name reads one component of the
      * per-vertex EntityIds input (Iris iris_Entity), passed flat to fragments.
      */
-    static final List<String> ENTITY_ID_NAMES = List.of("entityId", "blockEntityId");
+    static final List<String> ENTITY_ID_NAMES = List.of("entityId", "blockEntityId", "currentRenderedItemId");
 
     static final String ENTITY_ID_VARYING = "chimeraEntityId";
 
     static String entityIdVarying(String name) {
-        return name.equals("entityId") ? ENTITY_ID_VARYING : "chimeraBlockEntityId";
+        return switch (name) {
+            case "entityId" -> ENTITY_ID_VARYING;
+            case "blockEntityId" -> "chimeraBlockEntityId";
+            default -> "chimeraRenderedItemId";
+        };
     }
 
     static String entityIdComponent(String name) {
-        return name.equals("entityId") ? "x" : "y";
+        return switch (name) {
+            case "entityId" -> "x";
+            case "blockEntityId" -> "y";
+            default -> "z";
+        };
     }
 
     /**
@@ -465,7 +474,8 @@ public final class EntityVertexBridge {
                 // Vulkan's index counts from the draw's first vertex, as GL's does.
                 Map.entry("gl_VertexID", "gl_VertexIndex"),
                 Map.entry("entityId", entityIdExpression(layout, "entityId")),
-                Map.entry("blockEntityId", entityIdExpression(layout, "blockEntityId")));
+                Map.entry("blockEntityId", entityIdExpression(layout, "blockEntityId")),
+                Map.entry("currentRenderedItemId", entityIdExpression(layout, "currentRenderedItemId")));
         // ProjMat and gl_ProjectionMatrix belong to the host raster path.
         // Iris gbufferProjection uniforms stay in the shared pack UBO so
         // they use the legacy clip-depth convention instead.
@@ -527,7 +537,7 @@ public final class EntityVertexBridge {
         return wrapped;
     }
 
-    /** The entityId and blockEntityId types either stage declares, in {@code ENTITY_ID_NAMES} order. */
+    /** The entity identity types either stage declares, in {@code ENTITY_ID_NAMES} order. */
     static Map<String, String> entityIdTypes(String strippedVertex, String fragmentSource) {
         Map<String, String> types = new LinkedHashMap<>();
         for (String name : ENTITY_ID_NAMES) {

@@ -10,6 +10,7 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import net.minecraft.client.renderer.RenderPipelines;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -231,6 +232,54 @@ final class WorldEntityAdapterTest {
         assertTrue(convertedTerrain.source().contains("const int blockEntityId = 0;")
                         && !convertedTerrain.source().contains("EntityIds"),
                 "terrain blockEntityId must read GL's unbound default, not entity data");
+    }
+
+    /**
+     * Iris EntityPatcher: currentRenderedItemId reads iris_Entity.z on the entity layout (Photon's
+     * get_material_mask takes a dropped item's or a held item's id from it), and stays Iris's
+     * CommonUniforms value, 0 by the time the batch draws, on a host layout.
+     */
+    @Test
+    void renderedItemIdBridge(@TempDir Path shaders) throws IOException {
+        String vertex = """
+                #version 120
+                uniform int entityId;
+                uniform int currentRenderedItemId;
+                flat varying int material;
+                void main() {
+                    int id = max(entityId - 10000, 0);
+                    material = id == 100 ? max(currentRenderedItemId - 10000, 0) : id;
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = """
+                #version 120
+                flat varying int material;
+                void main() { gl_FragColor = vec4(float(material)); }
+                """;
+        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+                fragment, vertex, UniformRegistry.Stage.ENTITY, null, false);
+        assertTrue(plan.executable(), "currentRenderedItemId was not treated as vertex data: "
+                + plan.effective(UniformRegistry.Stage.ENTITY).deviations());
+        LegacyGlslConverter.TerrainVertexConversion converted =
+                EntityVertexBridge.convertEntityVertex(vertex, null, fragment, Map.of("material", 0));
+        assertTrue(converted != null, "entity vertex bridge rejected currentRenderedItemId");
+        assertTrue(converted.source().contains("chimeraRenderedItemId = EntityIds.z")
+                        && converted.source().contains("int(chimeraRenderedItemId)")
+                        && !converted.source().contains("uniform int currentRenderedItemId"),
+                "currentRenderedItemId must read EntityIds.z: " + converted.source());
+
+        String hostLayout = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
+        assertTrue(hostLayout.contains("max((0) - 10000, 0)")
+                        && !hostLayout.contains("uniform int currentRenderedItemId"),
+                "a host layout reads the item as 0: " + hostLayout);
+
+        assertEquals(0, PackItemIdResolver.empty().renderedItemId("minecraft:stick"),
+                "no item.properties: Iris's empty map reads 0");
+        Files.writeString(shaders.resolve("item.properties"), "item.10036 = torch\n");
+        PackItemIdResolver items = PackItemIdResolver.parse(shaders, Map.of()).resolver();
+        assertEquals(10036, items.renderedItemId("minecraft:torch"), "listed item");
+        assertEquals(PackItemIdResolver.UNMAPPED, items.renderedItemId("minecraft:stick"), "unlisted item");
     }
 
     private static void verifyEntityIdResolver(Path shaders) throws IOException {

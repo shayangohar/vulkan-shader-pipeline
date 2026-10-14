@@ -572,6 +572,13 @@ public final class ChimeraEntityBridge {
         return enabled ? currentBlockEntityId : 0;
     }
 
+    /** Iris setCurrentBlockEntity: replaces the current block entity id and returns the one replaced. */
+    public static int replaceBlockEntityId(int blockEntityId) {
+        int previous = currentBlockEntityId;
+        if (enabled) currentBlockEntityId = blockEntityId;
+        return previous;
+    }
+
     /** Marks the LevelRenderer interval in which world entities are submitted. */
     public static void beginWorldSubmissionWindow() {
         // Reserve the session-stable source before ModelFeatureRenderer moves

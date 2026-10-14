@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "f747949e79388441f6f1d20259960f78dadec0b0560d5fe978cb4f1268a07b40",
+      "reportSha256": "07e619d194d8034594c17e02931224c3230ce2040c1e26a522de842ea428512e",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -62,7 +62,6 @@
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",
         "FIXED_VERTEX_SUBSTITUTION",
-        "HAND_ITEM_ID_DEFAULTED",
         "HAND_STATE_FIXED_TO_HOST",
         "HAND_TRANSLUCENT_ITEM_PHASE",
         "HAND_VERTEX_BRIDGE",

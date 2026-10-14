@@ -98,7 +98,6 @@ public final class PackMaterialResolver {
 
         Map<String, Integer> ids = new TreeMap<>();
         Map<String, List<Selector>> selectors = new TreeMap<>();
-        Set<String> conflicts = new TreeSet<>();
         Set<String> deviations = new TreeSet<>();
         String sourceHash;
         try {
@@ -110,7 +109,7 @@ public final class PackMaterialResolver {
             for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
                 if (PackSettingsPlan.PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
                     // A directive line ends the open continuation.
-                    parseLine(joiner.finish(), ids, selectors, conflicts, deviations);
+                    parseLine(joiner.finish(), ids, selectors, deviations);
                 }
                 Matcher directive = CONDITION.matcher(raw);
                 if (directive.matches()) {
@@ -130,12 +129,12 @@ public final class PackMaterialResolver {
                 }
                 String line = joiner.accept(raw);
                 if (line != null) {
-                    parseLine(line, ids, selectors, conflicts, deviations);
+                    parseLine(line, ids, selectors, deviations);
                 }
             }
             String last = failed ? null : joiner.finish();
             if (last != null) {
-                parseLine(last, ids, selectors, conflicts, deviations);
+                parseLine(last, ids, selectors, deviations);
             }
         } catch (IOException e) {
             deviations.add("BLOCK_PROPERTIES_READ_FAILED");
@@ -209,7 +208,6 @@ public final class PackMaterialResolver {
             String rawLine,
             Map<String, Integer> ids,
             Map<String, List<Selector>> selectors,
-            Set<String> conflicts,
             Set<String> deviations
     ) {
         String line = rawLine;
@@ -247,13 +245,9 @@ public final class PackMaterialResolver {
                 deviations.add("BLOCK_PROPERTIES_INVALID");
                 continue;
             }
-            if (conflicts.contains(normalized)) {
-                continue;
-            }
+            // Iris BlockMaterialMapping (putIfAbsent): the first mapping in file order wins.
             Integer previous = ids.putIfAbsent(normalized, id);
             if (previous != null && previous != id) {
-                ids.remove(normalized);
-                conflicts.add(normalized);
                 deviations.add("BLOCK_MAPPING_CONFLICT");
             }
         }

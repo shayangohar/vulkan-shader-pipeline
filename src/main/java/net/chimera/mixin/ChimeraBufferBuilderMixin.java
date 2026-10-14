@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.RenderedItemIds;
 import net.chimera.render.vertex.ChimeraEntityVertexData;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import org.lwjgl.system.MemoryUtil;
@@ -99,7 +100,7 @@ public abstract class ChimeraBufferBuilderMixin {
                 (short) ChimeraEntityBridge.currentEntityId());
         MemoryUtil.memPutShort(pointer + chimera$ids + 2L,
                 (short) ChimeraEntityBridge.currentBlockEntityId());
-        MemoryUtil.memPutShort(pointer + chimera$ids + 4L, (short) 0);
+        MemoryUtil.memPutShort(pointer + chimera$ids + 4L, (short) RenderedItemIds.current());
         MemoryUtil.memPutShort(pointer + chimera$ids + 6L, (short) 0);
         MemoryUtil.memPutFloat(pointer + chimera$mid, 0.0f);
         MemoryUtil.memPutFloat(pointer + chimera$mid + 4L, 0.0f);

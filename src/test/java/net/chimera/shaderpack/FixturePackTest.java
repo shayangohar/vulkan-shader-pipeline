@@ -813,7 +813,8 @@ final class FixturePackTest {
             assertEquals(-7, result.resolver().resolveName("diorite"), "signed material id");
             assertEquals(8, result.resolver().resolveName("minecraft:dirt"), "duplicate material id");
             assertEquals(-1, result.resolver().resolveName("minecraft:oak_planks"), "selector mapping");
-            assertEquals(-1, result.resolver().resolveName("minecraft:stone"), "conflicting mapping");
+            assertEquals(11, result.resolver().resolveName("minecraft:stone"),
+                    "conflicting mapping: the first wins, as in Iris BlockMaterialMapping");
             // State selectors, as Iris reads them: BSL and Complementary map
             // tall grass by half and leaves by waterlogged.
             PackMaterialResolver resolver = result.resolver();

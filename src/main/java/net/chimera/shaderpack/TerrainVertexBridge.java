@@ -152,7 +152,7 @@ final class TerrainVertexBridge {
         vertex = LegacyGlslConverter.expandModernVaryingLists(vertex);
         fragment = LegacyGlslConverter.expandModernVaryingLists(fragment);
         vertex = withoutUnreachableFunctions(vertex);
-        // On the entity layout both stages read entityId and blockEntityId from EntityIds.
+        // On the entity layout both stages read the entity identities from EntityIds.
         Map<String, String> entityIdTypes = entityInputs
                 ? EntityVertexBridge.entityIdTypes(stripComments(vertex), fragment) : Map.of();
         vertex = interfacePlan == null

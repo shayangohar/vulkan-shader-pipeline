@@ -6,6 +6,7 @@ import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.render.shader.RenderedItemIds;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.HandLightDirectives;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
@@ -240,6 +241,7 @@ final class PackSessionLifecycle {
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
         ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
         PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
+        RenderedItemIds.install(PackItemIdResolver.empty());
         PackUniformProvider.resetSession();
     }
 
@@ -487,6 +489,7 @@ final class PackSessionLifecycle {
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
             PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
+            RenderedItemIds.install(PackItemIdResolver.empty());
             PackUniformProvider.installRuntimeSettings(null);
             pass.packNeedsHdrDepth = false;
             return;
@@ -580,6 +583,7 @@ final class PackSessionLifecycle {
                 items.deviations().isEmpty() && handLight.deviations().isEmpty() ? ""
                         : " " + items.deviations() + handLight.deviations());
         PackUniformProvider.installHeldItems(items.resolver(), handLight.oldHandLight());
+        RenderedItemIds.install(items.resolver());
     }
 
     /** Loads the session's pack textures, material maps, advanced images, storage buffers and shadowcomp. */

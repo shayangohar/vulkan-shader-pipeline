@@ -216,6 +216,11 @@ final class IrisCoreProfile {
         if (types.containsKey("blockEntityId")) {
             replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
         }
+        // CapturedRenderingState's item is 0 by the time a host-layout batch draws.
+        if (types.containsKey("currentRenderedItemId")) {
+            replacements.put("currentRenderedItemId",
+                    "float".equals(types.get("currentRenderedItemId")) ? "(0.0)" : "(0)");
+        }
         return GlslTokenRewriter.replaceIdentifiers(src, replacements);
     }
 

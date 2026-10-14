@@ -7,6 +7,8 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.chimera.render.ChimeraFamilyDraw;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraItemSubmission;
+import net.chimera.render.shader.RenderedItemIds;
 import net.chimera.render.shader.SubmissionIdentity;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.SubmitNodeStorage;
@@ -16,6 +18,7 @@ import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.world.item.ItemDisplayContext;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 
 import java.util.List;
@@ -52,6 +55,32 @@ public abstract class ChimeraItemFeatureRendererMixin {
             Operation<Void> original,
             @Local SubmitNodeStorage.ItemSubmit submit,
             @Local(argsOnly = true) MultiBufferSource.BufferSource bufferSource
+    ) {
+        // Iris MixinItemFeatureRenderer: the ids the node captured are current while it draws.
+        ChimeraItemSubmission ids = (ChimeraItemSubmission) (Object) submit;
+        RenderedItemIds.push(ids.chimera$itemId(), ids.chimera$blockEntityId());
+        try {
+            chimera$drawItem(displayContext, poseStack, buffers, lightCoords, overlayCoords, tintLayers, quads,
+                    renderType, foilType, original, submit, bufferSource);
+        } finally {
+            RenderedItemIds.pop();
+        }
+    }
+
+    @Unique
+    private static void chimera$drawItem(
+            ItemDisplayContext displayContext,
+            PoseStack poseStack,
+            MultiBufferSource buffers,
+            int lightCoords,
+            int overlayCoords,
+            int[] tintLayers,
+            List<BakedQuad> quads,
+            RenderType renderType,
+            ItemStackRenderState.FoilType foilType,
+            Operation<Void> original,
+            SubmitNodeStorage.ItemSubmit submit,
+            MultiBufferSource.BufferSource bufferSource
     ) {
         SubmissionIdentity identity = SubmissionIdentity.ofWorldNode(submit);
         if (buffers != bufferSource

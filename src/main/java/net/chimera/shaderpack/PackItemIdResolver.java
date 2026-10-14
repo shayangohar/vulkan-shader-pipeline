@@ -111,6 +111,14 @@ public final class PackItemIdResolver {
         return namespacedId == null ? UNMAPPED : ids.getOrDefault(namespaced(namespacedId), UNMAPPED);
     }
 
+    /**
+     * Iris's currentRenderedItemId for an item that is not a block item: its listed id, else
+     * {@link #UNMAPPED}, or 0 when the pack has no item.properties (Iris's empty map).
+     */
+    public int renderedItemId(String namespacedId) {
+        return this == EMPTY ? 0 : resolve(namespacedId);
+    }
+
     public Map<String, Integer> mappings() {
         return ids;
     }
