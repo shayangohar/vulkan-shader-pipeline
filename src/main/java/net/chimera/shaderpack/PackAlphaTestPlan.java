@@ -49,29 +49,37 @@ record PackAlphaTestPlan(
 
     static PackAlphaTestPlan forProgram(String programName, String sourceProgram, PackSettingsPlan settings) {
         String name = programName == null ? "" : programName;
-        boolean geometry = name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
-        // Iris TEXT_BG tests ONE_TENTH_ALPHA, the lane's per-draw reference.
-        boolean entity = FamilyAdapterRegistry.isEntityLike(name)
-                || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isGlintFamily(name)
-                || FamilyAdapterRegistry.forProgram(name).family() == FamilyAdapterPlan.Family.TEXT_BG;
-        boolean shadow = FamilyAdapterRegistry.isShadowFamily(name);
-        if (!geometry && !entity && !shadow) {
+        PackAlphaTestPlan irisDefault = irisDefault(name);
+        if (irisDefault == null) {
             return off(false);
         }
-        String key = "alphaTest." + sourceProgram;
-        String value = settings == null ? null : settings.propertyValues().get(key);
-        if (value == null && shadow) {
+        String value = settings == null ? null : settings.propertyValues().get("alphaTest." + sourceProgram);
+        return value == null ? irisDefault : parse(name, value);
+    }
+
+    /** The test Iris gives a program's shader key when the pack sets none; null when it has none. */
+    private static PackAlphaTestPlan irisDefault(String name) {
+        if (FamilyAdapterRegistry.isCloudFamily(name)) {
+            // Iris ShaderKey.CLOUDS: AlphaTests.ONE_TENTH_ALPHA.
+            return new PackAlphaTestPlan(Mode.FIXED, "GREATER", 0.1F, false, List.of());
+        }
+        if (FamilyAdapterRegistry.isShadowFamily(name)) {
             return new PackAlphaTestPlan(Mode.DYNAMIC_SHADOW, "DYNAMIC", 0.0F, false, List.of());
         }
-        if (value == null) {
-            // Iris tests entity programs against the render type's own
-            // threshold (iris_currentAlphaTest); packs rely on it to drop the
-            // transparent texels of layered skins and cutout models.
-            return new PackAlphaTestPlan(entity ? Mode.DYNAMIC_ENTITY : Mode.DYNAMIC_TERRAIN,
-                    "DYNAMIC", 0.0F, false, List.of());
+        // Iris tests entity programs against the render type's own threshold
+        // (iris_currentAlphaTest); packs rely on it to drop the transparent texels of
+        // layered skins and cutout models. Iris TEXT_BG tests ONE_TENTH_ALPHA, the
+        // lane's per-draw reference.
+        if (FamilyAdapterRegistry.isEntityLike(name)
+                || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
+                || FamilyAdapterRegistry.isGlintFamily(name)
+                || FamilyAdapterRegistry.forProgram(name).family() == FamilyAdapterPlan.Family.TEXT_BG) {
+            return new PackAlphaTestPlan(Mode.DYNAMIC_ENTITY, "DYNAMIC", 0.0F, false, List.of());
         }
-        return parse(name, value);
+        if (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")) {
+            return new PackAlphaTestPlan(Mode.DYNAMIC_TERRAIN, "DYNAMIC", 0.0F, false, List.of());
+        }
+        return null;
     }
 
     /**

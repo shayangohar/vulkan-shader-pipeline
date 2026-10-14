@@ -271,9 +271,12 @@ public final class PackPlanBuilder {
                 if (FamilyAdapterRegistry.isEntityLike(name) && !name.equals("gbuffers_damagedblock")) {
                     fragment = EntityOverlayColor.inject(fragment);
                 }
-            } else if (FamilyAdapterRegistry.isShadowFamily(name)) {
+            } else if (FamilyAdapterRegistry.isShadowFamily(name) || (FamilyAdapterRegistry.isCloudFamily(name)
+                    && !AuthoredOutput.producesNothing(vertex, fragment))) {
                 // Iris alpha-tests shadow terrain by layer and entity casters at 0.1; the
                 // shadow pass sets the reference per draw (ChimeraMainPass.renderShadowMap).
+                // Clouds test at a fixed reference; a cloud program that draws nothing keeps
+                // its discarding main, which is how the plan proves it (AuthoredOutput).
                 fragment = alphaTestPlan.injectDrawTest(fragment);
             }
         }
@@ -479,12 +482,12 @@ public final class PackPlanBuilder {
                 deviations.add(PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
                 executable = false;
             } else if (FamilyAdapterRegistry.isCloudFamily(name)) {
-                familyAdapter = familyAdapter.withVertexContract(FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR);
-                acceptVertex(HostLayoutVertexBridge.convertCloudVertex(vertex, vertexFile(), fragment),
+                familyAdapter = familyAdapter.withVertexContract(
+                        FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL);
+                acceptVertex(HostLayoutVertexBridge.convertCloudVertex(vertex, vertexFile(), fragment,
+                                stageMatch.locations(), allowStorageBuffers,
+                                interfacePlan.project("fragment", stage).executableUniforms()),
                         "CLOUD_VERTEX_BRIDGE", "CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
-                if (convertedVertex != null) {
-                    deviations.add("CLOUD_STATE_FIXED_TO_HOST");
-                }
             } else if (FamilyAdapterRegistry.isShadowLaneFamily(name) && hostLayoutFailure == null) {
                 LegacyGlslConverter.TerrainVertexConversion conversion = null;
                 try {
@@ -785,6 +788,7 @@ public final class PackPlanBuilder {
                 || FamilyAdapterRegistry.isWeatherFamily(name)
                 || FamilyAdapterRegistry.isHostLayoutFamily(name)
                 || FamilyAdapterRegistry.isSkyFamily(name)
+                || FamilyAdapterRegistry.isCloudFamily(name)
                 || name.equals("gbuffers_terrain")
                 || name.equals("gbuffers_water");
     }

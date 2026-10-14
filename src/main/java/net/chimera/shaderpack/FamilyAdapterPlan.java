@@ -100,6 +100,13 @@ public record FamilyAdapterPlan(
         SKY_POSITION_COLOR,
         SKY_POSITION_UV,
         SKY_POSITION_COLOR_UV,
+        /**
+         * Vanilla's cloud faces, decoded as Iris's cloud program decodes them, in
+         * DefaultVertexFormat.POSITION_COLOR_NORMAL (PackCloudRenderer).
+         */
+        CLOUD_POSITION_COLOR_NORMAL,
+        /** @deprecated VulkanMod's normal-less cloud mesh; retained so reports from older builds still parse. */
+        @Deprecated
         CLOUD_POSITION_COLOR,
         /** @deprecated retained so reports from older builds still parse. */
         @Deprecated

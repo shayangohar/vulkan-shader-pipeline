@@ -344,17 +344,15 @@ public final class PackPipelines {
     }
 
     public static PackSky buildCloud(PackProgramPlan plan) {
-        return buildSkyLike(plan, UniformRegistry.Stage.CLOUD,
-                DefaultVertexFormat.POSITION_COLOR,
-                "pack_" + (plan == null ? "clouds" : plan.name()),
-                PackAdvancedResourcePlan.empty(), null, plan == null ? null : plan.convertedVertex());
+        return buildCloud(plan, PackAdvancedResourcePlan.empty(), null);
     }
 
+    /** The cloud program over the faces PackCloudRenderer decodes from vanilla's cloud cells. */
     public static PackSky buildCloud(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         return buildSkyLike(plan, UniformRegistry.Stage.CLOUD,
-                DefaultVertexFormat.POSITION_COLOR,
+                DefaultVertexFormat.POSITION_COLOR_NORMAL,
                 "pack_" + (plan == null ? "clouds" : plan.name()), advancedResources, storageOwner,
                 plan == null ? null : plan.convertedVertex());
     }

@@ -12,10 +12,12 @@ import net.vulkanmod.vulkan.shader.Pipeline;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
-/** Routes VulkanMod's direct CloudRenderer pipeline bind through Chimera. */
+/**
+ * Serves PackCloudRenderer's direct pipeline bind the CLOUDS rendering phase, and binds each
+ * pipeline's pack images with its descriptor sets.
+ */
 @Mixin(value = Renderer.class, remap = false)
 public abstract class ChimeraRendererPipelineMixin {
     @WrapMethod(method = "uploadAndBindUBOs")
@@ -32,11 +34,6 @@ public abstract class ChimeraRendererPipelineMixin {
             PackUniformProvider.setRenderingPhase(previous);
         }
     }
-    @ModifyVariable(method = "bindGraphicsPipeline", at = @At("HEAD"), argsOnly = true, require = 1)
-    private GraphicsPipeline chimera$replaceCloudPipeline(GraphicsPipeline host) {
-        return ChimeraSkyBridge.replaceCloudPipeline(host);
-    }
-
     @SuppressWarnings("try") // the binding scope restores descriptor state on close
     @Redirect(method = "uploadAndBindUBOs", at = @At(value = "INVOKE",
             target = "Lnet/vulkanmod/vulkan/shader/Pipeline;bindDescriptorSets(Lorg/lwjgl/vulkan/VkCommandBuffer;I)V"),

@@ -69,7 +69,7 @@ public final class FamilyAdapterRegistry {
             plan("gbuffers_skytextured", FamilyAdapterPlan.Family.SKY,
                     UniformRegistry.Stage.SKY, FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV),
             plan("gbuffers_clouds", FamilyAdapterPlan.Family.CLOUD,
-                    UniformRegistry.Stage.CLOUD, FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR),
+                    UniformRegistry.Stage.CLOUD, FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL),
             plan("gbuffers_weather", FamilyAdapterPlan.Family.WEATHER,
                     UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_PARTICLE),
             // Iris LINES, LINES_TRANSLUCENT and SECONDARY_BLOCK_OUTLINE (ShaderKey.LINES) on the
@@ -115,7 +115,7 @@ public final class FamilyAdapterRegistry {
         }
         if (name.startsWith("gbuffers_cloud")) {
             return new FamilyAdapterPlan(name, FamilyAdapterPlan.Family.CLOUD, UniformRegistry.Stage.CLOUD,
-                    FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR, true, List.of());
+                    FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL, true, List.of());
         }
         if (name.startsWith("gbuffers_weather")) {
             return unsupported(name, FamilyAdapterPlan.Family.WEATHER);

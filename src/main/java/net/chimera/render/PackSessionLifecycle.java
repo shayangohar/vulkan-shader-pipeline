@@ -175,6 +175,7 @@ final class PackSessionLifecycle {
         // pack pipeline and leaves the host format/cache untouched.
         ChimeraEntityBridge.disable();
         ChimeraSkyBridge.disable();
+        PackCloudRenderer.reset();
         // Restore the host values before any pack-owned image is destroyed.
         pass.windows.restorePackResourceWindow();
         pass.images.programImages.clear();
