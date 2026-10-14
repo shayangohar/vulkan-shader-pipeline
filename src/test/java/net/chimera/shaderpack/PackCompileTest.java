@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.PackShadowCompute;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -126,14 +127,13 @@ final class PackCompileTest {
             String vertex = program.convertedVertex();
             if (FamilyAdapterRegistry.isHandFamily(name)) {
                 for (var host : ChimeraVertexFormats.handFormats().keySet()) {
-                    compileVariant(program, stage, "hand input variant",
-                            EntityVertexBridge.handVertexForFormat(vertex, host));
+                    compileLayoutVariant(program, stage, "hand input variant", host);
                 }
             }
             if (name.equals("gbuffers_entities_translucent") || name.equals("gbuffers_block_translucent")) {
                 // Iris GLYPH text variant (TEXT and TEXT_BE); gbuffers_block_translucent is built only as this.
-                compileVariant(program, stage, "text input variant", EntityVertexBridge.layoutVertexForFormat(vertex,
-                        DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP));
+                compileLayoutVariant(program, stage, "text input variant",
+                        DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
             }
             if (FamilyAdapterRegistry.isGlintFamily(name)) {
                 // First-person glint: the same program under the hand projection.
@@ -154,6 +154,22 @@ final class PackCompileTest {
                 failures.add(program.name() + " " + label + ": " + error);
                 vertexError = error;
             }
+        }
+
+        /** A native host layout's variant: its own inputs, and its own fragment where the layout has no overlay. */
+        private void compileLayoutVariant(PackProgramPlan program, UniformRegistry.Stage stage, String label,
+                                          VertexFormat host) {
+            String fragment = EntityVertexBridge.fragmentForFormat(program.convertedFragment(), host);
+            var prepared = PackPipelines.prepare(program, resources, stage,
+                    EntityVertexBridge.layoutVertexForFormat(program.convertedVertex(), host), fragment);
+            String error = compile(prepared.vertex(), true);
+            if (error != null) {
+                failures.add(program.name() + " " + label + ": " + error);
+                vertexError = error;
+            }
+            String fragmentError = fragment.equals(program.convertedFragment())
+                    ? null : compile(prepared.fragment(), false);
+            if (fragmentError != null) failures.add(program.name() + " " + label + " fragment: " + fragmentError);
         }
     }
 

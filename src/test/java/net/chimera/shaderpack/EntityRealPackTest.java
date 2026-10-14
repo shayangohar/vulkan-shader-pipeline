@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.chimera.testing.InstanceOptions;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -152,6 +154,14 @@ final class EntityRealPackTest {
                 .matcher(fragment).results().count();
         assertTrue(declarations == 1 && !fragment.contains("uniform vec4 entityColor"),
                 what + " fragment still reads entityColor from a uniform (" + declarations + " declarations)");
+        // Text binds no overlay; Iris leaves entityColor its zero uniform on layouts without UV1.
+        String glyph = EntityVertexBridge.fragmentForFormat(fragment,
+                DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+        assertTrue(!glyph.contains("texelFetch(" + PackResourcePlan.OVERLAY_SAMPLER)
+                        && glyph.contains("vec4 chimeraOverlayTexel = vec4(0.0, 0.0, 0.0, 1.0);"),
+                what + " GLYPH variant still fetches entityColor from an unbound overlay");
+        assertEquals(fragment, EntityVertexBridge.fragmentForFormat(fragment, DefaultVertexFormat.NEW_ENTITY),
+                what + " entity layout must keep its overlay");
     }
 
     /**

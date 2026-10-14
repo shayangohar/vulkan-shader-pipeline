@@ -46,6 +46,20 @@ final class HostFamilyTest {
                 "hand formats keep declaration order: native model, item quad, map text, map background");
     }
 
+    /** Only a layout with UV1 binds an overlay; Iris serves the others entityColor 0 (name tags read slot 1). */
+    @Test
+    void overlayFetchOnlyWhereTheLayoutHasUv1() {
+        String fragment = EntityOverlayColor.inject(
+                "#version 120\nuniform vec4 entityColor;\nvoid main() { gl_FragColor = entityColor; }\n");
+        for (var entry : ChimeraVertexFormats.handFormats().entrySet()) {
+            boolean entity = entry.getKey() == DefaultVertexFormat.NEW_ENTITY;
+            for (var format : List.of(entry.getKey(), entry.getValue())) {
+                assertEquals(entity, EntityVertexBridge.fragmentForFormat(fragment, format)
+                        .contains("texelFetch(" + PackResourcePlan.OVERLAY_SAMPLER), "overlay fetch on " + format);
+            }
+        }
+    }
+
     @Test
     void handInputsAndProjection() {
         String vertex = """

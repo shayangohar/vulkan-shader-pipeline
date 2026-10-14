@@ -922,6 +922,16 @@ public final class EntityVertexBridge {
     }
 
     /**
+     * The program's fragment for a pipeline on {@code format}: a layout without UV1 (text, a
+     * held map's background, particles in the hand) has no overlay, so entityColor is zero
+     * there, as under Iris.
+     */
+    public static String fragmentForFormat(String converted, VertexFormat format) {
+        return format == null || format.getElementAttributeNames().contains("UV1")
+                ? converted : EntityOverlayColor.withoutOverlay(converted);
+    }
+
+    /**
      * The converted glint program for first-person glint. Iris draws held glint with the
      * same ShaderKey.GLINT program under the hand projection; here it takes the hand
      * family's legacy projection and clip-depth remap, so its depth is computed exactly

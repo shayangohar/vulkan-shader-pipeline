@@ -109,7 +109,13 @@ public final class PackPipelines {
      * can exercise the exact descriptor-contract layer runtime installs. */
     static PreparedPipeline prepare(PackProgramPlan plan, PackAdvancedResourcePlan resources,
             UniformRegistry.Stage stage, String vertex) {
-        if (plan.interfacePlan() == null || vertex == null || plan.convertedFragment() == null) {
+        return prepare(plan, resources, stage, vertex, plan.convertedFragment());
+    }
+
+    /** The same preparation for a layout variant, whose fragment can differ from the plan's. */
+    static PreparedPipeline prepare(PackProgramPlan plan, PackAdvancedResourcePlan resources,
+            UniformRegistry.Stage stage, String vertex, String fragment) {
+        if (plan.interfacePlan() == null || vertex == null || fragment == null) {
             throw new PreparationFailure("source-projection", "STAGE_SOURCE_MISSING");
         }
         OrdinaryDescriptorContract ordinary = ordinaryContract(plan, resources);
@@ -117,7 +123,7 @@ public final class PackPipelines {
         return new PreparedPipeline(ordinary,
                 PackDescriptorContracts.bindPackShader(vertex, plan.name(), resources, layout,
                         plan.interfacePlan().project("vertex", stage), stage, VK_SHADER_STAGE_VERTEX_BIT),
-                PackDescriptorContracts.bindPackShader(plan.convertedFragment(), plan.name(), resources, layout,
+                PackDescriptorContracts.bindPackShader(fragment, plan.name(), resources, layout,
                         plan.interfacePlan().project("fragment", stage), stage, VK_SHADER_STAGE_FRAGMENT_BIT), layout,
                 ProgramImageBindingManifest.from(layout, ordinary));
     }
@@ -415,8 +421,8 @@ public final class PackPipelines {
                     convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
             String fragmentSource = PackDescriptorContracts.bindPackShader(
-                    plan.convertedFragment(), plan.name(), advancedResources, layout,
-                    interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
+                    EntityVertexBridge.fragmentForFormat(plan.convertedFragment(), format), plan.name(),
+                    advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
             if (vertexSource == null || fragmentSource == null) {
                 throw new IllegalStateException("advanced " + stage + " image declaration rejected");
             }
