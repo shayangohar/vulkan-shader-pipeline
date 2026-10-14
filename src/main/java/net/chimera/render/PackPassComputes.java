@@ -63,6 +63,11 @@ final class PackPassComputes implements AutoCloseable {
         return new PackPassComputes(List.copyOf(loaded), resources);
     }
 
+    /** The computes that loaded, in run order. */
+    List<String> installedNames() {
+        return loaded.stream().map(compute -> compute.plan().name()).toList();
+    }
+
     /** The targets a loaded compute writes, which their images must allow as storage. */
     Set<Integer> storageTargets() {
         Set<Integer> targets = new TreeSet<>();

@@ -604,20 +604,18 @@ public final class EntityVertexBridge {
                 allowStorageBuffers, fragmentUniforms, null);
     }
 
-    /** Particle and weather vertex conversion whose referenced samplers take the shared bindings. */
+    /**
+     * Particle and weather vertex conversion whose referenced samplers take the shared bindings.
+     * DefaultVertexFormat.PARTICLE has no mid-coordinate or tangent; the particle preamble serves
+     * them as it does for the other host layouts (Photon's gbuffers_textured, which its particles
+     * fall back to, reads both).
+     */
     public static LegacyGlslConverter.TerrainVertexConversion convertParticleVertexChecked(
             String source, Path sourceFile, String fragmentSource,
             Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms,
             VertexSamplerPlan samplerPlan
     ) {
-        String liveInputs = stripComments(removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
-                LegacyGlslConverter.prepareSource(source, sourceFile, true))));
-        if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord")
-                || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")
-                || LegacyGlslConverter.containsIdentifier(liveInputs, "Tangent")) {
-            throw new IllegalArgumentException("particle format has no material mid-coordinate or tangent attribute");
-        }
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
                 GlslVertexPreambles.PARTICLE_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }

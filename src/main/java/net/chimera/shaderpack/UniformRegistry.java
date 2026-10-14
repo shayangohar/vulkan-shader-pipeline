@@ -427,7 +427,9 @@ public final class UniformRegistry {
             // custom pack-selector allocation here leaves the ordinary
             // descriptor without a same-slot manifest resource and rejects
             // the pipeline.
-            Map.entry("noisetex", 7)
+            Map.entry("noisetex", 7),
+            // The opaque depth snapshot, on the slot post and gbuffers_water read it from.
+            Map.entry("depthtex1", 12)
     );
     /**
      * Resource-pack material maps ride fixed extended selectors, but only in
