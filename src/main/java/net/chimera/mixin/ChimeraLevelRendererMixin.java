@@ -1,9 +1,13 @@
 package net.chimera.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.resource.ResourceHandle;
+import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.textures.GpuSampler;
+import com.mojang.blaze3d.textures.GpuTexture;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
@@ -15,8 +19,11 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.state.LevelRenderState;
 import net.minecraft.util.profiling.ProfilerFiller;
+import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.VRenderSystem;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
+import org.lwjgl.opengl.GL11;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -69,6 +76,27 @@ public abstract class ChimeraLevelRendererMixin {
         ChimeraTextureBindingState.captureChunkSampler(this.chunkLayerSampler);
     }
 
+    /**
+     * The main pass's world clear (fog colour, depth 1). While a pack owns colortex0 only the
+     * depth clears: Iris's colortex0 clear is the pack's own (ChimeraMainPass.clearWorldTarget).
+     */
+    @WrapOperation(method = "method_62218", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/systems/CommandEncoder;clearColorAndDepthTextures("
+                    + "Lcom/mojang/blaze3d/textures/GpuTexture;ILcom/mojang/blaze3d/textures/GpuTexture;D)V"),
+            require = 1)
+    private void chimera$keepPackColortex0(CommandEncoder encoder, GpuTexture color, int clearColor,
+                                           GpuTexture depth, double clearDepth, Operation<Void> original) {
+        ChimeraMainPass pass = ChimeraRenderer.segmentsActive() ? ChimeraRenderer.getMainPass() : null;
+        if (pass == null || !pass.packOwnsColortex0()) {
+            original.call(encoder, color, clearColor, depth, clearDepth);
+            return;
+        }
+        // VkCommandEncoder's main-target path, depth only.
+        Renderer.getInstance().getMainPass().rebindMainTarget();
+        VRenderSystem.clearDepth(clearDepth);
+        Renderer.clearAttachments(GL11.GL_DEPTH_BUFFER_BIT);
+    }
+
     @Inject(method = "method_62213", at = @At("HEAD"), require = 1)
     private void chimera$beginParticlePass(
             GpuBufferSlice fog,
@@ -114,7 +142,8 @@ public abstract class ChimeraLevelRendererMixin {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 var position = camera.position();
-                pass.openLevelSegment(position.x, position.y, position.z);
+                pass.openLevelSegment(position.x, position.y, position.z,
+                        new float[] {vector4f.x(), vector4f.y(), vector4f.z()});
             }
         }
     }

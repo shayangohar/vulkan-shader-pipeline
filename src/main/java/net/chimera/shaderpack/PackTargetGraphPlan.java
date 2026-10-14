@@ -185,8 +185,10 @@ public final class PackTargetGraphPlan {
                 deviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
                 format = PostTargetPlan.DEFAULT_FORMAT;
             }
+            // Target 0 is the HDR image, cleared each frame to its fog-colour default (ChimeraMainPass).
+            float[] clearColor = target == 0 ? setting.clearColorCopy() : setting.irisClearColor(target, null);
             preliminary.put(target, new TargetSpec(target, format, width, height,
-                    setting.clear(), setting.clearColorCopy(), !setting.clear(), false, false,
+                    setting.clear(), clearColor, !setting.clear(), false, false,
                     setting.deviations()));
             deviations.addAll(setting.deviations());
         }

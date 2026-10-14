@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -587,6 +588,21 @@ final class PackFrontEndTest {
         assertTrue(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
                         && !entity.contains("mc_midTexCoord"),
                 "entity mc_Entity default:\n" + entity);
+    }
+
+    /** Iris ClearPassCreator: undeclared colortex0 clears to the fog (alpha 1), colortex1 to white. */
+    @Test
+    void irisClearDefaults() {
+        float[] fog = {0.2F, 0.4F, 0.6F};
+        var undeclared = PackConfig.TargetSettings.defaults();
+        assertTrue(undeclared.clearColorCopy() == null, "an undeclared clear colour stays undeclared");
+        assertArrayEquals(new float[] {0.2F, 0.4F, 0.6F, 1.0F}, undeclared.irisClearColor(0, fog));
+        assertArrayEquals(new float[] {1.0F, 1.0F, 1.0F, 1.0F}, undeclared.irisClearColor(1, null));
+        assertArrayEquals(new float[] {0.0F, 0.0F, 0.0F, 0.0F}, undeclared.irisClearColor(2, null));
+        // Photon declares colortex0ClearColor = vec4(0.0): the fog never reaches colortex0.
+        var declared = new PackConfig.TargetSettings("", true, new float[] {0.0F, 0.0F, 0.0F, 0.0F}, List.of());
+        assertArrayEquals(new float[] {0.0F, 0.0F, 0.0F, 0.0F}, declared.irisClearColor(0, fog));
+        assertArrayEquals(new float[] {0.0F, 0.0F, 0.0F, 0.0F}, declared.irisClearColor(1, null));
     }
 
     @Test

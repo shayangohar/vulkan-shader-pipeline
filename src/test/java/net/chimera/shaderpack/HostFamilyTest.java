@@ -642,28 +642,40 @@ final class HostFamilyTest {
                 + "Lnet/minecraft/util/FormattedCharSequence;FFII" + buffers + "I)V";
         String nameTag = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/network/chat/Component;FFIZ"
                 + buffers + "Lnet/minecraft/client/gui/Font$DisplayMode;II)V";
-        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", text, 1);
-        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", outlined, 1);
-        assertWrapsCalls("ChimeraNameTagFeatureRendererMixin", feature + "NameTagFeatureRenderer", nameTag, 2);
+        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", "render", text, 1);
+        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", "render", outlined, 1);
+        assertWrapsCalls("ChimeraNameTagFeatureRendererMixin", feature + "NameTagFeatureRenderer", "render",
+                nameTag, 2);
         MixinBytecode.assertMixinRegistered("ChimeraNameTagSubmitMixin");
         assertTrue(MixinBytecode.mixinTargets(MixinBytecode.nativeClass("net/chimera/mixin/ChimeraNameTagSubmitMixin"),
                 "net/minecraft/client/renderer/SubmitNodeStorage$NameTagSubmit"),
                 "name tag nodes carry their entity's identity");
     }
 
-    private static void assertWrapsCalls(String mixinName, String owner, String target, int calls)
+    /**
+     * Vanilla's world clear (fog colour, depth 1) would land on the pack's colortex0; a hook keeps
+     * it to depth while a pack owns that image, as Iris's ClearPass is colortex0's only clear.
+     */
+    @Test
+    void worldClearHook() throws IOException {
+        assertWrapsCalls("ChimeraLevelRendererMixin", "net/minecraft/client/renderer/LevelRenderer", "method_62218",
+                "Lcom/mojang/blaze3d/systems/CommandEncoder;clearColorAndDepthTextures("
+                        + "Lcom/mojang/blaze3d/textures/GpuTexture;ILcom/mojang/blaze3d/textures/GpuTexture;D)V", 1);
+    }
+
+    private static void assertWrapsCalls(String mixinName, String owner, String method, String target, int calls)
             throws IOException {
         MixinBytecode.assertMixinRegistered(mixinName);
         var mixin = MixinBytecode.nativeClass("net/chimera/mixin/" + mixinName);
         assertTrue(MixinBytecode.mixinTargets(mixin, owner)
                         && MixinBytecode.injects(mixin,
-                        "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;", "render", target),
+                        "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;", method, target),
                 mixinName + " wraps " + target);
-        long found = MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), "render").stream()
+        long found = MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), method).stream()
                 .filter(instruction -> instruction instanceof MethodInsnNode call
                         && ("L" + call.owner + ";" + call.name + call.desc).equals(target))
                 .count();
-        assertEquals(calls, found, owner + ".render calls " + target);
+        assertEquals(calls, found, owner + "." + method + " calls " + target);
     }
 
     @Test

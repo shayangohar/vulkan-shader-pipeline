@@ -189,7 +189,10 @@ public final class PackConfig {
         }
     }
 
-    /** Load-time target directives; the target graph allocates the images at runtime. */
+    /**
+     * Load-time target directives; the target graph allocates the images at runtime. A null
+     * {@code clearColor} means the pack declared none, so the target clears to Iris's default.
+     */
     public record TargetSettings(
             String sizeExpression,
             boolean clear,
@@ -198,26 +201,33 @@ public final class PackConfig {
     ) {
         public TargetSettings {
             sizeExpression = sizeExpression == null ? "" : sizeExpression.trim();
-            clearColor = clearColor == null ? new float[] {0.0F, 0.0F, 0.0F, 0.0F}
-                    : clearColor.clone();
-            if (clearColor.length != 4) {
-                clearColor = new float[] {0.0F, 0.0F, 0.0F, 0.0F};
-            }
+            clearColor = clearColor == null || clearColor.length != 4 ? null : clearColor.clone();
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
         }
 
         public static TargetSettings defaults() {
-            return new TargetSettings("", true,
-                    new float[] {0.0F, 0.0F, 0.0F, 0.0F}, List.of());
+            return new TargetSettings("", true, null, List.of());
         }
 
+        /** The declared clear colour, or null when the pack declared none. */
         public float[] clearColorCopy() {
-            return clearColor.clone();
+            return clearColor == null ? null : clearColor.clone();
         }
 
         @Override
         public float[] clearColor() {
-            return clearColor.clone();
+            return clearColorCopy();
+        }
+
+        /**
+         * The colour Iris's ClearPassCreator clears colortex{@code index} to: the declared one,
+         * else the fog colour with alpha 1 for colortex0, opaque white for colortex1, and
+         * transparent black for the rest.
+         */
+        public float[] irisClearColor(int index, float[] fogColor) {
+            if (clearColor != null) return clearColor.clone();
+            if (index == 0) return new float[] {fogColor[0], fogColor[1], fogColor[2], 1.0F};
+            return index == 1 ? new float[] {1.0F, 1.0F, 1.0F, 1.0F} : new float[] {0.0F, 0.0F, 0.0F, 0.0F};
         }
     }
 

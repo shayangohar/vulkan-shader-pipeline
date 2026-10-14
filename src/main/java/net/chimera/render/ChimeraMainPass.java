@@ -22,6 +22,7 @@ import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.TargetSpec;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
@@ -197,6 +198,9 @@ public final class ChimeraMainPass implements MainPass {
     boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
     boolean pendingDepthClear;
+    /** The HDR image and pack config colortex0 last cleared for; a change forces Iris's full clear. */
+    private VulkanImage clearedHdrImage;
+    private PackConfig.PackConfigData clearedPackConfig;
     private final ChimeraHorizonRenderer horizonRenderer = new ChimeraHorizonRenderer();
 
     /** Opens the stable output target before a screen frame starts. */
@@ -274,7 +278,7 @@ public final class ChimeraMainPass implements MainPass {
     // Segment control
     // ------------------------------------------------------------------
 
-    public void openLevelSegment(double cameraX, double cameraY, double cameraZ) {
+    public void openLevelSegment(double cameraX, double cameraY, double cameraZ, float[] fogColor) {
         resources.ensureWorldResources();
         Renderer.getInstance().endRenderPass();
         if (this.packStorageBufferOwner != null) {
@@ -309,7 +313,7 @@ public final class ChimeraMainPass implements MainPass {
             Renderer.setViewport(0, 0, this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight(),
                     stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, this.targets.hdrFramebuffer.scissor(stack));
-            Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+            clearWorldTarget(hdrColor, fogColor);
             this.levelPhase = true;
             this.pendingDepthClear = false;
         }
@@ -317,6 +321,38 @@ public final class ChimeraMainPass implements MainPass {
                 && this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE)) {
             postChain.runPrepareWindow(commandBuffer);
         }
+    }
+
+    /**
+     * Clears the opening world target. While a pack owns colortex0 (the HDR image) this is Iris's
+     * ClearPass: colortex0ClearColor, else the fog colour with alpha 1, and no clear under
+     * colortex0Clear=false except Iris's full clear of a new image or pack. Depth always clears.
+     */
+    private void clearWorldTarget(VulkanImage hdrColor, float[] fogColor) {
+        if (!this.packPostChainActive || !this.packPostTargets.isConfigured()) {
+            Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+            return;
+        }
+        PackConfig.TargetSettings colortex0 = this.packConfig == null ? PackConfig.TargetSettings.defaults()
+                : this.packConfig.targetSettings().getOrDefault(0, PackConfig.TargetSettings.defaults());
+        boolean fullClear = hdrColor != this.clearedHdrImage || this.packConfig != this.clearedPackConfig;
+        this.clearedHdrImage = hdrColor;
+        this.clearedPackConfig = this.packConfig;
+        if (!colortex0.clear() && !fullClear) {
+            Renderer.clearAttachments(GL11.GL_DEPTH_BUFFER_BIT);
+            return;
+        }
+        float[] color = colortex0.irisClearColor(0, fogColor);
+        VRenderSystem.setClearColor(color[0], color[1], color[2], color[3]);
+        Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+    }
+
+    /**
+     * True while the HDR image is a pack's colortex0. Vanilla's world clear then clears depth
+     * only: under Iris it lands on the vanilla target, never colortex0 (ChimeraLevelRendererMixin).
+     */
+    public boolean packOwnsColortex0() {
+        return this.levelPhase && this.packPostChainActive && this.packPostTargets.isConfigured();
     }
 
     /** Called inside the native overworld sky scope, after its clears and before its disc. */
