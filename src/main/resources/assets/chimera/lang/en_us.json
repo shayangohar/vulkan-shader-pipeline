@@ -1,6 +1,15 @@
 {
   "key.category.chimera.keybinds": "Chimera",
   "chimera.keybind.shaderPackSelection": "Shaderpack Selection Screen",
+  "chimera.keybind.reload": "Reload Shaders",
+  "chimera.keybind.toggleShaders": "Toggle Shaders",
+  "chimera.shaders.reloaded": "Shaders Reloaded!",
+  "chimera.shaders.reloaded.failure": "Failed to reload shaders! Reason: %s",
+  "chimera.shaders.disabled": "Shaders disabled!",
+  "chimera.shaders.toggled": "Toggled shaders to %s!",
+  "chimera.shaders.toggled.failure": "Failed to toggle shaders! Reason: %s",
+  "chimera.shaders.toggled.noPack": "no shader pack is selected",
+  "chimera.shaders.notReady": "Chimera is not ready yet",
 
   "options.chimera.shaderPackSelection": "Shader Packs...",
   "options.chimera.shaderPackSelection.title": "Shader Packs",
