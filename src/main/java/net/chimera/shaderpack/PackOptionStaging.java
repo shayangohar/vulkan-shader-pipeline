@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import net.chimera.shaderpack.options.OptionFile;
 import net.chimera.shaderpack.options.OptionSet;
 import net.chimera.shaderpack.options.OptionValues;
+import net.chimera.shaderpack.options.PendingOptions;
 import net.chimera.shaderpack.options.ShaderPackOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,9 +42,16 @@ final class PackOptionStaging {
     /**
      * Discovers the pack's options in {@code shadersDir}, applies the stored values and returns the
      * tree to read. {@code temporaryRoot} is the extraction root of a zip pack and null for a folder.
+     * The stored values are the option file's with {@code pending} on top, or none at all when
+     * {@code pending} asks for a reset; they are what the option file should hold afterwards.
      */
-    static Staged stage(Path packPath, Path shadersDir, Path temporaryRoot, List<String> deviations) {
-        Map<String, String> stored = packPath == null ? Map.of() : OptionFile.read(OptionFile.of(packPath));
+    static Staged stage(Path packPath, Path shadersDir, Path temporaryRoot, PendingOptions.Drained pending,
+                        List<String> deviations) {
+        Map<String, String> stored = new TreeMap<>();
+        if (!pending.reset()) {
+            if (packPath != null) stored.putAll(OptionFile.read(OptionFile.of(packPath)));
+            stored.putAll(pending.values());
+        }
         ShaderPackOptions pack = ShaderPackOptions.load(shadersDir, stored);
         OptionValues applied = pack.values().copy();
         Map<String, String> undeclared = new TreeMap<>();

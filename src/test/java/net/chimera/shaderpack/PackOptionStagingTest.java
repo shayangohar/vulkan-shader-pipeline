@@ -1,5 +1,7 @@
 package net.chimera.shaderpack;
 
+import net.chimera.shaderpack.options.OptionFile;
+import net.chimera.shaderpack.options.PendingOptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -87,6 +89,27 @@ final class PackOptionStagingTest {
             assertEquals(pack.resolve("shaders"), loaded.shadersDir());
             assertTrue(loaded.options().applied().changes().isEmpty());
             assertEquals("Custom", loaded.options().profileName(), "RP_MODE=1 matches neither profile");
+        }
+    }
+
+    @Test
+    void pendingValuesGoOnTopAndAResetDropsEverything(@TempDir Path dir) throws IOException {
+        Path pack = folderPack(dir);
+        Path file = dir.resolve("Example_r1.txt");
+        Files.writeString(file, "WATER_STYLE=2\nUNDECLARED=1\n");
+        var pending = new PendingOptions.Drained(Map.of("RP_MODE", "3"), false);
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack, "minecraft:overworld", pending)) {
+            assertEquals(Map.of("RP_MODE", "3", "WATER_STYLE", "2"), loaded.options().pack().values().changes());
+            loaded.options().saveOptionFile(pack);
+            assertEquals(Map.of("RP_MODE", "3", "WATER_STYLE", "2"), OptionFile.read(file),
+                    "the option file is rewritten with the stored values, and undeclared entries drop");
+        }
+        var reset = new PendingOptions.Drained(Map.of("RP_MODE", "2"), true);
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack, "minecraft:overworld", reset)) {
+            assertTrue(loaded.options().applied().changes().isEmpty(), "a reset ignores the file and the queue");
+            assertEquals(pack.resolve("shaders"), loaded.shadersDir());
+            loaded.options().saveOptionFile(pack);
+            assertFalse(Files.exists(file), "an all-default pack has no option file");
         }
     }
 

@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.chimera.shaderpack.options.PendingOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -239,17 +240,22 @@ public final class PackSource {
     }
 
     public static LoadResult loadResult(Path packPath, String dimension) {
+        return loadResult(packPath, dimension, PendingOptions.Drained.NONE);
+    }
+
+    /** Loads the pack with the settings screen's pending option values applied on top of its option file. */
+    public static LoadResult loadResult(Path packPath, String dimension, PendingOptions.Drained pending) {
         List<String> deviations = new ArrayList<>();
         if (packPath == null) {
             deviations.add("PACK_PATH_MISSING");
             return emptyResult(Path.of("shaders"), null, deviations, dimension);
         }
         if (Files.isDirectory(packPath)) {
-            return discover(PackOptionStaging.stage(packPath, packPath.resolve("shaders"), null, deviations),
-                    deviations, dimension);
+            return discover(PackOptionStaging.stage(packPath, packPath.resolve("shaders"), null, pending,
+                    deviations), deviations, dimension);
         }
         if (Files.isRegularFile(packPath)) {
-            return loadArchive(packPath, deviations, dimension);
+            return loadArchive(packPath, pending, deviations, dimension);
         }
 
         deviations.add("PACK_PATH_INVALID");
@@ -257,7 +263,8 @@ public final class PackSource {
         return emptyResult(packPath.resolve("shaders"), null, deviations, dimension);
     }
 
-    private static LoadResult loadArchive(Path archive, List<String> deviations, String dimension) {
+    private static LoadResult loadArchive(Path archive, PendingOptions.Drained pending, List<String> deviations,
+                                          String dimension) {
         Path temporaryRoot = null;
         try {
             temporaryRoot = Files.createTempDirectory("chimera-pack-");
@@ -271,7 +278,7 @@ public final class PackSource {
                 extractShaders(zip, names, prefix + "shaders/", temporaryRoot, deviations);
             }
             return discover(PackOptionStaging.stage(archive, temporaryRoot.resolve("shaders"), temporaryRoot,
-                    deviations), deviations, dimension);
+                    pending, deviations), deviations, dimension);
         } catch (Exception e) {
             if (!deviations.contains("PACK_ARCHIVE_UNSAFE_PATH")
                     && !deviations.contains("PACK_SHADERS_NOT_FOUND")

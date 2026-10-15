@@ -1,0 +1,152 @@
+package net.chimera.gui.options;
+
+import net.chimera.shaderpack.options.ShaderOption;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
+
+/**
+ * A choice the pack lists under {@code sliders}. At rest it looks like a choice with a small handle
+ * in its value box; hovered or focused it becomes a track with the value centred and the name in a
+ * tooltip. Dragging splits the track into one equal bucket per value.
+ *
+ * <p>A drag commits when the button is released or the pointer leaves the cell, after the last
+ * mouse position is taken. The arrow keys edit the value after Enter, and leaving that edit (Enter
+ * again, or focus moving away) commits it; Iris often drops those keyboard edits.
+ */
+final class SliderCell extends ChoiceCell {
+    private static final Component SET_TO_DEFAULT = Component.translatable("options.chimera.setToDefault")
+            .withStyle(ChatFormatting.GREEN);
+
+    private boolean dragging;
+    private boolean editing;
+    private int working = -1;
+
+    SliderCell(OptionContext context, ShaderOption.Choice option) {
+        super(context, option);
+    }
+
+    @Override
+    int minValueWidth() {
+        return 35;
+    }
+
+    private int index() {
+        return dragging || editing ? working : context.editor().choiceIndex(option);
+    }
+
+    @Override
+    Component valueText() {
+        if (!(dragging || editing) || working < 0) return super.valueText();
+        return context.text().value(option, option.values().get(working));
+    }
+
+    @Override
+    void renderCell(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (dragging) {
+            follow(mouseX);
+            if (!rowHovered || !Minecraft.getInstance().mouseHandler.isLeftPressed()) {
+                dragging = false;
+                commit();
+            }
+        }
+        if (hot()) {
+            renderActive(graphics, mouseX, mouseY);
+        } else {
+            super.renderCell(graphics, mouseX, mouseY);
+        }
+    }
+
+    /** The resting look's handle, inside the value box. */
+    @Override
+    void decorateValueBox(GuiGraphics graphics, int boxX, int boxWidth) {
+        int count = option.values().size();
+        int index = index();
+        if (index < 0 || count < 2) return;
+        int x = boxX + (int) (index / (float) (count - 1) * ((boxWidth - 4) - 4));
+        OptionLook.control(graphics, x, getY() + 4, 4, getHeight() - 8, OptionLook.State.NORMAL);
+    }
+
+    private void renderActive(GuiGraphics graphics, int mouseX, int mouseY) {
+        int x = getX();
+        int y = getY();
+        int width = getWidth();
+        OptionLook.control(graphics, x, y, width, getHeight(),
+                isFocused() ? OptionLook.State.HOVERED : OptionLook.State.NORMAL);
+        OptionLook.control(graphics, x + 2, y + 2, width - 4, getHeight() - 4, OptionLook.State.INSET);
+        int count = option.values().size();
+        int index = index();
+        if (index >= 0 && count > 1) {
+            int handleX = x + 4 + (int) (index / (float) (count - 1) * ((width - 8) - 6));
+            OptionLook.control(graphics, handleX, y + 4, 6, getHeight() - 8,
+                    dragging || editing ? OptionLook.State.HOVERED : OptionLook.State.NORMAL);
+        }
+        Component value = valueText();
+        graphics.drawString(context.font(), value, (x + width / 2) - context.font().width(value) / 2, y + 7,
+                OptionLook.WHITE);
+        if (shiftDown()) {
+            tooltipAtMouse(SET_TO_DEFAULT, mouseX, mouseY);
+        } else if (!context.overlay().commentShowing()) {
+            fullNameTooltip(mouseX, mouseY);
+        }
+    }
+
+    /** The bucket under the pointer: the track split into one equal part per value. */
+    private void follow(int mouseX) {
+        int count = option.values().size();
+        float fraction = Math.clamp((mouseX - (getX() + 4)) / (float) (getWidth() - 8), 0.0F, 1.0F);
+        working = Math.min(count - 1, (int) (fraction * count));
+    }
+
+    private void commit() {
+        if (working >= 0) context.editor().set(option.name(), option.values().get(working));
+        click();
+    }
+
+    @Override
+    boolean press(MouseButtonEvent event) {
+        if (event.button() != 0) return false;
+        if (event.hasShiftDown()) {
+            context.editor().reset(option.name());
+        } else {
+            dragging = true;
+            working = Math.max(0, context.editor().choiceIndex(option));
+        }
+        click();
+        return true;
+    }
+
+    @Override
+    boolean key(KeyEvent event) {
+        if (event.isConfirmation()) {
+            if (event.hasShiftDown()) {
+                editing = false;
+                context.editor().reset(option.name());
+                click();
+            } else if (editing) {
+                editing = false;
+                commit();
+            } else {
+                editing = true;
+                working = Math.max(0, context.editor().choiceIndex(option));
+                click();
+            }
+            return true;
+        }
+        if (!editing || !(event.isLeft() || event.isRight())) return false;
+        working = Math.clamp(working + (event.isRight() ? 1 : -1), 0, option.values().size() - 1);
+        return true;
+    }
+
+    @Override
+    public void setFocused(boolean focused) {
+        super.setFocused(focused);
+        if (!focused && editing) {
+            editing = false;
+            commit();
+        }
+    }
+}

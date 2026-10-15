@@ -25,14 +25,23 @@ public final class OptionFile {
 
     /** The stored text values; empty when there is no readable file. */
     public static Map<String, String> read(Path file) {
-        Map<String, String> values = new TreeMap<>();
-        if (!Files.isRegularFile(file)) return values;
+        if (!Files.isRegularFile(file)) return new TreeMap<>();
+        try {
+            return readStrict(file);
+        } catch (IOException unreadable) {
+            return new TreeMap<>();
+        }
+    }
+
+    /** The values of a settings file the player chose, failing when it cannot be read or parsed. */
+    public static Map<String, String> readStrict(Path file) throws IOException {
         Properties properties = new Properties();
         try (InputStream in = Files.newInputStream(file)) {
             properties.load(in);
-        } catch (IOException | IllegalArgumentException unreadable) {
-            return values;
+        } catch (IllegalArgumentException malformed) {
+            throw new IOException(malformed.getMessage(), malformed);
         }
+        Map<String, String> values = new TreeMap<>();
         properties.stringPropertyNames().forEach(name -> values.put(name, properties.getProperty(name)));
         return values;
     }
@@ -47,8 +56,13 @@ public final class OptionFile {
             Files.deleteIfExists(file);
             return;
         }
+        store(file, changes);
+    }
+
+    /** Writes {@code values} to {@code file} in the same format, even when there are none (an export). */
+    public static void store(Path file, Map<String, String> values) throws IOException {
         Properties properties = new Properties();
-        properties.putAll(changes);
+        properties.putAll(values);
         Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
         try (OutputStream out = Files.newOutputStream(temporary)) {
             properties.store(out, null);
