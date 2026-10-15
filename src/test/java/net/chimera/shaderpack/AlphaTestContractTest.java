@@ -340,7 +340,7 @@ final class AlphaTestContractTest {
     private static PackSettingsPlan settings(Map<String, String> properties) {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), properties, Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default",
-                PackRuntimeSettings.empty(), Map.of(), Map.of(), false);
+                PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of());
     }
 
     private static void expectFailure(Runnable action, String message) {

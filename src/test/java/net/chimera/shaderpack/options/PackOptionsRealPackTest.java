@@ -48,8 +48,10 @@ final class PackOptionsRealPackTest {
     }
 
     private static ShaderPackOptions load(Path pack) {
+        // The options come from the sources as shipped: the loaded tree already carries the
+        // instance's option file, and an edited choice line no longer lists its values.
         try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            ShaderPackOptions options = ShaderPackOptions.load(loaded.shadersDir(), Map.of());
+            ShaderPackOptions options = loaded.options().pack();
             System.out.println(summary(pack, options));
             return options;
         }

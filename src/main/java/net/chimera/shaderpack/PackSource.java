@@ -42,6 +42,7 @@ public final class PackSource {
     public static final class LoadResult implements AutoCloseable {
         private final Path shadersDir;
         private final Path temporaryRoot;
+        private final StagedOptions options;
         private final Map<String, List<PackProgram>> rawVariants;
         private final Map<String, String> explicitDimensionFolders;
         private final boolean hasDimensionProperties;
@@ -56,6 +57,7 @@ public final class PackSource {
         private LoadResult(
                 Path shadersDir,
                 Path temporaryRoot,
+                StagedOptions options,
                 Map<String, List<PackProgram>> variants,
                 Map<String, String> explicitDimensionFolders,
                 boolean hasDimensionProperties,
@@ -64,6 +66,7 @@ public final class PackSource {
         ) {
             this.shadersDir = shadersDir;
             this.temporaryRoot = temporaryRoot;
+            this.options = options;
             Map<String, List<PackProgram>> copy = new TreeMap<>();
             variants.forEach((key, value) -> copy.put(key, List.copyOf(value)));
             this.rawVariants = Map.copyOf(copy);
@@ -123,6 +126,11 @@ public final class PackSource {
 
         public Path shadersDir() {
             return shadersDir;
+        }
+
+        /** The pack's options and the values its sources were staged with. */
+        public StagedOptions options() {
+            return options;
         }
 
         public List<String> deviations() {
@@ -237,7 +245,8 @@ public final class PackSource {
             return emptyResult(Path.of("shaders"), null, deviations, dimension);
         }
         if (Files.isDirectory(packPath)) {
-            return discover(packPath.resolve("shaders"), null, deviations, dimension);
+            return discover(PackOptionStaging.stage(packPath, packPath.resolve("shaders"), null, deviations),
+                    deviations, dimension);
         }
         if (Files.isRegularFile(packPath)) {
             return loadArchive(packPath, deviations, dimension);
@@ -261,7 +270,8 @@ public final class PackSource {
                 }
                 extractShaders(zip, names, prefix + "shaders/", temporaryRoot, deviations);
             }
-            return discover(temporaryRoot.resolve("shaders"), temporaryRoot, deviations, dimension);
+            return discover(PackOptionStaging.stage(archive, temporaryRoot.resolve("shaders"), temporaryRoot,
+                    deviations), deviations, dimension);
         } catch (Exception e) {
             if (!deviations.contains("PACK_ARCHIVE_UNSAFE_PATH")
                     && !deviations.contains("PACK_SHADERS_NOT_FOUND")
@@ -329,11 +339,12 @@ public final class PackSource {
     }
 
     private static LoadResult discover(
-            Path shadersDir,
-            Path temporaryRoot,
+            PackOptionStaging.Staged staged,
             List<String> deviations,
             String dimension
     ) {
+        Path shadersDir = staged.shadersDir();
+        Path temporaryRoot = staged.temporaryRoot();
         if (!Files.isDirectory(shadersDir)) {
             deviations.add("NO_SHADERS_DIRECTORY");
             LOGGER.warn("[chimera] pack: no 'shaders' directory under {}", shadersDir);
@@ -367,7 +378,7 @@ public final class PackSource {
             loadStandardPostPrograms(variant.getValue(), byName, deviations);
             variants.put(variant.getKey(), List.copyOf(byName.values()));
         }
-        return new LoadResult(shadersDir, temporaryRoot, variants, dimensionFolders,
+        return new LoadResult(shadersDir, temporaryRoot, staged.options(), variants, dimensionFolders,
                 dimensionProperties, deviations, dimension);
     }
 
@@ -377,7 +388,7 @@ public final class PackSource {
             List<String> deviations,
             String dimension
     ) {
-        return new LoadResult(shadersDir, temporaryRoot, Map.of("", List.of()), Map.of(),
+        return new LoadResult(shadersDir, temporaryRoot, StagedOptions.none(), Map.of("", List.of()), Map.of(),
                 false, deviations, dimension);
     }
 
@@ -885,7 +896,7 @@ public final class PackSource {
                 || dimension.equals("minecraft:the_end") || dimension.equals("the_end");
     }
 
-    private static void deleteTree(Path root) {
+    static void deleteTree(Path root) {
         if (root == null || !Files.exists(root)) {
             return;
         }

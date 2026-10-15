@@ -25,6 +25,7 @@ import net.chimera.shaderpack.PackSource;
 import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.SelectorNamespace;
+import net.chimera.shaderpack.StagedOptions;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.TerrainShadingDirectives;
 import net.minecraft.client.Minecraft;
@@ -520,8 +521,11 @@ final class PackSessionLifecycle {
         pass.packSource = result;
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
         Path optionFile = PackOptionSources.optionFile(dir);
-        LOGGER.info("[chimera] pack options: file={}, applied={}", optionFile == null ? "none" : optionFile,
-                PackOptionSources.overrides(dir));
+        StagedOptions options = result.options();
+        LOGGER.info("[chimera] pack options: file={}, profile={}, applied={}, undeclared={}, disabledPrograms={}{}",
+                optionFile == null ? "none" : optionFile, options.profileName(), options.applied().changes(),
+                options.undeclared(), options.disabledPrograms(),
+                options.pack().problems().isEmpty() ? "" : " " + options.pack().problems());
         pass.conformanceReport = analysis.report();
         pass.packPrograms = analysis.plan() == null ? result.programs()
                 : analysis.plan().programs().stream().map(PackProgramPlan::program).toList();

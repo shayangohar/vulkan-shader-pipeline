@@ -78,7 +78,7 @@ final class ShaderPackOptionsTest {
         assertTrue(defaults.profile().current().isEmpty(), "defaults match no profile: Custom");
         ShaderPackOptions high = ShaderPackOptions.load(shaders, Map.of("QUALITY", "3"));
         assertEquals("HIGH", high.profile().current().orElseThrow().name());
-        assertEquals(List.of("composite1"), high.profileDisabledPrograms());
+        assertEquals(List.of("composite1"), high.profileDisabledPrograms(high.values()));
         ShaderPackOptions low = ShaderPackOptions.load(shaders, Map.of("SHADOWS", "false", "QUALITY", "1"));
         assertEquals("LOW", low.profile().current().orElseThrow().name());
     }

@@ -38,7 +38,10 @@ record PackSettingsPlan(
         PackRuntimeSettings runtimeSettings,
         Map<String, PackResourceDeclaration> resourceDeclarations,
         Map<String, Integer> samplerSlots,
-        boolean samplerSlotsFinalized
+        boolean samplerSlotsFinalized,
+        // The macros in force at the end of shaders.properties, option values included: Iris
+        // expands them throughout the file, so an image may be COLORED_LIGHTING texels wide.
+        Map<String, String> propertyMacros
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Pattern DEFINE = Pattern.compile(
@@ -67,6 +70,7 @@ record PackSettingsPlan(
     PackSettingsPlan {
         options = immutableOptions(options);
         defaults = immutableMap(defaults);
+        propertyMacros = immutableMap(propertyMacros);
         profiles = immutableProfiles(profiles);
         propertyValues = immutableMap(propertyValues);
         programEnabled = programEnabled == null
@@ -86,18 +90,22 @@ record PackSettingsPlan(
     static PackSettingsPlan empty() {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty(),
-                Map.of(), Map.of(), false);
+                Map.of(), Map.of(), false, Map.of());
     }
 
     static PackSettingsPlan parse(List<PackProgram> programs, Path shadersDir) {
-        return parse(programs, shadersDir, systemOptionOverrides());
+        return parse(programs, shadersDir, systemOptionOverrides(), Set.of());
     }
 
-    /** Parses settings with explicit load-time option overrides. */
+    /**
+     * Parses settings with load-time overrides for names the sources do not declare (declared
+     * options are already edited into the sources) and the programs the pack's profile switches off.
+     */
     static PackSettingsPlan parse(
             List<PackProgram> programs,
             Path shadersDir,
-            Map<String, String> explicitOverrides
+            Map<String, String> explicitOverrides,
+            Set<String> profileDisabledPrograms
     ) {
         Map<String, Option> options = new TreeMap<>();
         Map<String, String> defaults = new TreeMap<>();
@@ -141,18 +149,20 @@ record PackSettingsPlan(
         List<PackRuntimeSettings.Declaration> customValues = new ArrayList<>();
         Map<String, PackResourceDeclaration> resourceDeclarations = new TreeMap<>();
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
+        Map<String, String> macros = mergedConditionMacros(defaults, helperDefaults, overrides);
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
-            parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
+            macros = parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations,
-                    mergedConditionMacros(defaults, helperDefaults, overrides),
-                    toggleOptions(options, helperOptions, disabled));
+                    macros, toggleOptions(options, helperOptions, disabled));
         }
+        // Iris drops a !program.NAME program of the matching profile whatever its own switch says.
+        profileDisabledPrograms.forEach(program -> programEnabled.put(program, false));
         Set<String> unsupportedRequired = unsupportedFeatures(required, deviations);
         PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(
                 customValues, defaults, deviations, BiomeIds.constants());
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
-                runtimeSettings, resourceDeclarations, Map.of(), false);
+                runtimeSettings, resourceDeclarations, Map.of(), false, macros);
     }
 
     /** The programs' fragment and vertex sources by relative path; the first program by name wins a path. */
@@ -474,7 +484,7 @@ record PackSettingsPlan(
         return new PackSettingsPlan(options, defaults, profiles, propertyValues, programEnabled,
                 requiredFeatures, optionalFeatures, unsupportedRequiredFeatures, deviations,
                 activeProfile, runtimeSettings, resourceDeclarations,
-                resolved == null ? Map.of() : resolved, true);
+                resolved == null ? Map.of() : resolved, true, propertyMacros);
     }
 
     private String resourceFingerprint() {
@@ -531,7 +541,8 @@ record PackSettingsPlan(
         }
     }
 
-    private static void parseProperties(
+    /** Parses shaders.properties into the given maps and returns the macros in force at its end. */
+    private static Map<String, String> parseProperties(
             Path propertyFile,
             Map<String, Option> options,
             Map<String, String> defaults,
@@ -549,6 +560,7 @@ record PackSettingsPlan(
         PropertiesParse parse = new PropertiesParse(propertyFile, options, defaults, profiles, values,
                 programEnabled, required, optional, customValues, resourceDeclarations, deviations, toggleOptions);
         parse.run(stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
+        return parse.conditions.macros();
     }
 
     /** One pass over shaders.properties: its conditional blocks, defines and key=value entries. */

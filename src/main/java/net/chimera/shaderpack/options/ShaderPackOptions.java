@@ -46,6 +46,14 @@ public final class ShaderPackOptions {
         return new ShaderPackOptions(discovery, values, profiles, menu, PackLanguage.read(shadersRoot), problems);
     }
 
+    /** Nothing to configure, for a pack whose sources could not be read. */
+    public static ShaderPackOptions empty() {
+        OptionDiscovery discovery = OptionDiscovery.none();
+        OptionMenu menu = OptionMenu.build(MenuProperties.empty(), discovery.options(), PackProfiles.empty());
+        return new ShaderPackOptions(discovery, OptionValues.of(discovery.options(), Map.of()), PackProfiles.empty(),
+                menu, PackLanguage.empty(), List.of());
+    }
+
     public OptionSet options() {
         return discovery.options();
     }
@@ -76,13 +84,16 @@ public final class ShaderPackOptions {
         return profiles.scan(values);
     }
 
-    /** Programs the current profile switches off ({@code !program.NAME}). */
-    public List<String> profileDisabledPrograms() {
-        return profile().current().map(PackProfiles.Profile::disabledPrograms).orElse(List.of());
+    /**
+     * Programs the profile {@code current} matches switches off ({@code !program.NAME}), as paths
+     * without the extension: {@code composite1}, or {@code world0/composite1} in a dimension folder.
+     */
+    public List<String> profileDisabledPrograms(OptionValues current) {
+        return profiles.scan(current).current().map(PackProfiles.Profile::disabledPrograms).orElse(List.of());
     }
 
-    /** The source files the applied values change, with their new text, by pack-relative path. */
-    public Map<String, String> editedFiles() {
-        return discovery.editedFiles(values);
+    /** The source files {@code current} changes, with their new text, by pack-relative path. */
+    public Map<String, String> editedFiles(OptionValues current) {
+        return discovery.editedFiles(current);
     }
 }

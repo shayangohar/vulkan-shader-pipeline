@@ -28,10 +28,12 @@ final class AdvancedImageDeclarations {
     static Map<String, PackAdvancedResourcePlan.ImageSpec> parseImages(
             PackSettingsPlan settings, List<String> deviations) {
         Map<String, PackAdvancedResourcePlan.ImageSpec> images = new TreeMap<>();
+        // Sizes resolve against the macros shaders.properties was read with, option values included.
+        Map<String, String> macros = new TreeMap<>(settings.propertyMacros());
+        macros.putAll(settings.preprocessorDefines());
         for (Map.Entry<String, String> entry : settings.propertyValues().entrySet()) {
             if (!entry.getKey().startsWith("image.")) continue;
-            PackAdvancedResourcePlan.ImageSpec spec = parseImage(entry.getKey(), entry.getValue(),
-                    settings.preprocessorDefines());
+            PackAdvancedResourcePlan.ImageSpec spec = parseImage(entry.getKey(), entry.getValue(), macros);
             images.put(spec.name(), spec);
             deviations.addAll(spec.deviations());
             if (spec.supported()) {

@@ -27,6 +27,11 @@ public final class OptionDiscovery {
         this.ambiguous = ambiguous;
     }
 
+    /** No sources and no options. */
+    static OptionDiscovery none() {
+        return new OptionDiscovery(SourceGraph.empty(), OptionSet.empty(), Set.of());
+    }
+
     /** Reads every program source under {@code shadersRoot} and what it includes. */
     public static OptionDiscovery discover(Path shadersRoot) {
         SourceGraph graph = SourceGraph.read(shadersRoot);

@@ -39,6 +39,10 @@ final class SourceGraph {
         this.failures = List.copyOf(failures);
     }
 
+    static SourceGraph empty() {
+        return new SourceGraph(Map.of(), Map.of(), List.of());
+    }
+
     static SourceGraph read(Path shadersRoot) {
         Map<String, AnnotatedSource> files = new TreeMap<>();
         Map<String, Set<String>> includes = new HashMap<>();
