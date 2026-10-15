@@ -115,9 +115,15 @@ final class GlslMacroAliases {
         boolean[] drop = new boolean[lines.length];
         boolean[] macro = new boolean[lines.length];
         Map<String, String> aliases = new HashMap<>();
+        Map<String, String> live = Map.of();
         boolean changed = false;
         for (int line = 0; line < lines.length; line++) {
             String body = withoutCarriageReturn(lines[line]);
+            // Only a directive can change the aliases; every other line shares the last snapshot.
+            if (!ShaderSourcePreprocessor.startsDirective(body)) {
+                active.add(live);
+                continue;
+            }
             Matcher define = ALIAS_DEFINE.matcher(body);
             Matcher undef = UNDEF.matcher(body);
             Matcher named = MACRO_DEFINE.matcher(body);
@@ -139,7 +145,8 @@ final class GlslMacroAliases {
                 aliases.remove(named.group(2));
                 macro[line] = true;
             }
-            active.add(Map.copyOf(aliases));
+            live = Map.copyOf(aliases);
+            active.add(live);
         }
         if (!changed) return source;
         return applySamplerAliases(source, active, drop, macro);

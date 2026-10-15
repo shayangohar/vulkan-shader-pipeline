@@ -818,7 +818,12 @@ public final class GlslTokenRewriter {
         return GlslLexer.render(tokens);
     }
 
+    /**
+     * True when {@code name} appears as an identifier token, outside comments and literals. Most
+     * names asked about are absent, and then the text cannot hold the token, so it is not lexed.
+     */
     public static boolean containsIdentifier(String source, String name) {
+        if (source == null || !source.contains(name)) return false;
         for (GlslLexer.Token token : GlslLexer.lex(source)) {
             if (token.identifier(name)) {
                 return true;
@@ -828,6 +833,7 @@ public final class GlslTokenRewriter {
     }
 
     public static int identifierCount(String source, String name) {
+        if (source == null || !source.contains(name)) return 0;
         int count = 0;
         for (GlslLexer.Token token : GlslLexer.lex(source)) {
             if (token.identifier(name)) count++;

@@ -48,7 +48,10 @@ public final class PackSource {
         private final Map<String, String> explicitDimensionFolders;
         private final boolean hasDimensionProperties;
         private final List<String> baseDeviations;
-        private Map<String, List<PackProgram>> variants;
+        /** Prepared programs by source folder, filled as folders are selected. */
+        private final Map<String, List<PackProgram>> variants = new TreeMap<>();
+        private Map<String, String> preparedMacros = Map.of();
+        private Set<String> preparedLocked = Set.of();
         private List<PackProgram> programs;
         private List<String> deviations;
         private String selectedDimension = "minecraft:overworld";
@@ -74,11 +77,10 @@ public final class PackSource {
             this.explicitDimensionFolders = Map.copyOf(explicitDimensionFolders);
             this.hasDimensionProperties = hasDimensionProperties;
             this.baseDeviations = List.copyOf(new TreeSet<>(deviations));
-            this.variants = Map.of();
             this.programs = List.of();
             this.deviations = this.baseDeviations;
-            prepare(PackEngineDefines.forPack(Map.of()),
-                    PackEngineDefines.lockedNames(Set.of(), false, false));
+            this.preparedMacros = new TreeMap<>(PackEngineDefines.forPack(Map.of()));
+            this.preparedLocked = new TreeSet<>(PackEngineDefines.lockedNames(Set.of(), false, false));
             selectDimension(initialDimension);
         }
 
@@ -100,13 +102,26 @@ public final class PackSource {
             prepare(initialMacros, Set.of());
         }
 
-        /** Re-prepares variants while preserving explicit option overrides. */
+        /**
+         * Re-prepares the sources while preserving explicit option overrides. Preparing is the
+         * slowest step of a load, so it runs only for the folder a dimension selects, and not again
+         * for the same macros.
+         */
         public void prepare(Map<String, String> initialMacros, Set<String> lockedMacros) {
-            Map<String, List<PackProgram>> prepared = new TreeMap<>();
-            rawVariants.forEach((folder, values) -> prepared.put(folder, preparePrograms(
-                    values, shadersDir, folder, variantMacros(folder, initialMacros), lockedMacros)));
-            this.variants = Map.copyOf(prepared);
+            if (!initialMacros.equals(this.preparedMacros) || !lockedMacros.equals(this.preparedLocked)) {
+                this.preparedMacros = new TreeMap<>(initialMacros);
+                this.preparedLocked = new TreeSet<>(lockedMacros);
+                this.variants.clear();
+            }
             selectDimension(this.selectedDimension);
+        }
+
+        /** The prepared programs of one source folder; null for a folder the pack does not have. */
+        private List<PackProgram> variant(String folder) {
+            List<PackProgram> raw = rawVariants.get(folder);
+            if (raw == null) return null;
+            return variants.computeIfAbsent(folder, key -> preparePrograms(
+                    raw, shadersDir, key, variantMacros(key, preparedMacros), preparedLocked));
         }
 
         private static Map<String, String> variantMacros(
@@ -175,9 +190,9 @@ public final class PackSource {
                     ? "minecraft:overworld" : dimension;
             String folder = selectedFolder(requested);
             String chosen = folder;
-            List<PackProgram> selected = variants.get(folder);
+            List<PackProgram> selected = variant(folder);
             List<String> nextDeviations = new ArrayList<>(baseDeviations);
-            boolean hasNestedVariants = variants.keySet().stream()
+            boolean hasNestedVariants = rawVariants.keySet().stream()
                     .anyMatch(value -> !value.isBlank());
 
             if (hasNestedVariants && folder.equals("world0") && fallsBackToWorld0(requested)) {
@@ -187,14 +202,14 @@ public final class PackSource {
             if (selected == null && hasNestedVariants) {
                 if (fallsBackToWorld0(requested)) {
                     chosen = "world0";
-                    selected = variants.get("world0");
+                    selected = variant("world0");
                     nextDeviations.add("DIMENSION_SOURCE_FALLBACK_TO_WORLD0:" + requested);
                 } else {
                     nextDeviations.add("DIMENSION_SOURCE_UNAVAILABLE:" + requested);
                 }
             }
             if (selected == null) {
-                selected = variants.getOrDefault("", List.of());
+                selected = rawVariants.containsKey("") ? variant("") : List.of();
                 chosen = "";
             }
             if (hasNestedVariants && !chosen.isBlank()) {
@@ -211,7 +226,7 @@ public final class PackSource {
          * dimension.properties names its folder and the pack has a world0 folder.
          */
         private boolean fallsBackToWorld0(String requested) {
-            return !hasDimensionProperties && !isStandardDimension(requested) && variants.containsKey("world0");
+            return !hasDimensionProperties && !isStandardDimension(requested) && rawVariants.containsKey("world0");
         }
 
         private String selectedFolder(String dimension) {
