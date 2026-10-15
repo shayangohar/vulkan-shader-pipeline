@@ -104,7 +104,7 @@ public final class PackProbe {
             this.loaded = loaded;
             this.shadersDir = loaded.shadersDir();
             this.settingsPlan = PackSettingsPlan.parse(loaded.rawProgramsAllVariants(), shadersDir,
-                    loaded.options().undeclared(), loaded.options().disabledPrograms());
+                    loaded.options().undeclared(), loaded.options().environment());
         }
 
         Analysis analyze() {

@@ -18,10 +18,15 @@ import java.util.Set;
  * preprocessor as locked macros), and the programs the matching profile switches off.
  */
 public record StagedOptions(ShaderPackOptions pack, OptionValues applied, Map<String, String> undeclared,
-                            Set<String> disabledPrograms) {
+                            Set<String> disabledPrograms, boolean optionFileReadable) {
     public StagedOptions {
         undeclared = Map.copyOf(undeclared);
         disabledPrograms = Set.copyOf(disabledPrograms);
+    }
+
+    /** The applied values as shaders.properties sees them. */
+    PackOptionEnvironment environment() {
+        return PackOptionEnvironment.of(pack, applied, disabledPrograms);
     }
 
     /** The profile the applied values match, or {@code Custom} when none does, as Iris names it. */
@@ -32,10 +37,11 @@ public record StagedOptions(ShaderPackOptions pack, OptionValues applied, Map<St
     /**
      * Brings {@code <pack>.txt} in line with the stored values, as Iris rewrites it after every load:
      * the non-default values only, and no file when there are none. JVM overrides are never written.
-     * A pack that declares no options (one whose sources could not be read) leaves the file alone.
+     * A pack that declares no options (one whose sources could not be read), or an option file that
+     * could not be parsed, leaves the file alone.
      */
     public void saveOptionFile(Path packPath) throws IOException {
-        if (pack.options().toggles().isEmpty() && pack.options().choices().isEmpty()) return;
+        if (!optionFileReadable || pack.options().toggles().isEmpty() && pack.options().choices().isEmpty()) return;
         Path file = OptionFile.of(packPath);
         Map<String, String> stored = pack.values().changes();
         boolean current = stored.equals(OptionFile.read(file)) && Files.exists(file) != stored.isEmpty();
@@ -45,6 +51,6 @@ public record StagedOptions(ShaderPackOptions pack, OptionValues applied, Map<St
     /** The options of a pack whose sources could not be read. */
     static StagedOptions none() {
         ShaderPackOptions pack = ShaderPackOptions.empty();
-        return new StagedOptions(pack, pack.values(), Map.of(), Set.of());
+        return new StagedOptions(pack, pack.values(), Map.of(), Set.of(), true);
     }
 }

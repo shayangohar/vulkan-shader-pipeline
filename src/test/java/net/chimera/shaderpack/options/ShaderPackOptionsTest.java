@@ -56,7 +56,8 @@ final class ShaderPackOptionsTest {
         assertTrue(main.get(4) instanceof OptionMenu.Empty, "an undeclared name is a blank cell");
         List<String> filled = main.subList(5, main.size()).stream()
                 .map(element -> ((OptionMenu.OptionEntry) element).option().name()).sorted().toList();
-        assertEquals(List.of("FOG", "QUALITY"), filled, "* places every option no screen used");
+        assertEquals(List.of("FOG", "QUALITY", "SHADOWS"), filled,
+                "* places every option no sub-screen used, the main screen's own again, as Iris does");
         assertEquals(2, options.menu().main().columnCount());
         OptionMenu.Screen light = options.menu().subScreen("LIGHT").orElseThrow();
         assertEquals(1, light.columnCount());

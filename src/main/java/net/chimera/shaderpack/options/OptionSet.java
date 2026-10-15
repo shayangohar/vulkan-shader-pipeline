@@ -66,9 +66,22 @@ public final class OptionSet {
             }
         }
 
-        /** Names dropped because two declarations disagreed on the default. */
+        /** Merges another builder's options (one file's) into this one, conflicts included. */
+        void addAll(Builder other) {
+            other.toggles.values().forEach(declared -> merge(toggles, declared));
+            other.choices.values().forEach(declared -> merge(choices, declared));
+            ambiguous.addAll(other.ambiguous);
+        }
+
+        /**
+         * Names dropped because two declarations disagreed on the default, and not declared again
+         * afterwards (a later declaration starts a dropped name over).
+         */
         Set<String> ambiguous() {
-            return Collections.unmodifiableSet(ambiguous);
+            Set<String> dropped = new LinkedHashSet<>(ambiguous);
+            dropped.removeAll(toggles.keySet());
+            dropped.removeAll(choices.keySet());
+            return Collections.unmodifiableSet(dropped);
         }
 
         OptionSet build() {

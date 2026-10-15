@@ -187,7 +187,8 @@ final class PackFrontEndTest {
                 PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of());
         assertTrue(!settings.enabled("world0", "composite2"), "folder-scoped switch ignored");
         assertTrue(settings.enabled("world-1", "composite2"), "another folder's switch applied");
-        assertTrue(!settings.enabled("world0", "composite3"), "bare switch must still apply");
+        assertTrue(settings.enabled("world0", "composite3") && !settings.enabled("", "composite3"),
+                "a bare switch names the root program only, as Iris matches paths exactly");
     }
 
     /** uniform.bool reads through `uniform bool`, and gtexture is Iris's atlas name. */

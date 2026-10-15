@@ -113,16 +113,17 @@ final class OptionDiscoveryTest {
     }
 
     @Test
-    void anIfdefInAnotherIncludeGroupDoesNotConfirm(@TempDir Path root) throws IOException {
+    void anIfdefAnywhereInThePackConfirms(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.createDirectories(shaders.resolve("world0"));
         Files.writeString(shaders.resolve("composite.fsh"), "#define LONELY\n");
         Files.writeString(shaders.resolve("world0/final.fsh"), "#ifdef LONELY\n#endif\n");
-        assertFalse(OptionDiscovery.discover(shaders).options().isToggle("LONELY"));
-        Files.writeString(shaders.resolve("world0/final.fsh"),
-                "#include \"../composite.fsh\"\n#ifdef LONELY\n#endif\n");
         assertTrue(OptionDiscovery.discover(shaders).options().isToggle("LONELY"),
-                "a relative include joins the group");
+                "Iris treats the whole include graph as one group");
+        Files.writeString(shaders.resolve("world0/final.fsh"), "#include \"../../lib.glsl\"\n#ifdef LONELY\n#endif\n");
+        Files.writeString(shaders.resolve("lib.glsl"), "#define FROM_ROOT 1 // [1 2]\n");
+        assertTrue(OptionDiscovery.discover(shaders).options().isChoice("FROM_ROOT"),
+                "an include climbing above the root stays at the root, as Iris clamps it");
     }
 
     @Test

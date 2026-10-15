@@ -1,6 +1,7 @@
 package net.chimera.shaderpack.options;
 
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -10,7 +11,6 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -32,7 +32,10 @@ public final class PackLanguage {
         return new PackLanguage(Map.of());
     }
 
-    /** Reads the {@code lang} folder under {@code shadersRoot}; files that fail to parse are skipped. */
+    /**
+     * Reads the {@code lang} folder under {@code shadersRoot}. As Iris reads them, a bad byte becomes
+     * a replacement character and a malformed line keeps the entries before it.
+     */
     public static PackLanguage read(Path shadersRoot) {
         Path folder = shadersRoot.resolve("lang");
         Map<String, Map<String, String>> languages = new HashMap<>();
@@ -41,15 +44,12 @@ public final class PackLanguage {
             files.filter(Files::isRegularFile).forEach(file -> {
                 String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
                 if (!name.endsWith(".lang")) return;
-                Properties entries = new Properties();
-                try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                    entries.load(reader);
-                } catch (IOException | IllegalArgumentException malformed) {
-                    return;
+                try (Reader reader = new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8)) {
+                    languages.put(name.substring(0, name.lastIndexOf('.')),
+                            Collections.unmodifiableMap(new HashMap<>(MenuProperties.orderedEntries(reader))));
+                } catch (IOException unreadable) {
+                    // An unreadable file adds no translations.
                 }
-                Map<String, String> map = new HashMap<>();
-                entries.forEach((key, value) -> map.put(key.toString(), value.toString()));
-                languages.put(name.substring(0, name.lastIndexOf('.')), Collections.unmodifiableMap(map));
             });
         } catch (IOException unreadable) {
             return new PackLanguage(languages);

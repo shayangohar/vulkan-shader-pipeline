@@ -1,7 +1,7 @@
 package net.chimera.shaderpack.options;
 
 import java.io.IOException;
-import java.io.Reader;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -10,11 +10,10 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -30,22 +29,22 @@ import java.util.stream.Stream;
  */
 final class SourceGraph {
     private final Map<String, AnnotatedSource> files;
-    private final Map<String, Set<String>> includes;
+    private final List<String> irisOrder;
     private final List<String> failures;
 
-    private SourceGraph(Map<String, AnnotatedSource> files, Map<String, Set<String>> includes, List<String> failures) {
+    private SourceGraph(Map<String, AnnotatedSource> files, List<String> irisOrder, List<String> failures) {
         this.files = files;
-        this.includes = includes;
+        this.irisOrder = List.copyOf(irisOrder);
         this.failures = List.copyOf(failures);
     }
 
     static SourceGraph empty() {
-        return new SourceGraph(Map.of(), Map.of(), List.of());
+        return new SourceGraph(Map.of(), List.of(), List.of());
     }
 
     static SourceGraph read(Path shadersRoot) {
         Map<String, AnnotatedSource> files = new TreeMap<>();
-        Map<String, Set<String>> includes = new HashMap<>();
+        Map<PackPathKey, String> visited = new HashMap<>();
         List<String> failures = new ArrayList<>();
         Deque<String> queue = new ArrayDeque<>(ProgramSourceNames.starts(shadersRoot));
         Set<String> seen = new LinkedHashSet<>(queue);
@@ -57,16 +56,13 @@ final class SourceGraph {
                 continue;
             }
             files.put(path, AnnotatedSource.parse(lines));
-            Set<String> targets = new LinkedHashSet<>();
+            visited.put(new PackPathKey(path), path);
             for (String line : lines) {
                 String target = includeTarget(path, line);
-                if (target == null || target.equals(path)) continue;
-                targets.add(target);
-                if (seen.add(target)) queue.add(target);
+                if (target != null && !target.equals(path) && seen.add(target)) queue.add(target);
             }
-            includes.put(path, targets);
         }
-        return new SourceGraph(files, includes, failures);
+        return new SourceGraph(files, List.copyOf(visited.values()), failures);
     }
 
     /** Every readable file, by pack-relative path. */
@@ -74,31 +70,25 @@ final class SourceGraph {
         return files;
     }
 
+    /**
+     * The files in the order Iris walks them when it merges their options: a {@code java.util.HashMap}
+     * keyed by pack path, filled in the order the scan reads the files. A conflict drops a name and a
+     * later declaration starts it over, so the order decides which names survive.
+     */
+    List<String> irisOrder() {
+        return irisOrder;
+    }
+
     List<String> failures() {
         return failures;
     }
 
-    /**
-     * The files split into groups joined by includes in either direction. An option and the
-     * {@code #ifdef} that confirms it must share a group.
-     */
-    List<List<String>> components() {
-        Map<String, String> parent = new HashMap<>();
-        for (String file : files.keySet()) parent.put(file, file);
-        includes.forEach((from, targets) -> targets.stream().filter(files::containsKey)
-                .forEach(to -> parent.put(root(parent, from), root(parent, to))));
-        Map<String, List<String>> groups = new LinkedHashMap<>();
-        for (String file : files.keySet()) {
-            groups.computeIfAbsent(root(parent, file), key -> new ArrayList<>()).add(file);
+    /** A pack path hashed as Iris hashes its pack paths, {@code Objects.hash(path)}. */
+    private record PackPathKey(String path) {
+        @Override
+        public int hashCode() {
+            return Objects.hash(path);
         }
-        return List.copyOf(groups.values());
-    }
-
-    private static String root(Map<String, String> parent, String file) {
-        String current = file;
-        while (!parent.get(current).equals(current)) current = parent.get(current);
-        parent.put(file, current);
-        return current;
     }
 
     /** The pack path an {@code #include} line names, resolved against {@code from}; null for other lines. */
@@ -112,14 +102,13 @@ final class SourceGraph {
         return normalize(base + "/" + target);
     }
 
-    /** Collapses {@code .} and {@code ..} segments; null when the path climbs above the shaders root. */
+    /** Collapses {@code .} and {@code ..} segments; a {@code ..} at the shaders root stays there, as in Iris. */
     private static String normalize(String path) {
         Deque<String> segments = new ArrayDeque<>();
         for (String segment : path.split("/")) {
             if (segment.isEmpty() || segment.equals(".")) continue;
             if (segment.equals("..")) {
-                if (segments.isEmpty()) return null;
-                segments.removeLast();
+                if (!segments.isEmpty()) segments.removeLast();
             } else {
                 segments.addLast(segment);
             }
@@ -166,19 +155,25 @@ final class SourceGraph {
             }
         }
 
-        /** The folders dimension.properties names, else the world folders that exist. */
+        /**
+         * The folders dimension.properties names, in file order; without that file, the world
+         * folders that exist. As in Iris, a dimension.properties with any entry at all turns the
+         * world-folder fallback off.
+         */
         private static List<String> dimensionFolders(Path shadersRoot) {
             List<String> folders = new ArrayList<>();
             Path properties = shadersRoot.resolve("dimension.properties");
             if (Files.isRegularFile(properties)) {
-                Properties values = new Properties();
-                try (Reader reader = Files.newBufferedReader(properties, StandardCharsets.UTF_8)) {
-                    values.load(reader);
+                Map<String, String> entries;
+                try {
+                    entries = MenuProperties.orderedEntries(new StringReader(
+                            Files.readString(properties, StandardCharsets.ISO_8859_1)));
                 } catch (IOException | IllegalArgumentException unreadable) {
-                    values.clear();
+                    entries = Map.of();
                 }
-                values.stringPropertyNames().stream().filter(key -> key.startsWith("dimension."))
-                        .map(key -> key.substring("dimension.".length())).sorted().forEach(folders::add);
+                entries.keySet().stream().filter(key -> key.startsWith("dimension."))
+                        .map(key -> key.substring("dimension.".length())).forEach(folders::add);
+                if (!entries.isEmpty()) return folders;
             }
             if (folders.isEmpty()) {
                 for (String world : List.of("world0", "world-1", "world1")) {

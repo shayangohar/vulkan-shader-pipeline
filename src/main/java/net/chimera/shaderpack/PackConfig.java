@@ -3,9 +3,6 @@ package net.chimera.shaderpack;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -61,7 +58,7 @@ public final class PackConfig {
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile("#define\\s+DRAWBUFFERS(\\d+)");
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
-    private static final Pattern PROPERTY_LINE = Pattern.compile("^\\s*([A-Za-z0-9_.-]+)\\s*=\\s*([^#\\r\\n]+?)\\s*$");
+    private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
     /** shaders.properties key shape: <target>Format. */
     private static final Pattern COLORTEX_PROPERTY_KEY = Pattern.compile("^" + TARGET_NAME + "Format$");
     private static final Pattern TARGET_SIZE_PROPERTY_KEY =
@@ -301,20 +298,16 @@ public final class PackConfig {
             collectTargetConstants(program.executableVertexSource(), collected.targetSettings, collected.deviations);
         }
 
-        // shaders.properties overrides (OptiFine packs may declare formats here).
-        Path properties = shadersDir != null ? shadersDir.resolve("shaders.properties") : null;
-        if (properties != null && Files.isRegularFile(properties)) {
-            try {
-                for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
-                    Matcher m = PROPERTY_LINE.matcher(line);
-                    if (m.find()) {
-                        applyProperty(m.group(1), m.group(2).trim(), collected);
-                    }
-                }
-            } catch (IOException e) {
-                LOGGER.warn("[chimera] pack: cannot read {}: {}", properties, e.getMessage());
+        // shaders.properties overrides (OptiFine packs may declare formats here), as Iris reads
+        // them: inside the #if branches that hold, the last value of a key, and option names in a
+        // value expanded (Complementary sizes colortex1 by REFLECTION_RES).
+        settings.propertyValues().forEach((key, raw) -> {
+            int comment = raw.indexOf('#');
+            String value = (comment < 0 ? raw : raw.substring(0, comment)).trim();
+            if (PROPERTY_KEY.matcher(key).matches() && !value.isEmpty()) {
+                applyProperty(key, PackConditionals.expandMacros(value, settings.propertyMacros()).trim(), collected);
             }
-        }
+        });
 
         // Draw-buffer count: the geometry program's (targets it writes).
         int drawBufferCount = 1;

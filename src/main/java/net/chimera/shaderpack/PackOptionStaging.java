@@ -47,12 +47,39 @@ final class PackOptionStaging {
      */
     static Staged stage(Path packPath, Path shadersDir, Path temporaryRoot, PendingOptions.Drained pending,
                         List<String> deviations) {
-        Map<String, String> stored = new TreeMap<>();
-        if (!pending.reset()) {
-            if (packPath != null) stored.putAll(OptionFile.read(OptionFile.of(packPath)));
-            stored.putAll(pending.values());
+        Stored stored = stored(packPath, pending, deviations);
+        ShaderPackOptions pack = ShaderPackOptions.load(shadersDir, stored.values());
+        StagedOptions options = withOverrides(pack, stored.readable(), deviations);
+        Map<String, String> edits = pack.editedFiles(options.applied());
+        if (edits.isEmpty()) return new Staged(shadersDir, temporaryRoot, options);
+        return writeEdits(shadersDir, temporaryRoot, edits, options, deviations);
+    }
+
+    /** The stored values, and whether the option file could be read (an unreadable one is kept as is). */
+    private record Stored(Map<String, String> values, boolean readable) {}
+
+    private static Stored stored(Path packPath, PendingOptions.Drained pending, List<String> deviations) {
+        Map<String, String> values = new TreeMap<>();
+        if (pending.reset()) return new Stored(values, true);
+        boolean readable = true;
+        Path file = packPath == null ? null : OptionFile.of(packPath);
+        if (file != null && Files.isRegularFile(file)) {
+            try {
+                values.putAll(OptionFile.readStrict(file));
+            } catch (IOException unreadable) {
+                // Iris refuses such a file rather than rewrite it; keep it for the player to fix.
+                LOGGER.warn("[chimera] cannot read the option file {}: {}", file, unreadable.getMessage());
+                deviations.add("PACK_OPTION_FILE_UNREADABLE");
+                readable = false;
+            }
         }
-        ShaderPackOptions pack = ShaderPackOptions.load(shadersDir, stored);
+        values.putAll(pending.values());
+        return new Stored(values, readable);
+    }
+
+    /** The stored values with the JVM overrides for declared options on top. */
+    private static StagedOptions withOverrides(ShaderPackOptions pack, boolean fileReadable,
+                                               List<String> deviations) {
         OptionValues applied = pack.values().copy();
         Map<String, String> undeclared = new TreeMap<>();
         PackOptionSources.systemOverrides().forEach((name, text) -> {
@@ -64,10 +91,13 @@ final class PackOptionStaging {
             }
         });
         applied.changes().keySet().forEach(name -> deviations.add("PACK_OPTION_OVERRIDE:" + name));
-        StagedOptions options = new StagedOptions(pack, applied, undeclared,
-                Set.copyOf(pack.profileDisabledPrograms(applied)));
-        Map<String, String> edits = pack.editedFiles(applied);
-        if (edits.isEmpty()) return new Staged(shadersDir, temporaryRoot, options);
+        return new StagedOptions(pack, applied, undeclared, Set.copyOf(pack.profileDisabledPrograms(applied)),
+                fileReadable);
+    }
+
+    /** Writes the edited lines into the extracted tree, or into a copy of a folder pack. */
+    private static Staged writeEdits(Path shadersDir, Path temporaryRoot, Map<String, String> edits,
+                                     StagedOptions options, List<String> deviations) {
         Path root = temporaryRoot;
         try {
             if (root == null) {

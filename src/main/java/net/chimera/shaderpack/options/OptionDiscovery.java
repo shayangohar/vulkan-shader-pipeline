@@ -32,20 +32,25 @@ public final class OptionDiscovery {
         return new OptionDiscovery(SourceGraph.empty(), OptionSet.empty(), Set.of());
     }
 
-    /** Reads every program source under {@code shadersRoot} and what it includes. */
+    /**
+     * Reads every program source under {@code shadersRoot} and what it includes, as Iris does: an
+     * {@code #ifdef} anywhere in the pack confirms a toggle (Iris treats the whole include graph as
+     * one group), each file's options are merged within the file first, and the files are then
+     * merged in Iris's order, which decides the names a conflict drops.
+     */
     public static OptionDiscovery discover(Path shadersRoot) {
         SourceGraph graph = SourceGraph.read(shadersRoot);
+        Set<String> tested = new HashSet<>();
+        graph.files().values().forEach(source -> tested.addAll(source.testedNames()));
         OptionSet.Builder builder = new OptionSet.Builder();
-        for (List<String> component : graph.components()) {
-            Set<String> tested = new HashSet<>();
-            for (String file : component) tested.addAll(graph.files().get(file).testedNames());
-            for (String file : component) {
-                graph.files().get(file).options().forEach((line, option) -> {
-                    if (option instanceof ShaderOption.Choice || tested.contains(option.name())) {
-                        builder.add(new OptionSet.Location(file, line), option);
-                    }
-                });
-            }
+        for (String file : graph.irisOrder()) {
+            OptionSet.Builder declared = new OptionSet.Builder();
+            graph.files().get(file).options().forEach((line, option) -> {
+                if (option instanceof ShaderOption.Choice || tested.contains(option.name())) {
+                    declared.add(new OptionSet.Location(file, line), option);
+                }
+            });
+            builder.addAll(declared);
         }
         return new OptionDiscovery(graph, builder.build(), Set.copyOf(builder.ambiguous()));
     }

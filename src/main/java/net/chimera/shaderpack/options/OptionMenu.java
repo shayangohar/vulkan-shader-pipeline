@@ -93,12 +93,16 @@ public final class OptionMenu {
             this.options = options;
             this.profiles = profiles;
             this.properties = properties;
-            unplaced.addAll(options.toggles().keySet());
-            unplaced.addAll(options.choices().keySet());
         }
 
+        /**
+         * Iris builds the main screen before it gathers the unplaced options, so the options the
+         * main screen names are never taken out: a {@code *} lists them again.
+         */
         OptionMenu assemble() {
             Screen main = screen(null, properties.mainScreen().orElse(List.of("*")), properties.mainColumns());
+            unplaced.addAll(options.toggles().keySet());
+            unplaced.addAll(options.choices().keySet());
             Map<String, Screen> subScreens = new HashMap<>();
             properties.subScreens().forEach((id, entries) -> subScreens.put(id,
                     screen(id, entries, Optional.ofNullable(properties.subColumns().get(id)))));

@@ -44,6 +44,15 @@ final class PackOptionsRealPackTest {
             if (pack.getFileName().toString().startsWith("MakeUp")) {
                 assertEquals(List.of("0", "1", "2"), options.options().choices().get("V_CLOUDS").option().values());
             }
+            if (pack.getFileName().toString().startsWith("Bliss")) {
+                // Bliss declares these with different defaults across files; Iris's file order
+                // decides which survive, and with which default.
+                var toggles = options.options().toggles();
+                assertTrue(toggles.get("WEATHER").option().defaultValue(), "WEATHER is an option, on");
+                assertTrue(toggles.get("CLOUDSHADOWSONLY").option().defaultValue(), "CLOUDSHADOWSONLY defaults on");
+                assertFalse(toggles.containsKey("WORLD") || toggles.containsKey("LIGHTSOURCE_REFLECTION"),
+                        "WORLD and LIGHTSOURCE_REFLECTION conflict and drop");
+            }
         }
     }
 

@@ -11,6 +11,8 @@ import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -31,7 +33,9 @@ final class IrisPlayerState {
             "textureFilteringMode", "anisotropicFiltering", "currentColorSpace",
             "vehicleLookVector", "relativeVehiclePosition", "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime",
-            "dhNearPlane", "dhFarPlane", "dhRenderDistance");
+            "dhNearPlane", "dhFarPlane", "dhRenderDistance",
+            "is_burning", "is_hurt", "is_invisible", "is_on_ground", "is_sneaking", "is_sprinting", "is_alive");
+
 
     /** DHCompat's near and far planes when Distant Horizons is absent. */
     static final float DH_ABSENT_PLANE = 0.01f;
@@ -63,6 +67,7 @@ final class IrisPlayerState {
     private final int[] date = new int[3];
     private final int[] time = new int[3];
     private final int[] yearTime = new int[2];
+    private final Map<String, Boolean> playerFlags = new HashMap<>();
 
     void capture(Minecraft minecraft, float partialTick, double cameraX, double cameraY, double cameraZ,
                  float frameTime) {
@@ -125,6 +130,20 @@ final class IrisPlayerState {
         this.feetInWater = player != null && player.isInShallowWater();
         this.swimming = player != null && player.isSwimming();
         this.riding = player != null && player.isPassenger();
+        capturePlayerFlags(player);
+    }
+
+    /** IrisExclusiveUniforms' player flags; all false without a player. */
+    private void capturePlayerFlags(LocalPlayer player) {
+        this.playerFlags.clear();
+        if (player == null) return;
+        this.playerFlags.put("is_burning", player.isOnFire());
+        this.playerFlags.put("is_hurt", player.hurtTime > 0);
+        this.playerFlags.put("is_invisible", player.isInvisible());
+        this.playerFlags.put("is_on_ground", player.onGround());
+        this.playerFlags.put("is_sneaking", player.isCrouching());
+        this.playerFlags.put("is_sprinting", player.isSprinting());
+        this.playerFlags.put("is_alive", player.isAlive());
     }
 
     /** Iris's clock uniforms: the local date and time, and the seconds gone and left in the year. */
@@ -190,8 +209,13 @@ final class IrisPlayerState {
             case "currentYearTime" -> c < 2 ? this.yearTime[c] : Double.NaN;
             case "dhNearPlane", "dhFarPlane" -> DH_ABSENT_PLANE;
             case "dhRenderDistance" -> this.renderDistance;
-            default -> Double.NaN;
+            default -> playerFlag(name);
         };
+    }
+
+    /** IrisExclusiveUniforms' player flags ({@code is_hurt}, {@code is_alive}, ...); NaN for other names. */
+    private double playerFlag(String name) {
+        return NAMES.contains(name) ? flag(this.playerFlags.getOrDefault(name, false)) : Double.NaN;
     }
 
     /** Writes a name in its declared type: integer types as ints, the rest as floats. */

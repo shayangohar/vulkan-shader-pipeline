@@ -320,7 +320,7 @@ final class WaterProgramTest {
                 """;
         PackProgram program = new PackProgram("composite", source, null);
         PackSettingsPlan settings = PackSettingsPlan.parse(List.of(program), null,
-                Map.of("SOURCE_ON", "false", "SOURCE_OFF", "true"), Set.of());
+                Map.of("SOURCE_ON", "false", "SOURCE_OFF", "true"), PackOptionEnvironment.defaults(null));
         assertTrue(!settings.preprocessorDefines().containsKey("SOURCE_ON")
                         && "1".equals(settings.preprocessorDefines().get("SOURCE_OFF")),
                 "toggle defines: " + settings.preprocessorDefines());

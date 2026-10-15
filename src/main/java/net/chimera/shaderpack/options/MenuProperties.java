@@ -52,7 +52,8 @@ public record MenuProperties(
         Path file = shadersRoot.resolve("shaders.properties");
         if (!Files.isRegularFile(file)) return empty();
         try {
-            return parse(Files.readString(file, StandardCharsets.UTF_8));
+            // Iris reads shaders.properties as ISO-8859-1, which never fails on a stray byte.
+            return parse(Files.readString(file, StandardCharsets.ISO_8859_1));
         } catch (IOException unreadable) {
             return empty();
         }
