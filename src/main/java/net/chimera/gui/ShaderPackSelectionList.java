@@ -2,6 +2,7 @@ package net.chimera.gui;
 
 import net.chimera.ChimeraMod;
 import net.chimera.config.ShaderpackDirectory;
+import net.chimera.gui.options.OptionLook;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -10,11 +11,9 @@ import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.Util;
 
@@ -36,9 +35,6 @@ import java.util.List;
 public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPackSelectionList.BaseEntry> {
     private static final Component PACK_LIST_LABEL = Component.translatable("pack.chimera.list.label")
             .withStyle(ChatFormatting.ITALIC, ChatFormatting.GRAY);
-    private static final Identifier BUTTON = Identifier.withDefaultNamespace("widget/button");
-    private static final Identifier BUTTON_HIGHLIGHTED = Identifier.withDefaultNamespace("widget/button_highlighted");
-    private static final Identifier BUTTON_DISABLED = Identifier.withDefaultNamespace("widget/button_disabled");
     private static final int APPLIED_COLOR = 0xFFFFF263;
     private static final int DISABLED_COLOR = 0xFFA2A2A2;
 
@@ -48,6 +44,11 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
     private final WatchService watcher;
     private WatchKey key;
     private String applied;
+    /**
+     * The pack the player picked. Vanilla's selection also lands on the caption and toggle rows
+     * (by click or arrow key) and clears past either end; none of that unpicks the pack, as in Iris.
+     */
+    private String chosen;
 
     ShaderPackSelectionList(ShaderPackScreen screen, Minecraft minecraft, int width, int height, int top,
                             Path root, boolean shadersEnabled, String applied) {
@@ -93,9 +94,15 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         super.renderWidget(graphics, mouseX, mouseY, delta);
     }
 
-    /** Rebuilds the rows from the folder, keeping the selected pack selected. */
+    @Override
+    public void setSelected(BaseEntry entry) {
+        super.setSelected(entry);
+        if (entry instanceof ShaderPackEntry pack) this.chosen = pack.packName;
+    }
+
+    /** Rebuilds the rows from the folder, keeping the chosen pack chosen. */
     void refresh() {
-        String selected = getSelected() instanceof ShaderPackEntry entry ? entry.packName : this.applied;
+        String selected = this.chosen != null ? this.chosen : this.applied;
         clearEntries();
         List<String> names;
         try {
@@ -106,6 +113,8 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
                     .withStyle(ChatFormatting.RED, ChatFormatting.BOLD)));
             return;
         }
+        // A pack that left the folder is no longer chosen.
+        this.chosen = null;
         addEntry(this.topButtonRow);
         this.topButtonRow.allowToggle = !names.isEmpty();
         if (names.isEmpty()) {
@@ -132,7 +141,7 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
     }
 
     String selectedPack() {
-        return getSelected() instanceof ShaderPackEntry entry ? entry.packName : null;
+        return this.chosen;
     }
 
     boolean shadersEnabled() {
@@ -160,10 +169,11 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         }, url, true));
     }
 
+    /** A row drawn as a button, in Iris's flat look. */
     private static void drawButton(GuiGraphics graphics, int x, int y, int width, int height,
                                    boolean hovered, boolean disabled) {
-        Identifier sprite = disabled ? BUTTON_DISABLED : hovered ? BUTTON_HIGHLIGHTED : BUTTON;
-        graphics.blitSprite(RenderPipelines.GUI_TEXTURED, sprite, x, y, width, height);
+        OptionLook.control(graphics, x, y, width, height,
+                disabled ? OptionLook.State.INSET : hovered ? OptionLook.State.HOVERED : OptionLook.State.NORMAL);
     }
 
     private static void playClick() {
@@ -184,6 +194,12 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         public void renderContent(GuiGraphics graphics, int mouseX, int mouseY, boolean hovered, float delta) {
             graphics.drawCenteredString(Minecraft.getInstance().font, this.label,
                     getContentXMiddle() - 2, getContentY() + (getContentHeight() - 11) / 2, 0xFFC2C2C2);
+        }
+
+        /** A caption is never picked or focused by a click. */
+        @Override
+        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+            return false;
         }
 
         @Override
@@ -264,10 +280,11 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         }
 
         @Override
+        /** Runs the action without the row becoming the list's selection. */
         public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
             playClick();
             this.action.run();
-            return true;
+            return false;
         }
 
         @Override

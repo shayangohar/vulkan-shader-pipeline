@@ -7,9 +7,9 @@ import net.minecraft.client.gui.GuiGraphics;
  * a 1 px border, a 1 px inner ring and a fill, plus the dark panels of tooltips and comments. The
  * layers never overlap, so their alphas blend with the world behind and not with each other.
  */
-final class OptionLook {
+public final class OptionLook {
     /** A control's look: normal, hovered or focused, or inset (disabled, value boxes, slider tracks). */
-    enum State {
+    public enum State {
         NORMAL(0x8AE0E0E0, 0x36050505, 0x36232323),
         HOVERED(0xFFFFFFFF, 0x638C8C8C, 0x63A3A3A3),
         INSET(0x8AB3B3B3, 0x73000000, 0x73000000);
@@ -38,7 +38,7 @@ final class OptionLook {
 
     private OptionLook() {}
 
-    static void control(GuiGraphics graphics, int x, int y, int width, int height, State state) {
+    public static void control(GuiGraphics graphics, int x, int y, int width, int height, State state) {
         frame(graphics, x, y, width, height, state.border);
         frame(graphics, x + 1, y + 1, width - 2, height - 2, state.ring);
         graphics.fill(x + 2, y + 2, x + width - 2, y + height - 2, state.fill);

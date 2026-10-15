@@ -18,8 +18,15 @@ final class HeaderButton extends AbstractWidget {
     static final int HEIGHT = 16;
     static final int ICON_WIDTH = 15;
     private static final int SHADOW = 0xB3000000;
-    private static final int IMPORT_COLOR = 0xFF4DA6FF;
-    private static final int EXPORT_COLOR = 0xFFFC7D3D;
+    /** Each glyph row as pairs of first and last lit pixel. */
+    private static final int[][] EXPORT_GLYPH = {{3, 3}, {2, 4}, {1, 5}, {3, 3}, {3, 3}, {0, 0, 6, 6}, {0, 0, 6, 6},
+            {0, 6}};
+    private static final int[][] IMPORT_GLYPH = {{3, 3}, {3, 3}, {1, 5}, {2, 4}, {3, 3}, {0, 0, 6, 6}, {0, 0, 6, 6},
+            {0, 6}};
+    /** Yellow, orange, pink, violet. */
+    private static final int[] EXPORT_GRADIENT = {0xFFFFE066, 0xFFFF9F43, 0xFFFF6B9D, 0xFFB57BFF};
+    /** Teal, blue, lavender. */
+    private static final int[] IMPORT_GRADIENT = {0xFF3FD9C9, 0xFF4DA6FF, 0xFFB9A7FF};
 
     enum Kind { BACK, IMPORT, EXPORT, RESET }
 
@@ -62,11 +69,9 @@ final class HeaderButton extends AbstractWidget {
                 : hot() ? OptionLook.State.HOVERED : OptionLook.State.NORMAL;
         OptionLook.control(graphics, getX(), getY(), getWidth(), HEIGHT, state);
         switch (kind) {
-            case BACK -> graphics.drawCenteredString(context.font(), backLabel(), getX() + getWidth() / 2, getY() + 4,
-                    OptionLook.WHITE);
-            case RESET -> graphics.drawCenteredString(context.font(), Component.translatable("options.chimera.reset")
-                    .withStyle(inset ? ChatFormatting.GRAY : ChatFormatting.YELLOW), getX() + getWidth() / 2,
-                    getY() + 4, OptionLook.WHITE);
+            case BACK -> drawLabel(graphics, backLabel());
+            case RESET -> drawLabel(graphics, Component.translatable("options.chimera.reset")
+                    .withStyle(inset ? ChatFormatting.GRAY : ChatFormatting.YELLOW));
             case IMPORT, EXPORT -> drawIcon(graphics, getX() + 4, getY() + 4);
         }
         if (hot() && kind != Kind.BACK) {
@@ -87,21 +92,44 @@ final class HeaderButton extends AbstractWidget {
         };
     }
 
-    /** A tray with an arrow leaving it (export) or entering it (import), 7 by 8 pixels. */
-    private void drawIcon(GuiGraphics graphics, int x, int y) {
-        int color = hot() ? (kind == Kind.IMPORT ? IMPORT_COLOR : EXPORT_COLOR) : OptionLook.WHITE;
-        glyph(graphics, x + 1, y + 1, SHADOW);
-        glyph(graphics, x, y, color);
+    /** A label centred as Iris centres it. */
+    private void drawLabel(GuiGraphics graphics, Component label) {
+        int width = context.font().width(label);
+        graphics.drawString(context.font(), label, getX() + (getWidth() - width) / 2, getY() + 4, OptionLook.WHITE);
     }
 
-    private void glyph(GuiGraphics graphics, int x, int y, int color) {
-        graphics.fill(x, y + 7, x + 7, y + 8, color);
-        graphics.fill(x, y + 5, x + 1, y + 7, color);
-        graphics.fill(x + 6, y + 5, x + 7, y + 7, color);
-        graphics.fill(x + 3, y, x + 4, y + 5, color);
-        boolean up = kind == Kind.EXPORT;
-        graphics.fill(x + 2, y + (up ? 1 : 3), x + 5, y + (up ? 2 : 4), color);
-        graphics.fill(x + 1, y + 2, x + 6, y + 3, color);
+    /**
+     * A tray with an arrow leaving it (export) or entering it (import), 7 by 8 pixels, white with a
+     * shadow, and in a warm (export) or cool (import) gradient while hovered or focused.
+     */
+    private void drawIcon(GuiGraphics graphics, int x, int y) {
+        int[][] rows = kind == Kind.EXPORT ? EXPORT_GLYPH : IMPORT_GLYPH;
+        int[] gradient = kind == Kind.EXPORT ? EXPORT_GRADIENT : IMPORT_GRADIENT;
+        for (int row = 0; row < rows.length; row++) {
+            int color = hot() ? blend(gradient, row / (float) (rows.length - 1)) : OptionLook.WHITE;
+            for (int span = 0; span < rows[row].length; span += 2) {
+                int from = rows[row][span];
+                int to = rows[row][span + 1] + 1;
+                graphics.fill(x + from + 1, y + row + 1, x + to + 1, y + row + 2, SHADOW);
+                graphics.fill(x + from, y + row, x + to, y + row + 1, color);
+            }
+        }
+    }
+
+    /** The colour {@code t} of the way down a gradient through evenly spaced stops. */
+    private static int blend(int[] stops, float t) {
+        float position = t * (stops.length - 1);
+        int index = Math.min(stops.length - 2, (int) position);
+        float local = position - index;
+        int from = stops[index];
+        int to = stops[index + 1];
+        int color = 0xFF000000;
+        for (int shift = 0; shift <= 16; shift += 8) {
+            int a = (from >> shift) & 0xFF;
+            int b = (to >> shift) & 0xFF;
+            color |= Math.round(a + (b - a) * local) << shift;
+        }
+        return color;
     }
 
     @Override

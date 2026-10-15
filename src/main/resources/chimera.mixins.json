@@ -26,6 +26,7 @@
     "ChimeraBlockSeparateAoMixin",
     "ChimeraClientLevelShadeMixin",
     "ChimeraGuiVignetteMixin",
+    "ChimeraGuiHudMixin",
     "ChimeraScreenEffectWaterMixin",
     "QuadSorterMixin",
     "GraphicsPipelineMrtMixin",

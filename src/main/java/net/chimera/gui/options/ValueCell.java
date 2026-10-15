@@ -10,7 +10,7 @@ import net.minecraft.network.chat.Component;
  * a pending change.
  */
 abstract class ValueCell extends OptionCell {
-    private static final Component SET_TO_DEFAULT = Component.translatable("options.chimera.setToDefault")
+    static final Component SET_TO_DEFAULT = Component.translatable("options.chimera.setToDefault")
             .withStyle(ChatFormatting.GREEN);
 
     ValueCell(OptionContext context) {
@@ -54,10 +54,15 @@ abstract class ValueCell extends OptionCell {
      */
     void tooltip(boolean labelCut, int mouseX, int mouseY) {
         if (shiftDown()) {
-            tooltipAtMouse(SET_TO_DEFAULT, mouseX, mouseY);
+            setToDefaultTooltip(mouseX, mouseY);
         } else if (labelCut && !context.overlay().commentShowing()) {
             fullNameTooltip(mouseX, mouseY);
         }
+    }
+
+    /** The reset offer that holding Shift shows; a toggle's stays at the mouse even when focused. */
+    void setToDefaultTooltip(int mouseX, int mouseY) {
+        tooltipAtMouse(SET_TO_DEFAULT, mouseX, mouseY);
     }
 
     void fullNameTooltip(int mouseX, int mouseY) {

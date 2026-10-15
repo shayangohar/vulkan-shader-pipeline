@@ -1,8 +1,6 @@
 package net.chimera.gui.options;
 
 import net.chimera.shaderpack.options.ShaderOption;
-import net.minecraft.ChatFormatting;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -13,14 +11,12 @@ import net.minecraft.network.chat.Component;
  * in its value box; hovered or focused it becomes a track with the value centred and the name in a
  * tooltip. Dragging splits the track into one equal bucket per value.
  *
- * <p>A drag commits when the button is released or the pointer leaves the cell, after the last
- * mouse position is taken. The arrow keys edit the value after Enter, and leaving that edit (Enter
- * again, or focus moving away) commits it; Iris often drops those keyboard edits.
+ * <p>A drag follows the pointer and commits on the mouse release, or as soon as the pointer leaves
+ * the cell, after the last position is taken. The arrow keys edit the value after Enter, and
+ * leaving that edit (Enter again, a page change, Apply or Done) commits it; Iris often drops those
+ * keyboard edits. Cancel ends an edit without committing it.
  */
 final class SliderCell extends ChoiceCell {
-    private static final Component SET_TO_DEFAULT = Component.translatable("options.chimera.setToDefault")
-            .withStyle(ChatFormatting.GREEN);
-
     private boolean dragging;
     private boolean editing;
     private int working = -1;
@@ -48,8 +44,9 @@ final class SliderCell extends ChoiceCell {
     void renderCell(GuiGraphics graphics, int mouseX, int mouseY) {
         if (dragging) {
             follow(mouseX);
-            if (!rowHovered || !Minecraft.getInstance().mouseHandler.isLeftPressed()) {
+            if (!rowHovered) {
                 dragging = false;
+                context.sliders().dragging(null);
                 commit();
             }
         }
@@ -88,7 +85,7 @@ final class SliderCell extends ChoiceCell {
         graphics.drawString(context.font(), value, (x + width / 2) - context.font().width(value) / 2, y + 7,
                 OptionLook.WHITE);
         if (shiftDown()) {
-            tooltipAtMouse(SET_TO_DEFAULT, mouseX, mouseY);
+            setToDefaultTooltip(mouseX, mouseY);
         } else if (!context.overlay().commentShowing()) {
             fullNameTooltip(mouseX, mouseY);
         }
@@ -106,6 +103,21 @@ final class SliderCell extends ChoiceCell {
         click();
     }
 
+    /** The mouse button came up while this slider was dragged. */
+    void release(int mouseX) {
+        if (!dragging) return;
+        follow(mouseX);
+        dragging = false;
+        commit();
+    }
+
+    /** Leaves keyboard editing, queueing the edited value or dropping it. */
+    void endEdit(boolean commitValue) {
+        if (!editing) return;
+        editing = false;
+        if (commitValue) commit();
+    }
+
     @Override
     boolean press(MouseButtonEvent event) {
         if (event.button() != 0) return false;
@@ -114,6 +126,7 @@ final class SliderCell extends ChoiceCell {
         } else {
             dragging = true;
             working = Math.max(0, context.editor().choiceIndex(option));
+            context.sliders().dragging(this);
         }
         click();
         return true;
@@ -122,18 +135,7 @@ final class SliderCell extends ChoiceCell {
     @Override
     boolean key(KeyEvent event) {
         if (event.isConfirmation()) {
-            if (event.hasShiftDown()) {
-                editing = false;
-                context.editor().reset(option.name());
-                click();
-            } else if (editing) {
-                editing = false;
-                commit();
-            } else {
-                editing = true;
-                working = Math.max(0, context.editor().choiceIndex(option));
-                click();
-            }
+            confirm(event.hasShiftDown());
             return true;
         }
         if (!editing || !(event.isLeft() || event.isRight())) return false;
@@ -141,12 +143,25 @@ final class SliderCell extends ChoiceCell {
         return true;
     }
 
+    /** Enter starts or ends keyboard editing; Shift+Enter resets and keeps editing, as Iris does. */
+    private void confirm(boolean shift) {
+        if (shift) {
+            context.editor().reset(option.name());
+            if (editing) working = Math.max(0, option.values().indexOf(option.defaultValue()));
+            click();
+        } else if (editing) {
+            context.sliders().finishEdits(true);
+        } else {
+            editing = true;
+            working = Math.max(0, context.editor().choiceIndex(option));
+            context.sliders().editing(this);
+            click();
+        }
+    }
+
     @Override
     public void setFocused(boolean focused) {
         super.setFocused(focused);
-        if (!focused && editing) {
-            editing = false;
-            commit();
-        }
+        if (!focused && editing) context.sliders().finishEdits(true);
     }
 }

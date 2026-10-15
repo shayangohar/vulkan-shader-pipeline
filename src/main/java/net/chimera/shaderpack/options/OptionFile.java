@@ -59,14 +59,19 @@ public final class OptionFile {
         store(file, changes);
     }
 
-    /** Writes {@code values} to {@code file} in the same format, even when there are none (an export). */
-    public static void store(Path file, Map<String, String> values) throws IOException {
+    /** Writes {@code values} through a temporary file, so a failure leaves the previous file whole. */
+    private static void store(Path file, Map<String, String> values) throws IOException {
+        Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
+        export(temporary, values);
+        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    /** Writes {@code values} straight to a file the player chose, even when there are none. */
+    public static void export(Path file, Map<String, String> values) throws IOException {
         Properties properties = new Properties();
         properties.putAll(values);
-        Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
-        try (OutputStream out = Files.newOutputStream(temporary)) {
+        try (OutputStream out = Files.newOutputStream(file)) {
             properties.store(out, null);
         }
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 }

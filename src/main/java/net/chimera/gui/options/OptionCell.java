@@ -71,19 +71,24 @@ abstract class OptionCell extends AbstractWidget {
     @Override
     protected void updateWidgetNarration(NarrationElementOutput output) {}
 
-    /** The comment the pack writes under {@code key}, titled {@code title}. */
+    /** The comment the pack writes under {@code key}, titled {@code title}; none when it has no text. */
     Optional<OptionOverlay.Comment> comment(String title, String key) {
-        return context.text().raw(key).map(body -> new OptionOverlay.Comment(title, body));
+        return context.text().translated(key).filter(body -> !OptionText.paragraphs(body).isEmpty())
+                .map(body -> new OptionOverlay.Comment(title, body));
     }
 
     /** Draws {@code text} at (x, y), cut to {@code maxWidth} with "..."; true when it had to be cut. */
     boolean drawClipped(GuiGraphics graphics, String text, int x, int y, int maxWidth, int color) {
+        String shown = clip(text, maxWidth);
+        graphics.drawString(context.font(), shown, x, y, color);
+        return !shown.equals(text);
+    }
+
+    /** {@code text}, or its longest start that fits {@code maxWidth} with "..." added. */
+    String clip(String text, int maxWidth) {
         var font = context.font();
-        boolean cut = font.width(text) > maxWidth;
-        String shown = cut ? font.plainSubstrByWidth(text, Math.max(0, maxWidth - font.width(ELLIPSIS))) + ELLIPSIS
-                : text;
-        graphics.drawString(font, shown, x, y, color);
-        return cut;
+        if (font.width(text) <= maxWidth) return text;
+        return font.plainSubstrByWidth(text, Math.max(0, maxWidth - font.width(ELLIPSIS))) + ELLIPSIS;
     }
 
     /** A tooltip at the mouse, as Iris places them. */

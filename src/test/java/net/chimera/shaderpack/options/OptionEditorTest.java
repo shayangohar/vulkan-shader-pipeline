@@ -68,6 +68,7 @@ final class OptionEditorTest {
         editor.set("QUALITY", "7");
         assertEquals(-1, editor.choiceIndex(quality));
         assertEquals("2", editor.shownChoice(quality), "an off-list value shows the applied one");
+        assertFalse(editor.modified("QUALITY"), "and the cell showing the applied value is not marked");
         assertEquals("2", editor.cycle(quality, 1), "and steps on from the first entry");
         assertEquals("3", editor.cycle(quality, -1));
     }

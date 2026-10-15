@@ -12,6 +12,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
@@ -56,6 +57,8 @@ public final class ShaderPackScreen extends Screen {
     private boolean optionsMode;
     private OptionsView optionsView;
     private OptionList optionList;
+    /** The pack the settings wait for after a switch; another pack arriving means it failed to load. */
+    private Path awaitedPack;
 
     public ShaderPackScreen(@Nullable Screen parent) {
         super(Component.translatable("options.chimera.shaderPackSelection.title"));
@@ -85,19 +88,19 @@ public final class ShaderPackScreen extends Screen {
 
         int bottomCenter = this.width / 2 - 50;
         int topCenter = this.width / 2 - 76;
-        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> onClose())
-                .bounds(bottomCenter + 104, this.height - 27, 100, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("options.chimera.apply"), button -> applyChanges())
-                .bounds(bottomCenter, this.height - 27, 100, 20).build());
-        addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, button -> dropChangesAndClose())
-                .bounds(bottomCenter - 104, this.height - 27, 100, 20).build());
-        this.openFolderButton = addRenderableWidget(Button.builder(
-                        Component.translatable("options.chimera.openShaderPackFolder"), button -> openFolder())
-                .bounds(topCenter - 78, this.height - 51, 152, 20).build());
-        this.switchButton = addRenderableWidget(Button.builder(Component.translatable(this.optionsMode
+        int bottom = this.height - 27;
+        addRenderableWidget(new FlatButton(bottomCenter + 104, bottom, 100, 20, CommonComponents.GUI_DONE,
+                button -> onClose()));
+        addRenderableWidget(new FlatButton(bottomCenter, bottom, 100, 20,
+                Component.translatable("options.chimera.apply"), button -> applyChanges()));
+        addRenderableWidget(new FlatButton(bottomCenter - 104, bottom, 100, 20, CommonComponents.GUI_CANCEL,
+                button -> dropChangesAndClose()));
+        this.openFolderButton = addRenderableWidget(new FlatButton(topCenter - 78, this.height - 51, 152, 20,
+                Component.translatable("options.chimera.openShaderPackFolder"), button -> openFolder()));
+        this.switchButton = addRenderableWidget(new FlatButton(topCenter + 78, this.height - 51, 152, 20,
+                Component.translatable(this.optionsMode
                         ? "options.chimera.shaderPackList" : "options.chimera.shaderPackSettings"),
-                        button -> switchMode())
-                .bounds(topCenter + 78, this.height - 51, 152, 20).build());
+                button -> switchMode()));
         updateSwitchButton();
     }
 
@@ -116,8 +119,7 @@ public final class ShaderPackScreen extends Screen {
         }
         if (pack == null) return;
         if (this.optionsView == null || !this.optionsView.shows(pack)) {
-            this.optionsView = new OptionsView(pack, this.font, this::applyChanges, this::notify,
-                    () -> this.minecraft.screen == this);
+            this.optionsView = new OptionsView(pack, this.font, this::applyChanges, this::notify, this::importIntoView);
         }
         this.optionList = addRenderableWidget(this.optionsView.createList(this.minecraft, this.width,
                 this.height - 94, LIST_TOP));
@@ -147,11 +149,19 @@ public final class ShaderPackScreen extends Screen {
     private void switchMode() {
         this.optionsMode = !this.optionsMode;
         applyChanges();
+        this.awaitedPack = null;
         if (this.optionsMode) {
-            Path selected = ChimeraRenderer.selectedPackPath();
-            if (selected != null) OptionsView.startAtMainPage(selected);
+            this.awaitedPack = ChimeraRenderer.selectedPackPath();
+            if (this.awaitedPack != null) OptionsView.startAtMainPage(this.awaitedPack);
         }
         rebuildWidgets();
+    }
+
+    /** An import whose dialog has closed lands in the settings shown now, if this screen still is. */
+    private void importIntoView(Path file) {
+        if (this.minecraft.screen == this && this.optionsMode && this.optionList != null) {
+            this.optionsView.importFile(file);
+        }
     }
 
     @Override
@@ -185,28 +195,58 @@ public final class ShaderPackScreen extends Screen {
         updateSwitchButton();
     }
 
-    /** Rebuilds the settings when a load finishes, so they show the values the pack now runs with. */
+    /**
+     * Rebuilds the settings when a load finishes, so they show the values the pack now runs with,
+     * keeping keyboard focus on the bottom button that had it. A requested pack that failed to load,
+     * leaving another one running, sends the screen back to the list, as Iris has no pack then.
+     */
     private void followLoadedPack() {
         ChimeraRenderer.LoadedPack pack = settingsPack();
+        if (pack != null && this.awaitedPack != null && !samePath(pack.path(), this.awaitedPack)) {
+            this.optionsMode = false;
+            this.awaitedPack = null;
+            rebuildWidgets();
+            return;
+        }
+        if (pack != null) this.awaitedPack = null;
         boolean stale = pack == null ? this.optionList != null || ChimeraRenderer.selectedPackPath() == null
                 : this.optionsView == null || !this.optionsView.shows(pack);
-        if (stale) rebuildWidgets();
+        if (!stale) return;
+        Component focused = getFocused() instanceof Button button ? button.getMessage() : null;
+        rebuildWidgets();
+        if (focused == null) return;
+        for (var child : children()) {
+            if (child instanceof Button button && button.getMessage().equals(focused)) setFocused(button);
+        }
+    }
+
+    private static boolean samePath(Path first, Path second) {
+        return first.toAbsolutePath().normalize().equals(second.toAbsolutePath().normalize());
     }
 
     @Override
     public boolean keyPressed(KeyEvent event) {
         if (event.key() == GLFW.GLFW_KEY_TAB) {
-            if (this.switchButton.active) switchMode();
-            return true;
+            // As Iris: switch modes, then let Tab focus the first element (or Shift+Tab the last).
+            switchMode();
+            return super.keyPressed(event);
         }
         if (this.optionsMode && event.isEscape()) {
             if (this.optionsView == null || this.optionList == null || !this.optionsView.escape()) {
+                if (this.optionsView != null) this.optionsView.finishEdits(true);
                 this.optionsMode = false;
                 rebuildWidgets();
             }
             return true;
         }
         return super.keyPressed(event);
+    }
+
+    /** Screens see every release, so a dragged slider commits here; vanilla stops tracking held buttons. */
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (event.button() == 0 && this.optionsView != null) this.optionsView.mouseReleased(event.x());
+        return super.mouseReleased(event);
     }
 
     @Override
@@ -274,6 +314,7 @@ public final class ShaderPackScreen extends Screen {
     /** Cancel: the settings edits not applied yet are dropped; what Apply already did stays. */
     private void dropChangesAndClose() {
         this.dropChanges = true;
+        if (this.optionsView != null) this.optionsView.finishEdits(false);
         PendingOptions.clear();
         onClose();
     }
@@ -281,15 +322,20 @@ public final class ShaderPackScreen extends Screen {
     /**
      * Applies the pack choice, or else reloads the pack when settings are pending. As in Iris, only
      * a change does anything: opening the screen and pressing Done must not turn off a pack it
-     * cannot name (one loaded from outside the shaderpacks folder, for instance).
+     * cannot name (one loaded from outside the shaderpacks folder, for instance). An Apply that
+     * reloads nothing still shows the settings page from the top, as Iris's does.
      */
     private void applyChanges() {
+        if (this.optionsView != null) this.optionsView.finishEdits(true);
         Choice choice = currentChoice();
         if (!choice.equals(this.baseline)) {
             applySelection(choice);
             return;
         }
-        if (PendingOptions.isEmpty() && !PendingOptions.resetRequested()) return;
+        if (PendingOptions.isEmpty() && !PendingOptions.resetRequested()) {
+            if (this.optionList != null) this.optionsView.rebuildList();
+            return;
+        }
         if (ChimeraRenderer.reloadPack() == ChimeraRenderer.PackRequestResult.NOT_READY) {
             notify(Component.translatable("options.chimera.shaderPackSelection.notReady")
                     .withStyle(ChatFormatting.ITALIC, ChatFormatting.RED));
@@ -299,15 +345,14 @@ public final class ShaderPackScreen extends Screen {
     /**
      * Saves the selection and switches to it. Shaders off, or nothing selected, means vanilla. A
      * switch to what is already running queues nothing, as the pack command does. Settings pending
-     * for one pack are never applied to another.
+     * for one pack are never applied to another; turning shaders off keeps them for that pack.
      */
     private void applySelection(Choice choice) {
         String selected = choice.pack();
+        String previous = ChimeraConfig.get().shaderPack().orElse(null);
         boolean enabled = choice.enabled() && selected != null;
-        ChimeraConfig.get().setSelection(selected != null ? selected : ChimeraConfig.get().shaderPack().orElse(null),
-                enabled);
+        ChimeraConfig.get().setSelection(selected != null ? selected : previous, enabled);
         if (!enabled) {
-            PendingOptions.clear();
             ChimeraRenderer.disablePack();
             this.packList.setApplied(null);
             this.baseline = choice;
@@ -321,9 +366,8 @@ public final class ShaderPackScreen extends Screen {
             return;
         }
         ChimeraRenderer.LoadedPack loaded = ChimeraRenderer.loadedPack();
-        if (loaded == null || !loaded.path().toAbsolutePath().normalize().equals(pack.toAbsolutePath().normalize())) {
-            PendingOptions.clear();
-        }
+        boolean samePack = loaded != null ? samePath(loaded.path(), pack) : selected.equals(previous);
+        if (!samePack) PendingOptions.clear();
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.requestPack(pack);
         if (result == ChimeraRenderer.PackRequestResult.NOT_READY) {
             notify(Component.translatable("options.chimera.shaderPackSelection.notReady")

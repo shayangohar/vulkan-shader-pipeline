@@ -31,11 +31,12 @@ final class LinkCell extends OptionCell {
         OptionLook.control(graphics, x, y, width, getHeight(),
                 hot() ? OptionLook.State.HOVERED : OptionLook.State.NORMAL);
         String label = label();
-        int labelWidth = Math.min(context.font().width(label), width - 9);
+        String shown = clip(label, width - 9);
+        int labelWidth = context.font().width(shown);
         int labelX = (x + width / 2) - labelWidth / 2 - Math.max(labelWidth - (width - 18), 0) / 2;
-        boolean cut = drawClipped(graphics, label, labelX, y + 7, width - 9, OptionLook.WHITE);
+        graphics.drawString(context.font(), shown, labelX, y + 7, OptionLook.WHITE);
         graphics.drawString(context.font(), ">", x + width - 9, y + 7, OptionLook.WHITE);
-        if (hot() && cut) tooltipAtMouse(Component.literal(label), mouseX, mouseY);
+        if (hot() && !shown.equals(label)) tooltipAtMouse(Component.literal(label), mouseX, mouseY);
     }
 
     @Override

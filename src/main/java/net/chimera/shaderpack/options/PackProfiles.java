@@ -16,9 +16,9 @@ import java.util.Optional;
  * ({@code profile.OTHER}), or switches a program off while the profile is current
  * ({@code !program.NAME}).
  *
- * <p>Cycling follows the declared order. Detecting the current profile tries the profiles that set
+ * <p>Detecting the current profile tries the profiles that set
  * the most options first, so one that adds a constraint to another wins over it; when none matches
- * the player has a custom set.
+ * the player has a custom set. Cycling steps through that same order, as Iris does.
  */
 public final class PackProfiles {
     /** One preset: the option values it sets and the programs it switches off. */
@@ -115,7 +115,7 @@ public final class PackProfiles {
         }
     }
 
-    /** The profiles in the order the pack declared them, which is the cycling order. */
+    /** The profiles in the order the pack declared them; cycling follows {@link #scan} instead. */
     public List<Profile> declared() {
         return declared;
     }

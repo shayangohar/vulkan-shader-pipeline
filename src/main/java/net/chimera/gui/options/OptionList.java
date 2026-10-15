@@ -38,15 +38,20 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
         rebuild();
     }
 
-    /** Shows the open page from the top. A page the pack never defined shows the main page's elements. */
+    /**
+     * Shows the open page from the top. A page the pack never defined shows the main page's
+     * elements. A slider still in keyboard edit keeps its value; its cell is about to go.
+     */
     void rebuild() {
+        context.sliders().finishEdits(true);
         clearEntries();
         String page = pages.page();
         Optional<OptionMenu.Screen> sub = page == null ? Optional.empty() : menu.subScreen(page);
         OptionMenu.Screen screen = sub.orElse(menu.main());
         addEntry(new HeaderRow(sub.isPresent() ? page : null));
         List<OptionMenu.Element> elements = screen.elements();
-        int columns = screen.columnCount();
+        // Iris fills rows until they hold the column count, so 0 or less gives one cell per row.
+        int columns = Math.max(1, screen.columnCount());
         for (int start = 0; start < elements.size(); start += columns) {
             List<OptionCell> cells = new ArrayList<>();
             for (int index = start; index < start + columns; index++) {
@@ -109,8 +114,9 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
             this.utilities = List.of(new HeaderButton(context, HeaderButton.Kind.IMPORT),
                     new HeaderButton(context, HeaderButton.Kind.EXPORT),
                     new HeaderButton(context, HeaderButton.Kind.RESET));
-            if (back != null) buttons.add(back);
+            // Keyboard order as Iris's: the utilities, then Back.
             buttons.addAll(utilities);
+            if (back != null) buttons.add(back);
         }
 
         @Override

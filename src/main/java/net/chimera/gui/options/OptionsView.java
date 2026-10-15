@@ -14,7 +14,6 @@ import net.minecraft.network.chat.Component;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -28,24 +27,25 @@ public final class OptionsView implements OptionContext.Actions {
     private final OptionPages pages;
     private final Runnable apply;
     private final Consumer<Component> notifier;
-    private final BooleanSupplier stillOpen;
+    private final Consumer<Path> importer;
     private OptionList list;
 
     /**
-     * @param apply     the screen's Apply, which reloads the pack when values are pending
-     * @param notifier  shows a line under the screen title
-     * @param stillOpen whether the screen is still showing, for an import that finishes later
+     * @param apply    the screen's Apply, which reloads the pack when values are pending
+     * @param notifier shows a line under the screen title
+     * @param importer imports a chosen file into whichever view the screen shows when the dialog
+     *                 closes (a reload may have replaced this one), if the screen is still open
      */
     public OptionsView(ChimeraRenderer.LoadedPack loaded, Font font, Runnable apply, Consumer<Component> notifier,
-                       BooleanSupplier stillOpen) {
+                       Consumer<Path> importer) {
         this.loaded = loaded;
         OptionEditor editor = new OptionEditor(loaded.options().pack(), loaded.options().applied());
         this.context = new OptionContext(editor, new OptionText(loaded.options().pack().language()), font,
-                new OptionOverlay(), this);
+                new OptionOverlay(), new SliderControl(), this);
         this.pages = OptionPages.forPack(loaded.path());
         this.apply = apply;
         this.notifier = notifier;
-        this.stillOpen = stillOpen;
+        this.importer = importer;
     }
 
     /** True when the pack has anything to configure: its main page is not empty. */
@@ -79,6 +79,21 @@ public final class OptionsView implements OptionContext.Actions {
 
     public void tick() {
         context.overlay().tick();
+    }
+
+    /** Ends a keyboard slider edit: queued before Apply, Done or a mode switch, dropped for Cancel. */
+    public void finishEdits(boolean commit) {
+        context.sliders().finishEdits(commit);
+    }
+
+    /** A mouse button came up; a dragged slider takes the bucket under the pointer. */
+    public void mouseReleased(double mouseX) {
+        context.sliders().release((int) mouseX);
+    }
+
+    /** Shows the open page from the top again, as Iris does after an Apply that reloads nothing. */
+    public void rebuildList() {
+        if (list != null) list.rebuild();
     }
 
     public void beginFrame() {
@@ -122,9 +137,8 @@ public final class OptionsView implements OptionContext.Actions {
     @Override
     public void importSettings() {
         if (refuseFullscreen()) return;
-        SettingsTransfer.chooseImport(loaded.path(), file -> Minecraft.getInstance().execute(() -> {
-            if (stillOpen.getAsBoolean()) importFile(file);
-        }));
+        SettingsTransfer.chooseImport(loaded.path(),
+                file -> Minecraft.getInstance().execute(() -> importer.accept(file)));
     }
 
     @Override
@@ -141,7 +155,7 @@ public final class OptionsView implements OptionContext.Actions {
     }
 
     /** Replaces the pending settings with a file's; they apply with the next Apply. */
-    private void importFile(Path file) {
+    public void importFile(Path file) {
         String name = file.getFileName().toString();
         try {
             context.editor().importValues(OptionFile.readStrict(file));

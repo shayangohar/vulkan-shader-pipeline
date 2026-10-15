@@ -40,12 +40,22 @@ class ChoiceCell extends ValueCell {
         return context.editor().modified(option.name());
     }
 
+    /** A choice's tooltips sit beside a cell the keyboard focused, as Iris places them. */
     @Override
     void fullNameTooltip(int mouseX, int mouseY) {
         if (isFocused()) {
             tooltipBeside(Component.literal(label()));
         } else {
             super.fullNameTooltip(mouseX, mouseY);
+        }
+    }
+
+    @Override
+    void setToDefaultTooltip(int mouseX, int mouseY) {
+        if (isFocused()) {
+            tooltipBeside(SET_TO_DEFAULT);
+        } else {
+            super.setToDefaultTooltip(mouseX, mouseY);
         }
     }
 

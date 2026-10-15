@@ -8,22 +8,31 @@ import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * The native file dialogs behind Import and Export. They open off the render thread, starting at
- * the pack's own option file, and offer {@code .txt} files.
+ * The native file dialogs behind Import and Export. They open one at a time on their own thread,
+ * as Iris runs them, starting at the pack's own option file and offering {@code .txt} files; a
+ * click while one is open does nothing.
  */
 final class SettingsTransfer {
     private static final String FILTER = "*.txt";
     private static final String FILTER_LABEL = "Shader Pack Settings (.txt)";
+    private static final ExecutorService DIALOGS = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "Chimera settings dialog");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private static final AtomicBoolean OPEN = new AtomicBoolean();
 
     private SettingsTransfer() {}
 
     /** Asks for a settings file to import and hands the choice to {@code chosen}, off the render thread. */
     static void chooseImport(Path packPath, Consumer<Path> chosen) {
-        CompletableFuture.runAsync(() -> {
+        run(() -> {
             String file;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 file = TinyFileDialogs.tinyfd_openFileDialog("Import Shader Settings from File",
@@ -38,7 +47,7 @@ final class SettingsTransfer {
      * now, so changes not yet applied stay out. An all-default pack exports an empty file.
      */
     static void export(Path packPath) {
-        CompletableFuture.runAsync(() -> {
+        run(() -> {
             String file;
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 file = TinyFileDialogs.tinyfd_saveFileDialog("Export Shader Settings to File",
@@ -46,9 +55,20 @@ final class SettingsTransfer {
             }
             if (file == null) return;
             try {
-                OptionFile.store(Path.of(file), OptionFile.read(OptionFile.of(packPath)));
+                OptionFile.export(Path.of(file), OptionFile.read(OptionFile.of(packPath)));
             } catch (IOException failure) {
                 ChimeraMod.LOGGER.error("[chimera] cannot export shader settings to {}", file, failure);
+            }
+        });
+    }
+
+    private static void run(Runnable dialog) {
+        if (!OPEN.compareAndSet(false, true)) return;
+        DIALOGS.execute(() -> {
+            try {
+                dialog.run();
+            } finally {
+                OPEN.set(false);
             }
         });
     }

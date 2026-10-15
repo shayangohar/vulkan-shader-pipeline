@@ -39,8 +39,13 @@ public final class OptionEditor {
         pending.apply(PendingOptions.view());
     }
 
-    /** True while the queue would change this option at the next load. */
+    /**
+     * True while the queue would change this option at the next load. A choice compares what its
+     * cell shows, so a pending value off the list (which shows the applied one) is not marked.
+     */
     public boolean modified(String name) {
+        OptionSet.Declared<ShaderOption.Choice> choice = pack.options().choices().get(name);
+        if (choice != null) return !applied.choiceOrDefault(name).equals(shownChoice(choice.option()));
         String now = applied.effectiveText(name);
         return now != null && !now.equals(pending.effectiveText(name));
     }
