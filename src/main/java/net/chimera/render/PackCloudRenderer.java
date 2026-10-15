@@ -157,7 +157,12 @@ public final class PackCloudRenderer {
                 if (!window) return;
                 pass.rebindMainTarget();
             }
-            mesh.bind(clouds.pipeline());
+            // Not VBO.bind: its VTextureSelector.bindShaderTextures refills unit 0 from
+            // RenderSystem's shader texture, which is still the block atlas here, and the
+            // pack would shade the clouds with an atlas texel instead of Iris's white one.
+            Renderer renderer = Renderer.getInstance();
+            renderer.bindGraphicsPipeline(clouds.pipeline());
+            renderer.uploadAndBindUBOs(clouds.pipeline());
             mesh.draw();
         } finally {
             if (window) pass.endPackFamilyWindow(outputs);
