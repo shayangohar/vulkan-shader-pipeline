@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -25,10 +26,12 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Compiles every program a pack plan would install, through the runtime preparation seam
@@ -46,6 +49,14 @@ final class PackCompileTest {
 
     static Result run(Path pack, PackProbe.Analysis analysis) {
         if (analysis.plan() == null) return new Result(0, List.of());
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
+            return run(pack, loaded.shadersDir(), analysis);
+        }
+    }
+
+    /** As {@link #run(Path, PackProbe.Analysis)}, with computes read from {@code shadersDir}: a load with options. */
+    static Result run(Path pack, Path shadersDir, PackProbe.Analysis analysis) {
+        if (analysis.plan() == null) return new Result(0, List.of());
         int compiled = 0;
         List<String> failures = new ArrayList<>();
         var compiler = new ProgramCompiler(pack, analysis.plan().advancedResources(), failures);
@@ -62,14 +73,14 @@ final class PackCompileTest {
             }
             if (compiler.compiles(program)) compiled++;
         }
-        String computeError = compileShadowCompute(pack, analysis.plan());
+        String computeError = compileShadowCompute(pack, shadersDir, analysis.plan());
         if (computeError != null) {
             failures.add("shadowcomp: " + computeError);
         } else if (hasShadowCompute(analysis.plan())) {
             compiled++;
         }
         List<String> passComputes = new ArrayList<>();
-        compiled += compilePassComputes(pack, analysis.plan(), failures, passComputes);
+        compiled += compilePassComputes(pack, shadersDir, analysis.plan(), failures, passComputes);
         return new Result(compiled, List.copyOf(failures), List.copyOf(passComputes));
     }
 
@@ -78,10 +89,11 @@ final class PackCompileTest {
      * checks its value block; returns how many compiled. Photon's deferred4_a writes the sky
      * light the deferred pass reads.
      */
-    static int compilePassComputes(Path pack, PackPlan plan, List<String> failures, List<String> compiledNames) {
+    static int compilePassComputes(Path pack, Path shadersDir, PackPlan plan, List<String> failures,
+                                   List<String> compiledNames) {
         int compiled = 0;
-        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            for (var compute : PassComputePlan.build(plan, loaded.shadersDir()).computes()) {
+        try {
+            for (var compute : PassComputePlan.build(plan, shadersDir).computes()) {
                 if (!compute.supported()) continue;
                 Map<String, Integer> written = new LinkedHashMap<>();
                 for (var value : compute.values()) written.put(value.name(), value.offset());
@@ -226,8 +238,15 @@ final class PackCompileTest {
     static String compileShadowCompute(Path pack, PackPlan plan) {
         if (!hasShadowCompute(plan)) return null;
         try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
+            return compileShadowCompute(pack, loaded.shadersDir(), plan);
+        }
+    }
+
+    static String compileShadowCompute(Path pack, Path shadersDir, PackPlan plan) {
+        if (!hasShadowCompute(plan)) return null;
+        try {
             var module = PackShadowCompute.translatedModule(
-                    plan.advancedResources(), loaded.shadersDir(),
+                    plan.advancedResources(), shadersDir,
                     plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
             Map<String, Integer> written = new LinkedHashMap<>();
             for (var uniform : module.uniforms()) written.put(uniform.name(), uniform.offset());
@@ -314,8 +333,16 @@ final class PackCompileTest {
     /** A shaderc result: the SPIR-V words on success, otherwise the first error line. */
     private record Compiled(int[] words, String error) {}
 
+    /**
+     * Each distinct source compiles once per run: the option sweep prepares the same program
+     * source under most of its variants.
+     */
+    private static final Map<String, Optional<String>> COMPILED = new ConcurrentHashMap<>();
+
     private static String compile(String source, int kind, String fileName) {
-        return spirv(source, kind, fileName).error();
+        String key = kind + ":" + ConformanceReport.sha256(source.getBytes(StandardCharsets.UTF_8));
+        return COMPILED.computeIfAbsent(key, ignored -> Optional.ofNullable(spirv(source, kind, fileName).error()))
+                .orElse(null);
     }
 
     private static Compiled spirv(String source, int kind, String fileName) {
@@ -374,21 +401,26 @@ final class PackCompileTest {
 
     /** Programs and pass computes of the selected dimension the plan will not run, sorted. */
     static SortedSet<String> rejectedPrograms(Path pack, PackProbe.Analysis analysis) {
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
+            return rejectedProgramsIn(loaded.shadersDir(), analysis);
+        }
+    }
+
+    /** As {@link #rejectedPrograms}, with pass computes read from {@code shadersDir}: a load with options. */
+    static SortedSet<String> rejectedProgramsIn(Path shadersDir, PackProbe.Analysis analysis) {
         SortedSet<String> rejected = new TreeSet<>();
         if (analysis.plan() == null) return rejected;
         for (PackProgramPlan program : analysis.plan().activePrograms()) {
             if (!analysis.plan().shouldAttempt(program.name())) rejected.add(program.name());
         }
-        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            PassComputePlan.build(analysis.plan(), loaded.shadersDir()).computes().stream()
-                    .filter(compute -> !compute.supported())
-                    .forEach(compute -> rejected.add(compute.name()));
-        }
+        PassComputePlan.build(analysis.plan(), shadersDir).computes().stream()
+                .filter(compute -> !compute.supported())
+                .forEach(compute -> rejected.add(compute.name()));
         return rejected;
     }
 
-    /** The report deviations that say why a program was rejected, for gate messages. */
-    private static List<String> rejectionReasons(PackProbe.Analysis analysis, String program) {
+    /** The report deviations that say why a program was rejected, for gate messages and the option sweep. */
+    static List<String> rejectionReasons(PackProbe.Analysis analysis, String program) {
         var report = analysis.report().program(program);
         if (report == null) return List.of();
         return report.deviations().stream().filter(deviation -> deviation.contains("UNSUPPORTED")

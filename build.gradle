@@ -89,7 +89,7 @@ tasks.withType(Test).configureEach {
 // Fixture tests: everything they read is in the repository.
 tasks.named('test', Test) {
     useJUnitPlatform {
-        excludeTags 'packs', 'evidence'
+        excludeTags 'packs', 'evidence', 'sweep'
     }
 }
 
@@ -102,6 +102,20 @@ tasks.register('packTest', Test) {
         includeTags 'packs'
     }
     shouldRunAfter tasks.named('test')
+}
+
+// Every settings-screen option of the locked packs, one change at a time, through the compile gate's
+// analysis: which options make a program fall back or fail. Not part of check (it takes a while).
+tasks.register('optionSweep', Test) {
+    group = 'verification'
+    description = 'Sweeps the locked packs\' options; writes build/option-sweep. Narrow with -Pchimera.sweep.packs.'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    maxHeapSize = '10g'
+    outputs.upToDateWhen { false }
+    useJUnitPlatform {
+        includeTags 'sweep'
+    }
 }
 
 // Recorded runtime evidence (logs, captures, exact pack versions) for past parity milestones.
