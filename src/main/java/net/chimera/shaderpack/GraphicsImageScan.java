@@ -73,7 +73,9 @@ final class GraphicsImageScan {
     private void scanStage(String program, String stage, String source) {
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source, imageSamplerNames);
         deviations.addAll(usage.deviations());
-        Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source);
+        // The pattern opens with optional parts, so it is tried at every character; a stage
+        // without an image3D declaration (most of them) cannot match at all.
+        Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image3D") ? source : "");
         while (image.find()) {
             if (usage.liveImages().contains(image.group(2))) {
                 addWriter(program, stage, image.group(1), image.group(2));

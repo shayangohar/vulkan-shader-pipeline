@@ -625,9 +625,39 @@ public final class UniformRegistry {
         return COMPONENT_INPUTS.contains(name);
     }
 
+    /** True when {@code name} appears as a whole word at least twice: a declaration and a use. */
     private static boolean isReferenced(String source, String name) {
-        Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source);
-        return matcher.find() && matcher.find();
+        return wholeWordCount(source, name, 2) >= 2;
+    }
+
+    /**
+     * How often {@code name} appears as a whole word, counting no further than {@code limit}, word
+     * edges judged as Java's {@code \b} judges them. Planning asks this for every catalog uniform in
+     * every program, so it searches with {@code indexOf} rather than compiling a pattern each time.
+     */
+    private static int wholeWordCount(String source, String name, int limit) {
+        if (name.isEmpty() || !wordCharacter(name.charAt(0)) || !wordCharacter(name.charAt(name.length() - 1))) {
+            Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source);
+            int found = 0;
+            while (found < limit && matcher.find()) found++;
+            return found;
+        }
+        int found = 0;
+        int at = source.indexOf(name);
+        while (at >= 0 && found < limit) {
+            int end = at + name.length();
+            boolean whole = (at == 0 || !wordCharacter(source.charAt(at - 1)))
+                    && (end == source.length() || !wordCharacter(source.charAt(end)));
+            if (whole) found++;
+            at = source.indexOf(name, whole ? end : at + 1);
+        }
+        return found;
+    }
+
+    /** Java's {@code \b} word characters since JDK 19: ASCII letters, digits and '_'. */
+    private static boolean wordCharacter(char value) {
+        return value == '_' || (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
+                || (value >= '0' && value <= '9');
     }
 
     /** Iris EntityPatcher names served per vertex from EntityIds, not from the pack UBO. */
@@ -660,7 +690,7 @@ public final class UniformRegistry {
     }
 
     static boolean containsIdentifier(String source, String name) {
-        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(source).find();
+        return wholeWordCount(source, name, 1) >= 1;
     }
 
     static boolean isSamplerUnused(String source, String name) {

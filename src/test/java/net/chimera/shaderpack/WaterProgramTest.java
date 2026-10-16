@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -301,44 +300,12 @@ final class WaterProgramTest {
     }
 
     /**
-     * Iris keeps a pack's options in <pack>.txt beside the zip; Chimera reads
-     * the same file so both renderers run one option set. JVM
-     * chimera.option.* properties win over the file.
+     * A locked override written as true/false, as Iris writes toggles. false must leave the macro
+     * undefined even though the source defines it; true must define a toggle the source leaves
+     * commented out. Declared options are edited into the sources instead (PackOptionStagingTest).
      */
     @Test
-    void optionFile(@TempDir Path dir) throws Exception {
-        Path pack = dir.resolve("Example_r1.zip");
-        String previous = System.getProperty("chimera.option.WATER_STYLE");
-        try {
-            Files.writeString(pack, "");
-            assertTrue(PackOptionSources.optionFile(pack) == null
-                            && PackOptionSources.fileValues(pack).isEmpty(),
-                    "a pack without an option file produced options");
-            Files.writeString(dir.resolve("Example_r1.zip.txt"),
-                    "#Iris options\nWATER_STYLE=2\nRP_MODE=3\nSHADOW_QUALITY=1\n");
-            assertTrue(PackOptionSources.fileValues(pack).equals(
-                            Map.of("WATER_STYLE", "2", "RP_MODE", "3", "SHADOW_QUALITY", "1")),
-                    "option file values: " + PackOptionSources.fileValues(pack));
-            System.setProperty("chimera.option.WATER_STYLE", "3");
-            Map<String, String> merged = PackOptionSources.overrides(pack);
-            assertTrue("3".equals(merged.get("WATER_STYLE")) && "3".equals(merged.get("RP_MODE")),
-                    "JVM options must override the option file: " + merged);
-            verifyToggleOptions();
-        } finally {
-            if (previous == null) System.clearProperty("chimera.option.WATER_STYLE");
-            else System.setProperty("chimera.option.WATER_STYLE", previous);
-            try (var paths = Files.walk(dir)) {
-                paths.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
-            }
-        }
-    }
-
-    /**
-     * Iris writes toggle options as true/false. false must leave the macro
-     * undefined even though the pack source defines it; true must define a
-     * toggle the source leaves commented out.
-     */
-    private static void verifyToggleOptions() {
+    void lockedToggleOverrides() {
         String source = """
                 #version 120
                 #define SOURCE_ON
@@ -353,7 +320,7 @@ final class WaterProgramTest {
                 """;
         PackProgram program = new PackProgram("composite", source, null);
         PackSettingsPlan settings = PackSettingsPlan.parse(List.of(program), null,
-                Map.of("SOURCE_ON", "false", "SOURCE_OFF", "true"));
+                Map.of("SOURCE_ON", "false", "SOURCE_OFF", "true"), PackOptionEnvironment.defaults(null));
         assertTrue(!settings.preprocessorDefines().containsKey("SOURCE_ON")
                         && "1".equals(settings.preprocessorDefines().get("SOURCE_OFF")),
                 "toggle defines: " + settings.preprocessorDefines());
@@ -486,7 +453,7 @@ final class WaterProgramTest {
     private static PackSettingsPlan properties(Map<String, String> values) {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), values, Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default",
-                PackRuntimeSettings.empty(), Map.of(), Map.of(), false);
+                PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of());
     }
 
     private static String terrainVertex() {

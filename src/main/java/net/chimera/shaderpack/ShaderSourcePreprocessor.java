@@ -184,8 +184,8 @@ public final class ShaderSourcePreprocessor {
         }
 
         private void processLine(String line, Path sourceFile, int depth) throws IOException {
-            Matcher matcher = DIRECTIVE.matcher(line);
-            if (!matcher.matches()) {
+            Matcher matcher = directive(line);
+            if (matcher == null) {
                 if (active()) {
                     emitLockedDefinitions();
                     emit(line);
@@ -369,6 +369,30 @@ public final class ShaderSourcePreprocessor {
             int lineComment = argument.indexOf("//");
             return lineComment >= 0 ? argument.substring(0, lineComment) : argument;
         }
+    }
+
+    /** The line's directive match, or null for a line that is not a directive. */
+    private static Matcher directive(String line) {
+        if (!startsDirective(line)) return null;
+        Matcher matcher = DIRECTIVE.matcher(line);
+        return matcher.matches() ? matcher : null;
+    }
+
+    /**
+     * Whether the first character past leading whitespace (regex {@code \s}) is {@code #}. No other
+     * line can be a directive, and most lines of a pack are not, so line scanners test this before
+     * running a directive pattern.
+     */
+    static boolean startsDirective(String line) {
+        for (int index = 0; index < line.length(); index++) {
+            char value = line.charAt(index);
+            if (value == '#') return true;
+            if (value != ' ' && value != '\t' && value != '\n' && value != '\u000B' && value != '\f'
+                    && value != '\r') {
+                return false;
+            }
+        }
+        return false;
     }
 
     private static final class PreparationFailure extends RuntimeException {

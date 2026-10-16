@@ -14,7 +14,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -38,7 +37,10 @@ record PackSettingsPlan(
         PackRuntimeSettings runtimeSettings,
         Map<String, PackResourceDeclaration> resourceDeclarations,
         Map<String, Integer> samplerSlots,
-        boolean samplerSlotsFinalized
+        boolean samplerSlotsFinalized,
+        // The macros in force at the end of shaders.properties, option values included: Iris
+        // expands them throughout the file, so an image may be COLORED_LIGHTING texels wide.
+        Map<String, String> propertyMacros
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Pattern DEFINE = Pattern.compile(
@@ -49,8 +51,7 @@ record PackSettingsPlan(
             "^\\s*const\\s+(int|float|bool)\\s+([A-Za-z_]\\w*)\\s*=\\s*([^;]+);\\s*(.*)$");
     private static final Pattern PROFILE = Pattern.compile(
             "^profile\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
-    private static final Pattern PROGRAM_ENABLED = Pattern.compile(
-            "^program\\.(.+)\\.enabled\\s*=\\s*(.*)$");
+    private static final String PROGRAM_PREFIX = "program.";
     private static final Pattern FEATURES = Pattern.compile(
             "^iris\\.features\\.(required|optional)\\s*=\\s*(.*)$");
     private static final Pattern CUSTOM_VALUE = Pattern.compile(
@@ -67,6 +68,7 @@ record PackSettingsPlan(
     PackSettingsPlan {
         options = immutableOptions(options);
         defaults = immutableMap(defaults);
+        propertyMacros = immutableMap(propertyMacros);
         profiles = immutableProfiles(profiles);
         propertyValues = immutableMap(propertyValues);
         programEnabled = programEnabled == null
@@ -86,18 +88,23 @@ record PackSettingsPlan(
     static PackSettingsPlan empty() {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty(),
-                Map.of(), Map.of(), false);
+                Map.of(), Map.of(), false, Map.of());
     }
 
     static PackSettingsPlan parse(List<PackProgram> programs, Path shadersDir) {
-        return parse(programs, shadersDir, systemOptionOverrides());
+        return parse(programs, shadersDir, systemOptionOverrides(), PackOptionEnvironment.defaults(shadersDir));
     }
 
-    /** Parses settings with explicit load-time option overrides. */
+    /**
+     * Parses settings with load-time overrides for names the sources do not declare (declared
+     * options are already edited into the sources) and what the pack's options bring to
+     * shaders.properties: their values as macros and the programs the matching profile switches off.
+     */
     static PackSettingsPlan parse(
             List<PackProgram> programs,
             Path shadersDir,
-            Map<String, String> explicitOverrides
+            Map<String, String> explicitOverrides,
+            PackOptionEnvironment environment
     ) {
         Map<String, Option> options = new TreeMap<>();
         Map<String, String> defaults = new TreeMap<>();
@@ -109,14 +116,6 @@ record PackSettingsPlan(
             collectSourceOptions(file.getValue(), file.getKey(), options, defaults, deviations);
         }
 
-        // Real packs keep their authored options in included settings files,
-        // while shaders.properties uses those names in conditional image and
-        // program declarations. Read those defaults for the property
-        // condition state without turning every helper define into a pack
-        // option or changing the report schema.
-        Map<String, Option> helperOptions = new TreeMap<>();
-        Map<String, String> helperDefaults = new TreeMap<>();
-        collectHelperDefaults(shadersDir, helperOptions, helperDefaults, deviations);
         Map<String, String> overrides = normalizeOverrides(explicitOverrides, deviations);
         // Iris writes toggle options as true/false. On is the plain define
         // (Chimera's "1", as for an active source define); off means the
@@ -131,7 +130,6 @@ record PackSettingsPlan(
         overrides.keySet().removeAll(disabled);
         defaults.putAll(overrides);
         defaults.keySet().removeAll(disabled);
-        helperDefaults.keySet().removeAll(disabled);
 
         Map<String, Profile> profiles = new TreeMap<>();
         Map<String, String> properties = new TreeMap<>();
@@ -141,18 +139,21 @@ record PackSettingsPlan(
         List<PackRuntimeSettings.Declaration> customValues = new ArrayList<>();
         Map<String, PackResourceDeclaration> resourceDeclarations = new TreeMap<>();
         Path propertyFile = shadersDir == null ? null : shadersDir.resolve("shaders.properties");
+        Map<String, String> macros = mergedConditionMacros(environment.macros(), overrides, disabled);
         if (propertyFile != null && Files.isRegularFile(propertyFile)) {
-            parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
-                    required, optional, customValues, resourceDeclarations, deviations,
-                    mergedConditionMacros(defaults, helperDefaults, overrides),
-                    toggleOptions(options, helperOptions, disabled));
+            Set<String> toggles = new TreeSet<>(environment.toggles());
+            toggles.addAll(disabled);
+            macros = parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
+                    required, optional, customValues, resourceDeclarations, deviations, macros, toggles);
         }
+        // Iris drops a !program.NAME program of the matching profile whatever its own switch says.
+        environment.disabledPrograms().forEach(program -> programEnabled.put(program, false));
         Set<String> unsupportedRequired = unsupportedFeatures(required, deviations);
         PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(
                 customValues, defaults, deviations, BiomeIds.constants());
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
-                runtimeSettings, resourceDeclarations, Map.of(), false);
+                runtimeSettings, resourceDeclarations, Map.of(), false, macros);
     }
 
     /** The programs' fragment and vertex sources by relative path; the first program by name wins a path. */
@@ -188,20 +189,6 @@ record PackSettingsPlan(
         return disabled;
     }
 
-    /** The define options of the entry sources and helpers, and the overrides turned off. */
-    private static Set<String> toggleOptions(Map<String, Option> options, Map<String, Option> helperOptions,
-                                             Set<String> disabled) {
-        Set<String> toggleOptions = new TreeSet<>();
-        for (Option option : options.values()) {
-            if (option.type().equals("define")) toggleOptions.add(option.name());
-        }
-        for (Option option : helperOptions.values()) {
-            if (option.type().equals("define")) toggleOptions.add(option.name());
-        }
-        toggleOptions.addAll(disabled);
-        return toggleOptions;
-    }
-
     /** The required features Chimera does not support, each recorded as a deviation. */
     private static Set<String> unsupportedFeatures(Set<String> required, List<String> deviations) {
         Set<String> unsupported = new TreeSet<>();
@@ -214,52 +201,22 @@ record PackSettingsPlan(
         return unsupported;
     }
 
+    /**
+     * The macros shaders.properties is read with, as Iris preprocesses it: the pack's option values,
+     * Iris's standard environment with {@code IS_IRIS}, and the JVM overrides the pack does not
+     * declare (a false one leaves its name undefined).
+     */
     private static Map<String, String> mergedConditionMacros(
-            Map<String, String> defaults,
-            Map<String, String> helperDefaults,
-            Map<String, String> overrides
+            Map<String, String> optionMacros,
+            Map<String, String> overrides,
+            Set<String> disabled
     ) {
-        Map<String, String> result = new TreeMap<>();
-        if (defaults != null) result.putAll(defaults);
-        if (helperDefaults != null) result.putAll(helperDefaults);
-        if (overrides != null) result.putAll(overrides);
-        // Iris preprocesses shaders.properties with its standard environment.
+        Map<String, String> result = new TreeMap<>(optionMacros);
+        result.putAll(overrides);
+        result.keySet().removeAll(disabled);
         result.putAll(PackEngineDefines.standard());
+        result.put(PackEngineDefines.IS_IRIS, "1");
         return result;
-    }
-
-    private static void collectHelperDefaults(
-            Path shadersDir,
-            Map<String, Option> options,
-            Map<String, String> defaults,
-            List<String> deviations
-    ) {
-        if (shadersDir == null || !Files.isDirectory(shadersDir)) return;
-        try (var paths = Files.walk(shadersDir, 32)) {
-            paths.filter(Files::isRegularFile)
-                    .filter(PackSettingsPlan::isShaderSourceFile)
-                    .sorted(Comparator.comparing(path -> path.toString().replace('\\', '/')))
-                    .limit(512)
-                    .forEach(path -> {
-                        try {
-                            collectSourceOptions(Files.readString(path, StandardCharsets.UTF_8),
-                                    path.getFileName().toString(), options, defaults,
-                                    new ArrayList<>());
-                        } catch (IOException ignored) {
-                            // Executable sources remain authoritative when a
-                            // helper file cannot be read.
-                        }
-                    });
-        } catch (IOException ignored) {
-            // Helper defaults are an enhancement to the authored source path.
-        }
-    }
-
-    private static boolean isShaderSourceFile(Path path) {
-        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
-        return name.endsWith(".glsl") || name.endsWith(".vsh") || name.endsWith(".fsh")
-                || name.endsWith(".gsh") || name.endsWith(".csh")
-                || name.endsWith(".tcs") || name.endsWith(".tes");
     }
 
     private static Map<String, String> normalizeOverrides(
@@ -312,17 +269,12 @@ record PackSettingsPlan(
     }
 
     /**
-     * Iris reads {@code program.<folder>/<name>.enabled} for the selected dimension folder
-     * (Photon writes {@code program.world0/composite2.enabled = DOF}) ahead of the bare name.
+     * Iris matches a switch to the program's path exactly: {@code program.world0/composite2.enabled}
+     * (Photon's form) names the dimension folder's program, and a bare {@code program.composite2}
+     * only the root one. Bliss switches a bare {@code composite5} that only its folders have.
      */
     boolean enabled(String folder, String name) {
-        if (folder != null && !folder.isBlank()) {
-            Boolean scoped = programEnabled.get(folder + "/" + name);
-            if (scoped != null) {
-                return scoped;
-            }
-        }
-        return enabled(name);
+        return enabled(folder == null || folder.isBlank() ? name : folder + "/" + name);
     }
 
     String snapshotJson() {
@@ -474,7 +426,7 @@ record PackSettingsPlan(
         return new PackSettingsPlan(options, defaults, profiles, propertyValues, programEnabled,
                 requiredFeatures, optionalFeatures, unsupportedRequiredFeatures, deviations,
                 activeProfile, runtimeSettings, resourceDeclarations,
-                resolved == null ? Map.of() : resolved, true);
+                resolved == null ? Map.of() : resolved, true, propertyMacros);
     }
 
     private String resourceFingerprint() {
@@ -531,7 +483,8 @@ record PackSettingsPlan(
         }
     }
 
-    private static void parseProperties(
+    /** Parses shaders.properties into the given maps and returns the macros in force at its end. */
+    private static Map<String, String> parseProperties(
             Path propertyFile,
             Map<String, Option> options,
             Map<String, String> defaults,
@@ -548,7 +501,9 @@ record PackSettingsPlan(
     ) {
         PropertiesParse parse = new PropertiesParse(propertyFile, options, defaults, profiles, values,
                 programEnabled, required, optional, customValues, resourceDeclarations, deviations, toggleOptions);
-        parse.run(stageIndependentDefaults(initialMacros == null ? defaults : initialMacros));
+        // Iris's macro set is taken whole: SHADOW or DH_TERRAIN may be the pack's own options.
+        parse.run(initialMacros == null ? stageIndependentDefaults(defaults) : initialMacros);
+        return parse.conditions.macros();
     }
 
     /** One pass over shaders.properties: its conditional blocks, defines and key=value entries. */
@@ -591,7 +546,8 @@ record PackSettingsPlan(
         void run(Map<String, String> initialMacros) {
             conditions = new PackConditionals.State(initialMacros);
             try {
-                List<String> physical = Files.readAllLines(propertyFile, StandardCharsets.UTF_8);
+                // Iris reads shaders.properties as ISO-8859-1, which never fails on a stray byte.
+                List<String> physical = Files.readAllLines(propertyFile, StandardCharsets.ISO_8859_1);
                 PropertyLineJoiner joiner = new PropertyLineJoiner();
                 for (int index = 0; index <= physical.size(); index++) {
                     String raw = index < physical.size() ? physical.get(index) : null;
@@ -698,9 +654,9 @@ record PackSettingsPlan(
                 profiles.put(profile.group(1), new Profile(profile.group(1), value));
                 return;
             }
-            Matcher enabled = PROGRAM_ENABLED.matcher(line);
-            if (enabled.matches()) {
-                acceptProgramSwitch(enabled.group(1), enabled.group(2).trim());
+            String program = switchedProgram(key);
+            if (program != null) {
+                acceptProgramSwitch(program, value.trim());
                 return;
             }
             Matcher feature = FEATURES.matcher(line);
@@ -733,6 +689,17 @@ record PackSettingsPlan(
             } else if (!isSupportedProperty(key)) {
                 deviations.add("SETTING_UNSUPPORTED:" + key);
             }
+        }
+
+        /**
+         * The program a {@code program.<name>.<anything>} key switches: Iris takes the name up to the
+         * first dot after {@code program.} and any suffix (Solas writes
+         * {@code program.world0/deferred..enabled}). Null for any other key.
+         */
+        private static String switchedProgram(String key) {
+            int end = key.indexOf('.', PROGRAM_PREFIX.length());
+            return key.startsWith(PROGRAM_PREFIX) && end > PROGRAM_PREFIX.length()
+                    ? key.substring(PROGRAM_PREFIX.length(), end) : null;
         }
 
         /** A {@code program.<name>.enabled} switch, evaluated against the pack's option values. */

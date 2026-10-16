@@ -160,7 +160,8 @@ final class UniformCatalog {
      */
     static void addIrisPlayerState(Map<String, UniformRegistry.UniformDescriptor> specs) {
         for (String flag : List.of("hideGUI", "isRightHanded", "feetInWater", "inSwimmingAnimation",
-                "isRiding", "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog")) {
+                "isRiding", "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog",
+                "is_burning", "is_hurt", "is_invisible", "is_on_ground", "is_sneaking", "is_sprinting", "is_alive")) {
             addLive(specs, flag, List.of("bool", "int"), flag);
         }
         for (String value : List.of("currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger",

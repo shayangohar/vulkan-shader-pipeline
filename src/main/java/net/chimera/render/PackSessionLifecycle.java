@@ -25,8 +25,10 @@ import net.chimera.shaderpack.PackSource;
 import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.SelectorNamespace;
+import net.chimera.shaderpack.StagedOptions;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.TerrainShadingDirectives;
+import net.chimera.shaderpack.options.PendingOptions;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.vulkanmod.vulkan.Renderer;
@@ -35,6 +37,7 @@ import net.vulkanmod.vulkan.texture.VTextureSelector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -140,8 +143,15 @@ final class PackSessionLifecycle {
         return true;
     }
 
+    /** Reloads the pack the frame is about to run, so a reload never undoes a change still queued. */
     boolean queuePackReload() {
-        return queuePackChange(this.packPath, true);
+        return queuePackChange(selectedPackPath(), true);
+    }
+
+    /** The pack running now and the options it was loaded with; null without one. */
+    ChimeraRenderer.LoadedPack loadedPack() {
+        return this.packPath == null || pass.packSource == null
+                ? null : new ChimeraRenderer.LoadedPack(this.packPath, pass.packSource.options());
     }
 
     String packStatus() {
@@ -514,15 +524,30 @@ final class PackSessionLifecycle {
         logPackPrograms(dir);
     }
 
-    /** Loads the pack source once and installs its analysis: report, programs, constants and plan. */
+    /**
+     * Loads the pack source once and installs its analysis: report, programs, constants and plan. A
+     * fresh load takes the settings screen's pending values and then rewrites the option file, as
+     * Iris does on every load.
+     */
     private PackSource.LoadResult loadPackPlan(Path dir) {
-        PackSource.LoadResult result = pass.packSource != null
-                ? pass.packSource : PackSource.loadResult(dir, this.currentDimension);
+        boolean fresh = pass.packSource == null;
+        PackSource.LoadResult result = fresh
+                ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain(dir)) : pass.packSource;
         pass.packSource = result;
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
+        StagedOptions options = result.options();
+        if (fresh) {
+            try {
+                options.saveOptionFile(dir);
+            } catch (IOException failure) {
+                LOGGER.warn("[chimera] cannot write the option file of {}: {}", dir, failure.getMessage());
+            }
+        }
         Path optionFile = PackOptionSources.optionFile(dir);
-        LOGGER.info("[chimera] pack options: file={}, applied={}", optionFile == null ? "none" : optionFile,
-                PackOptionSources.overrides(dir));
+        LOGGER.info("[chimera] pack options: file={}, profile={}, applied={}, undeclared={}, disabledPrograms={}{}",
+                optionFile == null ? "none" : optionFile, options.profileName(), options.applied().changes(),
+                options.undeclared(), options.disabledPrograms(),
+                options.pack().problems().isEmpty() ? "" : " " + options.pack().problems());
         pass.conformanceReport = analysis.report();
         pass.packPrograms = analysis.plan() == null ? result.programs()
                 : analysis.plan().programs().stream().map(PackProgramPlan::program).toList();

@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,8 +92,35 @@ final class GlslResourceUsage {
      * entry-point reachability rules as authored samplers.
      */
     static Analysis analyze(String source, Set<String> injectedSamplers) {
+        AnalysisKey key = new AnalysisKey(source == null ? "" : source,
+                injectedSamplers == null ? Set.of() : Set.copyOf(injectedSamplers));
+        synchronized (RECENT) {
+            Analysis known = RECENT.get(key);
+            if (known != null) return known;
+        }
+        Analysis analysis = analyzeUncached(key.source(), key.injectedSamplers());
+        synchronized (RECENT) {
+            RECENT.put(key, analysis);
+        }
+        return analysis;
+    }
+
+    /** One analysis input: the result depends on nothing else. */
+    private record AnalysisKey(String source, Set<String> injectedSamplers) {}
+
+    /**
+     * The latest analyses. Planning one program asks about the same prepared source many times, once
+     * per sampler among others, and each answer would lex and trace the whole program again.
+     */
+    private static final Map<AnalysisKey, Analysis> RECENT = new LinkedHashMap<>(32, 0.75F, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<AnalysisKey, Analysis> eldest) {
+            return size() > 16;
+        }
+    };
+
+    private static Analysis analyzeUncached(String text, Set<String> injectedSamplers) {
         try {
-            String text = source == null ? "" : source;
             List<GlslLexer.Token> tokens = GlslLexer.lex(text);
             Declarations declared = collectDeclarations(tokens, injectedSamplers);
             List<FunctionDefinition> functions = collectFunctions(tokens);
@@ -380,7 +408,8 @@ final class GlslResourceUsage {
      */
     private static Map<String, List<String>> collectFunctionMacros(String source) {
         Map<String, List<String>> result = new HashMap<>();
-        Matcher objectLike = OBJECT_MACRO.matcher(source == null ? "" : source);
+        String defines = defineLines(source == null ? "" : source);
+        Matcher objectLike = OBJECT_MACRO.matcher(defines);
         while (objectLike.find()) {
             Set<String> named = new TreeSet<>();
             for (GlslLexer.Token token : GlslLexer.lex(objectLike.group(2))) {
@@ -388,7 +417,7 @@ final class GlslResourceUsage {
             }
             result.put(objectLike.group(1), List.copyOf(named));
         }
-        Matcher matcher = FUNCTION_MACRO.matcher(source == null ? "" : source);
+        Matcher matcher = FUNCTION_MACRO.matcher(defines);
         while (matcher.find()) {
             Set<String> called = new TreeSet<>();
             List<GlslLexer.Token> replacement = GlslLexer.lex(matcher.group(2));
@@ -406,6 +435,25 @@ final class GlslResourceUsage {
             result.put(matcher.group(1), List.copyOf(called));
         }
         return result;
+    }
+
+    /**
+     * The whole lines that contain {@code define}, in order, each ended by a newline: the only lines
+     * the macro patterns can match. Scanning these instead of a prepared source of thousands of
+     * lines gives the same matches in the same order.
+     */
+    private static String defineLines(String source) {
+        StringBuilder lines = new StringBuilder();
+        int at = source.indexOf("define");
+        while (at >= 0) {
+            int start = at;
+            while (start > 0 && source.charAt(start - 1) != '\n' && source.charAt(start - 1) != '\r') start--;
+            int end = at;
+            while (end < source.length() && source.charAt(end) != '\n' && source.charAt(end) != '\r') end++;
+            lines.append(source, start, end).append('\n');
+            at = source.indexOf("define", end);
+        }
+        return lines.toString();
     }
 
     private static void addMacroDependencies(

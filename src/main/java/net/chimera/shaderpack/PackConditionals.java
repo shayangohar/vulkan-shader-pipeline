@@ -7,12 +7,42 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Shared bounded expression evaluator for shader and pack-property conditions. */
 final class PackConditionals {
     static final int MAX_EXPRESSION_DEPTH = 64;
 
+    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_]\\w*");
+
     private PackConditionals() {}
+
+    /**
+     * {@code text} with every identifier that names a macro replaced by its value, again inside
+     * that value, as the preprocessor expands a shaders.properties value: {@code size.buffer.colortex1
+     * = REFLECTION_RES REFLECTION_RES} reads as {@code 0.5 0.5}. A macro is not expanded inside its
+     * own expansion.
+     */
+    static String expandMacros(String text, Map<String, String> macros) {
+        return expandMacros(text, macros, new HashSet<>());
+    }
+
+    private static String expandMacros(String text, Map<String, String> macros, Set<String> expanding) {
+        Matcher identifier = IDENTIFIER.matcher(text);
+        StringBuilder result = new StringBuilder(text.length());
+        int last = 0;
+        while (identifier.find()) {
+            String name = identifier.group();
+            String value = macros.get(name);
+            if (value == null || expanding.contains(name)) continue;
+            expanding.add(name);
+            result.append(text, last, identifier.start()).append(expandMacros(value, macros, expanding));
+            expanding.remove(name);
+            last = identifier.end();
+        }
+        return result.append(text, last, text.length()).toString();
+    }
 
     /** Shared conditional state for shader and pack-property preparation. */
     static final class State {

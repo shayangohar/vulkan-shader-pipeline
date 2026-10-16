@@ -1,10 +1,15 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Small lossless lexer for the token rewrites used by the pack bridge. */
 final class GlslLexer {
+    /** One shared string per ASCII symbol, so single-character tokens allocate nothing. */
+    private static final String[] SINGLE_CHARACTERS = singleCharacters();
+
     enum Kind {
         IDENTIFIER,
         NUMBER,
@@ -31,6 +36,29 @@ final class GlslLexer {
 
     static List<Token> lex(String source) {
         String input = source == null ? "" : source;
+        synchronized (RECENT) {
+            List<Token> known = RECENT.get(input);
+            if (known != null) return known;
+        }
+        List<Token> tokens = lexUncached(input);
+        synchronized (RECENT) {
+            RECENT.put(input, tokens);
+        }
+        return tokens;
+    }
+
+    /**
+     * The latest token lists. A program's planning passes each lex the source they are handed, and
+     * many hand on the same text unchanged.
+     */
+    private static final Map<String, List<Token>> RECENT = new LinkedHashMap<>(16, 0.75F, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, List<Token>> eldest) {
+            return size() > 8;
+        }
+    };
+
+    private static List<Token> lexUncached(String input) {
         List<Token> tokens = new ArrayList<>();
         int index = 0;
         while (index < input.length()) {
@@ -212,13 +240,37 @@ final class GlslLexer {
         return -1;
     }
 
+    /**
+     * The operator at {@code index}: the longest of {@code <<= >>= == != <= >= && || ++ -- += -= *=
+     * /= %= << >> ::}, else the single character. Every symbol of every pack source passes through
+     * here, so it is decided from the next characters instead of trying each operator in turn.
+     */
     private static String operatorAt(String source, int index) {
-        for (String operator : List.of("<<=", ">>=", "==", "!=", "<=", ">=", "&&", "||",
-                "++", "--", "+=", "-=", "*=", "/=", "%=", "<<", ">>", "::")) {
-            if (source.startsWith(operator, index)) {
-                return operator;
-            }
+        char first = source.charAt(index);
+        char second = index + 1 < source.length() ? source.charAt(index + 1) : '\0';
+        String operator = switch (first) {
+            case '<', '>' -> shiftOrCompare(source, index, first, second);
+            case '=', '!', '*', '/', '%' -> second == '=' ? source.substring(index, index + 2) : null;
+            case '&', '|', ':' -> second == first ? source.substring(index, index + 2) : null;
+            case '+', '-' -> second == first || second == '=' ? source.substring(index, index + 2) : null;
+            default -> null;
+        };
+        if (operator != null) return operator;
+        return first < SINGLE_CHARACTERS.length ? SINGLE_CHARACTERS[first] : String.valueOf(first);
+    }
+
+    /** {@code <<=}, {@code <<}, {@code <=} or their {@code >} forms; null for a lone angle bracket. */
+    private static String shiftOrCompare(String source, int index, char first, char second) {
+        if (second == first) {
+            boolean assign = index + 2 < source.length() && source.charAt(index + 2) == '=';
+            return source.substring(index, index + (assign ? 3 : 2));
         }
-        return source.substring(index, index + 1);
+        return second == '=' ? source.substring(index, index + 2) : null;
+    }
+
+    private static String[] singleCharacters() {
+        String[] strings = new String[128];
+        for (char value = 0; value < strings.length; value++) strings[value] = String.valueOf(value);
+        return strings;
     }
 }

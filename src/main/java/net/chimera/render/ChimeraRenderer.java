@@ -7,6 +7,7 @@ import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
+import net.chimera.shaderpack.StagedOptions;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.vulkanmod.vulkan.Renderer;
@@ -137,6 +138,14 @@ public final class ChimeraRenderer {
     /** The pack rendering now or about to (a queued change wins); null for vanilla. */
     public static Path selectedPackPath() {
         return ready && chimeraPass != null ? chimeraPass.selectedPackPath() : null;
+    }
+
+    /** A loaded pack and the options it was loaded with. A new load gives a new instance. */
+    public record LoadedPack(Path path, StagedOptions options) {}
+
+    /** The pack loaded now, whatever is queued; null when none is. */
+    public static LoadedPack loadedPack() {
+        return ready && chimeraPass != null ? chimeraPass.loadedPack() : null;
     }
 
     public static String packStatus() {

@@ -231,6 +231,10 @@ public final class ChimeraMainPass implements MainPass {
         return sessions.selectedPackPath();
     }
 
+    ChimeraRenderer.LoadedPack loadedPack() {
+        return sessions.loadedPack();
+    }
+
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         shadowPass.renderShadowSegment(cameraX, cameraY, cameraZ);
     }
