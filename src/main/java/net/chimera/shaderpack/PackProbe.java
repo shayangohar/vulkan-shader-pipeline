@@ -477,6 +477,10 @@ public final class PackProbe {
                         "(?:uniform|variable)\\.(?:float|int|bool|vec2|vec3|vec4)\\.[A-Za-z_]\\w*");
                 boolean alphaTest = key.equals("alphaTest.gbuffers_terrain")
                         || key.equals("alphaTest.gbuffers_water");
+                boolean featureFlags = key.startsWith("iris.features.");
+                if (featureFlags) {
+                    continue;
+                }
                 if (shadowSetting) {
                     shadowPropertySettings.add(key);
                 } else if (alphaTest) {

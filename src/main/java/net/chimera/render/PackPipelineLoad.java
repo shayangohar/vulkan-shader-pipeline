@@ -4,6 +4,7 @@ import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
+import net.chimera.shaderpack.PackFeatureFlags;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.minecraft.client.Minecraft;
@@ -14,6 +15,8 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -57,6 +60,9 @@ final class PackPipelineLoad {
             return;
         }
 
+        if (!enforceRequiredFeatures()) {
+            return;
+        }
         new PackPipelineInstaller(pass).installPrograms();
         installFamilyBridge();
         if (!enforceMaskCriticalFamilyContract()) {
@@ -160,24 +166,45 @@ final class PackPipelineLoad {
                     + "(entity and block installed or not authored)");
             return true;
         }
-        pass.packFrameUnsupported = String.join(", ", missing);
+        String families = String.join(", ", missing);
+        renderVanilla(families, "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing),
+                "is not supported yet (" + families + " could not load)");
+        return false;
+    }
+
+    /**
+     * Iris refuses a pack whose {@code iris.features.required} names a feature it cannot provide.
+     * Chimera renders vanilla for it, as for a missing mask-critical family, and names the features.
+     */
+    private boolean enforceRequiredFeatures() {
+        Set<String> missing = pass.packPlan == null ? Set.of() : pass.packPlan.unsupportedRequiredFeatures();
+        if (missing.isEmpty()) {
+            return true;
+        }
+        String features = missing.stream().map(PackFeatureFlags::readableName).collect(Collectors.joining(", "));
+        renderVanilla("required features " + features, "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing),
+                "needs features Chimera does not support (" + features + ")");
+        return false;
+    }
+
+    /** Drops the session to the host frame, as if no pack were selected, and says why in chat. */
+    private void renderVanilla(String reason, String deviation, String chatReason) {
+        pass.packFrameUnsupported = reason;
         if (pass.conformanceReport != null) {
-            pass.conformanceReport.markFrameFallback(
-                    "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing), "PACK_FRAME_UNSUPPORTED");
+            pass.conformanceReport.markFrameFallback(deviation, "PACK_FRAME_UNSUPPORTED");
             LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
             pass.sessions.logConformanceSummary();
         }
-        LOGGER.warn("[chimera] pack frame unsupported: {} could not install; vanilla rendering for {}",
-                pass.packFrameUnsupported, PackSessionLifecycle.packLabel(pass.sessions.packPath));
+        LOGGER.warn("[chimera] pack frame unsupported: {}; vanilla rendering for {}",
+                reason, PackSessionLifecycle.packLabel(pass.sessions.packPath));
         // Nothing built this session has been submitted yet, so release it directly.
         pass.sessions.cleanUpPackVariant();
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.gui != null) {
-            minecraft.gui.getChat().addMessage(Component.literal(
-                    "[Chimera] " + PackSessionLifecycle.packLabel(pass.sessions.packPath) + " is not supported yet ("
-                            + pass.packFrameUnsupported + " could not load). Rendering vanilla. See latest.log."));
+            minecraft.gui.getChat().addMessage(Component.literal("[Chimera] "
+                    + PackSessionLifecycle.packLabel(pass.sessions.packPath) + " " + chatReason
+                    + ". Rendering vanilla. See latest.log."));
         }
-        return false;
     }
 
     /**

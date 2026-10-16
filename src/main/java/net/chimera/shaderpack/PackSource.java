@@ -244,7 +244,7 @@ public final class PackSource {
                 return;
             }
             closed = true;
-            deleteTree(temporaryRoot);
+            PackTemporaryRoots.delete(temporaryRoot);
         }
     }
 
@@ -282,7 +282,7 @@ public final class PackSource {
                                           String dimension) {
         Path temporaryRoot = null;
         try {
-            temporaryRoot = Files.createTempDirectory("chimera-pack-");
+            temporaryRoot = PackTemporaryRoots.create();
             try (ZipFile zip = new ZipFile(archive.toFile())) {
                 List<String> names = entryNames(zip, deviations);
                 String prefix = findShadersPrefix(names);
@@ -305,7 +305,7 @@ public final class PackSource {
                     ? archive.resolveSibling(archive.getFileName() + ".invalid-shaders")
                     : temporaryRoot.resolve("shaders");
             if (temporaryRoot != null) {
-                deleteTree(temporaryRoot);
+                PackTemporaryRoots.delete(temporaryRoot);
             }
             return emptyResult(failedShadersDir, null, deviations, dimension);
         }

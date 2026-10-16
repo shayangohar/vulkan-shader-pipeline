@@ -22,6 +22,7 @@ import java.util.Optional;
  */
 public final class OptionList extends ContainerObjectSelectionList<OptionList.Row> {
     private static final int ROW_HEIGHT = 24;
+    private static final int MIN_CELL_WIDTH = 20;
 
     private final OptionContext context;
     private final OptionMenu menu;
@@ -50,8 +51,10 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
         OptionMenu.Screen screen = sub.orElse(menu.main());
         addEntry(new HeaderRow(sub.isPresent() ? page : null));
         List<OptionMenu.Element> elements = screen.elements();
-        // Iris fills rows until they hold the column count, so 0 or less gives one cell per row.
-        int columns = Math.max(1, screen.columnCount());
+        // Iris fills rows until they hold the column count, so 0 or less gives one cell per row. Unlike
+        // Iris, a count too wide for the row stops where cells reach their narrowest: a huge
+        // screen.columns would otherwise hang the screen padding the row, or draw cells of negative width.
+        int columns = Math.clamp(screen.columnCount(), 1, maxColumns());
         for (int start = 0; start < elements.size(); start += columns) {
             List<OptionCell> cells = new ArrayList<>();
             for (int index = start; index < start + columns; index++) {
@@ -60,6 +63,11 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
             addEntry(new CellRow(cells));
         }
         setScrollAmount(0);
+    }
+
+    /** The most cells a row fits at {@link #MIN_CELL_WIDTH}, with CellRow's 2-pixel gaps. */
+    private int maxColumns() {
+        return Math.max(1, (getRowWidth() - 3 + 2) / (MIN_CELL_WIDTH + 2));
     }
 
     private OptionCell cell(OptionMenu.Element element) {

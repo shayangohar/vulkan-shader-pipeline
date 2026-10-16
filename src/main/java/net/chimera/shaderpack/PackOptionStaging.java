@@ -102,7 +102,7 @@ final class PackOptionStaging {
         Path root = temporaryRoot;
         try {
             if (root == null) {
-                root = Files.createTempDirectory("chimera-pack-");
+                root = PackTemporaryRoots.create();
                 copyTree(shadersDir, root.resolve("shaders"));
             }
             Path staged = root.resolve("shaders");
@@ -114,7 +114,7 @@ final class PackOptionStaging {
             LOGGER.warn("[chimera] pack options cannot be applied to {}: {}", shadersDir, failure.getMessage());
             deviations.add("PACK_OPTION_STAGING_FAILED");
             if (temporaryRoot == null) {
-                PackSource.deleteTree(root);
+                PackTemporaryRoots.delete(root);
                 return new Staged(shadersDir, null, options);
             }
             return new Staged(root.resolve("shaders"), root, options);

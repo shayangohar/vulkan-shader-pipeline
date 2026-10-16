@@ -3,6 +3,7 @@ package net.chimera;
 import net.chimera.command.ChimeraCommands;
 import net.chimera.gui.ChimeraKeybinds;
 import net.chimera.render.ChimeraMaterialReloadListener;
+import net.chimera.shaderpack.PackTemporaryRoots;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.fabricmc.fabric.api.resource.v1.reloader.ResourceReloaderKeys;
@@ -24,6 +25,7 @@ public class ChimeraMod implements ClientModInitializer {
         LOGGER.info("Chimera {} initializing - shaderpack pipeline for VulkanMod", VERSION);
         ChimeraCommands.register();
         ChimeraKeybinds.register();
+        PackTemporaryRoots.sweepInBackground();
         ResourceLoader.get(PackType.CLIENT_RESOURCES).registerReloader(
                 ChimeraMaterialReloadListener.ID, ChimeraMaterialReloadListener.live());
         ResourceLoader.get(PackType.CLIENT_RESOURCES).addReloaderOrdering(
