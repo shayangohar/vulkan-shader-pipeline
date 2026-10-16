@@ -72,9 +72,15 @@ final class SettingsResolutionTest {
                     "profiles were not inventoried for " + dimension);
             assertTrue(settings.enabled("composite") && !settings.enabled("final"),
                     "program enable expressions were not evaluated for " + dimension);
-            assertTrue(settings.requiredFeatures().contains("LEGACY_GLSL")
-                            && settings.optionalFeatures().contains("MRT"),
+            assertTrue(settings.requiredFeatures().contains("REVERSED_CULLING")
+                            && settings.optionalFeatures().contains("PER_BUFFER_BLENDING"),
                     "feature flags were not inventoried for " + dimension);
+            assertTrue(settings.unsupportedRequiredFeatures().isEmpty(),
+                    "Chimera provides both required features for " + dimension);
+            assertEquals("1", settings.preprocessorDefines().get("IRIS_FEATURE_PER_BUFFER_BLENDING"),
+                    "an optional feature Chimera provides is defined in sources for " + dimension);
+            assertTrue(!settings.preprocessorDefines().containsKey("IRIS_FEATURE_FADE_VARIABLE"),
+                    "an optional feature Chimera lacks stays undefined for " + dimension);
             try (PackSource.LoadResult secondLoaded = PackSource.loadResult(fixture, dimension)) {
                 assertEquals(report.toJson(), PackProbe.analyze(fixture, secondLoaded).report().toJson(),
                         "report must be deterministic for " + dimension);

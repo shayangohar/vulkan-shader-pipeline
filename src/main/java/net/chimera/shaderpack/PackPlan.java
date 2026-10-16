@@ -118,6 +118,11 @@ public record PackPlan(
         return settings.preprocessorDefines();
     }
 
+    /** The {@code iris.features.required} flags Chimera cannot provide; Iris refuses such a pack. */
+    public Set<String> unsupportedRequiredFeatures() {
+        return settings.unsupportedRequiredFeatures();
+    }
+
     /** Explicit option names whose values must survive source defaults. */
     public Set<String> settingsOverriddenNames() {
         return settings.overriddenNames();

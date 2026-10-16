@@ -59,8 +59,6 @@ record PackSettingsPlan(
     private static final Pattern CONDITION = Pattern.compile(
             "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");
-    private static final Set<String> SUPPORTED_FEATURES = Set.of(
-            "LEGACY_GLSL", "COMPOSITE", "GBUFFERS", "SHADOWS", "WATER", "ENTITIES");
     private static final Pattern SAFE_OVERRIDE_VALUE = Pattern.compile(
             "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?[fF]?|true|false",
             Pattern.CASE_INSENSITIVE);
@@ -189,22 +187,17 @@ record PackSettingsPlan(
         return disabled;
     }
 
-    /** The required features Chimera does not support, each recorded as a deviation. */
+    /** The required features Chimera does not provide, each recorded as a deviation; Iris refuses the pack. */
     private static Set<String> unsupportedFeatures(Set<String> required, List<String> deviations) {
-        Set<String> unsupported = new TreeSet<>();
-        for (String feature : required) {
-            if (!SUPPORTED_FEATURES.contains(feature.toUpperCase())) {
-                unsupported.add(feature);
-                deviations.add("REQUIRED_FEATURE_UNSUPPORTED:" + feature);
-            }
-        }
+        Set<String> unsupported = PackFeatureFlags.unprovided(required);
+        unsupported.forEach(feature -> deviations.add("REQUIRED_FEATURE_UNSUPPORTED:" + feature));
         return unsupported;
     }
 
     /**
      * The macros shaders.properties is read with, as Iris preprocesses it: the pack's option values,
-     * Iris's standard environment with {@code IS_IRIS}, and the JVM overrides the pack does not
-     * declare (a false one leaves its name undefined).
+     * Iris's standard environment with {@code IS_IRIS} and the features Chimera provides, and the JVM
+     * overrides the pack does not declare (a false one leaves its name undefined).
      */
     private static Map<String, String> mergedConditionMacros(
             Map<String, String> optionMacros,
@@ -216,6 +209,7 @@ record PackSettingsPlan(
         result.keySet().removeAll(disabled);
         result.putAll(PackEngineDefines.standard());
         result.put(PackEngineDefines.IS_IRIS, "1");
+        result.putAll(PackFeatureFlags.propertyMacros());
         return result;
     }
 
@@ -241,7 +235,10 @@ record PackSettingsPlan(
         return PackOptionSources.systemOverrides();
     }
 
-    /** Active defaults seed the shared shader preprocessor. */
+    /**
+     * Active defaults seed the shared shader preprocessor, with Iris's defines for the optional
+     * features the pack lists and Chimera provides.
+     */
     Map<String, String> preprocessorDefines() {
         Map<String, String> result = new TreeMap<>();
         defaults.forEach((name, value) -> {
@@ -253,6 +250,7 @@ record PackSettingsPlan(
                 result.put(name, value);
             }
         });
+        result.putAll(PackFeatureFlags.sourceDefines(optionalFeatures));
         return stageIndependentDefaults(result);
     }
 
@@ -663,7 +661,8 @@ record PackSettingsPlan(
             if (feature.matches()) {
                 Set<String> destination = feature.group(1).equals("required") ? required : optional;
                 destination.clear();
-                for (String token : feature.group(2).split("[\\s,]+")) {
+                // As Iris: separated by spaces only, so "A,B" is one (unknown) flag.
+                for (String token : feature.group(2).trim().split(" +")) {
                     if (!token.isBlank()) {
                         destination.add(token);
                     }

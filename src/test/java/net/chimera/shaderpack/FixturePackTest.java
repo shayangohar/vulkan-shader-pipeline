@@ -164,14 +164,11 @@ final class FixturePackTest {
                 "compute stage deviation");
         assertTrue(report.deviations().contains("SETTING_NOT_APPLIED:customImage0"),
                 "custom image deviation");
-        assertTrue(report.deviations().contains("SETTING_NOT_APPLIED:iris.features.required"),
-                "feature flag deviation");
+        assertTrue(!report.deviations().contains("SETTING_NOT_APPLIED:iris.features.required"),
+                "feature flags are applied: the required COMPUTE_SHADERS is one Chimera provides");
         assertTrue(!report.shouldAttempt("gbuffers_terrain"), "MRT terrain must not execute");
         assertTrue(report.shouldAttempt("composite1"), "numbered post pass must execute");
-        assertEquals(List.of(
-                        "SETTING_NOT_APPLIED:customImage0",
-                        "SETTING_NOT_APPLIED:iris.features.required"),
-                report.deviations(), "unsupported deviations");
+        assertEquals(List.of("SETTING_NOT_APPLIED:customImage0"), report.deviations(), "unsupported deviations");
         assertStable(report, "unsupported");
     }
 
