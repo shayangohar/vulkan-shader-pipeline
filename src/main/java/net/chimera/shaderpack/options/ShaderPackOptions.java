@@ -79,6 +79,11 @@ public final class ShaderPackOptions {
         return problems;
     }
 
+    /** True when every source file the includes name was read, so no declared option can be missing. */
+    public boolean complete() {
+        return discovery.failures().isEmpty();
+    }
+
     /** Which profile the applied values match. */
     public PackProfiles.Scan profile() {
         return profiles.scan(values);

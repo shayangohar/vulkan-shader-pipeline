@@ -114,6 +114,25 @@ final class PackOptionStagingTest {
     }
 
     @Test
+    void anUnreadableSourceLeavesTheOptionFileAlone(@TempDir Path dir) throws IOException {
+        Path pack = folderPack(dir);
+        Path shaders = pack.resolve("shaders");
+        Files.writeString(shaders.resolve("composite.fsh"), COMPOSITE.replace("void main",
+                "#include \"/sun.glsl\"\nvoid main"));
+        byte[] latin1 = "// 30° by default\n#define SUN_ROTATION 30 // [0 30 45]\n"
+                .getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(shaders.resolve("sun.glsl"), latin1);
+        Path file = dir.resolve("Example_r1.txt");
+        Files.writeString(file, "SUN_ROTATION=45\nRP_MODE=3\n");
+        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
+            assertFalse(loaded.options().pack().complete());
+            loaded.options().saveOptionFile(pack);
+        }
+        assertEquals(Map.of("SUN_ROTATION", "45", "RP_MODE", "3"), OptionFile.read(file),
+                "a value for an option the scan could not see is kept, not dropped");
+    }
+
+    @Test
     void zipPackIsEditedWhereItIsExtracted(@TempDir Path dir) throws IOException {
         Path pack = dir.resolve("Example_r1.zip");
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(pack))) {

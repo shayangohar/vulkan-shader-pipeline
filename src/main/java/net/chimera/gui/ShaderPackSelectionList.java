@@ -152,6 +152,13 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         this.applied = name;
     }
 
+    /** After a switch failed to load: what runs is applied and picked again, the toggle as it runs. */
+    void showRunning(String name, boolean enabled) {
+        this.applied = name;
+        this.topButtonRow.enabled = enabled;
+        if (name != null) select(name);
+    }
+
     void close() {
         try {
             if (this.key != null) this.key.cancel();

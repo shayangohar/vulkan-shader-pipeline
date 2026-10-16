@@ -39,6 +39,7 @@ public final class OptionsView implements OptionContext.Actions {
     public OptionsView(ChimeraRenderer.LoadedPack loaded, Font font, Runnable apply, Consumer<Component> notifier,
                        Consumer<Path> importer) {
         this.loaded = loaded;
+        PendingOptions.bind(loaded.path());
         OptionEditor editor = new OptionEditor(loaded.options().pack(), loaded.options().applied());
         this.context = new OptionContext(editor, new OptionText(loaded.options().pack().language()), font,
                 new OptionOverlay(), new SliderControl(), this);
@@ -84,6 +85,12 @@ public final class OptionsView implements OptionContext.Actions {
     /** Ends a keyboard slider edit: queued before Apply, Done or a mode switch, dropped for Cancel. */
     public void finishEdits(boolean commit) {
         context.sliders().finishEdits(commit);
+    }
+
+    /** A load replaced this view: a slider edit or drag in progress queues the value it shows. */
+    public void retire() {
+        context.sliders().finishEdits(true);
+        context.sliders().endDrag();
     }
 
     /** A mouse button came up; a dragged slider takes the bucket under the pointer. */

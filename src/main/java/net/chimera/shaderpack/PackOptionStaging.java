@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -131,8 +132,9 @@ final class PackOptionStaging {
         };
     }
 
+    /** Copies a folder pack's sources; linked folders are copied too, as reading in place would see them. */
     private static void copyTree(Path source, Path target) throws IOException {
-        try (Stream<Path> paths = Files.walk(source)) {
+        try (Stream<Path> paths = Files.walk(source, FileVisitOption.FOLLOW_LINKS)) {
             for (Path path : (Iterable<Path>) paths::iterator) {
                 Path destination = target.resolve(source.relativize(path).toString());
                 if (Files.isDirectory(path)) {

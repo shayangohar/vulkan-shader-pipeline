@@ -113,16 +113,22 @@ public final class ShaderPackScreen extends Screen {
         ChimeraRenderer.LoadedPack pack = settingsPack();
         if (this.optionsMode && pack == null && ChimeraRenderer.selectedPackPath() == null) this.optionsMode = false;
         if (!this.optionsMode) {
-            this.optionsView = null;
+            retireOptionsView();
             addRenderableWidget(this.packList);
             return;
         }
         if (pack == null) return;
         if (this.optionsView == null || !this.optionsView.shows(pack)) {
+            retireOptionsView();
             this.optionsView = new OptionsView(pack, this.font, this::applyChanges, this::notify, this::importIntoView);
         }
         this.optionList = addRenderableWidget(this.optionsView.createList(this.minecraft, this.width,
                 this.height - 94, LIST_TOP));
+    }
+
+    private void retireOptionsView() {
+        if (this.optionsView != null) this.optionsView.retire();
+        this.optionsView = null;
     }
 
     /** The loaded pack, unless a change to another pack (or to none) is still queued. */
@@ -190,25 +196,53 @@ public final class ShaderPackScreen extends Screen {
     public void tick() {
         super.tick();
         if (this.notificationTimer > 0) this.notificationTimer--;
-        if (this.optionsMode) followLoadedPack();
+        if (switchFailed()) {
+            returnToRunningPack();
+        } else if (this.optionsMode) {
+            followLoadedPack();
+        }
         if (this.optionsView != null) this.optionsView.tick();
         updateSwitchButton();
     }
 
+    /** True once a pack this screen asked for gave way to another pack, or to none: it failed to load. */
+    private boolean switchFailed() {
+        if (this.awaitedPack == null) return false;
+        Path selected = ChimeraRenderer.selectedPackPath();
+        if (selected == null || !samePath(selected, this.awaitedPack)) return true;
+        if (settingsPack() != null) this.awaitedPack = null;
+        return false;
+    }
+
+    /**
+     * After a failed switch the screen shows what runs: that pack applied and picked (so Done does
+     * not retry), saved as the selection so the next start matches, and the list rather than the
+     * settings, as Iris has no pack to configure then. Chat, where the failure is reported, is
+     * hidden behind this screen, so it says so too.
+     */
+    private void returnToRunningPack() {
+        Path failed = this.awaitedPack;
+        this.awaitedPack = null;
+        String running = appliedPackName();
+        boolean enabled = ChimeraRenderer.selectedPackPath() != null;
+        this.packList.showRunning(running, enabled);
+        this.baseline = currentChoice();
+        if (running != null || !enabled) {
+            ChimeraConfig config = ChimeraConfig.get();
+            config.setSelection(running != null ? running : config.shaderPack().orElse(null), enabled);
+        }
+        notify(Component.translatable("options.chimera.shaderPackSelection.loadFailed",
+                failed.getFileName().toString()).withStyle(ChatFormatting.ITALIC, ChatFormatting.RED));
+        this.optionsMode = false;
+        rebuildWidgets();
+    }
+
     /**
      * Rebuilds the settings when a load finishes, so they show the values the pack now runs with,
-     * keeping keyboard focus on the bottom button that had it. A requested pack that failed to load,
-     * leaving another one running, sends the screen back to the list, as Iris has no pack then.
+     * keeping keyboard focus on the bottom button that had it.
      */
     private void followLoadedPack() {
         ChimeraRenderer.LoadedPack pack = settingsPack();
-        if (pack != null && this.awaitedPack != null && !samePath(pack.path(), this.awaitedPack)) {
-            this.optionsMode = false;
-            this.awaitedPack = null;
-            rebuildWidgets();
-            return;
-        }
-        if (pack != null) this.awaitedPack = null;
         boolean stale = pack == null ? this.optionList != null || ChimeraRenderer.selectedPackPath() == null
                 : this.optionsView == null || !this.optionsView.shows(pack);
         if (!stale) return;
@@ -343,19 +377,22 @@ public final class ShaderPackScreen extends Screen {
     }
 
     /**
-     * Saves the selection and switches to it. Shaders off, or nothing selected, means vanilla. A
-     * switch to what is already running queues nothing, as the pack command does. Settings pending
-     * for one pack are never applied to another; turning shaders off keeps them for that pack.
+     * Saves the selection and switches to it. Shaders off means vanilla; shaders on with no pack
+     * picked (the running one left the folder) changes nothing, as in Iris. A switch to what is
+     * already running queues nothing, as the pack command does. Settings pending for one pack are
+     * never applied to another; turning shaders off keeps them for that pack.
      */
     private void applySelection(Choice choice) {
         String selected = choice.pack();
+        if (choice.enabled() && selected == null) return;
         String previous = ChimeraConfig.get().shaderPack().orElse(null);
-        boolean enabled = choice.enabled() && selected != null;
+        boolean enabled = choice.enabled();
         ChimeraConfig.get().setSelection(selected != null ? selected : previous, enabled);
         if (!enabled) {
             ChimeraRenderer.disablePack();
             this.packList.setApplied(null);
             this.baseline = choice;
+            this.awaitedPack = null;
             return;
         }
         Path pack = ShaderpackDirectory.resolve(ShaderpackDirectory.root(), selected).orElse(null);
@@ -380,6 +417,7 @@ public final class ShaderPackScreen extends Screen {
         }
         this.packList.setApplied(selected);
         this.baseline = choice;
+        this.awaitedPack = pack;
     }
 
     private record Choice(String pack, boolean enabled) {}

@@ -7,7 +7,9 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,7 +46,8 @@ final class SettingsTransfer {
 
     /**
      * Asks where to export and writes the pack's applied settings there: what its option file holds
-     * now, so changes not yet applied stay out. An all-default pack exports an empty file.
+     * now, so changes not yet applied stay out. An all-default pack exports an empty file; an option
+     * file that cannot be parsed exports nothing, so the dialog's default (that file) is never emptied.
      */
     static void export(Path packPath) {
         run(() -> {
@@ -55,7 +58,9 @@ final class SettingsTransfer {
             }
             if (file == null) return;
             try {
-                OptionFile.export(Path.of(file), OptionFile.read(OptionFile.of(packPath)));
+                Path stored = OptionFile.of(packPath);
+                Map<String, String> values = Files.isRegularFile(stored) ? OptionFile.readStrict(stored) : Map.of();
+                OptionFile.export(Path.of(file), values);
             } catch (IOException failure) {
                 ChimeraMod.LOGGER.error("[chimera] cannot export shader settings to {}", file, failure);
             }

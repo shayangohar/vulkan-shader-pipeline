@@ -33,7 +33,7 @@ final class OptionEditorTest {
     @BeforeEach
     @AfterEach
     void emptyQueue() {
-        PendingOptions.drain();
+        PendingOptions.clear();
     }
 
     private static OptionEditor editor(Path root, Map<String, String> applied) throws IOException {
@@ -95,12 +95,32 @@ final class OptionEditorTest {
     }
 
     @Test
-    void aLoadTakesTheQueueAndTheResetRequest() {
+    void aLoadTakesTheQueueAndTheResetRequest(@TempDir Path root) {
+        Path pack = root.resolve("pack.zip");
+        PendingOptions.bind(pack);
         PendingOptions.put("QUALITY", "1");
         PendingOptions.requestReset();
-        PendingOptions.Drained drained = PendingOptions.drain();
+        PendingOptions.Drained drained = PendingOptions.drain(pack);
         assertEquals(Map.of("QUALITY", "1"), drained.values());
         assertTrue(drained.reset());
         assertTrue(PendingOptions.isEmpty() && !PendingOptions.resetRequested());
+    }
+
+    @Test
+    void anotherPacksQueueIsDroppedNeverApplied(@TempDir Path root) {
+        Path first = root.resolve("first.zip");
+        Path second = root.resolve("second.zip");
+        PendingOptions.bind(first);
+        PendingOptions.put("QUALITY", "1");
+        PendingOptions.requestReset();
+        assertEquals(PendingOptions.Drained.NONE, PendingOptions.drain(second),
+                "a load of another pack (shaders turned back on, K, the pack command) leaves its file alone");
+        assertTrue(PendingOptions.isEmpty() && !PendingOptions.resetRequested());
+
+        PendingOptions.put("QUALITY", "3");
+        PendingOptions.bind(root.resolve("x/../first.zip"));
+        assertEquals(Map.of("QUALITY", "3"), PendingOptions.view(), "the same pack keeps its queue");
+        PendingOptions.bind(second);
+        assertTrue(PendingOptions.isEmpty(), "showing another pack's settings drops the first pack's queue");
     }
 }

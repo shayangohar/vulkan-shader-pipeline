@@ -31,4 +31,11 @@ final class SliderControl {
         this.editing = null;
         if (cell != null) cell.endEdit(commit);
     }
+
+    /** Ends a drag whose release this view will never see, queueing the value the slider shows. */
+    void endDrag() {
+        SliderCell cell = this.dragging;
+        this.dragging = null;
+        if (cell != null) cell.endDrag();
+    }
 }

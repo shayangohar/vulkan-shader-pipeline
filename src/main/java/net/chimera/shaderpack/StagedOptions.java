@@ -37,11 +37,13 @@ public record StagedOptions(ShaderPackOptions pack, OptionValues applied, Map<St
     /**
      * Brings {@code <pack>.txt} in line with the stored values, as Iris rewrites it after every load:
      * the non-default values only, and no file when there are none. JVM overrides are never written.
-     * A pack that declares no options (one whose sources could not be read), or an option file that
-     * could not be parsed, leaves the file alone.
+     * A pack that declares no options (one whose sources could not be read), a pack with a source file
+     * that could not be read (Iris refuses such a pack before writing), or an option file that could
+     * not be parsed, leaves the file alone: values for options it could not see are never dropped.
      */
     public void saveOptionFile(Path packPath) throws IOException {
-        if (!optionFileReadable || pack.options().toggles().isEmpty() && pack.options().choices().isEmpty()) return;
+        boolean noOptions = pack.options().toggles().isEmpty() && pack.options().choices().isEmpty();
+        if (!optionFileReadable || !pack.complete() || noOptions) return;
         Path file = OptionFile.of(packPath);
         Map<String, String> stored = pack.values().changes();
         boolean current = stored.equals(OptionFile.read(file)) && Files.exists(file) != stored.isEmpty();

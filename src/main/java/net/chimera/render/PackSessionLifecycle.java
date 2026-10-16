@@ -143,8 +143,9 @@ final class PackSessionLifecycle {
         return true;
     }
 
+    /** Reloads the pack the frame is about to run, so a reload never undoes a change still queued. */
     boolean queuePackReload() {
-        return queuePackChange(this.packPath, true);
+        return queuePackChange(selectedPackPath(), true);
     }
 
     /** The pack running now and the options it was loaded with; null without one. */
@@ -530,7 +531,7 @@ final class PackSessionLifecycle {
     private PackSource.LoadResult loadPackPlan(Path dir) {
         boolean fresh = pass.packSource == null;
         PackSource.LoadResult result = fresh
-                ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain()) : pass.packSource;
+                ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain(dir)) : pass.packSource;
         pass.packSource = result;
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
         StagedOptions options = result.options();

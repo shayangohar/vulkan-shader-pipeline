@@ -111,6 +111,13 @@ final class SliderCell extends ChoiceCell {
         commit();
     }
 
+    /** The drag ends where the slider shows it, without a release. */
+    void endDrag() {
+        if (!dragging) return;
+        dragging = false;
+        commit();
+    }
+
     /** Leaves keyboard editing, queueing the edited value or dropping it. */
     void endEdit(boolean commitValue) {
         if (!editing) return;

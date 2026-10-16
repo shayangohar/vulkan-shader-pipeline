@@ -654,8 +654,10 @@ public final class UniformRegistry {
         return found;
     }
 
+    /** Java's {@code \b} word characters since JDK 19: ASCII letters, digits and '_'. */
     private static boolean wordCharacter(char value) {
-        return value == '_' || Character.isLetterOrDigit(value);
+        return value == '_' || (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
+                || (value >= '0' && value <= '9');
     }
 
     /** Iris EntityPatcher names served per vertex from EntityIds, not from the pack UBO. */

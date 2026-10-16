@@ -43,6 +43,7 @@
   "options.chimera.shaderPackSelection.copyError": "Could not add Shader Pack \"%s\"",
   "options.chimera.shaderPackSelection.copyErrorAlreadyExists": "\"%s\" is already in your Shader Packs folder!",
   "options.chimera.shaderPackSelection.missing": "\"%s\" is no longer in your Shader Packs folder",
+  "options.chimera.shaderPackSelection.loadFailed": "\"%s\" could not be loaded; see the log",
   "options.chimera.shaderPackSelection.notReady": "Chimera is not ready yet; try again in a moment",
   "options.chimera.shaderPackSelection.readError": "There was an error reading your shaderpacks folder",
 
