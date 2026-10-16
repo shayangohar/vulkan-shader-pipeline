@@ -73,6 +73,7 @@
     "ChimeraTextureManagerAccessor",
     "ChimeraSamplerAccessor",
     "ChimeraCloudRendererMixin",
+    "ChimeraVanillaCloudsAccessor",
     "ChimeraOptionsCloudsMixin",
     "ChimeraRasterOrientationMixin",
     "ChimeraPipelineFrontFaceMixin",

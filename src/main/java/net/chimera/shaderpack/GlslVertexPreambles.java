@@ -591,14 +591,14 @@ final class GlslVertexPreambles {
     }
 
     /**
-     * Lanes drawn on the host's own vertex layout (particles, weather, sky and the host-layout
-     * lanes): as in Iris's VanillaTransformer, gl_Color carries the host ColorModulator.
+     * Lanes drawn on the host's own vertex layout (particles, weather, sky, clouds and the
+     * host-layout lanes): as in Iris's VanillaTransformer, gl_Color carries the host ColorModulator.
      */
     static boolean nativeLayoutPreamble(String preamble) {
         return preamble == PARTICLE_VERTEX_PREAMBLE || preamble == LINE_VERTEX_PREAMBLE
                 || preamble == GLINT_VERTEX_PREAMBLE || preamble == LIGHTNING_VERTEX_PREAMBLE
                 || preamble == BEACON_VERTEX_PREAMBLE || preamble == LEASH_VERTEX_PREAMBLE
-                || isSkyPreamble(preamble);
+                || preamble == CLOUD_VERTEX_PREAMBLE || isSkyPreamble(preamble);
     }
 
     static boolean isSkyPreamble(String preamble) {
@@ -630,21 +630,20 @@ final class GlslVertexPreambles {
         return preamble;
     }
 
-    /** Host VulkanMod clouds are ordinary position/color geometry. */
-    static final String CLOUD_VERTEX_PREAMBLE = """
-            layout(binding = 0) uniform DynamicTransforms {
-                mat4 ModelViewMat;
-                vec4 ColorModulator;
-                vec3 ModelOffset;
-                mat4 TextureMat;
-            };
-            layout(binding = 1) uniform Projection { mat4 ProjMat; };
-            layout(location = 0) in vec3 Position;
-            layout(location = 1) in vec4 Color;
-            vec4 chimeraVertexValue() { return vec4(Position, 1.0); }
-            vec4 chimeraColorValue() { return Color; }
-            vec4 chimeraTexCoord0Value() { return vec4(0.0); }
-            vec4 chimeraTexCoord1Value() { return vec4(0.0); }
-            vec4 chimeraFtransform() { return ProjMat * ModelViewMat * chimeraVertexValue(); }
-            """;
+    /**
+     * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud faces (PackCloudRenderer
+     * decodes them into DefaultVertexFormat.POSITION_COLOR_NORMAL), gl_Vertex with the frame's
+     * CloudOffset added (the draw carries it in ModelOffset), the face colour times the cloud colour
+     * (ColorModulator), the face's axis normal, UV0 (0.5, 0.5) and full light (240, 240).
+     */
+    static final String CLOUD_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("return vec4(Position, 1.0);", "return vec4(Position + ModelOffset, 1.0);")
+            .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 2) in vec3 Normal;")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 }

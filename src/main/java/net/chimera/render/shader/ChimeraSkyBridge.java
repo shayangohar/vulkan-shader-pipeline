@@ -1,12 +1,10 @@
 package net.chimera.render.shader;
 
 import com.mojang.blaze3d.pipeline.RenderPipeline;
-import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.GeometryOutputPlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.renderer.RenderPipelines;
-import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 
@@ -22,7 +20,6 @@ public final class ChimeraSkyBridge {
     private static CloudStatus packCloudStatus;
     private static PackPipelines.PackSky active;
     private static boolean enabled;
-    private static boolean cloudTraceLogged;
 
     private ChimeraSkyBridge() {}
 
@@ -43,7 +40,6 @@ public final class ChimeraSkyBridge {
         };
         active = null;
         enabled = false;
-        cloudTraceLogged = false;
     }
 
     public static void setEnabled(boolean value) {
@@ -59,7 +55,6 @@ public final class ChimeraSkyBridge {
         clouds = null;
         cloudsDrawNothing = false;
         packCloudStatus = null;
-        cloudTraceLogged = false;
     }
 
     /** The installed pack's clouds directive, which replaces the player's cloud setting (Iris). */
@@ -107,19 +102,9 @@ public final class ChimeraSkyBridge {
         return enabled && clouds != null && pipeline == clouds.pipeline();
     }
 
-    /** Replaces VulkanMod's direct cloud pipeline bind while preserving its draw state. */
-    public static GraphicsPipeline replaceCloudPipeline(GraphicsPipeline host) {
-        if (!enabled || clouds == null || host == null
-                || host != PipelineManager.getCloudsPipeline()) {
-            return host;
-        }
-        active = clouds;
-        if (!cloudTraceLogged) {
-            cloudTraceLogged = true;
-            ChimeraMod.LOGGER.info("[chimera] cloud draw bridge active: host pipeline replaced with pack format={}",
-                    clouds.vertexFormat());
-        }
-        return clouds.pipeline();
+    /** The pack cloud program PackCloudRenderer draws the clouds with, or null when none is installed. */
+    public static PackPipelines.PackSky cloudPipeline() {
+        return enabled ? clouds : null;
     }
 
     private static PackPipelines.PackSky pipelineFor(RenderPipeline host) {
@@ -129,10 +114,6 @@ public final class ChimeraSkyBridge {
         }
         if (host == RenderPipelines.END_SKY || host == RenderPipelines.CELESTIAL) {
             return skyTextured == null ? null : skyTextured.forFormat(host.getVertexFormat());
-        }
-        if (host == RenderPipelines.CLOUDS || host == RenderPipelines.FLAT_CLOUDS) {
-            return clouds != null && clouds.vertexFormat() == host.getVertexFormat()
-                    ? clouds : null;
         }
         return null;
     }

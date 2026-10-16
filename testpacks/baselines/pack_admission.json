@@ -39,7 +39,6 @@
   "MakeUp-UltraFast-9.5g.zip": [
     "dh_terrain",
     "dh_water",
-    "gbuffers_clouds",
     "gbuffers_entities_glowing",
     "gbuffers_textured"
   ],
@@ -49,7 +48,6 @@
     "clrwl_shadow",
     "dh_terrain",
     "dh_water",
-    "gbuffers_clouds",
     "gbuffers_textured"
   ],
   "photon_v1.3b.zip": [

@@ -93,6 +93,21 @@ final class AlphaTestContractTest {
                 "alphaTest.shadow does not fix the shadow test");
     }
 
+    /** Iris ShaderKey.CLOUDS tests ONE_TENTH_ALPHA; a pack alphaTest.gbuffers_clouds replaces it. */
+    @Test
+    void cloudAlphaTest() {
+        String legacy = "#version 120\nvarying vec4 color;\nvoid main() {\n    gl_FragData[0] = color;\n}\n";
+        PackAlphaTestPlan iris = PackAlphaTestPlan.forProgram("gbuffers_clouds", settings(Map.of()));
+        String tested = iris.injectDrawTest(legacy);
+        assertTrue(iris.mode() == PackAlphaTestPlan.Mode.FIXED && tested.contains("gl_FragData[0].a > 0.1")
+                        && !tested.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                "cloud default is not Iris's fixed 0.1: " + tested);
+        assertTrue(PackAlphaTestPlan.forProgram("gbuffers_clouds", settings(Map.of(
+                        "alphaTest.gbuffers_clouds", "GREATER 0.005"))).injectDrawTest(legacy)
+                        .contains("gl_FragData[0].a > 0.005"),
+                "alphaTest.gbuffers_clouds does not replace the cloud test");
+    }
+
     private static void compileFragment(String source) {
         long compiler = Shaderc.shaderc_compiler_initialize();
         long result = Shaderc.shaderc_compile_into_spv(compiler, source,

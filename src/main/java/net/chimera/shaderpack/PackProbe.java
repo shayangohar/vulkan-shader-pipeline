@@ -504,6 +504,7 @@ public final class PackProbe {
                     && programPlan.alphaTestPlan().configured()
                     && (programName.equals("gbuffers_terrain")
                     || FamilyAdapterRegistry.isEntityLike(programName)
+                    || FamilyAdapterRegistry.isCloudFamily(programName)
                     ? programPlan.convertedVertex() != null
                     : false);
             if (!consumed) {

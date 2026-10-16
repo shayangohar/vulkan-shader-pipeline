@@ -99,12 +99,29 @@ final class HostLayoutVertexBridge {
         throw new IllegalArgumentException("sky program lacks its native input contract");
     }
 
-    /** Converts the generated cloud vertex contract. */
+    /** Converts a cloud vertex onto the decoded cloud faces; null when it cannot run there. */
     public static LegacyGlslConverter.TerrainVertexConversion convertCloudVertex(
             String source, Path sourceFile, String fragmentSource
     ) {
-        return TerrainVertexBridge.convertLegacyVertex(source, sourceFile, fragmentSource,
-                GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE);
+        return convertCloudVertex(source, sourceFile, fragmentSource, Map.of(), false, List.of());
+    }
+
+    /**
+     * Converts a cloud vertex onto the faces PackCloudRenderer decodes, with Iris's cloud inputs
+     * (GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE). The faces carry no mid-coordinates or tangents,
+     * so those attributes read GL's unbound default, as under Iris.
+     */
+    public static LegacyGlslConverter.TerrainVertexConversion convertCloudVertex(
+            String source, Path sourceFile, String fragmentSource, Map<String, Integer> locations,
+            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
+    ) {
+        try {
+            return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), sourceFile,
+                    fragmentSource, locations, GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE, allowStorageBuffers,
+                    uniforms, null);
+        } catch (RuntimeException failure) {
+            return null;
+        }
     }
 
     /**
