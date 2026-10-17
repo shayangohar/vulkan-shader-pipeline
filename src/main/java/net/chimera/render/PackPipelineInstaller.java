@@ -558,8 +558,9 @@ final class PackPipelineInstaller {
     }
 
     /**
-     * gbuffers_block_translucent, built only on Iris's GLYPH text layout: Iris 1.21.11 draws a block
-     * entity's text with it (TEXT_BE) and none of its models. Without it that text keeps its host draw.
+     * gbuffers_block_translucent, built only on Iris's GLYPH text layout: a block entity's text draws
+     * with it (Iris TEXT_BE). Without it that text keeps its host draw. Iris 1.21.1 also draws block
+     * entities' translucent models with it (BE_TRANSLUCENT); Chimera draws those with gbuffers_block.
      */
     void installBlockTranslucent(String name, PackProgramPlan programPlan) {
         PackPipelines.PackEntity text = buildTextVariant(name, programPlan);

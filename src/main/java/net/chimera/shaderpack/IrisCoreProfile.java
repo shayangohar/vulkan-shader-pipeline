@@ -189,11 +189,11 @@ final class IrisCoreProfile {
      * Iris applies EntityPatcher only to entity and text formats. On any other host layout
      * entityId and blockEntityId stay uniforms (CommonUniforms). blockEntityId is the constant
      * -1. entityId is Iris's fallback "for when entityId via attributes cannot be used
-     * (lightning)", read from CapturedRenderingState when the batch draws. Iris 1.21.11 never
-     * sets it for these draws: its lightning override is commented out, and a custom-geometry
-     * batch flushes after CustomFeatureRenderer has reset the entity to 0. Complementary's
-     * shadow program cuts entity shadows past 26 blocks, so a bolt drawn with its own id lost
-     * most of its shadow. Applied to both stages of a host-layout program before planning.
+     * (lightning)", read from CapturedRenderingState when the batch draws. Chimera reads 0, the
+     * value Iris 1.21.11 gives these draws. Iris 1.21.1 sets the pack's lightning_bolt id while a
+     * bolt draws (LightningRenderStateShard), so Complementary's shadow program, which cuts entity
+     * shadows past 26 blocks, cuts most of a bolt's shadow there; Chimera does not yet. Applied to
+     * both stages of a host-layout program before planning.
      */
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;

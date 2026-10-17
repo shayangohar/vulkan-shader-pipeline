@@ -43,7 +43,8 @@ public record FamilyAdapterPlan(
         BLOCK,
         /**
          * gbuffers_block_translucent: text drawn by block entities, such as signs (Iris TEXT_BE,
-         * ProgramId.BlockTrans). Iris 1.21.11 assigns it no block-entity model draws.
+         * ProgramId.BlockTrans). Iris 1.21.1 also draws block entities' translucent models with it
+         * (BE_TRANSLUCENT); Chimera draws those with gbuffers_block.
          */
         BLOCK_TRANSLUCENT,
         DAMAGED_BLOCK,
