@@ -2,7 +2,9 @@ package net.chimera.render;
 
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
+import net.vulkanmod.vulkan.framebuffer.MainDepthSnapshot;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -37,20 +39,30 @@ final class MainPassTargets {
     }
 
     void createHdrFramebuffer(int width, int height) {
-        this.hdrFramebuffer = Framebuffer.builder(width, height, 1, true)
-                .setFormat(pass.packHdrFormat)
-                .build();
+        this.hdrFramebuffer = framebuffer(width, height, pass.packHdrFormat);
     }
 
     void createOutputFramebuffer(int width, int height) {
         // Beryl's stable MainPass output uses VK_FORMAT_R8G8B8A8_UNORM (37).
-        this.compositeFramebuffer = Framebuffer.builder(width, height, 1, true)
-                .setFormat(37)
-                .build();
+        this.compositeFramebuffer = framebuffer(width, height, 37);
         // Pack final renders here in GL row order, with the output's formats.
-        this.packFinalFramebuffer = Framebuffer.builder(width, height, 1, true)
-                .setFormat(37)
-                .build();
+        this.packFinalFramebuffer = framebuffer(width, height, 37);
+    }
+
+    /**
+     * A framebuffer as Reforged's builder makes one, except that its colour image also allows
+     * transfers: the post chain copies colortex0 into and out of the HDR image, and screenshots copy
+     * the output. Reforged's builder drops the transfer usage upstream VulkanMod gave colour images.
+     */
+    private static Framebuffer framebuffer(int width, int height, int colorFormat) {
+        VulkanImage color = VulkanImage.builder(width, height)
+                .setFormat(colorFormat)
+                .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                .setLinearFiltering(true).setClamp(true).createVulkanImage();
+        VulkanImage depth = VulkanImage.createDepthImage(Vulkan.getDefaultDepthFormat(), width, height,
+                MainDepthSnapshot.depthAttachmentUsage(), false, true);
+        return Framebuffer.builder(color, depth).build();
     }
 
     void createRenderPasses() {

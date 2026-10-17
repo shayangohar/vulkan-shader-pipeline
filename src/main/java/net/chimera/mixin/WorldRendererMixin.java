@@ -72,11 +72,11 @@ public abstract class WorldRendererMixin {
                             + "bindShaderTextures(Lnet/vulkanmod/vulkan/shader/Pipeline;)V",
                     shift = At.Shift.AFTER),
             require = 1)
-    private void chimera$bindActualTerrainAtlas(RenderType renderType, double camX, double camY,
+    private void chimera$bindTerrainImages(RenderType renderType, double camX, double camY,
             double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
         if (!ChimeraRenderer.segmentsActive()) return;
         TerrainRenderType type = TerrainRenderType.get(renderType);
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass != null && type != null && TerrainLayers.drawn(type)) pass.bindTerrainAtlasAfterSelector(type);
+        if (pass != null && type != null && TerrainLayers.drawn(type)) pass.bindTerrainImagesAfterSelector(type);
     }
 }

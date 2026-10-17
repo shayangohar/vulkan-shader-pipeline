@@ -144,12 +144,16 @@ final class PackFamilyWindows {
      * Pairs the real selector atlas with LevelRenderer.chunkLayerSampler.
      * WorldRenderer calls this only after VulkanMod has synchronized slot 0.
      */
-    public void bindTerrainAtlasAfterSelector(TerrainRenderType renderType) {
+    public void bindTerrainImagesAfterSelector(TerrainRenderType renderType) {
         if (pass.shadowPass.shadowPassActive) return;
-        if (pass.packTranslucentSuspended && renderType == TerrainRenderType.TRANSLUCENT) return;
-        PackPipelines.PackTerrain terrain = renderType == TerrainRenderType.TRANSLUCENT
-                ? pass.pipelines.waterRoute : pass.pipelines.terrainRoute;
-        if (terrain == null) return;
+        boolean translucent = renderType == TerrainRenderType.TRANSLUCENT;
+        PackPipelines.PackTerrain terrain = translucent ? pass.pipelines.waterRoute : pass.pipelines.terrainRoute;
+        if (terrain == null || translucent && pass.packTranslucentSuspended) {
+            // The fixed pipeline draws this layer. Reforged has just rebound its shadow map slot
+            // (unit 3) from RenderSystem, which holds no texture there, to the missing texture.
+            pass.shadowPass.shadowMap.bindShadowTexture();
+            return;
+        }
         restorePackResourceWindow();
         // Capture the draw context before the transaction: the albedo image
         // straight from the synchronized selector plus the authoritative

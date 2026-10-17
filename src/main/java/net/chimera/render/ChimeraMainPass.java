@@ -463,8 +463,8 @@ public final class ChimeraMainPass implements MainPass {
         coverage.endPackCoverageWindow(renderType);
     }
 
-    public void bindTerrainAtlasAfterSelector(TerrainRenderType renderType) {
-        windows.bindTerrainAtlasAfterSelector(renderType);
+    public void bindTerrainImagesAfterSelector(TerrainRenderType renderType) {
+        windows.bindTerrainImagesAfterSelector(renderType);
     }
 
     // ------------------------------------------------------------------
