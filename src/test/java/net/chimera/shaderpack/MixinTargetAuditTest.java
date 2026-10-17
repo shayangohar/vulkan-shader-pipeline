@@ -105,8 +105,9 @@ final class MixinTargetAuditTest {
             for (FieldNode field : mixin.fields) {
                 boolean shadow = MixinBytecode.annotations(field.visibleAnnotations, field.invisibleAnnotations)
                         .stream().anyMatch(annotation -> annotation.desc.equals(SHADOW));
-                if (shadow && !hasField(field.name)) {
-                    problems.add(mixinName + ": shadow field " + field.name + " is not in " + target.name);
+                if (shadow && !hasField(field.name, field.desc)) {
+                    problems.add(mixinName + ": shadow field " + field.name + " " + field.desc
+                            + " is not in " + target.name);
                 }
             }
         }
@@ -329,10 +330,10 @@ final class MixinTargetAuditTest {
             return handler;
         }
 
-        private boolean hasField(String name) {
-            if (target.fields.stream().anyMatch(field -> field.name.equals(name))) return true;
-            return hostMixins.stream()
-                    .anyMatch(host -> host.fields.stream().anyMatch(field -> field.name.equals(name)));
+        private boolean hasField(String name, String desc) {
+            return Stream.concat(Stream.of(target), hostMixins.stream())
+                    .anyMatch(owner -> owner.fields.stream()
+                            .anyMatch(field -> field.name.equals(name) && field.desc.equals(desc)));
         }
 
         /** The target's methods a selector names ({@code name}, {@code name(desc)} or {@code Lowner;name(desc)}). */
