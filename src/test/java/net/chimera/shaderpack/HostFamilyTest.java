@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.HostAlphaTest;
@@ -22,8 +23,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_SINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 
 /** Host program families: requested-family fallback, particles, lines, glint, host-layout lanes and hands. */
 final class HostFamilyTest {
@@ -192,6 +200,28 @@ final class HostFamilyTest {
                 "block prefix plus 20-byte material inputs");
         assertEquals(extended, ChimeraVertexFormats.extendedLayout(DefaultVertexFormat.BLOCK));
         assertTrue(ChimeraVertexFormats.isFamilyFormat(extended), "only a family lane writes the block layout");
+    }
+
+    /**
+     * Chimera describes every family format to Vulkan itself, since Reforged's translator rejects
+     * the family scalars: one input per element, at the element's offset, typed as the converted
+     * shaders declare them (ivec2 UV1/UV2, uvec4 EntityIds, vec2 MidTexCoord).
+     */
+    @Test
+    void familyVertexInputs() {
+        Set<VertexFormat> family = new HashSet<>(ChimeraVertexFormats.handFormats().values());
+        family.add(ChimeraVertexFormats.EXTENDED_BLOCK);
+        for (VertexFormat format : family) {
+            assertTrue(ChimeraVertexFormats.isFamilyFormat(format), "family format " + format);
+            assertEquals(format.getElements().size(), ChimeraVertexFormats.vulkanInputFormats(format).length);
+        }
+        VertexFormat entity = ChimeraVertexFormats.EXTENDED_ENTITY;
+        assertArrayEquals(new int[] {VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32_SFLOAT,
+                        VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R8G8B8A8_SNORM,
+                        VK_FORMAT_R16G16B16A16_UINT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R8G8B8A8_SNORM},
+                ChimeraVertexFormats.vulkanInputFormats(entity));
+        assertArrayEquals(new int[] {0, 12, 16, 24, 28, 32, 36, 44, 52},
+                entity.getElements().stream().mapToInt(entity::getOffset).toArray());
     }
 
     /** Iris 1.21.1's AlphaTests per ShaderKey, for the entity-format and moving-block keys. */

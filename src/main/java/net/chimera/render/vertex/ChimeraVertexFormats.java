@@ -11,6 +11,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_SINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
+
 /** Vertex formats owned by Chimera rather than by the host renderer. */
 public final class ChimeraVertexFormats {
     public static final VertexFormatElement MATERIAL_ID =
@@ -21,9 +28,8 @@ public final class ChimeraVertexFormats {
                     VertexFormatElement.Usage.GENERIC, 1);
 
     /**
-     * Scalar metadata accepted by VulkanMod's generic format translator.
-     * ChimeraEntityVertexInputMixin replaces the Vulkan description with the
-     * packed four-component unsigned-short input at the same byte offset.
+     * The packed four-component unsigned-short entity ids, declared as one short and six bytes of
+     * padding; ChimeraEntityVertexInputMixin gives Vulkan the full input at the same byte offset.
      */
     public static final VertexFormatElement ENTITY_IDS =
             VertexFormatElement.register(16, 0, VertexFormatElement.Type.SHORT,
@@ -162,6 +168,29 @@ public final class ChimeraVertexFormats {
     /** True for a widened format only a family lane writes: no host program reads its layout. */
     public static boolean isFamilyFormat(VertexFormat format) {
         return format == EXTENDED_BLOCK || HAND_FORMATS.containsValue(format);
+    }
+
+    /**
+     * The Vulkan format of each element of family format {@code format}, by location. Reforged's
+     * vertex translator rejects the family scalars (MidTexCoord is declared a generic float), so
+     * ChimeraEntityVertexInputMixin describes family formats from this list instead.
+     */
+    public static int[] vulkanInputFormats(VertexFormat format) {
+        return format.getElementAttributeNames().stream().mapToInt(ChimeraVertexFormats::vulkanInputFormat)
+                .toArray();
+    }
+
+    private static int vulkanInputFormat(String attribute) {
+        return switch (attribute) {
+            case "Position" -> VK_FORMAT_R32G32B32_SFLOAT;
+            case "Color" -> VK_FORMAT_R8G8B8A8_UNORM;
+            case "UV0", "MidTexCoord" -> VK_FORMAT_R32G32_SFLOAT;
+            case "UV1", "UV2" -> VK_FORMAT_R16G16_SINT;
+            case "EntityIds" -> VK_FORMAT_R16G16B16A16_UINT;
+            // Normal is three bytes plus a pad byte; the tangent frame packs four.
+            case "Normal", "Tangent" -> VK_FORMAT_R8G8B8A8_SNORM;
+            default -> throw new IllegalArgumentException("unsupported family attribute " + attribute);
+        };
     }
 
     /** True for a format whose normal Chimera computes per quad because the host writes none. */
