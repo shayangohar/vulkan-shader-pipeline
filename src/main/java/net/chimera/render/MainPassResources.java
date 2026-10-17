@@ -50,7 +50,7 @@ final class MainPassResources {
         pass.shadowPass.shadowMap.init(shadowSettings);
         pass.targets.createHdrFramebuffer(width, height);
         pass.targets.createOutputFramebuffer(width, height);
-        pass.targets.createRenderPasses();
+        pass.targets.createOutputRenderPasses();
         pass.createPipelines();
         pass.targets.createHdrInteropTextures();
         pass.targets.createOutputInteropTextures();
@@ -87,8 +87,7 @@ final class MainPassResources {
             Renderer.getInstance().endRenderPass();
         }
         pass.targets.releaseHdrInteropTextures();
-        if (oldHdr != null) oldHdr.cleanUp();
-        pass.targets.hdrFramebuffer = null;
+        pass.targets.releaseHdrFramebuffer();
         if (pass.currentFramebuffer == oldHdr) {
             pass.currentFramebuffer = pass.targets.compositeFramebuffer;
         }

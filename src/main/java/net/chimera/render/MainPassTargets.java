@@ -38,8 +38,28 @@ final class MainPassTargets {
         this.pass = pass;
     }
 
+    /**
+     * The HDR framebuffer and its render passes, together: Reforged's RenderPass transitions the
+     * images of the framebuffer it was built for, so passes outliving a recreated framebuffer would
+     * transition its freed images.
+     */
     void createHdrFramebuffer(int width, int height) {
         this.hdrFramebuffer = framebuffer(width, height, pass.packHdrFormat);
+        createHdrRenderPasses();
+    }
+
+    void releaseHdrFramebuffer() {
+        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp();
+        ChimeraRasterOrientation.unmark(this.hdrRenderPass);
+        ChimeraRasterOrientation.unmark(this.hdrAuxRenderPass);
+        ChimeraRasterOrientation.unmark(this.hdrAuxClearDepthRenderPass);
+        if (this.hdrRenderPass != null) this.hdrRenderPass.cleanUp();
+        if (this.hdrAuxRenderPass != null) this.hdrAuxRenderPass.cleanUp();
+        if (this.hdrAuxClearDepthRenderPass != null) this.hdrAuxClearDepthRenderPass.cleanUp();
+        this.hdrFramebuffer = null;
+        this.hdrRenderPass = null;
+        this.hdrAuxRenderPass = null;
+        this.hdrAuxClearDepthRenderPass = null;
     }
 
     void createOutputFramebuffer(int width, int height) {
@@ -65,7 +85,7 @@ final class MainPassTargets {
         return Framebuffer.builder(color, depth).build();
     }
 
-    void createRenderPasses() {
+    private void createHdrRenderPasses() {
         // World depth is always stored: the world pass is suspended mid-frame
         // (shadow segment, family windows) and resumed with a depth load. A
         // DONT_CARE store let every later layer test against discarded depth.
@@ -89,8 +109,10 @@ final class MainPassTargets {
         ChimeraRasterOrientation.markGlOriented(this.hdrRenderPass);
         ChimeraRasterOrientation.markGlOriented(this.hdrAuxRenderPass);
         ChimeraRasterOrientation.markGlOriented(this.hdrAuxClearDepthRenderPass);
+    }
 
-        b = RenderPass.builder(this.compositeFramebuffer);
+    void createOutputRenderPasses() {
+        RenderPass.Builder b = RenderPass.builder(this.compositeFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         this.compositeRenderPass = b.build();
@@ -161,27 +183,17 @@ final class MainPassTargets {
         pass.depth.hdrDepthReadable = false;
         releaseHdrInteropTextures();
         releaseOutputInteropTextures();
-        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp();
+        releaseHdrFramebuffer();
         if (this.compositeFramebuffer != null) this.compositeFramebuffer.cleanUp();
         if (this.packFinalFramebuffer != null) this.packFinalFramebuffer.cleanUp();
-        ChimeraRasterOrientation.unmark(this.hdrRenderPass);
-        ChimeraRasterOrientation.unmark(this.hdrAuxRenderPass);
-        ChimeraRasterOrientation.unmark(this.hdrAuxClearDepthRenderPass);
-        if (this.hdrRenderPass != null) this.hdrRenderPass.cleanUp();
-        if (this.hdrAuxRenderPass != null) this.hdrAuxRenderPass.cleanUp();
-        if (this.hdrAuxClearDepthRenderPass != null) this.hdrAuxClearDepthRenderPass.cleanUp();
         if (this.compositeRenderPass != null) this.compositeRenderPass.cleanUp();
         if (this.packFinalRenderPass != null) this.packFinalRenderPass.cleanUp();
         if (this.compositeAuxRenderPass != null) this.compositeAuxRenderPass.cleanUp();
         if (this.compositeAuxClearDepthRenderPass != null) this.compositeAuxClearDepthRenderPass.cleanUp();
         if (this.presentRenderPass != null) this.presentRenderPass.cleanUp();
-        this.hdrFramebuffer = null;
         this.compositeFramebuffer = null;
         this.packFinalFramebuffer = null;
         pass.currentFramebuffer = null;
-        this.hdrRenderPass = null;
-        this.hdrAuxRenderPass = null;
-        this.hdrAuxClearDepthRenderPass = null;
         this.compositeRenderPass = null;
         this.packFinalRenderPass = null;
         this.compositeAuxRenderPass = null;
