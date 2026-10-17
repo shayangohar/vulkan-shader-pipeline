@@ -177,6 +177,8 @@ public final class PackPostTargets {
                         | (storage && PackPassComputes.storageSupported(target.format())
                         ? VK_IMAGE_USAGE_STORAGE_BIT : 0))
                 .setMipLevels(target.mipLevels())
+                // Reforged makes per-level views only on request; a mipmapped target renders to level 0.
+                .setLevelViews(target.mipLevels() > 1)
                 .setLinearFiltering(true)
                 .setClamp(true)
                 .createVulkanImage();
