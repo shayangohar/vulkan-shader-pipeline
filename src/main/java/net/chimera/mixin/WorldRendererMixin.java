@@ -29,6 +29,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *   <li>Depth is captured before translucent terrain, ahead of the pack window, whose guarded
  *   attachments must not intercept that fullscreen pass.</li>
  *   <li>The pack coverage window spans the layer's draws.</li>
+ *   <li>Every layer opens on the main target (ChimeraMainPass.rebindMainTarget), which opens the
+ *   shadow pass or a pending pack geometry window. Upstream VulkanMod's renderSectionLayer did this
+ *   itself; Reforged's draws into whatever is bound.</li>
  * </ul>
  */
 @Mixin(value = WorldRenderer.class, remap = false)
@@ -46,6 +49,8 @@ public abstract class WorldRendererMixin {
         try {
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass == null || !TerrainLayers.drawn(type)) {
+                // Reforged binds the pipeline of a layer it merged away too.
+                if (pass != null) pass.rebindMainTarget();
                 original.call(renderType, camX, camY, camZ, view, projection);
                 return;
             }
@@ -57,6 +62,7 @@ public abstract class WorldRendererMixin {
             }
             pass.beginPackCoverageWindow(type);
             try {
+                pass.rebindMainTarget();
                 original.call(renderType, camX, camY, camZ, view, projection);
             } finally {
                 pass.endPackCoverageWindow(type);
