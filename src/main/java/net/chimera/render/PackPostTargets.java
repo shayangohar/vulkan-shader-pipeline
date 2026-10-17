@@ -99,6 +99,8 @@ public final class PackPostTargets {
     private final int[] pendingWriteSide = new int[TARGET_COUNT];
     private final VulkanImage[] sourceImages = new VulkanImage[TARGET_COUNT];
     private final VulkanImage[] pendingImages = new VulkanImage[TARGET_COUNT];
+    /** Copies a geometry window samples in place of the targets it draws into. */
+    private final VulkanImage[] snapshotImages = new VulkanImage[TARGET_COUNT];
 
     private VulkanImage hdrIdentitySource;
     private PackTargetGraphPlan graph;
@@ -332,6 +334,16 @@ public final class PackPostTargets {
     /** Starts a geometry window for the declared targets, not necessarily including HDR. */
     public void beginGeometry(VkCommandBuffer commandBuffer, VulkanImage hdrColor,
                               List<Integer> outputTargets) {
+        beginGeometry(commandBuffer, hdrColor, outputTargets, List.of());
+    }
+
+    /**
+     * As above, for a program that also samples some of its outputs: Iris lets a gbuffer program
+     * read the target it draws into, which Vulkan forbids inside a render pass, so each such
+     * target's current contents are copied and the copy is what the window's draws sample.
+     */
+    public void beginGeometry(VkCommandBuffer commandBuffer, VulkanImage hdrColor,
+                              List<Integer> outputTargets, List<Integer> snapshotTargets) {
         requireFrameStarted();
         if (!this.configured || hdrColor == null || outputTargets == null || outputTargets.isEmpty()) {
             throw new IllegalStateException("pack geometry target state is not ready");
@@ -345,6 +357,31 @@ public final class PackPostTargets {
                 throw new IllegalStateException("missing geometry output target " + target);
             }
         }
+        if (snapshotTargets != null && !snapshotTargets.isEmpty()) {
+            snapshotOutputs(commandBuffer, outputTargets, snapshotTargets);
+        }
+    }
+
+    /** Copies each written target the window also samples, and makes the copy what it samples. */
+    private void snapshotOutputs(VkCommandBuffer commandBuffer, List<Integer> outputTargets,
+                                 List<Integer> snapshotTargets) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            for (int target : snapshotTargets) {
+                if (target <= 0 || target >= TARGET_COUNT || !outputTargets.contains(target)
+                        || !this.valid[target] || this.sourceImages[target] == null) continue;
+                if (this.snapshotImages[target] == null) {
+                    this.snapshotImages[target] = createTargetImage(targetSpec(target), "Snapshot", false);
+                }
+                copyImage(stack, commandBuffer, this.sourceImages[target], this.snapshotImages[target]);
+                this.sourceImages[target] = this.snapshotImages[target];
+                trace("snapshot target=" + target + " image=" + imageId(this.snapshotImages[target]));
+            }
+        }
+    }
+
+    private TargetSpec targetSpec(int target) {
+        return this.graph.targets().stream().filter(spec -> spec.index() == target).findFirst()
+                .orElseThrow(() -> new IllegalStateException("missing geometry snapshot target " + target));
     }
 
     /** Returns attachments in the same order as fragment output locations. */
@@ -402,6 +439,11 @@ public final class PackPostTargets {
     public void abortGeometry(VulkanImage hdrColor) {
         this.sourceImages[0] = hdrColor == null ? this.hdrIdentitySource : hdrColor;
         this.valid[0] = false;
+        for (int target = 1; target < TARGET_COUNT; target++) {
+            if (this.sourceImages[target] != null && this.sourceImages[target] == this.snapshotImages[target]) {
+                this.sourceImages[target] = imageFor(target, this.activeSide[target]);
+            }
+        }
     }
 
     /** Commits target 0 after the scene seed successfully merged host pixels. */
@@ -780,6 +822,12 @@ public final class PackPostTargets {
                     this.images[side][target].free();
                     this.images[side][target] = null;
                 }
+            }
+        }
+        for (int target = 0; target < TARGET_COUNT; target++) {
+            if (this.snapshotImages[target] != null) {
+                this.snapshotImages[target].free();
+                this.snapshotImages[target] = null;
             }
         }
         this.mipSampling.clear();

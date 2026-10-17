@@ -49,7 +49,8 @@ final class PackFamilyWindows {
         try {
             VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
             Renderer.getInstance().endRenderPass();
-            pass.packPostTargets.beginGeometry(Renderer.getCommandBuffer(), hdrColor, outputs.targetSlots());
+            pass.packPostTargets.beginGeometry(Renderer.getCommandBuffer(), hdrColor, outputs.targetSlots(),
+                    outputs.snapshotTargets());
             PackGeometryContext.beginGeometry(
                     pass.packPostTargets.geometryAttachments(outputs.targetSlots()),
                     pass.targets.hdrFramebuffer.getDepthAttachment());

@@ -108,7 +108,8 @@ public final class PackShadowCompute implements AutoCloseable {
         Module module;
         try {
             module = module(plan, spec, symbol -> owner.imageForSymbol(symbol) != null,
-                    sampledResourceOwner, shadersDir, initialMacros, lockedMacros);
+                    name -> sampledResourceOwner != null && sampledResourceOwner.image(name) != null,
+                    shadersDir, initialMacros, lockedMacros);
         } catch (IOException | RuntimeException failure) {
             LOGGER.warn("[chimera] shadowcomp translation failed: {}", failure.getMessage());
             return null;
@@ -144,14 +145,15 @@ public final class PackShadowCompute implements AutoCloseable {
             PackAdvancedResourcePlan.ImageSpec image = plan.imageForSymbol(symbol);
             return image != null && image.supported();
         };
-        return module(plan, spec, owned, null, shadersDir, initialMacros, lockedMacros);
+        // Offline there is no owner; the pack's noise texture is taken as loaded, as it is in game.
+        return module(plan, spec, owned, name -> true, shadersDir, initialMacros, lockedMacros);
     }
 
     private static Module module(
             PackAdvancedResourcePlan plan,
             PackAdvancedResourcePlan.ComputeSpec spec,
             Predicate<String> owned,
-            PackResourceOwner sampledResourceOwner,
+            Predicate<String> sampledAvailable,
             Path shadersDir,
             Map<String, String> initialMacros,
             Set<String> lockedMacros
@@ -166,7 +168,7 @@ public final class PackShadowCompute implements AutoCloseable {
                 PackEngineDefines.lockedNames(
                         lockedMacros, plan.capabilityPossible(), true));
         List<String> blocking = prepared.deviations().stream()
-                .filter(value -> value == null || !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:"))
+                .filter(value -> value == null || !ShaderSourcePreprocessor.isWarning(value))
                 .toList();
         if (!blocking.isEmpty()) {
             throw new IllegalArgumentException("preprocessing deviations " + blocking);
@@ -177,7 +179,7 @@ public final class PackShadowCompute implements AutoCloseable {
         if (!unowned.isEmpty()) {
             throw new IllegalArgumentException("no image owner for " + unowned);
         }
-        List<String> sampled2d = standardSampledResources(prepared.source(), sampledResourceOwner);
+        List<String> sampled2d = standardSampledResources(prepared.source(), sampledAvailable);
         List<ComputeValueBlock.Value> uniforms = computeUniforms(prepared.source());
         int uniformBinding = spec.imageNames().size() + spec.samplerNames().size() + sampled2d.size();
         String translated = translate(prepared.source(), plan, spec.imageNames(), spec.samplerNames(),
@@ -562,10 +564,9 @@ public final class PackShadowCompute implements AutoCloseable {
     }
 
     /** Resolves only standard sampled resources that already have a pack owner. */
-    private static List<String> standardSampledResources(String source, PackResourceOwner owner) {
-        if (source == null || owner == null) return List.of();
-        if (GlslTokenRewriter.containsIdentifier(source, "noisetex")
-                && owner.image("noisetex") != null) {
+    private static List<String> standardSampledResources(String source, Predicate<String> available) {
+        if (source == null) return List.of();
+        if (GlslTokenRewriter.containsIdentifier(source, "noisetex") && available.test("noisetex")) {
             return List.of("noisetex");
         }
         return List.of();

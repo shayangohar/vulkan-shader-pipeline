@@ -189,7 +189,7 @@ public final class PassComputePlan {
                 ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepareForRuntime(
                         shadersDir, path, raw, macros, lockedMacros);
                 prepared.deviations().stream()
-                        .filter(value -> value == null || !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:"))
+                        .filter(value -> value == null || !ShaderSourcePreprocessor.isWarning(value))
                         .forEach(value -> work.fail("PASS_COMPUTE_PREPROCESSOR:" + value));
                 GlslVersion version = prepared.successful() ? GlslVersion.first(prepared.source()) : null;
                 if (version == null || !version.supported() || version.number() < 430) {

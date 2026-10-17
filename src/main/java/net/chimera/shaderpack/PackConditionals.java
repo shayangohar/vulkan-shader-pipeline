@@ -71,8 +71,16 @@ final class PackConditionals {
             return macros.remove(name);
         }
 
-        void apply(String directive, String expression) {
+        /**
+         * Applies one conditional directive; false when it was ignored. An #elif, #else or #endif
+         * with no open #if is reported and skipped, as Iris's preprocessor (JCPP) does: Photon's
+         * TAAU program ends in a stray #endif and still runs under Iris.
+         */
+        boolean apply(String directive, String expression) {
             String argument = expression == null ? "" : expression.trim();
+            boolean closing = directive.equalsIgnoreCase("elif") || directive.equalsIgnoreCase("else")
+                    || directive.equalsIgnoreCase("endif");
+            if (closing && branches.isEmpty()) return false;
             switch (directive.toLowerCase()) {
                 case "if", "ifdef", "ifndef" -> {
                     boolean parent = active();
@@ -84,6 +92,7 @@ final class PackConditionals {
                 case "endif" -> closeBranch();
                 default -> throw new IllegalArgumentException("unsupported conditional");
             }
+            return true;
         }
 
         /** The expression an if, ifdef or ifndef directive tests. */

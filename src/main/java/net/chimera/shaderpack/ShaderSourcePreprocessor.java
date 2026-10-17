@@ -29,7 +29,16 @@ public final class ShaderSourcePreprocessor {
     private static final Pattern FUNCTION_DEFINE = Pattern.compile(
             "^([A-Za-z_]\\w*)\\s*\\([^)]*\\)(?:\\s+(.*))?$");
 
+    /** Deviations that only record a fact the preprocessor handled; every other one fails the source. */
+    private static final List<String> WARNINGS = List.of(
+            "PREPROCESSOR_MACRO_REDEFINED:", "PREPROCESSOR_UNMATCHED_CONDITIONAL:", "PREPROCESSOR_DIRECTIVE_REPORTED:");
+
     private ShaderSourcePreprocessor() {}
+
+    /** True when a deviation of a prepared source only records a fact (a redefinition, a stray #endif). */
+    public static boolean isWarning(String deviation) {
+        return deviation != null && WARNINGS.stream().anyMatch(deviation::startsWith);
+    }
 
     static Result prepare(Path shadersRoot, Path sourceFile, String source) {
         return prepare(shadersRoot, sourceFile, source, Map.of());
@@ -207,12 +216,22 @@ public final class ShaderSourcePreprocessor {
                 case "undef" -> undefine(argument);
                 case "include" -> include(argument, sourceFile, depth);
                 case "version", "extension", "pragma", "line" -> passThrough(directive, line);
-                default -> {
-                    if (active()) {
-                        throw new PreparationFailure("PREPROCESSOR_DIRECTIVE_UNSUPPORTED:" + directive);
-                    }
-                }
+                default -> otherDirective(directive);
             }
+        }
+
+        /**
+         * A directive with no handler. Iris's preprocessor (JCPP) reports #error and #warning and goes
+         * on without the line (Photon's prepare stage #errors with cloud shadows off, which no switch
+         * disables); any other active one fails the source.
+         */
+        private void otherDirective(String directive) {
+            if (!active()) return;
+            if (directive.equals("error") || directive.equals("warning")) {
+                deviations.add("PREPROCESSOR_DIRECTIVE_REPORTED:" + directive);
+                return;
+            }
+            throw new PreparationFailure("PREPROCESSOR_DIRECTIVE_UNSUPPORTED:" + directive);
         }
 
         private void undefine(String argument) {
@@ -359,7 +378,9 @@ public final class ShaderSourcePreprocessor {
 
         private void applyCondition(String directive, String expression) {
             try {
-                conditionState.apply(directive, expression);
+                if (!conditionState.apply(directive, expression)) {
+                    deviations.add("PREPROCESSOR_UNMATCHED_CONDITIONAL:" + directive);
+                }
             } catch (RuntimeException e) {
                 throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }

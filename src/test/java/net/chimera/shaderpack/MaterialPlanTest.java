@@ -548,11 +548,13 @@ final class MaterialPlanTest {
                 .withInterfacePlan(fragment)
                 .convert();
         assertTrue(converted != null, "elytra fragment conversion failed");
-        assertTrue(converted.contains("chimeraIsElytraFlying != 0"),
+        assertTrue(converted.contains("(isElytraFlying != 0)"),
                 "bool read was not translated: " + converted);
         assertTrue(!converted.contains("!isElytraFlying"),
                 "raw bool negation remained: " + converted);
         assertTrue(converted.contains("int isElytraFlying"),
                 "catalog int field was not emitted: " + converted);
+        // The read must name the declared field (it once named an undeclared chimeraIsElytraFlying).
+        assertEquals(null, PackCompileTest.compile(converted, false), converted);
     }
 }

@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -233,7 +234,7 @@ final class GlslResourceUsage {
 
         /** Records the resources one reachable body reads and queues every function it can call. */
         private void visitBody(FunctionDefinition function) {
-            Set<String> shadowed = localResourceDeclarations(tokens, function, declared.names());
+            Set<Integer> shadowed = localResourceReferences(tokens, function, declared.names());
             for (int index = function.bodyStart(); index < function.bodyEnd(); index++) {
                 GlslLexer.Token token = tokens.get(index);
                 if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
@@ -241,7 +242,7 @@ final class GlslResourceUsage {
                     continue;
                 }
                 String name = token.text();
-                if (!shadowed.contains(name)) {
+                if (!shadowed.contains(index)) {
                     live.addDeclared(name, declared.names());
                 }
                 int next = GlslLexer.nextSignificant(tokens, index);
@@ -324,11 +325,11 @@ final class GlslResourceUsage {
             Declarations declared,
             Resources referenced
     ) {
-        Set<String> shadowed = localResourceDeclarations(tokens, function, declared.names());
+        Set<Integer> shadowed = localResourceReferences(tokens, function, declared.names());
         for (int index = function.bodyStart(); index < function.bodyEnd(); index++) {
             GlslLexer.Token token = tokens.get(index);
             if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
-                    || declared.tokens().contains(index) || shadowed.contains(token.text())) {
+                    || declared.tokens().contains(index) || shadowed.contains(index)) {
                 continue;
             }
             referenced.addDeclared(token.text(), declared.names());
@@ -712,27 +713,39 @@ final class GlslResourceUsage {
         return cursor >= 0 && trivia.charAt(cursor) == '\\';
     }
 
-    /** The resource names a function body redeclares as locals, which hide the global resources. */
-    private static Set<String> localResourceDeclarations(
+    /**
+     * The token positions in a function body where a resource's name means a local the body
+     * declares: from that declaration to the end of its block, as GLSL scopes it. Bliss's
+     * GetVolumetricFog reads the global {@code shadow} sampler, then declares a {@code float shadow}
+     * in a later block; the earlier read is still the sampler's.
+     */
+    private static Set<Integer> localResourceReferences(
             List<GlslLexer.Token> tokens,
             FunctionDefinition function,
             Resources declared
     ) {
         Set<String> resources = declared.all();
-        Set<String> result = new HashSet<>();
+        Set<Integer> result = new HashSet<>();
+        Deque<Set<String>> scopes = new ArrayDeque<>();
+        scopes.push(new HashSet<>());
         int start = function.bodyStart();
         for (int index = start; index < function.bodyEnd(); index++) {
             GlslLexer.Token token = tokens.get(index);
+            if (token.symbol("{")) {
+                scopes.push(new HashSet<>());
+            } else if (token.symbol("}") && scopes.size() > 1) {
+                scopes.pop();
+            }
             if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
                     || !resources.contains(token.text())) continue;
             int previous = GlslLexer.previousSignificant(tokens, index);
-            if (previous >= start
+            boolean declaration = previous >= start
                     && tokens.get(previous).kind() == GlslLexer.Kind.IDENTIFIER
                     && (VALUE_TYPES.contains(tokens.get(previous).text())
                     || isSampler(tokens.get(previous).text())
-                    || isImageType(tokens.get(previous).text()))) {
-                result.add(token.text());
-            }
+                    || isImageType(tokens.get(previous).text()));
+            if (declaration) scopes.peek().add(token.text());
+            if (declaration || scopes.stream().anyMatch(scope -> scope.contains(token.text()))) result.add(index);
         }
         return result;
     }

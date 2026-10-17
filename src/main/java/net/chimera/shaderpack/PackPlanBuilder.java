@@ -100,7 +100,7 @@ public final class PackPlanBuilder {
         private final UniformRegistry.Stage stage;
         private final TerrainMaterialPlan terrainMaterial;
         private final PostTargetPlan targetPlan;
-        private final GeometryOutputPlan geometryOutputPlan;
+        private GeometryOutputPlan geometryOutputPlan;
         private final String directiveProgram;
         /** The deviation label of a host-layout lane (LINE, GLINT, SHADOW_LINES, ...), or null. */
         private final String hostLayoutLane;
@@ -297,7 +297,8 @@ public final class PackPlanBuilder {
             boolean reconcileStages = vertex != null && (stage != UniformRegistry.Stage.POST || pairedPostVertex);
             stageMatch = !reconcileStages
                     ? new GlslInterfaceScanner.ProgramMatch(Map.of(), List.of())
-                    : GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("fragment"));
+                    : GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("fragment"),
+                            pairedPostVertex);
         }
 
         private Map<String, Integer> varyingLocations() {
@@ -357,19 +358,28 @@ public final class PackPlanBuilder {
                     || FamilyAdapterRegistry.isCloudFamily(name);
         }
 
-        /** A world draw must not sample its own outputs, and shadow outputs are shadowcolor0 and 1 only. */
+        /** A world draw samples its own outputs through snapshots; shadow outputs are shadowcolor0 and 1 only. */
         private boolean targetsAdmitted() {
             boolean admitted = true;
             if (geometryOutputPlan != null) {
                 // A world draw samples pack targets as shader-read images while its own outputs
-                // are colour attachments; one image cannot be both inside a render pass.
+                // are colour attachments; one image cannot be both inside a render pass. An
+                // output it also samples (BSL's MCBL_SS water reads colortex8) reads a copy.
+                // colortex0 is the live HDR image, which has no target-shaped copy.
+                List<Integer> snapshots = new ArrayList<>();
                 for (UniformRegistry.SamplerBinding sampler : interfacePlan.effective(stage).samplers()) {
                     Integer target = PackResourcePlan.targetIndex(sampler.name());
-                    if (target != null && geometryOutputPlan.targetSlots().contains(target)) {
-                        deviations.add("GBUFFER_TARGET_FEEDBACK:colortex" + target);
+                    if (target == null || !geometryOutputPlan.targetSlots().contains(target)
+                            || snapshots.contains(target)) continue;
+                    if (target == 0) {
+                        deviations.add("GBUFFER_TARGET_FEEDBACK:colortex0");
                         admitted = false;
+                    } else {
+                        deviations.add("GBUFFER_TARGET_SNAPSHOT:colortex" + target);
+                        snapshots.add(target);
                     }
                 }
+                geometryOutputPlan = geometryOutputPlan.withSnapshotTargets(snapshots);
             }
             if (stage.shadowPass()) {
                 PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
@@ -979,7 +989,7 @@ public final class PackPlanBuilder {
         }
         return source.deviations().stream().noneMatch(value ->
                 ((value.startsWith("SOURCE_") || value.startsWith("PREPROCESSOR_"))
-                        && !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:"))
+                        && !ShaderSourcePreprocessor.isWarning(value))
                         || value.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:"));
     }
 }

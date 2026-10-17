@@ -14,6 +14,9 @@ public final class GlslTokenRewriter {
      * Blanks complete unreachable function definitions while preserving line
      * breaks. Source positions remain stable for compiler diagnostics and the
      * later declaration rewrites cannot leave dead resource references behind.
+     * Directive lines inside a blanked function stay: a #define there holds for
+     * the rest of the file (Complementary defines WATER_FOG_MULT_M in an unused
+     * GetWaterFog and uses it later, where the identical redefinition is folded).
      */
     static String removeUnreachableFunctions(
             String source, GlslResourceUsage.Analysis usage
@@ -23,16 +26,43 @@ public final class GlslTokenRewriter {
             return source;
         }
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
+        boolean[] directives = directiveTokens(tokens);
         for (GlslResourceUsage.FunctionDefinition function : usage.unreachableFunctions()) {
             int start = Math.max(0, function.definitionStart());
             int end = Math.min(tokens.size() - 1, function.definitionEnd());
             for (int index = start; index <= end; index++) {
+                if (directives[index]) continue;
                 String text = tokens.get(index).text();
                 tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.TRIVIA,
                         lineBreaks(text)));
             }
         }
         return GlslLexer.render(tokens);
+    }
+
+    /** Which tokens sit on a preprocessor directive line: from a '#' that starts a line to that line's end. */
+    private static boolean[] directiveTokens(List<GlslLexer.Token> tokens) {
+        boolean[] directive = new boolean[tokens.size()];
+        boolean lineStart = true;
+        boolean inDirective = false;
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() == GlslLexer.Kind.TRIVIA) {
+                int newline = token.text().lastIndexOf('\n');
+                if (newline >= 0) {
+                    inDirective = false;
+                    lineStart = token.text().substring(newline + 1).isBlank();
+                } else {
+                    directive[index] = inDirective;
+                    if (!token.text().isBlank()) lineStart = false;
+                }
+                continue;
+            }
+            if (lineStart && token.kind() == GlslLexer.Kind.SYMBOL && token.text().equals("#")) inDirective = true;
+            directive[index] = inDirective;
+            lineStart = false;
+        }
+        return directive;
     }
 
     static String lineBreaks(String text) {

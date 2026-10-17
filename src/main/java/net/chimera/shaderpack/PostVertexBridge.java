@@ -253,6 +253,11 @@ final class PostVertexBridge {
             }
             Integer location = layout.locations().get(declaration.name());
             String type = layout.types().get(declaration.name());
+            String zero = location == null ? GlslInterfaceScanner.zeroValue(declaration) : null;
+            if (zero != null) {
+                // No vertex output writes it: Iris zeroes it (GlslInterfaceScanner.UNWRITTEN_ZEROED).
+                return declaration.type() + " " + declaration.name() + " = " + zero + ";\n";
+            }
             if (location == null || !declaration.typeWithArray().equals(type)) {
                 throw new IllegalArgumentException("post varying is not matched: " + declaration.name());
             }

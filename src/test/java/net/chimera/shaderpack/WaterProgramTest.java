@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -135,7 +136,10 @@ final class WaterProgramTest {
                 "water accepted depthtex0, the depth it is writing: " + depth.deviations());
     }
 
-    /** A water program that samples a target it also writes must not execute. */
+    /**
+     * A water program that samples a target it also writes (BSL's MCBL_SS water reads colortex8)
+     * runs: Iris samples the target it draws into, and Chimera samples a copy taken as the window opens.
+     */
     @Test
     void targetFeedback() {
         String fragment = """
@@ -151,8 +155,9 @@ final class WaterProgramTest {
                 """;
         PackProgramPlan plan = PackPlanBuilder.build(new PackProgram("gbuffers_water", fragment, null,
                 terrainVertex(), null), null);
-        assertTrue(!plan.executable() && plan.deviations().contains("GBUFFER_TARGET_FEEDBACK:colortex5"),
-                "water sampling its own output target was admitted: " + plan.deviations());
+        assertTrue(plan.executable() && plan.deviations().contains("GBUFFER_TARGET_SNAPSHOT:colortex5"),
+                "water sampling its own output target was refused: " + plan.deviations());
+        assertEquals(List.of(5), plan.geometryOutputPlan().snapshotTargets());
         PackProgramPlan ok = PackPlanBuilder.build(new PackProgram("gbuffers_water", WATER_FRAGMENT, null,
                 terrainVertex(), null), null);
         assertTrue(ok.executable(), "reference water program is not executable: " + ok.deviations());
