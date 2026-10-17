@@ -5,8 +5,8 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.navigation.CommonInputs;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -133,13 +133,13 @@ final class HeaderButton extends AbstractWidget {
     }
 
     @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        return event.button() == 0 && activate(event.hasShiftDown());
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        return button == 0 && activate(Screen.hasShiftDown());
     }
 
     @Override
-    public boolean keyPressed(KeyEvent event) {
-        return event.isConfirmation() && activate(event.hasShiftDown());
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        return CommonInputs.selected(keyCode) && activate(Screen.hasShiftDown());
     }
 
     private boolean activate(boolean shift) {

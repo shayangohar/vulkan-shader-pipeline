@@ -4,13 +4,14 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.chimera.config.ChimeraConfig;
 import net.chimera.config.ShaderpackDirectory;
 import net.chimera.render.ChimeraRenderer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.neoforge.common.NeoForge;
 import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Path;
@@ -21,22 +22,24 @@ import java.nio.file.Path;
  * in chat as Iris does. A reload or toggle is queued for the next safe frame boundary.
  */
 public final class ChimeraKeybinds {
-    private static final KeyMapping.Category CATEGORY =
-            KeyMapping.Category.register(Identifier.fromNamespaceAndPath("chimera", "keybinds"));
-    private static KeyMapping reload;
-    private static KeyMapping toggleShaders;
-    private static KeyMapping shaderPackScreen;
+    private static final String CATEGORY = "key.category.chimera.keybinds";
+    private static final KeyMapping reload = new KeyMapping(
+            "chimera.keybind.reload", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_R, CATEGORY);
+    private static final KeyMapping toggleShaders = new KeyMapping(
+            "chimera.keybind.toggleShaders", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_K, CATEGORY);
+    private static final KeyMapping shaderPackScreen = new KeyMapping(
+            "chimera.keybind.shaderPackSelection", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_O, CATEGORY);
 
     private ChimeraKeybinds() {}
 
-    public static void register() {
-        reload = KeyBindingHelper.registerKeyBinding(new KeyMapping(
-                "chimera.keybind.reload", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_R, CATEGORY));
-        toggleShaders = KeyBindingHelper.registerKeyBinding(new KeyMapping(
-                "chimera.keybind.toggleShaders", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_K, CATEGORY));
-        shaderPackScreen = KeyBindingHelper.registerKeyBinding(new KeyMapping(
-                "chimera.keybind.shaderPackSelection", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_O, CATEGORY));
-        ClientTickEvents.END_CLIENT_TICK.register(ChimeraKeybinds::handle);
+    /** Registers the bindings and handles them at the end of each client tick. */
+    public static void register(IEventBus modBus) {
+        modBus.addListener(RegisterKeyMappingsEvent.class, event -> {
+            event.register(reload);
+            event.register(toggleShaders);
+            event.register(shaderPackScreen);
+        });
+        NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, event -> handle(Minecraft.getInstance()));
     }
 
     private static void handle(Minecraft minecraft) {

@@ -179,7 +179,6 @@ public final class PackNanTripwire {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (this.selfTestImage == null) {
                 this.selfTestImage = VulkanImage.builder(4, 4)
-                        .setName("chimeraNanTripwireSelfTest")
                         .setFormat(VK_FORMAT_R16G16B16A16_SFLOAT)
                         .setUsage(VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
                         .setLinearFiltering(false).setClamp(true).createVulkanImage();

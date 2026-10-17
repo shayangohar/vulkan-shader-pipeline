@@ -8,14 +8,12 @@ import net.chimera.gui.options.OptionsView;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.shaderpack.options.PendingOptions;
 import net.minecraft.ChatFormatting;
+import net.minecraft.Util;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.Util;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.glfw.GLFW;
 
@@ -259,13 +257,13 @@ public final class ShaderPackScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_TAB) {
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_TAB) {
             // As Iris: switch modes, then let Tab focus the first element (or Shift+Tab the last).
             switchMode();
-            return super.keyPressed(event);
+            return super.keyPressed(keyCode, scanCode, modifiers);
         }
-        if (this.optionsMode && event.isEscape()) {
+        if (this.optionsMode && keyCode == GLFW.GLFW_KEY_ESCAPE) {
             if (this.optionsView == null || this.optionList == null || !this.optionsView.escape()) {
                 if (this.optionsView != null) this.optionsView.finishEdits(true);
                 this.optionsMode = false;
@@ -273,14 +271,14 @@ public final class ShaderPackScreen extends Screen {
             }
             return true;
         }
-        return super.keyPressed(event);
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     /** Screens see every release, so a dragged slider commits here; vanilla stops tracking held buttons. */
     @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
-        if (event.button() == 0 && this.optionsView != null) this.optionsView.mouseReleased(event.x());
-        return super.mouseReleased(event);
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && this.optionsView != null) this.optionsView.mouseReleased(mouseX);
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override

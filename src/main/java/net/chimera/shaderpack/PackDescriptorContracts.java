@@ -2,14 +2,9 @@ package net.chimera.shaderpack;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
-import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.shaderpack.PackAdvancedResourcePlan.ProgramBindingLayout;
-import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
-import net.vulkanmod.vulkan.shader.descriptor.UBO;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,12 +13,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_ALL_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
@@ -73,11 +64,7 @@ final class PackDescriptorContracts {
         for (int slot : slots) PackPipelines.requireSelector(slot);
         PackDescriptorLayout layout = PIPELINE_JSON_STAGES.contains(stage)
                 ? pipelineJsonLayout(stage, iface, slots) : familyLayout(plan, stage, iface, slots);
-        // A guarded family contract owns the host transform blocks at bindings
-        // 0 and 1, so those two blocks must carry the host semantic names for
-        // the bridge's name-based lookups.
-        boolean familyContract = !PIPELINE_JSON_STAGES.contains(stage);
-        return new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface), familyContract);
+        return new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface));
     }
 
     /** A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then samplers. */
@@ -222,59 +209,38 @@ final class PackDescriptorContracts {
         return UniformRegistry.Stage.ENTITY;
     }
 
-    static void addStorageBufferDescriptors(
-            Pipeline.Builder builder,
-            String program,
-            PackAdvancedResourcePlan advancedResources
-    ) {
-        if (builder == null || advancedResources == null) return;
-        for (PackAdvancedResourcePlan.StorageBufferBinding binding
-                : advancedResources.bindingLayout(program).storageBuffers()) {
+    /**
+     * A program's whole descriptor set: its ordinary layout, then the storage buffers, storage
+     * images and advanced samplers its binding layout places. An advanced sampler reads a pack
+     * storage image, which stays in the general layout because a graphics or compute stage may
+     * also write it.
+     */
+    static PackDescriptorLayout withAdvancedDescriptors(PackDescriptorLayout ordinary, String program,
+                                                        PackAdvancedResourcePlan advancedResources) {
+        if (advancedResources == null) return ordinary;
+        ProgramBindingLayout layout = advancedResources.bindingLayout(program);
+        List<PackDescriptorLayout.StorageBuffer> buffers = new ArrayList<>();
+        for (PackAdvancedResourcePlan.StorageBufferBinding binding : layout.storageBuffers()) {
             if (!binding.supported() || binding.rewrittenBinding() < 0
                     || binding.size() <= 0 || binding.size() > Integer.MAX_VALUE) {
                 continue;
             }
-            builder.addUBO(new PackStorageBufferDescriptor(
-                    "PackStorageBuffer" + binding.logicalIndex(),
-                    binding.rewrittenBinding(), binding.stageMask(), (int) binding.size()));
+            buffers.add(new PackDescriptorLayout.StorageBuffer(binding.rewrittenBinding(), binding.stageMask(),
+                    (int) binding.size(), binding.logicalIndex()));
         }
-    }
-
-    static void addStorageImageDescriptors(
-            Pipeline.Builder builder,
-            String program,
-            PackAdvancedResourcePlan advancedResources
-    ) {
-        if (builder == null || advancedResources == null) return;
-        int index = 0;
-        for (PackAdvancedResourcePlan.GraphicsImageBinding binding
-                : advancedResources.bindingLayout(program).storageImages()) {
-            builder.addImageDescriptor(new ImageDescriptor(
-                    advancedResources.bindingLayout(program).imageBase() + index++, "image3D",
-                            "Sampler" + binding.selectorSlot(),
-                    binding.selectorSlot(), VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));
-        }
-    }
-
-    static void addAdvancedSamplerDescriptors(
-            Pipeline.Builder builder,
-            String program,
-            PackAdvancedResourcePlan advancedResources
-    ) {
-        if (builder == null || advancedResources == null) return;
-        int index = 0;
-        for (PackAdvancedResourcePlan.GraphicsImageBinding binding
-                : advancedResources.bindingLayout(program).advancedSamplers()) {
-            ImageDescriptor descriptor = new ImageDescriptor(
-                    advancedResources.bindingLayout(program).samplerBase() + index++,
-                    advancedSamplerType(advancedResources, binding),
+        List<PackDescriptorLayout.ImageSlot> images = new ArrayList<>();
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.storageImages()) {
+            images.add(new PackDescriptorLayout.ImageSlot(layout.imageBase() + images.size(), "image3D",
                     "Sampler" + binding.selectorSlot(), binding.selectorSlot(),
-                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-            // PackStorageImage deliberately stays in GENERAL because the same
-            // image may also be written by a graphics or compute stage.
-            descriptor.setLayout(VK_IMAGE_LAYOUT_GENERAL);
-            builder.addImageDescriptor(descriptor);
+                    PackDescriptorLayout.ImageAccess.STORAGE));
         }
+        int samplerIndex = 0;
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.advancedSamplers()) {
+            images.add(new PackDescriptorLayout.ImageSlot(layout.samplerBase() + samplerIndex++,
+                    advancedSamplerType(advancedResources, binding), "Sampler" + binding.selectorSlot(),
+                    binding.selectorSlot(), PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL));
+        }
+        return ordinary.withAdvanced(buffers, images);
     }
 
     static String bindStorageImages(String source, String program,
@@ -466,39 +432,15 @@ final class PackDescriptorContracts {
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    static void verifyAdvancedLayout(Pipeline.Builder builder, String program,
+    /** Checks the shaders and the program's binding plan against the whole descriptor set. */
+    static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
             PackAdvancedResourcePlan resources, String vertex, String fragment,
             PackStorageBufferOwner owner) {
-        List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = builderDescriptors(builder);
+        List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = layout.descriptorBindings();
         String mismatch = owner == null ? PackAdvancedResourcePlan.layoutMismatch(
                 resources.bindingLayout(program), vertex, fragment, descriptors)
                 : owner.verifyLayout(program, vertex, fragment, descriptors);
         if (mismatch != null) throw new PackPipelines.PreparationFailure("descriptor-contract", mismatch);
-    }
-
-    static List<PackAdvancedResourcePlan.DescriptorBinding> builderDescriptors(Pipeline.Builder builder) {
-        List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = new ArrayList<>();
-        for (UBO descriptor : builder.getUBOs()) descriptors.add(new PackAdvancedResourcePlan.DescriptorBinding(
-                descriptor.name, 0, descriptor.getBinding(), descriptor.getType(), descriptor.getStages(),
-                nativeDescriptorIdentity(descriptor.name, descriptor.getType(), descriptor.getBinding())));
-        for (ImageDescriptor descriptor : ((ChimeraPipelineBuilderAccessor) (Object) builder)
-                .chimera$imageDescriptors()) descriptors.add(new PackAdvancedResourcePlan.DescriptorBinding(
-                descriptor.name, 0, descriptor.getBinding(), descriptor.getType(), descriptor.getStages(),
-                nativeDescriptorIdentity(descriptor.name, descriptor.getType(), descriptor.getBinding())));
-        return List.copyOf(descriptors);
-    }
-
-    static String nativeDescriptorIdentity(String name, int type, int binding) {
-        Matcher sampler = Pattern.compile("Sampler(\\d+)").matcher(name == null ? "" : name);
-        if (sampler.matches() && (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                || type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)) {
-            return "resource:" + sampler.group(1) + ":" + type;
-        }
-        if (type == 9 && name != null && name.startsWith("PackStorageBuffer")) {
-            return "storage:" + name.substring("PackStorageBuffer".length());
-        }
-        if (type == 8) return "ubo:" + binding;
-        return name == null ? "" : name;
     }
 
     static String advancedSamplerType(

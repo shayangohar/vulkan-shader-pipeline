@@ -4,18 +4,17 @@ import net.chimera.ChimeraMod;
 import net.chimera.config.ShaderpackDirectory;
 import net.chimera.gui.options.OptionLook;
 import net.minecraft.ChatFormatting;
+import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.ObjectSelectionList;
+import net.minecraft.client.gui.navigation.CommonInputs;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.sounds.SoundEvents;
-import net.minecraft.util.Util;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
@@ -77,7 +76,7 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
     }
 
     @Override
-    protected int scrollBarX() {
+    protected int getScrollbarPosition() {
         return this.width - 6;
     }
 
@@ -198,14 +197,15 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         }
 
         @Override
-        public void renderContent(GuiGraphics graphics, int mouseX, int mouseY, boolean hovered, float delta) {
+        public void render(GuiGraphics graphics, int index, int y, int x, int width, int height,
+                           int mouseX, int mouseY, boolean hovered, float delta) {
             graphics.drawCenteredString(Minecraft.getInstance().font, this.label,
-                    getContentXMiddle() - 2, getContentY() + (getContentHeight() - 11) / 2, 0xFFC2C2C2);
+                    x + width / 2 - 2, y + (height - 11) / 2, 0xFFC2C2C2);
         }
 
         /** A caption is never picked or focused by a click. */
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
             return false;
         }
 
@@ -232,22 +232,21 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         }
 
         @Override
-        public void renderContent(GuiGraphics graphics, int mouseX, int mouseY, boolean hovered, float delta) {
-            int x = getContentX();
-            int y = getContentY();
-            drawButton(graphics, x - 2, y - 2, getContentWidth(), getContentHeight() + 2, hovered, !this.allowToggle);
-            graphics.drawCenteredString(Minecraft.getInstance().font, label(), getContentXMiddle() - 2,
-                    y + (getContentHeight() - 11) / 2, 0xFFFFFFFF);
+        public void render(GuiGraphics graphics, int index, int y, int x, int width, int height,
+                           int mouseX, int mouseY, boolean hovered, float delta) {
+            drawButton(graphics, x - 2, y - 2, width, height + 2, hovered, !this.allowToggle);
+            graphics.drawCenteredString(Minecraft.getInstance().font, label(), x + width / 2 - 2,
+                    y + (height - 11) / 2, 0xFFFFFFFF);
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
             return toggle();
         }
 
         @Override
-        public boolean keyPressed(KeyEvent event) {
-            return event.isConfirmation() && toggle();
+        public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+            return CommonInputs.selected(keyCode) && toggle();
         }
 
         private boolean toggle() {
@@ -278,25 +277,24 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         }
 
         @Override
-        public void renderContent(GuiGraphics graphics, int mouseX, int mouseY, boolean hovered, float delta) {
-            int x = getContentX();
-            int y = getContentY();
-            drawButton(graphics, x - 2, y - 2, getContentWidth(), getContentHeight() + 2, hovered, false);
-            graphics.drawCenteredString(Minecraft.getInstance().font, this.label, getContentXMiddle() - 2,
-                    y + (getContentHeight() - 11) / 2, 0xFFFFFFFF);
+        public void render(GuiGraphics graphics, int index, int y, int x, int width, int height,
+                           int mouseX, int mouseY, boolean hovered, float delta) {
+            drawButton(graphics, x - 2, y - 2, width, height + 2, hovered, false);
+            graphics.drawCenteredString(Minecraft.getInstance().font, this.label, x + width / 2 - 2,
+                    y + (height - 11) / 2, 0xFFFFFFFF);
         }
 
-        @Override
         /** Runs the action without the row becoming the list's selection. */
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        @Override
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
             playClick();
             this.action.run();
             return false;
         }
 
         @Override
-        public boolean keyPressed(KeyEvent event) {
-            if (!event.isConfirmation()) return false;
+        public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+            if (!CommonInputs.selected(keyCode)) return false;
             playClick();
             this.action.run();
             return true;
@@ -317,13 +315,11 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
         }
 
         @Override
-        public void renderContent(GuiGraphics graphics, int mouseX, int mouseY, boolean hovered, float delta) {
+        public void render(GuiGraphics graphics, int index, int y, int x, int width, int height,
+                           int mouseX, int mouseY, boolean hovered, float delta) {
             Font font = Minecraft.getInstance().font;
-            int x = getContentX();
-            int y = getContentY();
-            int width = getContentWidth();
             if (hovered) {
-                drawButton(graphics, x - 2, y - 2, width + 4, getContentHeight() + 4, true, false);
+                drawButton(graphics, x - 2, y - 2, width, height + 4, true, false);
             }
             String name = this.packName;
             if (font.width(Component.literal(name).withStyle(ChatFormatting.BOLD)) > getRowWidth() - 3) {
@@ -335,18 +331,17 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
             int color = 0xFFFFFFFF;
             if (enabled && this.packName.equals(applied)) color = APPLIED_COLOR;
             if (!enabled && !hovered) color = DISABLED_COLOR;
-            graphics.drawCenteredString(font, text, getContentXMiddle() - 2,
-                    y + (getContentHeight() - 11) / 2, color);
+            graphics.drawCenteredString(font, text, x + width / 2 - 2, y + (height - 11) / 2, color);
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-            return event.button() == 0 && pick();
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            return pick();
         }
 
         @Override
-        public boolean keyPressed(KeyEvent event) {
-            return event.isConfirmation() && pick();
+        public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+            return CommonInputs.selected(keyCode) && pick();
         }
 
         private boolean pick() {

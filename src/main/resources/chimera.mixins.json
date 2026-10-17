@@ -33,6 +33,8 @@
     "ChimeraBufferBuilderMixin",
     "ChimeraByteBufferBuilderAccessor",
     "ChimeraPipelineBuilderAccessor",
+    "ChimeraVulkanImageAccessor",
+    "ChimeraRendererAccessor",
     "ChimeraDeviceAccessor",
     "ChimeraDeviceFeaturesMixin",
     "ChimeraImageDescriptorMixin",
@@ -80,9 +82,7 @@
     "ChimeraPipelineFrontFaceMixin",
     "ChimeraPipelineStateAccessor",
     "ChimeraProjectionFarMixin",
-    "ChimeraModelViewBobbingMixin",
-    "ChimeraSpirvLocalInitMixin",
-    "ChimeraSpirvAccessor"
+    "ChimeraModelViewBobbingMixin"
   ],
   "injectors": {
     "defaultRequire": 1

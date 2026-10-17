@@ -4,7 +4,7 @@ import net.chimera.mixin.ChimeraTextureManagerAccessor;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.SimpleTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.vulkanmod.render.engine.VkTextureView;
 
 import java.util.ArrayList;
@@ -26,7 +26,7 @@ public final class SimpleTextureIndex {
     public static List<MaterialMapOwner.SimpleEntry> snapshot(TextureManager manager) {
         List<MaterialMapOwner.SimpleEntry> entries = new ArrayList<>();
         if (!(manager instanceof ChimeraTextureManagerAccessor accessor)) return entries;
-        for (Map.Entry<Identifier, AbstractTexture> registered
+        for (Map.Entry<ResourceLocation, AbstractTexture> registered
                 : accessor.chimera$texturesByPath().entrySet()) {
             if (!(registered.getValue() instanceof SimpleTexture simple)) continue;
             var view = simple.getTextureView();

@@ -23,7 +23,6 @@ import java.util.OptionalDouble;
  */
 public final class ChimeraTextureBindingState {
     private static final BindingStore<VulkanImage> STORE = new BindingStore<>();
-    private static final ThreadLocal<DescriptorBinding> DESCRIPTOR = new ThreadLocal<>();
 
     private static TerrainSamplerInfo terrainSamplerInfo;
     private static SamplerProfile terrainSamplerProfile;
@@ -198,24 +197,19 @@ public final class ChimeraTextureBindingState {
         }
     }
 
-    public static void beginDescriptor(int slot, VulkanImage image) {
-        DESCRIPTOR.set(new DescriptorBinding(slot, image));
-    }
-
-    /** Consumed by the descriptor-set sampler read immediately after getImage(). */
-    public static long samplerForDescriptor(VulkanImage image, long fallback) {
-        DescriptorBinding descriptor = DESCRIPTOR.get();
-        DESCRIPTOR.remove();
-        if (descriptor == null || image == null || descriptor.image != image) {
-            return fallback;
-        }
+    /**
+     * The sampler a descriptor reading selector {@code slot} binds with {@code image}: the pack's
+     * override for that pair, else the host's {@code fallback}.
+     */
+    public static long samplerForDescriptor(int slot, VulkanImage image, long fallback) {
+        if (image == null) return fallback;
         synchronized (ChimeraTextureBindingState.class) {
-            BindingStore.Entry<VulkanImage> binding = STORE.binding(descriptor.slot);
+            BindingStore.Entry<VulkanImage> binding = STORE.binding(slot);
             return binding != null && binding.image() == image ? binding.sampler() : fallback;
         }
     }
 
-    /** Clears thread-local and session selector state at pack cleanup boundaries. */
+    /** Clears the session selector state at pack cleanup boundaries. */
     public static void reset() {
         synchronized (ChimeraTextureBindingState.class) {
             STORE.reset();
@@ -225,7 +219,6 @@ public final class ChimeraTextureBindingState {
             loggedTerrainImage = Long.MIN_VALUE;
             loggedTerrainSampler = Long.MIN_VALUE;
         }
-        DESCRIPTOR.remove();
     }
 
     /** Small identity-based state machine used by runtime code and behavioral tests. */
@@ -282,8 +275,6 @@ public final class ChimeraTextureBindingState {
 
         static record Entry<I>(I image, long sampler) {}
     }
-
-    private record DescriptorBinding(int slot, VulkanImage image) {}
 
     private record TerrainSamplerInfo(
             long id,

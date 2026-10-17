@@ -35,8 +35,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ChimeraModelViewBobbingMixin {
     @Shadow @Final private Minecraft minecraft;
     @Shadow @Final private Camera mainCamera;
-    @Shadow private float spinningEffectTime;
-    @Shadow private float spinningEffectSpeed;
+    @Shadow private int confusionAnimationTick;
 
     @Shadow
     protected abstract void bobHurt(PoseStack poses, float tick);
@@ -83,7 +82,7 @@ public abstract class ChimeraModelViewBobbingMixin {
         bobHurt(poses, tick);
         if (minecraft.options.bobView().get()) bobView(poses, tick);
         modelView.set(poses.last().pose());
-        chimera$applyNausea(modelView, delta.getGameTimeDeltaPartialTick(false));
+        chimera$applyNausea(modelView, delta.getGameTimeDeltaPartialTick(true));
         return modelView.rotate(rotation);
     }
 
@@ -93,14 +92,14 @@ public abstract class ChimeraModelViewBobbingMixin {
         LocalPlayer player = minecraft.player;
         if (player == null) return;
         float scale = minecraft.options.screenEffectScale().get().floatValue();
-        float portal = Mth.lerp(partialTick, player.oPortalEffectIntensity, player.portalEffectIntensity);
-        float nausea = player.getEffectBlendFactor(MobEffects.NAUSEA, partialTick);
-        float strength = Math.max(portal, nausea) * scale * scale;
+        float strength = Mth.lerp(partialTick, player.oSpinningEffectIntensity, player.spinningEffectIntensity)
+                * scale * scale;
         if (strength <= 0.0F) return;
+        int speed = player.hasEffect(MobEffects.CONFUSION) ? 7 : 20;
         float squash = 5.0F / (strength * strength + 5.0F) - strength * 0.04F;
         squash *= squash;
         Vector3f axis = new Vector3f(0.0F, Mth.SQRT_OF_TWO / 2.0F, Mth.SQRT_OF_TWO / 2.0F);
-        float angle = (spinningEffectTime + partialTick * spinningEffectSpeed) * ((float) Math.PI / 180.0F);
+        float angle = (confusionAnimationTick + partialTick) * speed * ((float) Math.PI / 180.0F);
         modelView.rotate(angle, axis);
         modelView.scale(1.0F / squash, 1.0F, 1.0F);
         modelView.rotate(-angle, axis);

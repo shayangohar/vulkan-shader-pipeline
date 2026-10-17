@@ -1,6 +1,5 @@
 package net.chimera.render;
 
-import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
 import net.minecraft.util.profiling.ProfilerFiller;
@@ -12,7 +11,8 @@ import java.util.function.Supplier;
 /**
  * Resource-reload generation boundary for material companions.
  *
- * <p>Registered after vanilla textures, so atlas uploads observed during a
+ * <p>Registered through RegisterClientReloadListenersEvent, so it applies after
+ * vanilla's listeners, textures included: atlas uploads observed during a
  * reload already belong to the incoming pack set when {@code apply} runs.
  * The listener only signals: {@code apply} advances the owner generation,
  * which retires built companions and identity caches at the next pump.
@@ -21,8 +21,6 @@ import java.util.function.Supplier;
  */
 public final class ChimeraMaterialReloadListener extends SimplePreparableReloadListener<Integer> {
     private static final Logger LOGGER = LoggerFactory.getLogger(ChimeraMaterialReloadListener.class);
-    public static final Identifier ID =
-            Identifier.fromNamespaceAndPath("chimera", "material_maps");
 
     private final Supplier<MaterialMapOwner> owners;
 

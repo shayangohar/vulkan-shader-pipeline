@@ -55,7 +55,6 @@ public final class PackDepthTargets {
         for (int index = 0; index < images.length; index++) {
             if (!required(index)) continue;
             this.images[index] = VulkanImage.builder(Math.max(1, width), Math.max(1, height))
-                    .setName("chimeraPackDepthTex" + index)
                     .setFormat(this.plan.format())
                     .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
                     // Iris depthtex0/1/2 are point samples, not interpolated surface depths.
@@ -136,6 +135,7 @@ public final class PackDepthTargets {
             ChimeraDepthViewOverride.bind(rawDepth, depthView);
             VTextureSelector.bindTexture(6, rawDepth);
             vkCmdBeginRenderingKHR(commandBuffer, snapshotRendering(stack, images[index]));
+            renderer.setBoundRenderPass(ChimeraRenderingPass.of(new int[] {images[index].format}, 0, false));
             renderingActive = true;
             Renderer.setViewport(0, 0, images[index].width, images[index].height, stack);
             renderer.bindGraphicsPipeline(this.conversionPipeline);

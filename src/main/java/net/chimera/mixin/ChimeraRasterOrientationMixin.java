@@ -40,7 +40,7 @@ public abstract class ChimeraRasterOrientationMixin {
         if (!Renderer.isRecording() || !ChimeraRasterOrientation.boundPassGlOriented()) {
             return;
         }
-        Framebuffer framebuffer = Renderer.getInstance().getBoundFramebuffer();
+        Framebuffer framebuffer = ((ChimeraRendererAccessor) Renderer.getInstance()).chimera$boundFramebuffer();
         if (framebuffer == null) {
             return;
         }

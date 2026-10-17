@@ -28,7 +28,6 @@ public final class PackCoverageOwner {
         this.width = width;
         this.height = height;
         image = VulkanImage.builder(width, height)
-                .setName("chimeraSceneCoverage")
                 .setFormat(VK_FORMAT_R32_SFLOAT)
                 .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                         | VK_IMAGE_USAGE_TRANSFER_DST_BIT)

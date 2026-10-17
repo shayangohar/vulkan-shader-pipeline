@@ -1,9 +1,11 @@
 package net.chimera.gui;
 
 import net.chimera.gui.options.OptionLook;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Mth;
 
 /** A vanilla button drawn in Iris's flat look instead of the stone sprite, with vanilla's label. */
 final class FlatButton extends Button {
@@ -12,10 +14,10 @@ final class FlatButton extends Button {
     }
 
     @Override
-    protected void renderContents(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
+    protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         OptionLook.State state = !this.active ? OptionLook.State.INSET
                 : isHoveredOrFocused() ? OptionLook.State.HOVERED : OptionLook.State.NORMAL;
         OptionLook.control(graphics, getX(), getY(), getWidth(), getHeight(), state);
-        renderDefaultLabel(graphics.textRendererForWidget(this, GuiGraphics.HoveredTextEffects.NONE));
+        renderString(graphics, Minecraft.getInstance().font, getFGColor() | Mth.ceil(this.alpha * 255.0F) << 24);
     }
 }

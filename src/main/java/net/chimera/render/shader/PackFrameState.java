@@ -11,7 +11,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.fog.FogData;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
@@ -751,8 +751,8 @@ final class PackFrameState {
     }
 
     /** The camera biome's key, which is the name the constant table numbers. */
-    private static Identifier biomeKey(ClientLevel level, BlockPos pos) {
-        return level.getBiome(pos).unwrapKey().map(key -> key.identifier()).orElse(null);
+    private static ResourceLocation biomeKey(ClientLevel level, BlockPos pos) {
+        return level.getBiome(pos).unwrapKey().map(key -> key.location()).orElse(null);
     }
 
     /** The pack's precipitation input: none, rain or snow, as the packs compare it. */

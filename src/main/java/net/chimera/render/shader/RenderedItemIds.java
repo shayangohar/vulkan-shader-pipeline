@@ -3,7 +3,7 @@ package net.chimera.render.shader;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -51,7 +51,7 @@ public final class RenderedItemIds {
             int id = ChimeraTerrainPipelines.blockStateId(((BlockItem) item).getBlock().defaultBlockState());
             return id == -1 ? 0 : id;
         }
-        Identifier model = stack.get(DataComponents.ITEM_MODEL);
+        ResourceLocation model = stack.get(DataComponents.ITEM_MODEL);
         return items.renderedItemId((model != null ? model : BuiltInRegistries.ITEM.getKey(item)).toString());
     }
 

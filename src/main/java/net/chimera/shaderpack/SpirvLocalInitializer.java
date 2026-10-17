@@ -7,7 +7,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
 
 /**
  * Gives every uninitialized function-scope variable of a plain data type an
@@ -37,26 +36,7 @@ public final class SpirvLocalInitializer {
     private static final int OP_VARIABLE = 59;
     private static final int STORAGE_FUNCTION = 7;
 
-    // Set only while a pack pipeline compiles; host shaders keep their bytes.
-    private static final ThreadLocal<Boolean> PACK_COMPILE = ThreadLocal.withInitial(() -> false);
-
     private SpirvLocalInitializer() {}
-
-    /** Runs a pack pipeline creation with pack-module initialization enabled. */
-    static <T> T forPackCompile(Supplier<T> creation) {
-        boolean outer = PACK_COMPILE.get();
-        PACK_COMPILE.set(true);
-        try {
-            return creation.get();
-        } finally {
-            PACK_COMPILE.set(outer);
-        }
-    }
-
-    /** True while a pack pipeline's shaders compile on this thread. */
-    public static boolean packCompileActive() {
-        return PACK_COMPILE.get();
-    }
 
     /** Returns the transformed module, or the input when nothing needs an initializer. */
     public static ByteBuffer apply(ByteBuffer spirv) {

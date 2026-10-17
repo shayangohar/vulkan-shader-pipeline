@@ -81,8 +81,6 @@ final class OptionOverlay {
         }
         hoveredComment = settled == null ? null : frameComment;
         if (commentShowing()) renderComment(graphics, font, screenWidth, screenHeight);
-        if (tooltips.isEmpty()) return;
-        graphics.nextStratum();
         for (Tooltip tooltip : tooltips) {
             int width = font.width(tooltip.text());
             OptionLook.panel(graphics, tooltip.x(), tooltip.y(), width + 8, 16);
@@ -98,7 +96,6 @@ final class OptionOverlay {
         int height = Math.max(50, 18 + 10 * lines.size());
         int x = screenWidth / 2 - COMMENT_WIDTH / 2;
         int y = screenHeight - (height + 4);
-        graphics.nextStratum();
         OptionLook.panel(graphics, x, y, COMMENT_WIDTH, height);
         graphics.drawString(font, hoveredComment.title(), x + 4, y + 4, OptionLook.WHITE);
         for (int index = 0; index < lines.size(); index++) {

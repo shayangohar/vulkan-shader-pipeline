@@ -1,7 +1,5 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
@@ -72,10 +70,13 @@ public final class ChimeraRenderer {
             ChimeraMod.LOGGER.warn("VulkanMod Renderer ready but no main pass installed; chimera idle");
             return;
         }
+        if (!ChimeraDevice.dynamicRendering()) {
+            ChimeraMod.LOGGER.error("The Vulkan device has no dynamic rendering; chimera idle, vanilla rendering");
+            return;
+        }
 
         hostPass = current;
         chimeraPass = new ChimeraMainPass();
-        hostColorView = hostPass.getColorAttachmentView();
         renderer.addOnResizeCallback(ChimeraRenderer::refreshIdleHostPass);
         ready = true;
 
@@ -95,9 +96,6 @@ public final class ChimeraRenderer {
     private static void refreshIdleHostPass() {
         if (hostPass != null && Renderer.getInstance().getMainPass() != hostPass) {
             hostPass.onResize();
-        }
-        if (hostPass != null) {
-            hostColorView = hostPass.getColorAttachmentView();
         }
     }
 
@@ -233,29 +231,6 @@ public final class ChimeraRenderer {
 
     public static ChimeraMainPass getMainPass() {
         return chimeraPass;
-    }
-
-    private static GpuTextureView hostColorView;
-
-    /** True when the view is a main-target-family view (chimera or host). */
-    public static boolean isMainFamilyView(GpuTextureView view) {
-        if (view == null) {
-            return false;
-        }
-        if (chimeraPass != null && chimeraPass.isFamilyView(view)) {
-            return true;
-        }
-        GpuTexture texture = view.texture();
-        if (hostColorView != null && texture == hostColorView.texture()) {
-            return true;
-        }
-        GpuTexture current = getCurrentMainColorTexture();
-        return current != null && texture == current;
-    }
-
-    /** The live main-target color texture for the current phase. */
-    public static GpuTexture getCurrentMainColorTexture() {
-        return chimeraPass != null ? chimeraPass.currentMainColorTexture() : null;
     }
 
     private static boolean install() {
@@ -396,7 +371,7 @@ public final class ChimeraRenderer {
     /** Re-selects the pack variant before applying the screen lifecycle state. */
     public static void onLevelLoaded(ClientLevel level) {
         if (chimeraPass != null && level != null) {
-            chimeraPass.onLevelChanged(level.dimension().identifier().toString());
+            chimeraPass.onLevelChanged(level.dimension().location().toString());
         }
         if (!screenOpen || !screenMode) {
             return;

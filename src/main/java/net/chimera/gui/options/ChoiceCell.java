@@ -1,8 +1,7 @@
 package net.chimera.gui.options;
 
 import net.chimera.shaderpack.options.ShaderOption;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.navigation.CommonInputs;
 import net.minecraft.network.chat.Component;
 
 import java.util.Optional;
@@ -60,24 +59,24 @@ class ChoiceCell extends ValueCell {
     }
 
     @Override
-    boolean press(MouseButtonEvent event) {
-        if (event.button() > 1) return false;
-        if (event.hasShiftDown()) {
+    boolean press(int button) {
+        if (button > 1) return false;
+        if (shiftDown()) {
             context.editor().reset(option.name());
         } else {
-            step(event.button() == 0 ? 1 : -1);
+            step(button == 0 ? 1 : -1);
         }
         click();
         return true;
     }
 
     @Override
-    boolean key(KeyEvent event) {
-        if (!event.isConfirmation()) return false;
-        if (event.hasControlDown()) {
+    boolean key(int key) {
+        if (!CommonInputs.selected(key)) return false;
+        if (controlDown()) {
             context.editor().reset(option.name());
         } else {
-            step(event.hasShiftDown() ? -1 : 1);
+            step(shiftDown() ? -1 : 1);
         }
         click();
         return true;

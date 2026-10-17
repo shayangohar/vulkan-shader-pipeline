@@ -3,10 +3,7 @@ package net.chimera.render;
 import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
-import net.vulkanmod.vulkan.memory.MemoryTypes;
-import net.vulkanmod.vulkan.memory.buffer.Buffer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
-import net.vulkanmod.vulkan.shader.descriptor.UBO;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -18,8 +15,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 import static org.lwjgl.vulkan.VK10.vkCmdFillBuffer;
@@ -27,7 +22,7 @@ import static org.lwjgl.vulkan.VK10.vkCmdFillBuffer;
 /** Owns the bounded read/write storage buffers for one pack session. */
 public final class PackStorageBufferOwner implements AutoCloseable {
     private final PackAdvancedResourcePlan plan;
-    private final Map<Integer, Buffer> buffers = new TreeMap<>();
+    private final Map<Integer, PackStorageBuffer> buffers = new TreeMap<>();
     private final Map<Integer, String> failures = new TreeMap<>();
     private final Map<String, String> programFailures = new HashMap<>();
     private final Set<String> attachedPrograms = new TreeSet<>();
@@ -97,20 +92,15 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         for (Integer index : used) {
             PackAdvancedResourcePlan.BufferSpec spec = owner.plan.buffers().get(index);
             if (spec == null || !spec.supported()) continue;
-            if (spec.size() > maxRange) {
+            // The host sizes buffers with an int.
+            if (spec.size() > Math.min(maxRange, Integer.MAX_VALUE)) {
                 owner.failures.put(index, "STORAGE_BUFFER_DEVICE_RANGE_UNSUPPORTED:" + index);
                 continue;
             }
             try {
-                Buffer buffer = new Buffer("ChimeraStorageBuffer" + index,
-                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                        MemoryTypes.GPU_MEM);
-                buffer.createBuffer(spec.size());
-                owner.buffers.put(index, buffer);
+                owner.buffers.put(index, new PackStorageBuffer((int) spec.size()));
             } catch (RuntimeException failure) {
-                owner.failures.put(index, failure.getMessage() == null
-                        ? "STORAGE_BUFFER_ALLOCATION_FAILED:" + index
-                        : "STORAGE_BUFFER_ALLOCATION_FAILED:" + index);
+                owner.failures.put(index, "STORAGE_BUFFER_ALLOCATION_FAILED:" + index);
             }
         }
         return owner;
@@ -122,7 +112,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     }
 
     /** Returns the session-owned buffer for an admitted logical index. */
-    public Buffer buffer(int logicalIndex) {
+    public PackStorageBuffer buffer(int logicalIndex) {
         return buffers.get(logicalIndex);
     }
 
@@ -131,7 +121,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
      * immutable plan remains the authority for the logical index; this method
      * only exposes the already-created session buffer.
      */
-    public Buffer buffer(String program, String blockName, String instanceName) {
+    public PackStorageBuffer buffer(String program, String blockName, String instanceName) {
         if (program == null) return null;
         for (PackAdvancedResourcePlan.StorageBufferBinding binding
                 : plan.storageBuffers(program)) {
@@ -196,7 +186,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     }
 
     public long allocatedBytes() {
-        return buffers.values().stream().mapToLong(Buffer::getBufferSize).sum();
+        return buffers.values().stream().mapToLong(PackStorageBuffer::getBufferSize).sum();
     }
 
     public long plannedBytes() {
@@ -235,7 +225,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /** Adds one zero-fill command for each buffer, once per pack session. */
     public boolean initialize(VkCommandBuffer commandBuffer) {
         if (commandBuffer == null || closed || initialized || buffers.isEmpty()) return false;
-        for (Map.Entry<Integer, Buffer> entry : buffers.entrySet()) {
+        for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
             PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
             if (spec == null) return false;
             vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, spec.size(), 0);
@@ -280,12 +270,15 @@ public final class PackStorageBufferOwner implements AutoCloseable {
             return false;
         }
         for (PackAdvancedResourcePlan.StorageBufferBinding binding : plan.storageBuffers(program)) {
-            Buffer storage = buffers.get(binding.logicalIndex());
+            PackStorageBuffer storage = buffers.get(binding.logicalIndex());
             if (storage == null) return false;
-            UBO descriptor = pipeline.getUBO(binding.rewrittenBinding());
-            if (!(descriptor instanceof PackStorageBufferDescriptor)) return false;
-            descriptor.getBufferSlice().set(storage, 0L, (int) binding.size());
-            descriptor.setUseGlobalBuffer(false);
+            PackStorageBufferDescriptor descriptor = pipeline.getBuffers().stream()
+                    .filter(buffer -> buffer.getBinding() == binding.rewrittenBinding())
+                    .filter(PackStorageBufferDescriptor.class::isInstance)
+                    .map(PackStorageBufferDescriptor.class::cast)
+                    .findFirst().orElse(null);
+            if (descriptor == null) return false;
+            descriptor.setUniformBuffer(storage);
         }
         attachedPrograms.add(program);
         return true;
@@ -373,7 +366,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
-        buffers.values().forEach(Buffer::scheduleFree);
+        buffers.values().forEach(PackStorageBuffer::freeBuffer);
         buffers.clear();
         failures.clear();
         programFailures.clear();

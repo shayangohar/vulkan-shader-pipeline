@@ -1,0 +1,35 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+modId = "chimera"
+version = "${version}"
+displayName = "Chimera"
+description = "Shaderpack pipeline for VulkanMod - Iris-class shaders on Vulkan."
+authors = "shayangohar"
+
+[[mixins]]
+config = "chimera.mixins.json"
+
+[[dependencies.chimera]]
+modId = "neoforge"
+type = "required"
+versionRange = "[21.1,)"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.chimera]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.21.1,1.21.2)"
+ordering = "NONE"
+side = "CLIENT"
+
+# The Vulkan host renderer, VulkanMod Reforged; Chimera mixes into it, so it loads first.
+[[dependencies.chimera]]
+modId = "vulkanmod"
+type = "required"
+versionRange = "[0.3.0-ALPHA,)"
+ordering = "AFTER"
+side = "CLIENT"

@@ -3,8 +3,6 @@ package net.chimera.shaderpack;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.mixin.ChimeraDeviceAccessor;
-import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
-import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.HostPipelineLayout;
@@ -15,11 +13,6 @@ import net.chimera.shaderpack.PackAdvancedResourcePlan.ProgramBindingLayout;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
-import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.SPIRVUtils;
-import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
-import net.vulkanmod.vulkan.shader.layout.Uniform;
-import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.lwjgl.vulkan.VK10;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,8 +27,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -71,16 +62,6 @@ public final class PackPipelines {
                     + "([A-Za-z_]\\w*)\\s*;");
 
     private PackPipelines() {}
-
-    /** Own the real native builder lists so metadata is equally accessible without mixins. */
-    private static final class MetadataBuilder extends Pipeline.Builder implements ChimeraPipelineBuilderAccessor {
-        private final List<ImageDescriptor> images = new ArrayList<>();
-        MetadataBuilder(VertexFormat format, String name) {
-            super(format, name);
-            setUniforms(new ArrayList<>(), images);
-        }
-        @Override public List<ImageDescriptor> chimera$imageDescriptors() { return images; }
-    }
 
     private static OrdinaryDescriptorContract ordinaryContract(
             PackProgramPlan plan, PackAdvancedResourcePlan resources) {
@@ -125,31 +106,20 @@ public final class PackPipelines {
                 ProgramImageBindingManifest.from(layout, ordinary));
     }
 
-    static Pipeline.Builder prepareBuilder(PreparedPipeline prepared, String program,
-            PackAdvancedResourcePlan resources, VertexFormat format,
-            Function<Uniform.Info,
-                    Supplier<MappedBuffer>> suppliers) {
+    /**
+     * The whole descriptor set of a prepared program, checked against its shaders, its binding plan
+     * and its image manifest before any native object exists.
+     */
+    static PackDescriptorLayout prepareLayout(PreparedPipeline prepared, String program,
+            PackAdvancedResourcePlan resources) {
         validateSelectorLayout(prepared.layout());
-        try {
-            Pipeline.Builder builder = new MetadataBuilder(format, "pack_" + program);
-            builder.setUniformSupplierGetter(suppliers);
-            OrdinaryDescriptorContract ordinary = prepared.ordinary();
-            HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
-            PackDescriptorContracts.addStorageBufferDescriptors(builder, program, resources);
-            PackDescriptorContracts.addStorageImageDescriptors(builder, program, resources);
-            PackDescriptorContracts.addAdvancedSamplerDescriptors(builder, program, resources);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, prepared.vertex());
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, prepared.fragment());
-            String mismatch = PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
-                    prepared.vertex(), prepared.fragment(), PackDescriptorContracts.builderDescriptors(builder));
-            if (mismatch != null) throw new PreparationFailure("descriptor-contract", mismatch);
-            prepared.imageBindings().verify(PackDescriptorContracts.builderDescriptors(builder));
-            return builder;
-        } catch (PreparationFailure failure) {
-            throw failure;
-        } catch (RuntimeException failure) {
-            throw new PreparationFailure("descriptor-contract", "BUILDER_CONFIG_REJECTED", failure);
-        }
+        PackDescriptorLayout layout = PackDescriptorContracts.withAdvancedDescriptors(
+                prepared.ordinary().layout(), program, resources);
+        String mismatch = PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
+                prepared.vertex(), prepared.fragment(), layout.descriptorBindings());
+        if (mismatch != null) throw new PreparationFailure("descriptor-contract", mismatch);
+        prepared.imageBindings().verify(layout.descriptorBindings());
+        return layout;
     }
 
     static void validateSelectorLayout(ProgramBindingLayout layout) {
@@ -180,16 +150,19 @@ public final class PackPipelines {
         }
     }
 
-    static GraphicsPipeline createNative(Pipeline.Builder builder, ProgramImageBindingManifest imageBindings) {
-        imageBindings.verify(PackDescriptorContracts.builderDescriptors(builder));
+    /** Compiles a pack program's stages and creates its pipeline; pack uniforms come from the frame state. */
+    static GraphicsPipeline createNative(String name, VertexFormat format, PackDescriptorLayout layout,
+            String vertex, String fragment, ProgramImageBindingManifest imageBindings) {
+        imageBindings.verify(layout.descriptorBindings());
         try {
-            return SpirvLocalInitializer.forPackCompile(builder::createGraphicsPipeline);
+            return HostPipelineLayout.create(name, format, layout, vertex, fragment,
+                    PackUniformProvider.shared()::supplier, true);
+        } catch (HostPipelineLayout.LayoutFailure failure) {
+            throw new PreparationFailure("descriptor-contract", "BUILDER_CONFIG_REJECTED", failure);
+        } catch (HostPipelineLayout.ShaderCompilationFailure failure) {
+            throw new PreparationFailure("shader-compilation", "SHADER_COMPILATION_FAILED", failure);
         } catch (RuntimeException failure) {
-            boolean compilation = Arrays.stream(failure.getStackTrace()).anyMatch(frame ->
-                    frame.getClassName().equals(SPIRVUtils.class.getName())
-                            && frame.getMethodName().equals("compileShader"));
-            throw new PreparationFailure(compilation ? "shader-compilation" : "native-create",
-                    compilation ? "SHADER_COMPILATION_FAILED" : "NATIVE_PIPELINE_CREATION_FAILED", failure);
+            throw new PreparationFailure("native-create", "NATIVE_PIPELINE_CREATION_FAILED", failure);
         }
     }
 
@@ -407,9 +380,6 @@ public final class PackPipelines {
                     .mapToInt(UniformRegistry.SamplerBinding::slot).toArray();
             int[] slots = stage.shadowPass() ? shadowSamplerSlots(declaredSlots) : entitySamplerSlots(declaredSlots);
             OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
-            Pipeline.Builder builder = new MetadataBuilder(format, pipelineName);
-            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
             advancedResources = advancedResources == null
                     ? PackAdvancedResourcePlan.empty() : advancedResources;
             ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
@@ -422,12 +392,9 @@ public final class PackPipelines {
             if (vertexSource == null || fragmentSource == null) {
                 throw new IllegalStateException("advanced " + stage + " image declaration rejected");
             }
-            PackDescriptorContracts.addStorageBufferDescriptors(builder, plan.name(), advancedResources);
-            PackDescriptorContracts.addStorageImageDescriptors(builder, plan.name(), advancedResources);
-            PackDescriptorContracts.addAdvancedSamplerDescriptors(builder, plan.name(), advancedResources);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertexSource);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragmentSource);
-            PackDescriptorContracts.verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource,
+            PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
+                    plan.name(), advancedResources);
+            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertexSource,
                     fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
@@ -437,7 +404,8 @@ public final class PackPipelines {
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
                     ? new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF, PackBlendPlan.Mode.OFF}
                     : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
-            GraphicsPipeline pipeline = createRouted(builder, imageBindings, attachmentFormats, attachmentBlends);
+            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, fragmentSource,
+                    imageBindings, attachmentFormats, attachmentBlends);
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(pipelineName, e);
@@ -454,35 +422,25 @@ public final class PackPipelines {
 
     /**
      * Creates the pipeline under its attachment contract, when it has one, and registers that
-     * contract for the variants VulkanMod creates lazily. Pack-owned storage buffers keep their
-     * own descriptors; every other uniform buffer is the shared global one.
+     * contract for the variants VulkanMod creates lazily.
      */
     private static GraphicsPipeline createRouted(
-            Pipeline.Builder builder, ProgramImageBindingManifest imageBindings,
-            int[] attachmentFormats, PackBlendPlan.Mode[] attachmentBlends
+            String name, VertexFormat format, PackDescriptorLayout layout, String vertex, String fragment,
+            ProgramImageBindingManifest imageBindings, int[] attachmentFormats, PackBlendPlan.Mode[] attachmentBlends
     ) {
         if (attachmentFormats != null) {
             MrtPipelineContext.begin(attachmentFormats, deviceMaxColorAttachments(), attachmentBlends);
         }
         GraphicsPipeline pipeline;
         try {
-            pipeline = createNative(builder, imageBindings);
+            pipeline = createNative(name, format, layout, vertex, fragment, imageBindings);
         } finally {
             if (attachmentFormats != null) MrtPipelineContext.end();
         }
         if (attachmentFormats != null) {
             MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends);
         }
-        useGlobalUniformBuffers(pipeline);
         return pipeline;
-    }
-
-    private static void useGlobalUniformBuffers(GraphicsPipeline pipeline) {
-        for (var buffer : pipeline.getBuffers()) {
-            if (!(buffer instanceof PackStorageBufferDescriptor)) {
-                buffer.setUseGlobalBuffer(true);
-            }
-        }
     }
 
     /** Builds a post pipeline from the already prepared and translated plan. */
@@ -513,11 +471,11 @@ public final class PackPipelines {
             PreparedPipeline prepared = preparePost(plan, fixedVertexSource, advancedResources);
             String vertexSource = prepared.vertex();
             String fragmentSource = prepared.fragment();
-            Pipeline.Builder builder = prepareBuilder(prepared, plan.name(), advancedResources,
-                    CustomVertexFormat.NONE, PackUniformProvider.shared()::supplier);
-            PackDescriptorContracts.verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource,
+            PackDescriptorLayout layout = prepareLayout(prepared, plan.name(), advancedResources);
+            PackDescriptorContracts.verifyAdvancedLayout(layout, plan.name(), advancedResources, vertexSource,
                     fragmentSource, storageOwner);
-            GraphicsPipeline pipeline = createNative(builder, prepared.imageBindings());
+            GraphicsPipeline pipeline = createNative("pack_" + plan.name(), CustomVertexFormat.NONE, layout,
+                    vertexSource, fragmentSource, prepared.imageBindings());
             return new PackPost(plan.name(), pipeline, slots, samplerNames,
                     colorInputTargets(samplerNames), fragmentSource, plan.targetPlan(), prepared.imageBindings());
         } catch (Exception e) {
@@ -630,12 +588,11 @@ public final class PackPipelines {
             PreparedPipeline prepared = prepareShadow(plan, advancedResources);
             String vertexSource = prepared.vertex();
             String fragmentSource = prepared.fragment();
-            Pipeline.Builder builder = prepareBuilder(prepared, plan.name(), advancedResources,
-                    ChimeraVertexFormats.terrainFormat(materialPlan), PackUniformProvider.shared()::supplier);
-            PackDescriptorContracts.verifyAdvancedLayout(builder, plan.name(), advancedResources, vertexSource,
+            PackDescriptorLayout layout = prepareLayout(prepared, plan.name(), advancedResources);
+            PackDescriptorContracts.verifyAdvancedLayout(layout, plan.name(), advancedResources, vertexSource,
                     fragmentSource, storageOwner);
-            GraphicsPipeline pipeline = createRouted(builder, prepared.imageBindings(), shadowAttachmentFormats(),
-                    null);
+            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(), ChimeraVertexFormats.terrainFormat(materialPlan),
+                    layout, vertexSource, fragmentSource, prepared.imageBindings(), shadowAttachmentFormats(), null);
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -723,17 +680,10 @@ public final class PackPipelines {
             PackDescriptorLayout layout = new PackDescriptorLayout(blocks,
                     PackDescriptorContracts.samplerImages(blocks.size(), slots),
                     PackDescriptorLayout.EMPTY_PUSH_CONSTANTS);
-            Pipeline.Builder builder = new MetadataBuilder(CustomVertexFormat.NONE, "pack_" + program.name());
-            // Pipeline.Builder resolves uniform suppliers while the layout is applied.
-            // Install the provider first so the generated UBO never falls
-            // through to VulkanMod's global uniform maps.
-            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            HostPipelineLayout.apply(builder, layout, false);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, fixedVertexSource);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
             ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(layout,
                     interfacePlan);
-            GraphicsPipeline pipeline = createNative(builder, imageBindings);
+            GraphicsPipeline pipeline = createNative("pack_" + program.name(), CustomVertexFormat.NONE, layout,
+                    fixedVertexSource, converted, imageBindings);
 
             return new PackPost(program.name(), pipeline, slots, samplerNames,
                     requiredColorInputs, converted, targetPlan, imageBindings);
@@ -780,16 +730,9 @@ public final class PackPipelines {
             if (vertex == null) {
                 throw new IllegalStateException("advanced terrain vertex image declaration rejected");
             }
-            Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.terrainFormat(materialPlan),
-                    "pack_" + plan.name());
-            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
-            PackDescriptorContracts.addStorageBufferDescriptors(builder, plan.name(), advancedResources);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex);
-            PackDescriptorContracts.addStorageImageDescriptors(builder, plan.name(), advancedResources);
-            PackDescriptorContracts.addAdvancedSamplerDescriptors(builder, plan.name(), advancedResources);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, fragment);
-            PackDescriptorContracts.verifyAdvancedLayout(builder, plan.name(), advancedResources, vertex, fragment,
+            PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
+                    plan.name(), advancedResources);
+            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertex, fragment,
                     storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             // An authored route takes its own attachments; otherwise a coverage build writes the
@@ -800,7 +743,8 @@ public final class PackPipelines {
                     : coverage ? new int[] {targetFormat, VK10.VK_FORMAT_R32_SFLOAT} : null;
             PackBlendPlan.Mode[] attachmentBlends = dynamicAttachments
                     ? plan.blendPlan().attachments(outputPlan.targetSlots()) : null;
-            GraphicsPipeline pipeline = createRouted(builder, imageBindings, attachmentFormats, attachmentBlends);
+            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(), ChimeraVertexFormats.terrainFormat(materialPlan),
+                    descriptors, vertex, fragment, imageBindings, attachmentFormats, attachmentBlends);
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -853,16 +797,10 @@ public final class PackPipelines {
             PackDescriptorLayout host = shadowLayout();
             PackDescriptorLayout layout = host.withImages(
                     PackDescriptorContracts.samplerImages(host.bindingAfterBlocks(), slots));
-            Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN,
-                    "pack_" + program.name());
-            builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            HostPipelineLayout.apply(builder, layout, false);
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex.source());
-            builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
             ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(layout,
                     interfacePlan);
-            GraphicsPipeline pipeline = createNative(builder, imageBindings);
-            useGlobalUniformBuffers(pipeline);
+            GraphicsPipeline pipeline = createNative("pack_" + program.name(),
+                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, layout, vertex.source(), converted, imageBindings);
             return new PackShadow(pipeline, slots, converted, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(program.name(), e);

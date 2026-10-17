@@ -30,8 +30,7 @@ final class DepthSampleView {
             return view;
         }
         // Create before retiring, so the new handle cannot reuse the old one.
-        long next = VulkanImage.createImageView(nextImageId, image.format, VK_IMAGE_ASPECT_DEPTH_BIT,
-                image.arrayLayers, image.mipLevels);
+        long next = VulkanImage.createImageView(nextImageId, image.format, VK_IMAGE_ASPECT_DEPTH_BIT, image.mipLevels);
         destroy();
         view = next;
         imageId = view == 0L ? 0L : nextImageId;

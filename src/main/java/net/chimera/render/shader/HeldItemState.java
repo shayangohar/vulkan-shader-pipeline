@@ -4,7 +4,7 @@ import net.chimera.shaderpack.PackItemIdResolver;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
@@ -96,7 +96,7 @@ final class HeldItemState {
         if (stack == null) {
             return null;
         }
-        Identifier model = stack.get(DataComponents.ITEM_MODEL);
+        ResourceLocation model = stack.get(DataComponents.ITEM_MODEL);
         return (model != null ? model : BuiltInRegistries.ITEM.getKey(stack.getItem())).toString();
     }
 }

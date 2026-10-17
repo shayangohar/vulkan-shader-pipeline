@@ -220,6 +220,7 @@ final class PackSceneCoverage {
                     .sType(VK_STRUCTURE_TYPE_RENDERING_INFO_KHR)
                     .renderArea(area).layerCount(1).pColorAttachments(attachments);
             vkCmdBeginRenderingKHR(commandBuffer, rendering);
+            Renderer.getInstance().setBoundRenderPass(ChimeraRenderingPass.of(new int[] {target.format}, 0, false));
             VRenderSystem.disableDepthTest();
             VRenderSystem.depthMask(false);
             VRenderSystem.enableBlend();
@@ -230,6 +231,7 @@ final class PackSceneCoverage {
             Renderer.setViewport(0, 0, target.width, target.height, stack);
             pass.drawFullscreen(commandBuffer, this.sceneSeedPipeline);
             vkCmdEndRenderingKHR(commandBuffer);
+            Renderer.getInstance().setBoundRenderPass(null);
             target.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             pass.packPostTargets.commitSceneSeed(target);
             this.packCoverageState.commitSeed();

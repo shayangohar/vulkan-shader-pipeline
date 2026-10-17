@@ -8,26 +8,21 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * SwapChain.recreate() destroys the swapchain and its image views when the
- * surface extent becomes zero (window minimized) but leaves the
- * swapChainImages list populated, so the later cleanUp() destroys the
- * already-freed views a second time - the vkDestroyImageView access violation
- * seen on game exit. Skip cleanUp entirely when the swapchain was already
- * reaped by that branch (swapChainId == 0, hasImages == false); its images,
- * views, swapchain and depth are all gone already.
+ * SwapChain.recreate() destroys the swapchain, its image views and its depth image when the
+ * surface extent becomes zero (window minimized), but leaves the image list populated, so the
+ * later cleanUp() destroys the freed views a second time and frees the missing depth image: the
+ * access violation on game exit after a minimize. Skip cleanUp when that branch already reaped
+ * the swapchain (swapChainId == 0).
  */
-@Mixin(SwapChain.class)
+@Mixin(value = SwapChain.class, remap = false)
 public abstract class SwapChainMixin {
 
     @Shadow
     private long swapChainId;
 
-    @Shadow
-    private boolean hasImages;
-
     @Inject(method = "cleanUp", at = @At("HEAD"), cancellable = true)
     private void chimera$skipReapedSwapChain(CallbackInfo ci) {
-        if (this.swapChainId == 0L || !this.hasImages) {
+        if (this.swapChainId == 0L) {
             ci.cancel();
         }
     }

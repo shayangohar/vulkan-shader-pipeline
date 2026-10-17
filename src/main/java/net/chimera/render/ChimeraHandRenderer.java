@@ -1,26 +1,23 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.ProjectionType;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexSorting;
 import net.chimera.mixin.ChimeraGameRendererHandAccess;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.PerspectiveProjectionMatrixBuffer;
-import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.Sheets;
-import net.minecraft.client.renderer.SubmitNodeStorage;
-import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
-import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
-import net.minecraft.client.renderer.rendertype.RenderType;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.client.model.data.ModelData;
 import org.joml.Matrix4f;
+import org.joml.Matrix4fStack;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,6 +26,7 @@ import java.util.SequencedMap;
 /** Iris's solid-before-deferred and translucent-before-composite hand schedule. */
 public final class ChimeraHandRenderer implements AutoCloseable {
     public static final float DEPTH = 0.125F;
+    private static final RandomSource MODEL_RANDOM = RandomSource.create();
     private static ChimeraHandRenderer instance;
     private static boolean diverted;
     private static Boolean translucentPhase;
@@ -40,18 +38,6 @@ public final class ChimeraHandRenderer implements AutoCloseable {
      */
     private final SequencedMap<RenderType, ByteBufferBuilder> fixed = fixedBuffers();
     private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediateWithBuffers(fixed, vertices);
-    private final SubmitNodeStorage submits = new SubmitNodeStorage();
-    private final FeatureRenderDispatcher dispatcher;
-    // Separate buffers: a later upload must not overwrite an earlier draw's projection.
-    private final PerspectiveProjectionMatrixBuffer solidProjection = new PerspectiveProjectionMatrixBuffer(
-            "Chimera solid hand");
-    private final PerspectiveProjectionMatrixBuffer translucentProjection = new PerspectiveProjectionMatrixBuffer(
-            "Chimera translucent hand");
-
-    private ChimeraHandRenderer(Minecraft minecraft) {
-        dispatcher = new FeatureRenderDispatcher(submits, minecraft.getBlockRenderer(), buffers,
-                minecraft.getAtlasManager(), minecraft.renderBuffers().outlineBufferSource(), buffers, minecraft.font);
-    }
 
     public static void beginFrame() { diverted = false; }
     public static boolean diverted() { return diverted; }
@@ -61,10 +47,18 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     public static boolean skip(ItemStack item) {
         return active() && translucent(item) != translucentPhase;
     }
+
+    /**
+     * A held block whose model renders in the translucent chunk layer, as Iris decides. NeoForge
+     * models name their layers (a model's "render_type"), so the model is asked rather than the
+     * vanilla block-to-layer table.
+     */
     public static boolean translucent(ItemStack item) {
-        return item.getItem() instanceof BlockItem block
-                && ItemBlockRenderTypes.getChunkRenderType(
-                        block.getBlock().defaultBlockState()) == ChunkSectionLayer.TRANSLUCENT;
+        if (!(item.getItem() instanceof BlockItem block)) return false;
+        BlockState state = block.getBlock().defaultBlockState();
+        MODEL_RANDOM.setSeed(42L);
+        return Minecraft.getInstance().getBlockRenderer().getBlockModel(state)
+                .getRenderTypes(state, MODEL_RANDOM, ModelData.EMPTY).contains(RenderType.translucent());
     }
 
     /** Iris's depth squeeze expressed in VulkanMod's forward-Z [0,1] range. */
@@ -81,7 +75,7 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     public static void drawSolid() {
         var pass = ChimeraRenderer.getMainPass();
         if (!ChimeraRenderer.segmentsActive() || pass == null || !pass.hasPackHandSchedule()) return;
-        if (instance == null) instance = new ChimeraHandRenderer(Minecraft.getInstance());
+        if (instance == null) instance = new ChimeraHandRenderer();
         diverted = true;
         pass.beginHandSegment();
         instance.draw(false);
@@ -99,42 +93,42 @@ public final class ChimeraHandRenderer implements AutoCloseable {
                 || !minecraft.options.getCameraType().isFirstPerson() || game.isPanoramicMode()
                 || minecraft.options.hideGui || player.isSleeping()
                 || minecraft.gameMode.getPlayerMode() == GameType.SPECTATOR) return;
-        float tick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+        float tick = minecraft.getTimer().getGameTimeDeltaPartialTick(true);
         var access = (ChimeraGameRendererHandAccess) game;
         var bob = new PoseStack();
         access.chimera$bobHurt(bob, tick);
         if (minecraft.options.bobView().get()) access.chimera$bobView(bob, tick);
         Matrix4f projection = projection(game.getProjectionMatrix(access.chimera$getFov(camera, tick, false)));
+        Matrix4fStack modelView = RenderSystem.getModelViewStack();
         RenderSystem.backupProjectionMatrix();
-        RenderSystem.getModelViewStack().pushMatrix();
+        modelView.pushMatrix();
         translucentPhase = translucent;
         boolean draw = false;
         try {
-            RenderSystem.setProjectionMatrix((translucent ? translucentProjection
-                    : solidProjection).getBuffer(projection), ProjectionType.PERSPECTIVE);
-            RenderSystem.getModelViewStack().set(bob.last().pose());
+            RenderSystem.setProjectionMatrix(projection, VertexSorting.DISTANCE_TO_ORIGIN);
+            modelView.set(bob.last().pose());
+            RenderSystem.applyModelViewMatrix();
             draw = ChimeraEntityBridge.beginHandDraw(translucent);
             if (!draw) throw new IllegalStateException("installed hand schedule lost its family pipeline");
-            game.itemInHandRenderer.renderHandsWithItems(tick, new PoseStack(), submits, player,
-                    minecraft.getEntityRenderDispatcher().getPackedLightCoords(camera.entity(), tick));
-            // In 1.21.11 this only submits. Scope both emission and the GPU flush.
-            dispatcher.renderAllFeatures();
+            game.lightTexture().turnOnLightLayer();
+            game.itemInHandRenderer.renderHandsWithItems(tick, new PoseStack(), buffers, player,
+                    minecraft.getEntityRenderDispatcher().getPackedLightCoords(player, tick));
+            game.lightTexture().turnOffLightLayer();
             // Item and model layers flush inside the hand scope. Glint then draws in its
             // own lane (Iris ShaderKey.GLINT under the hand projection), over the depth
             // those layers wrote.
             buffers.endLastBatch();
             for (RenderType type : fixed.keySet()) {
-                if (type.pipeline() != RenderPipelines.GLINT) buffers.endBatch(type);
+                if (!isGlint(type)) buffers.endBatch(type);
             }
             ChimeraEntityBridge.endDraw();
             draw = false;
             buffers.endBatch();
         } finally {
-            submits.endFrame();
-            dispatcher.endFrame();
             if (draw) ChimeraEntityBridge.endDraw();
             translucentPhase = null;
-            RenderSystem.getModelViewStack().popMatrix();
+            modelView.popMatrix();
+            RenderSystem.applyModelViewMatrix();
             RenderSystem.restoreProjectionMatrix();
         }
     }
@@ -144,23 +138,28 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         diverted = false;
         translucentPhase = null;
     }
+
+    private static boolean isGlint(RenderType type) {
+        return type == RenderType.armorEntityGlint() || type == RenderType.glint()
+                || type == RenderType.glintTranslucent() || type == RenderType.entityGlint()
+                || type == RenderType.entityGlintDirect();
+    }
+
     /** Vanilla RenderBuffers' fixed buffers, for any Chimera-owned source a foil item may write to. */
     static SequencedMap<RenderType, ByteBufferBuilder> fixedBuffers() {
         var result = new LinkedHashMap<RenderType, ByteBufferBuilder>();
         for (RenderType type : List.of(Sheets.solidBlockSheet(), Sheets.cutoutBlockSheet(),
-                Sheets.translucentItemSheet(), Sheets.translucentBlockItemSheet(), Sheets.shieldSheet(),
+                Sheets.bannerSheet(), Sheets.translucentCullBlockSheet(), Sheets.shieldSheet(),
                 Sheets.bedSheet(), Sheets.shulkerBoxSheet(), Sheets.signSheet(), Sheets.hangingSignSheet(),
-                Sheets.chestSheet(), RenderTypes.armorEntityGlint(), RenderTypes.glint(),
-                RenderTypes.glintTranslucent(), RenderTypes.entityGlint(), RenderTypes.waterMask())) {
+                Sheets.chestSheet(), RenderType.armorEntityGlint(), RenderType.glint(),
+                RenderType.glintTranslucent(), RenderType.entityGlint(), RenderType.entityGlintDirect(),
+                RenderType.waterMask())) {
             result.put(type, new ByteBufferBuilder(type.bufferSize()));
         }
         return result;
     }
 
     @Override public void close() {
-        dispatcher.close();
-        solidProjection.close();
-        translucentProjection.close();
         vertices.close();
         fixed.values().forEach(ByteBufferBuilder::close);
     }

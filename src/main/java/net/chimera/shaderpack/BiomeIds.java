@@ -1,7 +1,7 @@
 package net.chimera.shaderpack;
 
 import net.minecraft.core.Holder;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.world.level.biome.Biome;
 
@@ -56,7 +56,7 @@ public final class BiomeIds {
     }
 
     /** The number for a biome key, or {@link #UNKNOWN} when no constant names it. */
-    public static int id(Identifier key) {
+    public static int id(ResourceLocation key) {
         if (key == null || !VANILLA_NAMESPACE.equals(key.getNamespace())) {
             return UNKNOWN;
         }

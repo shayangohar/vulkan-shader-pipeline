@@ -5,10 +5,10 @@ import net.chimera.shaderpack.options.ShaderOption;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.narration.NarratableEntry;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
@@ -89,8 +89,14 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
     }
 
     @Override
-    protected int scrollBarX() {
+    protected int getScrollbarPosition() {
         return this.width - 6;
+    }
+
+    /** Right clicks reach the cells too: they step a choice back. */
+    @Override
+    protected boolean isValidMouseClick(int button) {
+        return button == 0 || button == 1;
     }
 
     /** Iris fades the list's separators out in the settings, leaving the world in view. */
@@ -128,11 +134,9 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
         }
 
         @Override
-        public void renderContent(GuiGraphics graphics, int mouseX, int mouseY, boolean hovered, float delta) {
-            int x = getX();
-            int y = getY();
-            int width = getWidth();
-            graphics.fill(x - 3, y + 22, x + width, y + 23, OptionLook.HEADER_LINE);
+        public void render(GuiGraphics graphics, int index, int y, int x, int width, int height,
+                           int mouseX, int mouseY, boolean hovered, float delta) {
+            graphics.fill(x - 3, y + height - 2, x + width, y + height - 1, OptionLook.HEADER_LINE);
             int utilitiesWidth = utilities.stream().mapToInt(button -> button.getWidth() + 1).sum();
             int utilityX = x + width - 3 - utilitiesWidth;
             for (HeaderButton button : utilities) {
@@ -142,8 +146,8 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
             if (back != null) back.setPosition(x, y);
             Component title = page == null ? Component.literal(packName).withStyle(ChatFormatting.BOLD)
                     : Component.literal(context.text().screenName(page));
-            graphics.textRenderer().acceptScrolling(title, x + width / 2, x + 5, x + width - 10 - utilitiesWidth,
-                    y + 5, y + 15);
+            AbstractWidget.renderScrollingString(graphics, context.font(), title, x + width / 2, x + 5, y + 5,
+                    x + width - 10 - utilitiesWidth, y + 15, OptionLook.WHITE);
             for (HeaderButton button : buttons) {
                 button.mouseInside = hovered && mouseX > button.getX() && mouseX < button.getRight()
                         && mouseY > button.getY() && mouseY < button.getBottom();
@@ -157,9 +161,9 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-            for (HeaderButton button : buttons) {
-                if (button.mouseInside) return button.mouseClicked(event, doubleClick);
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            for (HeaderButton headerButton : buttons) {
+                if (headerButton.mouseInside) return headerButton.mouseClicked(mouseX, mouseY, button);
             }
             return false;
         }
@@ -176,22 +180,23 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
             this.cells = cells;
         }
 
+        /** Rows render at the list's row left and width, so the columns follow from those. */
         private int column(double mouseX) {
             int columns = cells.size();
-            int width = getContentWidth();
-            double offset = Math.clamp(mouseX - getContentX(), 0.0, width);
+            int width = getRowWidth();
+            double offset = Math.clamp(mouseX - getRowLeft(), 0.0, width);
             return Math.clamp((int) Math.floor(columns * offset / width), 0, columns - 1);
         }
 
         @Override
-        public void renderContent(GuiGraphics graphics, int mouseX, int mouseY, boolean hovered, float delta) {
+        public void render(GuiGraphics graphics, int rowIndex, int y, int x, int width, int height,
+                           int mouseX, int mouseY, boolean hovered, float delta) {
             int columns = cells.size();
-            float cellWidth = (getContentWidth() - 2 * (columns - 1) - 3) / (float) columns;
+            float cellWidth = (width - 2 * (columns - 1) - 3) / (float) columns;
             int hoveredColumn = hovered ? column(mouseX) : -1;
             for (int index = 0; index < columns; index++) {
                 OptionCell cell = cells.get(index);
-                cell.setRectangle((int) cellWidth, OptionCell.HEIGHT,
-                        getContentX() + (int) ((cellWidth + 2) * index), getContentY());
+                cell.setRectangle((int) cellWidth, OptionCell.HEIGHT, x + (int) ((cellWidth + 2) * index), y);
                 cell.rowHovered = index == hoveredColumn;
                 cell.render(graphics, mouseX, mouseY, delta);
             }
@@ -203,8 +208,8 @@ public final class OptionList extends ContainerObjectSelectionList<OptionList.Ro
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-            return cells.get(column(event.x())).press(event);
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            return cells.get(column(mouseX)).press(button);
         }
     }
 }

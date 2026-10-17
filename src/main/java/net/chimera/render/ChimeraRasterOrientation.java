@@ -36,6 +36,7 @@ public final class ChimeraRasterOrientation {
     }
 
     public static boolean isGlOriented(RenderPass pass) {
+        if (pass instanceof ChimeraRenderingPass window) return window.glOriented();
         return pass != null && GL_ORIENTED.contains(pass);
     }
 

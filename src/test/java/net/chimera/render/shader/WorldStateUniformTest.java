@@ -13,7 +13,7 @@ import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackRuntimeSettings;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.testing.TestPacks;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.vulkanmod.vulkan.shader.layout.Uniform;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
@@ -333,14 +333,14 @@ final class WorldStateUniformTest {
         String biomeTest = "if(in(biome, BIOME_GROVE, BIOME_DESERT), 1, 0) * clamp(sqrt(16.0), 0.0, 3.0)";
         PackExpression.Program biome = PackExpression.parse(biomeTest, BiomeIds.constants());
         PackExpression.State biomeState = biome.newState();
-        int desert = BiomeIds.id(Identifier.fromNamespaceAndPath(
+        int desert = BiomeIds.id(ResourceLocation.fromNamespaceAndPath(
                 "minecraft", "desert"));
         assertNear(3.0f, (float) biome.evaluate((name, component) -> desert, biomeState, 0.05f),
                 1.0e-6f, "a named biome constant must match the biome it names");
         assertNear(0.0f, (float) biome.evaluate((name, component) -> 1.0, biomeState, 0.05f),
                 1.0e-6f, "a biome outside the constants must not match one");
         assertTrue(BiomeIds.id(null) == BiomeIds.UNKNOWN
-                        && BiomeIds.id(Identifier.fromNamespaceAndPath(
+                        && BiomeIds.id(ResourceLocation.fromNamespaceAndPath(
                         "other", "desert")) == BiomeIds.UNKNOWN,
                 "an unlisted or foreign biome must match no constant");
 

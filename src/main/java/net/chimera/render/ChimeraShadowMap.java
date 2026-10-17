@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackGeometryContext;
@@ -10,8 +11,6 @@ import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Uniforms;
-import net.vulkanmod.vulkan.texture.SamplerInfo;
-import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
@@ -110,12 +109,10 @@ public class ChimeraShadowMap {
         // matrix follows the same numbers the pack reads instead of repeating the trigonometry.
         PackUniformProvider.installSunPath(settings.sunPathRotation(), settings.sunPathOffset());
 
-        this.shadowFramebuffer = new Framebuffer.Builder("chimeraShadow", this.shadowMapSize, this.shadowMapSize, 1,
-                true)
+        this.shadowFramebuffer = Framebuffer.builder(this.shadowMapSize, this.shadowMapSize, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
                 .build();
         this.shadowColor1 = VulkanImage.builder(this.shadowMapSize, this.shadowMapSize)
-                .setName("chimeraShadowColor1")
                 .setFormat(VK_FORMAT_R8G8B8A8_UNORM)
                 .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
                 .setLinearFiltering(true).setClamp(true).createVulkanImage();
@@ -124,7 +121,6 @@ public class ChimeraShadowMap {
         VulkanImage depth = this.shadowFramebuffer.getDepthAttachment();
         ChimeraDepthViewOverride.registerOwned(depth, this.depthSampleView.ensure(depth));
         this.opaqueDepth = VulkanImage.builder(this.shadowMapSize, this.shadowMapSize)
-                .setName("chimeraShadowOpaqueDepth")
                 .setFormat(depth.format)
                 .setUsage(VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
                 .setLinearFiltering(false).setClamp(true).createVulkanImage();
@@ -156,12 +152,7 @@ public class ChimeraShadowMap {
     }
 
     private void createSampler() {
-        this.shadowSampler = SamplerManager.createTextureSampler(
-                SamplerInfo.builder()
-                        .setAddressMode(2) // CLAMP_TO_BORDER
-                        .setFiltering(1, 1, 1)
-                        .createSamplerInfo()
-        );
+        this.shadowSampler = ChimeraSamplers.flat(true, true);
     }
 
     /**
@@ -361,9 +352,9 @@ public class ChimeraShadowMap {
         if (this.shadowFramebuffer == null) return;
         VulkanImage shadowColor = this.shadowFramebuffer.getColorAttachment();
         VulkanImage shadowDepth = this.shadowFramebuffer.getDepthAttachment();
-        shadowColor.setSampler(this.shadowSampler);
-        shadowDepth.setSampler(this.shadowSampler);
-        this.opaqueDepth.setSampler(this.shadowSampler);
+        for (VulkanImage image : List.of(shadowColor, shadowDepth, this.opaqueDepth)) {
+            ((ChimeraVulkanImageAccessor) image).chimera$setSampler(this.shadowSampler);
+        }
         VTextureSelector.bindTexture(3, shadowColor); // slot 3 for shadow map
         VTextureSelector.bindTexture(5, shadowDepth); // slot 5 for pack shadowtex0
     }
@@ -384,7 +375,7 @@ public class ChimeraShadowMap {
         }
         PackGeometryContext.beginShadow(this.shadowColors, this.shadowFramebuffer.getDepthAttachment());
         try {
-            Renderer.getInstance().beginRenderPass(this.shadowRenderPass, this.shadowFramebuffer);
+            Renderer.getInstance().beginRendering(this.shadowRenderPass, this.shadowFramebuffer);
             Renderer.getInstance().endRenderPass(commandBuffer);
         } finally {
             PackGeometryContext.close();
