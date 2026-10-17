@@ -62,7 +62,9 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
         if (family == null) return host.getBuffer(type);
         FamilyRenderType familyType = familyTypes.computeIfAbsent(family, ignored -> new HashMap<>())
                 .computeIfAbsent(type, ignored -> new FamilyRenderType(family, type));
-        familyBuffers.computeIfAbsent(familyType, started -> new ByteBufferBuilder(started.bufferSize()));
+        // A chunk type asks for 4 MB up front; a family batch starts small and grows as it fills.
+        familyBuffers.computeIfAbsent(familyType, started -> new ByteBufferBuilder(
+                Math.min(started.bufferSize(), RenderType.TRANSIENT_BUFFER_SIZE)));
         return super.getBuffer(familyType);
     }
 
