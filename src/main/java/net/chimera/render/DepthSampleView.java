@@ -21,19 +21,23 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
  */
 final class DepthSampleView {
     private long view;
-    private long imageId;
+    /**
+     * The image the view was made for, compared by object: a recreated image can reuse a freed
+     * image's VkImage handle, and a view of the freed image must not be returned for it.
+     */
+    private VulkanImage image;
 
-    /** Returns the depth-only view of the image, creating it for a new image identity. */
+    /** Returns the depth-only view of the image, creating it for a new image. */
     long ensure(VulkanImage image) {
-        long nextImageId = image.getId();
-        if (view != 0L && imageId == nextImageId) {
+        if (view != 0L && this.image == image) {
             return view;
         }
         // Create before retiring, so the new handle cannot reuse the old one.
-        long next = VulkanImage.createImageView(nextImageId, image.format, VK_IMAGE_ASPECT_DEPTH_BIT, image.mipLevels);
+        long next = VulkanImage.createImageView(image.getId(), image.format, VK_IMAGE_ASPECT_DEPTH_BIT,
+                image.mipLevels);
         destroy();
         view = next;
-        imageId = view == 0L ? 0L : nextImageId;
+        this.image = view == 0L ? null : image;
         return view;
     }
 
@@ -50,6 +54,6 @@ final class DepthSampleView {
         MemoryManager.getInstance().addFrameOp(
                 () -> vkDestroyImageView(Vulkan.getVkDevice(), retired, null));
         view = 0L;
-        imageId = 0L;
+        image = null;
     }
 }
