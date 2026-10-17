@@ -22,7 +22,7 @@ public final class ChimeraPostPipelines {
     private ChimeraPostPipelines() {}
 
     public static GraphicsPipeline create(String name) {
-        return HostPipelineLayout.create(name, name, CustomVertexFormat.NONE, UnaryOperator.identity(), false);
+        return HostPipelineLayout.create(name, name, CustomVertexFormat.NONE, UnaryOperator.identity());
     }
 
     /** Creates the internal forward-Z depth copy pipeline used by pack snapshots. */
@@ -36,10 +36,10 @@ public final class ChimeraPostPipelines {
     }
 
     /**
-     * Creates an extended terrain-format pipeline for shadow rendering. Its section-offset block
-     * (binding 2) reads the global buffer VulkanMod's WorldRenderer writes per chunk area.
+     * Creates a terrain-format pipeline for shadow rendering. It reads the section offset and the
+     * ChunkOffset push constant VulkanMod's DrawBuffers sets per chunk area.
      */
     public static GraphicsPipeline createTerrainPipeline(String name, VertexFormat vertexFormat) {
-        return HostPipelineLayout.create(name, name, vertexFormat, UnaryOperator.identity(), true);
+        return HostPipelineLayout.create(name, name, vertexFormat, UnaryOperator.identity());
     }
 }

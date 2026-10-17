@@ -13,4 +13,8 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface ChimeraVulkanImageAccessor {
     @Accessor("sampler")
     void chimera$setSampler(long sampler);
+
+    /** The Vulkan usage flags the image was created with. */
+    @Accessor("usage")
+    int chimera$usage();
 }

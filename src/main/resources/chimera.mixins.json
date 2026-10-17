@@ -55,7 +55,7 @@
     "ChimeraShadowDecalMixin",
     "ChimeraAtlasMaterialMixin",
     "ChimeraTextureManagerAccessor",
-    "ChimeraSamplerAccessor",
+    "ChimeraSamplerManagerAccessor",
     "ChimeraCloudRendererMixin",
     "ChimeraVanillaCloudsAccessor",
     "ChimeraOptionsCloudsMixin",

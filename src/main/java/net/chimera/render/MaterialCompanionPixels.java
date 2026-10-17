@@ -1,19 +1,18 @@
 package net.chimera.render;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.textures.TextureFormat;
-import net.vulkanmod.render.engine.VkTextureView;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.lwjgl.system.MemoryUtil;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 
 /**
  * Builds a material companion's pixels: decodes each sprite's normal or specular map, places it in
@@ -192,84 +191,55 @@ final class MaterialCompanionPixels {
         NativeImage image = NativeImage.read(in);
         try {
             MaterialMapPixels.checkSize(image.getWidth(), image.getHeight(), "decoded");
-            return new MaterialMapOwner.DecodedImage(image.getPixelsABGR(), image.getWidth(), image.getHeight());
+            return new MaterialMapOwner.DecodedImage(image.getPixelsRGBA(), image.getWidth(), image.getHeight());
         } finally {
             image.close();
         }
     }
 
+    /** One RGBA8 image with a level per mip, each uploaded from its ABGR texels. */
     static MaterialMapOwner.CompanionSet buildGpuCompanions(String location, MaterialMapOwner.MaterialMapKind kind,
             int width, int height, List<MaterialMapOwner.LevelPixels> levels) {
-        GpuTexture texture = RenderSystem.getDevice().createTexture(
-                () -> "chimera_material_" + kind.sampler() + "_" + location,
-                GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_COPY_DST
-                        | GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_RENDER_ATTACHMENT,
-                TextureFormat.RGBA8, width, height, 1, levels.size());
+        VulkanImage image = VulkanImage.builder(width, height)
+                .setFormat(VK_FORMAT_R8G8B8A8_UNORM)
+                .setMipLevels(levels.size())
+                .createVulkanImage();
         boolean installed = false;
         try {
-            List<NativeImage> retained = new ArrayList<>(levels.size());
             for (int level = 0; level < levels.size(); level++) {
                 MaterialMapOwner.LevelPixels pixels = levels.get(level);
-                NativeImage nativeLevel = toNative(pixels.pixels(), pixels.width(), pixels.height());
-                retained.add(nativeLevel);
-                RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, nativeLevel,
-                        level, 0, 0, 0, pixels.width(), pixels.height(), 0, 0);
-            }
-            GpuTextureView view = RenderSystem.getDevice().createTextureView(texture);
-            if (!(view instanceof VkTextureView vulkanView)
-                    || vulkanView.texture().getVulkanImage() == null) {
-                view.close();
-                throw new IllegalStateException("material companion has no Vulkan image: "
-                        + location + "/" + kind.sampler());
+                upload(image, level, 0, 0, pixels.width(), pixels.height(), pixels.pixels());
             }
             installed = true;
-            return new GpuCompanionSet(texture, view,
-                    vulkanView.texture().getVulkanImage(), retained);
+            return new GpuCompanionSet(image);
         } finally {
-            if (!installed) texture.close();
+            if (!installed) image.free();
         }
     }
 
-    record GpuCompanionSet(GpuTexture texture, GpuTextureView view, VulkanImage image,
-            List<NativeImage> retainedLevels) implements MaterialMapOwner.CompanionSet {
+    record GpuCompanionSet(VulkanImage image) implements MaterialMapOwner.CompanionSet {
         @Override
         public void writeRegion(int level, int x, int y, int width, int height, int[] pixels) {
-            // VulkanMod copies the pixels into its staging buffer during the
-            // call, so the temporary image closes as soon as it returns.
-            try (NativeImage region = toNative(pixels, width, height)) {
-                RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, region,
-                        level, 0, x, y, width, height, 0, 0);
-            }
+            upload(image, level, x, y, width, height, pixels);
         }
 
         @Override
         public void close() {
-            for (NativeImage level : retainedLevels) {
-                try {
-                    level.close();
-                } catch (RuntimeException failure) {
-                    MaterialMapOwner.LOGGER.warn("[chimera] material maps: level close failed", failure);
-                }
-            }
-            try {
-                view.close();
-            } finally {
-                texture.close();
-            }
+            image.free();
         }
     }
 
-    static NativeImage toNative(int[] pixels, int width, int height) {
-        NativeImage image = new NativeImage(width, height, false);
-        boolean filled = false;
+    /**
+     * Writes ABGR texels (RGBA bytes in memory) into one level region. VulkanMod copies them into
+     * its staging buffer during the call, so the buffer is freed as soon as it returns.
+     */
+    private static void upload(VulkanImage image, int level, int x, int y, int width, int height, int[] pixels) {
+        ByteBuffer buffer = MemoryUtil.memAlloc(pixels.length * Integer.BYTES);
         try {
-            for (int i = 0; i < pixels.length; i++) {
-                image.setPixelABGR(i % width, i / width, pixels[i]);
-            }
-            filled = true;
-            return image;
+            buffer.asIntBuffer().put(pixels);
+            image.uploadSubTextureAsync(level, width, height, x, y, 0, 0, width, buffer);
         } finally {
-            if (!filled) image.close();
+            MemoryUtil.memFree(buffer);
         }
     }
 }

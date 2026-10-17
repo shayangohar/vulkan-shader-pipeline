@@ -125,33 +125,21 @@ final class UniformCatalog {
         addLive(specs, "FogColor", "vec4");
         addLive(specs, "FogStart", "float");
         addLive(specs, "FogEnd", "float");
-        addLive(specs, "FogEnvironmentalStart", "float");
-        addLive(specs, "FogEnvironmentalEnd", "float");
-        addLive(specs, "FogRenderDistanceStart", "float");
-        addLive(specs, "FogRenderDistanceEnd", "float");
-        addLive(specs, "FogSkyEnd", "float");
-        addLive(specs, "FogCloudsEnd", "float");
         addLive(specs, "AlphaCutout", "float");
         addLive(specs, UniformRegistry.ENTITY_ALPHA_REFERENCE, "float");
         addLive(specs, UniformRegistry.GLINT_ALPHA, "float");
         addLive(specs, "ScreenSize", "vec2");
-        addLive(specs, "TextureSize", "ivec2");
-        addLive(specs, "TexelSize", "vec2");
         addLive(specs, "Light0_Direction", "vec3");
         addLive(specs, "Light1_Direction", "vec3");
         addLive(specs, "ColorModulator", "vec4");
         addLive(specs, "LineWidth", "float");
         addLive(specs, "ChunkOffset", "vec3");
-        addLive(specs, "UseRgss", "int");
-        addLive(specs, "CurrentTime", "int");
         addLive(specs, "EndPortalLayers", "int");
 
         addLive(specs, "fogColor", List.of("vec3", "vec4"), "fogColor");
         addLive(specs, "fogStart", "float");
         addLive(specs, "fogEnd", "float");
         addLive(specs, "screenSize", "vec2");
-        addLive(specs, "textureSize", "ivec2");
-        addLive(specs, "texelSize", "vec2");
     }
 
     /**
@@ -166,12 +154,10 @@ final class UniformCatalog {
         }
         for (String value : List.of("currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger",
                 "maxPlayerHunger", "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir",
-                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "chunkFadeTimeInv",
-                "dhNearPlane", "dhFarPlane")) {
+                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "dhNearPlane", "dhFarPlane")) {
             addLive(specs, value, "float");
         }
-        for (String value : List.of("textureFilteringMode", "anisotropicFiltering", "currentColorSpace",
-                "dhRenderDistance")) {
+        for (String value : List.of("currentColorSpace", "dhRenderDistance")) {
             addLive(specs, value, "int");
         }
         for (String vector : List.of("vehicleLookVector", "relativeVehiclePosition", "playerBodyVector")) {

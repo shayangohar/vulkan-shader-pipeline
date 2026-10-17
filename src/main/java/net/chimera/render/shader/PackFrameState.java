@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.shaderpack.BiomeIds;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.chimera.shaderpack.PackRenderingPhase;
@@ -9,10 +10,8 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.GameRenderer;
-import net.minecraft.client.renderer.fog.FogData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -87,8 +86,6 @@ final class PackFrameState {
     private final float[] shaderColor = new float[4];
     private final float[] lightDirection0 = new float[3];
     private final float[] lightDirection1 = new float[3];
-    private final float[] textureSize = new float[2];
-    private final float[] texelSize = new float[2];
 
     private final int[] eyeBrightness = new int[2];
     // The atlas the current draw samples: the block atlas per frame, per draw for entities.
@@ -132,17 +129,12 @@ final class PackFrameState {
     private float farPlane;
     private float fogStart;
     private float fogEnd;
-    private float fogEnvironmentalStart;
-    private float fogEnvironmentalEnd;
-    private float fogSkyEnd;
-    private float fogCloudsEnd;
     private float alphaCutout;
     // Per draw: the host entity pipeline's ALPHA_CUTOUT, 0 where it has none.
     private float entityAlphaReference;
     // Per frame: the glint strength option, vanilla Globals.GlintAlpha (Iris isGlint gl_Color).
     private float glintAlpha = 1.0F;
     private PackRenderingPhase renderingPhase = PackRenderingPhase.NONE;
-    private int currentTime;
     private int bedrockLevel;
     private float screenSizeWidth;
     private float screenSizeHeight;
@@ -181,7 +173,6 @@ final class PackFrameState {
         scalar(table, () -> frameTimeCounter, "frameTimeCounter");
         scalar(table, () -> frameCounter, "frameCounter");
         scalar(table, () -> renderingPhase.ordinal(), "renderStage");
-        scalar(table, () -> currentTime, "CurrentTime");
         scalar(table, () -> worldTime, "worldTime");
         scalar(table, () -> worldDay, "worldDay");
         scalar(table, () -> moonPhase, "moonPhase");
@@ -217,16 +208,11 @@ final class PackFrameState {
         scalar(table, () -> biomeId, "biome");
         scalar(table, () -> biomeCategory, "biome_category");
         scalar(table, () -> biomePrecipitation, "biome_precipitation");
-        scalar(table, () -> fogStart, "fogStart", "FogStart", "FogRenderDistanceStart");
-        scalar(table, () -> fogEnd, "fogEnd", "FogEnd", "FogRenderDistanceEnd");
-        scalar(table, () -> fogEnvironmentalStart, "FogEnvironmentalStart");
-        scalar(table, () -> fogEnvironmentalEnd, "FogEnvironmentalEnd");
-        scalar(table, () -> fogSkyEnd, "FogSkyEnd");
-        scalar(table, () -> fogCloudsEnd, "FogCloudsEnd");
+        scalar(table, () -> fogStart, "fogStart", "FogStart");
+        scalar(table, () -> fogEnd, "fogEnd", "FogEnd");
         scalar(table, () -> alphaCutout, "AlphaCutout");
         scalar(table, () -> entityAlphaReference, UniformRegistry.ENTITY_ALPHA_REFERENCE);
         scalar(table, () -> glintAlpha, UniformRegistry.GLINT_ALPHA);
-        scalar(table, () -> 0, "UseRgss");
 
         vector(table, 3, component -> componentOf(cameraOrigin.x, cameraOrigin.y, cameraOrigin.z, component),
                 "cameraPosition");
@@ -252,8 +238,6 @@ final class PackFrameState {
         floats(table, fogColor, "fogColor", "FogColor");
         vector(table, 2, component -> component == 0 ? screenSizeWidth : screenSizeHeight,
                 "screenSize", "ScreenSize");
-        floats(table, textureSize, "textureSize", "TextureSize");
-        floats(table, texelSize, "texelSize", "TexelSize");
         floats(table, shaderColor, "ColorModulator");
         floats(table, lightDirection0, "Light0_Direction");
         floats(table, lightDirection1, "Light1_Direction");
@@ -320,7 +304,7 @@ final class PackFrameState {
             return;
         }
 
-        var position = camera.position();
+        var position = camera.getPosition();
         advanceCamera(position.x, position.y, position.z, viewportChanged);
         irisPlayer.capture(minecraft, partialTick, position.x, position.y, position.z, frameTime);
         heldItems.capture(minecraft);
@@ -341,7 +325,7 @@ final class PackFrameState {
             this.playerLookVector.set((float) look.x, (float) look.y, (float) look.z);
             if (cameraEntity instanceof LivingEntity living) {
                 this.blindness = blindness(living);
-                this.darknessFactor = living.getEffectBlendFactor(MobEffects.DARKNESS, partialTick);
+                this.darknessFactor = darknessFactor(living, partialTick);
                 this.isElytraFlying = living.isFallFlying() ? 1 : 0;
             } else {
                 this.blindness = 0.0f;
@@ -625,12 +609,6 @@ final class PackFrameState {
             fogColor[i] = fog.getFloat(i * 4);
             shaderColor[i] = VRenderSystem.getShaderColor().getFloat(i * 4);
         }
-        MappedBuffer texture = VRenderSystem.getTextureSize();
-        textureSize[0] = texture.getInt(0);
-        textureSize[1] = texture.getInt(4);
-        MappedBuffer texel = VRenderSystem.getTexelSize();
-        texelSize[0] = texel.getFloat(0);
-        texelSize[1] = texel.getFloat(4);
         MappedBuffer direction0 = VRenderSystem.lightDirection0;
         MappedBuffer direction1 = VRenderSystem.lightDirection1;
         for (int i = 0; i < 3; i++) {
@@ -638,15 +616,8 @@ final class PackFrameState {
             lightDirection1[i] = direction1.getFloat(i * 4);
         }
         alphaCutout = VRenderSystem.alphaCutout;
-        currentTime = VRenderSystem.getCurrentTime();
-        FogData fogData = VRenderSystem.getFogData();
-        // Legacy pack fog is environmental fog, not the render-distance fade.
-        fogStart = fogData == null ? 0.0f : fogData.environmentalStart;
-        fogEnd = fogData == null ? 0.0f : fogData.environmentalEnd;
-        fogEnvironmentalStart = fogData == null ? 0.0f : fogData.environmentalStart;
-        fogEnvironmentalEnd = fogData == null ? 0.0f : fogData.environmentalEnd;
-        fogSkyEnd = fogData == null ? 0.0f : fogData.skyEnd;
-        fogCloudsEnd = fogData == null ? 0.0f : fogData.cloudEnd;
+        fogStart = RenderSystem.getShaderFogStart();
+        fogEnd = RenderSystem.getShaderFogEnd();
     }
 
     private void captureWorld(ClientLevel level, Minecraft minecraft, Camera camera,
@@ -664,7 +635,7 @@ final class PackFrameState {
         moonPhase = Math.floorMod(worldDay, 8);
         rainStrength = clamp(level.getRainLevel(partialTick), 0.0f, 1.0f);
         thunderStrength = clamp(level.getThunderLevel(partialTick), 0.0f, 1.0f);
-        captureCelestial(camera, partialTick);
+        captureCelestial(level, camera, partialTick);
         dimension = dimensionOrdinal(level);
         bedrockLevel = level.dimensionType().minY();
         heightLimit = level.dimensionType().height();
@@ -683,7 +654,7 @@ final class PackFrameState {
         rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
         eyeAltitude = cameraOrigin.y;
         biomeId = BiomeIds.id(biomeKey(level, biomePos));
-        biomePrecipitation = precipitation(biome, biomePos, level.getSeaLevel());
+        biomePrecipitation = precipitation(biome, biomePos);
         farPlane = Math.max(minecraft.options.getEffectiveRenderDistance(), 1) * 16.0f;
         if (!smoothingStarted) {
             wetnessValue = rainStrength;
@@ -709,15 +680,22 @@ final class PackFrameState {
     }
 
     /**
-     * Samples the host's own sky state for this frame and derives the celestial frame from it.
-     * The angles come from the attribute probe the host ticks for its own sky and fog, so a
-     * dimension, a datapack or an option that moves the sky moves the shadows with it.
+     * Samples the level's sky for this frame and derives the celestial frame from it: the sun
+     * turns with the time of day as LevelRenderer.renderSky turns it, the moon opposite, and the
+     * sky colour is the one the sky draws with.
      */
-    private void captureCelestial(Camera camera, float partialTick) {
-        var probe = camera.attributeProbe();
-        deriveCelestial(probe.getValue(EnvironmentAttributes.SUN_ANGLE, partialTick),
-                probe.getValue(EnvironmentAttributes.MOON_ANGLE, partialTick),
-                probe.getValue(EnvironmentAttributes.SKY_COLOR, partialTick));
+    private void captureCelestial(ClientLevel level, Camera camera, float partialTick) {
+        float sunAngle = level.getTimeOfDay(partialTick) * 360.0F;
+        var sky = level.getSkyColor(camera.getPosition(), partialTick);
+        deriveCelestial(sunAngle, sunAngle + 180.0F, packedRgb(sky.x, sky.y, sky.z));
+    }
+
+    private static int packedRgb(double red, double green, double blue) {
+        return (channel(red) << 16) | (channel(green) << 8) | channel(blue);
+    }
+
+    private static int channel(double value) {
+        return (int) Math.round(clamp((float) value, 0.0F, 1.0F) * 255.0F);
     }
 
     /** Test seam: the same derivation from explicit host samples. */
@@ -756,9 +734,8 @@ final class PackFrameState {
     }
 
     /** The pack's precipitation input: none, rain or snow, as the packs compare it. */
-    private static int precipitation(Biome biome, BlockPos pos,
-                                     int seaLevel) {
-        return switch (biome.getPrecipitationAt(pos, seaLevel)) {
+    private static int precipitation(Biome biome, BlockPos pos) {
+        return switch (biome.getPrecipitationAt(pos)) {
             case NONE -> 0;
             case RAIN -> 1;
             case SNOW -> 2;
@@ -843,11 +820,17 @@ final class PackFrameState {
             return 0.0f;
         }
         float scale = minecraft.options.darknessEffectScale().get().floatValue();
-        float gamma = minecraft.player.getEffectBlendFactor(MobEffects.DARKNESS, partialTick) * scale;
+        float gamma = darknessFactor(minecraft.player, partialTick) * scale;
         float darkness = Math.max(0.0f,
                 (float) Math.cos((minecraft.player.tickCount - partialTick)
                         * (float) Math.PI * 0.025f) * 0.45f * gamma);
         return darkness * scale;
+    }
+
+    /** The darkness effect's blend, as Iris CommonUniforms reads it: 0 without the effect. */
+    private static float darknessFactor(LivingEntity living, float partialTick) {
+        var effect = living.getEffect(MobEffects.DARKNESS);
+        return effect == null ? 0.0F : effect.getBlendFactor(living, partialTick);
     }
 
     private static float blindness(LivingEntity living) {

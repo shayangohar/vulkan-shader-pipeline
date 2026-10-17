@@ -2,7 +2,6 @@ package net.chimera.render.shader;
 
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.TextureFilteringMethod;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.HumanoidArm;
@@ -29,8 +28,7 @@ final class IrisPlayerState {
             "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog",
             "currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger", "maxPlayerHunger",
             "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir", "maxPlayerAir",
-            "playerMood", "pi", "lastFrameTime", "chunkFadeTimeInv",
-            "textureFilteringMode", "anisotropicFiltering", "currentColorSpace",
+            "playerMood", "pi", "lastFrameTime", "currentColorSpace",
             "vehicleLookVector", "relativeVehiclePosition", "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime",
             "dhNearPlane", "dhFarPlane", "dhRenderDistance",
@@ -57,9 +55,6 @@ final class IrisPlayerState {
     private float maxAir = -1.0f;
     private float mood;
     private float lastFrameTime;
-    private float chunkFadeTimeInv;
-    private int textureFilteringMode;
-    private int anisotropicFiltering;
     private int renderDistance;
     private final float[] vehicleLook = new float[3];
     private final float[] relativeVehicle = new float[3];
@@ -77,7 +72,7 @@ final class IrisPlayerState {
 
         LocalPlayer player = minecraft.player;
         Entity vehicle = player == null ? null : player.getVehicle();
-        this.vehicleInWater = vehicle != null && vehicle.isInShallowWater();
+        this.vehicleInWater = vehicle != null && vehicle.isInWater();
         set(this.vehicleLook, vehicle == null ? null : vehicle.getForward());
         if (vehicle == null) {
             set(this.relativeVehicle, null);
@@ -94,21 +89,12 @@ final class IrisPlayerState {
         captureClock();
     }
 
-    /** The HUD, hand, camera, filtering, fog and spectator state from the options and game mode. */
+    /** The HUD, hand, camera, fog and spectator state from the options and game mode. */
     private void captureOptions(Minecraft minecraft) {
         this.hideGui = minecraft.options.hideGui;
         this.rightHanded = minecraft.options.mainHand().get() == HumanoidArm.RIGHT;
         CameraType camera = minecraft.options.getCameraType();
         this.firstPerson = camera != CameraType.THIRD_PERSON_BACK && camera != CameraType.THIRD_PERSON_FRONT;
-        this.chunkFadeTimeInv = (float) (1.0 / (minecraft.options.chunkSectionFadeInTime().get() * 1000.0));
-        TextureFilteringMethod filtering = minecraft.options.textureFiltering().get();
-        this.textureFilteringMode = switch (filtering) {
-            case NONE -> 0;
-            case RGSS -> 1;
-            case ANISOTROPIC -> 2;
-        };
-        this.anisotropicFiltering = filtering == TextureFilteringMethod.ANISOTROPIC
-                ? minecraft.options.maxAnisotropyValue() : 0;
         this.renderDistance = minecraft.options.getEffectiveRenderDistance();
         this.heavyFog = minecraft.level != null && minecraft.gui != null
                 && minecraft.gui.getBossOverlay().shouldCreateWorldFog();
@@ -127,7 +113,7 @@ final class IrisPlayerState {
         this.armor = survival ? player.getArmorValue() / 50.0f : -1.0f;
         this.air = survival ? (float) player.getAirSupply() / (float) player.getMaxAirSupply() : -1.0f;
         this.maxAir = survival ? player.getMaxAirSupply() : -1.0f;
-        this.feetInWater = player != null && player.isInShallowWater();
+        this.feetInWater = player != null && player.isInWater();
         this.swimming = player != null && player.isSwimming();
         this.riding = player != null && player.isPassenger();
         capturePlayerFlags(player);
@@ -196,9 +182,6 @@ final class IrisPlayerState {
             case "playerMood" -> this.mood;
             case "pi" -> (float) Math.PI;
             case "lastFrameTime" -> this.lastFrameTime;
-            case "chunkFadeTimeInv" -> this.chunkFadeTimeInv;
-            case "textureFilteringMode" -> this.textureFilteringMode;
-            case "anisotropicFiltering" -> this.anisotropicFiltering;
             // IrisVideoSettings.colorSpace defaults to SRGB, ordinal 0; Chimera has no colour-space setting.
             case "currentColorSpace" -> 0;
             case "vehicleLookVector" -> c < 3 ? this.vehicleLook[c] : Double.NaN;

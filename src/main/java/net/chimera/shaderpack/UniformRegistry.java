@@ -541,12 +541,9 @@ public final class UniformRegistry {
      * value, as it would under Iris.
      */
     static final Set<String> HOST_ONLY = Set.of(
-            "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd",
-            "FogEnvironmentalStart", "FogEnvironmentalEnd", "FogRenderDistanceStart",
-            "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE, GLINT_ALPHA,
-            "ScreenSize", "TextureSize", "TexelSize", "Light0_Direction", "Light1_Direction",
-            "ColorModulator", "LineWidth", "ChunkOffset", "UseRgss", "CurrentTime", "EndPortalLayers",
-            "screenSize", "textureSize", "texelSize");
+            "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd", "AlphaCutout",
+            ENTITY_ALPHA_REFERENCE, GLINT_ALPHA, "ScreenSize", "Light0_Direction", "Light1_Direction",
+            "ColorModulator", "LineWidth", "ChunkOffset", "EndPortalLayers", "screenSize");
 
     /**
      * Names Iris 1.21.11 serves that Chimera does not yet: per-draw state, values that need Iris's

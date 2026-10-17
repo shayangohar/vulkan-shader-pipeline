@@ -1,12 +1,8 @@
 package net.chimera.render;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.vulkanmod.render.engine.VkGpuTexture;
-import net.vulkanmod.render.engine.VkTextureView;
-import net.vulkanmod.vulkan.texture.SamplerInfo;
-import net.vulkanmod.vulkan.texture.SamplerManager;
+import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.io.ByteArrayInputStream;
@@ -14,12 +10,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-
-import static org.lwjgl.vulkan.VK10.VK_FILTER_LINEAR;
-import static org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST;
-import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_REPEAT;
-import static org.lwjgl.vulkan.VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST;
 
 /** One pack-owned noisetex image for the narrow real-pack post path. */
 public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
@@ -66,27 +56,16 @@ public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
             throw new IOException("texture dimensions exceed limit");
         }
 
-        DynamicTexture texture = new DynamicTexture(() -> name == null ? "chimera_pack_texture" : name, pixels);
+        DynamicTexture texture = new DynamicTexture(pixels);
         try {
-            texture.upload();
-            GpuTextureView view = texture.getTextureView();
-            if (!(view instanceof VkTextureView vulkanView)) {
-                throw new IOException("noise texture did not create a Vulkan view");
-            }
-            VkGpuTexture gpuTexture = vulkanView.texture();
-            VulkanImage image = gpuTexture.getVulkanImage();
+            VulkanImage image = ChimeraTextures.image(texture);
             if (image == null) {
-                throw new IOException("noise texture has no Vulkan image");
+                throw new IOException("noise texture has no Vulkan image: " + name);
             }
             // DynamicTexture samples nearest/repeat. A pack's water normals
             // difference neighbouring noise texels, so nearest made them blocky.
-            boolean linear = !"nearest".equals(filter);
-            int vkFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-            image.setSampler(SamplerManager.getSampler(SamplerInfo.builder()
-                    .setAddressMode("clamp".equals(wrap)
-                            ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT)
-                    .setFiltering(vkFilter, vkFilter, VK_SAMPLER_MIPMAP_MODE_NEAREST)
-                    .createSamplerInfo()));
+            ((ChimeraVulkanImageAccessor) image).chimera$setSampler(
+                    ChimeraSamplers.flat(!"nearest".equals(filter), "clamp".equals(wrap)));
             return new PackNoiseTexture(texture, image);
         } catch (RuntimeException | IOException e) {
             texture.close();

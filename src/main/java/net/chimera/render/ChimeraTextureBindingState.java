@@ -1,106 +1,26 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
 import net.chimera.ChimeraMod;
-import net.chimera.mixin.ChimeraSamplerAccessor;
-import net.vulkanmod.render.engine.VkSampler;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.slf4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.OptionalDouble;
 
 /**
  * Keeps pack sampler overrides separate from VulkanMod image identity.
  *
- * <p>The host render path owns a texture-view and sampler pair. Pack draws
- * therefore use this short-lived selector-side override instead of changing
- * the shared image. The terrain sampler comes from Minecraft's
- * {@code LevelRenderer.chunkLayerSampler}; it is never inferred from another
- * image binding.</p>
+ * <p>The host render path owns an image and its sampler. Pack draws therefore use this
+ * short-lived selector-side override instead of changing the shared image: a descriptor reading a
+ * slot samples the overridden image with the recorded sampler, and any other image with its own.</p>
  */
 public final class ChimeraTextureBindingState {
     private static final BindingStore<VulkanImage> STORE = new BindingStore<>();
 
-    private static TerrainSamplerInfo terrainSamplerInfo;
-    private static SamplerProfile terrainSamplerProfile;
     private static final Map<Integer, SamplerProfile> samplerProfiles = new HashMap<>();
     private static long loggedTerrainImage = Long.MIN_VALUE;
-    private static long loggedTerrainSampler = Long.MIN_VALUE;
-    private static VkSampler derivedFrom;
-    private static VkSampler derived;
 
     private ChimeraTextureBindingState() {}
-
-    /**
-     * Captures the sampler LevelRenderer selected for chunk terrain, as pack
-     * programs must sample it (see {@link #packAtlasSampler}).
-     */
-    public static void captureChunkSampler(GpuSampler chunkSampler) {
-        GpuSampler sampler = chunkSampler instanceof VkSampler chunk ? packAtlasSampler(chunk) : chunkSampler;
-        if (!(sampler instanceof VkSampler vkSampler) || vkSampler.getId() == 0L) {
-            synchronized (ChimeraTextureBindingState.class) {
-                STORE.clearTerrainSampler();
-                terrainSamplerInfo = null;
-                terrainSamplerProfile = null;
-            }
-            return;
-        }
-        TerrainSamplerInfo info = new TerrainSamplerInfo(
-                vkSampler.getId(),
-                String.valueOf(vkSampler.getMinFilter()),
-                String.valueOf(vkSampler.getMagFilter()),
-                String.valueOf(vkSampler.getAddressModeU()),
-                String.valueOf(vkSampler.getAddressModeV()),
-                vkSampler.getMaxAnisotropy());
-        SamplerProfile profile = SamplerProfile.of(sampler, vkSampler.getId());
-        synchronized (ChimeraTextureBindingState.class) {
-            STORE.setTerrainSampler(info.id());
-            terrainSamplerInfo = info;
-            terrainSamplerProfile = profile;
-        }
-    }
-
-    /**
-     * The chunk sampler as packs sample it. Under the RGSS texture-filtering
-     * option the host chunk sampler filters LINEAR and the host terrain shader
-     * supersamples to keep texels sharp. Packs never run that supersampling
-     * (UseRgss reads 0), so the linear sampler blurred every atlas read,
-     * including the parallax heights in normals.a, which seamed POM steps.
-     * Iris samples the atlas with the non-RGSS vanilla filtering: nearest
-     * texels, linear between mip levels. Other modes pass through unchanged.
-     */
-    static synchronized VkSampler packAtlasSampler(VkSampler chunk) {
-        if (chunk.getMagFilter() != FilterMode.LINEAR) return chunk;
-        if (chunk != derivedFrom) {
-            // VkSampler only looks up SamplerManager's cached Vulkan sampler,
-            // so the derived wrapper owns nothing and needs no close.
-            FilterMode min = chunk.getMaxAnisotropy() > 1 ? FilterMode.LINEAR : FilterMode.NEAREST;
-            derived = new VkSampler(chunk.getAddressModeU(), chunk.getAddressModeV(), min,
-                    FilterMode.NEAREST, chunk.getMaxAnisotropy(), maxLodOf(chunk));
-            derivedFrom = chunk;
-        }
-        return derived;
-    }
-
-    /**
-     * The chunk sampler's LOD ceiling in the form VkSampler's constructor
-     * takes. VkSampler.getMaxLod() returns null, so it is read through the
-     * accessor; the constructor stores an absent ceiling as 1000.
-     */
-    private static OptionalDouble maxLodOf(VkSampler chunk) {
-        float maxLod = ((ChimeraSamplerAccessor) (Object) chunk).chimera$maxLod();
-        return maxLod >= 1000.0f ? OptionalDouble.empty() : OptionalDouble.of(maxLod);
-    }
-
-    /** Authoritative chunk sampler profile, or null when never captured. */
-    public static SamplerProfile terrainSamplerProfile() {
-        synchronized (ChimeraTextureBindingState.class) {
-            return terrainSamplerProfile;
-        }
-    }
 
     /** Recorded profile for one selector slot, or null when never marked. */
     public static SamplerProfile samplerProfile(int slot) {
@@ -109,31 +29,20 @@ public final class ChimeraTextureBindingState {
         }
     }
 
-    /** Binds selector slot 0 to the authoritative terrain sampler pair. */
+    /** Binds selector slot 0 to the terrain atlas and the sampler its texture parameters chose. */
     public static void bindTerrainAtlas(VulkanImage image) {
         if (image == null) {
             clearPackBinding(0);
             return;
         }
-        BindingStore.Entry<VulkanImage> entry;
-        TerrainSamplerInfo info;
+        SamplerProfile profile = SamplerProfile.of(image);
         synchronized (ChimeraTextureBindingState.class) {
-            entry = STORE.bindTerrainAtlas(image, image.getSampler());
-            info = terrainSamplerInfo;
-            long imageId = image.getId();
-            if (imageId != loggedTerrainImage || entry.sampler() != loggedTerrainSampler) {
-                loggedTerrainImage = imageId;
-                loggedTerrainSampler = entry.sampler();
-                if (info == null || info.id() != entry.sampler()) {
-                    LOGGER.warn("[chimera] pack terrain binding: image={} sampler={} "
-                                    + "authoritative chunk sampler unavailable; using image sampler; atlasMipLevels={}",
-                            imageId, entry.sampler(), image.mipLevels);
-                } else {
-                    LOGGER.info("[chimera] pack terrain binding: image={} sampler={} minFilter={} "
-                                    + "magFilter={} addressU={} addressV={} anisotropy={} atlasMipLevels={}",
-                            imageId, entry.sampler(), info.minFilter(), info.magFilter(),
-                            info.addressU(), info.addressV(), info.anisotropy(), image.mipLevels);
-                }
+            STORE.bind(0, image, profile.id());
+            samplerProfiles.put(0, profile);
+            if (image.getId() != loggedTerrainImage) {
+                loggedTerrainImage = image.getId();
+                LOGGER.info("[chimera] pack terrain binding: image={} sampler={} key={} atlasMipLevels={}",
+                        image.getId(), profile.id(), profile.key(), image.mipLevels);
             }
         }
     }
@@ -150,31 +59,15 @@ public final class ChimeraTextureBindingState {
         }
     }
 
-    /** Records a host texture pair redirected during an entity or sky draw. */
+    /** Records an image paired with an exact sampler for a pack selector slot. */
     public static void markPackBinding(int slot, VulkanImage image, long sampler) {
         if (image == null || sampler == 0L) {
             clearPackBinding(slot);
             return;
         }
         synchronized (ChimeraTextureBindingState.class) {
-            STORE.bindExact(slot, image, sampler);
+            STORE.bind(slot, image, sampler);
             samplerProfiles.put(slot, SamplerProfile.ofId(sampler));
-        }
-    }
-
-    /** Records a host texture pair with its exact sampler profile. */
-    public static void markPackBinding(int slot, VulkanImage image, GpuSampler sampler) {
-        if (image == null || sampler == null) {
-            clearPackBinding(slot);
-            return;
-        }
-        if (!(sampler instanceof VkSampler vkSampler) || vkSampler.getId() == 0L) {
-            markPackBinding(slot, image, image.getSampler());
-            return;
-        }
-        synchronized (ChimeraTextureBindingState.class) {
-            STORE.bindExact(slot, image, vkSampler.getId());
-            samplerProfiles.put(slot, SamplerProfile.of(sampler, vkSampler.getId()));
         }
     }
 
@@ -187,7 +80,7 @@ public final class ChimeraTextureBindingState {
 
     public static synchronized void restore(int slot, Snapshot snapshot) {
         if (snapshot.samplerOverride() == null) STORE.clear(slot);
-        else STORE.bindExact(slot, snapshot.image(), snapshot.samplerOverride());
+        else STORE.bind(slot, snapshot.image(), snapshot.samplerOverride());
     }
 
     public static void clearPackBinding(int slot) {
@@ -214,38 +107,15 @@ public final class ChimeraTextureBindingState {
         synchronized (ChimeraTextureBindingState.class) {
             STORE.reset();
             samplerProfiles.clear();
-            terrainSamplerInfo = null;
-            terrainSamplerProfile = null;
             loggedTerrainImage = Long.MIN_VALUE;
-            loggedTerrainSampler = Long.MIN_VALUE;
         }
     }
 
     /** Small identity-based state machine used by runtime code and behavioral tests. */
     static final class BindingStore<I> {
         private final Map<Integer, Entry<I>> bindings = new HashMap<>();
-        private long terrainSampler;
-
-        void setTerrainSampler(long sampler) {
-            this.terrainSampler = sampler;
-        }
-
-        void clearTerrainSampler() {
-            this.terrainSampler = 0L;
-        }
-
-        Entry<I> bindTerrainAtlas(I image, long fallbackSampler) {
-            long sampler = terrainSampler == 0L ? fallbackSampler : terrainSampler;
-            Entry<I> entry = new Entry<>(image, sampler);
-            bindings.put(0, entry);
-            return entry;
-        }
 
         void bind(int slot, I image, long sampler) {
-            bindings.put(slot, new Entry<>(image, sampler));
-        }
-
-        void bindExact(int slot, I image, long sampler) {
             bindings.put(slot, new Entry<>(image, sampler));
         }
 
@@ -270,20 +140,10 @@ public final class ChimeraTextureBindingState {
 
         void reset() {
             bindings.clear();
-            terrainSampler = 0L;
         }
 
-        static record Entry<I>(I image, long sampler) {}
+        record Entry<I>(I image, long sampler) {}
     }
-
-    private record TerrainSamplerInfo(
-            long id,
-            String minFilter,
-            String magFilter,
-            String addressU,
-            String addressV,
-            int anisotropy
-    ) {}
 
     private static final Logger LOGGER = ChimeraMod.LOGGER;
 }
