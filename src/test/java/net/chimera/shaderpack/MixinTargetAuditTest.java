@@ -16,6 +16,7 @@ import org.objectweb.asm.tree.TypeInsnNode;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,11 @@ final class MixinTargetAuditTest {
             "Lcom/llamalad7/mixinextras/injector/ModifyExpressionValue;",
             "Lcom/llamalad7/mixinextras/injector/ModifyReturnValue;");
     private static final String INJECT = "Lorg/spongepowered/asm/mixin/injection/Inject;";
+    private static final String REDIRECT = "Lorg/spongepowered/asm/mixin/injection/Redirect;";
+    private static final String MODIFY_ARG = "Lorg/spongepowered/asm/mixin/injection/ModifyArg;";
+    private static final String WRAP_OPERATION = "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;";
+    private static final String WRAP_WITH_CONDITION = "Lcom/llamalad7/mixinextras/injector/v2/WrapWithCondition;";
+    private static final String MODIFY_EXPRESSION_VALUE = "Lcom/llamalad7/mixinextras/injector/ModifyExpressionValue;";
     private static final String WRAP_METHOD = "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;";
     private static final String CALLBACK_INFO = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
     private static final String CALLBACK_INFO_RETURNABLE =
@@ -129,6 +135,83 @@ final class MixinTargetAuditTest {
                     problems.add(mixinName + "." + handler.name + ": handler " + handler.desc + " fits no "
                             + selector + " " + methods.stream().map(method -> method.desc).toList());
                 }
+                List<AnnotationNode> at = annotations(MixinBytecode.annotationValue(annotation, "at"));
+                Site site = at.isEmpty() ? null : site(at.get(0), methods);
+                if (site != null && !siteFits(annotation, handler, site)) {
+                    problems.add(mixinName + "." + handler.name + ": handler " + handler.desc
+                            + " does not fit its call or field (" + Arrays.toString(site.values()) + " -> "
+                            + site.result() + ")");
+                }
+            }
+        }
+
+        /**
+         * Whether a call or field injector's handler fits the instruction it targets: @Redirect and
+         * @WrapOperation take the receiver and arguments (a WrapOperation then its Operation) and
+         * return the result, @WrapWithCondition takes them and returns boolean,
+         * @ModifyExpressionValue takes and returns the result, and @ModifyArg returns an argument's
+         * type.
+         */
+        private static boolean siteFits(AnnotationNode annotation, MethodNode handler, Site site) {
+            Type[] params = Type.getArgumentTypes(handler.desc);
+            Type result = Type.getReturnType(handler.desc);
+            Type[] values = site.values();
+            return switch (annotation.desc) {
+                case REDIRECT -> startsWith(params, values) && result.equals(site.result());
+                case WRAP_OPERATION -> params.length > values.length && startsWith(params, values)
+                        && params[values.length].getDescriptor().equals(OPERATION) && result.equals(site.result());
+                case WRAP_WITH_CONDITION -> startsWith(params, values) && result == Type.BOOLEAN_TYPE;
+                case MODIFY_EXPRESSION_VALUE -> params.length > 0 && params[0].equals(site.result())
+                        && result.equals(site.result());
+                case MODIFY_ARG -> modifyArgFits(annotation, params, result, site.arguments());
+                default -> true;
+            };
+        }
+
+        private static boolean modifyArgFits(AnnotationNode annotation, Type[] params, Type result, Type[] arguments) {
+            boolean typed = MixinBytecode.annotationValue(annotation, "index") instanceof Integer index
+                    ? index < arguments.length && arguments[index].equals(result)
+                    : Arrays.asList(arguments).contains(result);
+            return typed && params.length > 0 && (params[0].equals(result) || startsWith(params, arguments));
+        }
+
+        /** The call or field an injection point names, from the first instruction it matches. */
+        private static Site site(AnnotationNode point, List<MethodNode> methods) {
+            String kind = String.valueOf(MixinBytecode.annotationValue(point, "value"));
+            if (!(MixinBytecode.annotationValue(point, "target") instanceof String reference)) return null;
+            for (MethodNode method : methods) {
+                for (AbstractInsnNode instruction : method.instructions) {
+                    Site site = matches(kind, reference, instruction) ? Site.of(instruction) : null;
+                    if (site != null) return site;
+                }
+            }
+            return null;
+        }
+
+        /** What a call or field access hands a handler: its receiver (null when static), arguments and result. */
+        private record Site(Type receiver, Type[] arguments, Type result) {
+            static Site of(AbstractInsnNode instruction) {
+                if (instruction instanceof MethodInsnNode call) {
+                    return new Site(call.getOpcode() == Opcodes.INVOKESTATIC ? null : Type.getObjectType(call.owner),
+                            Type.getArgumentTypes(call.desc), Type.getReturnType(call.desc));
+                }
+                if (instruction instanceof FieldInsnNode field) {
+                    int opcode = field.getOpcode();
+                    boolean isStatic = opcode == Opcodes.GETSTATIC || opcode == Opcodes.PUTSTATIC;
+                    boolean read = opcode == Opcodes.GETFIELD || opcode == Opcodes.GETSTATIC;
+                    Type type = Type.getType(field.desc);
+                    return new Site(isStatic ? null : Type.getObjectType(field.owner),
+                            read ? new Type[0] : new Type[] {type}, read ? type : Type.VOID_TYPE);
+                }
+                return null;
+            }
+
+            Type[] values() {
+                if (receiver == null) return arguments;
+                Type[] values = new Type[arguments.length + 1];
+                values[0] = receiver;
+                System.arraycopy(arguments, 0, values, 1, arguments.length);
+                return values;
             }
         }
 
@@ -168,6 +251,7 @@ final class MixinTargetAuditTest {
         }
 
         private static boolean startsWith(Type[] params, Type[] prefix) {
+            if (params.length < prefix.length) return false;
             for (int index = 0; index < prefix.length; index++) {
                 if (!params[index].equals(prefix[index])) return false;
             }
