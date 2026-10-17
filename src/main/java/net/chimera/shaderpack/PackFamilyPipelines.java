@@ -175,7 +175,7 @@ public final class PackFamilyPipelines {
     /** The host vertex format a host-layout contract draws on. */
     public static VertexFormat hostLayoutFormat(FamilyAdapterPlan.VertexContract contract) {
         return switch (contract) {
-            case HOST_LINE -> DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH;
+            case HOST_LINE -> DefaultVertexFormat.POSITION_COLOR_NORMAL;
             case HOST_GLINT -> DefaultVertexFormat.POSITION_TEX;
             case HOST_LIGHTNING -> DefaultVertexFormat.POSITION_COLOR;
             case HOST_BEACON -> DefaultVertexFormat.BLOCK;

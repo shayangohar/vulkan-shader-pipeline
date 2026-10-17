@@ -5,6 +5,7 @@ import net.chimera.mixin.ChimeraRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraSkyBridge;
+import net.chimera.render.shader.FamilyRenderType;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.GeometryOutputPlan;
@@ -19,6 +20,7 @@ import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.TargetSpec;
+import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
@@ -42,6 +44,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 import static org.lwjgl.vulkan.VK10.*;
@@ -426,6 +429,22 @@ public final class ChimeraMainPass implements MainPass {
 
     public PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
         return pipelines.particlePipeline(family);
+    }
+
+    /**
+     * The pack outputs a lane's draws need a window for, or null when they draw into the pass as it
+     * is: the lane writes only target 0, or the shadow pass owns the attachments.
+     */
+    public GeometryOutputPlan laneWindowOutputs(ChimeraEntityBridge.Family lane) {
+        GeometryOutputPlan outputs = pipelines.laneOutputs(lane);
+        return outputs != null && outputs.requiresDynamicAttachments() && !shadowPass.shadowPassActive
+                ? outputs : null;
+    }
+
+    /** Draws buffered family batches inside their lanes' pack windows (FamilyBufferSource). */
+    public void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
+                                  Consumer<RenderType> discard) {
+        windows.drawFamilyBatches(batches, draw, discard);
     }
 
     public boolean beginPackFamilyWindow(PackPipelines.PackEntity family) {

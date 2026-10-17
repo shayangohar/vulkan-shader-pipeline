@@ -140,7 +140,7 @@ final class UniformCatalog {
         addLive(specs, "Light0_Direction", "vec3");
         addLive(specs, "Light1_Direction", "vec3");
         addLive(specs, "ColorModulator", "vec4");
-        addLive(specs, "ModelOffset", "vec3");
+        addLive(specs, "LineWidth", "float");
         addLive(specs, "ChunkOffset", "vec3");
         addLive(specs, "UseRgss", "int");
         addLive(specs, "CurrentTime", "int");

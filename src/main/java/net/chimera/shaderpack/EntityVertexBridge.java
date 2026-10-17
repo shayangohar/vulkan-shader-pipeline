@@ -147,7 +147,7 @@ public final class EntityVertexBridge {
                 GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
-    /** Converts the block-entity variant, which uses the host ModelOffset field. */
+    /** Converts the block-entity variant: block entities draw posed, on the entity inputs. */
     public static LegacyGlslConverter.TerrainVertexConversion convertBlockVertex(
             String source,
             Path sourceFile,
@@ -166,7 +166,7 @@ public final class EntityVertexBridge {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, List.of());
+                GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, List.of());
     }
 
     /** Block vertex conversion that reports the first concrete failure. */
@@ -193,7 +193,7 @@ public final class EntityVertexBridge {
             VertexSamplerPlan samplerPlan
     ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
+                GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
     /** Hand models use the real entity inputs; held items/maps get layout variants at build time. */
@@ -893,8 +893,6 @@ public final class EntityVertexBridge {
         String contract = converted == null ? null
                 : converted.contains(GlslVertexPreambles.HAND_VERTEX_PREAMBLE)
                         ? GlslVertexPreambles.HAND_VERTEX_PREAMBLE
-                : converted.contains(GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE)
-                        ? GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE
                 : converted.contains(GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE)
                         ? GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE : null;
         if (contract == null) {

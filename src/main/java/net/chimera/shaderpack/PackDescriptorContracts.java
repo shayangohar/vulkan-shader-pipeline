@@ -114,7 +114,7 @@ final class PackDescriptorContracts {
                         VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(
                         new PackDescriptorLayout.Field("mat4", "ModelViewMat"),
                         new PackDescriptorLayout.Field("vec4", "ColorModulator"),
-                        new PackDescriptorLayout.Field("vec3", "ModelOffset"),
+                        new PackDescriptorLayout.Field("float", "LineWidth"),
                         new PackDescriptorLayout.Field("mat4", "TextureMat"))),
                 new PackDescriptorLayout.UniformBlock(UniformRegistry.PROJECTION_BINDING,
                         VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(new PackDescriptorLayout.Field("mat4", "ProjMat")))));

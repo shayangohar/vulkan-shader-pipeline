@@ -172,12 +172,15 @@ final class GlslVertexPreambles {
     static final String SHADOW_VERTEX_PREAMBLE = TERRAIN_VERTEX_PREAMBLE
             .replace("mat4 LightMVP;\n", "");
 
-    /** Host entity transform blocks and the append-only EXTENDED_ENTITY inputs. */
+    /**
+     * Host transform blocks and the append-only EXTENDED_ENTITY inputs. Every value is the host's
+     * (RenderSystem state through VulkanMod's uniform suppliers); LineWidth serves the line lane.
+     */
     static final String ENTITY_VERTEX_PREAMBLE = """
             layout(binding = 0) uniform DynamicTransforms {
                 mat4 ModelViewMat;
                 vec4 ColorModulator;
-                vec3 ModelOffset;
+                float LineWidth;
                 mat4 TextureMat;
             };
 
@@ -292,11 +295,7 @@ final class GlslVertexPreambles {
 
             """;
 
-    /** Block entities use the host block shader's camera-relative offset. */
-    static final String BLOCK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("return vec4(Position, 1.0);", "return vec4(Position + ModelOffset, 1.0);");
-
-    static final String CRUMBLING_VERTEX_PREAMBLE = BLOCK_VERTEX_PREAMBLE
+    static final String CRUMBLING_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
             .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
@@ -331,7 +330,7 @@ final class GlslVertexPreambles {
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /**
-     * DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, drawn as quads. Iris supplies the
+     * DefaultVertexFormat.POSITION_COLOR_NORMAL, each segment drawn as a quad. Iris supplies the
      * missing inputs as for any host format: UV0 (0.5, 0.5) and full light (240, 240). The
      * line offset is zero except while {@link #prepareLineVertex} widens a fallback program.
      */
@@ -340,7 +339,6 @@ final class GlslVertexPreambles {
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 2) in vec3 Normal;\n"
-                    + "layout(location = 3) in float LineWidth;\n"
                     + "#define chimeraLineWidth LineWidth\n"
                     + "#define chimeraLineDirection Normal\n"
                     + "#define chimeraLineVertexIndex gl_VertexIndex")
@@ -623,12 +621,11 @@ final class GlslVertexPreambles {
 
     /**
      * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud faces (PackCloudRenderer
-     * decodes them into DefaultVertexFormat.POSITION_COLOR_NORMAL), gl_Vertex with the frame's
-     * CloudOffset added (the draw carries it in ModelOffset), the face colour times the cloud colour
-     * (ColorModulator), the face's axis normal, UV0 (0.5, 0.5) and full light (240, 240).
+     * decodes them into DefaultVertexFormat.POSITION_COLOR_NORMAL), gl_Vertex in the cloud mesh's
+     * own space (the draw's model view carries the cloud offset), the face colour times the cloud
+     * colour (ColorModulator), the face's axis normal, UV0 (0.5, 0.5) and full light (240, 240).
      */
     static final String CLOUD_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("return vec4(Position, 1.0);", "return vec4(Position + ModelOffset, 1.0);")
             .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")

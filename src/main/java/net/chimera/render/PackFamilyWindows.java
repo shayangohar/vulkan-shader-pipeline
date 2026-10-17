@@ -1,12 +1,19 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.FamilyRenderType;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.GeometryOutputPlan;
 import net.chimera.shaderpack.PackPipelines;
+import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -20,6 +27,38 @@ final class PackFamilyWindows {
 
     PackFamilyWindows(ChimeraMainPass pass) {
         this.pass = pass;
+    }
+
+    /**
+     * Draws family batches in order inside the pack windows their lanes write, one window per run
+     * of consecutive batches with the same outputs. A run whose window cannot open is discarded:
+     * its widened meshes have no host program to fall back to.
+     */
+    void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
+                           Consumer<RenderType> discard) {
+        int start = 0;
+        while (start < batches.size()) {
+            GeometryOutputPlan outputs = pass.laneWindowOutputs(batches.get(start).family());
+            int end = start + 1;
+            while (end < batches.size()
+                    && Objects.equals(pass.laneWindowOutputs(batches.get(end).family()), outputs)) end++;
+            List<FamilyRenderType> run = batches.subList(start, end);
+            for (FamilyRenderType batch : run) {
+                pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(batch.family(), batch.format()));
+            }
+            if (outputs != null && !beginPackFamilyWindow(outputs)) {
+                run.forEach(discard);
+            } else {
+                // Rendering reopens inside the window before the first batch draws.
+                if (outputs != null) pass.rebindMainTarget();
+                try {
+                    run.forEach(draw);
+                } finally {
+                    if (outputs != null) endPackFamilyWindow(outputs);
+                }
+            }
+            start = end;
+        }
     }
 
     /**

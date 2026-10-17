@@ -5,7 +5,7 @@ import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import net.chimera.mixin.ChimeraGameRendererHandAccess;
-import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.FamilyBufferSource;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -37,7 +37,8 @@ public final class ChimeraHandRenderer implements AutoCloseable {
      * the second ends the first ("Not building!").
      */
     private final SequencedMap<RenderType, ByteBufferBuilder> fixed = fixedBuffers();
-    private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediateWithBuffers(fixed, vertices);
+    private final FamilyBufferSource buffers =
+            new FamilyBufferSource(MultiBufferSource.immediateWithBuffers(fixed, vertices));
 
     public static void beginFrame() { diverted = false; }
     public static boolean diverted() { return diverted; }
@@ -103,29 +104,20 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         RenderSystem.backupProjectionMatrix();
         modelView.pushMatrix();
         translucentPhase = translucent;
-        boolean draw = false;
         try {
             RenderSystem.setProjectionMatrix(projection, VertexSorting.DISTANCE_TO_ORIGIN);
             modelView.set(bob.last().pose());
             RenderSystem.applyModelViewMatrix();
-            draw = ChimeraEntityBridge.beginHandDraw(translucent);
-            if (!draw) throw new IllegalStateException("installed hand schedule lost its family pipeline");
             game.lightTexture().turnOnLightLayer();
             game.itemInHandRenderer.renderHandsWithItems(tick, new PoseStack(), buffers, player,
                     minecraft.getEntityRenderDispatcher().getPackedLightCoords(player, tick));
             game.lightTexture().turnOffLightLayer();
-            // Item and model layers flush inside the hand scope. Glint then draws in its
-            // own lane (Iris ShaderKey.GLINT under the hand projection), over the depth
-            // those layers wrote.
-            buffers.endLastBatch();
-            for (RenderType type : fixed.keySet()) {
-                if (!isGlint(type)) buffers.endBatch(type);
-            }
-            ChimeraEntityBridge.endDraw();
-            draw = false;
+            // Hand models, items and maps draw in their pack lanes first. Glint then draws in
+            // its own lane (Iris ShaderKey.GLINT under the hand projection), over the depth
+            // they wrote.
+            buffers.endFamilyBatches();
             buffers.endBatch();
         } finally {
-            if (draw) ChimeraEntityBridge.endDraw();
             translucentPhase = null;
             modelView.popMatrix();
             RenderSystem.applyModelViewMatrix();
@@ -137,12 +129,6 @@ public final class ChimeraHandRenderer implements AutoCloseable {
         if (instance != null) { instance.close(); instance = null; }
         diverted = false;
         translucentPhase = null;
-    }
-
-    private static boolean isGlint(RenderType type) {
-        return type == RenderType.armorEntityGlint() || type == RenderType.glint()
-                || type == RenderType.glintTranslucent() || type == RenderType.entityGlint()
-                || type == RenderType.entityGlintDirect();
     }
 
     /** Vanilla RenderBuffers' fixed buffers, for any Chimera-owned source a foil item may write to. */
@@ -160,6 +146,7 @@ public final class ChimeraHandRenderer implements AutoCloseable {
     }
 
     @Override public void close() {
+        buffers.close();
         vertices.close();
         fixed.values().forEach(ByteBufferBuilder::close);
     }

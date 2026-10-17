@@ -545,7 +545,7 @@ public final class UniformRegistry {
             "FogEnvironmentalStart", "FogEnvironmentalEnd", "FogRenderDistanceStart",
             "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE, GLINT_ALPHA,
             "ScreenSize", "TextureSize", "TexelSize", "Light0_Direction", "Light1_Direction",
-            "ColorModulator", "ModelOffset", "ChunkOffset", "UseRgss", "CurrentTime", "EndPortalLayers",
+            "ColorModulator", "LineWidth", "ChunkOffset", "UseRgss", "CurrentTime", "EndPortalLayers",
             "screenSize", "textureSize", "texelSize");
 
     /**

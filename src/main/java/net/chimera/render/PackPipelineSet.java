@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.shaderpack.GeometryOutputPlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 
@@ -173,6 +174,14 @@ final class PackPipelineSet {
             case SHADOW_ENTITIES -> this.shadowEntities;
             default -> null;
         };
+    }
+
+    /** The authored outputs of a lane's installed program, or null when the lane has none. */
+    GeometryOutputPlan laneOutputs(ChimeraEntityBridge.Family family) {
+        PackPipelines.PackEntity entity = familyPipeline(family);
+        if (entity != null) return entity.outputPlan();
+        PackPipelines.PackParticle lane = particlePipeline(family);
+        return lane == null ? null : lane.outputPlan();
     }
 
     /** The selected host-particle or host-layout lane retains its own authored output contract. */

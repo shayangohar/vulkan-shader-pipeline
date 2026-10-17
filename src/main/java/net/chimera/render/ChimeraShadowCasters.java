@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import net.chimera.mixin.ChimeraLevelRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.shaderpack.ShadowCasterDirectives;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -42,7 +43,8 @@ public final class ChimeraShadowCasters implements AutoCloseable {
 
     private final ByteBufferBuilder vertices = new ByteBufferBuilder(256 * 1024);
     private final SequencedMap<RenderType, ByteBufferBuilder> fixed = ChimeraHandRenderer.fixedBuffers();
-    private final MultiBufferSource.BufferSource buffers = MultiBufferSource.immediateWithBuffers(fixed, vertices);
+    private final FamilyBufferSource buffers =
+            new FamilyBufferSource(MultiBufferSource.immediateWithBuffers(fixed, vertices));
 
     /**
      * Draws this frame's casters into the open shadow map. The light matrices are
@@ -85,6 +87,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
                 drawBlockEntities(minecraft, delta.getGameTimeDeltaPartialTick(false), !directives.blockEntities(),
                         poses, cameraX, cameraY, cameraZ);
             }
+            buffers.endFamilyBatches();
             buffers.endBatch();
         } finally {
             ChimeraEntityBridge.endShadowCasters();
@@ -171,6 +174,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
 
     @Override
     public void close() {
+        buffers.close();
         vertices.close();
         fixed.values().forEach(ByteBufferBuilder::close);
     }

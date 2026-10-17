@@ -1,113 +1,106 @@
 package net.chimera.render.shader;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.shaderpack.PackRenderingPhase;
-import net.minecraft.client.renderer.RenderPipelines;
 
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * The Iris IrisPipelines mappings Chimera serves on the host's own vertex layout, in the main
- * pass (assignToMain) and the shadow pass (assignToShadow). Each lane owns its draws at
- * RenderType.draw (ChimeraRenderTypeMixin): the host mesh, draw call and raster state stay, and
- * only the program and its targets change. This table answers which lane a draw belongs to,
- * which host pipelines and format the lane accepts, which pack program serves it, the Iris
- * rendering phase it draws in and the alpha test of its Iris ShaderKey.
+ * The Iris shader keys Chimera serves on the host's own vertex layout, in the main pass and the
+ * shadow pass (Iris MixinGameRenderer's shader overrides). Each lane owns its draws at
+ * BufferUploader.drawWithShader (ChimeraBufferUploaderMixin): the host mesh, draw call and raster
+ * state stay, and only the program and its targets change. This table answers which lane a draw
+ * belongs to by its host shader and format, which pack program serves it, the Iris rendering
+ * phase it draws in and the alpha test of its Iris ShaderKey.
  *
- * <p>Depth-only main-pass pipelines Iris also maps (DRAGON_RAYS_DEPTH to LIGHTNING, WATER_MASK to
- * BASIC) write no colour, so their host draw is equivalent and they are not main-pass lanes.
- * In the shadow pass every draw writes the shadow map, so WATER_MASK draws with SHADOW_BASIC.</p>
+ * <p>Depth-only main-pass shaders Iris also maps (the water mask, the dragon rays' depth) write no
+ * colour, so their host draw is equivalent and they are not main-pass lanes. In the shadow pass
+ * every draw writes the shadow map, so the water mask draws with SHADOW_BASIC.</p>
  */
 public enum HostLayoutLane {
-    /** Iris WEATHER: rain and snow. */
+    /** Iris WEATHER: rain and snow, drawn with the particle shader inside renderSnowAndRain. */
     WEATHER(ChimeraEntityBridge.Family.WEATHER, "gbuffers_weather", DefaultVertexFormat.PARTICLE,
-            PackRenderingPhase.RAIN_SNOW, Pass.WORLD, AlphaTest.ONE_TENTH,
-            RenderPipelines.WEATHER_DEPTH_WRITE, RenderPipelines.WEATHER_NO_DEPTH_WRITE),
+            PackRenderingPhase.RAIN_SNOW, Pass.WEATHER, AlphaTest.ONE_TENTH, "particle"),
     /** Iris LINES: block outlines, fishing lines and other line draws. */
-    LINE(ChimeraEntityBridge.Family.LINE, "gbuffers_line", DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH,
-            PackRenderingPhase.OUTLINE, Pass.WORLD, AlphaTest.OFF,
-            RenderPipelines.LINES, RenderPipelines.LINES_TRANSLUCENT, RenderPipelines.SECONDARY_BLOCK_OUTLINE),
+    LINE(ChimeraEntityBridge.Family.LINE, "gbuffers_line", DefaultVertexFormat.POSITION_COLOR_NORMAL,
+            PackRenderingPhase.OUTLINE, Pass.WORLD, AlphaTest.OFF, "rendertype_lines"),
     /** Iris GLINT in the world; Iris draws world glint inside the entity phase. */
     GLINT(ChimeraEntityBridge.Family.GLINT, "gbuffers_armor_glint", DefaultVertexFormat.POSITION_TEX,
-            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.NON_ZERO, RenderPipelines.GLINT),
+            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.NON_ZERO, Shaders.GLINT),
     /** First-person glint: the same program under the hand projection. */
     HAND_GLINT(ChimeraEntityBridge.Family.HAND_GLINT, "gbuffers_armor_glint", DefaultVertexFormat.POSITION_TEX,
-            PackRenderingPhase.HAND_SOLID, Pass.HAND, AlphaTest.NON_ZERO, RenderPipelines.GLINT),
+            PackRenderingPhase.HAND_SOLID, Pass.HAND, AlphaTest.NON_ZERO, Shaders.GLINT),
     /** Iris LIGHTNING: lightning bolts and dragon death rays. */
     LIGHTNING(ChimeraEntityBridge.Family.LIGHTNING, "gbuffers_lightning", DefaultVertexFormat.POSITION_COLOR,
-            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, RenderPipelines.LIGHTNING,
-                    RenderPipelines.DRAGON_RAYS),
+            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, "rendertype_lightning"),
     /** Iris BEACON: beacon and end gateway beams. */
     BEACON_BEAM(ChimeraEntityBridge.Family.BEACON_BEAM, "gbuffers_beaconbeam", DefaultVertexFormat.BLOCK,
-            PackRenderingPhase.BLOCK_ENTITIES, Pass.WORLD, AlphaTest.OFF,
-            RenderPipelines.BEACON_BEAM_OPAQUE, RenderPipelines.BEACON_BEAM_TRANSLUCENT),
+            PackRenderingPhase.BLOCK_ENTITIES, Pass.WORLD, AlphaTest.OFF, "rendertype_beacon_beam"),
     /** Iris LEASH: leads, drawn with gbuffers_basic. */
     LEASH(ChimeraEntityBridge.Family.LEASH, "gbuffers_basic", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
-            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, RenderPipelines.LEASH),
+            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, "rendertype_leash"),
     /** Iris TEXT_BG: text and name-tag backgrounds, with gbuffers_entities_translucent's chain. */
     TEXT_BG(ChimeraEntityBridge.Family.TEXT_BG, "text_bg", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
-            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.ONE_TENTH,
-            RenderPipelines.TEXT_BACKGROUND, RenderPipelines.TEXT_BACKGROUND_SEE_THROUGH),
+            PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.ONE_TENTH, Shaders.TEXT_BACKGROUND),
     /*
-     * The shadow pass. Iris ShadowRenderer holds the ENTITIES phase while it draws entity and
-     * block-entity features, so every shadow lane reports it. Iris assigns no shadow key to
-     * LINES_TRANSLUCENT, DRAGON_RAYS or TEXT_INTENSITY (its intensity swizzle is a GL texture
-     * state) and cancels beacon beams; those draws stay out of the shadow map.
+     * The shadow pass. Iris ShadowRenderer holds the ENTITIES phase while it draws entities and
+     * block entities, so every shadow lane reports it. Iris assigns no shadow key to text intensity
+     * (its swizzle is a GL texture state) and cancels beacon beams; those draws stay out of the
+     * shadow map.
      */
     /** Iris SHADOW_LINES: fishing lines and hitboxes, the shadow program widened like gbuffers_basic. */
-    SHADOW_LINES(ChimeraEntityBridge.Family.SHADOW_LINES, "shadow_lines",
-            DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, PackRenderingPhase.ENTITIES, Pass.SHADOW,
-            AlphaTest.OFF, RenderPipelines.LINES, RenderPipelines.SECONDARY_BLOCK_OUTLINE),
+    SHADOW_LINES(ChimeraEntityBridge.Family.SHADOW_LINES, "shadow_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
+            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, "rendertype_lines"),
     /** Iris SHADOW_LEASH: leads. */
     SHADOW_LEASH(ChimeraEntityBridge.Family.SHADOW_LEASH, "shadow_leash", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, RenderPipelines.LEASH),
+            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, "rendertype_leash"),
     /** Iris SHADOW_LIGHTNING: lightning bolts, through shadow_lightning, shadow_entities and shadow. */
     SHADOW_LIGHTNING(ChimeraEntityBridge.Family.SHADOW_LIGHTNING, "shadow_lightning",
-            DefaultVertexFormat.POSITION_COLOR,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, RenderPipelines.LIGHTNING),
+            DefaultVertexFormat.POSITION_COLOR, PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF,
+            "rendertype_lightning"),
     /** Iris GLINT -> SHADOW_ENTITIES_CUTOUT: glint layers on items already in the map. */
     SHADOW_GLINT(ChimeraEntityBridge.Family.SHADOW_GLINT, "shadow_glint", DefaultVertexFormat.POSITION_TEX,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.ONE_TENTH, RenderPipelines.GLINT),
+            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.ONE_TENTH, Shaders.GLINT),
     /** Iris SHADOW_TEXT: sign text, text displays and name tags. */
     SHADOW_TEXT(ChimeraEntityBridge.Family.SHADOW_TEXT, "shadow_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO,
-            RenderPipelines.TEXT, RenderPipelines.TEXT_POLYGON_OFFSET, RenderPipelines.TEXT_SEE_THROUGH),
+            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO, "rendertype_text",
+            "rendertype_text_see_through"),
     /** Iris SHADOW_TEXT_BG: text and name tag backgrounds. */
     SHADOW_TEXT_BG(ChimeraEntityBridge.Family.SHADOW_TEXT_BG, "shadow_text_bg",
-            DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO,
-            RenderPipelines.TEXT_BACKGROUND, RenderPipelines.TEXT_BACKGROUND_SEE_THROUGH),
-    /** Iris SHADOW_BASIC: the boat water mask, depth only like its host pipeline. */
+            DefaultVertexFormat.POSITION_COLOR_LIGHTMAP, PackRenderingPhase.ENTITIES, Pass.SHADOW,
+            AlphaTest.NON_ZERO, Shaders.TEXT_BACKGROUND),
+    /** Iris SHADOW_BASIC: the boat water mask, depth only like its host shader. */
     SHADOW_BASIC(ChimeraEntityBridge.Family.SHADOW_BASIC, "shadow_basic", DefaultVertexFormat.POSITION,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, RenderPipelines.WATER_MASK);
+            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, "rendertype_water_mask");
+
+    /** The 1.21.1 shaders several lanes share. */
+    private static final class Shaders {
+        static final String[] GLINT = {"rendertype_glint", "rendertype_glint_translucent", "rendertype_entity_glint",
+                "rendertype_entity_glint_direct", "rendertype_armor_entity_glint"};
+        static final String[] TEXT_BACKGROUND = {"rendertype_text_background",
+                "rendertype_text_background_see_through"};
+    }
 
     /** Where a lane's draws happen. */
     public enum Pass {
         WORLD,
+        /** LevelRenderer.renderSnowAndRain. */
+        WEATHER,
         /** First person: drawn under the hand projection, only while the hand renders. */
         HAND,
         /** The pack shadow pass's caster window (ChimeraShadowCasters). */
-        SHADOW;
-
-        /** The pass a host draw belongs to now. */
-        public static Pass current() {
-            if (ChimeraEntityBridge.isShadowCasterPass()) return SHADOW;
-            return ChimeraHandRenderer.active() ? HAND : WORLD;
-        }
+        SHADOW
     }
 
     /** Iris AlphaTests of the lane's ShaderKey. */
     private enum AlphaTest {
         OFF(0.0F),
-        /** NON_ZERO_ALPHA: GREATER 0.0001. */
-        NON_ZERO(0.0001F),
-        /** ONE_TENTH_ALPHA: GREATER 0.1. */
-        ONE_TENTH(0.1F);
+        NON_ZERO(HostAlphaTest.NON_ZERO_ALPHA),
+        ONE_TENTH(HostAlphaTest.ONE_TENTH_ALPHA);
 
         private final float reference;
 
@@ -122,17 +115,17 @@ public enum HostLayoutLane {
     private final PackRenderingPhase phase;
     private final Pass pass;
     private final AlphaTest alphaTest;
-    private final List<RenderPipeline> pipelines;
+    private final List<String> shaders;
 
     HostLayoutLane(ChimeraEntityBridge.Family family, String program, VertexFormat format,
-                   PackRenderingPhase phase, Pass pass, AlphaTest alphaTest, RenderPipeline... pipelines) {
+                   PackRenderingPhase phase, Pass pass, AlphaTest alphaTest, String... shaders) {
         this.family = family;
         this.program = program;
         this.format = format;
         this.phase = phase;
         this.pass = pass;
         this.alphaTest = alphaTest;
-        this.pipelines = List.of(pipelines);
+        this.shaders = List.of(shaders);
     }
 
     public ChimeraEntityBridge.Family family() {
@@ -148,8 +141,9 @@ public enum HostLayoutLane {
         return format;
     }
 
-    public List<RenderPipeline> pipelines() {
-        return pipelines;
+    /** The host shaders, by name, whose draws this lane takes. */
+    public List<String> shaders() {
+        return shaders;
     }
 
     public Pass pass() {
@@ -175,15 +169,10 @@ public enum HostLayoutLane {
         return !format.contains(VertexFormatElement.UV0);
     }
 
-    /** True for a host pipeline of this lane drawing on the lane's host format. */
-    public boolean serves(RenderPipeline pipeline) {
-        return pipeline != null && pipelines.contains(pipeline) && pipeline.getVertexFormat() == format;
-    }
-
     /** The lane that owns a host draw in a pass, or null when the draw keeps its host program. */
-    public static HostLayoutLane forDraw(RenderPipeline pipeline, VertexFormat format, Pass pass) {
+    public static HostLayoutLane forDraw(String shader, VertexFormat format, Pass pass) {
         for (HostLayoutLane lane : values()) {
-            if (lane.pass == pass && lane.format == format && lane.pipelines.contains(pipeline)) {
+            if (lane.pass == pass && lane.format == format && lane.shaders.contains(shader)) {
                 return lane;
             }
         }

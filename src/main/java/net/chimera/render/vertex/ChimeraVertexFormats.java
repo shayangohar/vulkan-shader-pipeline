@@ -146,6 +146,11 @@ public final class ChimeraVertexFormats {
         return Collections.unmodifiableMap(formats);
     }
 
+    /** True for a widened format only a family lane writes: no host program reads its layout. */
+    public static boolean isFamilyFormat(VertexFormat format) {
+        return format == EXTENDED_ENTITY || HAND_FORMATS.containsValue(format);
+    }
+
     /** True for a format whose normal Chimera computes per quad because the host writes none. */
     public static boolean computesNormal(VertexFormat format) {
         return format == EXTENDED_GLYPH;
