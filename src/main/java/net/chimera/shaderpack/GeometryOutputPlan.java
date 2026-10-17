@@ -12,12 +12,17 @@ import java.util.regex.Pattern;
  * Immutable color-output contract for a geometry family.  Terrain and water
  * use the same legacy DRAWBUFFERS/RENDERTARGETS vocabulary as post programs,
  * but they do not participate in the post execution order.
+ *
+ * <p>{@code snapshotTargets} are outputs the program also samples. Iris lets a gbuffer program
+ * read the target it draws into; Vulkan cannot sample an attachment inside its render pass, so
+ * the program reads a copy of each taken as its window opens.
  */
 public record GeometryOutputPlan(
         String programName,
         PostTargetPlan targetPlan,
         List<String> deviations,
-        boolean executable
+        boolean executable,
+        List<Integer> snapshotTargets
 ) {
     private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
             "(?m)^\\s*#define\\s+DRAWBUFFERS([0-9]+)\\s*$");
@@ -27,11 +32,17 @@ public record GeometryOutputPlan(
     public GeometryOutputPlan {
         programName = programName == null ? "" : programName;
         deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        snapshotTargets = snapshotTargets == null ? List.of() : List.copyOf(snapshotTargets);
     }
 
     public static GeometryOutputPlan empty(String programName) {
         PostTargetPlan plan = PostTargetPlan.parse(programName, "", Map.of()).plan();
-        return new GeometryOutputPlan(programName, plan, List.of(), true);
+        return new GeometryOutputPlan(programName, plan, List.of(), true, List.of());
+    }
+
+    /** This plan, with the outputs the program also samples. */
+    public GeometryOutputPlan withSnapshotTargets(List<Integer> targets) {
+        return new GeometryOutputPlan(programName, targetPlan, deviations, executable, targets);
     }
 
     public static GeometryOutputPlan parse(
@@ -104,7 +115,7 @@ public record GeometryOutputPlan(
                 .distinct().sorted().toList();
         boolean executable = parsed.plan().executable()
                 && deviations.stream().noneMatch(value -> value.startsWith("GEOMETRY_"));
-        return new GeometryOutputPlan(parsed.plan().programName(), parsed.plan(), deviations, executable);
+        return new GeometryOutputPlan(parsed.plan().programName(), parsed.plan(), deviations, executable, List.of());
     }
 
     private static List<List<Integer>> routes(String source) {

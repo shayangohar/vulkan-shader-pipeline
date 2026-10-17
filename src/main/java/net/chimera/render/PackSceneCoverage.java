@@ -84,7 +84,8 @@ final class PackSceneCoverage {
             List<Integer> outputs = terrain.outputPlan().targetSlots();
             VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
             Renderer.getInstance().endRenderPass();
-            pass.packPostTargets.beginGeometry(Renderer.getCommandBuffer(), hdrColor, outputs);
+            pass.packPostTargets.beginGeometry(Renderer.getCommandBuffer(), hdrColor, outputs,
+                    terrain.outputPlan().snapshotTargets());
             PackGeometryContext.beginGeometry(
                     pass.packPostTargets.geometryAttachments(outputs),
                     pass.targets.hdrFramebuffer.getDepthAttachment());

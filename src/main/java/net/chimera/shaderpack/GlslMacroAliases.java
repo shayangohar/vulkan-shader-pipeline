@@ -130,7 +130,11 @@ final class GlslMacroAliases {
             if (define.matches()) {
                 String target = aliases.getOrDefault(define.group(2), define.group(2));
                 aliases.remove(define.group(1));
-                if (samplers.contains(target) && !define.group(1).equals(target)) {
+                // Either way round: an alias of a declared sampler, or a declaration through the
+                // macro (Photon declares `uniform sampler2D DEBUG_SAMPLER` with DEBUG_SAMPLER
+                // defined as colortex1), which the preprocessor expands before anything reads it.
+                boolean samplerAlias = samplers.contains(target) || samplers.contains(define.group(1));
+                if (samplerAlias && !define.group(1).equals(target)) {
                     aliases.put(define.group(1), target);
                     drop[line] = true;
                     changed = true;
