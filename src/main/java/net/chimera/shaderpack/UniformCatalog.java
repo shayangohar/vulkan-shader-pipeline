@@ -86,7 +86,7 @@ final class UniformCatalog {
         addLive(specs, "rainfall", "float");
         addDefault(specs, "centerDepthSmooth", "float");
         addDefault(specs, "entityColor", "vec4");
-        addDefault(specs, "lightningBoltPosition", "vec4");
+        addLive(specs, "lightningBoltPosition", "vec4");
         addDefault(specs, "blockEntityId", "int");
         addDefault(specs, "currentRenderedItemId", "int");
         addDefault(specs, "entityId", "int");

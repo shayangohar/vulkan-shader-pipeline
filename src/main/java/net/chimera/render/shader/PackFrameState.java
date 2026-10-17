@@ -14,16 +14,19 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.material.FogType;
+import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -78,6 +81,8 @@ final class PackFrameState {
     private final Vector3f upPosition = new Vector3f(0.0f, 1.0f, 0.0f);
     private final Vector3f skyColor = new Vector3f(0.0f, 0.0f, 0.0f);
     private final Vector3f sunLightVector = new Vector3f(0.0f, 1.0f, 0.0f);
+    /** A lightning bolt the level renders, from the camera; w is 1 while there is one. */
+    private final float[] lightningBoltPosition = new float[4];
     private final IrisPlayerState irisPlayer = new IrisPlayerState();
     private final HeldItemState heldItems = new HeldItemState();
     /** The shadow caster rotation for the same light, as Iris builds it; its Z is sunLightVector. */
@@ -226,8 +231,7 @@ final class PackFrameState {
         vector(table, shadowLightPosition, "shadowLightPosition");
         vector(table, upPosition, "upPosition");
         vector(table, skyColor, "skyColor");
-        // Defaulted: no bolt, as the uniform itself serves.
-        vector(table, 4, component -> 0.0, "lightningBoltPosition");
+        floats(table, lightningBoltPosition, "lightningBoltPosition");
         ints(table, eyeBrightness, "eyeBrightness");
         ints(table, eyeBrightnessSmooth, "eyeBrightnessSmooth");
         ints(table, atlasSize, "atlasSize");
@@ -630,6 +634,7 @@ final class PackFrameState {
         rainStrength = clamp(level.getRainLevel(partialTick), 0.0f, 1.0f);
         thunderStrength = clamp(level.getThunderLevel(partialTick), 0.0f, 1.0f);
         captureCelestial(level, camera, partialTick);
+        captureLightningBolt(level, camera, partialTick);
         dimension = dimensionOrdinal(level);
         bedrockLevel = level.dimensionType().minY();
         heightLimit = level.dimensionType().height();
@@ -670,6 +675,21 @@ final class PackFrameState {
         }
         eyeBrightnessSmooth[0] = (int) eyeBrightnessBlockSmooth;
         eyeBrightnessSmooth[1] = (int) eyeBrightnessSkySmooth;
+    }
+
+    /** Iris IrisExclusiveUniforms.lightningBoltPosition: the first bolt the level renders, or zero. */
+    private void captureLightningBolt(ClientLevel level, Camera camera, float partialTick) {
+        Arrays.fill(lightningBoltPosition, 0.0f);
+        for (Entity entity : level.entitiesForRendering()) {
+            if (entity instanceof LightningBolt bolt) {
+                Vec3 at = bolt.getPosition(partialTick).subtract(camera.getPosition());
+                lightningBoltPosition[0] = (float) at.x;
+                lightningBoltPosition[1] = (float) at.y;
+                lightningBoltPosition[2] = (float) at.z;
+                lightningBoltPosition[3] = 1.0f;
+                return;
+            }
+        }
     }
 
     /**
@@ -922,6 +942,7 @@ final class PackFrameState {
         skyColor.set(0.0f, 0.0f, 0.0f);
         sunLightVector.set(0.0f, 1.0f, 0.0f);
         shadowLightRotation.identity().rotateX((float) Math.toRadians(90.0));
+        Arrays.fill(lightningBoltPosition, 0.0f);
     }
 
     private void resetTemporalState() {

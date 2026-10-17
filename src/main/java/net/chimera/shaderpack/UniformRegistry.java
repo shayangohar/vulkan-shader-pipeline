@@ -571,8 +571,7 @@ public final class UniformRegistry {
      * The engine vectors and matrices the host serves to custom-value expressions component by
      * component, so {@code eyeBrightness.y} or {@code gbufferModelViewInverse.2.1} resolves to
      * something the host actually reads. A component of any other name is a declaration error
-     * rather than a zero. {@code lightningBoltPosition} is defaulted, so its components are the
-     * default's.
+     * rather than a zero.
      */
     private static final Set<String> COMPONENT_INPUTS = Set.of(
             "eyeBrightness", "eyeBrightnessSmooth", "atlasSize",
