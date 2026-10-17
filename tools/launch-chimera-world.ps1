@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$PrismPath = (Join-Path $env:LOCALAPPDATA "Programs\PrismLauncher\prismlauncher.exe"),
-    [string]$InstanceId = "CHIMERA",
+    [string]$InstanceId = "Chimera NeoForge 1.21.1",
     [string]$WorldName = "Chimera Dev",
     [int]$ReadyTimeoutSeconds = 180
 )

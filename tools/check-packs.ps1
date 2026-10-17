@@ -1,5 +1,6 @@
 <#
-Runs Gradle with the CHIMERA instance's locked shader packs as test inputs.
+Runs Gradle with the 'Chimera NeoForge 1.21.1' instance's locked shader packs as test inputs.
+The frozen Fabric 1.21.11 line (CHIMERA instance) runs from the fabric/1.21.11 branch.
 
   .\tools\check-packs.ps1                          the full gate: check build
   .\tools\check-packs.ps1 packTest                 one task
@@ -11,7 +12,7 @@ Every value becomes a -Pchimera.* property, which build.gradle passes to the tes
 #>
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$PackRoot = (Join-Path $env:APPDATA 'PrismLauncher\instances\CHIMERA\minecraft\shaderpacks'),
+    [string]$PackRoot = (Join-Path $env:APPDATA 'PrismLauncher\instances\Chimera NeoForge 1.21.1\minecraft\shaderpacks'),
     [string]$ComplementaryVersion = '',
     [string]$BslVersion = '',
     [hashtable]$Evidence = @{},
