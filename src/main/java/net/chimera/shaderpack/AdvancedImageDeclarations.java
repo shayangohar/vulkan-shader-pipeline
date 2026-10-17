@@ -297,7 +297,7 @@ final class AdvancedImageDeclarations {
     static boolean hasBlockingComputeDeviation(List<String> deviations) {
         return deviations.stream().anyMatch(value ->
                 value == null
-                        || (!value.startsWith("PREPROCESSOR_MACRO_REDEFINED:")
+                        || (!ShaderSourcePreprocessor.isWarning(value)
                         && !value.startsWith("COMPUTE_UNIFORM_DEFAULTED:")
                         && !value.startsWith("COMPUTE_UNIFORM_LIVE:")
                         && !value.startsWith("COMPUTE_UNIFORM_UNUSED:")

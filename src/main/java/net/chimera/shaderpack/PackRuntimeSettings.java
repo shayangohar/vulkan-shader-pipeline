@@ -115,6 +115,10 @@ public final class PackRuntimeSettings {
         Map<String, Declaration> byName = declarationsByName(declarations);
         Map<String, ParsedValue> parsed = new TreeMap<>();
         Set<String> rejected = new TreeSet<>();
+        // Iris logs a value it cannot parse and declares nothing, so a program that reads the
+        // name runs with it unset (zero). Bliss's `uniform.float.sandStorm = 0.0;` is one: its
+        // dependents are still refused, but shaders see the name as Iris leaves it.
+        Set<String> dropped = new TreeSet<>();
         // A declared value types every reference to it; anything else is the host's input.
         PackExpression.Widths widths = name -> {
             Declaration declared = byName.get(name);
@@ -125,6 +129,7 @@ public final class PackRuntimeSettings {
             if (compiled.refusal() != null) {
                 result.add(compiled.refusal());
                 rejected.add(declaration.name());
+                if (compiled.refusal().startsWith(PackExpression.SYNTAX + ":")) dropped.add(declaration.name());
             } else {
                 parsed.put(declaration.name(), new ParsedValue(declaration, compiled.program()));
             }
@@ -136,8 +141,11 @@ public final class PackRuntimeSettings {
         for (String name : parsed.keySet()) {
             resolve(name, parsed, rejected, visiting, resolved, order, result);
         }
+        Set<String> refusedToShaders = new TreeSet<>(rejected);
+        refusedToShaders.removeAll(dropped);
         return new PackRuntimeSettings(wetnessRise, wetnessFall, eyeBrightness,
-                orderedValues(order, parsed, rejected), rejectedDescriptors(rejected, byName), rejected, result);
+                orderedValues(order, parsed, rejected), rejectedDescriptors(refusedToShaders, byName),
+                rejected, result);
     }
 
     /** The non-null declarations by name; a later declaration of a name replaces the earlier one. */

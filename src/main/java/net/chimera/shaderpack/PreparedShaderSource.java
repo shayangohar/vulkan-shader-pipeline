@@ -25,6 +25,6 @@ public record PreparedShaderSource(
         return source != null && deviations.stream().noneMatch(value ->
                 value.startsWith("SOURCE_")
                         || (value.startsWith("PREPROCESSOR_")
-                        && !value.startsWith("PREPROCESSOR_MACRO_REDEFINED:")));
+                        && !ShaderSourcePreprocessor.isWarning(value)));
     }
 }

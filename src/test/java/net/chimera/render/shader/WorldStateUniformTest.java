@@ -346,7 +346,7 @@ final class WorldStateUniformTest {
 
         assertRejected("sinh(frameTime)", "CUSTOM_EXPRESSION_UNKNOWN_FUNCTION");
         assertRejected("smooth(1, 2)", "CUSTOM_EXPRESSION_ARITY");
-        assertRejected("frameTime +", "CUSTOM_EXPRESSION_UNSUPPORTED");
+        assertRejected("frameTime +", "CUSTOM_EXPRESSION_SYNTAX");
     }
 
     /** One frame of a smoothing chain, for the values the packs write. */

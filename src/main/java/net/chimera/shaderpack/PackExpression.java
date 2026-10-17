@@ -163,6 +163,9 @@ public final class PackExpression {
         return new Program(text.trim(), root, parser.dependencies(), parser.smoothSites());
     }
 
+    /** The code of a declaration that does not parse: Iris cannot parse it either, and drops it. */
+    public static final String SYNTAX = "CUSTOM_EXPRESSION_SYNTAX";
+
     /** A declaration the language cannot compile, with the code the report carries. */
     public static final class Unsupported extends RuntimeException {
         private final String code;
@@ -516,7 +519,7 @@ public final class PackExpression {
             Node result = conditional();
             skip();
             if (this.index != this.source.length()) {
-                throw new Unsupported("CUSTOM_EXPRESSION_UNSUPPORTED",
+                throw new Unsupported(SYNTAX,
                         this.source.substring(this.index));
             }
             if (result.width() == MATRIX_WIDTH) {
@@ -855,7 +858,7 @@ public final class PackExpression {
                 return Double.parseDouble(this.source.substring(start, this.index)
                         .replace("f", "").replace("F", ""));
             } catch (NumberFormatException failure) {
-                throw new Unsupported("CUSTOM_EXPRESSION_UNSUPPORTED",
+                throw new Unsupported(SYNTAX,
                         this.source.substring(start, this.index));
             }
         }
@@ -866,7 +869,7 @@ public final class PackExpression {
             if (this.index >= this.source.length()
                     || !(Character.isLetter(this.source.charAt(this.index))
                     || this.source.charAt(this.index) == '_')) {
-                throw new Unsupported("CUSTOM_EXPRESSION_UNSUPPORTED", "identifier");
+                throw new Unsupported(SYNTAX, "identifier");
             }
             this.index++;
             while (this.index < this.source.length()
@@ -917,7 +920,7 @@ public final class PackExpression {
 
         private void require(String token) {
             if (!take(token)) {
-                throw new Unsupported("CUSTOM_EXPRESSION_UNSUPPORTED", token);
+                throw new Unsupported(SYNTAX, token);
             }
         }
 

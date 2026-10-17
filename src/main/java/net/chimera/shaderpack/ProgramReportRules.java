@@ -574,7 +574,8 @@ final class ProgramReportRules {
 
     /** Members of a severe family that only record a fact. */
     static final List<String> BENIGN_PREFIXES = List.of(
-            "PROGRAM_ALIAS_RECORDED:", "PREPROCESSOR_MACRO_REDEFINED:");
+            "PROGRAM_ALIAS_RECORDED:", "PREPROCESSOR_MACRO_REDEFINED:", "PREPROCESSOR_UNMATCHED_CONDITIONAL:",
+            "PREPROCESSOR_DIRECTIVE_REPORTED:");
 
     static boolean hasSevereDeviation(Collection<String> deviations) {
         return deviations.stream().anyMatch(ProgramReportRules::isSevere);
