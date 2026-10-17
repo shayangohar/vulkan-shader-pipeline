@@ -46,7 +46,7 @@ public final class PackPlanBuilder {
         if (programs != null) {
             for (PackProgram program : (resolution == null ? PackResolutionPlan.empty() : resolution)
                     .executablePrograms(programs)) {
-                plans.add(build(program, config, resolution, advancedResources, entityIds));
+                plans.add(build(program, config, resolution, advancedResources));
             }
         }
         return new PackPlan(config, plans, entityIds,
@@ -58,16 +58,22 @@ public final class PackPlanBuilder {
             PackProgram program,
             PackConfig.PackConfigData config
     ) {
-        return build(program, config, PackResolutionPlan.empty(), PackAdvancedResourcePlan.empty(),
-                PackEntityIdResolver.empty());
+        return build(program, config, PackResolutionPlan.empty());
+    }
+
+    public static PackProgramPlan build(
+            PackProgram program,
+            PackConfig.PackConfigData config,
+            PackResolutionPlan resolution
+    ) {
+        return build(program, config, resolution, PackAdvancedResourcePlan.empty());
     }
 
     public static PackProgramPlan build(
             PackProgram program,
             PackConfig.PackConfigData config,
             PackResolutionPlan resolution,
-            PackAdvancedResourcePlan advancedResources,
-            PackEntityIdResolver entityIds
+            PackAdvancedResourcePlan advancedResources
     ) {
         if (program == null) {
             return new PackProgramPlan(null, Map.of(),
@@ -75,8 +81,7 @@ public final class PackPlanBuilder {
                     Map.of(), Map.of(), null, null, null, null,
                     List.of("PROGRAM_SOURCE_MISSING"), false);
         }
-        return new ProgramBuild(program, config, resolution, advancedResources,
-                IrisCoreProfile.hostLayoutEntityId(program.name(), entityIds)).plan();
+        return new ProgramBuild(program, config, resolution, advancedResources).plan();
     }
 
     /**
@@ -99,7 +104,6 @@ public final class PackPlanBuilder {
         private final String directiveProgram;
         /** The deviation label of a host-layout lane (LINE, GLINT, SHADOW_LINES, ...), or null. */
         private final String hostLayoutLane;
-        private final int hostLayoutEntityId;
         private final PackAlphaTestPlan alphaTestPlan;
         private final boolean allowStorageBuffers;
         private final List<String> deviations = new ArrayList<>();
@@ -121,15 +125,13 @@ public final class PackPlanBuilder {
                 PackProgram program,
                 PackConfig.PackConfigData config,
                 PackResolutionPlan resolution,
-                PackAdvancedResourcePlan advancedResources,
-                int hostLayoutEntityId
+                PackAdvancedResourcePlan advancedResources
         ) {
             this.program = program;
             this.name = program.name();
             this.config = config;
             this.resolution = resolution;
             this.advancedResources = advancedResources;
-            this.hostLayoutEntityId = hostLayoutEntityId;
             Map<String, PreparedShaderSource> prepared = preparedStages(program);
             if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.POST) {
                 prepared = normalizeModernPostStages(prepared);
@@ -248,12 +250,10 @@ public final class PackPlanBuilder {
                         directiveProgram.equals("gbuffers_line"))
                         : IrisCoreProfile.prepareHostLayoutSource(vertex, vertexFile());
                 boolean perVertexIds = FamilyAdapterRegistry.readsEntityIdsPerVertex(name);
-                if (!perVertexIds) vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex, hostLayoutEntityId);
+                if (!perVertexIds) vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
                 if (fragment != null) {
                     fragment = IrisCoreProfile.prepareHostLayoutSource(fragment, fragmentFile());
-                    if (!perVertexIds) {
-                        fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment, hostLayoutEntityId);
-                    }
+                    if (!perVertexIds) fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
                 }
             } catch (RuntimeException failure) {
                 hostLayoutFailure = safeReason(failure);

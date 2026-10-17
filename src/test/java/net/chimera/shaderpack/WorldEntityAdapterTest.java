@@ -310,7 +310,7 @@ final class WorldEntityAdapterTest {
                         && !converted.source().contains("uniform int currentRenderedItemId"),
                 "currentRenderedItemId must read EntityIds.z: " + converted.source());
 
-        String hostLayout = IrisCoreProfile.prepareHostLayoutIdentity(vertex, 0);
+        String hostLayout = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
         assertTrue(hostLayout.contains("max((0) - 10000, 0)")
                         && !hostLayout.contains("uniform int currentRenderedItemId"),
                 "a host layout reads the item as 0: " + hostLayout);
@@ -321,27 +321,6 @@ final class WorldEntityAdapterTest {
         PackItemIdResolver items = PackItemIdResolver.parse(shaders, Map.of()).resolver();
         assertEquals(10036, items.renderedItemId("minecraft:torch"), "listed item");
         assertEquals(PackItemIdResolver.UNMAPPED, items.renderedItemId("minecraft:stick"), "unlisted item");
-    }
-
-    /**
-     * Iris 1.21.1 draws a lightning bolt with the pack's lightning_bolt id (LightningRenderStateShard);
-     * every other host-layout batch reads the entity Iris has reset to 0 by the time it draws.
-     */
-    @Test
-    void lightningLanesReadTheBoltId(@TempDir Path shaders) throws IOException {
-        Files.writeString(shaders.resolve("entity.properties"), "entity.7=lightning_bolt\nentity.8=zombie\n");
-        PackEntityIdResolver mapped = PackEntityIdResolver.parse(shaders).resolver();
-        assertEquals(7, IrisCoreProfile.hostLayoutEntityId("gbuffers_lightning", mapped), "world lightning");
-        assertEquals(7, IrisCoreProfile.hostLayoutEntityId("shadow_lightning", mapped), "shadow lightning");
-        assertEquals(0, IrisCoreProfile.hostLayoutEntityId("gbuffers_line", mapped), "lines");
-        Files.writeString(shaders.resolve("entity.properties"), "entity.8=zombie\n");
-        assertEquals(-1, IrisCoreProfile.hostLayoutEntityId("gbuffers_lightning",
-                PackEntityIdResolver.parse(shaders).resolver()), "an unmapped bolt reads the map's -1");
-        assertEquals(0, IrisCoreProfile.hostLayoutEntityId("gbuffers_lightning", PackEntityIdResolver.empty()),
-                "without entity.properties Iris's empty map reads 0");
-        String folded = IrisCoreProfile.prepareHostLayoutIdentity(
-                "uniform int entityId;\nvoid main() { int id = entityId; }\n", 7);
-        assertTrue(folded.contains("int id = (7);") && !folded.contains("uniform int entityId"), folded);
     }
 
     private static void verifyEntityIdResolver(Path shaders) throws IOException {

@@ -189,11 +189,15 @@ final class IrisCoreProfile {
      * Iris applies EntityPatcher only to entity and text formats. On any other host layout
      * entityId and blockEntityId stay uniforms (CommonUniforms). blockEntityId is the constant
      * -1. entityId is Iris's fallback "for when entityId via attributes cannot be used
-     * (lightning)", read from CapturedRenderingState when the batch draws: {@code entityId} here
-     * ({@link #hostLayoutEntityId}). Applied to both stages of a host-layout program before
-     * planning.
+     * (lightning)", read from CapturedRenderingState when the batch draws. Chimera reads 0, the
+     * value Iris 1.21.11 gives these draws. Iris 1.21.1 sets the pack's lightning_bolt id while a
+     * bolt draws (LightningRenderStateShard), so Complementary's shadow program, which cuts entity
+     * shadows past 26 blocks, cuts most of a bolt's shadow there; Chimera does not yet. A constant
+     * cannot follow it: dragon rays share the lightning lanes, and Complementary draws a lane with
+     * the bolt's id as a bolt rather than as a death beam. Applied to both stages of a host-layout
+     * program before planning.
      */
-    public static String prepareHostLayoutIdentity(String source, int entityId) {
+    public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;
         Map<String, String> types = new HashMap<>();
         Matcher declaration = EntityVertexBridge.ENTITY_ID_DECLARATION.matcher(stripComments(source));
@@ -209,8 +213,7 @@ final class IrisCoreProfile {
         String src = EntityVertexBridge.removeEntityIdDeclarations(source);
         Map<String, String> replacements = new HashMap<>();
         if (types.containsKey("entityId")) {
-            replacements.put("entityId", "float".equals(types.get("entityId")) ? "(" + entityId + ".0)"
-                    : "(" + entityId + ")");
+            replacements.put("entityId", "float".equals(types.get("entityId")) ? "(0.0)" : "(0)");
         }
         if (types.containsKey("blockEntityId")) {
             replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
@@ -221,18 +224,6 @@ final class IrisCoreProfile {
                     "float".equals(types.get("currentRenderedItemId")) ? "(0.0)" : "(0)");
         }
         return GlslTokenRewriter.replaceIdentifiers(src, replacements);
-    }
-
-    /**
-     * entityId as a host-layout lane reads it when its batch draws: 0, as Iris's captured entity is
-     * by then, except that Iris 1.21.1 sets the pack's lightning_bolt id around a bolt's draw
-     * (LightningRenderStateShard). Dragon rays share the lightning lanes and read that id too.
-     */
-    static int hostLayoutEntityId(String name, PackEntityIdResolver entityIds) {
-        FamilyAdapterPlan.Family family = FamilyAdapterRegistry.forProgram(name).family();
-        boolean lightning = family == FamilyAdapterPlan.Family.LIGHTNING
-                || family == FamilyAdapterPlan.Family.SHADOW_LIGHTNING;
-        return lightning && entityIds != null ? entityIds.uniformId("minecraft:lightning_bolt") : 0;
     }
 
     static String expandIncludes(String source, Path sourceFile) {
