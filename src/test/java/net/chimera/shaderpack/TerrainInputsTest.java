@@ -237,12 +237,10 @@ final class TerrainInputsTest {
     @Test
     void separateAoColour() throws IOException {
         // Iris XHFPTerrainVertex: ColorABGR.withAlpha(tint, brightness) instead of mulRGB.
-        assertEquals(0x7F336699, SeparateAoColor.argb(0xFF336699, 0.5F),
-                "a block quad keeps its tint and carries the brightness in alpha");
-        assertEquals(0xFF336699, SeparateAoColor.argb(0x00336699, 1.0004F),
-                "a brightness rounding just above 1 stays opaque instead of wrapping to 0");
         assertEquals(0xCC3F7FFF, SeparateAoColor.rgba(1.0F, 0.5F, 0.25F, 0.8F),
-                "a fluid vertex keeps its tint and carries brightness times shade in alpha");
+                "a vertex keeps its tint and carries the brightness in alpha");
+        assertEquals(0xFF3F7FFF, SeparateAoColor.rgba(1.0F, 0.5F, 0.25F, 1.0004F),
+                "a brightness rounding just above 1 stays opaque instead of wrapping to 0");
         String fixedVertex = MixinBytecode.resourceText("assets/chimera/shaders/chimera_terrain/chimera_terrain.vsh");
         String separateAoVertex = ChimeraTerrainPipelines.withSeparateAo(fixedVertex);
         assertTrue(fixedVertex.contains("#ifdef CHIMERA_SEPARATE_AO")

@@ -93,7 +93,7 @@ final class PackFamilyWindows {
     void beginPackResourceWindow(TerrainRenderType renderType) {
         if (pass.shadowPass.shadowPassActive || !ChimeraRenderer.segmentsActive()) return;
         PackPipelines.PackTerrain terrain = switch (renderType) {
-            case SOLID, CUTOUT -> pass.pipelines.terrainRoute;
+            case SOLID, CUTOUT_MIPPED, CUTOUT -> pass.pipelines.terrainRoute;
             case TRANSLUCENT -> pass.pipelines.waterRoute;
             default -> null;
         };

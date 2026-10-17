@@ -1,6 +1,5 @@
 package net.chimera.render.shader;
 
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.ChimeraMod;
 import net.chimera.render.vertex.ChimeraExtTerrainBuilder;
@@ -11,7 +10,7 @@ import net.chimera.shaderpack.TerrainShadingDirectives;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.block.state.BlockState;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
-import net.vulkanmod.render.shader.PipelineManager;
+import net.vulkanmod.render.PipelineManager;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
@@ -21,9 +20,9 @@ import java.util.function.UnaryOperator;
 /**
  * Builds and installs chimera's terrain pipelines.
  *
- * The GLSL/JSON live under /assets/chimera/shaders/ and declare the same
- * bindings and UBO fields as the host's terrain path, so the host's uniform
- * suppliers and per-instance section data keep feeding them unchanged.
+ * The GLSL/JSON live under /assets/chimera/shaders/ and read the host terrain
+ * path's inputs: its uniform suppliers, the ChunkOffset push constant
+ * DrawBuffers writes per area and the section offset in the draw's base instance.
  *
  * Enabling swaps the terrain shader getter to chimera's pipeline and installs
  * the matching extended builder. Disabling restores the host getter, format,
@@ -224,19 +223,18 @@ public final class ChimeraTerrainPipelines {
                 ? ChimeraVertexFormats.terrainFormat(materialPlan)
                 : CustomVertexFormat.COMPRESSED_TERRAIN;
         boolean changed = extendedMode != chimeraMode
-                || PipelineManager.terrainVertexFormat != desiredFormat;
+                || PipelineManager.TERRAIN_VERTEX_FORMAT != desiredFormat;
 
         PipelineManager.setTerrainVertexFormat(desiredFormat);
         if (chimeraMode) {
             ThreadBuilderPack.setTerrainBuilderConstructor(renderType -> {
-                int size = TerrainRenderType.getLayer(renderType).bufferSize()
-                        / DefaultVertexFormat.BLOCK.getVertexSize();
-                return new ChimeraExtTerrainBuilder(size, materialResolver, materialPlan);
+                return new ChimeraExtTerrainBuilder(TerrainRenderType.getRenderType(renderType).bufferSize(),
+                        materialResolver, materialPlan);
             });
             PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         } else {
             ThreadBuilderPack.defaultTerrainBuilderConstructor();
-            PipelineManager.setDefaultTerrainShaderGetter();
+            PipelineManager.setDefaultShader();
         }
         extendedMode = chimeraMode;
 
@@ -253,7 +251,6 @@ public final class ChimeraTerrainPipelines {
         }
     }
 
-    /** Shares the host's global UBO pool so per-instance section data flows in unchanged. */
     private static GraphicsPipeline buildPipeline(
             String name,
             VertexFormat vertexFormat,
@@ -261,7 +258,7 @@ public final class ChimeraTerrainPipelines {
             boolean separateAo
     ) {
         return HostPipelineLayout.create(name, shaderConfigName, vertexFormat,
-                separateAo ? ChimeraTerrainPipelines::withSeparateAo : UnaryOperator.identity(), true);
+                separateAo ? ChimeraTerrainPipelines::withSeparateAo : UnaryOperator.identity());
     }
 
     /**

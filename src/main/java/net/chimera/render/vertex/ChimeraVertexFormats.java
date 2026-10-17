@@ -50,11 +50,15 @@ public final class ChimeraVertexFormats {
             new VertexFormatElement(7, 0, VertexFormatElement.Type.BYTE,
                     VertexFormatElement.Usage.NORMAL, 4);
 
+    /**
+     * VulkanMod's COMPRESSED_TERRAIN prefix (position and light, colour, UV), which its
+     * CompressedVertexBuilder writes, followed by the material attributes: 24 bytes.
+     */
     public static final VertexFormat EXTENDED_COMPRESSED_TERRAIN =
             VertexFormat.builder()
-                    .add("Position", CustomVertexFormat.ELEMENT_POSITION_INT16)
-                    .add("UV0", CustomVertexFormat.ELEMENT_UV0_UINT16)
-                    .add("Color", CustomVertexFormat.ELEMENT_COLOR_UINT)
+                    .add("Position", CustomVertexFormat.ELEMENT_POSITION)
+                    .add("Color", CustomVertexFormat.ELEMENT_COLOR)
+                    .add("UV0", CustomVertexFormat.ELEMENT_UV0)
                     .add("MaterialId", MATERIAL_ID)
                     .add("RenderType", RENDER_TYPE)
                     .build();
@@ -65,9 +69,9 @@ public final class ChimeraVertexFormats {
      */
     public static final VertexFormat MODERN_COMPRESSED_TERRAIN =
             VertexFormat.builder()
-                    .add("Position", CustomVertexFormat.ELEMENT_POSITION_INT16)
-                    .add("UV0", CustomVertexFormat.ELEMENT_UV0_UINT16)
-                    .add("Color", CustomVertexFormat.ELEMENT_COLOR_UINT)
+                    .add("Position", CustomVertexFormat.ELEMENT_POSITION)
+                    .add("Color", CustomVertexFormat.ELEMENT_COLOR)
+                    .add("UV0", CustomVertexFormat.ELEMENT_UV0)
                     .add("MaterialId", MATERIAL_ID)
                     .add("RenderType", RENDER_TYPE)
                     .add("MidTexCoord", TERRAIN_MID_TEX_COORD)

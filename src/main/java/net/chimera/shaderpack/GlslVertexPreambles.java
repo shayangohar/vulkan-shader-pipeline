@@ -60,36 +60,27 @@ final class GlslVertexPreambles {
                 mat4 LightMVP;
             };
 
-            layout(binding = 2) uniform SectionData {
-                ivec4 SectionOffsets[128];
-                vec4 SectionFadeFactors[128];
-            };
-
             layout(push_constant) uniform Push {
-                vec3 ModelOffset;
+                vec3 ChunkOffset;
             };
 
             layout(location = 0) in ivec4 inPositionLight;
-            layout(location = 1) in uvec2 inUV;
-            layout(location = 2) in uint inPackedColor;
+            layout(location = 1) in vec4 inColor;
+            layout(location = 2) in uvec2 inUV;
             layout(location = 3) in int inMaterialId;
             layout(location = 4) in int inRenderType;
 
             const float CHIMERA_UV_SCALE = 1.0 / 32768.0;
             const vec3 CHIMERA_POSITION_SCALE = vec3(1.0 / 2048.0);
-            const vec3 CHIMERA_POSITION_BIAS = vec3(4.0);
 
-            vec3 chimeraSectionOffset(int encoded) {
-                return vec3(
-                    float(bitfieldExtract(encoded, 0, 8)),
-                    float(bitfieldExtract(encoded, 16, 8)),
-                    float(bitfieldExtract(encoded, 8, 8)));
+            // The draw's base instance holds the section's offset in its area: x, z and y bytes.
+            vec3 chimeraSectionOffset() {
+                return vec3(bitfieldExtract(ivec3(gl_InstanceIndex) >> ivec3(0, 16, 8), 0, 8));
             }
 
             vec3 chimeraWorldPosition() {
-                int encoded = SectionOffsets[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];
                 return fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
-                        ModelOffset + chimeraSectionOffset(encoded));
+                        ChunkOffset + chimeraSectionOffset());
             }
 
             vec4 chimeraVertexValue() {
@@ -97,7 +88,7 @@ final class GlslVertexPreambles {
             }
 
             vec4 chimeraColorValue() {
-                return unpackUnorm4x8(inPackedColor);
+                return inColor;
             }
 
             vec4 chimeraTexCoord0Value() {

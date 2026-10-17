@@ -68,7 +68,7 @@ final class PackSceneCoverage {
         }
         pass.windows.beginPackResourceWindow(renderType);
         PackPipelines.PackTerrain terrain = switch (renderType) {
-            case SOLID, CUTOUT -> pass.pipelines.terrainRoute;
+            case SOLID, CUTOUT_MIPPED, CUTOUT -> pass.pipelines.terrainRoute;
             case TRANSLUCENT -> pass.pipelines.waterRoute;
             default -> null;
         };
@@ -164,7 +164,7 @@ final class PackSceneCoverage {
             }
             return;
         }
-        if (renderType != TerrainRenderType.SOLID && renderType != TerrainRenderType.CUTOUT) {
+        if (renderType == TerrainRenderType.TRANSLUCENT || renderType == TerrainRenderType.TRIPWIRE) {
             pass.windows.restorePackResourceWindow();
             return;
         }

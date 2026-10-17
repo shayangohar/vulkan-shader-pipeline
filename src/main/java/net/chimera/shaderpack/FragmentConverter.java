@@ -38,11 +38,12 @@ public final class FragmentConverter {
     static final Pattern POST_DRAWBUFFERS_DEFINE = Pattern.compile(
             "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
 
-    /** Three UBO blocks precede samplers in the terrain pipeline config. */
-    static final int GEOMETRY_SAMPLER_BINDING_BASE = 3;
-
-    static int geometrySamplerBindingBase() {
-        return GEOMETRY_SAMPLER_BINDING_BASE;
+    /**
+     * The host blocks ahead of a terrain-lane program's own uniform block: chimera_terrain.json's
+     * view and fog blocks for terrain and water, chimera_shadow.json's view block for shadow.
+     */
+    static int terrainHostBlocks(UniformRegistry.Stage stage) {
+        return stage == UniformRegistry.Stage.SHADOW ? 1 : 2;
     }
 
     /**
@@ -636,7 +637,7 @@ public final class FragmentConverter {
 
     /**
      * gbuffers_terrain and gbuffers_water share one terrain contract: the
-     * terrain vertex inputs, the generated pack uniform block at binding 3,
+     * terrain vertex inputs, the generated pack uniform block at binding 2,
      * the host terrain block at binding 1, and the terrain alpha test. They
      * differ only in the sampled inputs their stage table admits.
      */
@@ -644,7 +645,6 @@ public final class FragmentConverter {
         return stage == UniformRegistry.Stage.GEOMETRY || stage == UniformRegistry.Stage.TRANSLUCENT;
     }
 
-    /** Position of the sampler's registry slot in the emitted geometry config array. */
     /** First sampler binding of a geometry-family program, after its host and pack UBOs. */
     static int geometrySamplerBindingBase(UniformRegistry.ProgramInterface interfacePlan) {
         UniformRegistry.Stage stage = interfacePlan.stage();
@@ -654,7 +654,10 @@ public final class FragmentConverter {
                 || stage == UniformRegistry.Stage.SHADOW_ENTITY) {
             return uniforms ? 3 : 2;
         }
-        return GEOMETRY_SAMPLER_BINDING_BASE + (uniforms ? 1 : 0);
+        if (terrainContract(stage) || stage == UniformRegistry.Stage.SHADOW) {
+            return terrainHostBlocks(stage) + (uniforms ? 1 : 0);
+        }
+        return uniforms ? 4 : 3;
     }
 
     /**
@@ -688,11 +691,11 @@ public final class FragmentConverter {
     }
 
     /**
-     * The shadow program's pack uniform block follows its lane's host blocks: binding 3 after
-     * the terrain blocks, binding 2 after the entity transform blocks.
+     * The shadow program's pack uniform block follows its lane's host blocks: binding 1 after
+     * the shadow view block, binding 2 after the entity transform blocks.
      */
     static int shadowUniformBinding(UniformRegistry.Stage stage) {
-        return stage == UniformRegistry.Stage.SHADOW_ENTITY ? 2 : 3;
+        return stage == UniformRegistry.Stage.SHADOW_ENTITY ? 2 : terrainHostBlocks(stage);
     }
 
     static String generatedShadowUniformBlock(
@@ -724,11 +727,12 @@ public final class FragmentConverter {
                 ? source : GlslTokenRewriter.replaceIdentifiers(source, replacements);
     }
 
-    /** Ordinary terrain pack uniforms share the binding reserved after host section data. */
+    /** Terrain and water pack uniforms follow the terrain host blocks. */
     static String generatedGeometryUniformBlock(
             List<UniformRegistry.UniformDeclaration> uniforms
     ) {
-        StringBuilder block = new StringBuilder("layout(binding = 3) uniform ChimeraTerrainPackUniforms {\n");
+        StringBuilder block = new StringBuilder("layout(binding = "
+                + terrainHostBlocks(UniformRegistry.Stage.GEOMETRY) + ") uniform ChimeraTerrainPackUniforms {\n");
         for (UniformRegistry.UniformDeclaration uniform : uniforms) {
             block.append("    ").append(uniform.glslType()).append(' ')
                     .append(uniform.name()).append(";\n");
@@ -736,22 +740,15 @@ public final class FragmentConverter {
         return block.append("};\n").toString();
     }
 
-    /** Exact binding-1 layout, with an instance reserved for generated alpha testing. */
+    /** chimera_terrain.json's binding-1 fog block, with an instance reserved for generated alpha testing. */
     static String terrainHostUniformBlock(String source, String instance) {
         String block = GlslTokenRewriter.uniqueIdentifier(source, "ChimeraTerrainHostBlock");
         return """
                 layout(binding = 1) uniform %s {
                     vec4 FogColor;
-                    float FogEnvironmentalStart;
-                    float FogEnvironmentalEnd;
-                    float FogRenderDistanceStart;
-                    float FogRenderDistanceEnd;
-                    float FogSkyEnd;
-                    float FogCloudsEnd;
+                    float FogStart;
+                    float FogEnd;
                     float AlphaCutout;
-                    ivec2 TextureSize;
-                    vec2 TexelSize;
-                    int UseRgss;
                 } %s;
                 """.formatted(block, instance);
     }

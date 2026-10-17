@@ -1,49 +1,36 @@
 #version 460
-// Chimera terrain vertex stage (M2).
-// Consumes the extended terrain layout: the VulkanMod compressed
-// position/light, UV, and color prefix plus material attributes at locations
-// 3 and 4. Section offsets arrive per instance through a UBO indexed by
-// gl_InstanceIndex; ModelOffset is a push constant. The prefix stays
-// byte-compatible with the host terrain path.
+// Chimera terrain vertex stage.
+// Consumes the extended terrain layout: VulkanMod's compressed position/light,
+// colour and UV prefix plus material attributes at locations 3 and 4. The
+// draw's base instance encodes the section's offset within its area;
+// ChunkOffset, the area origin relative to the camera, is a push constant.
 
 layout(binding = 0) uniform ViewUBO {
     mat4 MVP;
     mat4 LightMVP;
 };
 
-layout(binding = 2) uniform SectionData {
-    ivec4 SectionOffsets[128];
-    vec4 SectionFadeFactors[128];
-};
-
 layout(push_constant) uniform Push {
-    vec3 ModelOffset;
+    vec3 ChunkOffset;
 };
 
-layout(binding = 4) uniform sampler2D LightMap;
+layout(binding = 3) uniform sampler2D LightMap;
 
 layout(location = 0) in ivec4 inPositionLight; // xyz: pos*2048 - 8192, w: packed light
-layout(location = 1) in uvec2 inUV;
-layout(location = 2) in uint inPackedColor;
+layout(location = 1) in vec4 inColor;
+layout(location = 2) in uvec2 inUV;
 
 layout(location = 0) out vec4 outVertexColor;
 layout(location = 1) out vec2 outTexCoord;
-layout(location = 2) out float outSphericalDistance;
-layout(location = 3) out float outCylindricalDistance;
-layout(location = 4) out flat float outFadeFactor;
-layout(location = 5) out vec4 outLightSpacePos;
+layout(location = 2) out float outVertexDistance;
+layout(location = 3) out vec4 outLightSpacePos;
 
 const float UV_SCALE = 1.0 / 32768.0;
 const vec3 POSITION_SCALE = vec3(1.0 / 2048.0);
-const vec3 POSITION_BIAS = vec3(4.0);
 
-vec3 unpackSectionOffset(int encoded) {
-    // Three signed bytes: x in bits [0..8), z in bits [8..16), y in bits [16..24)
-    return vec3(
-        float(bitfieldExtract(encoded, 0, 8)),
-        float(bitfieldExtract(encoded, 16, 8)),
-        float(bitfieldExtract(encoded, 8, 8))
-    );
+vec3 sectionOffset() {
+    // Three bytes: x in bits [0..8), z in bits [8..16), y in bits [16..24)
+    return vec3(bitfieldExtract(ivec3(gl_InstanceIndex) >> ivec3(0, 16, 8), 0, 8));
 }
 
 vec4 fetchLightmap(uint packedLight) {
@@ -54,25 +41,18 @@ vec4 fetchLightmap(uint packedLight) {
 }
 
 void main() {
-    int encoded = SectionOffsets[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];
-    vec3 sectionOrigin = unpackSectionOffset(encoded);
-
-    vec3 worldPos = fma(vec3(inPositionLight.xyz), POSITION_SCALE, ModelOffset + sectionOrigin);
+    vec3 worldPos = fma(vec3(inPositionLight.xyz), POSITION_SCALE, ChunkOffset + sectionOffset());
 
     gl_Position = MVP * vec4(worldPos, 1.0);
+    outVertexDistance = length(worldPos);
 
-    outSphericalDistance = length(worldPos);
-    outCylindricalDistance = max(length(worldPos.xz), abs(worldPos.y));
-
-    vec4 baseColor = unpackUnorm4x8(inPackedColor);
+    vec4 baseColor = inColor;
 #ifdef CHIMERA_SEPARATE_AO
     // separateAo meshes carry the light pipeline's brightness in alpha (Iris); terrain
     // vertex alpha is otherwise always 1, so fold it into RGB and keep the block opaque.
     baseColor = vec4(baseColor.rgb * baseColor.a, 1.0);
 #endif
     outVertexColor = baseColor * fetchLightmap(uint(inPositionLight.w));
-
-    outFadeFactor = SectionFadeFactors[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];
 
     outLightSpacePos = LightMVP * vec4(worldPos, 1.0);
 

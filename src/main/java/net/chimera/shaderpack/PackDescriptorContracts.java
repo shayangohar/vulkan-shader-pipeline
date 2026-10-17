@@ -79,7 +79,7 @@ final class PackDescriptorContracts {
             PackDescriptorLayout host = PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson(
                     stage == UniformRegistry.Stage.SHADOW ? "chimera_shadow.json" : "chimera_terrain.json"));
             List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(host.uniformBlocks());
-            blocks.addAll(packUniformBlock(iface, 3, VK_SHADER_STAGE_ALL_GRAPHICS));
+            blocks.addAll(packUniformBlock(iface, host.bindingAfterBlocks(), VK_SHADER_STAGE_ALL_GRAPHICS));
             layout = new PackDescriptorLayout(blocks, List.of(), host.pushConstants());
         }
         return layout.withImages(samplerImages(layout.bindingAfterBlocks(), slots));

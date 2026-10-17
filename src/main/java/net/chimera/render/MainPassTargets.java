@@ -1,10 +1,8 @@
 package net.chimera.render;
 
-import net.vulkanmod.gl.GlTexture;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
-import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -110,13 +108,13 @@ final class MainPassTargets {
     }
 
     void createHdrInteropTextures() {
-        this.hdrColorGlId = alias(this.hdrFramebuffer.getColorAttachment());
-        this.hdrDepthGlId = alias(this.hdrFramebuffer.getDepthAttachment());
+        this.hdrColorGlId = GlImageAlias.create(this.hdrFramebuffer.getColorAttachment());
+        this.hdrDepthGlId = GlImageAlias.create(this.hdrFramebuffer.getDepthAttachment());
     }
 
     void createOutputInteropTextures() {
-        this.compositeColorGlId = alias(this.compositeFramebuffer.getColorAttachment());
-        this.compositeDepthGlId = alias(this.compositeFramebuffer.getDepthAttachment());
+        this.compositeColorGlId = GlImageAlias.create(this.compositeFramebuffer.getColorAttachment());
+        this.compositeDepthGlId = GlImageAlias.create(this.compositeFramebuffer.getDepthAttachment());
     }
 
     boolean hdrResourcesLive() {
@@ -132,15 +130,15 @@ final class MainPassTargets {
     }
 
     void releaseHdrInteropTextures() {
-        retireAlias(this.hdrColorGlId);
-        retireAlias(this.hdrDepthGlId);
+        GlImageAlias.retire(this.hdrColorGlId);
+        GlImageAlias.retire(this.hdrDepthGlId);
         this.hdrColorGlId = 0;
         this.hdrDepthGlId = 0;
     }
 
     void releaseOutputInteropTextures() {
-        retireAlias(this.compositeColorGlId);
-        retireAlias(this.compositeDepthGlId);
+        GlImageAlias.retire(this.compositeColorGlId);
+        GlImageAlias.retire(this.compositeDepthGlId);
         this.compositeColorGlId = 0;
         this.compositeDepthGlId = 0;
     }
@@ -177,20 +175,6 @@ final class MainPassTargets {
         this.compositeAuxRenderPass = null;
         this.compositeAuxClearDepthRenderPass = null;
         this.presentRenderPass = null;
-    }
-
-    /** A new OpenGL texture name for {@code image}, as VulkanMod names its own main images. */
-    private static int alias(VulkanImage image) {
-        int id = GlTexture.genTextureId();
-        GlTexture.bindIdToImage(id, image);
-        return id;
-    }
-
-    /** Deletes an alias name without freeing its image, which its framebuffer owns. */
-    private static void retireAlias(int id) {
-        if (id == 0 || GlTexture.getTexture(id) == null) return;
-        GlTexture.setVulkanImage(id, null);
-        GlTexture.glDeleteTextures(id);
     }
 
     private static boolean live(Framebuffer framebuffer, int colorGlId, int depthGlId) {
