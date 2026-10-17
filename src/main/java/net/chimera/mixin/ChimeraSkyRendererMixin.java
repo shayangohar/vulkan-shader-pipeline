@@ -11,7 +11,11 @@ import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.DimensionSpecialEffects;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.vulkanmod.render.chunk.TerrainRenderState;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -25,10 +29,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * the sky window in the CUSTOM_SKY phase, so a sky a mod draws in its place is still the pack's
  * sky; each part of the vanilla sky then sets its phase at the call that starts it. As in Iris,
  * the sky draws even in thick fog (a boss's or a foggy dimension's), so the pack's sky programs
- * always write the sky the composite passes read. The pack
- * horizon draws as the sky disc begins, and the celestial plane turns by the pack's sun path
- * rotation after vanilla's -90 degree Y turn. renderClouds draws in the CLOUDS phase, and not at
- * all when the pack's cloud program draws nothing.
+ * always write the sky the composite passes read. The pack horizon draws in the SKY phase before
+ * anything else in the window, as Iris draws it ahead of the sky, wherever the sky is the normal
+ * one or the dimension has skylight. The celestial plane turns by the pack's sun path rotation
+ * after vanilla's -90 degree Y turn. renderClouds draws in the CLOUDS phase, and not at all when
+ * the pack's cloud program draws nothing.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraSkyRendererMixin {
@@ -39,9 +44,11 @@ public abstract class ChimeraSkyRendererMixin {
             original.call(frustum, projection, partialTick, camera, foggy, skyFog);
             return;
         }
-        var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.CUSTOM_SKY);
+        var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.SKY);
         ChimeraSkyBridge.beginSky();
         try {
+            chimera$horizon(frustum, projection);
+            PackUniformProvider.setRenderingPhase(PackRenderingPhase.CUSTOM_SKY);
             original.call(frustum, projection, partialTick, camera, false, skyFog);
         } finally {
             ChimeraSkyBridge.endSky();
@@ -49,13 +56,25 @@ public abstract class ChimeraSkyRendererMixin {
         }
     }
 
+    /** Iris IrisRenderingPipeline.beginLevelRendering's horizon, under the state the sky draws with. */
+    @Unique
+    private static void chimera$horizon(Matrix4f frustum, Matrix4f projection) {
+        ClientLevel level = Minecraft.getInstance().level;
+        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+        if (pass == null || level == null || (level.effects().skyType() != DimensionSpecialEffects.SkyType.NORMAL
+                && !level.dimensionType().hasSkyLight())) {
+            return;
+        }
+        // VulkanMod sets this state at the head of renderSky, which the horizon draws ahead of.
+        TerrainRenderState.prepareWorldTerrainState();
+        pass.drawPackHorizon(frustum, projection);
+    }
+
     @Inject(method = "renderSky", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/FogRenderer;levelFogColor()V"), require = 1)
     private void chimera$skyDisc(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
                                  boolean foggy, Runnable skyFog, CallbackInfo callback) {
-        if (!chimera$phase(PackRenderingPhase.SKY)) return;
-        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass != null) pass.drawPackHorizon(frustum, projection);
+        chimera$phase(PackRenderingPhase.SKY);
     }
 
     @Inject(method = "renderSky", at = @At(value = "INVOKE",
@@ -126,11 +145,9 @@ public abstract class ChimeraSkyRendererMixin {
         }
     }
 
-    /** Enters {@code phase} for the rest of the sky window; false when no pack draws the sky. */
+    /** Enters {@code phase} for the rest of the sky window, while a pack draws the sky. */
     @Unique
-    private static boolean chimera$phase(PackRenderingPhase phase) {
-        if (!ChimeraRenderer.segmentsActive()) return false;
-        PackUniformProvider.setRenderingPhase(phase);
-        return true;
+    private static void chimera$phase(PackRenderingPhase phase) {
+        if (ChimeraRenderer.segmentsActive()) PackUniformProvider.setRenderingPhase(phase);
     }
 }

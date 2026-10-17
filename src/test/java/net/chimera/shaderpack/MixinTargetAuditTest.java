@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,7 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Every registered Chimera mixin against the bytecode it targets (Minecraft as NeoForge patches it,
  * and VulkanMod Reforged), as Mixin resolves it when the game loads: each target class exists, each
  * injector's target method exists, each INVOKE, FIELD and NEW injection point (slices included)
- * occurs in that method, and each shadow, accessor and invoker names a member of the target.
+ * occurs in that method, each @Inject and @WrapMethod handler's descriptor fits its target, and each
+ * shadow, accessor and invoker names a member of the target with a matching descriptor.
  * Members VulkanMod's own mixins merge into a target count as the target's.
  */
 final class MixinTargetAuditTest {
@@ -43,6 +45,12 @@ final class MixinTargetAuditTest {
             "Lcom/llamalad7/mixinextras/injector/v2/WrapWithCondition;",
             "Lcom/llamalad7/mixinextras/injector/ModifyExpressionValue;",
             "Lcom/llamalad7/mixinextras/injector/ModifyReturnValue;");
+    private static final String INJECT = "Lorg/spongepowered/asm/mixin/injection/Inject;";
+    private static final String WRAP_METHOD = "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;";
+    private static final String CALLBACK_INFO = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
+    private static final String CALLBACK_INFO_RETURNABLE =
+            "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;";
+    private static final String OPERATION = "Lcom/llamalad7/mixinextras/injector/wrapoperation/Operation;";
     private static final String SHADOW = "Lorg/spongepowered/asm/mixin/Shadow;";
     private static final String ACCESSOR = "Lorg/spongepowered/asm/mixin/gen/Accessor;";
     private static final String INVOKER = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
@@ -117,7 +125,57 @@ final class MixinTargetAuditTest {
                         problems.add(mixinName + "." + handler.name + " in " + selector + ": " + failure);
                     }
                 }
+                if (!handlerFits(annotation.desc, handler, methods)) {
+                    problems.add(mixinName + "." + handler.name + ": handler " + handler.desc + " fits no "
+                            + selector + " " + methods.stream().map(method -> method.desc).toList());
+                }
             }
+        }
+
+        /**
+         * Whether an @Inject or @WrapMethod handler's descriptor fits one candidate, as Mixin checks it
+         * when it applies the mixin: an @Inject takes the target's arguments (or none), then its
+         * CallbackInfo, then any captured locals; a @WrapMethod takes the arguments and an Operation and
+         * returns the target's type. Other injectors are not checked here.
+         */
+        private static boolean handlerFits(String injector, MethodNode handler, List<MethodNode> methods) {
+            boolean inject = injector.equals(INJECT);
+            if (!inject && !injector.equals(WRAP_METHOD)) return true;
+            for (MethodNode method : methods) {
+                if (isStatic(handler) == isStatic(method)
+                        && (inject ? injectFits(handler.desc, method.desc) : wrapFits(handler.desc, method.desc))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static boolean injectFits(String handler, String target) {
+            Type[] params = Type.getArgumentTypes(handler);
+            Type[] arguments = Type.getArgumentTypes(target);
+            String callback = Type.getReturnType(target) == Type.VOID_TYPE ? CALLBACK_INFO : CALLBACK_INFO_RETURNABLE;
+            int index = params.length > arguments.length && startsWith(params, arguments) ? arguments.length : 0;
+            return Type.getReturnType(handler) == Type.VOID_TYPE && params.length > index
+                    && params[index].getDescriptor().equals(callback);
+        }
+
+        private static boolean wrapFits(String handler, String target) {
+            Type[] params = Type.getArgumentTypes(handler);
+            Type[] arguments = Type.getArgumentTypes(target);
+            return params.length == arguments.length + 1 && startsWith(params, arguments)
+                    && params[arguments.length].getDescriptor().equals(OPERATION)
+                    && Type.getReturnType(handler).equals(Type.getReturnType(target));
+        }
+
+        private static boolean startsWith(Type[] params, Type[] prefix) {
+            for (int index = 0; index < prefix.length; index++) {
+                if (!params[index].equals(prefix[index])) return false;
+            }
+            return true;
+        }
+
+        private static boolean isStatic(MethodNode method) {
+            return (method.access & Opcodes.ACC_STATIC) != 0;
         }
 
         /** Why an injection point is absent from every candidate method, or null when it is present. */
@@ -154,15 +212,27 @@ final class MixinTargetAuditTest {
             return reference.equals(member);
         }
 
+        /**
+         * An accessor or invoker resolves by name and descriptor: a getter returns the field's type, a
+         * setter takes it, and an invoker has its method's descriptor.
+         */
         private void member(MethodNode handler, AnnotationNode annotation, boolean field) {
             Object value = MixinBytecode.annotationValue(annotation, "value");
             String name = value instanceof String explicit && !explicit.isEmpty()
                     ? explicit : inferredName(handler.name);
-            boolean present = field ? hasField(name) : !findMethods(name).isEmpty();
+            boolean present = field ? fieldDescriptors(name).anyMatch(desc -> handler.desc.equals("()" + desc)
+                    || handler.desc.equals("(" + desc + ")V"))
+                    : findMethods(name).stream().anyMatch(method -> method.desc.equals(handler.desc));
             if (!present) {
                 problems.add(mixinName + "." + handler.name + ": " + (field ? "field " : "method ") + name
-                        + " is not in " + target.name);
+                        + " matching " + handler.desc + " is not in " + target.name);
             }
+        }
+
+        private Stream<String> fieldDescriptors(String name) {
+            return Stream.concat(target.fields.stream(),
+                            hostMixins.stream().flatMap(host -> host.fields.stream()))
+                    .filter(field -> field.name.equals(name)).map(field -> field.desc);
         }
 
         private static String inferredName(String handler) {

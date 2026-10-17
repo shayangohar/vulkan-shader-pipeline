@@ -57,9 +57,12 @@ public final class ChimeraSkyBridge {
         packCloudStatus = null;
     }
 
-    /** The installed pack's clouds directive, which replaces the player's cloud setting (Iris). */
+    /**
+     * The pack's clouds directive while its programs run, which replaces the player's cloud
+     * setting; null otherwise, as Iris overrides it only while a pack pipeline is active.
+     */
     public static CloudStatus packCloudStatus() {
-        return packCloudStatus;
+        return enabled ? packCloudStatus : null;
     }
 
     public static boolean isInstalled() {

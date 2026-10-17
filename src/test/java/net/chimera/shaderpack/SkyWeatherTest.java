@@ -276,6 +276,9 @@ final class SkyWeatherTest {
             assertTrue(ChimeraSkyBridge.skipHostClouds(), "authored empty clouds changed");
             assertEquals(CloudStatus.OFF, ChimeraSkyBridge.packCloudStatus(),
                     "pack clouds directive not applied");
+            ChimeraSkyBridge.setEnabled(false);
+            assertEquals(null, ChimeraSkyBridge.packCloudStatus(),
+                    "the clouds directive outlived the pack's programs");
         } finally {
             ChimeraSkyBridge.endSky();
             ChimeraSkyBridge.disable();

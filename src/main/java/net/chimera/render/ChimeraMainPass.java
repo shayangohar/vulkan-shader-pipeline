@@ -360,7 +360,7 @@ public final class ChimeraMainPass implements MainPass {
         return this.levelPhase && this.packPostChainActive && this.packPostTargets.isConfigured();
     }
 
-    /** Called as the overworld sky disc begins, under the sky's model-view and projection. */
+    /** Called as the sky window opens, ahead of the sky, under its model-view and projection. */
     public void drawPackHorizon(Matrix4f modelView, Matrix4f projection) {
         if (this.levelPhase && this.packPlan != null && this.packPlan.skyEnabled()
                 && ChimeraSkyBridge.hasBasicSky()) this.horizonRenderer.draw(modelView, projection);

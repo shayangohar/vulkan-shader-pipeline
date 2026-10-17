@@ -49,6 +49,7 @@
     "ChimeraRenderBuffersMixin",
     "ChimeraBufferUploaderMixin",
     "ChimeraVertexBufferMixin",
+    "ChimeraEntityCullingMixin",
     "ChimeraShaderPipelineMixin",
     "ChimeraEntityVertexInputMixin",
     "ChimeraFramebufferRenderPassMixin",

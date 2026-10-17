@@ -8,7 +8,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(GameRenderer.class)
 public interface ChimeraGameRendererHandAccess {
-    @Invoker("getFov") float chimera$getFov(Camera camera, float tick, boolean changingFov);
+    @Invoker("getFov") double chimera$getFov(Camera camera, float tick, boolean changingFov);
     @Invoker("bobHurt") void chimera$bobHurt(PoseStack poses, float tick);
     @Invoker("bobView") void chimera$bobView(PoseStack poses, float tick);
 }
