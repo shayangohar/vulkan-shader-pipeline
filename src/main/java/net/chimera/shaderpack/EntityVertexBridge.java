@@ -928,9 +928,12 @@ public final class EntityVertexBridge {
 
     /**
      * Iris writes mc_Entity as (-1, -1) for a block drawn outside a chunk mesh, no block having
-     * begun in its builder; the entity layout reads the unbound default instead.
+     * begun in its builder; the entity layout reads the unbound default instead. A gbuffers
+     * program declares it as a constant, a shadow program reads it through chimeraMcEntityValue.
      */
     static String movingBlockEntity(String source) {
+        source = source.replaceFirst("(vec2 chimeraMcEntityValue\\(\\) \\{\\s*return )vec2\\(0\\.0\\);",
+                "$1vec2(-1.0);");
         Matcher matcher = Pattern.compile("const (float|vec2|vec3|vec4) mc_Entity = [^;]+;").matcher(source);
         StringBuilder output = new StringBuilder();
         while (matcher.find()) {

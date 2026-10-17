@@ -1,31 +1,21 @@
 package net.chimera.mixin;
 
-import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
-import com.mojang.blaze3d.vertex.MeshData;
-import net.chimera.render.shader.ChimeraEntityBridge;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import net.chimera.render.shader.LightningBoltRenderType;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.entity.LightningBoltRenderer;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
 
-/**
- * Brackets the lightning bolt's batch, as Iris 1.21.1 wraps LightningBoltRenderer's
- * RenderType.lightning() in its LightningRenderStateShard: the lightning lanes read the pack's
- * lightning_bolt id there. Dragon rays, which share those lanes, draw with their own render type
- * and keep 0.
- */
-@Mixin(RenderType.class)
+/** Draws the lightning bolt with LightningBoltRenderType, as Iris swaps in its own lightning type. */
+@Mixin(LightningBoltRenderer.class)
 public abstract class ChimeraLightningBoltMixin {
-    @WrapMethod(method = "draw")
-    private void chimera$lightningBolt(MeshData mesh, Operation<Void> original) {
-        if ((Object) this != RenderType.lightning()) {
-            original.call(mesh);
-            return;
-        }
-        ChimeraEntityBridge.setLightningBoltDraw(true);
-        try {
-            original.call(mesh);
-        } finally {
-            ChimeraEntityBridge.setLightningBoltDraw(false);
-        }
+    @WrapOperation(method = "render(Lnet/minecraft/world/entity/LightningBolt;FFLcom/mojang/blaze3d/vertex/PoseStack;"
+            + "Lnet/minecraft/client/renderer/MultiBufferSource;I)V", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/RenderType;lightning()Lnet/minecraft/client/renderer/RenderType;"),
+            require = 1)
+    private RenderType chimera$boltType(Operation<RenderType> original) {
+        return LightningBoltRenderType.INSTANCE;
     }
 }

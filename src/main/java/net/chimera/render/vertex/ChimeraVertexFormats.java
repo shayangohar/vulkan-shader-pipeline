@@ -126,7 +126,10 @@ public final class ChimeraVertexFormats {
             DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, true);
     /**
      * Host BLOCK followed by the pack-visible attributes: the chunk render types of falling blocks
-     * and moving pistons, which Iris extends to IrisVertexFormats.TERRAIN outside chunk meshes.
+     * and moving pistons, which Iris extends to IrisVertexFormats.TERRAIN outside chunk meshes. Its
+     * elements match EXTENDED_GLYPH's, so VertexFormat.equals cannot tell the two apart; Chimera
+     * compares formats by identity, and their identical vertex inputs are harmless where a map does
+     * merge them.
      */
     public static final VertexFormat EXTENDED_BLOCK = appendMaterialInputs(DefaultVertexFormat.BLOCK);
     private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(

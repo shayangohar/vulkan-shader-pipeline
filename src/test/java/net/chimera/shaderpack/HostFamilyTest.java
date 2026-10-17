@@ -183,6 +183,10 @@ final class HostFamilyTest {
         assertTrue(moving.contains("const vec4 mc_Entity = vec4(-1.0, -1.0, 0.0, 1.0);")
                         && block.source().contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);"),
                 "mc_Entity reads (-1, -1) on the block layout and the unbound default on the entity layout");
+        // A shadow program reads mc_Entity through its preamble's helper.
+        assertTrue(EntityVertexBridge.movingBlockEntity(GlslVertexPreambles.ENTITY_SHADOW_VERTEX_PREAMBLE)
+                        .matches("(?s).*vec2 chimeraMcEntityValue\\(\\) \\{\\s*return vec2\\(-1\\.0\\);.*"),
+                "shadow casters read mc_Entity (-1, -1) on the block layout");
         var extended = ChimeraVertexFormats.EXTENDED_BLOCK;
         assertEquals(DefaultVertexFormat.BLOCK.getVertexSize() + 20, extended.getVertexSize(),
                 "block prefix plus 20-byte material inputs");
@@ -711,8 +715,8 @@ final class HostFamilyTest {
         assertEquals(0.1F, HostLayoutLane.TEXT_BG.alphaReference(), "Iris TEXT_BG tests ONE_TENTH_ALPHA");
         var glyphs = DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
         // TrueType glyphs (Iris TEXT_INTENSITY and TEXT_INTENSITY_BE) read their RRRR page alike.
-        for (String text : List.of("text", "text_polygon_offset", "text_see_through", "text_intensity",
-                "text_intensity_polygon_offset", "text_intensity_see_through")) {
+        for (String text : List.of("rendertype_text", "rendertype_text_see_through", "position_color_tex_lightmap",
+                "rendertype_text_intensity", "rendertype_text_intensity_see_through")) {
             assertTrue(ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.ENTITY)
                             == ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT
                             && ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.BLOCK)

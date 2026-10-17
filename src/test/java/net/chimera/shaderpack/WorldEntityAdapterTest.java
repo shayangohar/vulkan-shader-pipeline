@@ -79,12 +79,13 @@ final class WorldEntityAdapterTest {
                 "tangent translator-safe count");
     }
 
-    /** One render type in Iris 1.21.1's MixinGameRenderer table: its family in each context. */
-    private record Route(String type, Family entity, Family blockEntity, Family shadow, Family blockEntityShadow) {}
+    /** One shader in Iris 1.21.1's MixinGameRenderer table: the family of its draws in each context. */
+    private record Route(String shader, Family entity, Family blockEntity, Family shadow, Family blockEntityShadow) {}
 
     /**
-     * Every entity-format render type Iris 1.21.1 overrides, in an entity, in a block entity and in
-     * the shadow pass; then the chunk types Iris draws as MOVING_BLOCK.
+     * Every entity-format shader Iris 1.21.1 overrides, in an entity, in a block entity and in the
+     * shadow pass; then the chunk shaders Iris draws as MOVING_BLOCK. Routes key on the shader, as
+     * Iris's do, so NeoForge's item types and the armor-trim decal follow their shaders' rows.
      */
     @Test
     void worldPipelineContract() {
@@ -110,26 +111,51 @@ final class WorldEntityAdapterTest {
         routes.add(new Route("entity_alpha", null, null, Family.SHADOW_ENTITIES, Family.SHADOW_ENTITIES));
         var entityFormat = DefaultVertexFormat.NEW_ENTITY;
         for (Route route : routes) {
-            String type = route.type();
-            assertEquals(route.entity(), ChimeraEntityBridge.worldFamily(type, entityFormat, Family.ENTITY), type);
-            assertEquals(route.blockEntity(), ChimeraEntityBridge.worldFamily(type, entityFormat, Family.BLOCK),
-                    type + " in a block entity");
-            assertEquals(route.shadow(), ChimeraEntityBridge.shadowFamily(type, entityFormat, Family.ENTITY),
-                    type + " casting a shadow");
-            assertEquals(route.blockEntityShadow(), ChimeraEntityBridge.shadowFamily(type, entityFormat, Family.BLOCK),
-                    type + " casting a block entity's shadow");
+            String shader = "rendertype_" + route.shader();
+            assertEquals(route.entity(), ChimeraEntityBridge.worldFamily(shader, entityFormat, Family.ENTITY), shader);
+            assertEquals(route.blockEntity(), ChimeraEntityBridge.worldFamily(shader, entityFormat, Family.BLOCK),
+                    shader + " in a block entity");
+            assertEquals(route.shadow(), ChimeraEntityBridge.shadowFamily(shader, entityFormat, Family.ENTITY),
+                    shader + " casting a shadow");
+            assertEquals(route.blockEntityShadow(),
+                    ChimeraEntityBridge.shadowFamily(shader, entityFormat, Family.BLOCK),
+                    shader + " casting a block entity's shadow");
         }
+        assertEquals(null, ChimeraEntityBridge.worldFamily(null, entityFormat, Family.ENTITY),
+                "a render type without a shader keeps its host draw");
         var block = DefaultVertexFormat.BLOCK;
         for (String type : List.of("solid", "cutout_mipped", "cutout", "translucent", "translucent_moving_block",
                 "tripwire")) {
+            String shader = "rendertype_" + type;
             for (Family context : List.of(Family.ENTITY, Family.BLOCK)) {
-                assertEquals(Family.MOVING_BLOCK, ChimeraEntityBridge.worldFamily(type, block, context), type);
-                assertEquals(Family.SHADOW_ENTITIES, ChimeraEntityBridge.shadowFamily(type, block, context), type);
+                assertEquals(Family.MOVING_BLOCK, ChimeraEntityBridge.worldFamily(shader, block, context), shader);
+                assertEquals(Family.SHADOW_ENTITIES, ChimeraEntityBridge.shadowFamily(shader, block, context), shader);
             }
-            assertEquals(null, ChimeraEntityBridge.shadowFamily(type, block, null), "terrain casts no entity shadow");
+            assertEquals(null, ChimeraEntityBridge.shadowFamily(shader, block, null), "terrain casts no entity shadow");
         }
-        assertEquals(null, ChimeraEntityBridge.worldFamily("crumbling", block, Family.BLOCK), "crumbling");
-        assertEquals(null, ChimeraEntityBridge.worldFamily("beacon_beam", block, Family.BLOCK), "beacon beams");
+        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_crumbling", block, Family.BLOCK), "crumbling");
+        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_beacon_beam", block, Family.BLOCK), "beams");
+    }
+
+    /** Iris reports BLOCK_ENTITIES for whatever a block entity draws, in either pass, and ENTITIES for an entity's. */
+    @Test
+    void familyBatchesReportTheirContextPhase() {
+        ChimeraEntityBridge.beginBlockEntity(0);
+        try {
+            assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.MOVING_BLOCK),
+                    "a moving piston");
+            assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.SHADOW_ENTITIES),
+                    "a block entity's eyes in the shadow pass");
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
+        ChimeraEntityBridge.beginEntity("minecraft:falling_block");
+        try {
+            assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.writePhase(Family.MOVING_BLOCK),
+                    "a falling block");
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
     }
 
     @Test

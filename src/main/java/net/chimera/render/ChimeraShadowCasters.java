@@ -36,7 +36,8 @@ import java.util.SequencedMap;
  * <p>Like Iris it owns its buffers, draws every entity the light's view holds (the camera entity
  * included, so the player casts in first person) and the block entities of the sections inside the
  * light volume, with the light view on the model-view stack and the light projection as the
- * projection. The bridge's caster window routes every entity-format batch to shadow_entities.</p>
+ * projection. The bridge's caster window routes each caster batch to its shadow family:
+ * shadow_block for a block entity's models, shadow_entities for the rest.</p>
  */
 public final class ChimeraShadowCasters implements AutoCloseable {
     private static ChimeraShadowCasters instance;

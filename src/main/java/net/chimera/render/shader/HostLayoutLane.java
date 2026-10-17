@@ -47,9 +47,10 @@ public enum HostLayoutLane {
     TEXT_BG(ChimeraEntityBridge.Family.TEXT_BG, "text_bg", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.ONE_TENTH, Shaders.TEXT_BACKGROUND),
     /*
-     * The shadow pass. Iris ShadowRenderer holds the ENTITIES phase while it draws entities and
-     * block entities, so every shadow lane reports it. Iris cancels beacon beams, which stay out of
-     * the shadow map.
+     * The shadow pass. Shadow lanes report ENTITIES, the phase Iris ShadowRenderer holds for
+     * entities; Iris reports BLOCK_ENTITIES for a block entity's own draws (sign text here), which
+     * only the family lanes follow (ChimeraEntityBridge.writePhase). Iris cancels beacon beams,
+     * which stay out of the shadow map.
      */
     /** Iris SHADOW_LINES: fishing lines and hitboxes, the shadow program widened like gbuffers_basic. */
     SHADOW_LINES(ChimeraEntityBridge.Family.SHADOW_LINES, "shadow_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,

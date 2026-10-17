@@ -7,19 +7,17 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
+import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SequencedMap;
-import java.util.Set;
 
 /**
  * A buffer source that batches the pack family lanes apart from the host's. A render type that a
@@ -33,15 +31,22 @@ import java.util.Set;
  *
  * <p>Each family type keeps its own buffer. Vanilla memoizes most entity render types, but it
  * builds energy swirl and breeze wind anew each frame, as some mods do with theirs; past
- * {@link #MAX_FAMILY_TYPES}, the types a batch did not draw are freed with their buffers.</p>
+ * {@link #MAX_FAMILY_TYPES}, the types no flush has drawn for {@link #IDLE_FLUSHES} flushes are
+ * freed with their buffers.</p>
  */
 public final class FamilyBufferSource extends MultiBufferSource.BufferSource implements AutoCloseable {
     private static final List<FamilyBufferSource> LIVE = new ArrayList<>();
     private static final int MAX_FAMILY_TYPES = 256;
+    /** About half a second: the world source flushes two or three times a frame. */
+    private static final long IDLE_FLUSHES = 64;
 
     private final MultiBufferSource.BufferSource host;
     private final SequencedMap<RenderType, ByteBufferBuilder> familyBuffers;
-    private final Map<Family, Map<RenderType, FamilyRenderType>> familyTypes = new EnumMap<>(Family.class);
+    private final Map<TypeKey, FamilyRenderType> familyTypes = new HashMap<>();
+    private long flushes;
+
+    /** A family type's identity: its lane, the phase it draws in, and the host type it wraps. */
+    private record TypeKey(Family family, PackRenderingPhase phase, RenderType host) {}
 
     public FamilyBufferSource(MultiBufferSource.BufferSource host) {
         this(host, new LinkedHashMap<>());
@@ -60,8 +65,9 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     public VertexConsumer getBuffer(RenderType type) {
         Family family = ChimeraEntityBridge.familyFor(type);
         if (family == null) return host.getBuffer(type);
-        FamilyRenderType familyType = familyTypes.computeIfAbsent(family, ignored -> new HashMap<>())
-                .computeIfAbsent(type, ignored -> new FamilyRenderType(family, type));
+        PackRenderingPhase phase = ChimeraEntityBridge.writePhase(family);
+        FamilyRenderType familyType = familyTypes.computeIfAbsent(new TypeKey(family, phase, type),
+                key -> new FamilyRenderType(family, phase, type));
         // A chunk type asks for 4 MB up front; a family batch starts small and grows as it fills.
         familyBuffers.computeIfAbsent(familyType, started -> new ByteBufferBuilder(
                 Math.min(started.bufferSize(), RenderType.TRANSIENT_BUFFER_SIZE)));
@@ -96,22 +102,23 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
             if (startedBuilders.containsKey(type)) started.add((FamilyRenderType) type);
         }
         started.sort(Comparator.comparing(RenderType::sortOnUpload));
+        flushes++;
+        started.forEach(type -> type.drawnAt(flushes));
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
         if (pass == null) {
             started.forEach(super::endBatch);
         } else {
             pass.drawFamilyBatches(started, super::endBatch, this::discard);
         }
-        if (familyBuffers.size() > MAX_FAMILY_TYPES) freeIdleTypes(started);
+        if (familyBuffers.size() > MAX_FAMILY_TYPES) freeIdleTypes();
     }
 
-    /** Frees every family type, and its buffer, that this batch did not draw. */
-    private void freeIdleTypes(List<FamilyRenderType> drawn) {
-        Set<RenderType> kept = new HashSet<>(drawn);
+    /** Frees every family type, and its buffer, that no flush has drawn for IDLE_FLUSHES flushes. */
+    private void freeIdleTypes() {
         familyBuffers.entrySet().removeIf(entry -> {
-            if (kept.contains(entry.getKey())) return false;
             FamilyRenderType type = (FamilyRenderType) entry.getKey();
-            familyTypes.get(type.family()).remove(type.host());
+            if (flushes - type.lastDrawn() <= IDLE_FLUSHES) return false;
+            familyTypes.remove(new TypeKey(type.family(), type.phase(), type.host()));
             entry.getValue().close();
             return true;
         });

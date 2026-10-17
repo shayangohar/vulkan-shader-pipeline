@@ -3,6 +3,9 @@ package net.chimera.render.shader;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.ChimeraMod;
+import net.chimera.mixin.ChimeraCompositeRenderTypeAccessor;
+import net.chimera.mixin.ChimeraCompositeStateAccessor;
+import net.chimera.mixin.ChimeraShaderStateShardAccessor;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraTextureBindingState;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -10,6 +13,7 @@ import net.chimera.shaderpack.PackEntityIdResolver;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.ShaderInstance;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
@@ -18,6 +22,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Render-thread state of the pack geometry families: which pack program draws which host draw.
@@ -99,43 +104,46 @@ public final class ChimeraEntityBridge {
     }
 
     /**
-     * Entity render types by vanilla name. Flat held and dropped items draw with
-     * item_entity_translucent_cull: drawn by the host they wrote no gbuffer data, and deferred
-     * lighting erased them to a ghost. entity_alpha (the dying dragon) stays on the host: Iris tests
-     * it against the vertex alpha, a threshold the pack programs here do not take.
+     * Entity-format shaders by vanilla name; a render type routes by the shader it draws with, as
+     * Iris overrides shader getters, so NeoForge's and mods' render types on these shaders follow.
+     * Flat held and dropped items draw with item_entity_translucent_cull: drawn by the host they
+     * wrote no gbuffer data, and deferred lighting erased them to a ghost. entity_alpha (the dying
+     * dragon) stays on the host: Iris tests it against the vertex alpha, a threshold the pack
+     * programs here do not take.
      */
     private static final Map<String, EntityShader> ENTITY_SHADERS = Map.ofEntries(
-            Map.entry("entity_solid", EntityShader.MODEL),
-            Map.entry("entity_cutout", EntityShader.MODEL),
-            Map.entry("entity_cutout_no_cull", EntityShader.MODEL),
-            Map.entry("entity_cutout_no_cull_z_offset", EntityShader.MODEL),
-            Map.entry("entity_decal", EntityShader.MODEL),
-            Map.entry("entity_smooth_cutout", EntityShader.MODEL),
-            Map.entry("armor_cutout_no_cull", EntityShader.MODEL),
-            Map.entry("energy_swirl", EntityShader.OVERLAY),
-            Map.entry("entity_shadow", EntityShader.OVERLAY),
-            Map.entry("entity_translucent", EntityShader.TRANSLUCENT),
-            Map.entry("entity_translucent_cull", EntityShader.TRANSLUCENT),
-            Map.entry("item_entity_translucent_cull", EntityShader.TRANSLUCENT),
-            Map.entry("breeze_wind", EntityShader.TRANSLUCENT),
-            Map.entry("entity_no_outline", EntityShader.TRANSLUCENT),
-            Map.entry("eyes", EntityShader.EYES),
-            Map.entry("entity_translucent_emissive", EntityShader.EMISSIVE));
-    /** The chunk render types Iris draws as MOVING_BLOCK when an entity or block entity draws them. */
-    private static final Set<String> MOVING_BLOCK_TYPES = Set.of(
-            "solid", "cutout_mipped", "cutout", "translucent", "translucent_moving_block", "tripwire");
+            Map.entry("rendertype_entity_solid", EntityShader.MODEL),
+            Map.entry("rendertype_entity_cutout", EntityShader.MODEL),
+            Map.entry("rendertype_entity_cutout_no_cull", EntityShader.MODEL),
+            Map.entry("rendertype_entity_cutout_no_cull_z_offset", EntityShader.MODEL),
+            Map.entry("rendertype_entity_decal", EntityShader.MODEL),
+            Map.entry("rendertype_entity_smooth_cutout", EntityShader.MODEL),
+            Map.entry("rendertype_armor_cutout_no_cull", EntityShader.MODEL),
+            Map.entry("rendertype_energy_swirl", EntityShader.OVERLAY),
+            Map.entry("rendertype_entity_shadow", EntityShader.OVERLAY),
+            Map.entry("rendertype_entity_translucent", EntityShader.TRANSLUCENT),
+            Map.entry("rendertype_entity_translucent_cull", EntityShader.TRANSLUCENT),
+            Map.entry("rendertype_item_entity_translucent_cull", EntityShader.TRANSLUCENT),
+            Map.entry("rendertype_breeze_wind", EntityShader.TRANSLUCENT),
+            Map.entry("rendertype_entity_no_outline", EntityShader.TRANSLUCENT),
+            Map.entry("rendertype_eyes", EntityShader.EYES),
+            Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE));
+    /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
+    private static final Set<String> MOVING_BLOCK_SHADERS = Set.of("rendertype_solid", "rendertype_cutout_mipped",
+            "rendertype_cutout", "rendertype_translucent", "rendertype_translucent_moving_block",
+            "rendertype_tripwire");
     /**
-     * The glyph render types Iris routes through TEXT and TEXT_BE, and through TEXT_INTENSITY and
+     * The glyph shaders Iris routes through TEXT and TEXT_BE, and through TEXT_INTENSITY and
      * TEXT_INTENSITY_BE for TrueType glyphs, whose one-channel page reads RRRR
      * (IntensityTextureViews): world, sign and see-through text.
      */
-    private static final Set<String> TEXT_TYPES = Set.of("text", "text_polygon_offset", "text_see_through",
-            "text_intensity", "text_intensity_polygon_offset", "text_intensity_see_through");
+    private static final Set<String> TEXT_SHADERS = Set.of("rendertype_text", "rendertype_text_see_through",
+            "position_color_tex_lightmap", "rendertype_text_intensity", "rendertype_text_intensity_see_through");
 
     private static PackEntityIdResolver resolver = PackEntityIdResolver.empty();
     /** The pack's lightning_bolt id as Iris's entityId uniform reads it. */
     private static int lightningBoltEntityId;
-    /** True while RenderType.lightning() draws its batch (ChimeraLightningBoltMixin). */
+    /** True while LightningBoltRenderType, the bolt's render type, draws its batch. */
     private static boolean lightningBoltDraw;
     private static GraphicsPipeline entityPipeline;
     private static GraphicsPipeline translucentEntityPipeline;
@@ -306,6 +314,7 @@ public final class ChimeraEntityBridge {
     private static void resetFrameState() {
         restoreTextures();
         drawActive = false;
+        lightningBoltDraw = false;
         activePipeline = null;
         activeFamily = null;
         worldWindow = false;
@@ -341,8 +350,8 @@ public final class ChimeraEntityBridge {
 
     /**
      * Opens the shadow pass's caster window around its entity and block-entity drawing (Iris
-     * ShadowRenderer.ACTIVE): every entity-format batch draws with shadow_entities, every
-     * host-layout draw with its shadow lane, and anything else stays out of the shadow map.
+     * ShadowRenderer.ACTIVE): every caster batch draws with its shadow family ({@link #shadowFamily}),
+     * every host-layout draw with its shadow lane, and anything else stays out of the shadow map.
      */
     public static boolean beginShadowCasters() {
         shadowCasterPass = enabled && !drawActive && shadowCasterPipeline != null;
@@ -472,33 +481,59 @@ public final class ChimeraEntityBridge {
         VertexFormat format = type.format();
         Family family;
         if (shadowCasterPass) {
-            family = shadowFamily(type.name, format, context());
-            if (family == Family.SHADOW_BLOCK && shadowBlockPipeline == null) family = Family.SHADOW_ENTITIES;
+            family = shadowFamily(shaderOf(type), format, context());
         } else if (ChimeraHandRenderer.active()) {
             family = ChimeraHandRenderer.translucentPhase() ? Family.HAND_WATER : Family.HAND;
         } else {
             Family context = worldWindow ? context() : null;
-            family = context == null ? null : worldFamily(type.name, format, context);
+            family = context == null ? null : worldFamily(shaderOf(type), format, context);
+        }
+        if (family != null && pipelineFor(family, widenedFormat(family, format)) == null) {
+            family = fallback(family, format);
         }
         return family != null && pipelineFor(family, widenedFormat(family, format)) != null ? family : null;
     }
 
     /**
-     * The family Iris 1.21.1 draws a world render type with, by its name and format, inside an
+     * The lane of the next program in Iris's chain, where a lane's own program is not installed:
+     * shadow_block's caster lane, and gbuffers_block for a block entity's translucent models.
+     */
+    private static Family fallback(Family family, VertexFormat format) {
+        if (format != DefaultVertexFormat.NEW_ENTITY) return null;
+        return switch (family) {
+            case SHADOW_BLOCK -> Family.SHADOW_ENTITIES;
+            case BLOCK_TRANSLUCENT -> Family.BLOCK;
+            default -> null;
+        };
+    }
+
+    /** The shader a composite render type draws with, which Iris keys its overrides on; null for none. */
+    private static String shaderOf(RenderType type) {
+        if (!(type instanceof ChimeraCompositeRenderTypeAccessor composite)) return null;
+        var shard = ((ChimeraCompositeStateAccessor) (Object) composite.chimera$state()).chimera$shaderState();
+        return ((ChimeraShaderStateShardAccessor) shard).chimera$shader().map(Supplier::get)
+                .map(ShaderInstance::getName).orElse(null);
+    }
+
+    /**
+     * The family Iris 1.21.1 draws a world render type with, by its shader and format, inside an
      * entity ({@code context} ENTITY) or a block entity (BLOCK); null when Iris keeps it on another
      * program. Text is TEXT (gbuffers_entities_translucent) in an entity and TEXT_BE
      * (gbuffers_block_translucent) in a block entity.
      */
-    public static Family worldFamily(String type, VertexFormat format, Family context) {
+    public static Family worldFamily(String shader, VertexFormat format, Family context) {
+        if (shader == null) return null;
         boolean blockEntity = context == Family.BLOCK;
         if (format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
-            if (!TEXT_TYPES.contains(type)) return null;
+            if (!TEXT_SHADERS.contains(shader)) return null;
             return blockEntity ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
         }
-        if (format == DefaultVertexFormat.BLOCK) return MOVING_BLOCK_TYPES.contains(type) ? Family.MOVING_BLOCK : null;
-        EntityShader shader = format == DefaultVertexFormat.NEW_ENTITY ? ENTITY_SHADERS.get(type) : null;
-        if (shader == null) return null;
-        return switch (shader) {
+        if (format == DefaultVertexFormat.BLOCK) {
+            return MOVING_BLOCK_SHADERS.contains(shader) ? Family.MOVING_BLOCK : null;
+        }
+        EntityShader key = format == DefaultVertexFormat.NEW_ENTITY ? ENTITY_SHADERS.get(shader) : null;
+        if (key == null) return null;
+        return switch (key) {
             case MODEL, OVERLAY -> blockEntity ? Family.BLOCK : Family.ENTITY;
             case TRANSLUCENT -> blockEntity ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
             case EYES, EMISSIVE -> blockEntity ? Family.BLOCK : Family.SPIDER_EYES;
@@ -506,18 +541,19 @@ public final class ChimeraEntityBridge {
     }
 
     /**
-     * The family Iris 1.21.1 draws a shadow caster with: a block entity's models SHADOW_BLOCK,
-     * falling blocks and moving pistons the shadow program on the block layout, and every other
-     * entity-format caster SHADOW_ENTITIES_CUTOUT. Null leaves it out of the shadow map.
+     * The family Iris 1.21.1 draws a shadow caster with, by its shader and format: a block entity's
+     * models SHADOW_BLOCK, falling blocks and moving pistons the shadow program on the block layout,
+     * and every other entity-format caster SHADOW_ENTITIES_CUTOUT. Null leaves it out of the shadow
+     * map.
      */
-    public static Family shadowFamily(String type, VertexFormat format, Family context) {
+    public static Family shadowFamily(String shader, VertexFormat format, Family context) {
         if (format == DefaultVertexFormat.BLOCK) {
-            return context != null && MOVING_BLOCK_TYPES.contains(type) ? Family.SHADOW_ENTITIES : null;
+            return context != null && MOVING_BLOCK_SHADERS.contains(shader) ? Family.SHADOW_ENTITIES : null;
         }
         if (format != DefaultVertexFormat.NEW_ENTITY) return null;
-        EntityShader shader = ENTITY_SHADERS.get(type);
-        boolean blockModel = context == Family.BLOCK && shader != null
-                && shader != EntityShader.OVERLAY && shader != EntityShader.EYES;
+        EntityShader key = shader == null ? null : ENTITY_SHADERS.get(shader);
+        boolean blockModel = context == Family.BLOCK && key != null
+                && key != EntityShader.OVERLAY && key != EntityShader.EYES;
         return blockModel ? Family.SHADOW_BLOCK : Family.SHADOW_ENTITIES;
     }
 
@@ -584,6 +620,12 @@ public final class ChimeraEntityBridge {
      * when the lane has no pipeline for that format.
      */
     public static boolean beginDraw(Family family, VertexFormat format, String shader) {
+        HostLayoutLane lane = HostLayoutLane.of(family);
+        return beginDraw(family, format, shader, lane != null ? lane.phase() : phase(family));
+    }
+
+    /** Opens a draw as {@link #beginDraw(Family, VertexFormat, String)} does, in {@code phase}. */
+    public static boolean beginDraw(Family family, VertexFormat format, String shader, PackRenderingPhase phase) {
         if (!enabled || drawActive) return false;
         GraphicsPipeline selected = pipelineFor(family, format);
         if (selected == null) return false;
@@ -592,7 +634,7 @@ public final class ChimeraEntityBridge {
         activePipeline = selected;
         activeAlphaReference = lane != null ? lane.alphaReference()
                 : HostAlphaTest.reference(shader, family, shadowCasterPass);
-        activePhase = lane != null ? lane.phase() : phase(family);
+        activePhase = phase;
         for (int index = 0; index < VTextureSelector.SIZE; index++) {
             previousTextures[index] = VTextureSelector.getBoundTexture(index);
         }
@@ -674,15 +716,21 @@ public final class ChimeraEntityBridge {
         return variant == null ? null : variant.pipeline();
     }
 
+    /**
+     * The Iris rendering phase a family batch written now draws in: BLOCK_ENTITIES for whatever a
+     * block entity draws, as Iris wraps a block entity's render types in BlockEntityRenderStateShard
+     * in either pass, and otherwise the family's own.
+     */
+    public static PackRenderingPhase writePhase(Family family) {
+        return context() == Family.BLOCK ? PackRenderingPhase.BLOCK_ENTITIES : phase(family);
+    }
+
     /** The Iris rendering phase a family outside the host-layout lanes draws in. */
     private static PackRenderingPhase phase(Family family) {
         return switch (family) {
-            // Iris keeps the ENTITIES phase for every entity and block-entity shadow caster. A moving
-            // block batches the same in either context; a moving piston reads ENTITIES where Iris
-            // reports BLOCK_ENTITIES.
-            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, MOVING_BLOCK, SHADOW_ENTITIES, SHADOW_BLOCK
-                    -> PackRenderingPhase.ENTITIES;
-            case BLOCK, BLOCK_TRANSLUCENT -> PackRenderingPhase.BLOCK_ENTITIES;
+            // Iris holds the ENTITIES phase for entities and their shadow casters.
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, MOVING_BLOCK, SHADOW_ENTITIES -> PackRenderingPhase.ENTITIES;
+            case BLOCK, BLOCK_TRANSLUCENT, SHADOW_BLOCK -> PackRenderingPhase.BLOCK_ENTITIES;
             case DAMAGED_BLOCK -> PackRenderingPhase.DESTROY;
             case HAND -> PackRenderingPhase.HAND_SOLID;
             case HAND_WATER -> PackRenderingPhase.HAND_TRANSLUCENT;

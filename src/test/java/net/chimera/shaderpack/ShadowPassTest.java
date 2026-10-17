@@ -256,7 +256,7 @@ final class ShadowPassTest {
         assertTrue(MixinBytecode.instructionsThrough(mixin, "chimera$flameId").stream().anyMatch(instruction ->
                         instruction instanceof MethodInsnNode call && call.name.equals("flameEntityId")),
                 "burning-entity fire must draw with Iris's entity_flame id");
-        assertEquals(ChimeraEntityBridge.Family.ENTITY, ChimeraEntityBridge.worldFamily("entity_cutout",
+        assertEquals(ChimeraEntityBridge.Family.ENTITY, ChimeraEntityBridge.worldFamily("rendertype_entity_cutout",
                 DefaultVertexFormat.NEW_ENTITY, ChimeraEntityBridge.Family.ENTITY), "fire's cutout is an entity draw");
     }
 

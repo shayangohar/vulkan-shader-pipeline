@@ -606,8 +606,8 @@ public final class PackPipelines {
     }
 
     /**
-     * Builds shadow_entities on EXTENDED_ENTITY for the shadow pass's entity lane, as Iris draws
-     * every entity and block-entity pipeline in the shadow pass with SHADOW_ENTITIES_CUTOUT.
+     * Builds shadow_entities, or shadow_block, on EXTENDED_ENTITY for the shadow pass's caster
+     * lanes (Iris SHADOW_ENTITIES_CUTOUT and SHADOW_BLOCK).
      */
     public static PackEntity buildShadowEntities(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner

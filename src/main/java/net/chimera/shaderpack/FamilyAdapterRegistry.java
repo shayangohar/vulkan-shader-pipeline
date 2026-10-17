@@ -16,8 +16,9 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.TRANSLUCENT, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
             plan("shadow", FamilyAdapterPlan.Family.SHADOW,
                     UniformRegistry.Stage.SHADOW, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
-            // Iris SHADOW_ENTITIES_CUTOUT: every entity and block-entity pipeline in the shadow
-            // pass, on the entity layout (the end portal and gateway too, after the entitySolid swap).
+            // Iris SHADOW_ENTITIES_CUTOUT: the shadow pass's entity casters on the entity layout (the
+            // end portal and gateway too, after the entitySolid swap), and moving blocks on the
+            // block layout.
             plan("shadow_entities", FamilyAdapterPlan.Family.SHADOW_ENTITIES,
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             // Iris 1.21.1 SHADOW_BLOCK: a block entity's solid, cutout, translucent and emissive models.
