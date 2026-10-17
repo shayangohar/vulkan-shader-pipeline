@@ -16,17 +16,19 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
  * Render-thread state of the pack geometry families: which pack program draws which host draw.
  *
- * <p>Two kinds of lane exist. A family lane (entities, block entities, their text, the hand and
- * shadow casters) widens the host vertex format with Iris's attributes, so its geometry is batched
- * apart from the host's in a {@link FamilyRenderType} the moment it is written: the lane is chosen
- * from the render type and the context drawing it (EntityRenderDispatcher, BlockEntityRenderDispatcher,
- * the hand, the shadow casters). A host-layout lane (particles, crumbling, and the
- * {@link HostLayoutLane}s) keeps the host mesh and is chosen when it draws, by shader name.</p>
+ * <p>Two kinds of lane exist. A family lane (entities, block entities, their text and moving blocks,
+ * the hand and shadow casters) widens the host vertex format with Iris's attributes, so its
+ * geometry is batched apart from the host's in a {@link FamilyRenderType} the moment it is written:
+ * the lane is chosen from the render type and the context drawing it (EntityRenderDispatcher,
+ * BlockEntityRenderDispatcher, the hand, the shadow casters). A host-layout lane (particles,
+ * crumbling, and the {@link HostLayoutLane}s) keeps the host mesh and is chosen when it draws, by
+ * shader name.</p>
  *
  * <p>Either way the draw is open here while it runs, and the ShaderInstance pipeline seam
  * (ChimeraShaderPipelineMixin) hands Reforged the open draw's pack pipeline.</p>
@@ -37,8 +39,16 @@ public final class ChimeraEntityBridge {
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,
         BLOCK,
-        /** A block entity's text (signs), drawn with gbuffers_block_translucent (Iris TEXT_BE). */
+        /**
+         * A block entity's translucent models (Iris BE_TRANSLUCENT) and text (TEXT_BE), drawn with
+         * gbuffers_block_translucent.
+         */
         BLOCK_TRANSLUCENT,
+        /**
+         * Falling blocks and moving pistons: chunk render types drawn by an entity or a block entity,
+         * with gbuffers_block on the block layout (Iris MOVING_BLOCK).
+         */
+        MOVING_BLOCK,
         DAMAGED_BLOCK,
         HAND,
         HAND_WATER,
@@ -54,8 +64,13 @@ public final class ChimeraEntityBridge {
         LEASH,
         /** Text and name-tag backgrounds (Iris TEXT_BG), drawn with gbuffers_entities_translucent. */
         TEXT_BG,
-        /** Every entity-format caster in the shadow pass (Iris SHADOW_ENTITIES_CUTOUT). */
+        /**
+         * The shadow pass's entity-format casters (Iris SHADOW_ENTITIES_CUTOUT), and on the block
+         * layout its moving blocks.
+         */
         SHADOW_ENTITIES,
+        /** A block entity's models in the shadow pass, drawn with shadow_block (Iris SHADOW_BLOCK). */
+        SHADOW_BLOCK,
         /** The shadow pass's host-layout lanes (HostLayoutLane, Pass.SHADOW). */
         SHADOW_LINES,
         SHADOW_LEASH,
@@ -66,19 +81,49 @@ public final class ChimeraEntityBridge {
         SHADOW_BASIC
     }
 
-    /** Opaque and cutout entity render types, by vanilla name (Iris ENTITIES_SOLID and ENTITIES_CUTOUT). */
-    private static final Set<String> ENTITY_TYPES = Set.of(
-            "entity_solid", "entity_cutout", "entity_cutout_no_cull", "entity_cutout_no_cull_z_offset",
-            "entity_smooth_cutout", "entity_no_outline");
     /**
-     * Translucent entity render types (Iris ENTITIES_TRANSLUCENT). Flat held and dropped items draw
-     * with item_entity_translucent_cull: drawn by the host they wrote no gbuffer data, and deferred
-     * lighting erased them to a ghost.
+     * How Iris 1.21.1's MixinGameRenderer keys an entity-format shader, in an entity, in a block
+     * entity and in the shadow pass.
      */
-    private static final Set<String> TRANSLUCENT_TYPES = Set.of(
-            "entity_translucent", "entity_translucent_cull", "item_entity_translucent_cull");
-    /** Iris ENTITIES_EYES and ENTITIES_EYES_TRANS, both ProgramId.SpiderEyes. */
-    private static final Set<String> EYES_TYPES = Set.of("eyes", "entity_translucent_emissive");
+    enum EntityShader {
+        /** ENTITIES_SOLID_DIFFUSE or ENTITIES_CUTOUT_DIFFUSE; BLOCK_ENTITY_DIFFUSE; SHADOW_BLOCK. */
+        MODEL,
+        /** ENTITIES_CUTOUT; BLOCK_ENTITY; SHADOW_ENTITIES_CUTOUT. */
+        OVERLAY,
+        /** ENTITIES_TRANSLUCENT; BE_TRANSLUCENT; SHADOW_BLOCK. */
+        TRANSLUCENT,
+        /** ENTITIES_EYES; BLOCK_ENTITY; SHADOW_ENTITIES_CUTOUT. */
+        EYES,
+        /** ENTITIES_EYES_TRANS; BLOCK_ENTITY; SHADOW_BLOCK. */
+        EMISSIVE
+    }
+
+    /**
+     * Entity render types by vanilla name. Flat held and dropped items draw with
+     * item_entity_translucent_cull: drawn by the host they wrote no gbuffer data, and deferred
+     * lighting erased them to a ghost. entity_alpha (the dying dragon) stays on the host: Iris tests
+     * it against the vertex alpha, a threshold the pack programs here do not take.
+     */
+    private static final Map<String, EntityShader> ENTITY_SHADERS = Map.ofEntries(
+            Map.entry("entity_solid", EntityShader.MODEL),
+            Map.entry("entity_cutout", EntityShader.MODEL),
+            Map.entry("entity_cutout_no_cull", EntityShader.MODEL),
+            Map.entry("entity_cutout_no_cull_z_offset", EntityShader.MODEL),
+            Map.entry("entity_decal", EntityShader.MODEL),
+            Map.entry("entity_smooth_cutout", EntityShader.MODEL),
+            Map.entry("armor_cutout_no_cull", EntityShader.MODEL),
+            Map.entry("energy_swirl", EntityShader.OVERLAY),
+            Map.entry("entity_shadow", EntityShader.OVERLAY),
+            Map.entry("entity_translucent", EntityShader.TRANSLUCENT),
+            Map.entry("entity_translucent_cull", EntityShader.TRANSLUCENT),
+            Map.entry("item_entity_translucent_cull", EntityShader.TRANSLUCENT),
+            Map.entry("breeze_wind", EntityShader.TRANSLUCENT),
+            Map.entry("entity_no_outline", EntityShader.TRANSLUCENT),
+            Map.entry("eyes", EntityShader.EYES),
+            Map.entry("entity_translucent_emissive", EntityShader.EMISSIVE));
+    /** The chunk render types Iris draws as MOVING_BLOCK when an entity or block entity draws them. */
+    private static final Set<String> MOVING_BLOCK_TYPES = Set.of(
+            "solid", "cutout_mipped", "cutout", "translucent", "translucent_moving_block", "tripwire");
     /**
      * The glyph render types Iris routes through TEXT and TEXT_BE: world, sign and see-through text.
      * Intensity text stays host-drawn: Iris swizzles its one-channel glyph texture to RRRR, a texture
@@ -94,15 +139,21 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline damagedBlockPipeline;
     private static PackPipelines.PackHand handVariants;
     private static PackPipelines.PackHand handWaterVariants;
+    private static GraphicsPipeline blockTranslucentPipeline;
     /** The translucent-entity and block-translucent programs built for Iris's GLYPH text layout. */
     private static GraphicsPipeline translucentEntityTextPipeline;
     private static GraphicsPipeline blockTranslucentTextPipeline;
+    /** gbuffers_block on the block layout. */
+    private static GraphicsPipeline movingBlockPipeline;
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
     /** The installed lanes of {@link HostLayoutLane}, keyed by their family. */
     private static final EnumMap<Family, GraphicsPipeline> hostLayoutPipelines = new EnumMap<>(Family.class);
-    /** shadow_entities, drawing every entity-format caster in the shadow pass. */
+    /** shadow_entities, drawing the shadow pass's entity-format casters, and on the block layout its moving blocks. */
     private static GraphicsPipeline shadowCasterPipeline;
+    private static GraphicsPipeline shadowMovingBlockPipeline;
+    /** shadow_block, drawing a block entity's models in the shadow pass. */
+    private static GraphicsPipeline shadowBlockPipeline;
     private static boolean enabled;
 
     /** True from LevelRenderer.renderLevel's head to its return while the pack renders the world. */
@@ -164,13 +215,18 @@ public final class ChimeraEntityBridge {
     }
 
     /**
-     * Installs the text layout variants after {@link #install}: Iris draws TEXT with
-     * gbuffers_entities_translucent and a block entity's TEXT_BE with gbuffers_block_translucent.
+     * Installs gbuffers_block_translucent and the other layouts after {@link #install}: Iris draws
+     * TEXT with gbuffers_entities_translucent, a block entity's BE_TRANSLUCENT and TEXT_BE with
+     * gbuffers_block_translucent, and MOVING_BLOCK with gbuffers_block.
      */
-    public static void installTextVariants(PackPipelines.PackEntity translucentEntityText,
-                                           PackPipelines.PackEntity blockTranslucentText) {
+    public static void installLayoutVariants(PackPipelines.PackEntity translucentEntityText,
+                                             PackPipelines.PackEntity blockTranslucent,
+                                             PackPipelines.PackEntity blockTranslucentText,
+                                             PackPipelines.PackEntity movingBlock) {
         translucentEntityTextPipeline = pipeline(translucentEntityText);
+        blockTranslucentPipeline = pipeline(blockTranslucent);
         blockTranslucentTextPipeline = pipeline(blockTranslucentText);
+        movingBlockPipeline = pipeline(movingBlock);
     }
 
     /** Installs the host-layout lanes after {@link #install}. A lane without a pipeline keeps its host draw. */
@@ -187,10 +243,19 @@ public final class ChimeraEntityBridge {
         }
     }
 
-    /** Installs shadow_entities after {@link #install}; without it no entity casts a pack shadow. */
-    public static void installShadowCasters(PackPipelines.PackEntity casters) {
+    /**
+     * Installs shadow_entities, its block layout and shadow_block after {@link #install}. Without
+     * shadow_entities no entity casts a pack shadow; without shadow_block block entities cast
+     * theirs with shadow_entities.
+     */
+    public static void installShadowCasters(PackPipelines.PackEntity casters,
+                                            PackPipelines.PackEntity movingBlockCasters,
+                                            PackPipelines.PackEntity blockCasters) {
         shadowCasterPipeline = pipeline(casters);
-        ChimeraMod.LOGGER.info("[chimera] family bridge: shadow casters={}", status(shadowCasterPipeline));
+        shadowMovingBlockPipeline = pipeline(movingBlockCasters);
+        shadowBlockPipeline = pipeline(blockCasters);
+        ChimeraMod.LOGGER.info("[chimera] family bridge: shadow casters={}, moving blocks={}, block entities={}",
+                status(shadowCasterPipeline), status(shadowMovingBlockPipeline), status(shadowBlockPipeline));
     }
 
     public static void setEnabled(boolean value) {
@@ -209,15 +274,18 @@ public final class ChimeraEntityBridge {
         damagedBlockPipeline = null;
         handVariants = null;
         handWaterVariants = null;
+        blockTranslucentPipeline = null;
         translucentEntityTextPipeline = null;
         blockTranslucentTextPipeline = null;
+        movingBlockPipeline = null;
         particlePipeline = null;
         translucentParticlePipeline = null;
         hostLayoutPipelines.clear();
         shadowCasterPipeline = null;
+        shadowMovingBlockPipeline = null;
+        shadowBlockPipeline = null;
         resolver = PackEntityIdResolver.empty();
         FamilyBufferSource.releaseAll();
-        FamilyRenderType.clear();
         FamilyDrawTrace.reset();
     }
 
@@ -381,17 +449,16 @@ public final class ChimeraEntityBridge {
     public static Family familyFor(RenderType type) {
         if (!enabled || drawActive || type == null) return null;
         VertexFormat format = type.format();
+        Family family;
         if (shadowCasterPass) {
-            return format == DefaultVertexFormat.NEW_ENTITY && shadowCasterPipeline != null
-                    ? Family.SHADOW_ENTITIES : null;
+            family = shadowFamily(type.name, format, context());
+            if (family == Family.SHADOW_BLOCK && shadowBlockPipeline == null) family = Family.SHADOW_ENTITIES;
+        } else if (ChimeraHandRenderer.active()) {
+            family = ChimeraHandRenderer.translucentPhase() ? Family.HAND_WATER : Family.HAND;
+        } else {
+            Family context = worldWindow ? context() : null;
+            family = context == null ? null : worldFamily(type.name, format, context);
         }
-        if (ChimeraHandRenderer.active()) {
-            Family hand = ChimeraHandRenderer.translucentPhase() ? Family.HAND_WATER : Family.HAND;
-            return handPipeline(hand, ChimeraVertexFormats.handFormats().getOrDefault(format, format)) != null
-                    ? hand : null;
-        }
-        Family context = worldWindow ? context() : null;
-        Family family = context == null ? null : worldFamily(type.name, format, context);
         return family != null && pipelineFor(family, widenedFormat(family, format)) != null ? family : null;
     }
 
@@ -402,31 +469,45 @@ public final class ChimeraEntityBridge {
      * (gbuffers_block_translucent) in a block entity.
      */
     public static Family worldFamily(String type, VertexFormat format, Family context) {
-        if (TEXT_TYPES.contains(type) && format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
-            return context == Family.BLOCK ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
+        boolean blockEntity = context == Family.BLOCK;
+        if (format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
+            if (!TEXT_TYPES.contains(type)) return null;
+            return blockEntity ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
+        }
+        if (format == DefaultVertexFormat.BLOCK) return MOVING_BLOCK_TYPES.contains(type) ? Family.MOVING_BLOCK : null;
+        EntityShader shader = format == DefaultVertexFormat.NEW_ENTITY ? ENTITY_SHADERS.get(type) : null;
+        if (shader == null) return null;
+        return switch (shader) {
+            case MODEL, OVERLAY -> blockEntity ? Family.BLOCK : Family.ENTITY;
+            case TRANSLUCENT -> blockEntity ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
+            case EYES, EMISSIVE -> blockEntity ? Family.BLOCK : Family.SPIDER_EYES;
+        };
+    }
+
+    /**
+     * The family Iris 1.21.1 draws a shadow caster with: a block entity's models SHADOW_BLOCK,
+     * falling blocks and moving pistons the shadow program on the block layout, and every other
+     * entity-format caster SHADOW_ENTITIES_CUTOUT. Null leaves it out of the shadow map.
+     */
+    public static Family shadowFamily(String type, VertexFormat format, Family context) {
+        if (format == DefaultVertexFormat.BLOCK) {
+            return context != null && MOVING_BLOCK_TYPES.contains(type) ? Family.SHADOW_ENTITIES : null;
         }
         if (format != DefaultVertexFormat.NEW_ENTITY) return null;
-        if (context == Family.BLOCK) {
-            return ENTITY_TYPES.contains(type) || TRANSLUCENT_TYPES.contains(type) ? Family.BLOCK : null;
-        }
-        if (TRANSLUCENT_TYPES.contains(type)) return Family.ENTITY_TRANSLUCENT;
-        if (EYES_TYPES.contains(type)) return Family.SPIDER_EYES;
-        return ENTITY_TYPES.contains(type) ? Family.ENTITY : null;
+        EntityShader shader = ENTITY_SHADERS.get(type);
+        boolean blockModel = context == Family.BLOCK && shader != null
+                && shader != EntityShader.OVERLAY && shader != EntityShader.EYES;
+        return blockModel ? Family.SHADOW_BLOCK : Family.SHADOW_ENTITIES;
     }
 
     /** The vertex format a family lane writes for a host format: Iris's attributes appended. */
     static VertexFormat widenedFormat(Family family, VertexFormat format) {
         return switch (family) {
-            case HAND, HAND_WATER -> ChimeraVertexFormats.handFormats().getOrDefault(format, format);
-            case ENTITY_TRANSLUCENT, BLOCK_TRANSLUCENT -> format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP
-                    ? ChimeraVertexFormats.EXTENDED_GLYPH : widenedEntity(format);
-            case ENTITY, SPIDER_EYES, BLOCK, SHADOW_ENTITIES -> widenedEntity(format);
+            case HAND, HAND_WATER, ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, BLOCK_TRANSLUCENT, MOVING_BLOCK,
+                 SHADOW_ENTITIES, SHADOW_BLOCK -> Objects.requireNonNullElse(
+                         ChimeraVertexFormats.extendedLayout(format), format);
             default -> format;
         };
-    }
-
-    private static VertexFormat widenedEntity(VertexFormat format) {
-        return format == DefaultVertexFormat.NEW_ENTITY ? ChimeraVertexFormats.EXTENDED_ENTITY : format;
     }
 
     /**
@@ -547,14 +628,23 @@ public final class ChimeraEntityBridge {
                     ? translucentEntityTextPipeline : translucentEntityPipeline;
             case SPIDER_EYES -> spiderEyesPipeline;
             case BLOCK -> blockPipeline;
-            case BLOCK_TRANSLUCENT -> blockTranslucentTextPipeline;
+            case BLOCK_TRANSLUCENT -> format == ChimeraVertexFormats.EXTENDED_GLYPH
+                    ? blockTranslucentTextPipeline : blockTranslucentPipeline;
+            case MOVING_BLOCK -> movingBlockPipeline;
             case DAMAGED_BLOCK -> damagedBlockPipeline;
             case HAND, HAND_WATER -> handPipeline(family, format);
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
-            case SHADOW_ENTITIES -> shadowCasterPass ? shadowCasterPipeline : null;
+            case SHADOW_ENTITIES, SHADOW_BLOCK -> shadowCasterPipeline(family, format);
             default -> hostLayoutPipelines.get(family);
         };
+    }
+
+    /** A shadow caster family's pipeline for {@code format}; null outside the caster window. */
+    private static GraphicsPipeline shadowCasterPipeline(Family family, VertexFormat format) {
+        if (!shadowCasterPass) return null;
+        if (family == Family.SHADOW_BLOCK) return shadowBlockPipeline;
+        return format == ChimeraVertexFormats.EXTENDED_BLOCK ? shadowMovingBlockPipeline : shadowCasterPipeline;
     }
 
     private static GraphicsPipeline handPipeline(Family family, VertexFormat format) {
@@ -566,8 +656,11 @@ public final class ChimeraEntityBridge {
     /** The Iris rendering phase a family outside the host-layout lanes draws in. */
     private static PackRenderingPhase phase(Family family) {
         return switch (family) {
-            // Iris keeps the ENTITIES phase for every entity and block-entity shadow caster.
-            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, SHADOW_ENTITIES -> PackRenderingPhase.ENTITIES;
+            // Iris keeps the ENTITIES phase for every entity and block-entity shadow caster. A moving
+            // block batches the same in either context; a moving piston reads ENTITIES where Iris
+            // reports BLOCK_ENTITIES.
+            case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, MOVING_BLOCK, SHADOW_ENTITIES, SHADOW_BLOCK
+                    -> PackRenderingPhase.ENTITIES;
             case BLOCK, BLOCK_TRANSLUCENT -> PackRenderingPhase.BLOCK_ENTITIES;
             case DAMAGED_BLOCK -> PackRenderingPhase.DESTROY;
             case HAND -> PackRenderingPhase.HAND_SOLID;

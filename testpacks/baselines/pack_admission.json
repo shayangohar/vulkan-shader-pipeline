@@ -56,7 +56,6 @@
     "gbuffers_clouds",
     "gbuffers_terrain_solid",
     "gbuffers_textured",
-    "shadow_block",
     "shadow_cutout",
     "shadow_solid",
     "shadow_water"

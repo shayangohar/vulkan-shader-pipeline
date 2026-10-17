@@ -424,14 +424,6 @@ public final class ChimeraMainPass implements MainPass {
         coverage.beginPackCoverageWindow(renderType);
     }
 
-    public PackPipelines.PackEntity familyPipeline(ChimeraEntityBridge.Family family) {
-        return pipelines.familyPipeline(family);
-    }
-
-    public PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
-        return pipelines.particlePipeline(family);
-    }
-
     /**
      * The pack outputs a lane's draws need a window for, or null when they draw into the pass as it
      * is: the lane writes only target 0, or the shadow pass owns the attachments.

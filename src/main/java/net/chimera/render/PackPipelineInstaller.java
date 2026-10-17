@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.HostLayoutLane;
@@ -244,7 +245,10 @@ final class PackPipelineInstaller {
         }
     }
 
-    /** shadow_entities, the entity and block-entity casters of the shadow pass. */
+    /**
+     * shadow_entities, the entity casters of the shadow pass and on the block layout its moving
+     * blocks; or shadow_block, its block entities' models (Iris SHADOW_BLOCK).
+     */
     void installShadowEntities(String name, PackProgramPlan programPlan) {
         PackPipelines.PackEntity casters = PackPipelines.buildShadowEntities(programPlan,
                 advancedResources(), storage);
@@ -256,7 +260,13 @@ final class PackPipelineInstaller {
             casters.pipeline().cleanUp();
             return;
         }
-        pipelines.shadowEntities = casters;
+        if (name.equals("shadow_block")) {
+            pipelines.shadowBlock = casters;
+        } else {
+            pipelines.shadowEntities = casters;
+            pipelines.shadowMovingBlock = buildLayoutVariant(name, programPlan, DefaultVertexFormat.BLOCK,
+                    "moving_block");
+        }
         markFamilyPipelineInstalled(name, "SHADOW_ENTITY_PIPELINE_INSTALLED");
     }
 
@@ -513,11 +523,15 @@ final class PackPipelineInstaller {
         markFamilyPipelineInstalled(name, name.equals("gbuffers_entities_translucent")
                 ? "TRANSLUCENT_ENTITY_INSTALLED" : "SPIDER_EYES_INSTALLED");
         if (name.equals("gbuffers_entities_translucent")) {
-            pipelines.translucentEntityText = buildTextVariant(name, programPlan);
+            pipelines.translucentEntityText = buildLayoutVariant(name, programPlan,
+                    DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, "text");
         }
     }
 
-    /** gbuffers_block: block-entity models. Their text draws with gbuffers_block_translucent. */
+    /**
+     * gbuffers_block: block-entity models, and on the block layout falling blocks and moving pistons
+     * (Iris MOVING_BLOCK). Block entities' text draws with gbuffers_block_translucent.
+     */
     void installBlock(String name, PackProgramPlan programPlan) {
         PackPipelines.PackEntity block = PackFamilyPipelines.buildBlock(programPlan,
                 advancedResources(), storage);
@@ -555,21 +569,28 @@ final class PackPipelineInstaller {
                 + "stride={}, samplers={})",
                 ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                 Arrays.toString(block.samplerSlots()));
+        pipelines.movingBlock = buildLayoutVariant(name, programPlan, DefaultVertexFormat.BLOCK, "moving_block");
     }
 
     /**
-     * gbuffers_block_translucent, built only on Iris's GLYPH text layout: a block entity's text draws
-     * with it (Iris TEXT_BE). Without it that text keeps its host draw. Iris 1.21.1 also draws block
-     * entities' translucent models with it (BE_TRANSLUCENT); Chimera draws those with gbuffers_block.
+     * gbuffers_block_translucent: a block entity's translucent models (Iris BE_TRANSLUCENT) and, on
+     * Iris's GLYPH text layout, its text (TEXT_BE). A layout that fails to build keeps its host draw.
      */
     void installBlockTranslucent(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity text = buildTextVariant(name, programPlan);
-        if (text == null) {
-            markFamilyPipelineFallback(name, "BLOCK_TEXT_PIPELINE_BUILD_FAILED");
+        PackPipelines.PackEntity models = PackFamilyPipelines.buildEntityFamily(programPlan,
+                advancedResources(), storage);
+        if (models != null && !attachPackStoragePipeline(name, models.pipeline(), models.imageBindings())) {
+            models.pipeline().cleanUp();
+            models = null;
+        }
+        pipelines.blockTranslucent = models;
+        pipelines.blockTranslucentText = buildLayoutVariant(name, programPlan,
+                DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, "text");
+        if (models == null && pipelines.blockTranslucentText == null) {
+            markFamilyPipelineFallback(name, "BLOCK_TRANSLUCENT_PIPELINE_BUILD_FAILED");
             return;
         }
-        pipelines.blockTranslucentText = text;
-        markFamilyPipelineInstalled(name, "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED");
+        markFamilyPipelineInstalled(name, "BLOCK_TRANSLUCENT_INSTALLED");
     }
 
     /** gbuffers_damagedblock on the host block format. */
@@ -693,25 +714,25 @@ final class PackPipelineInstaller {
     }
 
     /**
-     * The program on Iris's GLYPH text layout, sharing its descriptors and outputs.
-     * Without it the text keeps its host draw.
+     * The program on another host layout ({@code host}: Iris's GLYPH text, or the block layout of
+     * moving blocks), sharing its descriptors and outputs. Without it those draws keep their host
+     * draw, or stay out of the shadow map.
      */
-    PackPipelines.PackEntity buildTextVariant(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity text = PackFamilyPipelines.buildLayoutVariant(programPlan,
-                DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
-                advancedResources(),
-                storage);
-        if (text == null) {
-            LOGGER.warn("[chimera] pack {}: text layout variant unavailable; text stays host-drawn", name);
+    PackPipelines.PackEntity buildLayoutVariant(String name, PackProgramPlan programPlan, VertexFormat host,
+                                                String layout) {
+        PackPipelines.PackEntity variant = PackFamilyPipelines.buildLayoutVariant(programPlan, host, layout,
+                advancedResources(), storage);
+        if (variant == null) {
+            LOGGER.warn("[chimera] pack {}: {} layout variant unavailable", name, layout);
             return null;
         }
-        if (!attachPackStoragePipeline(name, text.pipeline(), text.imageBindings())) {
-            text.pipeline().cleanUp();
+        if (!attachPackStoragePipeline(name, variant.pipeline(), variant.imageBindings())) {
+            variant.pipeline().cleanUp();
             return null;
         }
-        LOGGER.info("[chimera] pack {}: text layout variant installed (stride={})", name,
-                ChimeraVertexFormats.EXTENDED_GLYPH.getVertexSize());
-        return text;
+        LOGGER.info("[chimera] pack {}: {} layout variant installed (stride={})", name, layout,
+                ChimeraVertexFormats.extendedLayout(host).getVertexSize());
+        return variant;
     }
 
     /**

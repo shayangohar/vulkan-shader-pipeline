@@ -884,8 +884,8 @@ public final class EntityVertexBridge {
 
     /**
      * Same immutable entity, block or hand program, adapted only to the inputs of
-     * the extended format its native host layout uploads as: held maps, item quads
-     * and world or sign text keep their own prefixes, as in Iris.
+     * the extended format its native host layout uploads as: held maps, item quads,
+     * world or sign text and moving blocks keep their own prefixes, as in Iris.
      */
     public static String layoutVertexForFormat(String converted, VertexFormat host) {
         if (host == DefaultVertexFormat.NEW_ENTITY) return converted;
@@ -897,7 +897,7 @@ public final class EntityVertexBridge {
         if (contract == null) {
             throw new IllegalArgumentException("program lacks the entity input contract");
         }
-        var extended = ChimeraVertexFormats.handFormats().get(host);
+        var extended = ChimeraVertexFormats.extendedLayout(host);
         if (extended == null) {
             throw new IllegalArgumentException("unsupported entity-family host format");
         }
@@ -922,7 +922,28 @@ public final class EntityVertexBridge {
                         "layout(location = " + names.indexOf("MidTexCoord") + ") in vec2 MidTexCoord;")
                 .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                         "layout(location = " + names.indexOf("Tangent") + ") in vec4 ChimeraPackedTangent;");
-        return converted.replace(contract, preamble);
+        String adapted = converted.replace(contract, preamble);
+        return host == DefaultVertexFormat.BLOCK ? movingBlockEntity(adapted) : adapted;
+    }
+
+    /**
+     * Iris writes mc_Entity as (-1, -1) for a block drawn outside a chunk mesh, no block having
+     * begun in its builder; the entity layout reads the unbound default instead.
+     */
+    static String movingBlockEntity(String source) {
+        Matcher matcher = Pattern.compile("const (float|vec2|vec3|vec4) mc_Entity = [^;]+;").matcher(source);
+        StringBuilder output = new StringBuilder();
+        while (matcher.find()) {
+            String value = switch (matcher.group(1)) {
+                case "float" -> "-1.0";
+                case "vec2" -> "vec2(-1.0)";
+                case "vec3" -> "vec3(-1.0, -1.0, 0.0)";
+                default -> "vec4(-1.0, -1.0, 0.0, 1.0)";
+            };
+            matcher.appendReplacement(output, "const " + matcher.group(1) + " mc_Entity = " + value + ";");
+        }
+        matcher.appendTail(output);
+        return output.toString();
     }
 
     /**

@@ -157,6 +157,63 @@ final class HostFamilyTest {
     }
 
     /**
+     * Falling blocks and moving pistons: gbuffers_block on the block layout, as Iris draws MOVING_BLOCK
+     * on IrisVertexFormats.TERRAIN with mc_Entity (-1, -1) and no overlay.
+     */
+    @Test
+    void movingBlockLayout() {
+        String vertex = """
+                #version 120
+                attribute vec4 mc_Entity;
+                attribute vec4 at_tangent;
+                varying vec4 tint;
+                void main() {
+                    tint = vec4(mc_Entity.xy, at_tangent.w, 1.0) * gl_Color;
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = "#version 120\nvarying vec4 tint;\nvoid main() { gl_FragColor = tint; }\n";
+        var block = EntityVertexBridge.convertBlockVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        String moving = EntityVertexBridge.layoutVertexForFormat(block.source(), DefaultVertexFormat.BLOCK);
+        assertTrue(PackCompileTest.compile(moving, true) == null, "moving-block layout fails compilation: " + moving);
+        assertTrue(moving.contains("layout(location = 3) in ivec2 UV2;")
+                        && moving.contains("layout(location = 4) in vec3 Normal;")
+                        && moving.contains("layout(location = 5) in uvec4 EntityIds;")
+                        && moving.contains("const ivec2 UV1 = ivec2(0);"), "moving-block inputs: " + moving);
+        assertTrue(moving.contains("const vec4 mc_Entity = vec4(-1.0, -1.0, 0.0, 1.0);")
+                        && block.source().contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);"),
+                "mc_Entity reads (-1, -1) on the block layout and the unbound default on the entity layout");
+        var extended = ChimeraVertexFormats.EXTENDED_BLOCK;
+        assertEquals(DefaultVertexFormat.BLOCK.getVertexSize() + 20, extended.getVertexSize(),
+                "block prefix plus 20-byte material inputs");
+        assertEquals(extended, ChimeraVertexFormats.extendedLayout(DefaultVertexFormat.BLOCK));
+        assertTrue(ChimeraVertexFormats.isFamilyFormat(extended), "only a family lane writes the block layout");
+    }
+
+    /** Iris 1.21.1's AlphaTests per ShaderKey, for the entity-format and moving-block keys. */
+    @Test
+    void entityAlphaReferences() {
+        var eyes = "rendertype_eyes";
+        var solid = "rendertype_entity_solid";
+        assertEquals(0.0001F, HostAlphaTest.reference(eyes, ChimeraEntityBridge.Family.SPIDER_EYES, false),
+                "ENTITIES_EYES tests NON_ZERO_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference("rendertype_entity_translucent_emissive",
+                ChimeraEntityBridge.Family.SPIDER_EYES, false), "ENTITIES_EYES_TRANS tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference(eyes, ChimeraEntityBridge.Family.BLOCK, false),
+                "a block entity's eyes are BLOCK_ENTITY, ONE_TENTH_ALPHA");
+        assertEquals(0.0F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.ENTITY, false),
+                "ENTITIES_SOLID_DIFFUSE draws untested");
+        assertEquals(0.1F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.BLOCK, false),
+                "BLOCK_ENTITY_DIFFUSE tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference("rendertype_energy_swirl", ChimeraEntityBridge.Family.ENTITY, false),
+                "ENTITIES_CUTOUT tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference("rendertype_solid", ChimeraEntityBridge.Family.MOVING_BLOCK, false),
+                "MOVING_BLOCK tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.SHADOW_BLOCK, true),
+                "SHADOW_BLOCK tests ONE_TENTH_ALPHA");
+    }
+
+    /**
      * The opaque hand draws where renderLevel enters its "translucent" section, before translucent
      * terrain in both of its branches (Iris draws it there too).
      */

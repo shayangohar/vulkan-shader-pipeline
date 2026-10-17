@@ -20,6 +20,11 @@ public record FamilyAdapterPlan(
          * SHADOW_ENTITIES_CUTOUT, ProgramId.ShadowEntities, falling back to shadow).
          */
         SHADOW_ENTITIES,
+        /**
+         * shadow_block: block entities' models in the shadow pass (Iris SHADOW_BLOCK,
+         * ProgramId.ShadowBlock, falling back to shadow), on the entity layout.
+         */
+        SHADOW_BLOCK,
         /** shadow_lines: line draws in the shadow pass (Iris SHADOW_LINES, ProgramId.Shadow). */
         SHADOW_LINES,
         /** shadow_leash: leads in the shadow pass (Iris SHADOW_LEASH, ProgramId.Shadow). */
@@ -42,9 +47,8 @@ public record FamilyAdapterPlan(
         SPIDER_EYES,
         BLOCK,
         /**
-         * gbuffers_block_translucent: text drawn by block entities, such as signs (Iris TEXT_BE,
-         * ProgramId.BlockTrans). Iris 1.21.1 also draws block entities' translucent models with it
-         * (BE_TRANSLUCENT); Chimera draws those with gbuffers_block.
+         * gbuffers_block_translucent: block entities' translucent models (Iris BE_TRANSLUCENT) and
+         * text, such as signs (TEXT_BE), both ProgramId.BlockTrans.
          */
         BLOCK_TRANSLUCENT,
         DAMAGED_BLOCK,

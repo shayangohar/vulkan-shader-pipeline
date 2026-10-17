@@ -35,8 +35,7 @@ public abstract class ChimeraEntityVertexInputMixin {
 
     @Inject(method = "<init>", at = @At("RETURN"), require = 1)
     private void chimera$describeEntityFormat(VertexFormat format, CallbackInfo callback) {
-        if (format != ChimeraVertexFormats.EXTENDED_ENTITY
-                && !ChimeraVertexFormats.handFormats().containsValue(format)) {
+        if (!ChimeraVertexFormats.isFamilyFormat(format)) {
             return;
         }
 
@@ -70,7 +69,7 @@ public abstract class ChimeraEntityVertexInputMixin {
                     case "EntityIds" -> VK_FORMAT_R16G16B16A16_UINT;
                     // Normal is three bytes plus a pad byte, as in EXTENDED_ENTITY.
                     case "Normal", "Tangent" -> VK_FORMAT_R8G8B8A8_SNORM;
-                    default -> throw new IllegalArgumentException("unsupported hand attribute " + names.get(i));
+                    default -> throw new IllegalArgumentException("unsupported family attribute " + names.get(i));
                 };
                 describe(i, nativeFormat, format.getOffset(elements.get(i)));
             }

@@ -17,18 +17,19 @@ public final class HostAlphaTest {
 
     /**
      * Iris 1.21.1's threshold for a draw of {@code family} with the host shader {@code shader}:
-     * ENTITIES_SOLID and the entity-solid key draw untested; ENTITIES_EYES and HAND_TEXT test
-     * NON_ZERO_ALPHA; every other entity, block-entity, hand, text, particle, crumbling and shadow
-     * caster key tests ONE_TENTH_ALPHA. Untested, a flat item or a glyph quad wrote depth and
-     * gbuffer data across its transparent texels.
+     * an entity's ENTITIES_SOLID_DIFFUSE draws untested; ENTITIES_EYES and HAND_TEXT test
+     * NON_ZERO_ALPHA; every other entity, block-entity, moving-block, hand, text, particle,
+     * crumbling and shadow caster key tests ONE_TENTH_ALPHA. Untested, a flat item or a glyph quad
+     * wrote depth and gbuffer data across its transparent texels.
      */
     public static float reference(String shader, Family family, boolean shadowCaster) {
         if (shadowCaster) return ONE_TENTH_ALPHA;
-        if ("rendertype_eyes".equals(shader)) return NON_ZERO_ALPHA;
-        boolean hand = family == Family.HAND || family == Family.HAND_WATER;
-        if (hand && isText(shader)) return NON_ZERO_ALPHA;
-        if (family == Family.ENTITY && "rendertype_entity_solid".equals(shader)) return 0.0F;
-        return ONE_TENTH_ALPHA;
+        return switch (family) {
+            case SPIDER_EYES -> "rendertype_eyes".equals(shader) ? NON_ZERO_ALPHA : ONE_TENTH_ALPHA;
+            case HAND, HAND_WATER -> isText(shader) ? NON_ZERO_ALPHA : ONE_TENTH_ALPHA;
+            case ENTITY -> "rendertype_entity_solid".equals(shader) ? 0.0F : ONE_TENTH_ALPHA;
+            default -> ONE_TENTH_ALPHA;
+        };
     }
 
     private static boolean isText(String shader) {

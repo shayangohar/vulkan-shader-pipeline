@@ -124,6 +124,11 @@ public final class ChimeraVertexFormats {
      */
     public static final VertexFormat EXTENDED_GLYPH = appendMaterialInputs(
             DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, true);
+    /**
+     * Host BLOCK followed by the pack-visible attributes: the chunk render types of falling blocks
+     * and moving pistons, which Iris extends to IrisVertexFormats.TERRAIN outside chunk meshes.
+     */
+    public static final VertexFormat EXTENDED_BLOCK = appendMaterialInputs(DefaultVertexFormat.BLOCK);
     private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(
             DefaultVertexFormat.POSITION_TEX_COLOR);
     private static final Map<VertexFormat, VertexFormat> HAND_FORMATS = handFormatsInOrder();
@@ -146,9 +151,14 @@ public final class ChimeraVertexFormats {
         return Collections.unmodifiableMap(formats);
     }
 
+    /** The widened format a family lane writes for a host layout, or null when none widens it. */
+    public static VertexFormat extendedLayout(VertexFormat host) {
+        return host == DefaultVertexFormat.BLOCK ? EXTENDED_BLOCK : HAND_FORMATS.get(host);
+    }
+
     /** True for a widened format only a family lane writes: no host program reads its layout. */
     public static boolean isFamilyFormat(VertexFormat format) {
-        return format == EXTENDED_ENTITY || HAND_FORMATS.containsValue(format);
+        return format == EXTENDED_BLOCK || HAND_FORMATS.containsValue(format);
     }
 
     /** True for a format whose normal Chimera computes per quad because the host writes none. */

@@ -105,10 +105,11 @@ final class PackPipelineLoad {
                 pass.pipelines.hand, pass.pipelines.handWater, pass.pipelines.particle,
                 pass.pipelines.translucentParticle,
                 pass.packPlan == null ? null : pass.packPlan.entityIds());
-        ChimeraEntityBridge.installTextVariants(pass.pipelines.translucentEntityText,
-                pass.pipelines.blockTranslucentText);
+        ChimeraEntityBridge.installLayoutVariants(pass.pipelines.translucentEntityText,
+                pass.pipelines.blockTranslucent, pass.pipelines.blockTranslucentText, pass.pipelines.movingBlock);
         ChimeraEntityBridge.installHostLayout(pass.pipelines.hostLayout);
-        ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities);
+        ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities, pass.pipelines.shadowMovingBlock,
+                pass.pipelines.shadowBlock);
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 familyTargets(pass.pipelines.entity), familyTargets(pass.pipelines.block));
     }

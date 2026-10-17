@@ -416,9 +416,8 @@ final class ProgramReportRules {
             case ENTITY_TRANSLUCENT, SPIDER_EYES -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_STATE_FIXED_TO_HOST");
             case BLOCK -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
                     "BLOCK_ENTITY_ID_DEFAULTED", "ENTITY_STATE_FIXED_TO_HOST");
-            // Installed only as Iris's GLYPH text layout; its host state follows the text draw.
-            case BLOCK_TRANSLUCENT -> List.of("FAMILY_ADAPTER_INSTALLED", "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
-                    "ENTITY_STATE_FIXED_TO_HOST");
+            case BLOCK_TRANSLUCENT -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
+                    "BLOCK_TRANSLUCENT_INSTALLED", "ENTITY_STATE_FIXED_TO_HOST");
             case DAMAGED_BLOCK -> List.of("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
             case HAND -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
                     "HAND_STATE_FIXED_TO_HOST");
@@ -427,7 +426,7 @@ final class ProgramReportRules {
             case PARTICLE_TRANSLUCENT -> List.of("FAMILY_ADAPTER_INSTALLED", "PARTICLE_TRANSLUCENT_INSTALLED");
             case WEATHER -> List.of("FAMILY_ADAPTER_INSTALLED", "WEATHER_STATE_FIXED_TO_HOST");
             // Depth and cull follow each caster's host pipeline; blending is off, as in Iris.
-            case SHADOW_ENTITIES -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
+            case SHADOW_ENTITIES, SHADOW_BLOCK -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
                     "SHADOW_ENTITY_STATE_FIXED_TO_HOST");
             default -> family.vertexContract().hostLayout()
                     ? List.of("FAMILY_ADAPTER_INSTALLED", family.family().name() + "_STATE_FIXED_TO_HOST")

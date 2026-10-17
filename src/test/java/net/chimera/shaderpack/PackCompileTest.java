@@ -179,9 +179,13 @@ final class PackCompileTest {
                 }
             }
             if (name.equals("gbuffers_entities_translucent") || name.equals("gbuffers_block_translucent")) {
-                // Iris GLYPH text variant (TEXT and TEXT_BE); gbuffers_block_translucent is built only as this.
+                // Iris GLYPH text variant (TEXT and TEXT_BE).
                 compileLayoutVariant(program, stage, "text input variant",
                         DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+            }
+            if (name.equals("gbuffers_block") || name.equals("shadow_entities")) {
+                // Falling blocks and moving pistons on the block layout (Iris MOVING_BLOCK).
+                compileLayoutVariant(program, stage, "moving-block input variant", DefaultVertexFormat.BLOCK);
             }
             if (FamilyAdapterRegistry.isGlintFamily(name)) {
                 // First-person glint: the same program under the hand projection.

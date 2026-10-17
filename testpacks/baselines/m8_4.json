@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "07e619d194d8034594c17e02931224c3230ce2040c1e26a522de842ea428512e",
+      "reportSha256": "b326a2d33bf5c700532c7bbc35c0ad99f0def10ce2a279bcd588bcbdbdeea0c4",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -51,7 +51,7 @@
       "expectedDeviations": [
         "BLEND_PROGRAM_DEFAULT:gbuffers_spidereyes",
         "BLOCK_ENTITY_ID_DEFAULTED",
-        "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
+        "BLOCK_TRANSLUCENT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
         "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
         "ENTITY_BATCH_ORIGIN_SPLIT",

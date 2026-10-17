@@ -57,8 +57,7 @@ public abstract class ChimeraBufferBuilderMixin {
             VertexFormat format,
             CallbackInfo callback
     ) {
-        if (format != ChimeraVertexFormats.EXTENDED_ENTITY
-                && !ChimeraVertexFormats.handFormats().containsValue(format)) {
+        if (!ChimeraVertexFormats.isFamilyFormat(format)) {
             return;
         }
         chimera$particleLayout = !format.getElementAttributeNames().contains("Normal");

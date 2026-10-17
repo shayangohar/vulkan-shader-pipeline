@@ -86,6 +86,15 @@ public final class PackEntityIdResolver {
         return normalized == null ? 0xFFFF : ids.getOrDefault(normalized, 0xFFFF);
     }
 
+    /**
+     * The id Iris's entityId uniform reads for a registry name: an unknown name in a present map
+     * reads the map's -1 there, not the vertex attribute's unsigned sentinel.
+     */
+    public int uniformId(String name) {
+        int id = resolveName(name);
+        return id == 0xFFFF ? -1 : id;
+    }
+
     /** Resolves a live entity type without changing the render state. */
     public int resolve(EntityType<?> type) {
         if (type == null) {
