@@ -34,6 +34,7 @@
     "ChimeraByteBufferBuilderAccessor",
     "ChimeraPipelineBuilderAccessor",
     "ChimeraVulkanImageAccessor",
+    "ChimeraRenderPassAccessor",
     "ChimeraRendererAccessor",
     "ChimeraDeviceAccessor",
     "ChimeraDeviceFeaturesMixin",
