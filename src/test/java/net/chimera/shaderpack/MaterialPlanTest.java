@@ -2,10 +2,10 @@ package net.chimera.shaderpack;
 
 import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.PackResourceOwner;
+import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
@@ -293,24 +293,24 @@ final class MaterialPlanTest {
         PackProgramPlan plan = PackProbe.analyze(root.resolve("m87_entity"))
                 .plan().program("gbuffers_entities");
         OrdinaryDescriptorContract ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
-        PipelineConfig.UB dynamic = blockAt(ordinary, UniformRegistry.DYNAMIC_TRANSFORMS_BINDING);
-        PipelineConfig.UB projection = blockAt(ordinary, UniformRegistry.PROJECTION_BINDING);
+        PackDescriptorLayout.UniformBlock dynamic = blockAt(ordinary, UniformRegistry.DYNAMIC_TRANSFORMS_BINDING);
+        PackDescriptorLayout.UniformBlock projection = blockAt(ordinary, UniformRegistry.PROJECTION_BINDING);
         assertEquals(List.of("ModelViewMat", "ColorModulator", "ModelOffset", "TextureMat"),
-                dynamic.uniforms.stream().map(PipelineConfig.Uniform::name).toList(),
+                dynamic.fields().stream().map(PackDescriptorLayout.Field::name).toList(),
                 "DynamicTransforms fields");
         assertEquals(List.of("ProjMat"),
-                projection.uniforms.stream().map(PipelineConfig.Uniform::name).toList(),
+                projection.fields().stream().map(PackDescriptorLayout.Field::name).toList(),
                 "Projection fields");
-        assertEquals(VK_SHADER_STAGE_VERTEX_BIT, dynamic.stage,
+        assertEquals(VK_SHADER_STAGE_VERTEX_BIT, dynamic.stages(),
                 "DynamicTransforms stage");
-        assertEquals(VK_SHADER_STAGE_VERTEX_BIT, projection.stage,
+        assertEquals(VK_SHADER_STAGE_VERTEX_BIT, projection.stages(),
                 "Projection stage");
 
         Pipeline.Builder builder = new Pipeline.Builder(
                 ChimeraVertexFormats.EXTENDED_ENTITY,
                 "pack_gbuffers_entities");
         builder.setUniformSupplierGetter(info -> () -> null);
-        ordinary.apply(builder);
+        HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
         List<UBO> blocks = builder.getUBOs();
         assertTrue(names(blocks).contains(UniformRegistry.DYNAMIC_TRANSFORMS_UBO),
                 "binding 0 does not answer to " + UniformRegistry.DYNAMIC_TRANSFORMS_UBO
@@ -336,8 +336,8 @@ final class MaterialPlanTest {
                 "Projection std140 size");
     }
 
-    private static PipelineConfig.UB blockAt(OrdinaryDescriptorContract contract, int binding) {
-        return contract.uboBlocks().stream().filter(ub -> ub.binding == binding).findFirst()
+    private static PackDescriptorLayout.UniformBlock blockAt(OrdinaryDescriptorContract contract, int binding) {
+        return contract.layout().uniformBlocks().stream().filter(block -> block.binding() == binding).findFirst()
                 .orElseThrow(() -> new AssertionError("no uniform block at binding " + binding));
     }
 

@@ -1,14 +1,12 @@
 package net.chimera.shaderpack;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.ProgramImageBindingTransaction;
+import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.testing.InstanceOptions;
 import net.chimera.testing.TestPacks;
 import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
 import net.vulkanmod.vulkan.texture.VulkanImage;
@@ -42,6 +40,7 @@ final class StorageBufferPlanTest {
     private static final int VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC = 9;
     private static final int VK_SHADER_STAGE_VERTEX_BIT = 1;
     private static final int VK_SHADER_STAGE_FRAGMENT_BIT = 16;
+    private static final int VK_SHADER_STAGE_ALL_GRAPHICS = 0x1F;
 
     // Branch-resolved target routes depend on the CHIMERA instance's options, as at runtime.
     @BeforeAll
@@ -260,38 +259,29 @@ final class StorageBufferPlanTest {
         Set<String> advancedNames = layout.advancedSamplers().stream()
                 .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
                 .collect(Collectors.toSet());
-        var json = PackPipelines.shadowPipelineJson();
-        var samplers = new JsonArray();
         int[] slots = PackPipelines.shadowSamplerSlots(iface.samplers().stream()
                 .filter(value -> !advancedNames.contains(value.name()))
                 .mapToInt(UniformRegistry.SamplerBinding::slot).distinct().toArray());
-        for (int slot : slots) {
-            var sampler = new JsonObject();
-            sampler.addProperty("name", "Sampler" + slot);
-            samplers.add(sampler);
-        }
-        json.add("samplers", samplers);
-        var generated = new JsonObject();
-        generated.addProperty("type", "all");
-        generated.addProperty("binding", 3);
-        var fields = new JsonArray();
-        for (var uniform : iface.executableUniforms()) {
-            var field = new JsonObject();
-            field.addProperty("name", uniform.name());
-            field.addProperty("type", UniformRegistry.pipelineType(uniform.glslType()));
-            field.addProperty("count", UniformRegistry.pipelineCount(uniform.glslType()));
-            fields.add(field);
-        }
-        generated.add("fields", fields);
+        var fields = iface.executableUniforms().stream()
+                .map(uniform -> new PackDescriptorLayout.Field(PackDescriptorLayout.fieldType(
+                        UniformRegistry.pipelineType(uniform.glslType()),
+                        UniformRegistry.pipelineCount(uniform.glslType())), uniform.name()))
+                .toList();
         assertTrue(!fields.isEmpty(), "Synthetic shadow must include a generated UBO");
-        json.getAsJsonArray("UBOs").add(generated);
+        var host = PackPipelines.shadowLayout();
+        var blocks = new ArrayList<>(host.uniformBlocks());
+        blocks.add(new PackDescriptorLayout.UniformBlock(3, VK_SHADER_STAGE_ALL_GRAPHICS, 0, fields));
+        var samplers = new ArrayList<PackDescriptorLayout.ImageSlot>();
+        for (int slot : slots) {
+            samplers.add(new PackDescriptorLayout.ImageSlot(4 + samplers.size(), "sampler2D", "Sampler" + slot, slot));
+        }
         var builder = new Pipeline.Builder("shadow_regression");
         List<UBO> buffers = new ArrayList<>();
         List<ImageDescriptor> images = new ArrayList<>();
         builder.setUniforms(buffers, images);
         // Descriptor preparation installs suppliers but does not execute them or access Vulkan.
         builder.setUniformSupplierGetter(info -> () -> null);
-        builder.applyConfig(PipelineConfig.fromJson("shadow_regression", json));
+        HostPipelineLayout.apply(builder, new PackDescriptorLayout(blocks, samplers, host.pushConstants()), false);
         int index = 0;
         for (var binding : layout.storageImages()) {
             builder.addImageDescriptor(new ImageDescriptor(

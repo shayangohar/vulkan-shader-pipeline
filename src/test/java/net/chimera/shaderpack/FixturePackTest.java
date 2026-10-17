@@ -666,11 +666,11 @@ final class FixturePackTest {
         assertTrue(shadowProgram.vertexSource() != null, "shadow vertex source is missing");
         verifyShadowConversion(shadowProgram);
 
-        JsonObject shadowConfig = PackPipelines.shadowPipelineJson();
-        JsonArray shadowUbos = shadowConfig.getAsJsonArray("UBOs");
-        assertTrue(shadowUbos != null && shadowUbos.toString().contains("\"binding\":2"),
+        PackDescriptorLayout shadowLayout = PackPipelines.shadowLayout();
+        assertTrue(shadowLayout.uniformBlocks().stream().anyMatch(block -> block.binding() == 2),
                 "shadow section UBO binding was not preserved");
-        assertTrue(shadowUbos.toString().contains("\"name\":\"MVP\""),
+        assertTrue(shadowLayout.uniformBlocks().stream().flatMap(block -> block.fields().stream())
+                        .anyMatch(field -> field.name().equals("MVP")),
                 "shadow pack config MVP field is missing");
         assertEquals(List.of(0, 2), toList(PackPipelines.shadowSamplerSlots(new int[] {2})),
                 "shadow lightmap descriptor reservation");

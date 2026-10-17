@@ -1,6 +1,5 @@
 package net.chimera.render.shader;
 
-import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.ChimeraMod;
@@ -16,10 +15,8 @@ import net.vulkanmod.render.shader.PipelineManager;
 import net.vulkanmod.render.vertex.CustomVertexFormat;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
-import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.PipelineConfig;
-import net.vulkanmod.vulkan.shader.SPIRVUtils;
 
+import java.util.function.UnaryOperator;
 
 /**
  * Builds and installs chimera's terrain pipelines.
@@ -256,34 +253,15 @@ public final class ChimeraTerrainPipelines {
         }
     }
 
+    /** Shares the host's global UBO pool so per-instance section data flows in unchanged. */
     private static GraphicsPipeline buildPipeline(
             String name,
             VertexFormat vertexFormat,
             String shaderConfigName,
             boolean separateAo
     ) {
-        JsonObject json = ChimeraShaderLoader.loadJson(shaderConfigName + ".json");
-        PipelineConfig config = PipelineConfig.fromJson(name, json);
-
-        Pipeline.Builder builder = new Pipeline.Builder(vertexFormat, name);
-        builder.applyConfig(config);
-
-        String vertexPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.VERTEX_SHADER);
-        String fragmentPath = config.shaderPaths.get(SPIRVUtils.ShaderKind.FRAGMENT_SHADER);
-        String vertexSource = ChimeraShaderLoader.loadSource(vertexPath + ".vsh");
-        builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER,
-                separateAo ? withSeparateAo(vertexSource) : vertexSource);
-        builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER,
-                ChimeraShaderLoader.loadSource(fragmentPath + ".fsh"));
-
-        GraphicsPipeline pipeline = builder.createGraphicsPipeline();
-
-        // Share the host's global UBO pool so per-instance section data flows in unchanged.
-        for (var buffer : pipeline.getBuffers()) {
-            buffer.setUseGlobalBuffer(true);
-        }
-
-        return pipeline;
+        return HostPipelineLayout.create(name, shaderConfigName, vertexFormat,
+                separateAo ? ChimeraTerrainPipelines::withSeparateAo : UnaryOperator.identity(), true);
     }
 
     /**

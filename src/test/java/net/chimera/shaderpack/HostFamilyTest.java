@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -297,7 +298,8 @@ final class HostFamilyTest {
             var nativeBuilder = new Pipeline.Builder(
                     ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
             nativeBuilder.setUniformSupplierGetter(info -> () -> null);
-            ordinary.apply(nativeBuilder); // Regression used to throw "not admitted type: bool".
+            // Regression: applying the layout used to throw "not admitted type: bool".
+            HostPipelineLayout.apply(nativeBuilder, ordinary.layout(), ordinary.semanticTransformBlocks());
             var boolField = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
                     .filter(field -> field.getName().equals("hasSkylight")).findFirst().orElseThrow();
             assertEquals("int", boolField.getInfo().type, "native std140 bool storage");

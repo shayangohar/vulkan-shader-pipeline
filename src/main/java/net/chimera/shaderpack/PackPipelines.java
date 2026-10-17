@@ -1,7 +1,5 @@
 package net.chimera.shaderpack;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.mixin.ChimeraDeviceAccessor;
@@ -9,6 +7,7 @@ import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.shader.ChimeraShaderLoader;
+import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -17,7 +16,6 @@ import net.vulkanmod.render.vertex.CustomVertexFormat;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.PipelineConfig;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
 import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
 import net.vulkanmod.vulkan.shader.layout.Uniform;
@@ -44,10 +42,9 @@ import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 
 /**
- * Builds GraphicsPipelines from pack programs, mirroring
- * ChimeraPostPipelines.create / ChimeraTerrainPipelines.buildPipeline: a
- * PipelineConfig JSON parsed by PipelineConfig.fromJson (sampler names and
- * order define the descriptor bindings, sequentially after any UBO blocks),
+ * Builds GraphicsPipelines from pack programs: a {@link PackDescriptorLayout}
+ * (samplers take the bindings after the uniform blocks, in slot order) applied
+ * through {@link HostPipelineLayout},
  * vertex stage = a chimera fixed source or the narrow terrain bridge, fragment stage = the converted
  * legacy GLSL. Shader compilation failures return null for per-program
  * fallback; typed descriptor/preparation/native failures abort the install.
@@ -136,7 +133,8 @@ public final class PackPipelines {
         try {
             Pipeline.Builder builder = new MetadataBuilder(format, "pack_" + program);
             builder.setUniformSupplierGetter(suppliers);
-            prepared.ordinary().apply(builder);
+            OrdinaryDescriptorContract ordinary = prepared.ordinary();
+            HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
             PackDescriptorContracts.addStorageBufferDescriptors(builder, program, resources);
             PackDescriptorContracts.addStorageImageDescriptors(builder, program, resources);
             PackDescriptorContracts.addAdvancedSamplerDescriptors(builder, program, resources);
@@ -411,7 +409,7 @@ public final class PackPipelines {
             OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
             Pipeline.Builder builder = new MetadataBuilder(format, pipelineName);
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            ordinary.apply(builder);
+            HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
             advancedResources = advancedResources == null
                     ? PackAdvancedResourcePlan.empty() : advancedResources;
             ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
@@ -720,23 +718,20 @@ public final class PackPipelines {
                     .map(UniformRegistry.SamplerBinding::name)
                     .toList();
             List<Integer> requiredColorInputs = colorInputTargets(samplerNames);
-            JsonObject json = new JsonObject();
-            json.addProperty("vertex", "chimera_composite/chimera_composite");
-            json.addProperty("fragment", "pack/" + program.name());
-            json.add("samplers", samplerArray(slots));
-            json.add("UBOs", uniformUboArray(interfacePlan));
-            json.add("PushConstants", new JsonArray());
-
-            PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
+            // One fragment block for the pack's uniforms at binding 0, its samplers after it.
+            var blocks = PackDescriptorContracts.packUniformBlock(interfacePlan, 0, VK_SHADER_STAGE_FRAGMENT_BIT);
+            PackDescriptorLayout layout = new PackDescriptorLayout(blocks,
+                    PackDescriptorContracts.samplerImages(blocks.size(), slots),
+                    PackDescriptorLayout.EMPTY_PUSH_CONSTANTS);
             Pipeline.Builder builder = new MetadataBuilder(CustomVertexFormat.NONE, "pack_" + program.name());
-            // Pipeline.Builder resolves uniform suppliers during applyConfig.
+            // Pipeline.Builder resolves uniform suppliers while the layout is applied.
             // Install the provider first so the generated UBO never falls
             // through to VulkanMod's global uniform maps.
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            builder.applyConfig(config);
+            HostPipelineLayout.apply(builder, layout, false);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, fixedVertexSource);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
-            ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(config,
+            ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(layout,
                     interfacePlan);
             GraphicsPipeline pipeline = createNative(builder, imageBindings);
 
@@ -788,7 +783,7 @@ public final class PackPipelines {
             Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.terrainFormat(materialPlan),
                     "pack_" + plan.name());
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            ordinary.apply(builder);
+            HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
             PackDescriptorContracts.addStorageBufferDescriptors(builder, plan.name(), advancedResources);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex);
             PackDescriptorContracts.addStorageImageDescriptors(builder, plan.name(), advancedResources);
@@ -817,38 +812,6 @@ public final class PackPipelines {
         if (DeviceManager.device == null) return 8;
         return ((ChimeraDeviceAccessor) DeviceManager.device)
                 .chimera$properties().limits().maxColorAttachments();
-    }
-
-    /** One generated fragment UBO, or an empty array for a program without uniforms. */
-    static JsonArray uniformUboArray(UniformRegistry.ProgramInterface interfacePlan) {
-        return uniformUboArray(interfacePlan, 0, "fragment");
-    }
-
-    static JsonArray uniformUboArray(
-            UniformRegistry.ProgramInterface interfacePlan,
-            int binding,
-            String type
-    ) {
-        JsonArray ubos = new JsonArray();
-        List<UniformRegistry.UniformDeclaration> uniforms = interfacePlan.executableUniforms();
-        if (uniforms.isEmpty()) {
-            return ubos;
-        }
-
-        JsonObject ubo = new JsonObject();
-        ubo.addProperty("type", type);
-        ubo.addProperty("binding", binding);
-        JsonArray fields = new JsonArray();
-        for (UniformRegistry.UniformDeclaration uniform : uniforms) {
-            JsonObject field = new JsonObject();
-            field.addProperty("name", uniform.name());
-            field.addProperty("type", UniformRegistry.pipelineType(uniform.glslType()));
-            field.addProperty("count", UniformRegistry.pipelineCount(uniform.glslType()));
-            fields.add(field);
-        }
-        ubo.add("fields", fields);
-        ubos.add(ubo);
-        return ubos;
     }
 
     /** Builds the strict legacy shadow program on the extended terrain inputs. */
@@ -887,18 +850,16 @@ public final class PackPipelines {
                 throw new IllegalStateException("legacy shadow fragment conversion failed");
             }
 
-            JsonObject json = shadowPipelineJson();
-            json.addProperty("fragment", "pack_" + program.name());
-            json.add("samplers", samplerArray(slots));
-
-            PipelineConfig config = PipelineConfig.fromJson("pack_" + program.name(), json);
+            PackDescriptorLayout host = shadowLayout();
+            PackDescriptorLayout layout = host.withImages(
+                    PackDescriptorContracts.samplerImages(host.bindingAfterBlocks(), slots));
             Pipeline.Builder builder = new MetadataBuilder(ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN,
                     "pack_" + program.name());
             builder.setUniformSupplierGetter(PackUniformProvider.shared()::supplier);
-            builder.applyConfig(config);
+            HostPipelineLayout.apply(builder, layout, false);
             builder.setShaderSrc(SPIRVUtils.ShaderKind.VERTEX_SHADER, vertex.source());
             builder.setShaderSrc(SPIRVUtils.ShaderKind.FRAGMENT_SHADER, converted);
-            ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(config,
+            ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(layout,
                     interfacePlan);
             GraphicsPipeline pipeline = createNative(builder, imageBindings);
             useGlobalUniformBuffers(pipeline);
@@ -909,16 +870,6 @@ public final class PackPipelines {
         }
     }
 
-    /** Sampler JSON entries "Sampler<slot>" in the given order (config binding order). */
-    private static JsonArray samplerArray(int[] slots) {
-        JsonArray samplersJson = new JsonArray();
-        for (int slot : slots) {
-            JsonObject sampler = new JsonObject();
-            sampler.addProperty("name", "Sampler" + slot);
-            samplersJson.add(sampler);
-        }
-        return samplersJson;
-    }
     /**
      * The fixed terrain vertex reads its LightMap at descriptor index 1
      * (layout(binding = 4), registry slot 2). Force registry slot 2 into the
@@ -957,9 +908,9 @@ public final class PackPipelines {
         return Arrays.stream(declaredSlots).distinct().sorted().toArray();
     }
 
-    /** Return an isolated copy so pack sampler and fragment fields cannot alter the host config. */
-    static JsonObject shadowPipelineJson() {
-        return ChimeraShaderLoader.loadJson("chimera_shadow.json").deepCopy();
+    /** The fixed shadow pipeline's layout: its terrain blocks and push constants, with its own samplers. */
+    static PackDescriptorLayout shadowLayout() {
+        return PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson("chimera_shadow.json"));
     }
 
     /** Derives the logical post color inputs once from the shared interface plan. */

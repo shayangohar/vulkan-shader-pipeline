@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ChimeraHorizonRenderer;
 import net.chimera.render.shader.ChimeraSkyBridge;
+import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.render.shader.PackUniformProvider;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -222,7 +223,8 @@ final class SkyWeatherTest {
         var format = PackPipelines.skyVertexFormat(contract);
         var nativeBuilder = new Pipeline.Builder(format, "test_sky");
         nativeBuilder.setUniformSupplierGetter(info -> () -> null);
-        PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of()).apply(nativeBuilder);
+        var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
+        HostPipelineLayout.apply(nativeBuilder, ordinary.layout(), ordinary.semanticTransformBlocks());
         var stageInfo = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
                 .filter(field -> field.getName().equals("renderStage")).findFirst().orElseThrow().getInfo();
         var supplier = PackUniformProvider.shared().supplier(stageInfo);
