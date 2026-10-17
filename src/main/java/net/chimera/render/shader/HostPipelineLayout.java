@@ -78,7 +78,8 @@ public final class HostPipelineLayout {
         Pipeline.Builder builder = new Pipeline.Builder(format, name);
         builder.setUniforms(uniformBuffers(layout, uniforms), images(layout));
         ((ChimeraPipelineBuilderAccessor) builder).chimera$setPushConstants(pushConstants(layout, uniforms));
-        SPIRVUtils.SPIRV vertex = compile(name + ".vsh", vertexSource, SPIRVUtils.ShaderKind.VERTEX_SHADER, packModules);
+        SPIRVUtils.SPIRV vertex = compile(name + ".vsh", vertexSource, SPIRVUtils.ShaderKind.VERTEX_SHADER,
+                packModules);
         SPIRVUtils.SPIRV fragment;
         try {
             fragment = compile(name + ".fsh", fragmentSource, SPIRVUtils.ShaderKind.FRAGMENT_SHADER, packModules);
@@ -115,7 +116,7 @@ public final class HostPipelineLayout {
      * sizes a descriptor set by its descriptor count and places each at its binding, so the
      * bindings must run from 0 without a gap.
      */
-    static List<UBO> uniformBuffers(PackDescriptorLayout layout, UniformSource uniforms) {
+    public static List<UBO> uniformBuffers(PackDescriptorLayout layout, UniformSource uniforms) {
         requireDenseBindings(layout);
         List<UBO> buffers = new ArrayList<>();
         for (PackDescriptorLayout.UniformBlock block : layout.uniformBlocks()) {
@@ -124,7 +125,9 @@ public final class HostPipelineLayout {
                 continue;
             }
             AlignedStruct.Builder struct = new AlignedStruct.Builder();
-            for (PackDescriptorLayout.Field field : block.fields()) struct.addUniformInfo(hostType(field.type()), field.name());
+            for (PackDescriptorLayout.Field field : block.fields()) {
+                struct.addUniformInfo(hostType(field.type()), field.name());
+            }
             UBO buffer = struct.buildUBO(block.binding(), block.stages());
             supply(buffer.getUniforms(), block.fields(), uniforms);
             buffers.add(buffer);
@@ -142,7 +145,9 @@ public final class HostPipelineLayout {
             ImageDescriptor image = new ImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
                     slot.access() == PackDescriptorLayout.ImageAccess.STORAGE);
             // Pack storage images stay in the general layout, as a graphics or compute stage may also write them.
-            if (slot.access() == PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL) image.setLayout(VK_IMAGE_LAYOUT_GENERAL);
+            if (slot.access() == PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL) {
+                image.setLayout(VK_IMAGE_LAYOUT_GENERAL);
+            }
             images.add(image);
         }
         return images;
@@ -153,7 +158,9 @@ public final class HostPipelineLayout {
         PackDescriptorLayout.UniformBlock block = layout.pushConstants();
         if (block == null || block.fields().isEmpty()) return null;
         AlignedStruct.Builder struct = new AlignedStruct.Builder();
-        for (PackDescriptorLayout.Field field : block.fields()) struct.addUniformInfo(hostType(field.type()), field.name());
+        for (PackDescriptorLayout.Field field : block.fields()) {
+            struct.addUniformInfo(hostType(field.type()), field.name());
+        }
         PushConstants constants = struct.buildPushConstant();
         supply(constants.getUniforms(), block.fields(), uniforms);
         return constants;

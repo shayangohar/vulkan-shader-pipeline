@@ -18,7 +18,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -318,12 +317,12 @@ public final class PackPipelines {
         return buildCloud(plan, PackAdvancedResourcePlan.empty(), null);
     }
 
-    /** The cloud program over the faces PackCloudRenderer decodes from vanilla's cloud cells. */
+    /** The cloud program over vanilla's cloud mesh. */
     public static PackSky buildCloud(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         return buildSkyLike(plan, UniformRegistry.Stage.CLOUD,
-                DefaultVertexFormat.POSITION_COLOR_NORMAL,
+                DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL,
                 "pack_" + (plan == null ? "clouds" : plan.name()), advancedResources, storageOwner,
                 plan == null ? null : plan.convertedVertex());
     }
@@ -591,8 +590,9 @@ public final class PackPipelines {
             PackDescriptorLayout layout = prepareLayout(prepared, plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(layout, plan.name(), advancedResources, vertexSource,
                     fragmentSource, storageOwner);
-            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(), ChimeraVertexFormats.terrainFormat(materialPlan),
-                    layout, vertexSource, fragmentSource, prepared.imageBindings(), shadowAttachmentFormats(), null);
+            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
+                    ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, fragmentSource,
+                    prepared.imageBindings(), shadowAttachmentFormats(), null);
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -743,8 +743,9 @@ public final class PackPipelines {
                     : coverage ? new int[] {targetFormat, VK10.VK_FORMAT_R32_SFLOAT} : null;
             PackBlendPlan.Mode[] attachmentBlends = dynamicAttachments
                     ? plan.blendPlan().attachments(outputPlan.targetSlots()) : null;
-            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(), ChimeraVertexFormats.terrainFormat(materialPlan),
-                    descriptors, vertex, fragment, imageBindings, attachmentFormats, attachmentBlends);
+            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
+                    ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, fragment, imageBindings,
+                    attachmentFormats, attachmentBlends);
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -800,7 +801,8 @@ public final class PackPipelines {
             ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(layout,
                     interfacePlan);
             GraphicsPipeline pipeline = createNative("pack_" + program.name(),
-                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, layout, vertex.source(), converted, imageBindings);
+                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, layout, vertex.source(), converted,
+                    imageBindings);
             return new PackShadow(pipeline, slots, converted, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(program.name(), e);

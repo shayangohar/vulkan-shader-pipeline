@@ -29,7 +29,7 @@ final class SkyCloudAdapterTest {
         assertProgram(first.plan(), "gbuffers_skytextured", UniformRegistry.Stage.SKY,
                 "SKY_VERTEX_BRIDGE", FamilyAdapterPlan.VertexContract.SKY_POSITION_UV);
         assertProgram(first.plan(), "gbuffers_clouds", UniformRegistry.Stage.CLOUD,
-                "CLOUD_VERTEX_BRIDGE", FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL);
+                "CLOUD_VERTEX_BRIDGE", FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL);
         assertTrue(first.report().shouldAttempt("gbuffers_skybasic"),
                 "skybasic report rejected an executable plan");
         assertTrue(first.report().shouldAttempt("gbuffers_clouds"),
@@ -49,11 +49,11 @@ final class SkyCloudAdapterTest {
 
     /**
      * BSL (CLOUDS=3) and Complementary (CLOUD_STYLE_DEFINE=50) shade vanilla clouds by face
-     * normal. Iris hands their programs the decoded face: gl_Vertex with the cloud offset, the
-     * axis normal, the face colour times the cloud colour, UV0 (0.5, 0.5) and full light.
+     * normal. Iris 1.21.1 hands their programs vanilla's cloud mesh: gl_Vertex in the mesh's space,
+     * the clouds texture coordinate, the face colour, the axis normal and full light.
      */
     @Test
-    void cloudProgramReadsIrisFaceInputs() {
+    void cloudProgramReadsIrisMeshInputs() {
         String vertex = """
                 #version 120
                 varying vec2 texCoord;
@@ -74,8 +74,8 @@ final class SkyCloudAdapterTest {
         var conversion = HostLayoutVertexBridge.convertCloudVertex(vertex, null, fragment);
         assertTrue(conversion != null, "a normal-reading cloud program did not convert");
         String converted = conversion.source();
-        for (String expected : List.of("layout(location = 2) in vec3 Normal;", "const vec2 UV0 = vec2(0.5);",
-                "const ivec2 UV2 = ivec2(240);", "return vec4(Position + ModelOffset, 1.0);",
+        for (String expected : List.of("layout(location = 3) in vec3 Normal;", "layout(location = 1) in vec2 UV0;",
+                "layout(location = 2) in vec4 Color;", "const ivec2 UV2 = ivec2(240);", "return vec4(Position, 1.0);",
                 "color = (Color * ColorModulator);", "transpose(inverse(mat3(ModelViewMat))) * Normal.xyz")) {
             assertTrue(converted.contains(expected), "cloud vertex lost " + expected + ": " + converted);
         }

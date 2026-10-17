@@ -129,9 +129,6 @@ public final class PackUniformProvider {
     /** Iris SystemTimeUniforms.TIMER: the pack clock, which keeps running while paused. */
     public static float currentFrameTimeCounter() { return INSTANCE.frameState.frameTimeCounter(); }
 
-    /** Camera-relative world view, without a native celestial pose or model translation. */
-    public static Matrix4f currentSkyModelView() { return INSTANCE.frameState.modelView(); }
-
     /**
      * The camera's gbufferProjection x gbufferModelView (GL clip range, camera-relative), written
      * to dest: the view shadow culling keeps casters for, as Iris's frustum reads it.

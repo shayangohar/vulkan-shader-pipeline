@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import net.chimera.render.LightEmission;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -87,7 +88,7 @@ final class HeldItemState {
     /** IrisItemLightProvider's default: a block item emits its block's default light. */
     static int lightEmission(ItemStack stack) {
         return stack != null && stack.getItem() instanceof BlockItem item
-                ? item.getBlock().defaultBlockState().getLightEmission() : 0;
+                ? LightEmission.of(item.getBlock().defaultBlockState()) : 0;
     }
 
     private static String itemName(ItemStack stack) {

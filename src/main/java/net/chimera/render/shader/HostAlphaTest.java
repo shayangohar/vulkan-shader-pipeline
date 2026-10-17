@@ -7,7 +7,7 @@ import net.chimera.render.shader.ChimeraEntityBridge.Family;
  * the host shader to), which the pack program reads per draw as iris_currentAlphaTest. Host-layout
  * lanes carry their own instead.
  */
-final class HostAlphaTest {
+public final class HostAlphaTest {
     /** Iris AlphaTests.ONE_TENTH_ALPHA: GREATER 0.1. */
     static final float ONE_TENTH_ALPHA = 0.1F;
     /** Iris AlphaTests.NON_ZERO_ALPHA: GREATER 0.0001. */
@@ -22,7 +22,7 @@ final class HostAlphaTest {
      * caster key tests ONE_TENTH_ALPHA. Untested, a flat item or a glyph quad wrote depth and
      * gbuffer data across its transparent texels.
      */
-    static float reference(String shader, Family family, boolean shadowCaster) {
+    public static float reference(String shader, Family family, boolean shadowCaster) {
         if (shadowCaster) return ONE_TENTH_ALPHA;
         if ("rendertype_eyes".equals(shader)) return NON_ZERO_ALPHA;
         boolean hand = family == Family.HAND || family == Family.HAND_WATER;

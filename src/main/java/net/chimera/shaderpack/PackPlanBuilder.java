@@ -493,7 +493,7 @@ public final class PackPlanBuilder {
                 executable = false;
             } else if (FamilyAdapterRegistry.isCloudFamily(name)) {
                 familyAdapter = familyAdapter.withVertexContract(
-                        FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL);
+                        FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL);
                 acceptVertex(HostLayoutVertexBridge.convertCloudVertex(vertex, vertexFile(), fragment,
                                 stageMatch.locations(), allowStorageBuffers,
                                 interfacePlan.project("fragment", stage).executableUniforms()),

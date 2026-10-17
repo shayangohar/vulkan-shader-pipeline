@@ -67,7 +67,8 @@ public abstract class GraphicsPipelineMrtMixin {
 
     @Redirect(method = "createGraphicsPipeline",
             at = @At(value = "INVOKE", target = "Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState;"
-                    + "calloc(ILorg/lwjgl/system/MemoryStack;)Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState$Buffer;"))
+                    + "calloc(ILorg/lwjgl/system/MemoryStack;)"
+                    + "Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState$Buffer;"))
     private VkPipelineColorBlendAttachmentState.Buffer chimera$colorBlendAttachments(int hostCount,
                                                                                       MemoryStack stack) {
         int count = this.chimera$window == null ? hostCount : this.chimera$window.colorFormats().length;

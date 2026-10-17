@@ -1,6 +1,6 @@
 package net.chimera.shaderpack;
 
-/** Iris 1.10 WorldRenderingPhase: ordinals are part of the shader ABI. */
+/** Iris WorldRenderingPhase: ordinals are part of the shader ABI. */
 public enum PackRenderingPhase {
     NONE, SKY, SUNSET, CUSTOM_SKY, SUN, MOON, STARS, VOID,
     TERRAIN_SOLID, TERRAIN_CUTOUT_MIPPED, TERRAIN_CUTOUT,

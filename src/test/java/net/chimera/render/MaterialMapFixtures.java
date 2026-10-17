@@ -1,7 +1,6 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
+import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import javax.imageio.ImageIO;
@@ -17,6 +16,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import static org.lwjgl.opengl.GL11.GL_LEQUAL;
+import static org.lwjgl.opengl.GL11.GL_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_NONE;
+import static org.lwjgl.opengl.GL11.GL_REPEAT;
 
 /** The mini resource pack, sprite layouts and recording fakes the material-map tests share. */
 final class MaterialMapFixtures {
@@ -90,18 +95,17 @@ final class MaterialMapFixtures {
         return new DrawMaterialContext(base, SamplerProfile.ofId(samplerId));
     }
 
-    static final AddressMode REPEAT =
-            AddressMode.REPEAT;
-
-    static final FilterMode LINEAR =
-            FilterMode.LINEAR;
-
-    static final FilterMode NEAREST =
-            FilterMode.NEAREST;
+    /**
+     * A repeating, trilinear key with mip ceiling {@code maxLod}, as VulkanMod builds a mipmapped
+     * texture's sampler (biased by -0.5).
+     */
+    static SamplerManager.SamplerKey trilinearKey(float maxLod) {
+        return new SamplerManager.SamplerKey(GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR, GL_REPEAT, GL_REPEAT, GL_REPEAT,
+                0.0F, maxLod, -0.5F, GL_NONE, GL_LEQUAL);
+    }
 
     static DrawMaterialContext profiledContext(VulkanImage base, float maxLod) {
-        return new DrawMaterialContext(base,
-                new SamplerProfile(0x7777L, REPEAT, REPEAT, LINEAR, LINEAR, 4, maxLod));
+        return new DrawMaterialContext(base, new SamplerProfile(0x7777L, trilinearKey(maxLod)));
     }
 
     static final class CountingLookup implements MaterialMapOwner.ResourceLookup {
@@ -170,51 +174,18 @@ final class MaterialMapFixtures {
         }
     }
 
+    /** SamplerManager's sampler cache: one sampler per distinct key, recorded in creation order. */
     static final class FakeSamplers implements MaterialMapOwner.MaterialSamplerFactory {
-        record Request(AddressMode addressU,
-                AddressMode addressV,
-                FilterMode minFilter,
-                FilterMode magFilter,
-                int anisotropy, float maxLod) {}
-        final List<Request> requests = new ArrayList<>();
-        final List<FakeOwnedSampler> live = new ArrayList<>();
+        final List<SamplerManager.SamplerKey> requests = new ArrayList<>();
+        private final Map<SamplerManager.SamplerKey, Long> samplers = new LinkedHashMap<>();
         long nextId = 0x9E450L;
 
         @Override
-        public MaterialMapOwner.OwnedMaterialSampler create(
-                AddressMode addressU,
-                AddressMode addressV,
-                FilterMode minFilter,
-                FilterMode magFilter,
-                int anisotropy, float maxLod) {
-            requests.add(new Request(addressU, addressV, minFilter, magFilter, anisotropy, maxLod));
-            FakeOwnedSampler sampler = new FakeOwnedSampler(nextId++);
-            live.add(sampler);
-            return sampler;
-        }
-
-        boolean allClosed() {
-            return live.stream().allMatch(sampler -> sampler.closed);
-        }
-    }
-
-    static final class FakeOwnedSampler
-            implements MaterialMapOwner.OwnedMaterialSampler {
-        final long samplerId;
-        boolean closed;
-
-        FakeOwnedSampler(long samplerId) {
-            this.samplerId = samplerId;
-        }
-
-        @Override
-        public long id() {
-            return samplerId;
-        }
-
-        @Override
-        public void close() {
-            closed = true;
+        public long sampler(SamplerManager.SamplerKey key) {
+            return samplers.computeIfAbsent(key, created -> {
+                requests.add(created);
+                return nextId++;
+            });
         }
     }
 

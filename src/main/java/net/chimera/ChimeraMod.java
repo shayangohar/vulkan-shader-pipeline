@@ -8,7 +8,6 @@ import net.chimera.shaderpack.PackTemporaryRoots;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
@@ -21,12 +20,11 @@ import org.slf4j.LoggerFactory;
 public final class ChimeraMod {
     public static final String MOD_ID = "chimera";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
-    public static final String VERSION = ModList.get().getModContainerById(MOD_ID)
-            .map(container -> container.getModInfo().getVersion().toString())
-            .orElse("dev");
+    private static String version = "dev";
 
     public ChimeraMod(IEventBus modBus, ModContainer container) {
-        LOGGER.info("Chimera {} initializing - shaderpack pipeline for VulkanMod", VERSION);
+        version = container.getModInfo().getVersion().toString();
+        LOGGER.info("Chimera {} initializing - shaderpack pipeline for VulkanMod", version);
         NeoForge.EVENT_BUS.addListener(RegisterClientCommandsEvent.class,
                 event -> ChimeraCommands.register(event.getDispatcher()));
         ChimeraKeybinds.register(modBus);
@@ -36,5 +34,10 @@ public final class ChimeraMod {
         // The mod list's Config button opens the shader pack selector, as Iris's does.
         container.registerExtensionPoint(IConfigScreenFactory.class, (mod, parent) -> new ShaderPackScreen(parent));
         LOGGER.info("Press O (or use /chimera pack) to choose a shader pack in-game");
+    }
+
+    /** This mod's version, once NeoForge has constructed the mod. */
+    public static String version() {
+        return version;
     }
 }

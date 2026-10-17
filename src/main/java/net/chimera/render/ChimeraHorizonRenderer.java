@@ -1,24 +1,22 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.Tesselator;
+import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.chimera.render.shader.PackUniformProvider;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.vulkanmod.vulkan.VRenderSystem;
+import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
-import org.joml.Vector3f;
-import org.joml.Vector4f;
 
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
-
-/** Iris's camera-centred inverted cone fills the band vanilla's sky disc leaves clear. */
+/**
+ * Iris HorizonRenderer: a camera-centred inverted cone that fills the band vanilla's sky disc
+ * leaves clear. It draws in the fog colour with the position shader, which the sky window gives
+ * the pack's gbuffers_skybasic program.
+ */
 public final class ChimeraHorizonRenderer implements AutoCloseable {
-    private GpuBuffer buffer;
+    private VertexBuffer buffer;
     private int radius = -1;
 
     /** Apex plus a closed eight-segment rim, drawn as one fan. */
@@ -39,41 +37,31 @@ public final class ChimeraHorizonRenderer implements AutoCloseable {
         return vertices;
     }
 
-    public void draw() {
-        var minecraft = Minecraft.getInstance();
-        int distance = minecraft.options.getEffectiveRenderDistance();
+    /** Draws the horizon under the sky's model-view and projection. */
+    public void draw(Matrix4f modelView, Matrix4f projection) {
+        int distance = Minecraft.getInstance().options.getEffectiveRenderDistance();
         int nextRadius = Math.min(distance * 16, 256);
         if (buffer == null || radius != nextRadius) {
             close();
-            var builder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_FAN, DefaultVertexFormat.POSITION);
+            BufferBuilder builder = Tesselator.getInstance().begin(VertexFormat.Mode.TRIANGLE_FAN,
+                    DefaultVertexFormat.POSITION);
             float[] vertices = vertices(distance);
             for (int i = 0; i < vertices.length; i += 3) builder.addVertex(vertices[i], vertices[i + 1],
                     vertices[i + 2]);
-            try (var mesh = builder.buildOrThrow()) {
-                buffer = RenderSystem.getDevice().createBuffer(() -> "Chimera horizon",
-                        GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, mesh.vertexBuffer());
-            }
-            Tesselator.getInstance().clear();
+            buffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
+            buffer.bind();
+            buffer.upload(builder.buildOrThrow());
             radius = nextRadius;
         }
-        var fog = VRenderSystem.getShaderFogColor();
+        float[] fog = RenderSystem.getShaderFogColor();
+        RenderSystem.depthMask(false);
         // Alpha one is part of Iris's contract; zero breaks sky reflections in some packs.
-        var transform = RenderSystem.getDynamicUniforms().writeTransform(PackUniformProvider.currentSkyModelView(),
-                new Vector4f(fog.getFloat(0), fog.getFloat(4), fog.getFloat(8), 1), new Vector3f(), new Matrix4f());
-        var target = minecraft.getMainRenderTarget();
-        try (var pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Chimera horizon",
-                target.getColorTextureView(), OptionalInt.empty(), target.getDepthTextureView(),
-                        OptionalDouble.empty())) {
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform("DynamicTransforms", transform);
-            pass.setPipeline(RenderPipelines.SKY);
-            pass.setVertexBuffer(0, buffer);
-            // Non-indexed on purpose: VulkanMod draws fans as triangle lists and expands them only
-            // through its own auto-index buffer (10 vertices -> 24 indices). Iris's indexed GL fan
-            // call would hand Vulkan 10 list indices, i.e. 3 triangles. The sky draw hook owns
-            // authored targets, formats, blending and commit.
-            pass.draw(0, VERTEX_COUNT);
-        }
+        RenderSystem.setShaderColor(fog[0], fog[1], fog[2], 1.0F);
+        buffer.bind();
+        buffer.drawWithShader(modelView, projection, GameRenderer.getPositionShader());
+        VertexBuffer.unbind();
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        RenderSystem.depthMask(true);
     }
 
     @Override public void close() {

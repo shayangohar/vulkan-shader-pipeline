@@ -17,7 +17,8 @@ public abstract class ChimeraParticleEngineMixin {
     @WrapOperation(method = "render(Lnet/minecraft/client/renderer/LightTexture;Lnet/minecraft/client/Camera;F"
             + "Lnet/minecraft/client/renderer/culling/Frustum;Ljava/util/function/Predicate;)V",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/particle/ParticleRenderType;"
-                    + "begin(Lcom/mojang/blaze3d/vertex/Tesselator;Lnet/minecraft/client/renderer/texture/TextureManager;)"
+                    + "begin(Lcom/mojang/blaze3d/vertex/Tesselator;"
+                    + "Lnet/minecraft/client/renderer/texture/TextureManager;)"
                     + "Lcom/mojang/blaze3d/vertex/BufferBuilder;"), require = 1)
     private BufferBuilder chimera$particleType(ParticleRenderType type, Tesselator tesselator, TextureManager textures,
                                                Operation<BufferBuilder> original) {

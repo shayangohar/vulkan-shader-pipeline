@@ -1,8 +1,7 @@
 package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import net.chimera.render.vertex.ChimeraVertexFormats;
-import net.vulkanmod.vulkan.shader.Pipeline;
+import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.testing.InstanceOptions;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.AfterAll;
@@ -17,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -231,16 +231,11 @@ final class EntityRealPackTest {
         ProgramImageBindingManifest manifest = prepared.imageBindings();
         assertTrue(manifest != null && !manifest.entries().isEmpty(),
                 what + " has no manifest entries");
-        // Builder inventory, not the layout proxy: this is the exact
-        // descriptor-contract layer createNative verifies at runtime
-        // (layout mismatch plus manifest bijection). Uniform suppliers
+        // The whole descriptor set, as createNative builds it: the layout checked against the
+        // shaders and the manifest, then the host's buffer descriptors. Uniform suppliers
         // never run headless; the dummy is never invoked.
         try {
-            Pipeline.Builder builder =
-                    PackPipelines.prepareBuilder(prepared, plan.name(), advanced,
-                            ChimeraVertexFormats.EXTENDED_ENTITY,
-                            info -> () -> null);
-            assertTransformBlocks(what, builder);
+            assertTransformBlocks(what, PackPipelines.prepareLayout(prepared, plan.name(), advanced));
         } catch (PackPipelines.PreparationFailure failure) {
             throw new AssertionError(what + " builder descriptor mismatch: "
                     + failure.phase + ":" + failure.reason + "\nmanifest=" + manifest.entries()
@@ -330,24 +325,22 @@ final class EntityRealPackTest {
     }
 
     /**
-     * Descriptor identity on the real pack program: the built contract's
-     * transform blocks must answer to the semantic names the bridge looks up.
-     * VulkanMod names config-declared blocks {@code "UBO: <binding>"} and
-     * {@code Pipeline.getUBO(String)} compares names exactly, so a numeric block
-     * would make every host per-draw transform binding miss.
+     * Descriptor identity on the real pack program: the transform blocks sit at their bindings with
+     * the fields the host fills by name, and the host builds every buffer descriptor of the layout.
      */
-    private static void assertTransformBlocks(String what,
-            Pipeline.Builder builder) {
-        for (int binding : List.of(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
-                UniformRegistry.PROJECTION_BINDING)) {
-            String expected = binding == UniformRegistry.DYNAMIC_TRANSFORMS_BINDING
-                    ? UniformRegistry.DYNAMIC_TRANSFORMS_UBO : UniformRegistry.PROJECTION_UBO;
-            boolean present = builder.getUBOs().stream()
-                    .anyMatch(block -> block.binding == binding && block.name.equals(expected));
-            assertTrue(present, what + " has no " + expected + " block at binding " + binding
-                    + ": " + builder.getUBOs().stream()
-                    .map(block -> block.name + "@" + block.binding).toList());
+    private static void assertTransformBlocks(String what, PackDescriptorLayout layout) {
+        var expected = Map.of(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
+                List.of("ModelViewMat", "ColorModulator", "LineWidth", "TextureMat"),
+                UniformRegistry.PROJECTION_BINDING, List.of("ProjMat"));
+        for (var block : expected.entrySet()) {
+            var fields = layout.uniformBlocks().stream().filter(built -> built.binding() == block.getKey())
+                    .findFirst().map(built -> built.fields().stream().map(PackDescriptorLayout.Field::name).toList())
+                    .orElse(null);
+            assertEquals(block.getValue(), fields, what + " transform block at binding " + block.getKey());
         }
+        var buffers = HostPipelineLayout.uniformBuffers(layout, (name, type) -> () -> null);
+        assertEquals(layout.uniformBlocks().size() + layout.storageBuffers().size(), buffers.size(),
+                what + " host buffer descriptors");
     }
 
     /**

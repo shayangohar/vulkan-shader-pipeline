@@ -31,6 +31,8 @@ neoForge {
             sourceSet sourceSets.main
         }
     }
+    // The tests read Minecraft, Mixin and VulkanMod classes without starting the game.
+    addModdingDependenciesTo sourceSets.test
 }
 
 dependencies {
@@ -173,5 +175,5 @@ java {
 // the classpath), processing (Mixin's annotation processor) and serial (internal exceptions
 // are never serialized).
 tasks.withType(JavaCompile).configureEach {
-    options.compilerArgs += ['-Xlint:all', '-Xlint:-classfile', '-Xlint:-processing', '-Xlint:-serial', '-Werror', '-Xmaxerrs', '10000'] // PORT-TEMP maxerrs
+    options.compilerArgs += ['-Xlint:all', '-Xlint:-classfile', '-Xlint:-processing', '-Xlint:-serial', '-Werror']
 }

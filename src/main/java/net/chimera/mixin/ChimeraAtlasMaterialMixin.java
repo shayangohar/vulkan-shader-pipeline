@@ -7,6 +7,7 @@ import net.chimera.render.MaterialMapPixels;
 import net.chimera.render.shader.AtlasSizes;
 import net.minecraft.client.renderer.texture.SpriteLoader;
 import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.world.inventory.InventoryMenu;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +50,7 @@ public abstract class ChimeraAtlasMaterialMixin {
                 return;
             }
             AtlasSizes.note(image, preparations.width(), preparations.height(),
-                    atlas.location().equals(TextureAtlas.LOCATION_BLOCKS));
+                    atlas.location().equals(InventoryMenu.BLOCK_ATLAS));
             var pass = ChimeraRenderer.getMainPass();
             if (pass == null) return;
             MaterialMapOwner owner = pass.materialMaps();

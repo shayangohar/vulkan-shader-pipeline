@@ -79,7 +79,7 @@ public record FamilyAdapterPlan(
         EXTENDED_ENTITY,
         EXTENDED_PARTICLE,
         HOST_PARTICLE,
-        /** DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, drawn as quads. */
+        /** DefaultVertexFormat.POSITION_COLOR_NORMAL lines (outlines, hitboxes, debug lines). */
         HOST_LINE,
         /** DefaultVertexFormat.POSITION_TEX glint layers. */
         HOST_GLINT,
@@ -100,17 +100,8 @@ public record FamilyAdapterPlan(
         SKY_POSITION_COLOR,
         SKY_POSITION_UV,
         SKY_POSITION_COLOR_UV,
-        /**
-         * Vanilla's cloud faces, decoded as Iris's cloud program decodes them, in
-         * DefaultVertexFormat.POSITION_COLOR_NORMAL (PackCloudRenderer).
-         */
-        CLOUD_POSITION_COLOR_NORMAL,
-        /** @deprecated VulkanMod's normal-less cloud mesh; retained so reports from older builds still parse. */
-        @Deprecated
-        CLOUD_POSITION_COLOR,
-        /** @deprecated retained so reports from older builds still parse. */
-        @Deprecated
-        CLOUD_GENERATED,
+        /** Vanilla's cloud mesh, DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL. */
+        CLOUD_POSITION_UV_COLOR_NORMAL,
         FULLSCREEN,
         HOST_FALLBACK;
 

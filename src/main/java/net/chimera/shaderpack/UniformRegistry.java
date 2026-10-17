@@ -29,23 +29,15 @@ public final class UniformRegistry {
     static final Pattern UNIFORM_BLOCK = Pattern.compile(
             "\\buniform\\s+([A-Za-z_]\\w*)\\s*\\{");
 
-    /**
-     * Host ordinary-transform block names for the guarded family lanes.
-     *
-     * <p>They must match the converted GLSL preambles in
-     * {@link LegacyGlslConverter} and the name-based
-     * {@code Pipeline.getUBO(String)} lookups, which compare names exactly.
-     * VulkanMod's own reflected pipelines carry these same semantic names, and
-     * a host render pass stores its per-draw transform slices under them.</p>
-     */
-    public static final String DYNAMIC_TRANSFORMS_UBO = "DynamicTransforms";
     /** Per-draw entity alpha-test reference, Chimera's counterpart of iris_currentAlphaTest. */
     public static final String ENTITY_ALPHA_REFERENCE = "chimeraAlphaTestRef";
     /** Vanilla Globals.GlintAlpha (glint strength), declared into glint programs before planning. */
     public static final String GLINT_ALPHA = "chimeraGlintAlpha";
-    public static final String PROJECTION_UBO = "Projection";
 
-    /** Descriptor bindings of the host ordinary-transform blocks. */
+    /**
+     * Descriptor bindings of the transform blocks (DynamicTransforms, Projection) the converted
+     * preambles declare; the host fills their fields by name (HostPipelineLayout).
+     */
     public static final int DYNAMIC_TRANSFORMS_BINDING = 0;
     public static final int PROJECTION_BINDING = 1;
 
@@ -546,13 +538,12 @@ public final class UniformRegistry {
             "ColorModulator", "LineWidth", "ChunkOffset", "EndPortalLayers", "screenSize");
 
     /**
-     * Names Iris 1.21.11 serves that Chimera does not yet: per-draw state, values that need Iris's
+     * Names Iris 1.21.1 serves that Chimera does not yet: per-draw state, values that need Iris's
      * ID maps or fog-mode plumbing, and the matrices Iris's core-profile transformers inject. A
      * program reading one must not run on a zero Iris would never give it.
      */
     private static final Set<String> IRIS_UNSERVED = Set.of(
-            "alphaTestRef", "blendFunc", "gtextureId", "gtextureSize", "textureReloadCount",
-            "vehicleId", "currentSelectedBlockId", "currentSelectedBlockPos",
+            "alphaTestRef", "blendFunc", "gtextureSize", "currentSelectedBlockId", "currentSelectedBlockPos",
             "fogDensity", "fogMode", "fogShape",
             "cloudTime", "constantMood",
             "modelViewMatrix", "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse",
@@ -595,7 +586,7 @@ public final class UniformRegistry {
             "gbufferProjection", "gbufferProjectionInverse", "gbufferPreviousProjection",
             "shadowModelView", "shadowModelViewInverse", "shadowProjection", "shadowProjectionInverse",
             "dhProjection", "dhProjectionInverse", "dhPreviousProjection",
-            "vehicleLookVector", "relativeVehiclePosition", "playerBodyVector",
+            "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime");
 
     /**

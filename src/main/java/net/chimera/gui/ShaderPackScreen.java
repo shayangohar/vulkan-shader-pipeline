@@ -42,7 +42,7 @@ public final class ShaderPackScreen extends Screen {
     private static final int LIST_TOP = 36;
 
     private final @Nullable Screen parent;
-    private final Component versionText = Component.literal("Chimera " + ChimeraMod.VERSION)
+    private final Component versionText = Component.literal("Chimera " + ChimeraMod.version())
             .withStyle(ChatFormatting.GRAY);
     private ShaderPackSelectionList packList;
     private Button openFolderButton;

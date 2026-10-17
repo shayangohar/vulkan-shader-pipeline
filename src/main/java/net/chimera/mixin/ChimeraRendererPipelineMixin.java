@@ -6,7 +6,6 @@ import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.PackUniformProvider;
-import net.chimera.shaderpack.PackRenderingPhase;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
@@ -18,31 +17,37 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * Uploads a pack draw's uniforms under its per-draw state, and binds each pipeline's pack images
- * with its descriptor sets. A family draw uploads with its alpha test, albedo, atlas size and
- * Iris rendering phase; PackCloudRenderer's direct pipeline bind uploads in the CLOUDS phase.
+ * with its descriptor sets. A family draw uploads with its alpha test, albedo, atlas size and Iris
+ * rendering phase; a sky or cloud draw with the atlas size of its texture, in the phase its
+ * LevelRenderer hooks set.
  */
 @Mixin(value = Renderer.class, remap = false)
 public abstract class ChimeraRendererPipelineMixin {
     @WrapMethod(method = "uploadAndBindUBOs")
     private void chimera$drawState(Pipeline pipeline, Operation<Void> original) {
-        boolean family = pipeline == ChimeraEntityBridge.pipeline();
-        if (!family && !ChimeraSkyBridge.isCloudPipeline(pipeline)) {
+        if (pipeline == ChimeraSkyBridge.pipeline()) {
+            PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
+            try {
+                original.call(pipeline);
+            } finally {
+                PackUniformProvider.restoreFrameAtlasSize();
+            }
+            return;
+        }
+        if (pipeline != ChimeraEntityBridge.pipeline()) {
             original.call(pipeline);
             return;
         }
-        if (family) {
-            PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference());
-            // Restored with the family's texture snapshot when the draw ends.
-            if (ChimeraEntityBridge.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
-            PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
-        }
-        var previous = PackUniformProvider.setRenderingPhase(family
-                ? ChimeraEntityBridge.renderingPhase() : PackRenderingPhase.CLOUDS);
+        PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference());
+        // Restored with the family's texture snapshot when the draw ends.
+        if (ChimeraEntityBridge.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
+        PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
+        var previous = PackUniformProvider.setRenderingPhase(ChimeraEntityBridge.renderingPhase());
         try {
             original.call(pipeline);
         } finally {
             PackUniformProvider.setRenderingPhase(previous);
-            if (family) PackUniformProvider.restoreFrameAtlasSize();
+            PackUniformProvider.restoreFrameAtlasSize();
         }
     }
 

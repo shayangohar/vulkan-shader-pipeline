@@ -8,7 +8,6 @@ import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.vertex.ChimeraEntityVertexData;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
-import net.minecraft.client.renderer.RenderPipelines;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -81,13 +80,14 @@ final class WorldEntityAdapterTest {
 
     @Test
     void worldPipelineContract() {
-        assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ENTITY_SOLID),
+        var entity = ChimeraEntityBridge.Family.ENTITY;
+        assertEquals(entity, ChimeraEntityBridge.worldFamily("entity_solid", DefaultVertexFormat.NEW_ENTITY, entity),
                 "solid world entity lane was not supported");
-        assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ENTITY_TRANSLUCENT),
+        assertEquals(ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT,
+                ChimeraEntityBridge.worldFamily("entity_translucent", DefaultVertexFormat.NEW_ENTITY, entity),
                 "living translucent world entity lane was not supported");
-        assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL)
-                        && RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL.getVertexFormat()
-                        == RenderPipelines.ENTITY_TRANSLUCENT.getVertexFormat(),
+        assertEquals(ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT,
+                ChimeraEntityBridge.worldFamily("item_entity_translucent_cull", DefaultVertexFormat.NEW_ENTITY, entity),
                 "flat item lane is not the translucent entity contract");
     }
 

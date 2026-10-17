@@ -14,7 +14,6 @@ import net.chimera.shaderpack.PackRuntimeSettings;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.testing.TestPacks;
 import net.minecraft.resources.ResourceLocation;
-import net.vulkanmod.vulkan.shader.layout.Uniform;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -812,9 +811,8 @@ final class WorldStateUniformTest {
 
         PackUniformProvider.resetSession();
         PackUniformProvider.installRuntimeSettings(settings);
-        Uniform.Info info = Uniform.createUniformInfo("float", "m73Marker");
-        MappedBuffer firstBuffer = PackUniformProvider.shared().supplier(info).get();
-        MappedBuffer secondBuffer = PackUniformProvider.shared().supplier(info).get();
+        MappedBuffer firstBuffer = PackUniformProvider.shared().supplier("m73Marker", "float").get();
+        MappedBuffer secondBuffer = PackUniformProvider.shared().supplier("m73Marker", "float").get();
         assertTrue(firstBuffer == secondBuffer, "custom uniform buffer was recreated");
         PackUniformProvider.resetSession();
     }

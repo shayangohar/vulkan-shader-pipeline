@@ -3,9 +3,7 @@ package net.chimera.shaderpack;
 import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.PackResourceOwner;
 import net.chimera.render.shader.HostPipelineLayout;
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
-import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
@@ -225,7 +223,7 @@ final class MaterialPlanTest {
 
     // ------------------------------------------------------------------
     // Compact directive parsing, entity output plans, slots,
-    // and the isElytraFlying int bridge.
+    // and the unset isElytraFlying.
     // ------------------------------------------------------------------
 
     @Test
@@ -282,10 +280,7 @@ final class MaterialPlanTest {
     /**
      * Descriptor identity: the guarded family contract must carry the
      * host transform blocks at bindings 0/1 with the converted preambles'
-     * fields, and the applied builder must expose them under their semantic
-     * names. VulkanMod names config-declared blocks "UBO: &lt;binding&gt;" and
-     * {@code Pipeline.getUBO(String)} compares names exactly, so a numeric block
-     * can never satisfy the bridge's lookup.
+     * fields, which the host fills by name, at the preambles' std140 sizes.
      */
     @Test
     void ordinaryTransformBlocks() throws Exception {
@@ -295,7 +290,7 @@ final class MaterialPlanTest {
         OrdinaryDescriptorContract ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
         PackDescriptorLayout.UniformBlock dynamic = blockAt(ordinary, UniformRegistry.DYNAMIC_TRANSFORMS_BINDING);
         PackDescriptorLayout.UniformBlock projection = blockAt(ordinary, UniformRegistry.PROJECTION_BINDING);
-        assertEquals(List.of("ModelViewMat", "ColorModulator", "ModelOffset", "TextureMat"),
+        assertEquals(List.of("ModelViewMat", "ColorModulator", "LineWidth", "TextureMat"),
                 dynamic.fields().stream().map(PackDescriptorLayout.Field::name).toList(),
                 "DynamicTransforms fields");
         assertEquals(List.of("ProjMat"),
@@ -306,23 +301,7 @@ final class MaterialPlanTest {
         assertEquals(VK_SHADER_STAGE_VERTEX_BIT, projection.stages(),
                 "Projection stage");
 
-        Pipeline.Builder builder = new Pipeline.Builder(
-                ChimeraVertexFormats.EXTENDED_ENTITY,
-                "pack_gbuffers_entities");
-        builder.setUniformSupplierGetter(info -> () -> null);
-        HostPipelineLayout.apply(builder, ordinary.layout(), ordinary.semanticTransformBlocks());
-        List<UBO> blocks = builder.getUBOs();
-        assertTrue(names(blocks).contains(UniformRegistry.DYNAMIC_TRANSFORMS_UBO),
-                "binding 0 does not answer to " + UniformRegistry.DYNAMIC_TRANSFORMS_UBO
-                        + ": " + names(blocks));
-        assertTrue(names(blocks).contains(UniformRegistry.PROJECTION_UBO),
-                "binding 1 does not answer to " + UniformRegistry.PROJECTION_UBO
-                        + ": " + names(blocks));
-        assertTrue(blocks.stream()
-                        .filter(block -> block.getBinding() == UniformRegistry.DYNAMIC_TRANSFORMS_BINDING
-                                || block.getBinding() == UniformRegistry.PROJECTION_BINDING)
-                        .noneMatch(block -> block.name.startsWith("UBO: ")),
-                "transform blocks kept their numeric names: " + names(blocks));
+        List<UBO> blocks = HostPipelineLayout.uniformBuffers(ordinary.layout(), (name, type) -> () -> null);
         // The fragment block carries the per-draw host alpha-test reference.
         assertTrue(plan.interfacePlan().uniforms().stream()
                         .anyMatch(u -> u.name().equals(UniformRegistry.ENTITY_ALPHA_REFERENCE)),
@@ -341,12 +320,8 @@ final class MaterialPlanTest {
                 .orElseThrow(() -> new AssertionError("no uniform block at binding " + binding));
     }
 
-    private static List<String> names(List<UBO> blocks) {
-        return blocks.stream().map(block -> block.name).toList();
-    }
-
     private static int sizeOf(List<UBO> blocks, int binding) {
-        return blocks.stream().filter(block -> block.binding == binding).findFirst()
+        return blocks.stream().filter(block -> block.getBinding() == binding).findFirst()
                 .orElseThrow(() -> new AssertionError("no built block at binding " + binding)).getSize();
     }
 
@@ -521,24 +496,22 @@ final class MaterialPlanTest {
         }
     }
 
+    /**
+     * Iris 1.21.1 serves no isElytraFlying (newer Iris does): a program reading it still runs, and
+     * the bool reads the false an unset GL uniform holds, from a bool field of the generated block.
+     */
     @Test
-    void elytraUniformBridge() {
-        UniformRegistry.UniformDescriptor descriptor =
-                UniformRegistry.descriptor("isElytraFlying");
-        assertTrue(descriptor != null, "isElytraFlying missing from catalog");
-        assertTrue(descriptor.accepts("int") && !descriptor.accepts("bool"),
-                "isElytraFlying must be int-typed: " + descriptor.acceptedTypes());
-        // Prepared pack sources allow the bool->int translation; the live
-        // field then enters the generated UBO and the negation becomes an
-        // integer comparison. The entity fragment conversion requires the
-        // paired vertex layout, so both stages come from one snippet pair.
+    void elytraUniformIsUnset() {
+        assertTrue(UniformRegistry.descriptor("isElytraFlying") == null,
+                "isElytraFlying is not an Iris 1.21.1 uniform");
+        // The entity fragment conversion requires the paired vertex layout, so both stages come
+        // from one snippet pair.
         UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
                 ELYTRA_SNIPPET, ELYTRA_VERTEX_SNIPPET, UniformRegistry.Stage.ENTITY, null, true);
         UniformRegistry.ProgramInterface fragment = plan.effective(UniformRegistry.Stage.ENTITY);
         assertTrue(fragment.executable(), "elytra interface not executable: " + fragment.deviations());
-        assertTrue(fragment.executableUniforms().stream()
-                        .anyMatch(uniform -> uniform.name().equals("isElytraFlying")),
-                "isElytraFlying did not land in executable uniforms");
+        assertTrue(fragment.deviations().contains("UNIFORM_UNSET_ZERO:isElytraFlying"),
+                "isElytraFlying must read Iris's unset zero: " + fragment.deviations());
         LegacyGlslConverter.TerrainVertexConversion vertex = EntityVertexBridge.convertEntityVertex(
                 ELYTRA_VERTEX_SNIPPET, null, ELYTRA_SNIPPET, Map.of());
         assertTrue(vertex != null, "elytra vertex bridge failed");
@@ -548,13 +521,8 @@ final class MaterialPlanTest {
                 .withInterfacePlan(fragment)
                 .convert();
         assertTrue(converted != null, "elytra fragment conversion failed");
-        assertTrue(converted.contains("(isElytraFlying != 0)"),
-                "bool read was not translated: " + converted);
-        assertTrue(!converted.contains("!isElytraFlying"),
-                "raw bool negation remained: " + converted);
-        assertTrue(converted.contains("int isElytraFlying"),
-                "catalog int field was not emitted: " + converted);
-        // The read must name the declared field (it once named an undeclared chimeraIsElytraFlying).
+        assertTrue(converted.contains("bool isElytraFlying;") && converted.contains("!isElytraFlying"),
+                "the bool field and its read must stay bool: " + converted);
         assertEquals(null, PackCompileTest.compile(converted, false), converted);
     }
 }

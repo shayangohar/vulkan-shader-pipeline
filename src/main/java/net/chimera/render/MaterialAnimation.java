@@ -4,28 +4,24 @@ import java.util.List;
 
 /**
  * One animated material map in an atlas slot: its frame schedule, each
- * frame's logical mip chain, and a ticker that mirrors Minecraft 1.21.11's
- * {@code SpriteContents.AnimationState}, so the map runs in lockstep with
- * the atlas it belongs to.
+ * frame's logical mip chain, and a ticker that mirrors Minecraft 1.21.1's
+ * {@code SpriteContents.Ticker}, so the map runs in lockstep with the atlas
+ * it belongs to.
  *
  * <p>Game semantics, copied rather than approximated: the first schedule
  * entry shows first; every atlas tick adds one sub-frame; reaching the
  * entry's time moves to the next entry (wrapping) and restarts the count.
  * A non-interpolated map redraws only when the frame index changes. An
- * interpolated map redraws every tick, mixing the current and next frame on
- * all four channels by {@code subFrame / time} truncated to thousandths,
- * each mip level from that frame's own level ({@code animate_sprite} and
- * {@code animate_sprite_interpolate}). Pure CPU state: no GPU, no natives.</p>
+ * interpolated map also redraws on every other tick while the next entry
+ * shows a different frame. Every redraw writes every mip level, each from
+ * that frame's own level. Pure CPU state: no GPU, no natives.</p>
  *
- * <p>Iris parity: Iris ships with Sodium, whose default "animate only visible
- * textures" (0.8.7 {@code SpriteContentsTickerMixin}) clears a sprite's active
- * flag after its first {@code drawToAtlas}. Vanilla draws once per mip level,
- * so once the schedule has reached its last entry, Iris redraws only mip 0
- * and the smaller levels keep the last frame drawn before that. Packs are
- * tuned against that look (distant water normals hold still), so
- * {@link #animatedLevels()} reproduces it. Sodium also skips mip 0 for
- * sprites off screen; a map off screen cannot be seen, so that part is not
- * mirrored.</p>
+ * <p>Iris parity: Iris 1.21.1 runs with Sodium 0.8.13, whose
+ * {@code SpriteContentsInterpolationMixin} replaces vanilla's interpolation:
+ * {@code ColorMixer.mix} on the colour channels with the current frame's
+ * weight {@code 1 - subFrame / time} as a byte, and the current frame's
+ * alpha. Its "animate only visible textures" skips the upload of a sprite
+ * off screen; a map off screen cannot be seen, so that is not mirrored.</p>
  */
 final class MaterialAnimation {
     /** One schedule entry: which frame of the strip to show, and for how many ticks. */
@@ -39,8 +35,6 @@ final class MaterialAnimation {
     private final int height;
     private int frame;
     private int subFrame;
-    /** Sodium's {@code hasUploadedAllOnce}: the schedule has reached its last entry. */
-    private boolean shownLastEntry;
 
     MaterialAnimation(List<Frame> frames, boolean interpolate, int[][][] frameLevels, int width, int height) {
         if (frames.size() < 2) {
@@ -73,7 +67,6 @@ final class MaterialAnimation {
             subFrame = 0;
             changed = previous != frames.get(frame).index();
         }
-        if (frame == frames.size() - 1) shownLastEntry = true;
         return changed || (interpolate && currentIndex() != nextIndex());
     }
 
@@ -84,34 +77,26 @@ final class MaterialAnimation {
             return current;
         }
         int[] next = frameLevels[nextIndex()][level];
-        float progress = (int) ((float) subFrame / (float) frames.get(frame).time() * 1000.0f) / 1000.0f;
+        // Sodium ColorU8.normalizedFloatToByte: the current frame's weight as a byte.
+        int weight = (int) ((1.0f - (float) subFrame / (float) frames.get(frame).time()) * 255.0f) & 0xFF;
         int[] mixed = new int[current.length];
         for (int i = 0; i < current.length; i++) {
-            mixed[i] = MaterialMapPixels.pack(
-                    mix(MaterialMapPixels.alpha(current[i]), MaterialMapPixels.alpha(next[i]), progress),
-                    mix(MaterialMapPixels.blue(current[i]), MaterialMapPixels.blue(next[i]), progress),
-                    mix(MaterialMapPixels.green(current[i]), MaterialMapPixels.green(next[i]), progress),
-                    mix(MaterialMapPixels.red(current[i]), MaterialMapPixels.red(next[i]), progress));
+            mixed[i] = mix(current[i], next[i], weight) & 0x00FFFFFF | current[i] & 0xFF000000;
         }
         return mixed;
     }
 
-    /** GLSL mix on normalized channels, stored to UNORM8 with round-to-nearest. */
-    private static int mix(int current, int next, float progress) {
-        float value = current / 255.0f * (1.0f - progress) + next / 255.0f * progress;
-        return Math.max(0, Math.min(255, Math.round(value * 255.0f)));
+    /** Sodium ColorMixer.mix: every channel weighted by {@code weight / 255}, rounded as Sodium rounds. */
+    private static int mix(int current, int next, int weight) {
+        long redBlue = (current & 0x00FF00FFL) * weight + (next & 0x00FF00FFL) * (255 - weight);
+        long greenAlpha = (current & 0xFF00FF00L) * weight + (next & 0xFF00FF00L) * (255 - weight);
+        long mixedRedBlue = (redBlue + 0x00FF00FFL) >>> 8 & 0x00FF00FFL;
+        long mixedGreenAlpha = (greenAlpha + 0xFF00FF00L) >>> 8 & 0xFF00FF00L;
+        return (int) (mixedRedBlue | mixedGreenAlpha);
     }
 
     int levels() {
         return frameLevels[0].length;
-    }
-
-    /**
-     * Mip levels a redraw writes: every level until the schedule first
-     * reaches its last entry, then only level 0 (see the class note).
-     */
-    int animatedLevels() {
-        return shownLastEntry ? 1 : levels();
     }
 
     int width() {

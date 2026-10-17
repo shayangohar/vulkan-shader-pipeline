@@ -202,21 +202,17 @@ final class AdvancedImagePlanTest {
         assertTrue(schedule.contains("!pass.hasPackHandSchedule()")
                         && depth.contains("if (!ChimeraHandRenderer.diverted()) renderer.renderHandsWithItems"),
                 "hand fallback must remain vanilla unless both pack phases are installed");
-        assertTrue(level.contains("ordinal = 1") && level.contains("ChimeraHandRenderer.drawSolid();"),
-                "opaque pack hand must run before deferred");
+        assertTrue(level.contains("stringValue=translucent") && level.contains("ChimeraHandRenderer.drawSolid();"),
+                "opaque pack hand must run before translucent terrain");
         assertTrue(level.indexOf("ChimeraHandRenderer.drawTranslucent();")
                         < level.indexOf("pass.finishLevelSegment();"),
                 "translucent pack hand must run before pack final");
-        assertTrue(schedule.indexOf("dispatcher.renderAllFeatures();")
-                        < schedule.indexOf("ChimeraEntityBridge.endDraw();")
-                        && schedule.indexOf("buffers.endLastBatch();") < schedule.indexOf(
-                                "ChimeraEntityBridge.endDraw();"),
-                "hand submission, emission and flush must share the family scope");
-        // Glint flushes after the hand scope closes, in its own HAND_GLINT lane.
-        assertTrue(schedule.indexOf("type.pipeline() != RenderPipelines.GLINT")
-                        < schedule.indexOf("ChimeraEntityBridge.endDraw();")
-                        && schedule.indexOf("ChimeraEntityBridge.endDraw();") < schedule.indexOf("buffers.endBatch();"),
-                "hand glint must flush after the hand family scope");
+        // Hand models, items and maps flush in their family lanes, then glint in its own, all
+        // inside the hand scope that selects the hand lanes.
+        assertTrue(schedule.indexOf("renderHandsWithItems(") < schedule.indexOf("buffers.endFamilyBatches();")
+                        && schedule.indexOf("buffers.endFamilyBatches();") < schedule.indexOf("buffers.endBatch();")
+                        && schedule.indexOf("buffers.endBatch();") < schedule.indexOf("translucentPhase = null;"),
+                "hand submission and both flushes must share the hand scope");
 
         int resolve = main.indexOf("resolvePackWorldToOutput(commandBuffer, hdrColor);");
         int finalCall = main.indexOf("finishPackFinalBeforeHand();", resolve);

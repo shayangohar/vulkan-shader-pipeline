@@ -116,7 +116,6 @@ final class PackFrameState {
     private float blindness;
     private float darknessLightFactor;
     private float darknessFactor;
-    private int isElytraFlying;
     private float nightVision;
     private float wetness;
     private float eyeAltitude;
@@ -144,7 +143,6 @@ final class PackFrameState {
     private int dimension;
     private int heightLimit;
     private int logicalHeightLimit;
-    private int seaLevel;
     private int hasCeiling;
     private int hasSkylight;
     private float ambientLight;
@@ -185,7 +183,6 @@ final class PackFrameState {
         scalar(table, () -> bedrockLevel, "bedrockLevel");
         scalar(table, () -> heightLimit, "heightLimit");
         scalar(table, () -> logicalHeightLimit, "logicalHeightLimit");
-        scalar(table, () -> seaLevel, "seaLevel");
         scalar(table, () -> hasCeiling, "hasCeiling");
         scalar(table, () -> hasSkylight, "hasSkylight");
         scalar(table, () -> ambientLight, "ambientLight");
@@ -203,7 +200,6 @@ final class PackFrameState {
         scalar(table, () -> nightVision, "nightVision");
         scalar(table, () -> screenBrightness, "screenBrightness");
         scalar(table, () -> isEyeInWater, "isEyeInWater");
-        scalar(table, () -> isElytraFlying, "isElytraFlying");
         scalar(table, () -> eyeAltitude, "eyeAltitude");
         scalar(table, () -> biomeId, "biome");
         scalar(table, () -> biomeCategory, "biome_category");
@@ -306,7 +302,7 @@ final class PackFrameState {
 
         var position = camera.getPosition();
         advanceCamera(position.x, position.y, position.z, viewportChanged);
-        irisPlayer.capture(minecraft, partialTick, position.x, position.y, position.z, frameTime);
+        irisPlayer.capture(minecraft, frameTime);
         heldItems.capture(minecraft);
 
         Entity cameraEntity = minecraft.getCameraEntity();
@@ -326,11 +322,9 @@ final class PackFrameState {
             if (cameraEntity instanceof LivingEntity living) {
                 this.blindness = blindness(living);
                 this.darknessFactor = darknessFactor(living, partialTick);
-                this.isElytraFlying = living.isFallFlying() ? 1 : 0;
             } else {
                 this.blindness = 0.0f;
                 this.darknessFactor = 0.0f;
-                this.isElytraFlying = 0;
             }
             captureEyeBrightness(minecraft.level, eye.x, eye.y, eye.z);
         }
@@ -640,7 +634,6 @@ final class PackFrameState {
         bedrockLevel = level.dimensionType().minY();
         heightLimit = level.dimensionType().height();
         logicalHeightLimit = level.dimensionType().logicalHeight();
-        seaLevel = level.getSeaLevel();
         hasCeiling = level.dimensionType().hasCeiling() ? 1 : 0;
         hasSkylight = level.dimensionType().hasSkyLight() ? 1 : 0;
         ambientLight = level.dimensionType().ambientLight();
@@ -695,7 +688,7 @@ final class PackFrameState {
     }
 
     private static int channel(double value) {
-        return (int) Math.round(clamp((float) value, 0.0F, 1.0F) * 255.0F);
+        return Math.round(clamp((float) value, 0.0F, 1.0F) * 255.0F);
     }
 
     /** Test seam: the same derivation from explicit host samples. */
@@ -897,7 +890,6 @@ final class PackFrameState {
         eyeBrightness[1] = 0;
         eyeBrightnessSmooth[0] = 0;
         isEyeInWater = 0;
-        isElytraFlying = 0;
     }
 
     private void clearWorldState() {
@@ -913,7 +905,6 @@ final class PackFrameState {
         dimension = 0;
         heightLimit = 0;
         logicalHeightLimit = 0;
-        seaLevel = 0;
         hasCeiling = 0;
         hasSkylight = 0;
         ambientLight = 0.0f;

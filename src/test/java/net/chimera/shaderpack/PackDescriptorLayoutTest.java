@@ -20,21 +20,20 @@ final class PackDescriptorLayoutTest {
     void terrainConfig() {
         var layout = PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson("chimera_terrain.json"));
         var blocks = layout.uniformBlocks();
-        assertEquals(List.of(0, 1, 2), blocks.stream().map(PackDescriptorLayout.UniformBlock::binding).toList());
-        assertEquals(List.of(VERTEX, ALL_GRAPHICS, VERTEX),
+        assertEquals(List.of(0, 1), blocks.stream().map(PackDescriptorLayout.UniformBlock::binding).toList());
+        assertEquals(List.of(VERTEX, ALL_GRAPHICS),
                 blocks.stream().map(PackDescriptorLayout.UniformBlock::stages).toList());
         assertEquals(List.of(new PackDescriptorLayout.Field("mat4", "MVP"),
                 new PackDescriptorLayout.Field("mat4", "LightMVP")), blocks.get(0).fields());
-        assertEquals(List.of("vec4", "float", "float", "float", "float", "float", "float", "float", "ivec2", "vec2",
-                "int"), blocks.get(1).fields().stream().map(PackDescriptorLayout.Field::type).toList());
-        assertEquals(4096, blocks.get(2).size(), "a block without fields keeps its byte size");
-        assertEquals(List.of(), blocks.get(2).fields());
-        assertEquals(List.of(new PackDescriptorLayout.ImageSlot(3, "sampler2D", "Sampler0", 0),
-                new PackDescriptorLayout.ImageSlot(4, "sampler2D", "Sampler2", 2),
-                new PackDescriptorLayout.ImageSlot(5, "sampler2D", "Sampler3", 3)), layout.images(),
+        assertEquals(List.of(new PackDescriptorLayout.Field("vec4", "FogColor"),
+                new PackDescriptorLayout.Field("float", "FogStart"), new PackDescriptorLayout.Field("float", "FogEnd"),
+                new PackDescriptorLayout.Field("float", "AlphaCutout")), blocks.get(1).fields());
+        assertEquals(List.of(new PackDescriptorLayout.ImageSlot(2, "sampler2D", "Sampler0", 0),
+                new PackDescriptorLayout.ImageSlot(3, "sampler2D", "Sampler2", 2),
+                new PackDescriptorLayout.ImageSlot(4, "sampler2D", "Sampler3", 3)), layout.images(),
                 "samplers take the bindings after the last block");
         assertEquals(new PackDescriptorLayout.UniformBlock(0, VERTEX, 0,
-                List.of(new PackDescriptorLayout.Field("vec3", "ModelOffset"))), layout.pushConstants());
+                List.of(new PackDescriptorLayout.Field("vec3", "ChunkOffset"))), layout.pushConstants());
     }
 
     @Test

@@ -1,8 +1,7 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 
@@ -16,6 +15,11 @@ import java.util.Map;
 import static net.chimera.render.MaterialMapFixtures.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.lwjgl.opengl.GL11.GL_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_NEAREST;
+import static org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_REPEAT;
 
 /**
  * Draw-time material-map resolution: which companion a draw binds, the sampler it samples with, and
@@ -126,16 +130,15 @@ final class MaterialMapDrawTest {
             assertEquals(0x7777L, normals.samplerOverride(), "normals left the albedo sampler");
             assertTrue(samplers.requests.isEmpty(), "normals allocated a sampler");
 
-            // Atlas labPBR specular derives NEAREST/NEAREST with the source ceiling.
+            // Atlas labPBR specular filters NEAREST inside the source's mip mode, with its ceiling.
             var specular4 = owner.resolveDrawMaterial(lod4, "specular");
             var specular8 = owner.resolveDrawMaterial(lod8, "specular");
             assertEquals(2, samplers.requests.size(), "max-LOD variants aliased in the cache");
-            FakeSamplers.Request first = samplers.requests.get(0);
-            assertEquals(NEAREST, first.minFilter(), "labPBR min filter");
-            assertEquals(NEAREST, first.magFilter(), "labPBR mag filter");
-            assertEquals(REPEAT, first.addressU(), "labPBR address U");
-            assertEquals(REPEAT, first.addressV(), "labPBR address V");
-            assertEquals(4, first.anisotropy(), "labPBR anisotropy");
+            SamplerManager.SamplerKey first = samplers.requests.get(0);
+            assertEquals(GL_NEAREST_MIPMAP_LINEAR, first.minFilter(), "labPBR min filter");
+            assertEquals(GL_NEAREST, first.magFilter(), "labPBR mag filter");
+            assertEquals(GL_REPEAT, first.wrapS(), "labPBR wrap S");
+            assertEquals(GL_REPEAT, first.wrapT(), "labPBR wrap T");
             assertEquals(4.0f, first.maxLod(), "labPBR max LOD not preserved");
             assertEquals(8.0f, samplers.requests.get(1).maxLod(), "second ceiling not preserved");
             assertTrue(specular4.samplerOverride() != specular8.samplerOverride(),
@@ -153,7 +156,6 @@ final class MaterialMapDrawTest {
         } finally {
             owner.close();
         }
-        assertTrue(samplers.allClosed(), "shutdown closed owned samplers");
     }
 
     @Test
@@ -185,21 +187,20 @@ final class MaterialMapDrawTest {
             // Simple labPBR specular filters NEAREST and clamps to LOD zero.
             var specular = owner.resolveDrawMaterial(context, "specular");
             assertEquals(2, samplers.requests.size(), "simple maps did not derive two samplers");
-            FakeSamplers.Request normalRequest = samplers.requests.get(0);
-            assertEquals(LINEAR, normalRequest.minFilter(), "simple normals min filter");
-            assertEquals(LINEAR, normalRequest.magFilter(), "simple normals mag filter");
-            assertEquals(REPEAT, normalRequest.addressU(), "simple normals address");
+            SamplerManager.SamplerKey normalRequest = samplers.requests.get(0);
+            assertEquals(GL_LINEAR_MIPMAP_LINEAR, normalRequest.minFilter(), "simple normals min filter");
+            assertEquals(GL_LINEAR, normalRequest.magFilter(), "simple normals mag filter");
+            assertEquals(GL_REPEAT, normalRequest.wrapS(), "simple normals wrap");
             assertEquals(0.0f, normalRequest.maxLod(), "simple normals LOD not clamped");
-            FakeSamplers.Request specularRequest = samplers.requests.get(1);
-            assertEquals(NEAREST, specularRequest.minFilter(), "simple specular min filter");
-            assertEquals(NEAREST, specularRequest.magFilter(), "simple specular mag filter");
+            SamplerManager.SamplerKey specularRequest = samplers.requests.get(1);
+            assertEquals(GL_NEAREST_MIPMAP_LINEAR, specularRequest.minFilter(), "simple specular min filter");
+            assertEquals(GL_NEAREST, specularRequest.magFilter(), "simple specular mag filter");
             assertEquals(0.0f, specularRequest.maxLod(), "simple specular LOD not clamped");
             assertTrue(normals.samplerOverride() != specular.samplerOverride(),
                     "simple kinds shared one sampler");
         } finally {
             owner.close();
         }
-        assertTrue(samplers.allClosed(), "shutdown closed simple samplers");
     }
 
     /**
@@ -223,12 +224,7 @@ final class MaterialMapDrawTest {
             owner.pumpPendingBuilds(mapLookup(files), MaterialMapFixtures::decodeImageIO);
             // Entity batch first: slot 0 now names a foreign image.
             ChimeraTextureBindingState.markPackBinding(0, entityBase, 0x5555L);
-            DrawMaterialContext terrain = new DrawMaterialContext(atlasBase,
-                    new SamplerProfile(0x7777L,
-                            AddressMode.REPEAT,
-                            AddressMode.REPEAT,
-                            FilterMode.LINEAR,
-                            FilterMode.LINEAR, 4, 4.0f));
+            DrawMaterialContext terrain = profiledContext(atlasBase, 4.0f);
             var normals = owner.resolveDrawMaterial(terrain, "normals");
             var specular = owner.resolveDrawMaterial(terrain, "specular");
             assertTrue(normals.image() == factory.set("minecraft:blocks",

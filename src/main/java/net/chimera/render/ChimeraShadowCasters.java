@@ -152,7 +152,8 @@ public final class ChimeraShadowCasters implements AutoCloseable {
                 draw(dispatcher, blockEntity, partialTick, lightsOnly, poses, cameraX, cameraY, cameraZ);
             }
         }
-        Set<BlockEntity> global = ((ChimeraLevelRendererAccessor) minecraft.levelRenderer).chimera$globalBlockEntities();
+        var renderer = (ChimeraLevelRendererAccessor) minecraft.levelRenderer;
+        Set<BlockEntity> global = renderer.chimera$globalBlockEntities();
         synchronized (global) {
             for (BlockEntity blockEntity : global) {
                 if (!blockEntity.isRemoved()) {
@@ -164,7 +165,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
 
     private void draw(BlockEntityRenderDispatcher dispatcher, BlockEntity blockEntity, float partialTick,
                       boolean lightsOnly, PoseStack poses, double cameraX, double cameraY, double cameraZ) {
-        if (lightsOnly && blockEntity.getBlockState().getLightEmission() == 0) return;
+        if (lightsOnly && LightEmission.of(blockEntity.getBlockState()) == 0) return;
         BlockPos position = blockEntity.getBlockPos();
         poses.pushPose();
         poses.translate(position.getX() - cameraX, position.getY() - cameraY, position.getZ() - cameraZ);

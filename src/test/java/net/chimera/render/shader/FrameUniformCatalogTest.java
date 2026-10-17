@@ -8,7 +8,6 @@ import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.testing.TestPacks;
-import net.vulkanmod.vulkan.shader.layout.Uniform;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.junit.jupiter.api.Test;
@@ -137,14 +136,12 @@ final class FrameUniformCatalogTest {
     void stableBuffers() {
         PackUniformProvider.resetSession();
         PackUniformProvider provider = PackUniformProvider.shared();
-        Uniform.Info firstInfo = Uniform.createUniformInfo("float", "frameTimeCounter");
-        MappedBuffer first = provider.supplier(firstInfo).get();
-        MappedBuffer second = provider.supplier(firstInfo).get();
+        MappedBuffer first = provider.supplier("frameTimeCounter", "float").get();
+        MappedBuffer second = provider.supplier("frameTimeCounter", "float").get();
         assertTrue(first == second, "frame uniform buffer was recreated");
 
-        Uniform.Info vectorInfo = Uniform.createUniformInfo("vec3", "cameraPosition");
-        Uniform.Info integerInfo = Uniform.createUniformInfo("ivec3", "cameraPositionInt");
-        assertTrue(provider.supplier(vectorInfo).get() != provider.supplier(integerInfo).get(),
+        assertTrue(provider.supplier("cameraPosition", "vec3").get()
+                        != provider.supplier("cameraPositionInt", "ivec3").get(),
                 "typed bindings reused an incompatible buffer");
     }
 

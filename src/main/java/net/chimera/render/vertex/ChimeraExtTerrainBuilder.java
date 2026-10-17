@@ -1,6 +1,7 @@
 package net.chimera.render.vertex;
 
 import net.chimera.mixin.ChimeraTerrainBufferBuilderAccessor;
+import net.chimera.render.LightEmission;
 import net.chimera.shaderpack.PackMaterialResolver;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.minecraft.world.level.block.state.BlockState;
@@ -21,7 +22,8 @@ public final class ChimeraExtTerrainBuilder extends TerrainBufferBuilder {
                                     TerrainMaterialPlan materialPlan) {
         super(size, CustomVertexFormat.COMPRESSED_TERRAIN);
         TerrainMaterialPlan plan = materialPlan == null ? TerrainMaterialPlan.legacy() : materialPlan;
-        ((ChimeraTerrainBufferBuilderAccessor) (Object) this).chimera$setFormat(ChimeraVertexFormats.terrainFormat(plan));
+        var builder = (ChimeraTerrainBufferBuilderAccessor) (Object) this;
+        builder.chimera$setFormat(ChimeraVertexFormats.terrainFormat(plan));
         this.materialResolver = materialResolver == null ? PackMaterialResolver.empty() : materialResolver;
         this.extendedVertexBuilder = new ChimeraExtVertexBuilder(plan);
         this.vertexBuilder = this.extendedVertexBuilder;
@@ -39,7 +41,7 @@ public final class ChimeraExtTerrainBuilder extends TerrainBufferBuilder {
     @Override
     public void setBlockAttributes(BlockState blockState) {
         extendedVertexBuilder.setBlockData(materialResolver.resolve(blockState), -1,
-                blockState.getLightEmission());
+                LightEmission.of(blockState));
     }
 
     /**
@@ -50,7 +52,7 @@ public final class ChimeraExtTerrainBuilder extends TerrainBufferBuilder {
     public void setFluidBlockAttributes(BlockState blockState, FluidState fluidState,
                                         int localX, int localY, int localZ) {
         extendedVertexBuilder.setBlockData(materialResolver.resolve(fluidState.createLegacyBlock()), 1,
-                blockState.getLightEmission());
+                LightEmission.of(blockState));
         extendedVertexBuilder.setBlockPosition(localX, localY, localZ);
     }
 }

@@ -620,16 +620,17 @@ final class GlslVertexPreambles {
     }
 
     /**
-     * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud faces (PackCloudRenderer
-     * decodes them into DefaultVertexFormat.POSITION_COLOR_NORMAL), gl_Vertex in the cloud mesh's
-     * own space (the draw's model view carries the cloud offset), the face colour times the cloud
-     * colour (ColorModulator), the face's axis normal, UV0 (0.5, 0.5) and full light (240, 240).
+     * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud mesh
+     * (DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL), gl_Vertex in the mesh's own space (the
+     * draw's model view carries the cloud offset), the clouds texture coordinate, the face colour
+     * (the cloud colour times the face shade), the face's axis normal and full light (240, 240).
      */
     static final String CLOUD_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
+            .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
+            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
-            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 2) in vec3 Normal;")
+            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 3) in vec3 Normal;")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",

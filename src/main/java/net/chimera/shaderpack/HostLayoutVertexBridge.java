@@ -107,8 +107,8 @@ final class HostLayoutVertexBridge {
     }
 
     /**
-     * Converts a cloud vertex onto the faces PackCloudRenderer decodes, with Iris's cloud inputs
-     * (GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE). The faces carry no mid-coordinates or tangents,
+     * Converts a cloud vertex onto vanilla's cloud mesh, with Iris's cloud inputs
+     * (GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE). The mesh carries no mid-coordinates or tangents,
      * so those attributes read GL's unbound default, as under Iris.
      */
     public static LegacyGlslConverter.TerrainVertexConversion convertCloudVertex(

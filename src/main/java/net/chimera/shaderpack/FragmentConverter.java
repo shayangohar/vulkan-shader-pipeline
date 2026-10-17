@@ -28,10 +28,6 @@ import java.util.regex.Pattern;
 public final class FragmentConverter {
     private FragmentConverter() {}
 
-    private static final Pattern ELYTRA_FLYING_BOOL = Pattern.compile("\\buniform\\s+bool\\s+isElytraFlying\\b");
-    /** A read of the int catalog field that stands for Iris's bool isElytraFlying. */
-    static final String ELYTRA_FLYING_READ = "(isElytraFlying != 0)";
-
     static final Pattern MODERN_GEOMETRY_OUTPUT_DECL = Pattern.compile(
             "(?m)^\\s*out\\s+vec4\\s+(\\w+)\\s*;\\s*");
 
@@ -270,14 +266,10 @@ public final class FragmentConverter {
             src = LegacyGlslConverter.removePackMetadataConstants(src);
             src = LegacyGlslConverter.stripUnusedConsumedConsts(src, packConstants);
             src = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
-            boolean elytraFlyingBool = declaresElytraFlyingBool(src);
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
                 src = EntityVertexBridge.removeEntityIdDeclarations(src, interfacePlan);
                 src = EntityVertexBridge.replaceEntityIdReferences(src, request.terrainLayout());
-            }
-            if (elytraFlyingBool) {
-                src = rewriteElytraFlyingBool(src, interfacePlan);
             }
             if (geometryStage && modern && request.geometryOutputPlan() == null && !stage.shadowPass()) {
                 src = convertModernGeometryOutputs(src);
@@ -657,7 +649,9 @@ public final class FragmentConverter {
         if (terrainContract(stage) || stage == UniformRegistry.Stage.SHADOW) {
             return terrainHostBlocks(stage) + (uniforms ? 1 : 0);
         }
-        return uniforms ? 4 : 3;
+        // Sky and clouds: binding 2 holds the pack's uniform block, or an empty block in its place
+        // (PackDescriptorContracts.familyLayout).
+        return 3;
     }
 
     /**
@@ -765,34 +759,6 @@ public final class FragmentConverter {
 
     static void validateEntityFragmentVersion(String source) {
         GlslVersion.requireSupported(source, "entity fragment", true);
-    }
-
-    /** True when the source declares Iris's isElytraFlying as the bool Iris serves. */
-    static boolean declaresElytraFlyingBool(String source) {
-        return source != null && ELYTRA_FLYING_BOOL.matcher(source).find();
-    }
-
-    /**
-     * Reads the boolean Iris isElytraFlying uniform from the live int catalog
-     * field: VulkanMod's admitted UBO types have no bool, so the generated
-     * block declares {@code int isElytraFlying} and every read becomes
-     * {@code (isElytraFlying != 0)}, which a pack's {@code !isElytraFlying}
-     * also accepts. Any stage that reads it: Complementary's HIDE_ARMOR reads
-     * it in the entity and the shadow programs.
-     */
-    static String rewriteElytraFlyingBool(
-            String source, UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        if (source == null || !GlslTokenRewriter.containsIdentifier(source, "isElytraFlying")
-                || source.contains(ELYTRA_FLYING_READ)) {
-            return source;
-        }
-        boolean live = interfacePlan != null && interfacePlan.executableUniforms().stream()
-                .anyMatch(uniform -> uniform.name().equals("isElytraFlying"));
-        if (!live) {
-            return source;
-        }
-        return GlslTokenRewriter.replaceIdentifiers(source, Map.of("isElytraFlying", ELYTRA_FLYING_READ));
     }
 
     static String chimeraFragmentVaryings(LegacyGlslConverter.TerrainVaryingLayout layout) {

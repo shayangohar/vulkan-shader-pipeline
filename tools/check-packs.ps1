@@ -47,5 +47,8 @@ foreach ($name in $Evidence.Keys) {
 if ($PrintBaselines) { $properties += '-Pchimera.printBaselines=true' }
 if (-not $GradleArguments) { $GradleArguments = @('check', 'build') }
 
+# Gradle reports failing tasks on stderr. Under 'Stop', a redirected run would end at the first such
+# line instead of running every task (--continue); the exit code still reports the failure.
+$ErrorActionPreference = 'Continue'
 & (Join-Path $PSScriptRoot 'gradlew-prism.ps1') @GradleArguments @properties --continue
 exit $LASTEXITCODE

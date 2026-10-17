@@ -70,7 +70,8 @@ public abstract class ChimeraLevelRendererMixin {
 
     /** After the entity loop (vanilla's first pose check), before its entity batches flush. */
     @Inject(method = "renderLevel", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/LevelRenderer;checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;"
+                    + "checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
             ordinal = 0), require = 1)
     private void chimera$drawEntityFamilies(CallbackInfo ci) {
         chimera$drawFamilyBatches();
@@ -78,7 +79,8 @@ public abstract class ChimeraLevelRendererMixin {
 
     /** After the block-entity loops, VulkanMod's section block entities included. */
     @Inject(method = "renderLevel", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/LevelRenderer;checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;"
+                    + "checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
             ordinal = 1, shift = At.Shift.AFTER), require = 1)
     private void chimera$drawBlockEntityFamilies(CallbackInfo ci) {
         chimera$drawFamilyBatches();

@@ -79,23 +79,20 @@ final class MaterialMapAnimationTest {
             assertEquals(FALLBACK_NORMALS, n0[8 * 32 + 8], "undividable strip left its slot flat");
             int brick = n0[16 * 32 + 16];
 
-            // Shown frame after each tick: 0 holds 2, then 2 holds 3, then 1 holds 1.
-            // Tick 5 first reaches the last entry: from then on only mip 0 is
-            // redrawn (Iris + Sodium), so mip 1 keeps frame 2.
+            // Shown frame after each tick: 0 holds 2, then 2 holds 3, then 1 holds 1. Every
+            // redraw writes all three mip levels, as 1.21.1 uploads a frame.
             int[] expected = {0, 2, 2, 2, 1, 0, 0, 2};
-            int lastEntryTick = 4;
             int writes = 0;
             for (int tick = 0; tick < expected.length; tick++) {
                 owner.tickAtlas("minecraft:animated");
                 owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO);
                 boolean changed = tick == 0 ? false : expected[tick] != expected[tick - 1];
-                if (changed) writes += tick < lastEntryTick ? 3 : 1;
+                if (changed) writes += 3;
                 assertEquals(writes, normals.writes.size(), "tick " + (tick + 1) + " redraw count");
                 int shown = frames[expected[tick]];
-                int smaller = frames[expected[Math.min(tick, lastEntryTick - 1)]];
                 assertEquals(shown, normals.levels.get(0).pixels()[32 + 1], "tick " + (tick + 1) + " frame");
                 assertEquals(shown, normals.levels.get(0).pixels()[0], "tick " + (tick + 1) + " padding");
-                assertEquals(smaller, normals.levels.get(1).pixels()[0], "tick " + (tick + 1) + " mip 1");
+                assertEquals(shown, normals.levels.get(1).pixels()[0], "tick " + (tick + 1) + " mip 1");
             }
             assertTrue(owner.companionFor(base, "normals").image() == bound,
                     "animation changed the descriptor identity");
@@ -141,13 +138,15 @@ final class MaterialMapAnimationTest {
             int content = 32 + 9;
             assertEquals(pack(40, 200, 100, 0), specular.levels.get(0).pixels()[content],
                     "interpolation starts on frame 0");
-            // Four ticks per frame: progress 0.25, 0.5, 0.75, then frame 1 exactly.
+            // Four ticks per frame. Sodium weighs the current frame by 191, 127, then 63 of 255,
+            // mixes the colour channels and keeps the current frame's alpha; then frame 1 shows
+            // exactly and mixes towards frame 0.
             int[][] shown = {
-                    {90, 150, 100, 50},
-                    {140, 100, 100, 100},
-                    {190, 50, 100, 150},
+                    {40, 150, 100, 50},
+                    {40, 100, 100, 100},
+                    {40, 50, 100, 150},
                     {240, 0, 100, 200},
-                    {190, 50, 100, 150}};
+                    {240, 50, 100, 150}};
             for (int tick = 0; tick < shown.length; tick++) {
                 owner.tickAtlas("minecraft:animated");
                 owner.pumpPendingBuilds(lookup, MaterialMapFixtures::decodeImageIO);
@@ -157,8 +156,8 @@ final class MaterialMapAnimationTest {
                 assertEquals(pack(value[0], value[1], value[2], value[3]),
                         specular.levels.get(0).pixels()[8], "interpolated padding tick " + (tick + 1));
             }
-            // Every tick redraws; tick 4 reaches the last entry, after which only mip 0 is written.
-            assertEquals(3 * 3 + (shown.length - 3), specular.writes.size(), "interpolation redraws every tick");
+            // Every tick redraws all three mip levels.
+            assertEquals(3 * shown.length, specular.writes.size(), "interpolation redraws every tick");
         } finally {
             owner.close();
         }

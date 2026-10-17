@@ -60,10 +60,6 @@ final class UniformCatalog {
         addLive(specs, "blindness", "float", "blindness");
         addLive(specs, "darknessFactor", "float");
         addLive(specs, "darknessLightFactor", "float");
-        addLive(specs, "isElytraFlying", "int");
-        addDefault(specs, "endFlashIntensity", "float");
-        addDefault(specs, "previousEndFlashIntensity", "float");
-        addDefault(specs, "endFlashPosition", "vec3");
         addLive(specs, "frameTime", "float");
         addLive(specs, "nightVision", "float");
         addLive(specs, "screenBrightness", "float");
@@ -82,7 +78,6 @@ final class UniformCatalog {
         addLive(specs, "dimension", "int");
         addLive(specs, "heightLimit", "int");
         addLive(specs, "logicalHeightLimit", "int");
-        addLive(specs, "seaLevel", "int");
         // Iris serves these through uniform1b; packs declare them bool or int.
         addLive(specs, "hasCeiling", List.of("int", "bool"), "hasCeiling");
         addLive(specs, "hasSkylight", List.of("int", "bool"), "hasSkylight");
@@ -143,12 +138,11 @@ final class UniformCatalog {
     }
 
     /**
-     * Iris's player, HUD, vehicle, clock and Distant Horizons uniforms (see IrisPlayerState).
+     * Iris's player, HUD, clock and Distant Horizons uniforms (see IrisPlayerState).
      * Booleans take bool or int, as Iris's uniform1b serves either.
      */
     static void addIrisPlayerState(Map<String, UniformRegistry.UniformDescriptor> specs) {
-        for (String flag : List.of("hideGUI", "isRightHanded", "feetInWater", "inSwimmingAnimation",
-                "isRiding", "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog",
+        for (String flag : List.of("hideGUI", "isRightHanded", "firstPersonCamera", "isSpectator",
                 "is_burning", "is_hurt", "is_invisible", "is_on_ground", "is_sneaking", "is_sprinting", "is_alive")) {
             addLive(specs, flag, List.of("bool", "int"), flag);
         }
@@ -160,9 +154,7 @@ final class UniformCatalog {
         for (String value : List.of("currentColorSpace", "dhRenderDistance")) {
             addLive(specs, value, "int");
         }
-        for (String vector : List.of("vehicleLookVector", "relativeVehiclePosition", "playerBodyVector")) {
-            addLive(specs, vector, "vec3");
-        }
+        addLive(specs, "playerBodyVector", "vec3");
         addLive(specs, "currentDate", "ivec3");
         addLive(specs, "currentTime", "ivec3");
         addLive(specs, "currentYearTime", "ivec2");

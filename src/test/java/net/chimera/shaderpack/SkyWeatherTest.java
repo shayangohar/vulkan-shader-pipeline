@@ -1,17 +1,17 @@
 package net.chimera.shaderpack;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ChimeraHorizonRenderer;
 import net.chimera.render.shader.ChimeraSkyBridge;
-import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.render.shader.PackUniformProvider;
 import net.minecraft.client.CloudStatus;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.vulkanmod.vulkan.memory.buffer.index.AutoIndexBuffer;
-import net.vulkanmod.vulkan.shader.Pipeline;
+import net.vulkanmod.vulkan.memory.AutoIndexBuffer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -108,66 +108,74 @@ final class SkyWeatherTest {
     }
 
     /**
-     * VulkanMod draws fans as triangle lists. An explicit index buffer is passed through unchanged,
-     * so the 10-vertex horizon must be submitted non-indexed to get the native 24-index expansion.
+     * The horizon is Iris's ten-vertex fan in a vertex buffer, drawn with the position shader so the
+     * sky window gives it gbuffers_skybasic. VulkanMod's vertex buffer expands an unindexed fan with
+     * its own index buffer into eight triangles.
      */
     @Test
     void horizonSubmission() throws IOException {
-        int vertices = ChimeraHorizonRenderer.VERTEX_COUNT;
-        assertEquals(VertexFormat.Mode.TRIANGLE_FAN,
-                RenderPipelines.SKY.getVertexFormatMode(),
-                "horizon relies on the SKY pipeline's fan auto-index path");
-        assertEquals(24, AutoIndexBuffer.getIndexCount(
-                        AutoIndexBuffer.DrawType.TRIANGLE_FAN, vertices),
+        assertEquals(24, AutoIndexBuffer.DrawType.getTriangleStripIndexCount(ChimeraHorizonRenderer.VERTEX_COUNT),
                 "horizon fan must expand to eight triangles");
         var draw = MixinBytecode.nativeClass("net/chimera/render/ChimeraHorizonRenderer").methods.stream()
                 .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
-        int nonIndexed = 0;
+        boolean fan = false;
+        boolean positionShader = false;
+        boolean vertexBuffer = false;
         for (var instruction : draw.instructions) {
-            if (instruction instanceof MethodInsnNode call
-                    && call.owner.equals("com/mojang/blaze3d/systems/RenderPass")) {
-                assertTrue(!call.name.equals("drawIndexed") && !call.name.equals("setIndexBuffer"),
-                        "indexed horizon submission bypasses VulkanMod's fan expansion");
-                if (call.name.equals("draw")) nonIndexed++;
+            if (instruction instanceof FieldInsnNode field && field.name.equals("TRIANGLE_FAN")) fan = true;
+            if (instruction instanceof MethodInsnNode call) {
+                if (call.name.equals("getPositionShader")) positionShader = true;
+                if (call.owner.equals("com/mojang/blaze3d/vertex/VertexBuffer")
+                        && call.name.equals("drawWithShader")) vertexBuffer = true;
             }
         }
-        assertEquals(1, nonIndexed, "horizon must submit one non-indexed fan");
+        assertTrue(fan && positionShader && vertexBuffer,
+                "the horizon must draw a fan from a vertex buffer with the position shader");
     }
 
     /**
-     * The end portal follows Iris: an entitySolid cube emitted from the native submit lambda,
-     * routed as block-entity custom geometry. Pin the native seams those hooks rely on.
+     * The end portal follows Iris: an entitySolid cube in place of the portal's own render type,
+     * from a head-cancelling hook on TheEndPortalRenderer.render. The gateway draws its portal
+     * through that same method, after its beam.
      */
     @Test
     void endPortalHooks() throws IOException {
-        var portal = MixinBytecode.nativeClass("net/minecraft/client/renderer/blockentity/AbstractEndPortalRenderer");
-        assertTrue(portal.methods.stream().anyMatch(method -> method.name.equals("method_73539")
-                        && method.desc.equals("(Lnet/minecraft/client/renderer/blockentity/state/EndPortalRenderState;"
-                        + "Lcom/mojang/blaze3d/vertex/PoseStack$Pose;Lcom/mojang/blaze3d/vertex/VertexConsumer;)V")),
-                "end portal geometry lambda changed");
-        var submit = portal.methods.stream().filter(method -> method.name.equals("submit")
-                && method.desc.startsWith("(Lnet/minecraft/client/renderer/blockentity/state/EndPortalRenderState;"))
-                .findFirst().orElseThrow();
-        boolean custom = false;
-        for (var instruction : submit.instructions) {
-            if (instruction instanceof MethodInsnNode call
-                    && call.name.equals("submitCustomGeometry")) custom = true;
+        String portal = "net/minecraft/client/renderer/blockentity/TheEndPortalRenderer";
+        MixinBytecode.assertCancellingHeadInject("net/chimera/mixin/ChimeraEndPortalRendererMixin", portal,
+                "render(Lnet/minecraft/world/level/block/entity/TheEndPortalBlockEntity;F"
+                        + "Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;II)V",
+                false);
+        var gateway = MixinBytecode.nativeClass("net/minecraft/client/renderer/blockentity/TheEndGatewayRenderer");
+        assertEquals(portal, gateway.superName, "the gateway is an end portal renderer");
+        assertTrue(MixinBytecode.instructionsThrough(gateway, "render").stream().anyMatch(instruction ->
+                        instruction instanceof MethodInsnNode call && call.owner.equals(portal)
+                                && call.name.equals("render")),
+                "the gateway must draw its portal through TheEndPortalRenderer.render");
+    }
+
+    /**
+     * A sky program's samplers follow binding 2, which holds its uniform block or an empty block in
+     * its place: with or without pack uniforms, the shader's sampler binding is the layout's.
+     */
+    @Test
+    void skySamplersFollowTheUniformBlock() {
+        String vertex = "#version 120\nvarying vec2 uv;\n"
+                + "void main() { uv = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy; gl_Position = ftransform(); }\n";
+        for (boolean uniforms : List.of(false, true)) {
+            String fragment = "#version 120\nuniform sampler2D texture;\n"
+                    + (uniforms ? "uniform float rainStrength;\n" : "") + "varying vec2 uv;\n"
+                    + "void main() { gl_FragData[0] = texture2D(texture, uv)"
+                    + (uniforms ? " * (1.0 - rainStrength)" : "") + "; }\n";
+            var plan = PackPlanBuilder.build(new PackProgram("gbuffers_skytextured", fragment, null, vertex, null),
+                    null);
+            assertTrue(plan.executable(), "sky program rejected: " + plan.deviations());
+            var images = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of()).layout().images();
+            assertEquals(1, images.size(), "one sampler descriptor");
+            assertTrue(plan.convertedFragment().contains("layout(binding = " + images.get(0).binding()
+                            + ") uniform sampler2D chimeraTexture"),
+                    "sampler binding disagrees with the layout (uniforms " + uniforms + "): "
+                            + plan.convertedFragment());
         }
-        assertTrue(custom, "end portal must submit custom geometry for the block-entity custom batch");
-        for (String renderer : List.of("net/minecraft/client/renderer/blockentity/AbstractEndPortalRenderer",
-                "net/minecraft/client/renderer/blockentity/TheEndGatewayRenderer")) {
-            assertTrue(MixinBytecode.nativeClass(renderer).methods.stream().anyMatch(method ->
-                    method.name.equals("renderType")
-                            && method.desc.equals("()Lnet/minecraft/client/renderer/rendertype/RenderType;")),
-                    renderer + " renderType seam changed");
-        }
-        String storageAdd = "(Lcom/mojang/blaze3d/vertex/PoseStack;"
-                + "Lnet/minecraft/client/renderer/rendertype/RenderType;"
-                + "Lnet/minecraft/client/renderer/SubmitNodeCollector$CustomGeometryRenderer;)V";
-        var storage = MixinBytecode.nativeClass("net/minecraft/client/renderer/feature/CustomFeatureRenderer$Storage");
-        assertTrue(storage.methods.stream().anyMatch(method -> method.name.equals("add")
-                        && method.desc.equals(storageAdd)),
-                "custom geometry storage seam changed");
     }
 
     @Test
@@ -221,13 +229,10 @@ final class SkyWeatherTest {
                                 + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }"),
                 "sky live inputs, world matrices or early-return clip conversion changed");
         var format = PackPipelines.skyVertexFormat(contract);
-        var nativeBuilder = new Pipeline.Builder(format, "test_sky");
-        nativeBuilder.setUniformSupplierGetter(info -> () -> null);
         var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
-        HostPipelineLayout.apply(nativeBuilder, ordinary.layout(), ordinary.semanticTransformBlocks());
-        var stageInfo = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
-                .filter(field -> field.getName().equals("renderStage")).findFirst().orElseThrow().getInfo();
-        var supplier = PackUniformProvider.shared().supplier(stageInfo);
+        var stage = ordinary.layout().uniformBlocks().stream().flatMap(block -> block.fields().stream())
+                .filter(field -> field.name().equals("renderStage")).findFirst().orElseThrow();
+        var supplier = PackUniformProvider.shared().supplier(stage.name(), stage.type());
         var previousPhase = PackUniformProvider.setRenderingPhase(PackRenderingPhase.SUN);
         assertEquals(4, supplier.get().getInt(0), "sun stage UBO value");
         var enclosing = PackUniformProvider.setRenderingPhase(PackRenderingPhase.MOON);
@@ -249,71 +254,60 @@ final class SkyWeatherTest {
         ChimeraSkyBridge.install(basic, textured, null, true, "off");
         ChimeraSkyBridge.setEnabled(true);
         try {
-            for (var host : List.of(RenderPipelines.SKY,
-                    RenderPipelines.SUNRISE_SUNSET,
-                    RenderPipelines.STARS)) {
-                assertTrue(ChimeraSkyBridge.shouldUsePackPipeline(host), "missing basic sky shape");
-                assertEquals(plan.geometryOutputPlan(), ChimeraSkyBridge.outputPlan(), "wrong sky family");
+            assertTrue(ChimeraSkyBridge.programFor("position", DefaultVertexFormat.POSITION) == null,
+                    "sky selection leaked outside the sky window");
+            ChimeraSkyBridge.beginSky();
+            // The sky disc, stars and void draw with "position", the sunrise fan with "position_color".
+            for (var draw : Map.of("position", DefaultVertexFormat.POSITION,
+                    "position_color", DefaultVertexFormat.POSITION_COLOR).entrySet()) {
+                var sky = ChimeraSkyBridge.programFor(draw.getKey(), draw.getValue());
+                assertTrue(sky != null && sky.outputPlan().equals(plan.geometryOutputPlan()),
+                        "wrong sky family for " + draw.getKey());
             }
-            for (var host : List.of(RenderPipelines.CELESTIAL,
-                    RenderPipelines.END_SKY)) {
-                assertTrue(ChimeraSkyBridge.shouldUsePackPipeline(host), "missing textured sky shape");
-                assertEquals("textured", ChimeraSkyBridge.outputPlan().programName(), "wrong textured family");
+            // The sun and moon draw with "position_tex", the end sky with "position_tex_color".
+            for (var draw : Map.of("position_tex", DefaultVertexFormat.POSITION_TEX,
+                    "position_tex_color", DefaultVertexFormat.POSITION_TEX_COLOR).entrySet()) {
+                var sky = ChimeraSkyBridge.programFor(draw.getKey(), draw.getValue());
+                assertTrue(sky != null && sky.outputPlan().programName().equals("textured"),
+                        "wrong textured family for " + draw.getKey());
             }
+            assertTrue(ChimeraSkyBridge.programFor("rendertype_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP)
+                    == null, "sky selection leaked to another shader");
             assertTrue(ChimeraSkyBridge.skipHostClouds(), "authored empty clouds changed");
             assertEquals(CloudStatus.OFF, ChimeraSkyBridge.packCloudStatus(),
                     "pack clouds directive not applied");
-            assertTrue(!ChimeraSkyBridge.shouldUsePackPipeline(RenderPipelines.GUI)
-                            && !ChimeraSkyBridge.isDrawActive(), "sky selection leaked to GUI");
         } finally {
+            ChimeraSkyBridge.endSky();
             ChimeraSkyBridge.disable();
         }
     }
 
+    /** Rain and snow draw inside renderSnowAndRain, the weather window, and Iris's stage macros keep their ABI. */
     @Test
-    void weatherFlushTiming() throws IOException {
-        var level = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
-                .filter(method -> method.name.equals("method_62216")).findFirst().orElseThrow();
-        boolean submitted = false;
-        boolean delayedFlush = false;
-        for (var instruction : level.instructions) {
-            if (instruction instanceof MethodInsnNode call) {
-                if (call.owner.endsWith("/WeatherEffectRenderer") && call.name.equals("render")) submitted = true;
-                if (submitted && call.name.equals("endBatch")) delayedFlush = true;
-            }
+    void weatherDrawsInsideItsWindow() throws IOException {
+        var weather = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
+                .filter(method -> method.name.equals("renderSnowAndRain")).findFirst().orElseThrow();
+        boolean draws = false;
+        for (var instruction : weather.instructions) {
+            if (instruction instanceof MethodInsnNode call && call.name.equals("drawWithShader")
+                    && call.owner.equals("com/mojang/blaze3d/vertex/BufferUploader")) draws = true;
         }
-        assertTrue(delayedFlush, "re-audit native weather flush timing");
+        assertTrue(draws, "re-audit where rain and snow draw");
         assertEquals("6", PackEngineDefines.standard().get("MC_RENDER_STAGE_STARS"), "Iris star macro ABI");
         assertEquals("21", PackEngineDefines.standard().get("MC_RENDER_STAGE_RAIN_SNOW"), "Iris weather macro ABI");
         assertEquals("8", PackEngineDefines.standard().get("MC_RENDER_STAGE_TERRAIN_SOLID"), "Iris terrain macro ABI");
     }
 
+    /**
+     * Iris turns the celestial plane by the pack's sun path rotation after vanilla's -90 degree Y
+     * turn and before the time-of-day X turn; Chimera's hook is the first pose rotation after the Y
+     * axis is read in renderSky.
+     */
     @Test
     void skyPhaseHooks() throws IOException {
-        var skyClass = MixinBytecode.nativeClass("net/minecraft/client/renderer/SkyRenderer");
-        for (String signature : List.of("renderSkyDisc(I)V", "renderDarkDisc()V",
-                "renderSun(FLcom/mojang/blaze3d/vertex/PoseStack;)V",
-                "renderMoon(Lnet/minecraft/world/level/MoonPhase;FLcom/mojang/blaze3d/vertex/PoseStack;)V",
-                "renderStars(FLcom/mojang/blaze3d/vertex/PoseStack;)V",
-                "renderSunriseAndSunset(Lcom/mojang/blaze3d/vertex/PoseStack;FI)V", "renderEndSky()V",
-                "renderEndFlash(Lcom/mojang/blaze3d/vertex/PoseStack;FFF)V")) {
-            assertTrue(skyClass.methods.stream().anyMatch(method -> (method.name + method.desc).equals(signature)),
-                    "sky phase hook no longer matches native method: " + signature);
-        }
-        var celestial = skyClass.methods.stream().filter(method -> method.name.equals("renderSunMoonAndStars")
-                && method.desc.equals(
-                        "(Lcom/mojang/blaze3d/vertex/PoseStack;FFFLnet/minecraft/world/level/MoonPhase;FF)V"))
-                .findFirst().orElseThrow();
-        boolean rotationSeam = false;
-        for (var instruction : celestial.instructions) {
-            if (instruction instanceof MethodInsnNode call
-                    && call.owner.equals("com/mojang/blaze3d/vertex/PoseStack")
-                    && call.name.equals("mulPose") && call.desc.equals("(Lorg/joml/Quaternionfc;)V")) {
-                rotationSeam = true;
-                break;
-            }
-        }
-        assertTrue(rotationSeam, "re-audit the Iris celestial sun-path rotation seam");
+        var sky = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
+                .filter(method -> method.name.equals("renderSky")).findFirst().orElseThrow();
+        assertTrue(sunPathSeamPrecedesTimeTurn(sky), "re-audit the Iris celestial sun-path rotation seam");
         float previousRotation = PackUniformProvider.currentSunPathRotation();
         try {
             PackUniformProvider.installSunPath(17.5F, 0.0F);
@@ -324,24 +318,19 @@ final class SkyWeatherTest {
         }
     }
 
-    @Test
-    void skyAndWeatherDrawsOwnAttachments() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin");
-        boolean weather = false;
-        for (var instruction : MixinBytecode.instructionsThrough(mixin, "chimera$immediateFamilyWindow")) {
-            if (instruction instanceof MethodInsnNode call && call.name.equals("beginHostLayoutDraw")) weather = true;
-        }
-        assertTrue(weather, "weather must own its actual immediate draw");
-        var indexed = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraVkRenderPassMixin");
-        for (String name : List.of("chimera$familyAttachments", "chimera$skyAttachments")) {
-            var method = indexed.methods.stream().filter(candidate ->
-                    candidate.name.equals(name)).findFirst().orElseThrow();
-            boolean targets = false;
-            for (var instruction : method.instructions) {
-                if (instruction instanceof MethodInsnNode call
-                        && call.name.equals("beginPackFamilyWindow")) targets = true;
+    /** True when the first pose rotation after the Y axis is read comes before the X axis is read. */
+    private static boolean sunPathSeamPrecedesTimeTurn(MethodNode sky) {
+        boolean yTurn = false;
+        boolean rotation = false;
+        for (var instruction : sky.instructions) {
+            if (instruction instanceof FieldInsnNode field && field.owner.equals("com/mojang/math/Axis")) {
+                if (field.name.equals("YP")) yTurn = true;
+                if (field.name.equals("XP") && yTurn) return rotation;
+            } else if (yTurn && instruction instanceof MethodInsnNode call
+                    && call.owner.equals("com/mojang/blaze3d/vertex/PoseStack") && call.name.equals("mulPose")) {
+                rotation = true;
             }
-            assertTrue(targets, "both native sky draw APIs must own attachments");
         }
+        return false;
     }
 }

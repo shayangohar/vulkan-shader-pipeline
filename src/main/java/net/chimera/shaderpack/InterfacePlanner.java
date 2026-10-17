@@ -114,15 +114,11 @@ final class InterfacePlanner {
             deviations.add("ADVANCED_IMAGE_DECLARATION:" + variable.name());
             return;
         }
-        // Pack authors write bool for Iris's isElytraFlying; the catalog field is int, so a
-        // bool declaration of that name plans as the live int field rather than failing.
-        String declaredType = variable.name().equals("isElytraFlying") && type.equals("bool")
-                ? "int" : type;
-        String effectiveType = variable.array() ? declaredType + "[]" : declaredType;
+        String effectiveType = variable.array() ? type + "[]" : type;
         UniformRegistry.UniformDeclaration declaration = new UniformRegistry.UniformDeclaration(variable.name(),
                 effectiveType);
         UniformRegistry.UniformDeclaration previous = declared.uniforms().putIfAbsent(variable.name(), declaration);
-        if (previous != null && !previous.glslType().equals(declaredType)) {
+        if (previous != null && !previous.glslType().equals(type)) {
             declared.conflicts().add(variable.name());
             declared.uniforms().put(variable.name(), declaration);
         }

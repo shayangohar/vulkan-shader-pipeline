@@ -1,16 +1,15 @@
 package net.chimera.render.shader;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import net.chimera.shaderpack.GeometryOutputPlan;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.CloudStatus;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
-import net.vulkanmod.vulkan.shader.Pipeline;
 
 /**
- * Small host-aware bridge for sky and cloud passes. It deliberately selects
- * only the host pipelines whose topology and depth contract are known.
+ * The pack's sky and cloud programs, chosen per host draw as Iris 1.21.1 overrides the sky's
+ * shaders: inside LevelRenderer.renderSky (the sky window) the position shaders draw with
+ * gbuffers_skybasic and the textured ones with gbuffers_skytextured, and the cloud shader draws
+ * with gbuffers_clouds. PackHostDraws opens and closes each draw.
  */
 public final class ChimeraSkyBridge {
     private static PackPipelines.PackSkyFamily skyBasic;
@@ -19,6 +18,7 @@ public final class ChimeraSkyBridge {
     private static boolean cloudsDrawNothing;
     private static CloudStatus packCloudStatus;
     private static PackPipelines.PackSky active;
+    private static boolean skyWindow;
     private static boolean enabled;
 
     private ChimeraSkyBridge() {}
@@ -66,56 +66,49 @@ public final class ChimeraSkyBridge {
         return skyBasic != null || skyTextured != null || clouds != null || cloudsDrawNothing;
     }
 
-    /**
-     * True when the active pack cloud program draws nothing, so VulkanMod's
-     * host cloud mesh must not be drawn in its place.
-     */
+    /** True when the active pack cloud program draws nothing, so the host clouds must not draw. */
     public static boolean skipHostClouds() {
         return enabled && cloudsDrawNothing;
-    }
-
-    public static boolean isDrawActive() {
-        return enabled && active != null;
-    }
-
-    public static boolean shouldUsePackPipeline(RenderPipeline host) {
-        if (!enabled || host == null) {
-            return false;
-        }
-        active = pipelineFor(host);
-        return active != null;
-    }
-
-    public static GraphicsPipeline pipeline() {
-        return active == null ? null : active.pipeline();
     }
 
     public static boolean hasBasicSky() {
         return enabled && skyBasic != null;
     }
 
-    public static GeometryOutputPlan outputPlan() {
-        return active == null ? null : active.outputPlan();
+    /** Opens the sky window around LevelRenderer.renderSky. */
+    public static void beginSky() {
+        skyWindow = true;
     }
 
-    public static boolean isCloudPipeline(Pipeline pipeline) {
-        return enabled && clouds != null && pipeline == clouds.pipeline();
+    public static void endSky() {
+        skyWindow = false;
     }
 
-    /** The pack cloud program PackCloudRenderer draws the clouds with, or null when none is installed. */
-    public static PackPipelines.PackSky cloudPipeline() {
-        return enabled ? clouds : null;
-    }
-
-    private static PackPipelines.PackSky pipelineFor(RenderPipeline host) {
-        if (host == RenderPipelines.SKY || host == RenderPipelines.SUNRISE_SUNSET
-                || host == RenderPipelines.STARS) {
-            return skyBasic == null ? null : skyBasic.forFormat(host.getVertexFormat());
+    /** The pack program that draws a host mesh of {@code shader} on {@code format}, or null. */
+    public static PackPipelines.PackSky programFor(String shader, VertexFormat format) {
+        if (!enabled || shader == null) return null;
+        if (shader.equals("rendertype_clouds")) {
+            return clouds != null && clouds.vertexFormat() == format ? clouds : null;
         }
-        if (host == RenderPipelines.END_SKY || host == RenderPipelines.CELESTIAL) {
-            return skyTextured == null ? null : skyTextured.forFormat(host.getVertexFormat());
-        }
-        return null;
+        if (!skyWindow) return null;
+        PackPipelines.PackSkyFamily family = switch (shader) {
+            case "position", "position_color" -> skyBasic;
+            case "position_tex", "position_tex_color" -> skyTextured;
+            default -> null;
+        };
+        return family == null ? null : family.forFormat(format);
     }
 
+    public static void beginDraw(PackPipelines.PackSky program) {
+        active = program;
+    }
+
+    public static void endDraw() {
+        active = null;
+    }
+
+    /** The open draw's pipeline, or null when no sky or cloud draw is open. */
+    public static GraphicsPipeline pipeline() {
+        return active == null ? null : active.pipeline();
+    }
 }

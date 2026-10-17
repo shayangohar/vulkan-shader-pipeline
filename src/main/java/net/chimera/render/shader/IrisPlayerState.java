@@ -15,8 +15,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Iris's player, HUD, vehicle, clock and Distant Horizons uniforms, captured once per frame. Each
- * value follows the Iris 1.21.11 supplier it is named after ({@code CommonUniforms},
+ * Iris's player, HUD, clock and Distant Horizons uniforms, captured once per frame. Each value
+ * follows the Iris 1.21.1 supplier it is named after ({@code CommonUniforms},
  * {@code IrisExclusiveUniforms}, {@code IrisTimeUniforms}, {@code DHCompat}), including the -1
  * Iris reports for player stats outside survival. Distant Horizons is not supported, so the
  * {@code dh*} values are the ones Iris serves when DH is absent.
@@ -24,12 +24,11 @@ import java.util.Set;
 final class IrisPlayerState {
     /** Every scalar or vector name this snapshot answers; matrices stay with the frame state. */
     static final Set<String> NAMES = Set.of(
-            "hideGUI", "isRightHanded", "feetInWater", "inSwimmingAnimation", "isRiding",
-            "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog",
+            "hideGUI", "isRightHanded", "firstPersonCamera", "isSpectator",
             "currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger", "maxPlayerHunger",
             "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir", "maxPlayerAir",
             "playerMood", "pi", "lastFrameTime", "currentColorSpace",
-            "vehicleLookVector", "relativeVehiclePosition", "playerBodyVector",
+            "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime",
             "dhNearPlane", "dhFarPlane", "dhRenderDistance",
             "is_burning", "is_hurt", "is_invisible", "is_on_ground", "is_sneaking", "is_sprinting", "is_alive");
@@ -40,13 +39,8 @@ final class IrisPlayerState {
 
     private boolean hideGui;
     private boolean rightHanded = true;
-    private boolean feetInWater;
-    private boolean swimming;
-    private boolean riding;
-    private boolean vehicleInWater;
     private boolean firstPerson = true;
     private boolean spectator;
-    private boolean heavyFog;
     private float health = -1.0f;
     private float maxHealth = -1.0f;
     private float hunger = -1.0f;
@@ -56,32 +50,16 @@ final class IrisPlayerState {
     private float mood;
     private float lastFrameTime;
     private int renderDistance;
-    private final float[] vehicleLook = new float[3];
-    private final float[] relativeVehicle = new float[3];
     private final float[] bodyVector = new float[3];
     private final int[] date = new int[3];
     private final int[] time = new int[3];
     private final int[] yearTime = new int[2];
     private final Map<String, Boolean> playerFlags = new HashMap<>();
 
-    void capture(Minecraft minecraft, float partialTick, double cameraX, double cameraY, double cameraZ,
-                 float frameTime) {
+    void capture(Minecraft minecraft, float frameTime) {
         this.lastFrameTime = frameTime;
         captureOptions(minecraft);
         capturePlayerStats(minecraft);
-
-        LocalPlayer player = minecraft.player;
-        Entity vehicle = player == null ? null : player.getVehicle();
-        this.vehicleInWater = vehicle != null && vehicle.isInWater();
-        set(this.vehicleLook, vehicle == null ? null : vehicle.getForward());
-        if (vehicle == null) {
-            set(this.relativeVehicle, null);
-        } else {
-            Vec3 position = vehicle.getPosition(partialTick);
-            this.relativeVehicle[0] = (float) (cameraX - position.x);
-            this.relativeVehicle[1] = (float) (cameraY - position.y);
-            this.relativeVehicle[2] = (float) (cameraZ - position.z);
-        }
         Entity cameraEntity = minecraft.getCameraEntity();
         set(this.bodyVector, cameraEntity == null ? null : cameraEntity.getForward());
         this.mood = cameraEntity instanceof LocalPlayer local
@@ -89,20 +67,18 @@ final class IrisPlayerState {
         captureClock();
     }
 
-    /** The HUD, hand, camera, fog and spectator state from the options and game mode. */
+    /** The HUD, hand, camera and spectator state from the options and game mode. */
     private void captureOptions(Minecraft minecraft) {
         this.hideGui = minecraft.options.hideGui;
         this.rightHanded = minecraft.options.mainHand().get() == HumanoidArm.RIGHT;
         CameraType camera = minecraft.options.getCameraType();
         this.firstPerson = camera != CameraType.THIRD_PERSON_BACK && camera != CameraType.THIRD_PERSON_FRONT;
         this.renderDistance = minecraft.options.getEffectiveRenderDistance();
-        this.heavyFog = minecraft.level != null && minecraft.gui != null
-                && minecraft.gui.getBossOverlay().shouldCreateWorldFog();
         this.spectator = minecraft.gameMode != null
                 && minecraft.gameMode.getPlayerMode() == GameType.SPECTATOR;
     }
 
-    /** Iris's player stats, -1 outside survival, and the player's water and riding flags. */
+    /** Iris's player stats, -1 outside survival, and its player flags. */
     private void capturePlayerStats(Minecraft minecraft) {
         LocalPlayer player = minecraft.player;
         boolean survival = player != null && minecraft.gameMode != null
@@ -113,9 +89,6 @@ final class IrisPlayerState {
         this.armor = survival ? player.getArmorValue() / 50.0f : -1.0f;
         this.air = survival ? (float) player.getAirSupply() / (float) player.getMaxAirSupply() : -1.0f;
         this.maxAir = survival ? player.getMaxAirSupply() : -1.0f;
-        this.feetInWater = player != null && player.isInWater();
-        this.swimming = player != null && player.isSwimming();
-        this.riding = player != null && player.isPassenger();
         capturePlayerFlags(player);
     }
 
@@ -147,14 +120,11 @@ final class IrisPlayerState {
         this.yearTime[1] = now.toLocalDate().lengthOfYear() * 86400 - elapsed;
     }
 
-    /** No level: Iris's values with no player and no vehicle. */
+    /** No level: Iris's values with no player. */
     void clear() {
-        this.feetInWater = this.swimming = this.riding = this.vehicleInWater = false;
-        this.spectator = this.heavyFog = false;
+        this.spectator = false;
         this.health = this.maxHealth = this.hunger = this.armor = this.air = this.maxAir = -1.0f;
         this.mood = 0.0f;
-        set(this.vehicleLook, null);
-        set(this.relativeVehicle, null);
         set(this.bodyVector, null);
     }
 
@@ -164,13 +134,8 @@ final class IrisPlayerState {
         return switch (name) {
             case "hideGUI" -> flag(this.hideGui);
             case "isRightHanded" -> flag(this.rightHanded);
-            case "feetInWater" -> flag(this.feetInWater);
-            case "inSwimmingAnimation" -> flag(this.swimming);
-            case "isRiding" -> flag(this.riding);
-            case "vehicleInWater" -> flag(this.vehicleInWater);
             case "firstPersonCamera" -> flag(this.firstPerson);
             case "isSpectator" -> flag(this.spectator);
-            case "heavyFog" -> flag(this.heavyFog);
             case "currentPlayerHealth" -> this.health;
             case "maxPlayerHealth" -> this.maxHealth;
             case "currentPlayerHunger" -> this.hunger;
@@ -184,8 +149,6 @@ final class IrisPlayerState {
             case "lastFrameTime" -> this.lastFrameTime;
             // IrisVideoSettings.colorSpace defaults to SRGB, ordinal 0; Chimera has no colour-space setting.
             case "currentColorSpace" -> 0;
-            case "vehicleLookVector" -> c < 3 ? this.vehicleLook[c] : Double.NaN;
-            case "relativeVehiclePosition" -> c < 3 ? this.relativeVehicle[c] : Double.NaN;
             case "playerBodyVector" -> c < 3 ? this.bodyVector[c] : Double.NaN;
             case "currentDate" -> c < 3 ? this.date[c] : Double.NaN;
             case "currentTime" -> c < 3 ? this.time[c] : Double.NaN;

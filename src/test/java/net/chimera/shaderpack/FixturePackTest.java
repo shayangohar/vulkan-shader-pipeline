@@ -555,15 +555,15 @@ final class FixturePackTest {
                 .withInterfacePlan(interfacePlan)
                 .convert();
         assertTrue(convertedFragment != null, "water fragment conversion failed");
-        assertTrue(convertedFragment.contains("layout(binding = 3) uniform ChimeraTerrainPackUniforms"),
+        assertTrue(convertedFragment.contains("layout(binding = 2) uniform ChimeraTerrainPackUniforms"),
                 "terrain pack uniform block is missing");
         assertTrue(!convertedFragment.contains("uniform float fogStart"),
                 "fogStart declaration was not removed");
-        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D chimeraTexture"),
+        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
                 "water atlas binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D lightmap"),
+        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
                 "water lightmap binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 6) uniform sampler2D shadowtex0"),
+        assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D shadowtex0"),
                 "water shadow binding is missing");
         assertTrue(convertedFragment.contains("layout(location = " + vertex.layout().location("renderType")
                         + ") in float renderType"),
@@ -667,8 +667,9 @@ final class FixturePackTest {
         verifyShadowConversion(shadowProgram);
 
         PackDescriptorLayout shadowLayout = PackPipelines.shadowLayout();
-        assertTrue(shadowLayout.uniformBlocks().stream().anyMatch(block -> block.binding() == 2),
-                "shadow section UBO binding was not preserved");
+        assertTrue(shadowLayout.pushConstants() != null && shadowLayout.pushConstants().fields().stream()
+                        .anyMatch(field -> field.name().equals("ChunkOffset")),
+                "shadow chunk offset push constant was not preserved");
         assertTrue(shadowLayout.uniformBlocks().stream().flatMap(block -> block.fields().stream())
                         .anyMatch(field -> field.name().equals("MVP")),
                 "shadow pack config MVP field is missing");
@@ -704,8 +705,8 @@ final class FixturePackTest {
         assertTrue(vertex.source().contains("layout(binding = 0) uniform ViewUBO"), "shadow MVP UBO is missing");
         assertTrue(vertex.source().contains("mat4 MVP;"), "shadow MVP field is missing");
         assertTrue(!vertex.source().contains("LightMVP"), "pack shadow bridge retained the fixed LightMVP name");
-        assertTrue(vertex.source().contains("layout(binding = 2) uniform SectionData"),
-                "shadow section UBO is missing");
+        assertTrue(vertex.source().contains("layout(push_constant) uniform Push"),
+                "shadow chunk offset push constant is missing");
         assertTrue(vertex.source().contains("layout(location = 3) in int inMaterialId"),
                 "shadow material input is missing");
         assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
@@ -717,10 +718,10 @@ final class FixturePackTest {
                 .withInterfacePlan(interfacePlan)
                 .convert();
         assertTrue(convertedFragment != null, "shadow fragment conversion failed");
-        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
-                "shadow atlas binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
-                "shadow lightmap binding is missing");
+        assertTrue(convertedFragment.contains("layout(binding = 1) uniform sampler2D chimeraTexture"),
+                "shadow atlas binding is missing: " + convertedFragment);
+        assertTrue(convertedFragment.contains("layout(binding = 2) uniform sampler2D lightmap"),
+                "shadow lightmap binding is missing: " + convertedFragment);
         assertTrue(convertedFragment.contains("layout(location = "), "shadow varying locations are missing");
     }
 

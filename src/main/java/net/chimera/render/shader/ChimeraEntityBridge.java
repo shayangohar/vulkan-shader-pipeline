@@ -391,23 +391,27 @@ public final class ChimeraEntityBridge {
                     ? hand : null;
         }
         Family context = worldWindow ? context() : null;
-        if (context == null) return null;
-        if (TEXT_TYPES.contains(type.name) && format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
-            // Iris getText: TEXT_BE (gbuffers_block_translucent) inside a block entity, TEXT
-            // (gbuffers_entities_translucent) otherwise.
-            Family text = context == Family.BLOCK ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
-            return textPipeline(text) != null ? text : null;
+        Family family = context == null ? null : worldFamily(type.name, format, context);
+        return family != null && pipelineFor(family, widenedFormat(family, format)) != null ? family : null;
+    }
+
+    /**
+     * The family Iris 1.21.1 draws a world render type with, by its name and format, inside an
+     * entity ({@code context} ENTITY) or a block entity (BLOCK); null when Iris keeps it on another
+     * program. Text is TEXT (gbuffers_entities_translucent) in an entity and TEXT_BE
+     * (gbuffers_block_translucent) in a block entity.
+     */
+    public static Family worldFamily(String type, VertexFormat format, Family context) {
+        if (TEXT_TYPES.contains(type) && format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
+            return context == Family.BLOCK ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
         }
         if (format != DefaultVertexFormat.NEW_ENTITY) return null;
         if (context == Family.BLOCK) {
-            return blockPipeline != null && (ENTITY_TYPES.contains(type.name) || TRANSLUCENT_TYPES.contains(type.name))
-                    ? Family.BLOCK : null;
+            return ENTITY_TYPES.contains(type) || TRANSLUCENT_TYPES.contains(type) ? Family.BLOCK : null;
         }
-        if (TRANSLUCENT_TYPES.contains(type.name)) {
-            return translucentEntityPipeline != null ? Family.ENTITY_TRANSLUCENT : null;
-        }
-        if (EYES_TYPES.contains(type.name)) return spiderEyesPipeline != null ? Family.SPIDER_EYES : null;
-        return ENTITY_TYPES.contains(type.name) && entityPipeline != null ? Family.ENTITY : null;
+        if (TRANSLUCENT_TYPES.contains(type)) return Family.ENTITY_TRANSLUCENT;
+        if (EYES_TYPES.contains(type)) return Family.SPIDER_EYES;
+        return ENTITY_TYPES.contains(type) ? Family.ENTITY : null;
     }
 
     /** The vertex format a family lane writes for a host format: Iris's attributes appended. */
@@ -431,14 +435,23 @@ public final class ChimeraEntityBridge {
      */
     public static Family hostLaneFor(String shader, VertexFormat format) {
         if (!enabled || drawActive || shader == null) return null;
-        HostLayoutLane.Pass pass = shadowCasterPass ? HostLayoutLane.Pass.SHADOW
-                : ChimeraHandRenderer.active() ? HostLayoutLane.Pass.HAND
-                : !worldWindow ? null
-                : weatherWindow ? HostLayoutLane.Pass.WEATHER : HostLayoutLane.Pass.WORLD;
+        HostLayoutLane.Pass pass = currentPass();
         if (pass == null) return null;
         HostLayoutLane lane = HostLayoutLane.forDraw(shader, format, pass);
         if (lane != null) return hostLayoutPipelines.containsKey(lane.family()) ? lane.family() : null;
-        if (pass != HostLayoutLane.Pass.WORLD) return null;
+        return pass == HostLayoutLane.Pass.WORLD ? worldHostLane(shader, format) : null;
+    }
+
+    /** The pass a host draw belongs to now, or null outside every lane window. */
+    private static HostLayoutLane.Pass currentPass() {
+        if (shadowCasterPass) return HostLayoutLane.Pass.SHADOW;
+        if (ChimeraHandRenderer.active()) return HostLayoutLane.Pass.HAND;
+        if (!worldWindow) return null;
+        return weatherWindow ? HostLayoutLane.Pass.WEATHER : HostLayoutLane.Pass.WORLD;
+    }
+
+    /** A world draw's particle or crumbling lane: the families outside the host-layout table. */
+    private static Family worldHostLane(String shader, VertexFormat format) {
         if (particleWindow && shader.equals("particle") && format == DefaultVertexFormat.PARTICLE) {
             // An opaque pack shader never draws translucent particles, nor the other way round:
             // the host state and ordering are part of each lane's contract.
@@ -548,10 +561,6 @@ public final class ChimeraEntityBridge {
         var variants = family == Family.HAND ? handVariants : handWaterVariants;
         var variant = variants == null ? null : variants.forFormat(format);
         return variant == null ? null : variant.pipeline();
-    }
-
-    private static GraphicsPipeline textPipeline(Family family) {
-        return family == Family.BLOCK_TRANSLUCENT ? blockTranslucentTextPipeline : translucentEntityTextPipeline;
     }
 
     /** The Iris rendering phase a family outside the host-layout lanes draws in. */
