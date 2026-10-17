@@ -157,6 +157,15 @@ public final class PackUniformProvider {
         }
     }
 
+    /** Sets the entityId the next host-layout lane draw reads, rewriting its binding only on change. */
+    public static void updateDrawEntityId(int entityId) {
+        if (!INSTANCE.frameState.setHostEntityId(entityId)) return;
+        Binding binding = INSTANCE.bindings.get(new UniformKey(UniformRegistry.HOST_ENTITY_ID, "int"));
+        if (binding != null) {
+            INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+    }
+
     /** Returns the enclosing phase for an exception-safe draw-scope restore. */
     public static PackRenderingPhase setRenderingPhase(PackRenderingPhase phase) {
         var previous = INSTANCE.frameState.setRenderingPhase(phase);

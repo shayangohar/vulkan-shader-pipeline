@@ -314,6 +314,13 @@ final class WorldEntityAdapterTest {
         assertTrue(hostLayout.contains("max((0) - 10000, 0)")
                         && !hostLayout.contains("uniform int currentRenderedItemId"),
                 "a host layout reads the item as 0: " + hostLayout);
+        // Iris's fallback entityId uniform: per draw, the bolt's id while a lightning bolt draws.
+        String lane = IrisCoreProfile.prepareHostLayoutIdentity("#version 120\nuniform int entityId;\n"
+                + "uniform float blockEntityId;\nvoid main() { int id = entityId; float b = blockEntityId; }\n");
+        assertTrue(lane.contains("uniform int " + UniformRegistry.HOST_ENTITY_ID + ";")
+                        && lane.contains("int id = (" + UniformRegistry.HOST_ENTITY_ID + ");")
+                        && lane.contains("float b = (-1.0);") && !lane.contains("uniform int entityId"),
+                "a host-layout lane reads entityId per draw and blockEntityId as -1: " + lane);
 
         assertEquals(0, PackItemIdResolver.empty().renderedItemId("minecraft:stick"),
                 "no item.properties: Iris's empty map reads 0");
@@ -334,6 +341,10 @@ final class WorldEntityAdapterTest {
                 "namespaced entity name");
         assertEquals(0xFFFF, parsed.resolver().resolveName("pig"),
                 "unknown mapped entity sentinel");
+        assertEquals(-1, parsed.resolver().uniformId("pig"), "Iris's entityId uniform reads the map's -1");
+        assertEquals(1, parsed.resolver().uniformId("zombie"), "a mapped entity's uniform id");
+        assertEquals(0, PackEntityIdResolver.empty().uniformId("minecraft:lightning_bolt"),
+                "without entity.properties Iris's empty map reads 0");
         assertEquals(0, PackEntityIdResolver.empty().resolveName("zombie"),
                 "missing map default");
 

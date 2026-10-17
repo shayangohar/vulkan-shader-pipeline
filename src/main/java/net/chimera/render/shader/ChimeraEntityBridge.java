@@ -132,6 +132,10 @@ public final class ChimeraEntityBridge {
     private static final Set<String> TEXT_TYPES = Set.of("text", "text_polygon_offset", "text_see_through");
 
     private static PackEntityIdResolver resolver = PackEntityIdResolver.empty();
+    /** The pack's lightning_bolt id as Iris's entityId uniform reads it. */
+    private static int lightningBoltEntityId;
+    /** True while RenderType.lightning() draws its batch (ChimeraLightningBoltMixin). */
+    private static boolean lightningBoltDraw;
     private static GraphicsPipeline entityPipeline;
     private static GraphicsPipeline translucentEntityPipeline;
     private static GraphicsPipeline spiderEyesPipeline;
@@ -206,6 +210,7 @@ public final class ChimeraEntityBridge {
         particlePipeline = particle == null ? null : particle.pipeline();
         translucentParticlePipeline = translucentParticle == null ? null : translucentParticle.pipeline();
         resolver = nextResolver == null ? PackEntityIdResolver.empty() : nextResolver;
+        lightningBoltEntityId = resolver.uniformId("minecraft:lightning_bolt");
         ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
                         + "block={}, damagedBlock={}, hand={}, handWater={}, particle={}, particleTranslucent={}",
                 status(entityPipeline), status(translucentEntityPipeline), status(spiderEyesPipeline),
@@ -285,6 +290,7 @@ public final class ChimeraEntityBridge {
         shadowMovingBlockPipeline = null;
         shadowBlockPipeline = null;
         resolver = PackEntityIdResolver.empty();
+        lightningBoltEntityId = 0;
         FamilyBufferSource.releaseAll();
         FamilyDrawTrace.reset();
     }
@@ -430,6 +436,20 @@ public final class ChimeraEntityBridge {
         int previous = currentBlockEntityId;
         if (enabled) currentBlockEntityId = blockEntityId;
         return previous;
+    }
+
+    /** Opens or closes the lightning bolt's draw, Iris's LightningRenderStateShard window. */
+    public static void setLightningBoltDraw(boolean drawing) {
+        lightningBoltDraw = drawing;
+    }
+
+    /**
+     * entityId as a host-layout lane reads it (Iris's fallback entityId uniform): the pack's
+     * lightning_bolt id while a bolt draws, otherwise 0, the entity Iris has reset by the time a
+     * host-layout batch draws.
+     */
+    public static int hostLayoutEntityId() {
+        return enabled && lightningBoltDraw ? lightningBoltEntityId : 0;
     }
 
     /** The entity id Iris gives burning-entity fire: the pack's entity.properties id for minecraft:entity_flame. */

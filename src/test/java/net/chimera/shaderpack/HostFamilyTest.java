@@ -658,13 +658,13 @@ final class HostFamilyTest {
         for (String line : inputs) {
             assertTrue(vertex.contains(line), program + " lost Iris host input " + line + ": " + vertex);
         }
-        // Iris draws these batches with its fallback entityId already reset to 0.
+        // Iris reads its fallback entityId per draw: 0 by the time these batches draw.
         assertTrue(vertex.contains("(Color * ColorModulator)")
-                        && vertex.contains("(0) == 10101")
+                        && vertex.contains("(chimeraHostEntityId) == 10101")
                         && vertex.contains("float((-1))")
                         && !vertex.contains("chimeraEntityId")
-                        && plan.convertedFragment().contains("(0) == 10101"),
-                program + " must read entityId 0 and blockEntityId -1: " + vertex);
+                        && plan.convertedFragment().contains("(chimeraHostEntityId) == 10101"),
+                program + " must read the per-draw entityId and blockEntityId -1: " + vertex);
         assertTrue(!plan.alphaTestPlan().perDrawReference(),
                 program + " has no Iris alpha test (AlphaTests.OFF)");
     }

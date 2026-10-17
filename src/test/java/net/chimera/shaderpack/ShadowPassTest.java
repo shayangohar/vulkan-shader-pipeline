@@ -240,10 +240,10 @@ final class ShadowPassTest {
                             && fragment.contains("int(chimeraBlockEntityId) / 100 == 155"),
                     key + " reads Iris's entity-patched ids, unbound on the host mesh: " + vertex);
         } else {
-            assertTrue(vertex.contains("(0) == 10001")
+            assertTrue(vertex.contains("chimeraHostEntityId) == 10001")
                             && !vertex.contains("chimeraEntityId")
                             && fragment.contains("(-1) / 100 == 155"),
-                    key + " must read entityId 0 and blockEntityId -1: " + vertex + "\n" + fragment);
+                    key + " must read the per-draw entityId and blockEntityId -1: " + vertex + "\n" + fragment);
         }
     }
 

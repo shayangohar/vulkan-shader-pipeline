@@ -189,13 +189,9 @@ final class IrisCoreProfile {
      * Iris applies EntityPatcher only to entity and text formats. On any other host layout
      * entityId and blockEntityId stay uniforms (CommonUniforms). blockEntityId is the constant
      * -1. entityId is Iris's fallback "for when entityId via attributes cannot be used
-     * (lightning)", read from CapturedRenderingState when the batch draws. Chimera reads 0, the
-     * value Iris 1.21.11 gives these draws. Iris 1.21.1 sets the pack's lightning_bolt id while a
-     * bolt draws (LightningRenderStateShard), so Complementary's shadow program, which cuts entity
-     * shadows past 26 blocks, cuts most of a bolt's shadow there; Chimera does not yet. A constant
-     * cannot follow it: dragon rays share the lightning lanes, and Complementary draws a lane with
-     * the bolt's id as a bolt rather than as a death beam. Applied to both stages of a host-layout
-     * program before planning.
+     * (lightning)", read from CapturedRenderingState when the batch draws: here the per-draw
+     * {@link UniformRegistry#HOST_ENTITY_ID}, which is 0 except while a lightning bolt draws.
+     * Applied to both stages of a host-layout program before planning.
      */
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;
@@ -212,8 +208,10 @@ final class IrisCoreProfile {
         if (types.isEmpty()) return source;
         String src = EntityVertexBridge.removeEntityIdDeclarations(source);
         Map<String, String> replacements = new HashMap<>();
+        String entityId = UniformRegistry.HOST_ENTITY_ID;
         if (types.containsKey("entityId")) {
-            replacements.put("entityId", "float".equals(types.get("entityId")) ? "(0.0)" : "(0)");
+            replacements.put("entityId", "float".equals(types.get("entityId")) ? "float(" + entityId + ")"
+                    : "(" + entityId + ")");
         }
         if (types.containsKey("blockEntityId")) {
             replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
@@ -223,7 +221,8 @@ final class IrisCoreProfile {
             replacements.put("currentRenderedItemId",
                     "float".equals(types.get("currentRenderedItemId")) ? "(0.0)" : "(0)");
         }
-        return GlslTokenRewriter.replaceIdentifiers(src, replacements);
+        String folded = GlslTokenRewriter.replaceIdentifiers(src, replacements);
+        return types.containsKey("entityId") ? insertAfterHeader(folded, "uniform int " + entityId + ";\n") : folded;
     }
 
     static String expandIncludes(String source, Path sourceFile) {

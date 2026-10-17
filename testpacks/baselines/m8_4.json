@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "b326a2d33bf5c700532c7bbc35c0ad99f0def10ce2a279bcd588bcbdbdeea0c4",
+      "reportSha256": "18f5cb3b54801fd8c15c187cf1237b4cf07712c5abe4964797e9f32fd6886426",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -81,7 +81,7 @@
       ]
     },
     "unsupported_families": {
-      "reportSha256": "57323eb11bcd1c847780b5c84bc3555741b0741f31edc1c9ffe9b7f0ec59a561",
+      "reportSha256": "a708b71315eb7bf74de0275c4d80716add4ed2f5b7115ab6a6f83c3dd242263d",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",

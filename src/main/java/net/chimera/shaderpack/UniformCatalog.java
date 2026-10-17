@@ -123,6 +123,7 @@ final class UniformCatalog {
         addLive(specs, "AlphaCutout", "float");
         addLive(specs, UniformRegistry.ENTITY_ALPHA_REFERENCE, "float");
         addLive(specs, UniformRegistry.GLINT_ALPHA, "float");
+        addLive(specs, UniformRegistry.HOST_ENTITY_ID, "int");
         addLive(specs, "ScreenSize", "vec2");
         addLive(specs, "Light0_Direction", "vec3");
         addLive(specs, "Light1_Direction", "vec3");

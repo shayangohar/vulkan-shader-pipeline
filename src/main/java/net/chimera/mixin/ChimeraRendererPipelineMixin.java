@@ -17,8 +17,8 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * Uploads a pack draw's uniforms under its per-draw state, and binds each pipeline's pack images
- * with its descriptor sets. A family draw uploads with its alpha test, albedo, atlas size and Iris
- * rendering phase; a sky or cloud draw with the atlas size of its texture, in the phase its
+ * with its descriptor sets. A family draw uploads with its alpha test, entityId, albedo, atlas size
+ * and Iris rendering phase; a sky or cloud draw with the atlas size of its texture, in the phase its
  * LevelRenderer hooks set.
  */
 @Mixin(value = Renderer.class, remap = false)
@@ -39,6 +39,7 @@ public abstract class ChimeraRendererPipelineMixin {
             return;
         }
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference());
+        PackUniformProvider.updateDrawEntityId(ChimeraEntityBridge.hostLayoutEntityId());
         // Restored with the family's texture snapshot when the draw ends.
         if (ChimeraEntityBridge.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));

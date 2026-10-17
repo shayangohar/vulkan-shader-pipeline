@@ -50,6 +50,7 @@
     "ChimeraBufferUploaderMixin",
     "ChimeraVertexBufferMixin",
     "ChimeraEntityCullingMixin",
+    "ChimeraLightningBoltMixin",
     "ChimeraShaderPipelineMixin",
     "ChimeraEntityVertexInputMixin",
     "ChimeraFramebufferRenderPassMixin",

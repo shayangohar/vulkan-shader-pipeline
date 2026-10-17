@@ -33,6 +33,11 @@ public final class UniformRegistry {
     public static final String ENTITY_ALPHA_REFERENCE = "chimeraAlphaTestRef";
     /** Vanilla Globals.GlintAlpha (glint strength), declared into glint programs before planning. */
     public static final String GLINT_ALPHA = "chimeraGlintAlpha";
+    /**
+     * Per-draw entityId of a host-layout lane, Chimera's counterpart of Iris's fallback entityId
+     * uniform: declared into host-layout programs in place of entityId before planning.
+     */
+    public static final String HOST_ENTITY_ID = "chimeraHostEntityId";
 
     /**
      * Descriptor bindings of the transform blocks (DynamicTransforms, Projection) the converted
@@ -534,7 +539,7 @@ public final class UniformRegistry {
      */
     static final Set<String> HOST_ONLY = Set.of(
             "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd", "AlphaCutout",
-            ENTITY_ALPHA_REFERENCE, GLINT_ALPHA, "ScreenSize", "Light0_Direction", "Light1_Direction",
+            ENTITY_ALPHA_REFERENCE, GLINT_ALPHA, HOST_ENTITY_ID, "ScreenSize", "Light0_Direction", "Light1_Direction",
             "ColorModulator", "LineWidth", "ChunkOffset", "EndPortalLayers", "screenSize");
 
     /**
