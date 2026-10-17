@@ -91,7 +91,7 @@ final class PackNanTripwireTest {
                                 .pApplicationName(stack.UTF8("Chimera NaN scan test"))
                                         .apiVersion(VK_MAKE_VERSION(1, 2, 0)));
                 ok(vkCreateInstance(create, null, pointer));
-                instance = new VkInstance(pointer.get(0), create);
+                instance = HeadlessVulkan.instance(pointer.get(0), create);
                 var count = stack.mallocInt(1);
                 ok(vkEnumeratePhysicalDevices(instance, count, null));
                 assertTrue(count.get(0) > 0, "no Vulkan device");

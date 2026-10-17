@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.shader.PackUniformProvider;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -586,30 +587,8 @@ public final class PackNanTripwire {
     }
 
     static ByteBuffer compile() {
-        long compiler = Shaderc.shaderc_compiler_initialize();
-        long options = Shaderc.shaderc_compile_options_initialize();
-        long result = 0L;
-        try {
-            Shaderc.shaderc_compile_options_set_target_env(options,
-                    Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
-            Shaderc.shaderc_compile_options_set_optimization_level(options,
-                    Shaderc.shaderc_optimization_level_performance);
-            result = Shaderc.shaderc_compile_into_spv(compiler, SHADER,
-                    Shaderc.shaderc_glsl_compute_shader, "chimera_nan_tripwire.csh", "main", options);
-            if (result == 0L || Shaderc.shaderc_result_get_compilation_status(result)
-                    != Shaderc.shaderc_compilation_status_success) {
-                throw new IllegalStateException("shaderc: " + (result == 0L ? "no result"
-                        : Shaderc.shaderc_result_get_error_message(result)));
-            }
-            ByteBuffer bytes = Shaderc.shaderc_result_get_bytes(result);
-            ByteBuffer copy = MemoryUtil.memAlloc(bytes.remaining());
-            MemoryUtil.memCopy(bytes, copy);
-            return copy;
-        } finally {
-            if (result != 0L) Shaderc.shaderc_result_release(result);
-            Shaderc.shaderc_compile_options_release(options);
-            Shaderc.shaderc_compiler_release(compiler);
-        }
+        return GlslCompiler.compile("chimera_nan_tripwire.csh", SHADER, Shaderc.shaderc_glsl_compute_shader,
+                GlslCompiler::optimize);
     }
 
     private static void check(int result, String what) {

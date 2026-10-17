@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.testing.InstanceOptions;
 import net.chimera.testing.TestPacks;
@@ -11,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
 
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -412,37 +412,13 @@ final class EntityRealPackTest {
     }
 
     static void compileStage(String source, boolean vertex, String what) {
-        long compiler = Shaderc.shaderc_compiler_initialize();
-        // Heap buffers plus the native entry point directly. The CharSequence
-        // overload stack-allocates UTF-8 and overflows LWJGL's thread-local
-        // MemoryStack on large MCBL sources, while the
-        // ByteBuffer overload sizes by remaining() and feeds shaderc the
-        // terminator as trailing garbage. Explicit sizes excluding the
-        // terminator reproduce the CharSequence semantics without the stack.
-        ByteBuffer text = MemoryUtil.memUTF8(source);
-        ByteBuffer name = MemoryUtil.memUTF8(
-                vertex ? "entity.vsh" : "entity.fsh");
-        ByteBuffer entry = MemoryUtil.memASCII("main");
-        long result = 0;
         try {
-            result = Shaderc.nshaderc_compile_into_spv(compiler,
-                    MemoryUtil.memAddress(text), text.remaining() - 1,
-                    vertex ? Shaderc.shaderc_glsl_vertex_shader
-                            : Shaderc.shaderc_glsl_fragment_shader,
-                    MemoryUtil.memAddress(name),
-                    MemoryUtil.memAddress(entry), 0);
-            assertTrue(result != 0
-                            && Shaderc.shaderc_result_get_compilation_status(result)
-                            == Shaderc.shaderc_compilation_status_success,
-                    what + " did not compile: " + (result == 0 ? "no result"
-                            : Shaderc.shaderc_result_get_error_message(result))
-                            + " [source dumped to " + dumpSource(source, what) + "]");
-        } finally {
-            if (result != 0) Shaderc.shaderc_result_release(result);
-            MemoryUtil.memFree(entry);
-            MemoryUtil.memFree(name);
-            MemoryUtil.memFree(text);
-            Shaderc.shaderc_compiler_release(compiler);
+            MemoryUtil.memFree(GlslCompiler.compile(vertex ? "entity.vsh" : "entity.fsh", source,
+                    vertex ? Shaderc.shaderc_glsl_vertex_shader : Shaderc.shaderc_glsl_fragment_shader,
+                    options -> {}));
+        } catch (IllegalStateException failure) {
+            throw new AssertionError(what + " did not compile: " + failure.getMessage()
+                    + " [source dumped to " + dumpSource(source, what) + "]", failure);
         }
     }
 

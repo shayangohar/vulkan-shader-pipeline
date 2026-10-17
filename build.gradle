@@ -83,7 +83,8 @@ tasks.withType(Test).configureEach {
     // One JVM per class: plans read process-wide shader options and keep static caches.
     forkEvery = 1
     maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
-    jvmArgs '-ea', '-Dorg.lwjgl.system.stackSize=256'
+    // LWJGL's default 64 KB thread stack, as in game under VulkanMod Reforged: no stackSize override.
+    jvmArgs '-ea'
     // LWJGL extracts its natives here rather than into the working directory.
     systemProperty 'org.lwjgl.system.SharedLibraryExtractPath', layout.buildDirectory.dir('lwjgl').get().asFile.path
     systemProperties chimeraProperties.get()

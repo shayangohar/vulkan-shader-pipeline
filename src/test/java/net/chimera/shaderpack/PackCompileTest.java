@@ -7,6 +7,7 @@ import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.PackShadowCompute;
 import net.chimera.render.shader.ChimeraShaderLoader;
+import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Tag;
@@ -35,7 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Compiles every program a pack plan would install, through the runtime preparation seam
- * ({@link PackPipelines#prepare}) and VulkanMod's shaderc target (SPIRVUtils: Vulkan 1.2), so a
+ * ({@link PackPipelines#prepare}) and the runtime's compiler ({@link GlslCompiler}), so a
  * converter defect shows up offline instead of as a failed pipeline in game. Failing sources are
  * written to build/pack-report/ for inspection. Used by the pack report and the compile gate.
  */
@@ -349,44 +350,23 @@ final class PackCompileTest {
                 .orElse(null);
     }
 
+    /** Compiled as the runtime compiles (GlslCompiler), without the optimizer. */
     private static Compiled spirv(String source, int kind, String fileName) {
-        long compiler = Shaderc.shaderc_compiler_initialize();
-        long options = Shaderc.shaderc_compile_options_initialize();
-        // Heap buffers and explicit sizes: large sources overflow LWJGL's stack
-        // (EntityRealPackTest.compileStage).
-        ByteBuffer text = MemoryUtil.memUTF8(source);
-        ByteBuffer name = MemoryUtil.memUTF8(fileName);
-        ByteBuffer entry = MemoryUtil.memASCII("main");
-        long result = 0;
+        ByteBuffer bytes;
         try {
-            Shaderc.shaderc_compile_options_set_target_env(options,
-                    Shaderc.shaderc_target_env_vulkan,
-                    Shaderc.shaderc_env_version_vulkan_1_2);
-            result = Shaderc.nshaderc_compile_into_spv(compiler,
-                    MemoryUtil.memAddress(text), text.remaining() - 1,
-                    kind,
-                    MemoryUtil.memAddress(name),
-                    MemoryUtil.memAddress(entry), options);
-            if (result != 0 && Shaderc.shaderc_result_get_compilation_status(result)
-                    == Shaderc.shaderc_compilation_status_success) {
-                ByteBuffer bytes = Shaderc.shaderc_result_get_bytes(result);
-                int[] words = new int[bytes.remaining() / 4];
-                bytes.order(ByteOrder.nativeOrder()).asIntBuffer().get(words);
-                return new Compiled(words, null);
-            }
-            String message = result == 0 ? "no result"
-                    : Shaderc.shaderc_result_get_error_message(result);
-            if (message == null) return new Compiled(null, "unknown");
+            bytes = GlslCompiler.compile(fileName, source, kind, options -> {});
+        } catch (IllegalStateException failure) {
+            String message = failure.getMessage().strip();
             // Warnings precede errors in shaderc's report; name the first error.
-            return new Compiled(null, message.strip().lines().filter(line -> line.contains("error")).findFirst()
-                    .orElse(message.strip().lines().findFirst().orElse("unknown")));
+            return new Compiled(null, message.lines().filter(line -> line.contains("error")).findFirst()
+                    .orElse(message.lines().findFirst().orElse("unknown")));
+        }
+        try {
+            int[] words = new int[bytes.remaining() / 4];
+            bytes.order(ByteOrder.nativeOrder()).asIntBuffer().get(words);
+            return new Compiled(words, null);
         } finally {
-            if (result != 0) Shaderc.shaderc_result_release(result);
-            Shaderc.shaderc_compile_options_release(options);
-            Shaderc.shaderc_compiler_release(compiler);
-            MemoryUtil.memFree(entry);
-            MemoryUtil.memFree(name);
-            MemoryUtil.memFree(text);
+            MemoryUtil.memFree(bytes);
         }
     }
 

@@ -17,6 +17,8 @@ import net.vulkanmod.vulkan.shader.layout.AlignedStruct;
 import net.vulkanmod.vulkan.shader.layout.PushConstants;
 import net.vulkanmod.vulkan.shader.layout.Uniform;
 import net.vulkanmod.vulkan.util.MappedBuffer;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.util.shaderc.Shaderc;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -78,11 +80,11 @@ public final class HostPipelineLayout {
         Pipeline.Builder builder = new Pipeline.Builder(format, name);
         builder.setUniforms(uniformBuffers(layout, uniforms), images(layout));
         ((ChimeraPipelineBuilderAccessor) builder).chimera$setPushConstants(pushConstants(layout, uniforms));
-        SPIRVUtils.SPIRV vertex = compile(name + ".vsh", vertexSource, SPIRVUtils.ShaderKind.VERTEX_SHADER,
+        SPIRVUtils.SPIRV vertex = compile(name + ".vsh", vertexSource, Shaderc.shaderc_glsl_vertex_shader,
                 packModules);
         SPIRVUtils.SPIRV fragment;
         try {
-            fragment = compile(name + ".fsh", fragmentSource, SPIRVUtils.ShaderKind.FRAGMENT_SHADER, packModules);
+            fragment = compile(name + ".fsh", fragmentSource, Shaderc.shaderc_glsl_fragment_shader, packModules);
         } catch (RuntimeException failure) {
             vertex.free();
             throw failure;
@@ -219,19 +221,17 @@ public final class HostPipelineLayout {
         }
     }
 
-    private static SPIRVUtils.SPIRV compile(String name, String source, SPIRVUtils.ShaderKind kind,
-                                            boolean packModule) {
-        SPIRVUtils.SPIRV compiled;
+    private static SPIRVUtils.SPIRV compile(String name, String source, int kind, boolean packModule) {
+        ByteBuffer compiled;
         try {
-            compiled = SPIRVUtils.compileShader(name, source, kind);
-        } catch (RuntimeException failure) {
+            compiled = GlslCompiler.compile(name, source, kind, GlslCompiler::optimize);
+        } catch (IllegalStateException failure) {
             throw new ShaderCompilationFailure(failure);
         }
-        if (!packModule) return compiled;
-        ByteBuffer transformed = SpirvTrigPrecision.apply(SpirvLocalInitializer.apply(compiled.bytecode()));
-        if (transformed == compiled.bytecode()) return compiled;
-        compiled.free();
+        ByteBuffer module = packModule ? SpirvTrigPrecision.apply(SpirvLocalInitializer.apply(compiled)) : compiled;
+        if (module == compiled) return SPIRVUtils.SPIRV.ownedBuffer(compiled, () -> MemoryUtil.memFree(compiled));
+        MemoryUtil.memFree(compiled);
         // The transformed bytes are a garbage-collected direct buffer: nothing to release.
-        return SPIRVUtils.SPIRV.ownedBuffer(transformed, () -> {});
+        return SPIRVUtils.SPIRV.ownedBuffer(module, () -> {});
     }
 }
