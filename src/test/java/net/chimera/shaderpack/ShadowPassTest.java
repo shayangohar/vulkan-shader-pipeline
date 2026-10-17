@@ -147,13 +147,9 @@ final class ShadowPassTest {
                             == route.getValue(),
                     route.getKey().shader() + " must route to " + route.getValue() + " in the shadow pass");
         }
-        // Intensity text keeps its host program (its RRRR swizzle), and Iris cancels beacon beams in the
-        // shadow pass: they stay out of the map.
-        assertTrue(HostLayoutLane.forDraw("rendertype_text_intensity",
-                        DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, shadowPass) == null
-                        && HostLayoutLane.forDraw("rendertype_beacon_beam", DefaultVertexFormat.BLOCK,
-                                shadowPass) == null,
-                "intensity text and beacon beams have no shadow lane");
+        // Iris cancels beacon beams in the shadow pass: they stay out of the map.
+        assertTrue(HostLayoutLane.forDraw("rendertype_beacon_beam", DefaultVertexFormat.BLOCK, shadowPass) == null,
+                "beacon beams have no shadow lane");
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT.alphaReference(),
                 "Iris SHADOW_TEXT: NON_ZERO_ALPHA");
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT_BG.alphaReference(),

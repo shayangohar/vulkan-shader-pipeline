@@ -2,6 +2,8 @@ package net.chimera.render.shader;
 
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
 
+import java.util.Set;
+
 /**
  * The discard threshold Iris tests a family draw against (the AlphaTests of the ShaderKey it maps
  * the host shader to), which the pack program reads per draw as iris_currentAlphaTest. Host-layout
@@ -12,6 +14,9 @@ public final class HostAlphaTest {
     static final float ONE_TENTH_ALPHA = 0.1F;
     /** Iris AlphaTests.NON_ZERO_ALPHA: GREATER 0.0001. */
     static final float NON_ZERO_ALPHA = 0.0001F;
+    /** The glyph shaders Iris keys HAND_TEXT and HAND_TEXT_INTENSITY on in the hand. */
+    private static final Set<String> TEXT_SHADERS = Set.of("rendertype_text", "rendertype_text_see_through",
+            "rendertype_text_intensity", "rendertype_text_intensity_see_through", "position_color_tex_lightmap");
 
     private HostAlphaTest() {}
 
@@ -33,7 +38,6 @@ public final class HostAlphaTest {
     }
 
     private static boolean isText(String shader) {
-        return "rendertype_text".equals(shader) || "rendertype_text_see_through".equals(shader)
-                || "position_color_tex_lightmap".equals(shader);
+        return shader != null && TEXT_SHADERS.contains(shader);
     }
 }

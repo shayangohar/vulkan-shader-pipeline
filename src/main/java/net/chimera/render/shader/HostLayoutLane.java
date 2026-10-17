@@ -48,9 +48,8 @@ public enum HostLayoutLane {
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.ONE_TENTH, Shaders.TEXT_BACKGROUND),
     /*
      * The shadow pass. Iris ShadowRenderer holds the ENTITIES phase while it draws entities and
-     * block entities, so every shadow lane reports it. Iris assigns no shadow key to text intensity
-     * (its swizzle is a GL texture state) and cancels beacon beams; those draws stay out of the
-     * shadow map.
+     * block entities, so every shadow lane reports it. Iris cancels beacon beams, which stay out of
+     * the shadow map.
      */
     /** Iris SHADOW_LINES: fishing lines and hitboxes, the shadow program widened like gbuffers_basic. */
     SHADOW_LINES(ChimeraEntityBridge.Family.SHADOW_LINES, "shadow_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
@@ -65,10 +64,10 @@ public enum HostLayoutLane {
     /** Iris GLINT -> SHADOW_ENTITIES_CUTOUT: glint layers on items already in the map. */
     SHADOW_GLINT(ChimeraEntityBridge.Family.SHADOW_GLINT, "shadow_glint", DefaultVertexFormat.POSITION_TEX,
             PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.ONE_TENTH, Shaders.GLINT),
-    /** Iris SHADOW_TEXT: sign text, text displays and name tags. */
+    /** Iris SHADOW_TEXT and SHADOW_TEXT_INTENSITY: sign text, text displays and name tags. */
     SHADOW_TEXT(ChimeraEntityBridge.Family.SHADOW_TEXT, "shadow_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO, "rendertype_text",
-            "rendertype_text_see_through"),
+            "rendertype_text_see_through", "rendertype_text_intensity", "rendertype_text_intensity_see_through"),
     /** Iris SHADOW_TEXT_BG: text and name tag backgrounds. */
     SHADOW_TEXT_BG(ChimeraEntityBridge.Family.SHADOW_TEXT_BG, "shadow_text_bg",
             DefaultVertexFormat.POSITION_COLOR_LIGHTMAP, PackRenderingPhase.ENTITIES, Pass.SHADOW,

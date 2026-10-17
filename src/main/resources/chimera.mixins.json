@@ -51,6 +51,8 @@
     "ChimeraVertexBufferMixin",
     "ChimeraEntityCullingMixin",
     "ChimeraLightningBoltMixin",
+    "ChimeraIntensityTextureMixin",
+    "ChimeraIntensityViewMixin",
     "ChimeraShaderPipelineMixin",
     "ChimeraEntityVertexInputMixin",
     "ChimeraFramebufferRenderPassMixin",

@@ -125,11 +125,12 @@ public final class ChimeraEntityBridge {
     private static final Set<String> MOVING_BLOCK_TYPES = Set.of(
             "solid", "cutout_mipped", "cutout", "translucent", "translucent_moving_block", "tripwire");
     /**
-     * The glyph render types Iris routes through TEXT and TEXT_BE: world, sign and see-through text.
-     * Intensity text stays host-drawn: Iris swizzles its one-channel glyph texture to RRRR, a texture
-     * state Chimera has no counterpart for, and only TrueType resource-pack fonts use it.
+     * The glyph render types Iris routes through TEXT and TEXT_BE, and through TEXT_INTENSITY and
+     * TEXT_INTENSITY_BE for TrueType glyphs, whose one-channel page reads RRRR
+     * (IntensityTextureViews): world, sign and see-through text.
      */
-    private static final Set<String> TEXT_TYPES = Set.of("text", "text_polygon_offset", "text_see_through");
+    private static final Set<String> TEXT_TYPES = Set.of("text", "text_polygon_offset", "text_see_through",
+            "text_intensity", "text_intensity_polygon_offset", "text_intensity_see_through");
 
     private static PackEntityIdResolver resolver = PackEntityIdResolver.empty();
     /** The pack's lightning_bolt id as Iris's entityId uniform reads it. */

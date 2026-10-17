@@ -710,17 +710,19 @@ final class HostFamilyTest {
         }
         assertEquals(0.1F, HostLayoutLane.TEXT_BG.alphaReference(), "Iris TEXT_BG tests ONE_TENTH_ALPHA");
         var glyphs = DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
-        for (String text : List.of("text", "text_polygon_offset", "text_see_through")) {
+        // TrueType glyphs (Iris TEXT_INTENSITY and TEXT_INTENSITY_BE) read their RRRR page alike.
+        for (String text : List.of("text", "text_polygon_offset", "text_see_through", "text_intensity",
+                "text_intensity_polygon_offset", "text_intensity_see_through")) {
             assertTrue(ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.ENTITY)
                             == ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT
                             && ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.BLOCK)
                             == ChimeraEntityBridge.Family.BLOCK_TRANSLUCENT,
                     text + " must draw as Iris TEXT and TEXT_BE");
         }
-        for (String text : List.of("text_intensity", "text_intensity_polygon_offset", "text_intensity_see_through")) {
-            assertTrue(ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.ENTITY) == null,
-                    "intensity text keeps its host draw: Iris swizzles its glyph texture to RRRR");
-        }
+        assertEquals(0.0001F, HostAlphaTest.reference("rendertype_text_intensity", ChimeraEntityBridge.Family.HAND,
+                false), "first-person TrueType text tests NON_ZERO_ALPHA as Iris HAND_TEXT_INTENSITY");
+        assertEquals(HostLayoutLane.SHADOW_TEXT, HostLayoutLane.forDraw("rendertype_text_intensity", glyphs,
+                HostLayoutLane.Pass.SHADOW), "TrueType text casts with shadow_text (Iris SHADOW_TEXT_INTENSITY)");
     }
 
     @Test
