@@ -12,6 +12,7 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.PackEntityIdResolver;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackRenderingPhase;
+import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
@@ -334,6 +335,8 @@ public final class ChimeraEntityBridge {
     public static void beginWorldWindow() {
         worldWindow = enabled;
         contextDepth = 0;
+        // RenderType.draw has no finally: a bolt draw that threw must not mark later lane draws.
+        lightningBoltDraw = false;
     }
 
     public static void endWorldWindow() {
@@ -354,6 +357,7 @@ public final class ChimeraEntityBridge {
      * every host-layout draw with its shadow lane, and anything else stays out of the shadow map.
      */
     public static boolean beginShadowCasters() {
+        lightningBoltDraw = false;
         shadowCasterPass = enabled && !drawActive && shadowCasterPipeline != null;
         return shadowCasterPass;
     }
@@ -422,8 +426,16 @@ public final class ChimeraEntityBridge {
         currentBlockEntityId = blockEntityId;
     }
 
+    /**
+     * The context drawing now: BLOCK anywhere inside a block entity, as Iris's block-entity wrapper
+     * wins over an entity's (a spawner's mob draws as the block entity's), else the innermost one.
+     */
     private static Family context() {
-        return contextDepth == 0 ? null : contexts[Math.min(contextDepth, contexts.length) - 1];
+        int depth = Math.min(contextDepth, contexts.length);
+        for (int index = 0; index < depth; index++) {
+            if (contexts[index] == Family.BLOCK) return Family.BLOCK;
+        }
+        return depth == 0 ? null : contexts[depth - 1];
     }
 
     public static int currentEntityId() {
@@ -511,8 +523,11 @@ public final class ChimeraEntityBridge {
     private static String shaderOf(RenderType type) {
         if (!(type instanceof ChimeraCompositeRenderTypeAccessor composite)) return null;
         var shard = ((ChimeraCompositeStateAccessor) (Object) composite.chimera$state()).chimera$shaderState();
-        return ((ChimeraShaderStateShardAccessor) shard).chimera$shader().map(Supplier::get)
-                .map(ShaderInstance::getName).orElse(null);
+        ShaderInstance shader = ((ChimeraShaderStateShardAccessor) shard).chimera$shader().map(Supplier::get)
+                .orElse(null);
+        if (shader == null) return null;
+        // VulkanMod Reforged loads breeze wind's shader as a second instance named rendertype_energy_swirl.
+        return shader == GameRenderer.getRendertypeBreezeWindShader() ? "rendertype_breeze_wind" : shader.getName();
     }
 
     /**

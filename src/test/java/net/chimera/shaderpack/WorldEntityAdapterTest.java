@@ -146,6 +146,13 @@ final class WorldEntityAdapterTest {
                     "a moving piston");
             assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.SHADOW_ENTITIES),
                     "a block entity's eyes in the shadow pass");
+            ChimeraEntityBridge.beginEntity("minecraft:zombie");
+            try {
+                assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.ENTITY),
+                        "a spawner's mob draws as the block entity's, as Iris's wrapper order gives");
+            } finally {
+                ChimeraEntityBridge.endContext();
+            }
         } finally {
             ChimeraEntityBridge.endContext();
         }
