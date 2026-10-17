@@ -267,7 +267,8 @@ public final class PackPlanBuilder {
             }
             if (FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isParticleLike(name)
                     || FamilyAdapterRegistry.isWeatherFamily(name) || FamilyAdapterRegistry.isGlintFamily(name)) {
-                fragment = alphaTestPlan.injectDrawTest(fragment);
+                // Iris draws ENTITIES_ALPHA (the dying dragon) with gbuffers_entities alone.
+                fragment = alphaTestPlan.injectDrawTest(fragment, name.equals("gbuffers_entities"));
                 if (FamilyAdapterRegistry.isEntityLike(name) && !name.equals("gbuffers_damagedblock")) {
                     fragment = EntityOverlayColor.inject(fragment);
                 }

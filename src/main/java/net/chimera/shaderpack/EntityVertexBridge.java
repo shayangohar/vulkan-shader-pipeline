@@ -37,6 +37,30 @@ public final class EntityVertexBridge {
 
     static final String ENTITY_ID_VARYING = "chimeraEntityId";
 
+    /**
+     * A host value the entity vertex bridge forwards to a fragment that reads it: the overlay
+     * coordinates entityColor fetches with (EntityOverlayColor), and the vertex colour's alpha
+     * Iris's vertex-alpha test compares against (PackAlphaTestPlan).
+     */
+    record ForwardedVarying(String name, String type, String qualifier, String value) {
+        static final List<ForwardedVarying> ALL = List.of(
+                new ForwardedVarying(EntityOverlayColor.UV_VARYING, "ivec2", "flat ", "UV1"),
+                new ForwardedVarying(PackAlphaTestPlan.VERTEX_ALPHA_VARYING, "float", "", "Color.a"));
+
+        /** The forwarded varyings {@code fragment} reads, in a fixed order. */
+        static List<ForwardedVarying> readBy(String fragment) {
+            String stripped = stripComments(fragment == null ? "" : fragment);
+            return ALL.stream().filter(varying -> LegacyGlslConverter.containsIdentifier(stripped, varying.name()))
+                    .toList();
+        }
+
+        /** The varying's {@code in} or {@code out} declaration at its location in {@code layout}. */
+        String declaration(LegacyGlslConverter.TerrainVaryingLayout layout, String direction) {
+            return "layout(location = " + layout.location(name) + ") " + qualifier + direction + " " + type + " "
+                    + name + ";\n";
+        }
+    }
+
     static String entityIdVarying(String name) {
         return switch (name) {
             case "entityId" -> ENTITY_ID_VARYING;
@@ -325,15 +349,11 @@ public final class EntityVertexBridge {
 
         EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
         requireMatchingFragmentVaryings(vertexVaryings, fragmentSource);
-        boolean overlayUv = LegacyGlslConverter.containsIdentifier(stripComments(fragmentSource == null ? ""
-                : fragmentSource),
-                EntityOverlayColor.UV_VARYING);
-        // The bridge's flat varyings follow the pack's: the entity identities, then the overlay coordinates.
+        List<ForwardedVarying> forwarded = ForwardedVarying.readBy(fragmentSource);
+        // The bridge's varyings follow the pack's: the entity identities, then what the fragment reads.
         Map<String, String> addedVaryings = new LinkedHashMap<>();
         entityIdTypes.forEach((name, type) -> addedVaryings.put(entityIdVarying(name), type));
-        if (overlayUv) {
-            addedVaryings.put(EntityOverlayColor.UV_VARYING, "ivec2");
-        }
+        forwarded.forEach(varying -> addedVaryings.put(varying.name(), varying.type()));
         LegacyGlslConverter.TerrainVaryingLayout layout =
                 entityVaryingLayout(vertexVaryings, sharedLocations, addedVaryings);
 
@@ -351,15 +371,14 @@ public final class EntityVertexBridge {
         converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                 "chimeraEntityFtransform()");
         converted = injectEntityIdPrologues(converted, entityIdTypes.keySet());
-        if (overlayUv) {
+        for (ForwardedVarying varying : forwarded) {
             converted = LegacyGlslConverter.injectMainPrologue(converted,
-                    EntityOverlayColor.UV_VARYING + " = UV1;");
+                    varying.name() + " = " + varying.value() + ";");
         }
         requireConsumedDeclarations(converted);
         String chimeraVaryings = entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
-        if (overlayUv) {
-            chimeraVaryings += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
-                    + ") flat out ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
+        for (ForwardedVarying varying : forwarded) {
+            chimeraVaryings += varying.declaration(layout, "out");
         }
         String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
         converted = wrapProjectedMain(converted, vertexPreamble);

@@ -101,16 +101,16 @@ public final class ChimeraEntityBridge {
         /** ENTITIES_EYES; BLOCK_ENTITY; SHADOW_ENTITIES_CUTOUT. */
         EYES,
         /** ENTITIES_EYES_TRANS; BLOCK_ENTITY; SHADOW_BLOCK. */
-        EMISSIVE
+        EMISSIVE,
+        /** ENTITIES_ALPHA (the dying dragon's dissolve) in either; Iris keeps no shadow key for it. */
+        ALPHA
     }
 
     /**
      * Entity-format shaders by vanilla name; a render type routes by the shader it draws with, as
      * Iris overrides shader getters, so NeoForge's and mods' render types on these shaders follow.
      * Flat held and dropped items draw with item_entity_translucent_cull: drawn by the host they
-     * wrote no gbuffer data, and deferred lighting erased them to a ghost. entity_alpha (the dying
-     * dragon) stays on the host: Iris tests it against the vertex alpha, a threshold the pack
-     * programs here do not take.
+     * wrote no gbuffer data, and deferred lighting erased them to a ghost.
      */
     private static final Map<String, EntityShader> ENTITY_SHADERS = Map.ofEntries(
             Map.entry("rendertype_entity_solid", EntityShader.MODEL),
@@ -128,7 +128,8 @@ public final class ChimeraEntityBridge {
             Map.entry("rendertype_breeze_wind", EntityShader.TRANSLUCENT),
             Map.entry("rendertype_entity_no_outline", EntityShader.TRANSLUCENT),
             Map.entry("rendertype_eyes", EntityShader.EYES),
-            Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE));
+            Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE),
+            Map.entry("rendertype_entity_alpha", EntityShader.ALPHA));
     /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
     private static final Set<String> MOVING_BLOCK_SHADERS = Set.of("rendertype_solid", "rendertype_cutout_mipped",
             "rendertype_cutout", "rendertype_translucent", "rendertype_translucent_moving_block",
@@ -547,11 +548,15 @@ public final class ChimeraEntityBridge {
             return MOVING_BLOCK_SHADERS.contains(shader) ? Family.MOVING_BLOCK : null;
         }
         EntityShader key = format == DefaultVertexFormat.NEW_ENTITY ? ENTITY_SHADERS.get(shader) : null;
-        if (key == null) return null;
+        return key == null ? null : entityFamily(key, blockEntity);
+    }
+
+    private static Family entityFamily(EntityShader key, boolean blockEntity) {
         return switch (key) {
             case MODEL, OVERLAY -> blockEntity ? Family.BLOCK : Family.ENTITY;
             case TRANSLUCENT -> blockEntity ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
             case EYES, EMISSIVE -> blockEntity ? Family.BLOCK : Family.SPIDER_EYES;
+            case ALPHA -> Family.ENTITY;
         };
     }
 
@@ -568,7 +573,7 @@ public final class ChimeraEntityBridge {
         if (format != DefaultVertexFormat.NEW_ENTITY) return null;
         EntityShader key = shader == null ? null : ENTITY_SHADERS.get(shader);
         boolean blockModel = context == Family.BLOCK && key != null
-                && key != EntityShader.OVERLAY && key != EntityShader.EYES;
+                && key != EntityShader.OVERLAY && key != EntityShader.EYES && key != EntityShader.ALPHA;
         return blockModel ? Family.SHADOW_BLOCK : Family.SHADOW_ENTITIES;
     }
 

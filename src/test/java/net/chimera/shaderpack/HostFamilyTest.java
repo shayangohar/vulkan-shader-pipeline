@@ -209,6 +209,8 @@ final class HostFamilyTest {
                 "ENTITIES_SOLID_DIFFUSE draws untested");
         assertEquals(0.1F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.BLOCK, false),
                 "BLOCK_ENTITY_DIFFUSE tests ONE_TENTH_ALPHA");
+        assertEquals(-1.0F, HostAlphaTest.reference("rendertype_entity_alpha", ChimeraEntityBridge.Family.ENTITY,
+                false), "ENTITIES_ALPHA tests the vertex alpha (AlphaTests.VERTEX_ALPHA)");
         assertEquals(0.1F, HostAlphaTest.reference("rendertype_energy_swirl", ChimeraEntityBridge.Family.ENTITY, false),
                 "ENTITIES_CUTOUT tests ONE_TENTH_ALPHA");
         assertEquals(0.1F, HostAlphaTest.reference("rendertype_solid", ChimeraEntityBridge.Family.MOVING_BLOCK, false),

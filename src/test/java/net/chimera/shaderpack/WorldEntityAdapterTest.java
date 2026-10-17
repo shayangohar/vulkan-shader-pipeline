@@ -107,8 +107,9 @@ final class WorldEntityAdapterTest {
                 Family.SHADOW_ENTITIES));
         routes.add(new Route("entity_translucent_emissive", Family.SPIDER_EYES, Family.BLOCK,
                 Family.SHADOW_ENTITIES, Family.SHADOW_BLOCK));
-        // Iris tests the dying dragon's dissolve against the vertex alpha; it stays on the host.
-        routes.add(new Route("entity_alpha", null, null, Family.SHADOW_ENTITIES, Family.SHADOW_ENTITIES));
+        // Iris ENTITIES_ALPHA (the dying dragon) in either context, with no shadow key of its own.
+        routes.add(new Route("entity_alpha", Family.ENTITY, Family.ENTITY, Family.SHADOW_ENTITIES,
+                Family.SHADOW_ENTITIES));
         var entityFormat = DefaultVertexFormat.NEW_ENTITY;
         for (Route route : routes) {
             String shader = "rendertype_" + route.shader();

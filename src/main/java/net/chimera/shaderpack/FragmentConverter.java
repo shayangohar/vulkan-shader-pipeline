@@ -771,9 +771,8 @@ public final class FragmentConverter {
                         + ") flat in uint " + varying + ";\n";
             }
         }
-        if (layout.locations().containsKey(EntityOverlayColor.UV_VARYING)) {
-            declarations += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
-                    + ") flat in ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
+        for (EntityVertexBridge.ForwardedVarying varying : EntityVertexBridge.ForwardedVarying.ALL) {
+            if (layout.locations().containsKey(varying.name())) declarations += varying.declaration(layout, "in");
         }
         return declarations;
     }

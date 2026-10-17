@@ -75,6 +75,19 @@ final class AlphaTestContractTest {
                 "uniform float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + ";",
                 "layout(binding = 0) uniform Ref { float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + "; };"));
 
+        // Iris ENTITIES_ALPHA (AlphaTests.VERTEX_ALPHA): a negative reference tests the vertex alpha,
+        // which the entity vertex bridge forwards once the fragment reads it.
+        String vertexAlpha = dynamic.injectDrawTest(legacy, true);
+        assertTrue(vertexAlpha.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE + " < 0.0 ? !(gl_FragData[0].a > "
+                        + PackAlphaTestPlan.VERTEX_ALPHA_VARYING + ")"), "vertex-alpha test: " + vertexAlpha);
+        String vertex = "#version 120\nvarying vec2 uv;\nvoid main() { uv = gl_MultiTexCoord0.xy; "
+                + "gl_Position = ftransform(); }\n";
+        String forwarded = EntityVertexBridge.convertEntityVertexChecked(vertex, null, vertexAlpha, Map.of(), false,
+                List.of()).source();
+        assertTrue(forwarded.contains("out float " + PackAlphaTestPlan.VERTEX_ALPHA_VARYING + ";")
+                        && forwarded.contains(PackAlphaTestPlan.VERTEX_ALPHA_VARYING + " = Color.a;"),
+                "the vertex bridge forwards the vertex alpha: " + forwarded);
+
         String noOutput = "#version 120\nvoid main() {}\n";
         assertTrue(dynamic.injectDrawTest(noOutput).equals(noOutput), "output-less entity fragment was changed");
         assertTrue(PackAlphaTestPlan.forProgram("gbuffers_entities", settings(Map.of(
