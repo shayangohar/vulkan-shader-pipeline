@@ -11,7 +11,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
@@ -142,18 +141,5 @@ final class TargetGraphTest {
                 }
             }
         }
-    }
-
-    /** A shadow program that writes shadowcolor0 alone leaves shadowcolor1's writes masked. */
-    @Test
-    void attachmentWrites() {
-        MrtPipelineContext.begin(new int[] {37, 37}, 8, null, new boolean[] {true, false});
-        try {
-            assertTrue(Arrays.equals(new boolean[] {true, false}, MrtPipelineContext.attachmentWrites()),
-                    "written attachments were not carried to the pipeline");
-        } finally {
-            MrtPipelineContext.end();
-        }
-        assertTrue(MrtPipelineContext.attachmentWrites() == null, "write flags outlived their contract");
     }
 }

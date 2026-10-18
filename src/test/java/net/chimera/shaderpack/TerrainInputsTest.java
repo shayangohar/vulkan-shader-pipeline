@@ -342,7 +342,7 @@ final class TerrainInputsTest {
                     "entity route disagrees with geometry plan " + targets);
             PackBlendPlan blends = new PackBlendPlan(null, Map.of(1, PackBlendPlan.Mode.OFF), List.of());
             MrtPipelineContext.begin(route.outputFormatsArray(), 8,
-                    blends.attachments(route.targetSlots()), null);
+                    blends.attachments(route.targetSlots()));
             try {
                 assertEquals(count, MrtPipelineContext.attachmentCount(0),
                         "native attachment count " + targets);
