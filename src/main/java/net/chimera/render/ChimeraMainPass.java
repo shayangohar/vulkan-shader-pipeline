@@ -303,7 +303,7 @@ public final class ChimeraMainPass implements MainPass {
         this.packWorldResolved = false;
         this.packFinalApplied = false;
         if (this.packDepthTargets.isConfigured()) {
-            this.packDepthTargets.beginFrame();
+            this.packDepthTargets.beginFrame(Renderer.getCommandBuffer());
         }
         if (this.packPostTargets.isConfigured()) {
             postChain.beginPostFrame(Renderer.getCommandBuffer());

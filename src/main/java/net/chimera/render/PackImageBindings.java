@@ -107,11 +107,14 @@ final class PackImageBindings {
         };
     }
 
-    /** A depth snapshot; depthtex0 falls back to the live world depth until it is captured. */
+    /**
+     * A depth snapshot. depthtex0 falls back to the live world depth until it is captured;
+     * depthtex1 and depthtex2 read their last capture until this frame's.
+     */
     private VulkanImage depthTargetImage(String name) {
+        if (!name.equals("depthtex0")) return pass.packDepthTargets.sampledImage(name);
         VulkanImage depth = pass.packDepthTargets.image(name);
-        return depth == null && name.equals("depthtex0")
-                && pass.targets.hdrFramebuffer != null
+        return depth == null && pass.targets.hdrFramebuffer != null
                 ? pass.targets.hdrFramebuffer.getDepthAttachment() : depth;
     }
 
