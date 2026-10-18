@@ -1,0 +1,15 @@
+filename = 'RenderPearl v2.4.0.zip'
+name = 'RenderPearl'
+side = 'client'
+x-modrinth-version-number = '2.4.0'
+x-modrinth-release-type = 'release'
+
+[download]
+hash = '47758c781bbebc9dd44a82dbdd9e7385a4937d1aad3abbc05fc302ab05222d224ce483ecd15619c52551d5a434780b7898b12798dc39e01bb41c7a6586408bfd'
+hash-format = 'sha512'
+mode = 'url'
+url = 'https://cdn.modrinth.com/data/BrRak9pu/versions/4q8gfsTN/RenderPearl%20v2.4.0.zip'
+
+[update.modrinth]
+mod-id = 'BrRak9pu'
+version = '4q8gfsTN'

@@ -1,0 +1,15 @@
+filename = 'Ebin-Resurrected-v1.5.6.zip'
+name = 'Ebin Resurrected'
+side = 'client'
+x-modrinth-version-number = '1.5.6'
+x-modrinth-release-type = 'release'
+
+[download]
+hash = '58c16c80cec86de34c46cb14e48147d2e8598ef0127fb5fca9ef440b64d7ecb29c548288b66dcd08673b31a4cf7a341cc3d1ca6dfc47e24d5a4383046f63f508'
+hash-format = 'sha512'
+mode = 'url'
+url = 'https://cdn.modrinth.com/data/VP9picRm/versions/blRQVUY5/Ebin-Resurrected-v1.5.6.zip'
+
+[update.modrinth]
+mod-id = 'VP9picRm'
+version = 'blRQVUY5'

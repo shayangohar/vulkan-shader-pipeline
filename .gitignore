@@ -22,6 +22,8 @@ logs/
 mappings/
 scratch/
 tools/_chimera-pack-agent*.jar
+# Corpus packs are third-party, many all-rights-reserved: commit only their pins.
+testpacks/corpus/packs/
 
 # Fabric
 run/
