@@ -177,11 +177,13 @@ public final class PackPostTargets {
                         | (storage && PackPassComputes.storageSupported(target.format())
                         ? VK_IMAGE_USAGE_STORAGE_BIT : 0))
                 .setMipLevels(target.mipLevels())
-                // Reforged makes per-level views only on request; a mipmapped target renders to level 0.
-                .setLevelViews(target.mipLevels() > 1)
+                // Reforged makes per-level views only on request. A mipmapped target renders to level 0
+                // through one, as does a padded-alpha target, whose main view reads alpha as 1.
+                .setLevelViews(target.mipLevels() > 1 || target.paddedAlpha())
                 .setLinearFiltering(true)
                 .setClamp(true)
                 .createVulkanImage();
+        if (target.paddedAlpha()) ImageViews.sampleAlphaAsOne(image);
         // Iris samples the base level until a program's pass generates the chain.
         if (image.mipLevels > 1) sampleWith(image, baseLevelSampler());
         return image;
@@ -501,9 +503,9 @@ public final class PackPostTargets {
         this.mipSampling.clear();
     }
 
-    /** Pack targets render to level 0 only: an attachment view has exactly one level. */
+    /** Pack targets render to level 0 only, through an identity view of exactly one level. */
     public static long attachmentView(VulkanImage image) {
-        return image.mipLevels > 1 ? image.getLevelImageView(0) : image.getImageView();
+        return image.getLevelImageViews() != null ? image.getLevelImageView(0) : image.getImageView();
     }
 
     /**

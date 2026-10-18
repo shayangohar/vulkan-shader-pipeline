@@ -122,6 +122,10 @@ public final class PackTargetGraphPlan {
             return config == null ? Map.of() : config.colortexFormats();
         }
 
+        Set<Integer> paddedAlpha() {
+            return config == null ? Set.of() : config.paddedAlphaTargets();
+        }
+
         boolean allocatable(Integer target) {
             return target != null && !unavailableFormatTargets.contains(target);
         }
@@ -189,7 +193,7 @@ public final class PackTargetGraphPlan {
             float[] clearColor = target == 0 ? setting.clearColorCopy() : setting.irisClearColor(target, null);
             preliminary.put(target, new TargetSpec(target, format, width, height,
                     setting.clear(), clearColor, !setting.clear(), false, false,
-                    setting.deviations()));
+                    inputs.paddedAlpha().contains(target), setting.deviations()));
             deviations.addAll(setting.deviations());
         }
         return preliminary;
@@ -353,7 +357,7 @@ public final class PackTargetGraphPlan {
             targets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
                     source.clear(), source.clearColorCopy(), persistent,
                     doubleTargets.getOrDefault(source.index(), false),
-                    mipmappedTargets.contains(source.index()), source.deviations()));
+                    mipmappedTargets.contains(source.index()), source.paddedAlpha(), source.deviations()));
         }
         return targets;
     }
@@ -599,6 +603,7 @@ public final class PackTargetGraphPlan {
                     .append(target.doubled()).append(':');
             for (float value : target.clearColor()) result.append(value).append(',');
             if (target.mipmapped()) result.append(":mips=").append(target.mipLevels());
+            if (target.paddedAlpha()) result.append(":paddedAlpha");
             result.append(';');
         }
         result.append("steps=");

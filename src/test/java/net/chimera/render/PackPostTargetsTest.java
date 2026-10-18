@@ -76,7 +76,7 @@ final class PackPostTargetsTest {
     @Test
     void feedbackSeeding() {
         TargetSpec persistent = new TargetSpec(2, 97, 16, 16, false,
-                new float[] {0, 0, 0, 0}, true, true, false, List.of());
+                new float[] {0, 0, 0, 0}, true, true, false, false, List.of());
         TargetStep feedback = new TargetStep("feedback", List.of(2), List.of(2),
                 List.of(97), Map.of(2, 0), Map.of(2, 1), List.of(), 16, 16,
                 false, true, List.of());
@@ -93,7 +93,7 @@ final class PackPostTargetsTest {
         // its first read cannot sample undefined memory. Seeding fixes
         // first-frame contents only; it never redefines clear semantics.
         TargetSpec clearedFeedback = new TargetSpec(2, 97, 16, 16, true,
-                new float[] {0, 0, 0, 0}, true, true, false, List.of());
+                new float[] {0, 0, 0, 0}, true, true, false, false, List.of());
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(clearedFeedback, List.of(feedback)),
                 "declared feedback target must seed even when the pack clears it");
     }

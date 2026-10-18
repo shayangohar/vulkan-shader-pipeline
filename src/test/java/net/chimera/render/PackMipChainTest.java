@@ -43,7 +43,7 @@ final class PackMipChainTest {
     }
 
     private static TargetSpec spec(int width, int height, boolean mipmapped) {
-        return new TargetSpec(0, FORMAT, width, height, true, null, false, false, mipmapped, List.of());
+        return new TargetSpec(0, FORMAT, width, height, true, null, false, false, mipmapped, false, List.of());
     }
 
     private static void ok(int result) {

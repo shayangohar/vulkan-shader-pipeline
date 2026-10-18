@@ -670,7 +670,7 @@ final class PackFrontEndTest {
     @Test
     void persistentWorldTargetSeed() {
         // A persistent target a world program reads needs a defined first frame even with no post reader.
-        TargetSpec fog = new TargetSpec(7, 97, 16, 16, false, null, true, false, false, List.of());
+        TargetSpec fog = new TargetSpec(7, 97, 16, 16, false, null, true, false, false, false, List.of());
         assertTrue(PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), Set.of(7))
                         && !PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), Set.of()),
                 "persistent world-read target seeding");
