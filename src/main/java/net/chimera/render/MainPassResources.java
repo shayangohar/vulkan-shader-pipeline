@@ -25,8 +25,22 @@ final class MainPassResources {
     /** The stable Minecraft main/output target and aliases are live. */
     boolean outputResourcesReady;
 
+    /** A screen opened or closed: the world attachments are recreated at the next frame boundary. */
+    boolean worldRefreshDue;
+
     MainPassResources(ChimeraMainPass pass) {
         this.pass = pass;
+    }
+
+    /**
+     * Recreates the world attachments a screen change retired, before the frame records its first
+     * command. Not as one of VulkanMod's frame ops: a framebuffer retired while they run is queued
+     * onto the list being run and destroyed at once, while the previous frame may still use it.
+     */
+    void refreshWorldResourcesIfDue() {
+        if (!this.worldRefreshDue) return;
+        this.worldRefreshDue = false;
+        refreshWorldResources();
     }
 
     void createResources() {
@@ -100,8 +114,9 @@ final class MainPassResources {
     }
 
     /**
-     * Retires the HDR attachments at a frame-op boundary (the slot fence was
-     * waited) and recreates them at the same safe point. Leaving
+     * Retires the HDR attachments at a frame boundary, before recording starts,
+     * and recreates them at the same safe point. VulkanMod frees the retired
+     * images and framebuffers once every frame that used them has finished. Leaving
      * hdrFramebuffer null here is the respawn NPE: the next frame's
      * openLevelSegment can run before another recreate boundary when screens
      * suppress segments, and when the level dies the host handoff leaves no

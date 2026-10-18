@@ -29,7 +29,6 @@ import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
 import net.vulkanmod.vulkan.framebuffer.SwapChain;
-import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.pass.MainPass;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
@@ -243,8 +242,8 @@ public final class ChimeraMainPass implements MainPass {
     }
     /**
      * Mirrors Beryl's setScreen contract: keep the stable output target alive
-     * for GUI/post work and retire only internal world resources when this
-     * frame slot reaches its fence.
+     * for GUI/post work and retire only internal world resources at the next
+     * frame boundary (MainPassResources.refreshWorldResourcesIfDue).
      */
     public void scheduleScreenResourceReset() {
         this.earlyOutputPass = true;
@@ -252,7 +251,7 @@ public final class ChimeraMainPass implements MainPass {
             LOGGER.info("[chimera] scheduled world attachment reset frame={} hdrId={}",
                     Renderer.getCurrentFrame(), targets.hdrImageId());
         }
-        MemoryManager.getInstance().addFrameOp(this.resources::refreshWorldResources);
+        this.resources.worldRefreshDue = true;
     }
 
      boolean prepareForInstall() {

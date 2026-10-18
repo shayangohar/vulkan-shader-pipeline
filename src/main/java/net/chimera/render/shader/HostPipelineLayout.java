@@ -6,6 +6,7 @@ import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.shaderpack.PackDescriptorLayout;
 import net.chimera.shaderpack.SpirvLocalInitializer;
+import net.chimera.shaderpack.SpirvOutputWrites;
 import net.chimera.shaderpack.SpirvTrigPrecision;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
@@ -69,7 +70,8 @@ public final class HostPipelineLayout {
     /**
      * Compiles the two stages and creates a pipeline named {@code name} with {@code layout}. Pack
      * modules ({@code packModules}) get zero-initialized locals and GL-order trigonometric arithmetic
-     * (SpirvLocalInitializer, SpirvTrigPrecision); Chimera's own shaders keep their bytes.
+     * (SpirvLocalInitializer, SpirvTrigPrecision); Chimera's own shaders keep their bytes. A pack
+     * pipeline records the output locations its fragment stage writes (SpirvOutputWrites).
      *
      * @throws LayoutFailure when the host cannot bind the layout
      * @throws ShaderCompilationFailure when a stage does not compile
@@ -91,7 +93,12 @@ public final class HostPipelineLayout {
         }
         try {
             builder.setSPIRVs(vertex, fragment);
-            return builder.createGraphicsPipeline();
+            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            if (packModules) {
+                MrtPipelineContext.recordWrittenOutputs(pipeline,
+                        SpirvOutputWrites.writtenLocations(fragment.bytecode()));
+            }
+            return pipeline;
         } finally {
             // The pipeline holds its shader modules; the bytes are no longer needed.
             vertex.free();

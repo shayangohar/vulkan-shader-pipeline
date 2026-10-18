@@ -1,6 +1,7 @@
 package net.chimera.render.shader;
 
 import net.chimera.shaderpack.PackBlendPlan;
+import net.chimera.shaderpack.SpirvOutputWrites;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 
 import java.util.Arrays;
@@ -11,8 +12,9 @@ import java.util.WeakHashMap;
 /**
  * Render-thread-only context used by the narrow Chimera GraphicsPipeline mixin.
  * VulkanMod creates a graphics pipeline lazily while a post pass is bound, so
- * the target formats, and any pack blend directives per attachment, must be
- * available at that exact call site.
+ * the target formats, any pack blend directives per attachment, and the output
+ * locations the pipeline's fragment stage writes must be available at that
+ * exact call site.
  */
 public final class MrtPipelineContext {
     public static final int LOGICAL_LIMIT = 8;
@@ -23,7 +25,10 @@ public final class MrtPipelineContext {
     private static final ThreadLocal<Contract> CURRENT = new ThreadLocal<>();
     private static final ThreadLocal<Contract> PREVIOUS = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> PIPELINE_SCOPE = new ThreadLocal<>();
+    private static final ThreadLocal<Integer> CURRENT_WRITES = new ThreadLocal<>();
     private static final Map<GraphicsPipeline, Contract> REGISTERED =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<GraphicsPipeline, Integer> WRITTEN_OUTPUTS =
             Collections.synchronizedMap(new WeakHashMap<>());
 
     private MrtPipelineContext() {}
@@ -71,12 +76,20 @@ public final class MrtPipelineContext {
         REGISTERED.put(pipeline, contract(formats, blends));
     }
 
+    /** Records the output locations {@code pipeline}'s fragment stage writes (SpirvOutputWrites). */
+    public static void recordWrittenOutputs(GraphicsPipeline pipeline, int locations) {
+        if (pipeline != null) WRITTEN_OUTPUTS.put(pipeline, locations);
+    }
+
     public static void unregister(GraphicsPipeline pipeline) {
-        if (pipeline != null) REGISTERED.remove(pipeline);
+        if (pipeline == null) return;
+        REGISTERED.remove(pipeline);
+        WRITTEN_OUTPUTS.remove(pipeline);
     }
 
     /** Activates a registered contract at GraphicsPipeline.createGraphicsPipeline. */
     public static void beginPipeline(GraphicsPipeline pipeline) {
+        CURRENT_WRITES.set(WRITTEN_OUTPUTS.get(pipeline));
         Contract contract = REGISTERED.get(pipeline);
         if (contract == null) {
             PIPELINE_SCOPE.set(Boolean.FALSE);
@@ -89,6 +102,7 @@ public final class MrtPipelineContext {
 
     /** Restores any outer render-pass contract after lazy pipeline creation. */
     public static void endPipeline() {
+        CURRENT_WRITES.remove();
         if (!Boolean.TRUE.equals(PIPELINE_SCOPE.get())) {
             PIPELINE_SCOPE.remove();
             return;
@@ -109,6 +123,15 @@ public final class MrtPipelineContext {
     public static PackBlendPlan.Mode[] attachmentBlends() {
         Contract contract = CURRENT.get();
         return contract == null || contract.blends() == null ? null : contract.blends().clone();
+    }
+
+    /**
+     * A bit per output location the pipeline being created writes, or SpirvOutputWrites.ALL when
+     * that is not recorded (Chimera's own pipelines, VulkanMod's).
+     */
+    public static int writtenOutputs() {
+        Integer locations = CURRENT_WRITES.get();
+        return locations == null ? SpirvOutputWrites.ALL : locations;
     }
 
     public static int attachmentCount(int fallback) {

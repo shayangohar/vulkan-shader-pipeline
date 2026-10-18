@@ -20,8 +20,8 @@ import static org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTE
 
 /**
  * Enables what Chimera needs on VulkanMod's logical device: the supported core features of the
- * pack image path, and VK_KHR_dynamic_rendering with its feature, which Chimera's windows render
- * with (ChimeraDevice).
+ * pack image path, independentBlend for per-attachment blend and write masks, and
+ * VK_KHR_dynamic_rendering with its feature, which Chimera's windows render with (ChimeraDevice).
  */
 @Mixin(value = DeviceManager.class, remap = false)
 public abstract class ChimeraDeviceFeaturesMixin {
@@ -37,7 +37,7 @@ public abstract class ChimeraDeviceFeaturesMixin {
             index = 0,
             require = 1
     )
-    private static VkPhysicalDeviceFeatures chimera$enableStorageFeatures(
+    private static VkPhysicalDeviceFeatures chimera$enablePackFeatures(
             VkPhysicalDeviceFeatures enabled
     ) {
         Device device = DeviceManager.device;
@@ -65,6 +65,9 @@ public abstract class ChimeraDeviceFeaturesMixin {
         if (enabledCount > 0) {
             LOGGER.info("[chimera] enabled {} supported storage-image device features", enabledCount);
         }
+        // A pack's blend directives and the buffers a program leaves unwritten differ per attachment.
+        enabled.independentBlend(available.independentBlend());
+        ChimeraDevice.setIndependentBlend(available.independentBlend());
         return enabled;
     }
 
