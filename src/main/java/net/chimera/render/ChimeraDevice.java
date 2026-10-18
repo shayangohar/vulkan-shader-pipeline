@@ -11,10 +11,12 @@ import static org.lwjgl.vulkan.VK10.vkEnumerateDeviceExtensionProperties;
 /**
  * What Chimera enables on VulkanMod's logical device (ChimeraDeviceFeaturesMixin). Chimera's
  * windows render with VK_KHR_dynamic_rendering, which VulkanMod leaves off; without it no shader
- * pack can run, and Chimera keeps VulkanMod's own rendering.
+ * pack can run, and Chimera keeps VulkanMod's own rendering. The independentBlend feature lets a
+ * window's attachments blend and mask writes differently.
  */
 public final class ChimeraDevice {
     private static volatile boolean dynamicRendering;
+    private static volatile boolean independentBlend;
 
     private ChimeraDevice() {}
 
@@ -25,6 +27,15 @@ public final class ChimeraDevice {
 
     public static void setDynamicRendering(boolean enabled) {
         dynamicRendering = enabled;
+    }
+
+    /** True once the device was created with independentBlend. */
+    public static boolean independentBlend() {
+        return independentBlend;
+    }
+
+    public static void setIndependentBlend(boolean enabled) {
+        independentBlend = enabled;
     }
 
     /** Whether {@code device} offers the device extension {@code name}. */

@@ -161,6 +161,7 @@ public final class ChimeraRenderer {
         // Material companions are independent of shader-pack state: atlas
         // uploads arrive whether or not a pack is installed.
         chimeraPass.pumpMaterialMapBuilds();
+        chimeraPass.resources.refreshWorldResourcesIfDue();
         if (chimeraPass.hasPendingPackChange() && installed) {
             Renderer.getInstance().setMainPass(hostPass);
             ChimeraTerrainPipelines.disable();

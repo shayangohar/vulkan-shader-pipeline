@@ -403,8 +403,9 @@ public final class PackPipelines {
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
                     ? new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF, PackBlendPlan.Mode.OFF}
                     : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
+            boolean[] attachmentWrites = stage.shadowPass() ? shadowAttachmentWrites(plan) : null;
             GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, fragmentSource,
-                    imageBindings, attachmentFormats, attachmentBlends);
+                    imageBindings, attachmentFormats, attachmentBlends, attachmentWrites);
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(pipelineName, e);
@@ -421,14 +422,17 @@ public final class PackPipelines {
 
     /**
      * Creates the pipeline under its attachment contract, when it has one, and registers that
-     * contract for the variants VulkanMod creates lazily.
+     * contract for the variants VulkanMod creates lazily. {@code attachmentWrites} names the
+     * attachments the program writes, null for all of them.
      */
     private static GraphicsPipeline createRouted(
             String name, VertexFormat format, PackDescriptorLayout layout, String vertex, String fragment,
-            ProgramImageBindingManifest imageBindings, int[] attachmentFormats, PackBlendPlan.Mode[] attachmentBlends
+            ProgramImageBindingManifest imageBindings, int[] attachmentFormats, PackBlendPlan.Mode[] attachmentBlends,
+            boolean[] attachmentWrites
     ) {
         if (attachmentFormats != null) {
-            MrtPipelineContext.begin(attachmentFormats, deviceMaxColorAttachments(), attachmentBlends);
+            MrtPipelineContext.begin(attachmentFormats, deviceMaxColorAttachments(), attachmentBlends,
+                    attachmentWrites);
         }
         GraphicsPipeline pipeline;
         try {
@@ -437,7 +441,7 @@ public final class PackPipelines {
             if (attachmentFormats != null) MrtPipelineContext.end();
         }
         if (attachmentFormats != null) {
-            MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends);
+            MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends, attachmentWrites);
         }
         return pipeline;
     }
@@ -592,7 +596,7 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, fragmentSource,
-                    prepared.imageBindings(), shadowAttachmentFormats(), null);
+                    prepared.imageBindings(), shadowAttachmentFormats(), null, shadowAttachmentWrites(plan));
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -603,6 +607,22 @@ public final class PackPipelines {
     /** ChimeraShadowMap's colour attachments, shadowcolor0 and shadowcolor1: both VK_FORMAT_R8G8B8A8_UNORM. */
     private static int[] shadowAttachmentFormats() {
         return new int[] {37, 37};
+    }
+
+    /**
+     * The shadow colours {@code plan}'s program writes, or null when its source is unknown. Iris
+     * binds only those as the shadow framebuffer's draw buffers, so a colour the program does not
+     * write keeps its contents; a Vulkan attachment the shader leaves unwritten would receive
+     * undefined values.
+     */
+    private static boolean[] shadowAttachmentWrites(PackProgramPlan plan) {
+        String fragment = plan.program().executableFragmentSource();
+        if (fragment == null) return null;
+        boolean[] writes = new boolean[shadowAttachmentFormats().length];
+        for (int target : PostTargetPlan.parse("shadow", fragment).plan().targetSlots()) {
+            if (target >= 0 && target < writes.length) writes[target] = true;
+        }
+        return writes;
     }
 
     /**
@@ -745,7 +765,7 @@ public final class PackPipelines {
                     ? plan.blendPlan().attachments(outputPlan.targetSlots()) : null;
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, fragment, imageBindings,
-                    attachmentFormats, attachmentBlends);
+                    attachmentFormats, attachmentBlends, null);
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);

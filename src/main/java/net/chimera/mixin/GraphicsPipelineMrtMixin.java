@@ -1,5 +1,6 @@
 package net.chimera.mixin;
 
+import net.chimera.render.ChimeraDevice;
 import net.chimera.render.ChimeraRenderingPass;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.PackBlendPlan;
@@ -31,8 +32,8 @@ import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
  * {@link ChimeraRenderingPass} is bound renders without a Vulkan render pass, into the window's
  * color and depth formats, with one blend attachment per color attachment: each starts from the
  * host draw's blend (the vanilla render type's, as in Iris) and takes the pack's blend directive
- * for that buffer where the pipeline's MRT contract declares one. Variants for VulkanMod's own
- * render passes are untouched.
+ * for that buffer where the pipeline's MRT contract declares one. An attachment the contract marks
+ * unwritten gets no color writes. Variants for VulkanMod's own render passes are untouched.
  */
 @Mixin(value = GraphicsPipeline.class, remap = false)
 public abstract class GraphicsPipelineMrtMixin {
@@ -83,13 +84,21 @@ public abstract class GraphicsPipelineMrtMixin {
             VkPipelineColorBlendAttachmentState.Buffer attachments) {
         if (this.chimera$window == null) return attachments;
         PackBlendPlan.Mode[] blends = MrtPipelineContext.attachmentBlends();
+        boolean[] writes = MrtPipelineContext.attachmentWrites();
         // A contract for another attachment set does not describe this window.
         if (blends != null && blends.length != attachments.capacity()) blends = null;
+        if (writes != null && writes.length != attachments.capacity()) writes = null;
+        // Without independentBlend every attachment must blend and mask alike.
+        if (!ChimeraDevice.independentBlend()) {
+            blends = null;
+            writes = null;
+        }
         VkPipelineColorBlendAttachmentState host = attachments.get(0);
         for (int index = 0; index < attachments.capacity(); index++) {
             VkPipelineColorBlendAttachmentState target = attachments.get(index);
             PackBlendPlan.Mode mode = blends == null ? null : blends[index];
-            target.colorWriteMask(host.colorWriteMask());
+            // An attachment the program leaves unwritten keeps its contents, as an unbound GL draw buffer does.
+            target.colorWriteMask(writes == null || writes[index] ? host.colorWriteMask() : 0);
             if (mode == null) {
                 target.blendEnable(host.blendEnable())
                         .srcColorBlendFactor(host.srcColorBlendFactor())
