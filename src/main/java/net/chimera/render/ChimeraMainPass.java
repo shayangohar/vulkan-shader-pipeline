@@ -689,6 +689,15 @@ public final class ChimeraMainPass implements MainPass {
     // Main-target interop
     // ------------------------------------------------------------------
 
+    /**
+     * Minecraft binds the main target before each frame's game render (Reforged hands that bind
+     * here). A frame that renders no level, such as one ticked while the world saves, draws there.
+     */
+    @Override
+    public void mainTargetBindWrite() {
+        rebindMainTarget();
+    }
+
     @Override
     public void rebindMainTarget() {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
