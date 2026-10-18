@@ -233,7 +233,7 @@ final class WorldStateUniformTest {
     /** A frame seen through {@code modelView} at raw noon on a straight sun path. */
     private static PackFrameState noonState(Matrix4f modelView) {
         PackFrameState state = new PackFrameState();
-        state.rotateViewForTest(modelView, forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f));
+        state.rotateViewForTest(modelView, legacyProjection(forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f)));
         state.installSunPath(0.0f, 0.0f);
         state.setCelestialForTest(0.0f, 0.0f, 0x4C7BC8);
         return state;
@@ -384,7 +384,7 @@ final class WorldStateUniformTest {
         Matrix4f firstPackProjection = legacyProjection(firstProjection);
         Matrix4f secondPackProjection = legacyProjection(secondProjection);
         PackFrameState state = new PackFrameState();
-        state.rotateViewForTest(firstModel, firstProjection);
+        state.rotateViewForTest(firstModel, legacyProjection(firstProjection));
         assertMatrixNear(firstModel, state.modelView(), "first-frame model view");
         assertMatrixNear(firstProjection, state.rasterProjectionForTest(),
                 "host raster projection must remain unchanged");
@@ -397,7 +397,7 @@ final class WorldStateUniformTest {
         assertMatrixNear(new Matrix4f(firstProjection).mul(firstModel), state.mvpForTest(),
                 "host MVP must use the unconverted raster projection");
 
-        state.rotateViewForTest(secondModel, secondProjection);
+        state.rotateViewForTest(secondModel, legacyProjection(secondProjection));
         assertMatrixNear(secondModel, state.modelView(), "second-frame model view");
         assertMatrixNear(firstModel, state.previousModelViewForTest(),
                 "previous model view must be the first frame, not the current one");
@@ -419,7 +419,7 @@ final class WorldStateUniformTest {
             }
         }
 
-        state.rotateViewForTest(secondModel, secondProjection);
+        state.rotateViewForTest(secondModel, legacyProjection(secondProjection));
         assertMatrixNear(secondModel, state.previousModelViewForTest(),
                 "stationary camera must converge previous model view");
         assertMatrixNear(secondPackProjection, state.previousProjectionForTest(),
@@ -433,7 +433,7 @@ final class WorldStateUniformTest {
         Matrix4f secondProjection = secondFrameProjection();
         Matrix4f secondPackProjection = legacyProjection(secondProjection);
         PackFrameState reloaded = new PackFrameState();
-        reloaded.rotateViewForTest(secondModel, secondProjection);
+        reloaded.rotateViewForTest(secondModel, legacyProjection(secondProjection));
         assertMatrixNear(secondModel, reloaded.previousModelViewForTest(),
                 "reloaded session must restart previous model view from current");
         assertMatrixNear(secondPackProjection, reloaded.previousProjectionForTest(),
@@ -441,7 +441,7 @@ final class WorldStateUniformTest {
 
         PackFrameState delayedCapture = new PackFrameState();
         delayedCapture.rotateViewForTest(null, null);
-        delayedCapture.rotateViewForTest(secondModel, secondProjection);
+        delayedCapture.rotateViewForTest(secondModel, legacyProjection(secondProjection));
         assertMatrixNear(secondModel, delayedCapture.previousModelViewForTest(),
                 "missing initial capture must not seed history with identity");
         assertMatrixNear(secondPackProjection, delayedCapture.previousProjectionForTest(),
@@ -457,11 +457,11 @@ final class WorldStateUniformTest {
         PackFrameState resized = new PackFrameState();
         assertTrue(!resized.updateViewport(2560, 1440),
                 "initial viewport must not count as a resize");
-        resized.rotateViewForTest(firstModel, firstProjection);
-        resized.rotateViewForTest(secondModelView(), secondFrameProjection());
+        resized.rotateViewForTest(firstModel, legacyProjection(firstProjection));
+        resized.rotateViewForTest(secondModelView(), legacyProjection(secondFrameProjection()));
         assertTrue(resized.updateViewport(1920, 1080),
                 "viewport size change was not detected");
-        resized.rotateViewForTest(firstModel, firstProjection);
+        resized.rotateViewForTest(firstModel, legacyProjection(firstProjection));
         assertMatrixNear(firstModel, resized.previousModelViewForTest(),
                 "resize must seed previous model view from the resized frame");
         assertMatrixNear(firstPackProjection, resized.previousProjectionForTest(),
@@ -510,7 +510,7 @@ final class WorldStateUniformTest {
             rendered.mul(new Matrix4f().rotateX(0.009f).rotateZ(-0.004f));
 
             PackFrameState state = new PackFrameState();
-            state.rotateViewForTest(new Matrix4f(), rendered);
+            state.rotateViewForTest(new Matrix4f(), legacyProjection(rendered));
             Matrix4f packProjection = state.projectionForTest();
             Matrix4f packInverse = state.projectionInverseForTest();
             assertMatrixNear(rendered, state.rasterProjectionForTest(),
@@ -546,7 +546,7 @@ final class WorldStateUniformTest {
 
         PackFrameState state = new PackFrameState();
         Matrix4f hostProjection = forwardProjection(0.05f, 512.0f, 16.0f / 9.0f);
-        state.rotateViewForTest(new Matrix4f(), hostProjection);
+        state.rotateViewForTest(new Matrix4f(), legacyProjection(hostProjection));
         verifyWrittenMatrix(state, "gbufferProjection", legacyProjection(hostProjection));
         verifyWrittenMatrix(state, "ProjMat", hostProjection);
     }
@@ -556,8 +556,8 @@ final class WorldStateUniformTest {
         Matrix4f previousModelView = new Matrix4f();
         Matrix4f currentModelView = new Matrix4f().translation(-0.025f, 0.01f, 0.0f);
         PackFrameState state = new PackFrameState();
-        state.rotateViewForTest(previousModelView, hostProjection);
-        state.rotateViewForTest(currentModelView, hostProjection);
+        state.rotateViewForTest(previousModelView, legacyProjection(hostProjection));
+        state.rotateViewForTest(currentModelView, legacyProjection(hostProjection));
 
         float[] worldPoint = {0.12f, 0.08f, -5.0f};
         Vector4f currentView = transform(currentModelView,
@@ -656,6 +656,10 @@ final class WorldStateUniformTest {
         return forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f).m20(0.001f);
     }
 
+    /**
+     * The GL projection behind a host forward-Z one: what Minecraft 1.21.1 hands renderLevel, and
+     * what packs read as gbufferProjection.
+     */
     private static Matrix4f legacyProjection(Matrix4f rendered) {
         Matrix4f converted = new Matrix4f(rendered);
         converted.m02(2.0f * rendered.m02() - rendered.m03());

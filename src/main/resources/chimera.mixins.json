@@ -35,6 +35,7 @@
     "ChimeraPipelineBuilderAccessor",
     "ChimeraVulkanImageAccessor",
     "ChimeraRenderPassAccessor",
+    "ChimeraShadowProjectionMixin",
     "ChimeraRendererAccessor",
     "ChimeraDeviceAccessor",
     "ChimeraDeviceFeaturesMixin",

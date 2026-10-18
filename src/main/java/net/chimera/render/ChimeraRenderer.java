@@ -201,6 +201,11 @@ public final class ChimeraRenderer {
         return segmentsActive() && chimeraPass != null && chimeraPass.packLoaded();
     }
 
+    /** True while Chimera's shadow pass records (ChimeraShadowProjectionMixin). */
+    public static boolean shadowPassActive() {
+        return chimeraPass != null && chimeraPass.shadowPass.shadowPassActive;
+    }
+
     /**
      * The screen overlay switches of the pack rendering this frame's world, or null when the
      * world is not pack-rendered and Minecraft's overlays draw as usual (Iris checks its active

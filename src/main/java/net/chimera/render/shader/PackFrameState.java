@@ -517,27 +517,27 @@ final class PackFrameState {
         }
         if (!viewInitialized) {
             modelView.set(capturedModelView);
-            rasterProjection.set(capturedProjection);
-            convertProjectionToLegacyClipRange(rasterProjection, projection);
+            projection.set(capturedProjection);
+            mapDepthToVulkanRange(projection, rasterProjection);
             previousModelView.set(capturedModelView);
             previousProjection.set(projection);
         } else {
             previousModelView.set(modelView);
             previousProjection.set(projection);
             modelView.set(capturedModelView);
-            rasterProjection.set(capturedProjection);
-            convertProjectionToLegacyClipRange(rasterProjection, projection);
+            projection.set(capturedProjection);
+            mapDepthToVulkanRange(projection, rasterProjection);
         }
         viewInitialized = true;
     }
 
-    /** Maps host forward-Z [0,1] clip depth to the legacy pack [-1,1] clip range. */
-    private static void convertProjectionToLegacyClipRange(Matrix4f rendered, Matrix4f destination) {
-        destination.set(rendered);
-        destination.m02(2.0f * rendered.m02() - rendered.m03());
-        destination.m12(2.0f * rendered.m12() - rendered.m13());
-        destination.m22(2.0f * rendered.m22() - rendered.m23());
-        destination.m32(2.0f * rendered.m32() - rendered.m33());
+    /** The host's form of a GL projection: Reforged's applyProjectionMatrix maps [-1,1] depth onto [0,1]. */
+    private static void mapDepthToVulkanRange(Matrix4f legacy, Matrix4f destination) {
+        destination.set(legacy);
+        destination.m02(0.5f * (legacy.m02() + legacy.m03()));
+        destination.m12(0.5f * (legacy.m12() + legacy.m13()));
+        destination.m22(0.5f * (legacy.m22() + legacy.m23()));
+        destination.m32(0.5f * (legacy.m32() + legacy.m33()));
     }
 
     /** Test-only entry for the previous-matrix rotation; skips host render state. */

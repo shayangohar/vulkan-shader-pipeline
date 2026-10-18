@@ -62,15 +62,12 @@ public final class ChimeraHandRenderer implements AutoCloseable {
                 .getRenderTypes(state, MODEL_RANDOM, ModelData.EMPTY).contains(RenderType.translucent());
     }
 
-    /** Iris's depth squeeze expressed in VulkanMod's forward-Z [0,1] range. */
+    /**
+     * Iris's depth squeeze on Minecraft's GL projection (HandRenderer). The host maps the result
+     * onto Vulkan's [0,1] depth, which puts the hand at Iris's 0.5 +/- DEPTH / 2.
+     */
     public static Matrix4f projection(Matrix4f raster) {
-        Matrix4f result = new Matrix4f(raster);
-        float offset = (1.0F - DEPTH) * 0.5F;
-        result.m02(DEPTH * raster.m02() + offset * raster.m03());
-        result.m12(DEPTH * raster.m12() + offset * raster.m13());
-        result.m22(DEPTH * raster.m22() + offset * raster.m23());
-        result.m32(DEPTH * raster.m32() + offset * raster.m33());
-        return result;
+        return new Matrix4f().scale(1.0F, 1.0F, DEPTH).mul(raster);
     }
 
     public static void drawSolid() {

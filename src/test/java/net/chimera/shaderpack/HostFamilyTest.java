@@ -145,11 +145,15 @@ final class HostFamilyTest {
                     && glyph.contains("layout(location = 7) in vec4 ChimeraPackedTangent;"),
                             "entity-family GLYPH inputs");
         }
-        var raster = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, true);
+        // Minecraft 1.21.1's GL projection; the host (Reforged's VRenderSystem.applyProjectionMatrix)
+        // maps the depth row onto Vulkan's [0,1].
+        var raster = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, false);
         var snapshot = new Matrix4f(raster);
-        var drawn = ChimeraHandRenderer.projection(raster);
-        var iris = new Matrix4f().scale(1, 1, ChimeraHandRenderer.DEPTH)
-                .mul(new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, false));
+        var squeezed = ChimeraHandRenderer.projection(raster);
+        var drawn = new Matrix4f(squeezed).m02(0.5F * (squeezed.m02() + squeezed.m03()))
+                .m12(0.5F * (squeezed.m12() + squeezed.m13())).m22(0.5F * (squeezed.m22() + squeezed.m23()))
+                .m32(0.5F * (squeezed.m32() + squeezed.m33()));
+        var iris = new Matrix4f().scale(1, 1, ChimeraHandRenderer.DEPTH).mul(raster);
         for (float z : new float[]{-0.05F, -0.5F, -1.0F, -128F}) {
             var point = new Vector4f(0.02F, -0.03F, z, 1);
             var actual = drawn.transform(new Vector4f(point));
