@@ -95,13 +95,12 @@ final class GlslVertexPreambles {
                 return vec4(vec2(inUV) * CHIMERA_UV_SCALE, 0.0, 1.0);
             }
 
-            // Raw UV2 light coordinates (level * 16, 0..240), as Iris supplies
-            // gl_MultiTexCoord1; gl_TextureMatrix[1] normalizes them.
+            // Raw UV2 light coordinates, one byte each (block, sky), as Iris supplies
+            // gl_MultiTexCoord1 from Sodium's vertices; gl_TextureMatrix[1] normalizes
+            // them. Smooth lighting keeps fractions of a level below the top nibble.
             vec4 chimeraTexCoord1Value() {
-                return vec4(
-                        vec2(float((uint(inPositionLight.w) >> 4u) & 0xFu),
-                             float((uint(inPositionLight.w) >> 12u) & 0xFu)) * 16.0,
-                        0.0, 1.0);
+                uint light = uint(inPositionLight.w);
+                return vec4(float(light & 0xFFu), float((light >> 8u) & 0xFFu), 0.0, 1.0);
             }
 
             vec2 chimeraMcEntityValue() {
