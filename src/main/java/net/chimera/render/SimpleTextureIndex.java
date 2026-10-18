@@ -4,8 +4,7 @@ import net.chimera.mixin.ChimeraTextureManagerAccessor;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.SimpleTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
-import net.minecraft.resources.Identifier;
-import net.vulkanmod.render.engine.VkTextureView;
+import net.minecraft.resources.ResourceLocation;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,7 +16,7 @@ import java.util.Map;
  * <p>Matches draw-observed albedo images by exact GPU identity against
  * registered textures. Only resource-backed {@code SimpleTexture}
  * instances qualify: atlases, dynamic textures, lightmaps, overlays, and
- * any view that is not a Vulkan image never match, so no maps are
+ * any texture without a Vulkan image never match, so no maps are
  * invented for them. Read-only; safe at the pump seam.</p>
  */
 public final class SimpleTextureIndex {
@@ -26,14 +25,14 @@ public final class SimpleTextureIndex {
     public static List<MaterialMapOwner.SimpleEntry> snapshot(TextureManager manager) {
         List<MaterialMapOwner.SimpleEntry> entries = new ArrayList<>();
         if (!(manager instanceof ChimeraTextureManagerAccessor accessor)) return entries;
-        for (Map.Entry<Identifier, AbstractTexture> registered
+        for (Map.Entry<ResourceLocation, AbstractTexture> registered
                 : accessor.chimera$texturesByPath().entrySet()) {
             if (!(registered.getValue() instanceof SimpleTexture simple)) continue;
-            var view = simple.getTextureView();
-            if (!(view instanceof VkTextureView vulkanView)
-                    || vulkanView.texture().getVulkanImage() == null) continue;
-            var resourceId = simple.resourceId();
-            entries.add(new MaterialMapOwner.SimpleEntry(vulkanView.texture().getVulkanImage(),
+            var image = ChimeraTextures.image(simple);
+            if (image == null) continue;
+            // A SimpleTexture registers under the resource it loads.
+            ResourceLocation resourceId = registered.getKey();
+            entries.add(new MaterialMapOwner.SimpleEntry(image,
                     resourceId.getNamespace(), relativeSpritePath(resourceId.getPath())));
         }
         return entries;

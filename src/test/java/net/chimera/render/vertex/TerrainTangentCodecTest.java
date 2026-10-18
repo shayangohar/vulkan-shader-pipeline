@@ -53,31 +53,38 @@ final class TerrainTangentCodecTest {
     }
 
     /**
-     * VulkanMod's fluid renderer passes packed normal 0. The builder must
-     * store the quad's face normal, as Iris does, or the pack normalizes a
-     * zero vector and water lighting and reflections turn NaN.
+     * The builder stores each quad's face normal from its diagonals, as Iris does. VulkanMod's
+     * fluid renderer passes packed normal 0, which a pack would normalize into NaN water
+     * lighting; its block renderer passes the facing axis as unit bytes (1/127 once unpacked).
      */
     @Test
-    void checkFluidNormal() {
+    void storesFaceNormals() {
+        // Water top face, Minecraft corner order (counter-clockwise from above), no host normal.
+        checkStoredNormal(new float[][] {{0, 0.875f, 0}, {0, 0.875f, 1}, {1, 0.875f, 1}, {1, 0.875f, 0}},
+                0, new float[] {0, 1, 0});
+        // Block east face with VulkanMod's VertexUtil.packNormal(1, 0, 0).
+        checkStoredNormal(new float[][] {{1, 1, 1}, {1, 0, 1}, {1, 0, 0}, {1, 1, 0}},
+                0x000001, new float[] {1, 0, 0});
+    }
+
+    private static void checkStoredNormal(float[][] corners, int hostNormal, float[] expected) {
         TerrainMaterialPlan plan = new TerrainMaterialPlan(
                 true, true, true, true, List.of());
         ChimeraExtVertexBuilder builder = new ChimeraExtVertexBuilder(plan);
         int stride = plan.stride();
         long base = MemoryUtil.nmemCalloc(4, stride);
         try {
-            // Water top face, Minecraft corner order (counter-clockwise from above).
-            float[][] corners = {{0, 0.875f, 0}, {0, 0.875f, 1}, {1, 0.875f, 1}, {1, 0.875f, 0}};
             for (int index = 0; index < 4; index++) {
                 float[] c = corners[index];
                 builder.vertex(base + (long) index * stride, c[0], c[1], c[2], 0xFFFFFFFF,
-                        index >= 2 ? 1 : 0, index == 1 || index == 2 ? 1 : 0, 0x00F000F0, 0);
+                        index >= 2 ? 1 : 0, index == 1 || index == 2 ? 1 : 0, 0x00F000F0, hostNormal);
             }
             for (int index = 0; index < 4; index++) {
                 int word = MemoryUtil.memGetInt(base + (long) index * stride + 32);
-                assertTrue(Math.abs(ChimeraEntityVertexData.unpack(word, 1) - 1.0f) < 0.01f
-                                && Math.abs(ChimeraEntityVertexData.unpack(word, 0)) < 0.01f
-                                && Math.abs(ChimeraEntityVertexData.unpack(word, 2)) < 0.01f,
-                        "fluid vertex " + index + " kept a missing normal: " + Integer.toHexString(word));
+                for (int axis = 0; axis < 3; axis++) {
+                    assertTrue(Math.abs(ChimeraEntityVertexData.unpack(word, axis) - expected[axis]) < 0.01f,
+                            "vertex " + index + " stored normal " + Integer.toHexString(word));
+                }
             }
         } finally {
             MemoryUtil.nmemFree(base);

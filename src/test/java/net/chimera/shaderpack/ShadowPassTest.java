@@ -1,14 +1,14 @@
 package net.chimera.shaderpack;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ShadowCullingFrustum;
+import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.HostLayoutLane;
-import net.minecraft.client.renderer.RenderPipelines;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
@@ -100,19 +100,19 @@ final class ShadowPassTest {
         assertTrue(snapshotAfterCasters, "entity casters must draw before the shadowtex1 snapshot, as in Iris");
     }
 
+    /**
+     * A shadow-pass draw tries its shadow lane first; one without a lane is dropped, never drawn with
+     * its host shader.
+     */
     @Test
     void shadowDrawWithoutLaneIsDropped() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin");
+        var draws = MixinBytecode.nativeClass("net/chimera/render/shader/PackHostDraws");
         boolean lane = false;
-        boolean guard = false;
         boolean dropped = false;
-        for (var instruction : MixinBytecode.instructionsThrough(mixin, "chimera$immediateFamilyWindow")) {
+        for (var instruction : MixinBytecode.instructionsThrough(draws, "draw")) {
             if (instruction instanceof MethodInsnNode call) {
-                if (call.name.equals("beginHostLayoutDraw")) lane = true;
-                if (lane && call.name.equals("isShadowCasterPass")) guard = true;
-                if (guard && call.name.equals("close") && call.owner.equals("com/mojang/blaze3d/vertex/MeshData")) {
-                    dropped = true;
-                }
+                if (call.name.equals("hostLaneFor")) lane = true;
+                if (lane && call.name.equals("dropsHostDraw")) dropped = true;
             }
         }
         assertTrue(dropped, "a shadow-pass draw tries its shadow lane first; one without an installed lane "
@@ -129,34 +129,27 @@ final class ShadowPassTest {
     @Test
     void shadowLaneRoutes() {
         var shadowPass = HostLayoutLane.Pass.SHADOW;
-        Map<RenderPipeline, HostLayoutLane> routes = Map.of(
-                RenderPipelines.LINES, HostLayoutLane.SHADOW_LINES,
-                RenderPipelines.SECONDARY_BLOCK_OUTLINE,
-                HostLayoutLane.SHADOW_LINES,
-                RenderPipelines.LEASH, HostLayoutLane.SHADOW_LEASH,
-                RenderPipelines.LIGHTNING,
-                HostLayoutLane.SHADOW_LIGHTNING,
-                RenderPipelines.GLINT, HostLayoutLane.SHADOW_GLINT,
-                RenderPipelines.TEXT, HostLayoutLane.SHADOW_TEXT,
-                RenderPipelines.TEXT_SEE_THROUGH,
+        record Draw(String shader, VertexFormat format) {}
+        Map<Draw, HostLayoutLane> routes = Map.of(
+                new Draw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL), HostLayoutLane.SHADOW_LINES,
+                new Draw("rendertype_leash", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP), HostLayoutLane.SHADOW_LEASH,
+                new Draw("rendertype_lightning", DefaultVertexFormat.POSITION_COLOR), HostLayoutLane.SHADOW_LIGHTNING,
+                new Draw("rendertype_glint", DefaultVertexFormat.POSITION_TEX), HostLayoutLane.SHADOW_GLINT,
+                new Draw("rendertype_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP),
                 HostLayoutLane.SHADOW_TEXT,
-                RenderPipelines.TEXT_BACKGROUND,
+                new Draw("rendertype_text_see_through", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP),
+                HostLayoutLane.SHADOW_TEXT,
+                new Draw("rendertype_text_background", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP),
                 HostLayoutLane.SHADOW_TEXT_BG,
-                RenderPipelines.WATER_MASK,
-                HostLayoutLane.SHADOW_BASIC);
+                new Draw("rendertype_water_mask", DefaultVertexFormat.POSITION), HostLayoutLane.SHADOW_BASIC);
         for (var route : routes.entrySet()) {
-            assertTrue(HostLayoutLane.forDraw(route.getKey(),
-                            route.getKey().getVertexFormat(), shadowPass) == route.getValue(),
-                    route.getKey().getLocation() + " must route to " + route.getValue() + " in the shadow pass");
+            assertTrue(HostLayoutLane.forDraw(route.getKey().shader(), route.getKey().format(), shadowPass)
+                            == route.getValue(),
+                    route.getKey().shader() + " must route to " + route.getValue() + " in the shadow pass");
         }
-        // Iris assigns no shadow key to these (or cancels them): they stay out of the map.
-        for (var host : List.of(RenderPipelines.LINES_TRANSLUCENT,
-                RenderPipelines.DRAGON_RAYS,
-                RenderPipelines.TEXT_INTENSITY,
-                RenderPipelines.BEACON_BEAM_OPAQUE)) {
-            assertTrue(HostLayoutLane.forDraw(host, host.getVertexFormat(), shadowPass) == null,
-                    host.getLocation() + " has no Iris shadow key");
-        }
+        // Iris cancels beacon beams in the shadow pass: they stay out of the map.
+        assertTrue(HostLayoutLane.forDraw("rendertype_beacon_beam", DefaultVertexFormat.BLOCK, shadowPass) == null,
+                "beacon beams have no shadow lane");
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT.alphaReference(),
                 "Iris SHADOW_TEXT: NON_ZERO_ALPHA");
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT_BG.alphaReference(),
@@ -180,7 +173,7 @@ final class ShadowPassTest {
         Files.writeString(shaders.resolve("shadow_text.fsh"), "#version 120\nvoid main() { decoy(); }\n");
         var analysis = PackProbe.analyze(root);
         Map<String, List<String>> inputs = Map.of(
-                "shadow_lines", List.of("layout(location = 3) in float LineWidth;", "void chimeraLineMain()",
+                "shadow_lines", List.of("#define chimeraLineWidth LineWidth", "void chimeraLineMain()",
                         "chimeraLineViewScale", "chimeraShadowUniforms.viewWidth"),
                 "shadow_leash", List.of("layout(location = 2) in ivec2 UV2;", "const vec2 UV0 = vec2(0.5);"),
                 "shadow_lightning", List.of("layout(location = 1) in vec4 Color;", "const ivec2 UV2 = ivec2(240);"),
@@ -243,28 +236,28 @@ final class ShadowPassTest {
                             && fragment.contains("int(chimeraBlockEntityId) / 100 == 155"),
                     key + " reads Iris's entity-patched ids, unbound on the host mesh: " + vertex);
         } else {
-            assertTrue(vertex.contains("(0) == 10001")
+            assertTrue(vertex.contains("chimeraHostEntityId) == 10001")
                             && !vertex.contains("chimeraEntityId")
                             && fragment.contains("(-1) / 100 == 155"),
-                    key + " must read entityId 0 and blockEntityId -1: " + vertex + "\n" + fragment);
+                    key + " must read the per-draw entityId and blockEntityId -1: " + vertex + "\n" + fragment);
         }
     }
 
+    /** Burning-entity fire draws through the entity family, its block-sheet cutout, with Iris's entity_flame id. */
     @Test
     void burningEntityFireDrawsThroughEntityFamily() throws IOException {
-        var flames = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraFlameFeatureRendererMixin").methods.stream()
-                .filter(method -> method.name.equals("chimera$packFlames")).findFirst().orElseThrow();
-        boolean flameId = false;
-        boolean family = false;
-        for (var instruction : flames.instructions) {
-            if (instruction instanceof MethodInsnNode call) {
-                if (call.name.equals("flameEntityId")) flameId = true;
-                if (call.name.equals("emit")
-                        && call.owner.equals("net/chimera/render/ChimeraFamilyDraw")) family = true;
-            }
-        }
-        assertTrue(flameId && family,
-                "burning-entity fire must draw through the entity family with Iris's entity_flame id");
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraEntityRenderDispatcherMixin");
+        assertTrue(MixinBytecode.injects(mixin, "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;",
+                        "render", "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;renderFlame("
+                                + "Lcom/mojang/blaze3d/vertex/PoseStack;"
+                                + "Lnet/minecraft/client/renderer/MultiBufferSource;"
+                                + "Lnet/minecraft/world/entity/Entity;Lorg/joml/Quaternionf;)V"),
+                "burning-entity fire must be wrapped where the dispatcher draws it");
+        assertTrue(MixinBytecode.instructionsThrough(mixin, "chimera$flameId").stream().anyMatch(instruction ->
+                        instruction instanceof MethodInsnNode call && call.name.equals("flameEntityId")),
+                "burning-entity fire must draw with Iris's entity_flame id");
+        assertEquals(ChimeraEntityBridge.Family.ENTITY, ChimeraEntityBridge.worldFamily("rendertype_entity_cutout",
+                DefaultVertexFormat.NEW_ENTITY, ChimeraEntityBridge.Family.ENTITY), "fire's cutout is an entity draw");
     }
 
     /** Iris ShadowRenderer.createShadowFrustum: the culling each shadow.culling state picks, with its distances. */
@@ -371,32 +364,28 @@ final class ShadowPassTest {
         return frustum.visible(x, y, z, x + 1.0F, y + 1.0F, z + 1.0F);
     }
 
-    /** Iris renders shadows before any terrain: the shadow segment runs at the opaque layer's HEAD. */
+    /** Iris renders shadows before any terrain: the shadow segment runs before the opaque layer draws. */
     @Test
     void shadowPassOrder() throws IOException {
-        var hook = MixinBytecode.nativeClass("net/chimera/mixin/WorldRendererMixin").methods.stream()
-                .filter(method -> {
-                    for (var instruction : method.instructions) {
-                        if (instruction instanceof MethodInsnNode call
-                                && call.name.equals("renderShadowSegment")) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }).findFirst().orElseThrow(() -> new AssertionError("no mixin method starts the shadow segment"));
-        String point = null;
-        for (var annotation : hook.visibleAnnotations == null
-                ? List.<AnnotationNode>of() : hook.visibleAnnotations) {
-            if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
-            for (int i = 0; i < annotation.values.size(); i += 2) {
-                if (!annotation.values.get(i).equals("at")) continue;
-                var at = (AnnotationNode) ((List<?>) annotation.values.get(i + 1)).get(0);
-                for (int j = 0; j < at.values.size(); j += 2) {
-                    if (at.values.get(j).equals("value")) point = (String) at.values.get(j + 1);
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/WorldRendererMixin");
+        assertTrue(MixinBytecode.injects(mixin, "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;",
+                "renderSectionLayer", null), "the terrain layers must be wrapped");
+        var hook = mixin.methods.stream().filter(method -> method.name.equals("chimera$terrainLayer")).findFirst()
+                .orElseThrow();
+        int shadow = -1;
+        int layer = -1;
+        int index = 0;
+        for (var instruction : hook.instructions) {
+            if (instruction instanceof MethodInsnNode call) {
+                if (call.name.equals("renderShadowSegment") && shadow < 0) shadow = index;
+                if (shadow >= 0 && layer < 0 && call.name.equals("call")
+                        && call.owner.equals("com/llamalad7/mixinextras/injector/wrapoperation/Operation")) {
+                    layer = index;
                 }
             }
+            index++;
         }
-        assertEquals("HEAD", point, "the shadow map must render before the opaque layer samples it");
+        assertTrue(shadow >= 0 && layer > shadow, "the shadow map must render before the opaque layer samples it");
     }
 
     /** BSL-style legacy shadow program: terrain attributes, both identities and both shadow colours. */

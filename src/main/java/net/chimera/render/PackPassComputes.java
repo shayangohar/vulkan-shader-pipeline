@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PassComputePlan;
@@ -140,7 +141,8 @@ final class PackPassComputes implements AutoCloseable {
             VulkanImage image = binding.target() < 0 ? (resources == null ? null : resources.image("noisetex"))
                     : binding.target() < sources.length ? sources[binding.target()] : null;
             if (image == null) throw new IllegalStateException(binding.symbol() + " has no image this frame");
-            if (binding.storage() && (image.usage & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
+            if (binding.storage()
+                    && (((ChimeraVulkanImageAccessor) image).chimera$usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
                 throw new IllegalStateException(binding.symbol() + " image was not created for storage");
             }
             images.add(image);

@@ -1,12 +1,19 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.FamilyRenderType;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.GeometryOutputPlan;
 import net.chimera.shaderpack.PackPipelines;
+import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -20,6 +27,38 @@ final class PackFamilyWindows {
 
     PackFamilyWindows(ChimeraMainPass pass) {
         this.pass = pass;
+    }
+
+    /**
+     * Draws family batches in order inside the pack windows their lanes write, one window per run
+     * of consecutive batches with the same outputs. A run whose window cannot open is discarded:
+     * its widened meshes have no host program to fall back to.
+     */
+    void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
+                           Consumer<RenderType> discard) {
+        int start = 0;
+        while (start < batches.size()) {
+            GeometryOutputPlan outputs = pass.laneWindowOutputs(batches.get(start).family());
+            int end = start + 1;
+            while (end < batches.size()
+                    && Objects.equals(pass.laneWindowOutputs(batches.get(end).family()), outputs)) end++;
+            List<FamilyRenderType> run = batches.subList(start, end);
+            for (FamilyRenderType batch : run) {
+                pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(batch.family(), batch.format()));
+            }
+            if (outputs != null && !beginPackFamilyWindow(outputs)) {
+                run.forEach(discard);
+            } else {
+                // Rendering reopens inside the window before the first batch draws.
+                if (outputs != null) pass.rebindMainTarget();
+                try {
+                    run.forEach(draw);
+                } finally {
+                    if (outputs != null) endPackFamilyWindow(outputs);
+                }
+            }
+            start = end;
+        }
     }
 
     /**
@@ -93,7 +132,7 @@ final class PackFamilyWindows {
     void beginPackResourceWindow(TerrainRenderType renderType) {
         if (pass.shadowPass.shadowPassActive || !ChimeraRenderer.segmentsActive()) return;
         PackPipelines.PackTerrain terrain = switch (renderType) {
-            case SOLID, CUTOUT -> pass.pipelines.terrainRoute;
+            case SOLID, CUTOUT_MIPPED, CUTOUT -> pass.pipelines.terrainRoute;
             case TRANSLUCENT -> pass.pipelines.waterRoute;
             default -> null;
         };
@@ -105,12 +144,16 @@ final class PackFamilyWindows {
      * Pairs the real selector atlas with LevelRenderer.chunkLayerSampler.
      * WorldRenderer calls this only after VulkanMod has synchronized slot 0.
      */
-    public void bindTerrainAtlasAfterSelector(TerrainRenderType renderType) {
+    public void bindTerrainImagesAfterSelector(TerrainRenderType renderType) {
         if (pass.shadowPass.shadowPassActive) return;
-        if (pass.packTranslucentSuspended && renderType == TerrainRenderType.TRANSLUCENT) return;
-        PackPipelines.PackTerrain terrain = renderType == TerrainRenderType.TRANSLUCENT
-                ? pass.pipelines.waterRoute : pass.pipelines.terrainRoute;
-        if (terrain == null) return;
+        boolean translucent = renderType == TerrainRenderType.TRANSLUCENT;
+        PackPipelines.PackTerrain terrain = translucent ? pass.pipelines.waterRoute : pass.pipelines.terrainRoute;
+        if (terrain == null || translucent && pass.packTranslucentSuspended) {
+            // The fixed pipeline draws this layer. Reforged has just rebound its shadow map slot
+            // (unit 3) from RenderSystem, which holds no texture there, to the missing texture.
+            pass.shadowPass.shadowMap.bindShadowTexture();
+            return;
+        }
         restorePackResourceWindow();
         // Capture the draw context before the transaction: the albedo image
         // straight from the synchronized selector plus the authoritative

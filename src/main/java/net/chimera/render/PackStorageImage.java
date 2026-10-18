@@ -70,11 +70,11 @@ final class PackStorageImage extends VulkanImage {
     private final long allocation;
     private final long view;
     private final int depth;
+    private long sampler;
     private boolean freed;
     private boolean initialized;
 
     private PackStorageImage(
-            String name,
             long image,
             long allocation,
             int format,
@@ -86,11 +86,11 @@ final class PackStorageImage extends VulkanImage {
             int formatSize,
             long sampler
     ) {
-        super(name, image, format, 1, width, height, formatSize, usage, view);
+        super(image, format, 1, width, height, formatSize, usage, view);
         this.allocation = allocation;
         this.view = view;
         this.depth = depth;
-        setSampler(sampler);
+        this.sampler = sampler;
         setCurrentLayout(VK_IMAGE_LAYOUT_UNDEFINED);
         this.initialized = false;
     }
@@ -123,8 +123,7 @@ final class PackStorageImage extends VulkanImage {
                 throw new IllegalStateException("advanced image allocation failed: " + result);
             }
             long imageId = image.get(0);
-            long imageView = VulkanImage.createImageView(imageId, VK_IMAGE_VIEW_TYPE_3D,
-                    format, VK_IMAGE_ASPECT_COLOR_BIT, 1, 0, 1);
+            long imageView = ImageViews.create(imageId, VK_IMAGE_VIEW_TYPE_3D, format, VK_IMAGE_ASPECT_COLOR_BIT);
             LongBuffer sampler = stack.mallocLong(1);
             VkSamplerCreateInfo samplerInfo = VkSamplerCreateInfo.calloc(stack)
                     .sType$Default()
@@ -143,7 +142,7 @@ final class PackStorageImage extends VulkanImage {
                 vmaDestroyImage(Vulkan.getAllocator(), imageId, allocation.get(0));
                 throw new IllegalStateException("advanced image sampler allocation failed");
             }
-            return new PackStorageImage("chimeraAdvanced_" + spec.name(), imageId,
+            return new PackStorageImage(imageId,
                     allocation.get(0), format, spec.width(), spec.height(), spec.depth(),
                     usage, imageView, bytesPerVoxel(spec.internalFormat()), sampler.get(0));
         }
@@ -270,16 +269,17 @@ final class PackStorageImage extends VulkanImage {
     @Override
     public long getImageView() { return view; }
 
+    /** The image's own sampler: nearest for integer formats, linear otherwise, repeating, on one level. */
     @Override
-    public long getImageView(int ignoredFormat) { return view; }
+    public long getSampler() { return sampler; }
 
     @Override
     public void free() {
         if (freed) return;
         freed = true;
-        if (getSampler() != 0L) {
-            vkDestroySampler(Vulkan.getVkDevice(), getSampler(), null);
-            setSampler(0L);
+        if (sampler != 0L) {
+            vkDestroySampler(Vulkan.getVkDevice(), sampler, null);
+            sampler = 0L;
         }
         vkDestroyImageView(Vulkan.getVkDevice(), view, null);
         vmaDestroyImage(Vulkan.getAllocator(), getId(), allocation);

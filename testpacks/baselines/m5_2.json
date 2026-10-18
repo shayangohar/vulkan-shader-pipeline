@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "material": {
-      "reportSha256": "08a48511d1d94416d3d1f96e2c233fc85e0ab24c57fb8a5eb5b36b8ed432cf68",
+      "reportSha256": "e97f8ba330659a69d66c0453976a8f25fa2e7695ed7836e3891166c7b4e1d3a7",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -52,9 +52,10 @@
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
         ],
         "gbuffers_block_translucent": [
-          "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
+          "BLOCK_TRANSLUCENT_INSTALLED",
           "BLOCK_VERTEX_BRIDGE",
           "ENTITY_STATE_FIXED_TO_HOST",
+          "ENTITY_VERTEX_FORMAT_EXTENDED",
           "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"
@@ -88,7 +89,7 @@
       }
     },
     "unsupported_vertex": {
-      "reportSha256": "6314fd93771171f9ea9113b81848e0a954ad0772cf5adbc9a58e14e45bbd9e07",
+      "reportSha256": "92b9abbd473766e634b0a3ed2068543f0de4fdf2ed9da2c7ecb701dfce0450ae",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -138,9 +139,10 @@
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
         ],
         "gbuffers_block_translucent": [
-          "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
+          "BLOCK_TRANSLUCENT_INSTALLED",
           "BLOCK_VERTEX_BRIDGE",
           "ENTITY_STATE_FIXED_TO_HOST",
+          "ENTITY_VERTEX_FORMAT_EXTENDED",
           "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"

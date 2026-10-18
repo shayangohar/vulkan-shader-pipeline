@@ -16,9 +16,13 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.TRANSLUCENT, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
             plan("shadow", FamilyAdapterPlan.Family.SHADOW,
                     UniformRegistry.Stage.SHADOW, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
-            // Iris SHADOW_ENTITIES_CUTOUT: every entity and block-entity pipeline in the shadow
-            // pass, on the entity layout (the end portal and gateway too, after the entitySolid swap).
+            // Iris SHADOW_ENTITIES_CUTOUT: the shadow pass's entity casters on the entity layout (the
+            // end portal and gateway too, after the entitySolid swap), and moving blocks on the
+            // block layout.
             plan("shadow_entities", FamilyAdapterPlan.Family.SHADOW_ENTITIES,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
+            // Iris 1.21.1 SHADOW_BLOCK: a block entity's solid, cutout, translucent and emissive models.
+            plan("shadow_block", FamilyAdapterPlan.Family.SHADOW_BLOCK,
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             // Iris IrisPipelines.assignToShadow keys drawn on the host's own layout. Each key resolves
             // its Iris program through PackResolutionPlan (shadow_lightning is itself an Iris program;
@@ -47,8 +51,8 @@ public final class FamilyAdapterRegistry {
                     FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             plan("gbuffers_block", FamilyAdapterPlan.Family.BLOCK,
                     UniformRegistry.Stage.BLOCK, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
-            // Iris TEXT_BE: a block entity's text, planned on the entity layout and installed only
-            // as its GLYPH layout variant.
+            // Iris BE_TRANSLUCENT and TEXT_BE: a block entity's translucent models on the entity
+            // layout, and its text on the GLYPH layout variant.
             plan("gbuffers_block_translucent", FamilyAdapterPlan.Family.BLOCK_TRANSLUCENT,
                     UniformRegistry.Stage.BLOCK, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             plan("gbuffers_damagedblock",
@@ -69,7 +73,7 @@ public final class FamilyAdapterRegistry {
             plan("gbuffers_skytextured", FamilyAdapterPlan.Family.SKY,
                     UniformRegistry.Stage.SKY, FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV),
             plan("gbuffers_clouds", FamilyAdapterPlan.Family.CLOUD,
-                    UniformRegistry.Stage.CLOUD, FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL),
+                    UniformRegistry.Stage.CLOUD, FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL),
             plan("gbuffers_weather", FamilyAdapterPlan.Family.WEATHER,
                     UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_PARTICLE),
             // Iris LINES, LINES_TRANSLUCENT and SECONDARY_BLOCK_OUTLINE (ShaderKey.LINES) on the
@@ -115,7 +119,7 @@ public final class FamilyAdapterRegistry {
         }
         if (name.startsWith("gbuffers_cloud")) {
             return new FamilyAdapterPlan(name, FamilyAdapterPlan.Family.CLOUD, UniformRegistry.Stage.CLOUD,
-                    FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL, true, List.of());
+                    FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL, true, List.of());
         }
         if (name.startsWith("gbuffers_weather")) {
             return unsupported(name, FamilyAdapterPlan.Family.WEATHER);
@@ -151,9 +155,10 @@ public final class FamilyAdapterRegistry {
         return forProgram(name).stage().shadowPass();
     }
 
-    /** The shadow program on the entity layout (Iris ProgramId.ShadowEntities). */
+    /** A shadow program on the entity layout (Iris ProgramId.ShadowEntities and ShadowBlock). */
     public static boolean isShadowEntityFamily(String name) {
-        return forProgram(name).family() == FamilyAdapterPlan.Family.SHADOW_ENTITIES;
+        FamilyAdapterPlan.Family family = forProgram(name).family();
+        return family == FamilyAdapterPlan.Family.SHADOW_ENTITIES || family == FamilyAdapterPlan.Family.SHADOW_BLOCK;
     }
 
     /** A shadow-pass key drawn on the host's own layout (lines, leads, lightning, glint, text, water mask). */

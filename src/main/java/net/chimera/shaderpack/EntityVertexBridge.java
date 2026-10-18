@@ -37,6 +37,30 @@ public final class EntityVertexBridge {
 
     static final String ENTITY_ID_VARYING = "chimeraEntityId";
 
+    /**
+     * A host value the entity vertex bridge forwards to a fragment that reads it: the overlay
+     * coordinates entityColor fetches with (EntityOverlayColor), and the vertex colour's alpha
+     * Iris's vertex-alpha test compares against (PackAlphaTestPlan).
+     */
+    record ForwardedVarying(String name, String type, String qualifier, String value) {
+        static final List<ForwardedVarying> ALL = List.of(
+                new ForwardedVarying(EntityOverlayColor.UV_VARYING, "ivec2", "flat ", "UV1"),
+                new ForwardedVarying(PackAlphaTestPlan.VERTEX_ALPHA_VARYING, "float", "", "Color.a"));
+
+        /** The forwarded varyings {@code fragment} reads, in a fixed order. */
+        static List<ForwardedVarying> readBy(String fragment) {
+            String stripped = stripComments(fragment == null ? "" : fragment);
+            return ALL.stream().filter(varying -> LegacyGlslConverter.containsIdentifier(stripped, varying.name()))
+                    .toList();
+        }
+
+        /** The varying's {@code in} or {@code out} declaration at its location in {@code layout}. */
+        String declaration(LegacyGlslConverter.TerrainVaryingLayout layout, String direction) {
+            return "layout(location = " + layout.location(name) + ") " + qualifier + direction + " " + type + " "
+                    + name + ";\n";
+        }
+    }
+
     static String entityIdVarying(String name) {
         return switch (name) {
             case "entityId" -> ENTITY_ID_VARYING;
@@ -147,7 +171,7 @@ public final class EntityVertexBridge {
                 GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
-    /** Converts the block-entity variant, which uses the host ModelOffset field. */
+    /** Converts the block-entity variant: block entities draw posed, on the entity inputs. */
     public static LegacyGlslConverter.TerrainVertexConversion convertBlockVertex(
             String source,
             Path sourceFile,
@@ -166,7 +190,7 @@ public final class EntityVertexBridge {
             boolean allowStorageBuffers
     ) {
         return convertEntityVertex(source, sourceFile, fragmentSource, sharedLocations,
-                GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, List.of());
+                GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, List.of());
     }
 
     /** Block vertex conversion that reports the first concrete failure. */
@@ -193,7 +217,7 @@ public final class EntityVertexBridge {
             VertexSamplerPlan samplerPlan
     ) {
         return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
+                GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
     /** Hand models use the real entity inputs; held items/maps get layout variants at build time. */
@@ -325,15 +349,11 @@ public final class EntityVertexBridge {
 
         EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
         requireMatchingFragmentVaryings(vertexVaryings, fragmentSource);
-        boolean overlayUv = LegacyGlslConverter.containsIdentifier(stripComments(fragmentSource == null ? ""
-                : fragmentSource),
-                EntityOverlayColor.UV_VARYING);
-        // The bridge's flat varyings follow the pack's: the entity identities, then the overlay coordinates.
+        List<ForwardedVarying> forwarded = ForwardedVarying.readBy(fragmentSource);
+        // The bridge's varyings follow the pack's: the entity identities, then what the fragment reads.
         Map<String, String> addedVaryings = new LinkedHashMap<>();
         entityIdTypes.forEach((name, type) -> addedVaryings.put(entityIdVarying(name), type));
-        if (overlayUv) {
-            addedVaryings.put(EntityOverlayColor.UV_VARYING, "ivec2");
-        }
+        forwarded.forEach(varying -> addedVaryings.put(varying.name(), varying.type()));
         LegacyGlslConverter.TerrainVaryingLayout layout =
                 entityVaryingLayout(vertexVaryings, sharedLocations, addedVaryings);
 
@@ -351,15 +371,14 @@ public final class EntityVertexBridge {
         converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                 "chimeraEntityFtransform()");
         converted = injectEntityIdPrologues(converted, entityIdTypes.keySet());
-        if (overlayUv) {
+        for (ForwardedVarying varying : forwarded) {
             converted = LegacyGlslConverter.injectMainPrologue(converted,
-                    EntityOverlayColor.UV_VARYING + " = UV1;");
+                    varying.name() + " = " + varying.value() + ";");
         }
         requireConsumedDeclarations(converted);
         String chimeraVaryings = entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
-        if (overlayUv) {
-            chimeraVaryings += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
-                    + ") flat out ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
+        for (ForwardedVarying varying : forwarded) {
+            chimeraVaryings += varying.declaration(layout, "out");
         }
         String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
         converted = wrapProjectedMain(converted, vertexPreamble);
@@ -469,7 +488,6 @@ public final class EntityVertexBridge {
                 Map.entry("mc_midTexCoord", midTexCoordValue(stripped)),
                 Map.entry("at_tangent", "chimeraEntityTangentValue()"),
                 Map.entry("Tangent", "chimeraEntityTangentValue()"),
-                Map.entry("isElytraFlying", FragmentConverter.ELYTRA_FLYING_READ),
                 // Vulkan's index counts from the draw's first vertex, as GL's does.
                 Map.entry("gl_VertexID", "gl_VertexIndex"),
                 Map.entry("entityId", entityIdExpression(layout, "entityId")),
@@ -885,22 +903,20 @@ public final class EntityVertexBridge {
 
     /**
      * Same immutable entity, block or hand program, adapted only to the inputs of
-     * the extended format its native host layout uploads as: held maps, item quads
-     * and world or sign text keep their own prefixes, as in Iris.
+     * the extended format its native host layout uploads as: held maps, item quads,
+     * world or sign text and moving blocks keep their own prefixes, as in Iris.
      */
     public static String layoutVertexForFormat(String converted, VertexFormat host) {
         if (host == DefaultVertexFormat.NEW_ENTITY) return converted;
         String contract = converted == null ? null
                 : converted.contains(GlslVertexPreambles.HAND_VERTEX_PREAMBLE)
                         ? GlslVertexPreambles.HAND_VERTEX_PREAMBLE
-                : converted.contains(GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE)
-                        ? GlslVertexPreambles.BLOCK_VERTEX_PREAMBLE
                 : converted.contains(GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE)
                         ? GlslVertexPreambles.ENTITY_VERTEX_PREAMBLE : null;
         if (contract == null) {
             throw new IllegalArgumentException("program lacks the entity input contract");
         }
-        var extended = ChimeraVertexFormats.handFormats().get(host);
+        var extended = ChimeraVertexFormats.extendedLayout(host);
         if (extended == null) {
             throw new IllegalArgumentException("unsupported entity-family host format");
         }
@@ -925,7 +941,31 @@ public final class EntityVertexBridge {
                         "layout(location = " + names.indexOf("MidTexCoord") + ") in vec2 MidTexCoord;")
                 .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                         "layout(location = " + names.indexOf("Tangent") + ") in vec4 ChimeraPackedTangent;");
-        return converted.replace(contract, preamble);
+        String adapted = converted.replace(contract, preamble);
+        return host == DefaultVertexFormat.BLOCK ? movingBlockEntity(adapted) : adapted;
+    }
+
+    /**
+     * Iris writes mc_Entity as (-1, -1) for a block drawn outside a chunk mesh, no block having
+     * begun in its builder; the entity layout reads the unbound default instead. A gbuffers
+     * program declares it as a constant, a shadow program reads it through chimeraMcEntityValue.
+     */
+    static String movingBlockEntity(String source) {
+        source = source.replaceFirst("(vec2 chimeraMcEntityValue\\(\\) \\{\\s*return )vec2\\(0\\.0\\);",
+                "$1vec2(-1.0);");
+        Matcher matcher = Pattern.compile("const (float|vec2|vec3|vec4) mc_Entity = [^;]+;").matcher(source);
+        StringBuilder output = new StringBuilder();
+        while (matcher.find()) {
+            String value = switch (matcher.group(1)) {
+                case "float" -> "-1.0";
+                case "vec2" -> "vec2(-1.0)";
+                case "vec3" -> "vec3(-1.0, -1.0, 0.0)";
+                default -> "vec4(-1.0, -1.0, 0.0, 1.0)";
+            };
+            matcher.appendReplacement(output, "const " + matcher.group(1) + " mc_Entity = " + value + ";");
+        }
+        matcher.appendTail(output);
+        return output.toString();
     }
 
     /**

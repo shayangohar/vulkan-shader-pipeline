@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "21ae638e543f2a49d18da500f68e19fd37ed3740a9dd73f5e79dfd972c90483e",
+      "reportSha256": "86df002497d87881076c68a5d5da0fd573de28d2fb6895dfe2099abc43fe7d51",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -19,6 +19,10 @@
           "vertex"
         ],
         "shadow_basic": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_block": [
           "fragment",
           "vertex"
         ],
@@ -70,6 +74,14 @@
           "PROGRAM_ALIAS_RECORDED:shadow_basic->shadow",
           "SHADOW_BASIC_STATE_FIXED_TO_HOST",
           "SHADOW_BASIC_VERTEX_BRIDGE"
+        ],
+        "shadow_block": [
+          "ENTITY_VERTEX_FORMAT_EXTENDED",
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_block->shadow",
+          "SHADOW_ENTITY_STATE_FIXED_TO_HOST",
+          "SHADOW_ENTITY_VERTEX_BRIDGE"
         ],
         "shadow_entities": [
           "ENTITY_VERTEX_FORMAT_EXTENDED",
@@ -132,7 +144,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "72182d225b8e8737ced784908bd975d64be9f23525c65e8ec24b521d061e09dc",
+      "reportSha256": "c0ef4908a23506e9e9cd1e29d1e4e4ca7e3d4d460c06090930deb2bac09bac91",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -149,6 +161,10 @@
           "vertex"
         ],
         "shadow_basic": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_block": [
           "fragment",
           "vertex"
         ],
@@ -197,6 +213,12 @@
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_basic->shadow",
           "SHADOW_BASIC_VERTEX_BRIDGE",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
+        "shadow_block": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_block->shadow",
+          "SHADOW_ENTITY_VERTEX_BRIDGE",
           "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
         ],
         "shadow_entities": [

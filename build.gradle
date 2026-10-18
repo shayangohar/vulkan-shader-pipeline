@@ -1,5 +1,6 @@
 plugins {
-    id 'fabric-loom' version '1.14-SNAPSHOT'
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.148'
 }
 
 version = project.mod_version
@@ -19,18 +20,25 @@ repositories {
     }
 }
 
+neoForge {
+    version = project.neo_version
+    parchment {
+        minecraftVersion = project.parchment_minecraft_version
+        mappingsVersion = project.parchment_mappings_version
+    }
+    mods {
+        chimera {
+            sourceSet sourceSets.main
+        }
+    }
+    // The tests read Minecraft, Mixin and VulkanMod classes without starting the game.
+    addModdingDependenciesTo sourceSets.test
+}
+
 dependencies {
-    minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings loom.officialMojangMappings()
-
-    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-
-    // Host renderer (LGPL) - linked as a library, chimera stays MIT
-    modImplementation "maven.modrinth:vulkanmod:${project.vulkanmod_version}"
-
-    // Optional: Mod Menu's config button opens the shader pack selector
-    modCompileOnly "maven.modrinth:modmenu:17.0.1-beta.1"
+    // Host renderer: VulkanMod Reforged, treated as GPL-3.0 (KNOW-658). Linked as a library;
+    // chimera stays MIT.
+    implementation "maven.modrinth:vulkanmod-reforged:${project.reforged_version}"
 
     // Vulkan bindings: bundled by VulkanMod at runtime; compile-only here
     compileOnly "org.lwjgl:lwjgl-vulkan:3.3.3"
@@ -49,7 +57,7 @@ dependencies {
 processResources {
     inputs.property 'version', project.version
 
-    filesMatching('fabric.mod.json') {
+    filesMatching('META-INF/neoforge.mods.toml') {
         expand 'version': project.version
     }
 }
@@ -75,7 +83,8 @@ tasks.withType(Test).configureEach {
     // One JVM per class: plans read process-wide shader options and keep static caches.
     forkEvery = 1
     maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
-    jvmArgs '-ea', '-Dorg.lwjgl.system.stackSize=256'
+    // LWJGL's default 64 KB thread stack, as in game under VulkanMod Reforged: no stackSize override.
+    jvmArgs '-ea'
     // LWJGL extracts its natives here rather than into the working directory.
     systemProperty 'org.lwjgl.system.SharedLibraryExtractPath', layout.buildDirectory.dir('lwjgl').get().asFile.path
     systemProperties chimeraProperties.get()

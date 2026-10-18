@@ -22,10 +22,10 @@ public final class PackEngineDefines {
     public static final String SHADOWCOMP = "SHADOWCOMP";
 
     /**
-     * Iris 1.10's fixed standard environment (StandardMacros), for the one
-     * Minecraft version Chimera targets. Packs branch on these everywhere,
-     * {@code MC_VERSION} above all: undefined, it reads as 0 and selects a
-     * pack's pre-1.13 paths. Vendor, mipmap-level and texture-format macros
+     * Iris's fixed standard environment (StandardMacros) as Iris 1.8.14 defines it
+     * on Minecraft 1.21.1, the one version Chimera targets. Packs branch on these
+     * everywhere, {@code MC_VERSION} above all: undefined, it reads as 0 and
+     * selects a pack's pre-1.13 paths. Vendor, mipmap-level and texture-format macros
      * depend on the live device and options, and IRIS_TAG_SUPPORT promises
      * block.properties tags Chimera does not read yet; none are defined here.
      */
@@ -35,12 +35,11 @@ public final class PackEngineDefines {
 
     private static Map<String, String> standardMacros() {
         TreeMap<String, String> result = new TreeMap<>();
-        result.put("MC_VERSION", "12111");
-        result.put("IRIS_VERSION", "11007");
+        result.put("MC_VERSION", "12101");
+        result.put("IRIS_VERSION", "10814");
         result.put("MC_GL_VERSION", "460");
         result.put("MC_GLSL_VERSION", "460");
         result.put(osMacro(), "1");
-        result.put("MAX_COLOR_BUFFERS", "16");
         result.put("IRIS_HAS_TRANSLUCENCY_SORTING", "1");
         result.put("MC_NORMAL_MAP", "1");
         result.put("MC_SPECULAR_MAP", "1");

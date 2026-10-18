@@ -52,7 +52,7 @@ final class OpaqueDepthCapture {
             runEarlyPostWindow(commandBuffer);
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            Renderer.getInstance().beginRenderPass(pass.targets.hdrAuxRenderPass, pass.targets.hdrFramebuffer);
+            Renderer.getInstance().beginRendering(pass.targets.hdrAuxRenderPass, pass.targets.hdrFramebuffer);
             Renderer.setViewport(0, 0, pass.targets.hdrFramebuffer.getWidth(),
                     pass.targets.hdrFramebuffer.getHeight(), stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, pass.targets.hdrFramebuffer.scissor(stack));

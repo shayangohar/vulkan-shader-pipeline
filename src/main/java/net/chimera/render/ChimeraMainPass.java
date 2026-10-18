@@ -1,11 +1,11 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.mixin.ChimeraDeviceAccessor;
+import net.chimera.mixin.ChimeraRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraSkyBridge;
+import net.chimera.render.shader.FamilyRenderType;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.GeometryOutputPlan;
@@ -20,9 +20,11 @@ import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.TargetSpec;
+import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
+import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
@@ -32,6 +34,7 @@ import net.vulkanmod.vulkan.pass.MainPass;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
+import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
@@ -40,10 +43,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 import static org.lwjgl.vulkan.VK10.*;
@@ -106,7 +108,7 @@ public final class ChimeraMainPass implements MainPass {
     ) {}
 
     PackRenderState capturePackRenderState() {
-        Framebuffer boundFramebuffer = Renderer.getInstance().getBoundFramebuffer();
+        Framebuffer boundFramebuffer = boundFramebuffer();
         if (boundFramebuffer == null) {
             boundFramebuffer = this.currentFramebuffer;
         }
@@ -207,9 +209,6 @@ public final class ChimeraMainPass implements MainPass {
 
     /** Opens the stable output target before a screen frame starts. */
     boolean earlyOutputPass = true;
-    /** Pooled vanilla passes can retain any prior main-target view identity. */
-    final Set<GpuTextureView> mainFamilyViews =
-            Collections.newSetFromMap(new IdentityHashMap<>());
 
     public ChimeraMainPass() {
         this(PackSessionLifecycle.startupPackPath());
@@ -304,7 +303,7 @@ public final class ChimeraMainPass implements MainPass {
         this.packWorldResolved = false;
         this.packFinalApplied = false;
         if (this.packDepthTargets.isConfigured()) {
-            this.packDepthTargets.beginFrame();
+            this.packDepthTargets.beginFrame(Renderer.getCommandBuffer());
         }
         if (this.packPostTargets.isConfigured()) {
             postChain.beginPostFrame(Renderer.getCommandBuffer());
@@ -315,7 +314,7 @@ public final class ChimeraMainPass implements MainPass {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.targets.hdrFramebuffer.getColorAttachment();
             trace("openHdr", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            Renderer.getInstance().beginRenderPass(this.targets.hdrRenderPass, this.targets.hdrFramebuffer);
+            Renderer.getInstance().beginRendering(this.targets.hdrRenderPass, this.targets.hdrFramebuffer);
             Renderer.setViewport(0, 0, this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight(),
                     stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, this.targets.hdrFramebuffer.scissor(stack));
@@ -361,10 +360,10 @@ public final class ChimeraMainPass implements MainPass {
         return this.levelPhase && this.packPostChainActive && this.packPostTargets.isConfigured();
     }
 
-    /** Called inside the native overworld sky scope, after its clears and before its disc. */
-    public void drawPackHorizon() {
+    /** Called as the sky window opens, ahead of the sky, under its model-view and projection. */
+    public void drawPackHorizon(Matrix4f modelView, Matrix4f projection) {
         if (this.levelPhase && this.packPlan != null && this.packPlan.skyEnabled()
-                && ChimeraSkyBridge.hasBasicSky()) this.horizonRenderer.draw();
+                && ChimeraSkyBridge.hasBasicSky()) this.horizonRenderer.draw(modelView, projection);
     }
 
     /** Resolves the world into the stable output before hand and GUI work. */
@@ -425,12 +424,20 @@ public final class ChimeraMainPass implements MainPass {
         coverage.beginPackCoverageWindow(renderType);
     }
 
-    public PackPipelines.PackEntity familyPipeline(ChimeraEntityBridge.Family family) {
-        return pipelines.familyPipeline(family);
+    /**
+     * The pack outputs a lane's draws need a window for, or null when they draw into the pass as it
+     * is: the lane writes only target 0, or the shadow pass owns the attachments.
+     */
+    public GeometryOutputPlan laneWindowOutputs(ChimeraEntityBridge.Family lane) {
+        GeometryOutputPlan outputs = pipelines.laneOutputs(lane);
+        return outputs != null && outputs.requiresDynamicAttachments() && !shadowPass.shadowPassActive
+                ? outputs : null;
     }
 
-    public PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
-        return pipelines.particlePipeline(family);
+    /** Draws buffered family batches inside their lanes' pack windows (FamilyBufferSource). */
+    public void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
+                                  Consumer<RenderType> discard) {
+        windows.drawFamilyBatches(batches, draw, discard);
     }
 
     public boolean beginPackFamilyWindow(PackPipelines.PackEntity family) {
@@ -456,8 +463,8 @@ public final class ChimeraMainPass implements MainPass {
         coverage.endPackCoverageWindow(renderType);
     }
 
-    public void bindTerrainAtlasAfterSelector(TerrainRenderType renderType) {
-        windows.bindTerrainAtlasAfterSelector(renderType);
+    public void bindTerrainImagesAfterSelector(TerrainRenderType renderType) {
+        windows.bindTerrainImagesAfterSelector(renderType);
     }
 
     // ------------------------------------------------------------------
@@ -474,7 +481,7 @@ public final class ChimeraMainPass implements MainPass {
         if (this.earlyOutputPass) {
             trace("beginOutput", "outputColor",
                     this.targets.compositeFramebuffer.getColorAttachment(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            Renderer.getInstance().beginRenderPass(this.targets.compositeRenderPass, this.targets.compositeFramebuffer);
+            Renderer.getInstance().beginRendering(this.targets.compositeRenderPass, this.targets.compositeFramebuffer);
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
         }
     }
@@ -518,15 +525,15 @@ public final class ChimeraMainPass implements MainPass {
 
     /** Draws the output target onto the swapchain image and leaves that image ready to present. */
     private void presentToSwapChain(VkCommandBuffer commandBuffer, MemoryStack stack, VulkanImage outputColor) {
-        SwapChain swapChain = Renderer.getInstance().getSwapChain();
-        if (!swapChain.hasImages()) {
+        SwapChain swapChain = Vulkan.getSwapChain();
+        if (swapChain.getId() == VK_NULL_HANDLE) {
             return;
         }
         trace("presentSwap", "swapchain", swapChain.getColorAttachment(),
                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         swapChain.getColorAttachment().transitionImageLayout(stack, commandBuffer,
                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        Renderer.getInstance().beginRenderPass(this.targets.presentRenderPass, swapChain);
+        Renderer.getInstance().beginRendering(this.targets.presentRenderPass, swapChain);
         // The present draw otherwise inherits the GUI's last viewport and
         // scissor, leaving the swapchain on its clear color; pin the full
         // swapchain like DefaultMainPass.begin does.
@@ -601,7 +608,7 @@ public final class ChimeraMainPass implements MainPass {
             images.prepareProgramImages(resolvePipeline);
             previous = images.bindProgramImages(resolvePipeline, null, source,
                     DrawMaterialContext.captureLive());
-            Renderer.getInstance().beginRenderPass(this.targets.compositeRenderPass, this.targets.compositeFramebuffer);
+            Renderer.getInstance().beginRendering(this.targets.compositeRenderPass, this.targets.compositeFramebuffer);
             // The identity and legacy pack seams share the same transaction.
             drawFullscreen(commandBuffer, resolvePipeline);
         } finally {
@@ -640,7 +647,7 @@ public final class ChimeraMainPass implements MainPass {
             // color, then clear the fresh hand depth after depthtex2 capture.
             RenderPass handPass = HAND_BOUNDARY_POLICY.clearDepth()
                     ? this.targets.compositeAuxClearDepthRenderPass : this.targets.compositeAuxRenderPass;
-            Renderer.getInstance().beginRenderPass(handPass,
+            Renderer.getInstance().beginRendering(handPass,
                     this.targets.compositeFramebuffer);
             Renderer.setViewport(0, 0, this.targets.compositeFramebuffer.getWidth(),
                     this.targets.compositeFramebuffer.getHeight(), stack);
@@ -682,14 +689,23 @@ public final class ChimeraMainPass implements MainPass {
     // Main-target interop
     // ------------------------------------------------------------------
 
+    /**
+     * Minecraft binds the main target before each frame's game render (Reforged hands that bind
+     * here). A frame that renders no level, such as one ticked while the world saves, draws there.
+     */
+    @Override
+    public void mainTargetBindWrite() {
+        rebindMainTarget();
+    }
+
     @Override
     public void rebindMainTarget() {
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
 
         if (this.shadowPass.shadowPassActive) {
             Framebuffer shadow = this.shadowPass.shadowMap.getShadowFramebuffer();
-            if (Renderer.getInstance().getBoundFramebuffer() != shadow) {
-                Renderer.getInstance().beginRenderPass(this.shadowPass.shadowMap.getShadowRenderPass(), shadow);
+            if (boundFramebuffer() != shadow) {
+                Renderer.getInstance().beginRendering(this.shadowPass.shadowMap.getShadowRenderPass(), shadow);
             }
             return;
         }
@@ -698,7 +714,7 @@ public final class ChimeraMainPass implements MainPass {
                 ? this.currentFramebuffer
                 : this.targets.compositeFramebuffer;
         boolean forceDepthClear = this.pendingDepthClear;
-        if (Renderer.getInstance().getBoundFramebuffer() == target && !forceDepthClear) {
+        if (boundFramebuffer() == target && !forceDepthClear) {
             return;
         }
 
@@ -718,7 +734,7 @@ public final class ChimeraMainPass implements MainPass {
         if (forceDepthClear) {
             Renderer.getInstance().endRenderPass(commandBuffer);
         }
-        Renderer.getInstance().beginRenderPass(pass, target);
+        Renderer.getInstance().beginRendering(pass, target);
     }
 
     @Override
@@ -737,44 +753,33 @@ public final class ChimeraMainPass implements MainPass {
     }
 
     @Override
-    public Framebuffer getMainFramebuffer() {
-        return currentFramebuffer();
+    public VulkanImage getColorAttachment() {
+        return currentFramebuffer().getColorAttachment();
     }
 
     @Override
-    public GpuTexture getColorAttachment() {
+    public VulkanImage getDepthAttachment() {
+        return currentFramebuffer().getDepthAttachment();
+    }
+
+    /** The OpenGL name Minecraft's main target reads the current phase's color image through. */
+    @Override
+    public int getColorAttachmentGlId() {
         return this.currentFramebuffer == this.targets.hdrFramebuffer
-                ? this.targets.hdrColorTexture
-                : this.targets.compositeColorTexture;
+                ? this.targets.hdrColorGlId
+                : this.targets.compositeColorGlId;
     }
 
     @Override
-    public GpuTextureView getColorAttachmentView() {
+    public int getDepthAttachmentGlId() {
         return this.currentFramebuffer == this.targets.hdrFramebuffer
-                ? this.targets.hdrColorTextureView
-                : this.targets.compositeColorTextureView;
-    }
-
-    @Override
-    public GpuTexture getDepthAttachment() {
-        return this.currentFramebuffer == this.targets.hdrFramebuffer
-                ? this.targets.hdrDepthTexture
-                : this.targets.compositeDepthTexture;
+                ? this.targets.hdrDepthGlId
+                : this.targets.compositeDepthGlId;
     }
 
     /** Records a depth clear to apply when the current target reopens. */
     public void requestPendingDepthClear() {
         this.pendingDepthClear = true;
-    }
-
-    /** True when a pooled view belongs to either Chimera main-target phase. */
-    public boolean isFamilyView(GpuTextureView view) {
-        return this.mainFamilyViews.contains(view);
-    }
-
-    /** The live main-target color texture for the current phase. */
-    public GpuTexture currentMainColorTexture() {
-        return getColorAttachment();
     }
 
     /** Re-enters the current target applying any pending depth clear. */
@@ -790,6 +795,11 @@ public final class ChimeraMainPass implements MainPass {
         return this.currentFramebuffer != null
                 ? this.currentFramebuffer
                 : this.targets.compositeFramebuffer;
+    }
+
+    /** The framebuffer VulkanMod is recording into, or null between passes. */
+    static Framebuffer boundFramebuffer() {
+        return ((ChimeraRendererAccessor) Renderer.getInstance()).chimera$boundFramebuffer();
     }
 
     // ------------------------------------------------------------------
@@ -819,7 +829,6 @@ public final class ChimeraMainPass implements MainPass {
         this.sessions.pendingPackDimension = null;
         this.sessions.loggedPendingPackDimension = null;
         this.conformanceReport = null;
-        this.mainFamilyViews.clear();
     }
 
     public MaterialMapOwner materialMaps() {

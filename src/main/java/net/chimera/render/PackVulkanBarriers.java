@@ -1,6 +1,5 @@
 package net.chimera.render;
 
-import net.vulkanmod.vulkan.memory.buffer.Buffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkBufferMemoryBarrier;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -53,12 +52,12 @@ final class PackVulkanBarriers {
     }
 
     static void beforeStorageBufferUse(VkCommandBuffer commandBuffer,
-                                       Collection<Buffer> buffers) {
+                                       Collection<PackStorageBuffer> buffers) {
         if (commandBuffer == null || buffers == null || buffers.isEmpty()) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferMemoryBarrier.Buffer barriers = VkBufferMemoryBarrier.calloc(buffers.size(), stack);
             int index = 0;
-            for (Buffer buffer : buffers) {
+            for (PackStorageBuffer buffer : buffers) {
                 if (buffer == null) continue;
                 barriers.get(index++)
                         .sType$Default()

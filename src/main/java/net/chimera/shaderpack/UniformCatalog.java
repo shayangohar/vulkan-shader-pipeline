@@ -60,10 +60,6 @@ final class UniformCatalog {
         addLive(specs, "blindness", "float", "blindness");
         addLive(specs, "darknessFactor", "float");
         addLive(specs, "darknessLightFactor", "float");
-        addLive(specs, "isElytraFlying", "int");
-        addDefault(specs, "endFlashIntensity", "float");
-        addDefault(specs, "previousEndFlashIntensity", "float");
-        addDefault(specs, "endFlashPosition", "vec3");
         addLive(specs, "frameTime", "float");
         addLive(specs, "nightVision", "float");
         addLive(specs, "screenBrightness", "float");
@@ -82,7 +78,6 @@ final class UniformCatalog {
         addLive(specs, "dimension", "int");
         addLive(specs, "heightLimit", "int");
         addLive(specs, "logicalHeightLimit", "int");
-        addLive(specs, "seaLevel", "int");
         // Iris serves these through uniform1b; packs declare them bool or int.
         addLive(specs, "hasCeiling", List.of("int", "bool"), "hasCeiling");
         addLive(specs, "hasSkylight", List.of("int", "bool"), "hasSkylight");
@@ -91,7 +86,7 @@ final class UniformCatalog {
         addLive(specs, "rainfall", "float");
         addDefault(specs, "centerDepthSmooth", "float");
         addDefault(specs, "entityColor", "vec4");
-        addDefault(specs, "lightningBoltPosition", "vec4");
+        addLive(specs, "lightningBoltPosition", "vec4");
         addDefault(specs, "blockEntityId", "int");
         addDefault(specs, "currentRenderedItemId", "int");
         addDefault(specs, "entityId", "int");
@@ -125,58 +120,42 @@ final class UniformCatalog {
         addLive(specs, "FogColor", "vec4");
         addLive(specs, "FogStart", "float");
         addLive(specs, "FogEnd", "float");
-        addLive(specs, "FogEnvironmentalStart", "float");
-        addLive(specs, "FogEnvironmentalEnd", "float");
-        addLive(specs, "FogRenderDistanceStart", "float");
-        addLive(specs, "FogRenderDistanceEnd", "float");
-        addLive(specs, "FogSkyEnd", "float");
-        addLive(specs, "FogCloudsEnd", "float");
         addLive(specs, "AlphaCutout", "float");
         addLive(specs, UniformRegistry.ENTITY_ALPHA_REFERENCE, "float");
         addLive(specs, UniformRegistry.GLINT_ALPHA, "float");
+        addLive(specs, UniformRegistry.HOST_ENTITY_ID, "int");
         addLive(specs, "ScreenSize", "vec2");
-        addLive(specs, "TextureSize", "ivec2");
-        addLive(specs, "TexelSize", "vec2");
         addLive(specs, "Light0_Direction", "vec3");
         addLive(specs, "Light1_Direction", "vec3");
         addLive(specs, "ColorModulator", "vec4");
-        addLive(specs, "ModelOffset", "vec3");
+        addLive(specs, "LineWidth", "float");
         addLive(specs, "ChunkOffset", "vec3");
-        addLive(specs, "UseRgss", "int");
-        addLive(specs, "CurrentTime", "int");
         addLive(specs, "EndPortalLayers", "int");
 
         addLive(specs, "fogColor", List.of("vec3", "vec4"), "fogColor");
         addLive(specs, "fogStart", "float");
         addLive(specs, "fogEnd", "float");
         addLive(specs, "screenSize", "vec2");
-        addLive(specs, "textureSize", "ivec2");
-        addLive(specs, "texelSize", "vec2");
     }
 
     /**
-     * Iris's player, HUD, vehicle, clock and Distant Horizons uniforms (see IrisPlayerState).
+     * Iris's player, HUD, clock and Distant Horizons uniforms (see IrisPlayerState).
      * Booleans take bool or int, as Iris's uniform1b serves either.
      */
     static void addIrisPlayerState(Map<String, UniformRegistry.UniformDescriptor> specs) {
-        for (String flag : List.of("hideGUI", "isRightHanded", "feetInWater", "inSwimmingAnimation",
-                "isRiding", "vehicleInWater", "firstPersonCamera", "isSpectator", "heavyFog",
+        for (String flag : List.of("hideGUI", "isRightHanded", "firstPersonCamera", "isSpectator",
                 "is_burning", "is_hurt", "is_invisible", "is_on_ground", "is_sneaking", "is_sprinting", "is_alive")) {
             addLive(specs, flag, List.of("bool", "int"), flag);
         }
         for (String value : List.of("currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger",
                 "maxPlayerHunger", "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir",
-                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "chunkFadeTimeInv",
-                "dhNearPlane", "dhFarPlane")) {
+                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "dhNearPlane", "dhFarPlane")) {
             addLive(specs, value, "float");
         }
-        for (String value : List.of("textureFilteringMode", "anisotropicFiltering", "currentColorSpace",
-                "dhRenderDistance")) {
+        for (String value : List.of("currentColorSpace", "dhRenderDistance")) {
             addLive(specs, value, "int");
         }
-        for (String vector : List.of("vehicleLookVector", "relativeVehiclePosition", "playerBodyVector")) {
-            addLive(specs, vector, "vec3");
-        }
+        addLive(specs, "playerBodyVector", "vec3");
         addLive(specs, "currentDate", "ivec3");
         addLive(specs, "currentTime", "ivec3");
         addLive(specs, "currentYearTime", "ivec2");

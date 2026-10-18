@@ -555,15 +555,15 @@ final class FixturePackTest {
                 .withInterfacePlan(interfacePlan)
                 .convert();
         assertTrue(convertedFragment != null, "water fragment conversion failed");
-        assertTrue(convertedFragment.contains("layout(binding = 3) uniform ChimeraTerrainPackUniforms"),
+        assertTrue(convertedFragment.contains("layout(binding = 2) uniform ChimeraTerrainPackUniforms"),
                 "terrain pack uniform block is missing");
         assertTrue(!convertedFragment.contains("uniform float fogStart"),
                 "fogStart declaration was not removed");
-        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D chimeraTexture"),
+        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
                 "water atlas binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D lightmap"),
+        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
                 "water lightmap binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 6) uniform sampler2D shadowtex0"),
+        assertTrue(convertedFragment.contains("layout(binding = 5) uniform sampler2D shadowtex0"),
                 "water shadow binding is missing");
         assertTrue(convertedFragment.contains("layout(location = " + vertex.layout().location("renderType")
                         + ") in float renderType"),
@@ -666,11 +666,12 @@ final class FixturePackTest {
         assertTrue(shadowProgram.vertexSource() != null, "shadow vertex source is missing");
         verifyShadowConversion(shadowProgram);
 
-        JsonObject shadowConfig = PackPipelines.shadowPipelineJson();
-        JsonArray shadowUbos = shadowConfig.getAsJsonArray("UBOs");
-        assertTrue(shadowUbos != null && shadowUbos.toString().contains("\"binding\":2"),
-                "shadow section UBO binding was not preserved");
-        assertTrue(shadowUbos.toString().contains("\"name\":\"MVP\""),
+        PackDescriptorLayout shadowLayout = PackPipelines.shadowLayout();
+        assertTrue(shadowLayout.pushConstants() != null && shadowLayout.pushConstants().fields().stream()
+                        .anyMatch(field -> field.name().equals("ChunkOffset")),
+                "shadow chunk offset push constant was not preserved");
+        assertTrue(shadowLayout.uniformBlocks().stream().flatMap(block -> block.fields().stream())
+                        .anyMatch(field -> field.name().equals("MVP")),
                 "shadow pack config MVP field is missing");
         assertEquals(List.of(0, 2), toList(PackPipelines.shadowSamplerSlots(new int[] {2})),
                 "shadow lightmap descriptor reservation");
@@ -704,8 +705,8 @@ final class FixturePackTest {
         assertTrue(vertex.source().contains("layout(binding = 0) uniform ViewUBO"), "shadow MVP UBO is missing");
         assertTrue(vertex.source().contains("mat4 MVP;"), "shadow MVP field is missing");
         assertTrue(!vertex.source().contains("LightMVP"), "pack shadow bridge retained the fixed LightMVP name");
-        assertTrue(vertex.source().contains("layout(binding = 2) uniform SectionData"),
-                "shadow section UBO is missing");
+        assertTrue(vertex.source().contains("layout(push_constant) uniform Push"),
+                "shadow chunk offset push constant is missing");
         assertTrue(vertex.source().contains("layout(location = 3) in int inMaterialId"),
                 "shadow material input is missing");
         assertTrue(vertex.source().contains("layout(location = 4) in int inRenderType"),
@@ -717,10 +718,10 @@ final class FixturePackTest {
                 .withInterfacePlan(interfacePlan)
                 .convert();
         assertTrue(convertedFragment != null, "shadow fragment conversion failed");
-        assertTrue(convertedFragment.contains("layout(binding = 3) uniform sampler2D chimeraTexture"),
-                "shadow atlas binding is missing");
-        assertTrue(convertedFragment.contains("layout(binding = 4) uniform sampler2D lightmap"),
-                "shadow lightmap binding is missing");
+        assertTrue(convertedFragment.contains("layout(binding = 1) uniform sampler2D chimeraTexture"),
+                "shadow atlas binding is missing: " + convertedFragment);
+        assertTrue(convertedFragment.contains("layout(binding = 2) uniform sampler2D lightmap"),
+                "shadow lightmap binding is missing: " + convertedFragment);
         assertTrue(convertedFragment.contains("layout(location = "), "shadow varying locations are missing");
     }
 
@@ -775,6 +776,20 @@ final class FixturePackTest {
                 "invalid resolution deviation");
         assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
                 "invalid distance deviation");
+    }
+
+    /** RGB formats are stored in RGBA images; GL reads their alpha as 1, so Chimera samples them so. */
+    @Test
+    void paddedAlphaTargets(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "colortex5Format=RGB8\ncolortex6Format=RGBA16F\n");
+        PackConfig.PackConfigData config = PackConfig.parse(List.of(new PackProgram("deferred1",
+                "#version 120\nconst int colortex4Format = RGB16F;\nconst int colortex6Format = RGB16F;\n"
+                        + "const int gaux4Format = R11F_G11F_B10F;\nconst int colortex8Format = RGBA8;",
+                shaders.resolve("deferred1.fsh"), null, null)), shaders);
+        assertEquals(List.of(4, 5, 7), List.copyOf(config.paddedAlphaTargets()),
+                "targets declared without alpha, a later declaration replacing an earlier one");
+        assertEquals(97, config.colortexFormats().get(4), "RGB16F is stored as RGBA16F");
     }
 
     private static void assertExtendedFormat() {

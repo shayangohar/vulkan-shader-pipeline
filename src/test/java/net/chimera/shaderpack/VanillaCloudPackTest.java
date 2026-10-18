@@ -47,7 +47,7 @@ final class VanillaCloudPackTest {
                             && analysis.report().shouldAttempt("gbuffers_clouds"),
                     name + " gbuffers_clouds is not planned to run: "
                             + (clouds == null ? "no plan" : clouds.deviations()));
-            assertEquals(FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL,
+            assertEquals(FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL,
                     clouds.familyAdapter().vertexContract(), name + " cloud vertex contract");
             assertEquals(targets, clouds.geometryOutputPlan().targetSlots(), name + " cloud targets");
             assertTrue(!"off".equals(analysis.plan().cloudSetting()), name + " turns the vanilla clouds off");

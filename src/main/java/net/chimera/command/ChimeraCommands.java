@@ -1,15 +1,15 @@
 package net.chimera.command;
 
+import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.chimera.config.ChimeraConfig;
 import net.chimera.config.ShaderpackDirectory;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.PackNanTripwire;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.Minecraft;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
@@ -23,57 +23,64 @@ import java.util.List;
 public final class ChimeraCommands {
     private ChimeraCommands() {}
 
-    public static void register() {
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-                dispatcher.register(ClientCommandManager.literal("chimera")
-                        .then(ClientCommandManager.literal("pack")
-                                .then(ClientCommandManager.literal("list")
-                                        .executes(ChimeraCommands::listPacks))
-                                .then(ClientCommandManager.literal("load")
-                                        .then(ClientCommandManager.argument(
-                                                        "nameOrPath", StringArgumentType.greedyString())
-                                                .executes(ChimeraCommands::loadPack)))
-                                .then(ClientCommandManager.literal("reload")
-                                        .executes(ChimeraCommands::reloadPack))
-                                .then(ClientCommandManager.literal("off")
-                                        .executes(ChimeraCommands::turnPackOff))
-                                .then(ClientCommandManager.literal("status")
-                                        .executes(ChimeraCommands::packStatus)))
-                        .then(ClientCommandManager.literal("debug")
-                                .then(ClientCommandManager.literal("nan")
-                                        .then(ClientCommandManager.literal("on")
-                                                .executes(context -> setNanTripwire(context, true)))
-                                        .then(ClientCommandManager.literal("off")
-                                                .executes(context -> setNanTripwire(context, false)))
-                                        .then(ClientCommandManager.literal("test")
-                                                .executes(ChimeraCommands::nanTripwireSelfTest))
-                                        .executes(ChimeraCommands::nanTripwireStatus)))));
+    /** Registers {@code /chimera}; NeoForge hands client commands over in RegisterClientCommandsEvent. */
+    public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("chimera")
+                .then(Commands.literal("pack")
+                        .then(Commands.literal("list")
+                                .executes(ChimeraCommands::listPacks))
+                        .then(Commands.literal("load")
+                                .then(Commands.argument("nameOrPath", StringArgumentType.greedyString())
+                                        .executes(ChimeraCommands::loadPack)))
+                        .then(Commands.literal("reload")
+                                .executes(ChimeraCommands::reloadPack))
+                        .then(Commands.literal("off")
+                                .executes(ChimeraCommands::turnPackOff))
+                        .then(Commands.literal("status")
+                                .executes(ChimeraCommands::packStatus)))
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("nan")
+                                .then(Commands.literal("on")
+                                        .executes(context -> setNanTripwire(context, true)))
+                                .then(Commands.literal("off")
+                                        .executes(context -> setNanTripwire(context, false)))
+                                .then(Commands.literal("test")
+                                        .executes(ChimeraCommands::nanTripwireSelfTest))
+                                .executes(ChimeraCommands::nanTripwireStatus))));
     }
 
-    private static int listPacks(CommandContext<FabricClientCommandSource> context) {
+    private static void feedback(CommandContext<CommandSourceStack> context, Component message) {
+        context.getSource().sendSuccess(() -> message, false);
+    }
+
+    private static void failure(CommandContext<CommandSourceStack> context, Component message) {
+        context.getSource().sendFailure(message);
+    }
+
+    private static int listPacks(CommandContext<CommandSourceStack> context) {
         Path root = shaderpacksRoot();
         try {
             List<String> names = listPackNames(root);
             if (names.isEmpty()) {
-                context.getSource().sendFeedback(Component.literal(
+                feedback(context, Component.literal(
                         "No shaderpacks found in " + root));
                 return 0;
             }
-            context.getSource().sendFeedback(Component.literal(
+            feedback(context, Component.literal(
                     "Shaderpacks in " + root + ": " + String.join(", ", names)));
             return names.size();
         } catch (IOException failure) {
-            context.getSource().sendError(Component.literal(
+            failure(context, Component.literal(
                     "Cannot list shaderpacks: " + failure.getMessage()));
             return -1;
         }
     }
 
-    private static int loadPack(CommandContext<FabricClientCommandSource> context) {
+    private static int loadPack(CommandContext<CommandSourceStack> context) {
         String raw = StringArgumentType.getString(context, "nameOrPath");
         Resolution resolution = resolvePackPath(shaderpacksRoot(), gameDirectory(), raw);
         if (!resolution.valid()) {
-            context.getSource().sendError(Component.literal(resolution.error()));
+            failure(context, Component.literal(resolution.error()));
             return -1;
         }
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.requestPack(resolution.path());
@@ -83,23 +90,23 @@ public final class ChimeraCommands {
         return reportRequest(context, result, "pack " + resolution.path().getFileName());
     }
 
-    private static int reloadPack(CommandContext<FabricClientCommandSource> context) {
+    private static int reloadPack(CommandContext<CommandSourceStack> context) {
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.reloadPack();
         return reportRequest(context, result, "current pack");
     }
 
-    private static int turnPackOff(CommandContext<FabricClientCommandSource> context) {
+    private static int turnPackOff(CommandContext<CommandSourceStack> context) {
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.disablePack();
         if (result != ChimeraRenderer.PackRequestResult.NOT_READY) {
             ChimeraConfig config = ChimeraConfig.get();
             config.setSelection(config.shaderPack().orElse(null), false);
         }
         switch (result) {
-            case QUEUED -> context.getSource().sendFeedback(Component.literal(
+            case QUEUED -> feedback(context, Component.literal(
                     "Chimera shader pack off queued; vanilla rendering resumes at the next safe frame boundary."));
-            case ALREADY_ACTIVE -> context.getSource().sendFeedback(Component.literal(
+            case ALREADY_ACTIVE -> feedback(context, Component.literal(
                     "No Chimera shader pack is loaded; rendering is already vanilla."));
-            case NOT_READY -> context.getSource().sendError(Component.literal(
+            case NOT_READY -> failure(context, Component.literal(
                     "Chimera is not ready; no pack change was queued."));
         }
         return result == ChimeraRenderer.PackRequestResult.NOT_READY ? -1 : 0;
@@ -122,43 +129,43 @@ public final class ChimeraCommands {
         }
     }
 
-    private static int packStatus(CommandContext<FabricClientCommandSource> context) {
-        context.getSource().sendFeedback(Component.literal(ChimeraRenderer.packStatus()));
+    private static int packStatus(CommandContext<CommandSourceStack> context) {
+        feedback(context, Component.literal(ChimeraRenderer.packStatus()));
         return 0;
     }
 
-    private static int setNanTripwire(CommandContext<FabricClientCommandSource> context, boolean on) {
+    private static int setNanTripwire(CommandContext<CommandSourceStack> context, boolean on) {
         PackNanTripwire.setEnabled(on);
-        context.getSource().sendFeedback(Component.literal(on
+        feedback(context, Component.literal(on
                 ? "NaN tripwire on."
                 : "NaN tripwire off."));
         return on ? 1 : 0;
     }
 
-    private static int nanTripwireSelfTest(CommandContext<FabricClientCommandSource> context) {
+    private static int nanTripwireSelfTest(CommandContext<CommandSourceStack> context) {
         PackNanTripwire.requestSelfTest();
-        context.getSource().sendFeedback(Component.literal(
+        feedback(context, Component.literal(
                 "NaN tripwire self-test queued."));
         return 1;
     }
 
-    private static int nanTripwireStatus(CommandContext<FabricClientCommandSource> context) {
-        context.getSource().sendFeedback(Component.literal(
+    private static int nanTripwireStatus(CommandContext<CommandSourceStack> context) {
+        feedback(context, Component.literal(
                 "NaN tripwire " + (PackNanTripwire.enabled() ? "on." : "off.")));
         return PackNanTripwire.enabled() ? 1 : 0;
     }
 
     private static int reportRequest(
-            CommandContext<FabricClientCommandSource> context,
+            CommandContext<CommandSourceStack> context,
             ChimeraRenderer.PackRequestResult result,
             String target
     ) {
         switch (result) {
-            case QUEUED -> context.getSource().sendFeedback(Component.literal(
+            case QUEUED -> feedback(context, Component.literal(
                     "Chimera " + target + " change queued; it will apply at the next safe frame boundary."));
-            case ALREADY_ACTIVE -> context.getSource().sendFeedback(Component.literal(
+            case ALREADY_ACTIVE -> feedback(context, Component.literal(
                     "Chimera " + target + " is already active."));
-            case NOT_READY -> context.getSource().sendError(Component.literal(
+            case NOT_READY -> failure(context, Component.literal(
                     "Chimera is not ready; no pack change was queued."));
         }
         return result == ChimeraRenderer.PackRequestResult.NOT_READY ? -1 : 0;

@@ -10,7 +10,8 @@ import org.spongepowered.asm.mixin.injection.ModifyVariable;
  * Removes Minecraft's directional face shading while the installed pack lights faces itself,
  * as Iris's MixinClientLevel does. VulkanMod's flat and smooth light pipelines and its fluid
  * renderer read the shade through RenderRegion.getShade, which calls this method, so terrain
- * and fluids mesh unshaded (1.0, or 0.9 in constant-ambient dimensions).
+ * and fluids mesh unshaded (1.0, or 0.9 in constant-ambient dimensions). Both overloads change,
+ * NeoForge's per-normal one included.
  */
 @Mixin(ClientLevel.class)
 public abstract class ChimeraClientLevelShadeMixin {

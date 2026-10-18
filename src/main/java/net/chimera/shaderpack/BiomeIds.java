@@ -1,8 +1,9 @@
 package net.chimera.shaderpack;
 
 import net.minecraft.core.Holder;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.biome.Biome;
 
 import java.util.List;
@@ -56,7 +57,7 @@ public final class BiomeIds {
     }
 
     /** The number for a biome key, or {@link #UNKNOWN} when no constant names it. */
-    public static int id(Identifier key) {
+    public static int id(ResourceLocation key) {
         if (key == null || !VANILLA_NAMESPACE.equals(key.getNamespace())) {
             return UNKNOWN;
         }
@@ -83,28 +84,34 @@ public final class BiomeIds {
     }
 
     /**
-     * A biome's category, by Iris 1.21.11's {@code BiomeUniforms.getBiomeCategory}: the first
-     * tag that matches in this order, else {@code PLAINS}. Iris never answers {@code SAVANNA} or
-     * {@code UNDERGROUND} on this version, and neither does this.
+     * Iris 1.21.1's {@code BiomeUniforms.getBiomeCategory}, line for line: the first tag a biome
+     * has picks its category. Iris never answers {@code SAVANNA} on this version.
      */
+    private static final List<Map.Entry<TagKey<Biome>, Category>> CATEGORY_TAGS = List.of(
+            Map.entry(BiomeTags.WITHOUT_WANDERING_TRADER_SPAWNS, Category.NONE),
+            Map.entry(BiomeTags.HAS_VILLAGE_SNOWY, Category.ICY),
+            Map.entry(BiomeTags.IS_HILL, Category.EXTREME_HILLS),
+            Map.entry(BiomeTags.IS_TAIGA, Category.TAIGA),
+            Map.entry(BiomeTags.IS_OCEAN, Category.OCEAN),
+            Map.entry(BiomeTags.IS_JUNGLE, Category.JUNGLE),
+            Map.entry(BiomeTags.IS_FOREST, Category.FOREST),
+            Map.entry(BiomeTags.IS_BADLANDS, Category.MESA),
+            Map.entry(BiomeTags.IS_NETHER, Category.NETHER),
+            Map.entry(BiomeTags.IS_END, Category.THE_END),
+            Map.entry(BiomeTags.IS_BEACH, Category.BEACH),
+            Map.entry(BiomeTags.HAS_DESERT_PYRAMID, Category.DESERT),
+            Map.entry(BiomeTags.IS_RIVER, Category.RIVER),
+            Map.entry(BiomeTags.HAS_CLOSER_WATER_FOG, Category.SWAMP),
+            Map.entry(BiomeTags.PLAYS_UNDERWATER_MUSIC, Category.UNDERGROUND),
+            Map.entry(BiomeTags.WITHOUT_ZOMBIE_SIEGES, Category.MUSHROOM),
+            Map.entry(BiomeTags.IS_MOUNTAIN, Category.MOUNTAIN));
+
+    /** A biome's category, by {@link #CATEGORY_TAGS}, else {@code PLAINS}. */
     public static Category category(Holder<Biome> biome) {
         if (biome == null) return Category.NONE;
-        if (biome.is(BiomeTags.WITHOUT_WANDERING_TRADER_SPAWNS)) return Category.NONE;
-        if (biome.is(BiomeTags.HAS_VILLAGE_SNOWY)) return Category.ICY;
-        if (biome.is(BiomeTags.IS_HILL)) return Category.EXTREME_HILLS;
-        if (biome.is(BiomeTags.IS_TAIGA)) return Category.TAIGA;
-        if (biome.is(BiomeTags.IS_OCEAN)) return Category.OCEAN;
-        if (biome.is(BiomeTags.IS_JUNGLE)) return Category.JUNGLE;
-        if (biome.is(BiomeTags.IS_FOREST)) return Category.FOREST;
-        if (biome.is(BiomeTags.IS_BADLANDS)) return Category.MESA;
-        if (biome.is(BiomeTags.IS_NETHER)) return Category.NETHER;
-        if (biome.is(BiomeTags.IS_END)) return Category.THE_END;
-        if (biome.is(BiomeTags.IS_BEACH)) return Category.BEACH;
-        if (biome.is(BiomeTags.HAS_DESERT_PYRAMID)) return Category.DESERT;
-        if (biome.is(BiomeTags.IS_RIVER)) return Category.RIVER;
-        if (biome.is(BiomeTags.ALLOWS_SURFACE_SLIME_SPAWNS)) return Category.SWAMP;
-        if (biome.is(BiomeTags.WITHOUT_ZOMBIE_SIEGES)) return Category.MUSHROOM;
-        if (biome.is(BiomeTags.IS_MOUNTAIN)) return Category.MOUNTAIN;
+        for (Map.Entry<TagKey<Biome>, Category> tag : CATEGORY_TAGS) {
+            if (biome.is(tag.getKey())) return tag.getValue();
+        }
         return Category.PLAINS;
     }
 

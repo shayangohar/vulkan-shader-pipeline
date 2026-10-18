@@ -8,7 +8,6 @@ import net.chimera.shaderpack.UniformRegistry;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.vulkanmod.vulkan.shader.layout.Uniform;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
@@ -47,20 +46,20 @@ public final class PackUniformProvider {
         return INSTANCE;
     }
 
-    /** Called by Pipeline.Builder while it applies the generated UBO config. */
-    public Supplier<MappedBuffer> supplier(Uniform.Info info) {
-        UniformRegistry.UniformDescriptor descriptor = resolveUniform(info.name, info.type);
-        if (descriptor == null) {
-            throw new IllegalArgumentException("uniform is not in the Chimera catalog: "
-                    + info.name + " (" + info.type + ")");
-        }
-        UniformKey key = new UniformKey(info.name, info.type);
+    /**
+     * The stable value buffer of pack uniform {@code name} of type {@code type}, for a pipeline
+     * being built (HostPipelineLayout), or null when the Chimera catalog does not serve it.
+     */
+    public Supplier<MappedBuffer> supplier(String name, String type) {
+        UniformRegistry.UniformDescriptor descriptor = resolveUniform(name, type);
+        if (descriptor == null) return null;
+        UniformKey key = new UniformKey(name, type);
         Binding binding = bindings.get(key);
         if (binding == null) {
-            binding = new Binding(descriptor, info.type, createBuffer(info.type));
+            binding = new Binding(descriptor, type, createBuffer(type));
             bindings.put(key, binding);
         }
-        frameState.write(descriptor, info.type, binding.buffer);
+        frameState.write(descriptor, type, binding.buffer);
         logCatalogOnce();
         Binding stable = binding;
         return () -> stable.buffer;
@@ -130,9 +129,6 @@ public final class PackUniformProvider {
     /** Iris SystemTimeUniforms.TIMER: the pack clock, which keeps running while paused. */
     public static float currentFrameTimeCounter() { return INSTANCE.frameState.frameTimeCounter(); }
 
-    /** Camera-relative world view, without a native celestial pose or model translation. */
-    public static Matrix4f currentSkyModelView() { return INSTANCE.frameState.modelView(); }
-
     /**
      * The camera's gbufferProjection x gbufferModelView (GL clip range, camera-relative), written
      * to dest: the view shadow culling keeps casters for, as Iris's frustum reads it.
@@ -156,6 +152,15 @@ public final class PackUniformProvider {
         if (!INSTANCE.frameState.setEntityAlphaReference(reference)) return;
         Binding binding = INSTANCE.bindings.get(
                 new UniformKey(UniformRegistry.ENTITY_ALPHA_REFERENCE, "float"));
+        if (binding != null) {
+            INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+    }
+
+    /** Sets the entityId the next host-layout lane draw reads, rewriting its binding only on change. */
+    public static void updateDrawEntityId(int entityId) {
+        if (!INSTANCE.frameState.setHostEntityId(entityId)) return;
+        Binding binding = INSTANCE.bindings.get(new UniformKey(UniformRegistry.HOST_ENTITY_ID, "int"));
         if (binding != null) {
             INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
         }

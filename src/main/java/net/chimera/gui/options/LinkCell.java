@@ -1,8 +1,7 @@
 package net.chimera.gui.options;
 
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.navigation.CommonInputs;
 import net.minecraft.network.chat.Component;
 
 import java.util.Optional;
@@ -40,15 +39,15 @@ final class LinkCell extends OptionCell {
     }
 
     @Override
-    boolean press(MouseButtonEvent event) {
-        if (event.button() != 0) return false;
+    boolean press(int button) {
+        if (button != 0) return false;
         open();
         return true;
     }
 
     @Override
-    boolean key(KeyEvent event) {
-        if (!event.isConfirmation()) return false;
+    boolean key(int key) {
+        if (!CommonInputs.selected(key)) return false;
         open();
         return true;
     }

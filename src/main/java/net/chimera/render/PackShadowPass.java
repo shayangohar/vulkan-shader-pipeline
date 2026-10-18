@@ -1,8 +1,6 @@
 package net.chimera.render;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.PackUniformProvider;
@@ -10,10 +8,9 @@ import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ShadowCasterDirectives;
 import net.chimera.shaderpack.ShadowCullingPlan;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.chunk.WorldRenderer;
-import net.vulkanmod.render.engine.VkGpuDevice;
-import net.vulkanmod.render.engine.VkGpuTexture;
-import net.vulkanmod.render.shader.PipelineManager;
+import net.vulkanmod.render.PipelineManager;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
@@ -48,9 +45,8 @@ final class PackShadowPass {
     /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
     ShadowCullingPlan shadowCulling;
 
-    /** GL-registry slot-5 view of the shadow depth, for pack geometry sampling (shadowtex0). */
-    GpuTexture packShadowTexture;
-    GpuTextureView packShadowView;
+    /** OpenGL name of the shadow depth on texture unit 5, for pack geometry sampling (shadowtex0); 0 when none. */
+    int packShadowGlId;
     long packShadowSourceId;
     ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     final PackShadowDepth packShadowDepth = new PackShadowDepth();
@@ -135,7 +131,7 @@ final class PackShadowPass {
                     this.shadowMap.captureOpaqueDepth(cmd);
                     PackUniformProvider.updateDrawAlphaReference(0.0F);
                     WorldRenderer.getInstance().renderSectionLayer(
-                            TerrainRenderType.TRANSLUCENT, cameraX, cameraY, cameraZ,
+                            RenderType.translucent(), cameraX, cameraY, cameraZ,
                             this.shadowMap.getLightView(), projection);
                 }
             } finally {
@@ -205,17 +201,16 @@ final class PackShadowPass {
 
     /** Draws the opaque terrain layer, then the cutout layer unless the host merged it into opaque. */
     private void drawShadowTerrain(ShadowFrame frame) {
-        TerrainRenderType opaqueType = TerrainRenderType.getRemapped(TerrainRenderType.SOLID);
         WorldRenderer.getInstance().renderSectionLayer(
-                opaqueType,
+                TerrainRenderType.getRenderType(TerrainLayers.OPAQUE),
                 frame.cameraX(), frame.cameraY(), frame.cameraZ(),
                 this.shadowMap.getLightView(), frame.projection());
 
-        TerrainRenderType cutoutType = TerrainRenderType.getRemapped(TerrainRenderType.CUTOUT);
-        recordShadowCutoutDisposition(cutoutType == opaqueType);
-        if (cutoutType != opaqueType) {
+        boolean cutoutDrawn = TerrainLayers.drawn(TerrainRenderType.CUTOUT);
+        recordShadowCutoutDisposition(!cutoutDrawn);
+        if (cutoutDrawn) {
             WorldRenderer.getInstance().renderSectionLayer(
-                    cutoutType, frame.cameraX(), frame.cameraY(), frame.cameraZ(),
+                    RenderType.cutout(), frame.cameraX(), frame.cameraY(), frame.cameraZ(),
                     this.shadowMap.getLightView(), frame.projection());
         }
     }
@@ -529,11 +524,11 @@ final class PackShadowPass {
     }
 
     /**
-     * Keeps GL-registry slot 5 (the sampler slot pack geometry declares as
-     * shadowtex0) pointing at the shadow map's depth. Terrain draws bind
-     * sampler slots from that registry (VTextureSelector.bindShaderTextures),
-     * unlike post seams which bind through boundTextures; the view is rebuilt
-     * only when the shadow attachment is recreated (id change).
+     * Keeps RenderSystem texture unit 5 (the sampler slot pack geometry declares as
+     * shadowtex0) pointing at the shadow map's depth. Terrain draws bind sampler
+     * slots from those units (VTextureSelector.bindShaderTextures), unlike post
+     * seams which bind through boundTextures; the alias is renamed only when the
+     * shadow attachment is recreated (id change).
      */
     void maintainPackShadowGoal() {
         boolean geometryUsesShadow = pass.pipelines.terrainPipeline != null
@@ -547,19 +542,13 @@ final class PackShadowPass {
             return;
         }
         VulkanImage shadowDepth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
-        if (this.packShadowView == null || shadowDepth.getId() != this.packShadowSourceId) {
-            // A recreated shadow attachment retires the old view and texture.
-            // This view is a sampler view, not a main color view, so it must
-            // never enter the main-target alias set.
-            releaseOldShadowView();
-            VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
-            VkGpuTexture texture = device.gpuTextureFromVulkanImage(shadowDepth);
-            GpuTextureView view = device.createTextureView(texture);
-            this.packShadowTexture = texture;
-            this.packShadowView = view;
+        if (this.packShadowGlId == 0 || shadowDepth.getId() != this.packShadowSourceId) {
+            // A recreated shadow attachment retires the old name.
+            releasePackShadowView();
+            this.packShadowGlId = GlImageAlias.create(shadowDepth);
             this.packShadowSourceId = shadowDepth.getId();
         }
-        VRenderSystem.setShaderTexture(5, this.packShadowView);
+        RenderSystem.setShaderTexture(5, this.packShadowGlId);
     }
 
     /**
@@ -639,19 +628,9 @@ final class PackShadowPass {
                 merged ? "merged by uniqueOpaqueLayer" : "separate");
     }
 
-    void releaseOldShadowView() {
-        if (this.packShadowView != null) {
-            this.packShadowView.close();
-        }
-        if (this.packShadowTexture != null) {
-            this.packShadowTexture.close();
-        }
-    }
-
     void releasePackShadowView() {
-        releaseOldShadowView();
-        this.packShadowTexture = null;
-        this.packShadowView = null;
+        GlImageAlias.retire(this.packShadowGlId);
+        this.packShadowGlId = 0;
         this.packShadowSourceId = 0L;
     }
 }

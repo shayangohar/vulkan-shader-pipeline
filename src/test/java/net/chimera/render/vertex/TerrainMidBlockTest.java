@@ -23,7 +23,8 @@ final class TerrainMidBlockTest {
                 true, true, true, true, List.of());
         ChimeraExtVertexBuilder builder = new ChimeraExtVertexBuilder(plan);
         // A glowstone-like block at section position (4, 7, 9), emission 15.
-        builder.setBlockData(7, -1, 15, 4, 7, 9);
+        builder.setBlockData(7, -1, 15);
+        builder.setBlockPosition(4, 7, 9);
         // Its +X face lies on x = 5, the boundary with block (5, 7, 9).
         float[][] eastFace = {{5, 8, 10}, {5, 7, 10}, {5, 7, 9}, {5, 8, 9}};
         int[][] words = write(builder, plan.stride(), eastFace);
@@ -37,7 +38,7 @@ final class TerrainMidBlockTest {
             assertTrue(words[index][3] == 15, "vertex " + index + " lost the block's emission: " + words[index][3]);
         }
         // A torch-like model inside the block keeps the exact offset Iris computes.
-        builder.setBlockData(9, -1, 7, 4, 7, 9);
+        builder.setBlockData(9, -1, 7);
         float[][] post = {{4.4375F, 7.625F, 9.4375F}, {4.4375F, 7, 9.4375F},
                 {4.5625F, 7, 9.5625F}, {4.5625F, 7.625F, 9.5625F}};
         int[][] postWords = write(builder, plan.stride(), post);

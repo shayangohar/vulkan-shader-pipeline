@@ -2,8 +2,7 @@ package net.chimera.gui.options;
 
 import net.chimera.shaderpack.options.PackProfiles;
 import net.minecraft.ChatFormatting;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.navigation.CommonInputs;
 import net.minecraft.network.chat.Component;
 
 import java.util.Optional;
@@ -45,17 +44,17 @@ final class ProfileCell extends ValueCell {
     void tooltip(boolean labelCut, int mouseX, int mouseY) {}
 
     @Override
-    boolean press(MouseButtonEvent event) {
-        if (event.button() > 1) return false;
-        step(event.button() == 0);
+    boolean press(int button) {
+        if (button > 1) return false;
+        step(button == 0);
         click();
         return true;
     }
 
     @Override
-    boolean key(KeyEvent event) {
-        if (!event.isConfirmation()) return false;
-        if (!event.hasControlDown()) step(!event.hasShiftDown());
+    boolean key(int key) {
+        if (!CommonInputs.selected(key)) return false;
+        if (!controlDown()) step(!shiftDown());
         click();
         return true;
     }

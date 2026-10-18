@@ -1,7 +1,7 @@
 package net.chimera.config;
 
 import net.chimera.ChimeraMod;
-import net.fabricmc.loader.api.FabricLoader;
+import net.neoforged.fml.loading.FMLPaths;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,7 +32,7 @@ public final class ChimeraConfig {
 
     public static synchronized ChimeraConfig get() {
         if (instance == null) {
-            instance = load(FabricLoader.getInstance().getConfigDir().resolve("chimera.properties"));
+            instance = load(FMLPaths.CONFIGDIR.get().resolve("chimera.properties"));
         }
         return instance;
     }

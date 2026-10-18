@@ -1,14 +1,14 @@
 package net.chimera.mixin;
 
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.ChimeraTextures;
 import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.MaterialMapPixels;
 import net.chimera.render.shader.AtlasSizes;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.SpriteLoader;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-import net.minecraft.data.AtlasIds;
-import net.vulkanmod.render.engine.VkTextureView;
+import net.minecraft.world.inventory.InventoryMenu;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
@@ -43,15 +43,14 @@ public abstract class ChimeraAtlasMaterialMixin {
     private void chimera$noteAtlasUpload(SpriteLoader.Preparations preparations, CallbackInfo info) {
         try {
             TextureAtlas atlas = (TextureAtlas) (Object) this;
-            var view = atlas.getTextureView();
-            if (!(view instanceof VkTextureView vulkanView)
-                    || vulkanView.texture().getVulkanImage() == null) {
+            VulkanImage image = ChimeraTextures.image(atlas);
+            if (image == null) {
                 LOGGER.warn("[chimera] material maps: atlas {} has no Vulkan image, skipping companions",
                         atlas.location());
                 return;
             }
-            AtlasSizes.note(vulkanView.texture().getVulkanImage(), preparations.width(),
-                    preparations.height(), chimera$isBlockAtlas(atlas));
+            AtlasSizes.note(image, preparations.width(), preparations.height(),
+                    atlas.location().equals(InventoryMenu.BLOCK_ATLAS));
             var pass = ChimeraRenderer.getMainPass();
             if (pass == null) return;
             MaterialMapOwner owner = pass.materialMaps();
@@ -76,7 +75,7 @@ public abstract class ChimeraAtlasMaterialMixin {
             }
             owner.noteAtlasUpload(new MaterialMapOwner.AtlasUpload(atlas.location().toString(),
                     preparations.width(), preparations.height(), preparations.mipLevel() + 1,
-                    List.copyOf(sprites)), vulkanView.texture().getVulkanImage());
+                    List.copyOf(sprites)), image);
         } catch (RuntimeException failure) {
             LOGGER.warn("[chimera] material maps: atlas observation failed", failure);
         }
@@ -97,14 +96,6 @@ public abstract class ChimeraAtlasMaterialMixin {
             owner.tickAtlas(((TextureAtlas) (Object) this).location().toString());
         } catch (RuntimeException failure) {
             LOGGER.warn("[chimera] material maps: animation tick failed", failure);
-        }
-    }
-
-    private static boolean chimera$isBlockAtlas(TextureAtlas atlas) {
-        try {
-            return Minecraft.getInstance().getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS) == atlas;
-        } catch (RuntimeException notRegistered) {
-            return false;
         }
     }
 }

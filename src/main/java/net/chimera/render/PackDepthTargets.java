@@ -35,6 +35,8 @@ public final class PackDepthTargets {
     private final VulkanImage[] images = new VulkanImage[3];
     private final boolean[] valid = new boolean[3];
     private final boolean[] previousValid = new boolean[3];
+    /** Images holding a capture, or the far plane before the first: a draw may sample them. */
+    private final boolean[] defined = new boolean[3];
     private DepthGraphPlan plan = DepthGraphPlan.empty();
     private GraphicsPipeline conversionPipeline;
     private final DepthSampleView depthSampleView = new DepthSampleView();
@@ -46,6 +48,7 @@ public final class PackDepthTargets {
         if (!this.plan.any()) return false;
         Arrays.fill(this.valid, false);
         Arrays.fill(this.previousValid, false);
+        Arrays.fill(this.defined, false);
         MrtPipelineContext.begin(new int[] {this.plan.format()}, 1);
         try {
             this.conversionPipeline = ChimeraPostPipelines.createDepthPipeline();
@@ -55,7 +58,6 @@ public final class PackDepthTargets {
         for (int index = 0; index < images.length; index++) {
             if (!required(index)) continue;
             this.images[index] = VulkanImage.builder(Math.max(1, width), Math.max(1, height))
-                    .setName("chimeraPackDepthTex" + index)
                     .setFormat(this.plan.format())
                     .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
                     // Iris depthtex0/1/2 are point samples, not interpolated surface depths.
@@ -93,10 +95,26 @@ public final class PackDepthTargets {
                 && convert(commandBuffer, rawDepth, 2, true);
     }
 
-    /** Starts a new world frame while retaining the previous capture validity. */
-    public void beginFrame() {
+    /**
+     * Starts a new world frame while retaining the previous capture validity. A target not yet
+     * captured is cleared to the far plane first, so a draw that samples it reads defined depth.
+     */
+    public void beginFrame(VkCommandBuffer commandBuffer) {
         System.arraycopy(this.valid, 0, this.previousValid, 0, this.valid.length);
         Arrays.fill(this.valid, false);
+        for (int index = 0; index < images.length; index++) {
+            if (images[index] != null && !defined[index]) clearToFarPlane(commandBuffer, index);
+        }
+    }
+
+    private void clearToFarPlane(VkCommandBuffer commandBuffer, int index) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            images[index].transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            vkCmdBeginRenderingKHR(commandBuffer, snapshotRendering(stack, images[index], 1.0f));
+            vkCmdEndRenderingKHR(commandBuffer);
+            images[index].transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        defined[index] = true;
     }
 
     /** Publishes the captures made during the current world frame. */
@@ -135,7 +153,8 @@ public final class PackDepthTargets {
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             ChimeraDepthViewOverride.bind(rawDepth, depthView);
             VTextureSelector.bindTexture(6, rawDepth);
-            vkCmdBeginRenderingKHR(commandBuffer, snapshotRendering(stack, images[index]));
+            vkCmdBeginRenderingKHR(commandBuffer, snapshotRendering(stack, images[index], 0.0f));
+            renderer.setBoundRenderPass(ChimeraRenderingPass.of(new int[] {images[index].format}, 0, false));
             renderingActive = true;
             Renderer.setViewport(0, 0, images[index].width, images[index].height, stack);
             renderer.bindGraphicsPipeline(this.conversionPipeline);
@@ -151,6 +170,7 @@ public final class PackDepthTargets {
                 depthReadLayoutActive = false;
             }
             valid[index] = true;
+            defined[index] = true;
             renderer.setBoundRenderPass(null);
             renderer.setBoundFramebuffer(null);
             return true;
@@ -196,10 +216,10 @@ public final class PackDepthTargets {
                 && conversionPipeline != null;
     }
 
-    /** Dynamic rendering that clears one snapshot image and draws over its whole extent. */
-    private static VkRenderingInfo snapshotRendering(MemoryStack stack, VulkanImage snapshot) {
+    /** Dynamic rendering that clears one snapshot image to {@code depth} over its whole extent. */
+    private static VkRenderingInfo snapshotRendering(MemoryStack stack, VulkanImage snapshot, float depth) {
         VkClearValue clear = VkClearValue.calloc(stack);
-        clear.color().float32(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
+        clear.color().float32(stack.floats(depth, 0.0f, 0.0f, 0.0f));
         VkRenderingAttachmentInfo.Buffer attachments = VkRenderingAttachmentInfo.calloc(1, stack);
         attachments.get(0)
                 .sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
@@ -225,6 +245,20 @@ public final class PackDepthTargets {
             case "depthtex2" -> valid[2] ? images[2] : null;
             default -> null;
         };
+    }
+
+    /**
+     * The image a draw samples as depthtex1 or depthtex2: this frame's capture, or before it the
+     * last one, as Iris's depth textures persist between their copies. NeoForge draws solid
+     * particles before translucent terrain, ahead of the depthtex1 capture.
+     */
+    public VulkanImage sampledImage(String name) {
+        int index = switch (name) {
+            case "depthtex1" -> 1;
+            case "depthtex2" -> 2;
+            default -> -1;
+        };
+        return index > 0 && defined[index] ? images[index] : null;
     }
 
     public boolean isConfigured() { return configured; }
@@ -257,6 +291,7 @@ public final class PackDepthTargets {
         Arrays.fill(images, null);
         Arrays.fill(valid, false);
         Arrays.fill(previousValid, false);
+        Arrays.fill(defined, false);
         conversionPipeline = null;
         configured = false;
         plan = DepthGraphPlan.empty();

@@ -107,15 +107,14 @@ final class CoreFamilyAdapterTest {
         }
         PackProgramPlan entityPlan = first.plan().program("gbuffers_entities");
         PackProgramPlan blockPlan = first.plan().program("gbuffers_block");
-        assertTrue(entityPlan.convertedVertex() != null
-                        && !entityPlan.convertedVertex().contains("Position + ModelOffset"),
-                "world entity bridge inherited the block ModelOffset");
-        assertTrue(blockPlan.convertedVertex() != null
-                        && blockPlan.convertedVertex().contains("Position + ModelOffset"),
-                "block bridge omitted the host ModelOffset");
+        for (PackProgramPlan plan : List.of(entityPlan, blockPlan)) {
+            // Block entities draw entity meshes placed by the pose, as entities do.
+            assertTrue(plan.convertedVertex() != null && plan.convertedVertex().contains("return vec4(Position, 1.0);"),
+                    plan.name() + " bridge must read the host position as is");
+        }
         PackProgramPlan blockText = first.plan().program("gbuffers_block_translucent");
-        assertTrue(blockText != null && blockText.executable()
-                        && blockText.convertedVertex().contains("Position + ModelOffset"),
+        assertTrue(blockText != null && blockText.executable() && "gbuffers_block".equals(
+                        first.resolution().resolution("gbuffers_block_translucent").selectedProgram()),
                 "without its own file, block-entity text plans from gbuffers_block (Iris BlockTrans -> Block)");
 
         PackProgramPlan particles = first.plan().program("gbuffers_particles");

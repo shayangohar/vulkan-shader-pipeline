@@ -5,10 +5,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraEntityBridge.Family;
 import net.chimera.render.vertex.ChimeraEntityVertexData;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
-import net.minecraft.client.renderer.RenderPipelines;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -79,16 +79,91 @@ final class WorldEntityAdapterTest {
                 "tangent translator-safe count");
     }
 
+    /** One shader in Iris 1.21.1's MixinGameRenderer table: the family of its draws in each context. */
+    private record Route(String shader, Family entity, Family blockEntity, Family shadow, Family blockEntityShadow) {}
+
+    /**
+     * Every entity-format shader Iris 1.21.1 overrides, in an entity, in a block entity and in the
+     * shadow pass; then the chunk shaders Iris draws as MOVING_BLOCK. Routes key on the shader, as
+     * Iris's do, so NeoForge's item types and the armor-trim decal follow their shaders' rows.
+     */
     @Test
     void worldPipelineContract() {
-        assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ENTITY_SOLID),
-                "solid world entity lane was not supported");
-        assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ENTITY_TRANSLUCENT),
-                "living translucent world entity lane was not supported");
-        assertTrue(ChimeraEntityBridge.supportsWorldPipeline(RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL)
-                        && RenderPipelines.ITEM_ENTITY_TRANSLUCENT_CULL.getVertexFormat()
-                        == RenderPipelines.ENTITY_TRANSLUCENT.getVertexFormat(),
-                "flat item lane is not the translucent entity contract");
+        List<Route> routes = new ArrayList<>();
+        for (String model : List.of("entity_solid", "entity_cutout", "entity_cutout_no_cull",
+                "entity_cutout_no_cull_z_offset", "entity_decal", "entity_smooth_cutout", "armor_cutout_no_cull")) {
+            routes.add(new Route(model, Family.ENTITY, Family.BLOCK, Family.SHADOW_ENTITIES, Family.SHADOW_BLOCK));
+        }
+        for (String overlay : List.of("energy_swirl", "entity_shadow")) {
+            routes.add(new Route(overlay, Family.ENTITY, Family.BLOCK, Family.SHADOW_ENTITIES,
+                    Family.SHADOW_ENTITIES));
+        }
+        for (String translucent : List.of("entity_translucent", "entity_translucent_cull",
+                "item_entity_translucent_cull", "breeze_wind", "entity_no_outline")) {
+            routes.add(new Route(translucent, Family.ENTITY_TRANSLUCENT, Family.BLOCK_TRANSLUCENT,
+                    Family.SHADOW_ENTITIES, Family.SHADOW_BLOCK));
+        }
+        routes.add(new Route("eyes", Family.SPIDER_EYES, Family.BLOCK, Family.SHADOW_ENTITIES,
+                Family.SHADOW_ENTITIES));
+        routes.add(new Route("entity_translucent_emissive", Family.SPIDER_EYES, Family.BLOCK,
+                Family.SHADOW_ENTITIES, Family.SHADOW_BLOCK));
+        // Iris ENTITIES_ALPHA (the dying dragon) in either context, with no shadow key of its own.
+        routes.add(new Route("entity_alpha", Family.ENTITY, Family.ENTITY, Family.SHADOW_ENTITIES,
+                Family.SHADOW_ENTITIES));
+        var entityFormat = DefaultVertexFormat.NEW_ENTITY;
+        for (Route route : routes) {
+            String shader = "rendertype_" + route.shader();
+            assertEquals(route.entity(), ChimeraEntityBridge.worldFamily(shader, entityFormat, Family.ENTITY), shader);
+            assertEquals(route.blockEntity(), ChimeraEntityBridge.worldFamily(shader, entityFormat, Family.BLOCK),
+                    shader + " in a block entity");
+            assertEquals(route.shadow(), ChimeraEntityBridge.shadowFamily(shader, entityFormat, Family.ENTITY),
+                    shader + " casting a shadow");
+            assertEquals(route.blockEntityShadow(),
+                    ChimeraEntityBridge.shadowFamily(shader, entityFormat, Family.BLOCK),
+                    shader + " casting a block entity's shadow");
+        }
+        assertEquals(null, ChimeraEntityBridge.worldFamily(null, entityFormat, Family.ENTITY),
+                "a render type without a shader keeps its host draw");
+        var block = DefaultVertexFormat.BLOCK;
+        for (String type : List.of("solid", "cutout_mipped", "cutout", "translucent", "translucent_moving_block",
+                "tripwire")) {
+            String shader = "rendertype_" + type;
+            for (Family context : List.of(Family.ENTITY, Family.BLOCK)) {
+                assertEquals(Family.MOVING_BLOCK, ChimeraEntityBridge.worldFamily(shader, block, context), shader);
+                assertEquals(Family.SHADOW_ENTITIES, ChimeraEntityBridge.shadowFamily(shader, block, context), shader);
+            }
+            assertEquals(null, ChimeraEntityBridge.shadowFamily(shader, block, null), "terrain casts no entity shadow");
+        }
+        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_crumbling", block, Family.BLOCK), "crumbling");
+        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_beacon_beam", block, Family.BLOCK), "beams");
+    }
+
+    /** Iris reports BLOCK_ENTITIES for whatever a block entity draws, in either pass, and ENTITIES for an entity's. */
+    @Test
+    void familyBatchesReportTheirContextPhase() {
+        ChimeraEntityBridge.beginBlockEntity(0);
+        try {
+            assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.MOVING_BLOCK),
+                    "a moving piston");
+            assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.SHADOW_ENTITIES),
+                    "a block entity's eyes in the shadow pass");
+            ChimeraEntityBridge.beginEntity("minecraft:zombie");
+            try {
+                assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.ENTITY),
+                        "a spawner's mob draws as the block entity's, as Iris's wrapper order gives");
+            } finally {
+                ChimeraEntityBridge.endContext();
+            }
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
+        ChimeraEntityBridge.beginEntity("minecraft:falling_block");
+        try {
+            assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.writePhase(Family.MOVING_BLOCK),
+                    "a falling block");
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
     }
 
     @Test
@@ -273,6 +348,13 @@ final class WorldEntityAdapterTest {
         assertTrue(hostLayout.contains("max((0) - 10000, 0)")
                         && !hostLayout.contains("uniform int currentRenderedItemId"),
                 "a host layout reads the item as 0: " + hostLayout);
+        // Iris's fallback entityId uniform: per draw, the bolt's id while a lightning bolt draws.
+        String lane = IrisCoreProfile.prepareHostLayoutIdentity("#version 120\nuniform int entityId;\n"
+                + "uniform float blockEntityId;\nvoid main() { int id = entityId; float b = blockEntityId; }\n");
+        assertTrue(lane.contains("uniform int " + UniformRegistry.HOST_ENTITY_ID + ";")
+                        && lane.contains("int id = (" + UniformRegistry.HOST_ENTITY_ID + ");")
+                        && lane.contains("float b = (-1.0);") && !lane.contains("uniform int entityId"),
+                "a host-layout lane reads entityId per draw and blockEntityId as -1: " + lane);
 
         assertEquals(0, PackItemIdResolver.empty().renderedItemId("minecraft:stick"),
                 "no item.properties: Iris's empty map reads 0");
@@ -293,6 +375,10 @@ final class WorldEntityAdapterTest {
                 "namespaced entity name");
         assertEquals(0xFFFF, parsed.resolver().resolveName("pig"),
                 "unknown mapped entity sentinel");
+        assertEquals(-1, parsed.resolver().uniformId("pig"), "Iris's entityId uniform reads the map's -1");
+        assertEquals(1, parsed.resolver().uniformId("zombie"), "a mapped entity's uniform id");
+        assertEquals(0, PackEntityIdResolver.empty().uniformId("minecraft:lightning_bolt"),
+                "without entity.properties Iris's empty map reads 0");
         assertEquals(0, PackEntityIdResolver.empty().resolveName("zombie"),
                 "missing map default");
 

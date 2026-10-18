@@ -29,23 +29,20 @@ public final class UniformRegistry {
     static final Pattern UNIFORM_BLOCK = Pattern.compile(
             "\\buniform\\s+([A-Za-z_]\\w*)\\s*\\{");
 
-    /**
-     * Host ordinary-transform block names for the guarded family lanes.
-     *
-     * <p>They must match the converted GLSL preambles in
-     * {@link LegacyGlslConverter} and the name-based
-     * {@code Pipeline.getUBO(String)} lookups, which compare names exactly.
-     * VulkanMod's own reflected pipelines carry these same semantic names, and
-     * a host render pass stores its per-draw transform slices under them.</p>
-     */
-    public static final String DYNAMIC_TRANSFORMS_UBO = "DynamicTransforms";
     /** Per-draw entity alpha-test reference, Chimera's counterpart of iris_currentAlphaTest. */
     public static final String ENTITY_ALPHA_REFERENCE = "chimeraAlphaTestRef";
     /** Vanilla Globals.GlintAlpha (glint strength), declared into glint programs before planning. */
     public static final String GLINT_ALPHA = "chimeraGlintAlpha";
-    public static final String PROJECTION_UBO = "Projection";
+    /**
+     * Per-draw entityId of a host-layout lane, Chimera's counterpart of Iris's fallback entityId
+     * uniform: declared into host-layout programs in place of entityId before planning.
+     */
+    public static final String HOST_ENTITY_ID = "chimeraHostEntityId";
 
-    /** Descriptor bindings of the host ordinary-transform blocks. */
+    /**
+     * Descriptor bindings of the transform blocks (DynamicTransforms, Projection) the converted
+     * preambles declare; the host fills their fields by name (HostPipelineLayout).
+     */
     public static final int DYNAMIC_TRANSFORMS_BINDING = 0;
     public static final int PROJECTION_BINDING = 1;
 
@@ -541,21 +538,17 @@ public final class UniformRegistry {
      * value, as it would under Iris.
      */
     static final Set<String> HOST_ONLY = Set.of(
-            "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd",
-            "FogEnvironmentalStart", "FogEnvironmentalEnd", "FogRenderDistanceStart",
-            "FogRenderDistanceEnd", "FogSkyEnd", "FogCloudsEnd", "AlphaCutout", ENTITY_ALPHA_REFERENCE, GLINT_ALPHA,
-            "ScreenSize", "TextureSize", "TexelSize", "Light0_Direction", "Light1_Direction",
-            "ColorModulator", "ModelOffset", "ChunkOffset", "UseRgss", "CurrentTime", "EndPortalLayers",
-            "screenSize", "textureSize", "texelSize");
+            "MVP", "ModelViewMat", "ProjMat", "TextureMat", "FogColor", "FogStart", "FogEnd", "AlphaCutout",
+            ENTITY_ALPHA_REFERENCE, GLINT_ALPHA, HOST_ENTITY_ID, "ScreenSize", "Light0_Direction", "Light1_Direction",
+            "ColorModulator", "LineWidth", "ChunkOffset", "EndPortalLayers", "screenSize");
 
     /**
-     * Names Iris 1.21.11 serves that Chimera does not yet: per-draw state, values that need Iris's
+     * Names Iris 1.21.1 serves that Chimera does not yet: per-draw state, values that need Iris's
      * ID maps or fog-mode plumbing, and the matrices Iris's core-profile transformers inject. A
      * program reading one must not run on a zero Iris would never give it.
      */
     private static final Set<String> IRIS_UNSERVED = Set.of(
-            "alphaTestRef", "blendFunc", "gtextureId", "gtextureSize", "textureReloadCount",
-            "vehicleId", "currentSelectedBlockId", "currentSelectedBlockPos",
+            "alphaTestRef", "blendFunc", "gtextureSize", "currentSelectedBlockId", "currentSelectedBlockPos",
             "fogDensity", "fogMode", "fogShape",
             "cloudTime", "constantMood",
             "modelViewMatrix", "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse",
@@ -583,8 +576,7 @@ public final class UniformRegistry {
      * The engine vectors and matrices the host serves to custom-value expressions component by
      * component, so {@code eyeBrightness.y} or {@code gbufferModelViewInverse.2.1} resolves to
      * something the host actually reads. A component of any other name is a declaration error
-     * rather than a zero. {@code lightningBoltPosition} is defaulted, so its components are the
-     * default's.
+     * rather than a zero.
      */
     private static final Set<String> COMPONENT_INPUTS = Set.of(
             "eyeBrightness", "eyeBrightnessSmooth", "atlasSize",
@@ -598,7 +590,7 @@ public final class UniformRegistry {
             "gbufferProjection", "gbufferProjectionInverse", "gbufferPreviousProjection",
             "shadowModelView", "shadowModelViewInverse", "shadowProjection", "shadowProjectionInverse",
             "dhProjection", "dhProjectionInverse", "dhPreviousProjection",
-            "vehicleLookVector", "relativeVehiclePosition", "playerBodyVector",
+            "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime");
 
     /**

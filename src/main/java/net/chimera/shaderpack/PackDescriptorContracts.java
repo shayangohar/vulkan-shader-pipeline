@@ -2,15 +2,9 @@ package net.chimera.shaderpack;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
-import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.shaderpack.PackAdvancedResourcePlan.ProgramBindingLayout;
-import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.PipelineConfig;
-import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
-import net.vulkanmod.vulkan.shader.descriptor.UBO;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,12 +13,9 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-import static org.lwjgl.vulkan.VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_ALL_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 
@@ -65,55 +56,68 @@ final class PackDescriptorContracts {
             PackProgramPlan plan, Set<String> advancedSamplerNames
     ) {
         if (plan == null || plan.interfacePlan() == null) {
-            return new OrdinaryDescriptorContract(PipelineConfig.builder().build());
+            return new OrdinaryDescriptorContract(PackDescriptorLayout.EMPTY);
         }
         UniformRegistry.Stage stage = stageForProgram(plan.name());
         var iface = plan.interfacePlan().effective(stage);
         int[] slots = ordinarySamplerSlots(iface, stage, advancedSamplerNames);
         for (int slot : slots) PackPipelines.requireSelector(slot);
-        PipelineConfig config = PIPELINE_JSON_STAGES.contains(stage)
-                ? pipelineJsonConfig(plan.name(), stage, iface, slots) : familyConfig(plan, stage, iface, slots);
-        // A guarded family contract owns the host transform blocks at bindings
-        // 0 and 1, so those two blocks must carry the host semantic names for
-        // the bridge's name-based lookups.
-        boolean familyContract = !PIPELINE_JSON_STAGES.contains(stage);
-        return new OrdinaryDescriptorContract(config, ordinaryResources(config, iface), familyContract);
+        PackDescriptorLayout layout = PIPELINE_JSON_STAGES.contains(stage)
+                ? pipelineJsonLayout(stage, iface, slots) : familyLayout(plan, stage, iface, slots);
+        return new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface));
     }
 
     /** A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then samplers. */
-    private static PipelineConfig pipelineJsonConfig(String program, UniformRegistry.Stage stage,
-                                                     UniformRegistry.ProgramInterface iface, int[] slots) {
-        JsonObject json = stage == UniformRegistry.Stage.SHADOW ? PackPipelines.shadowPipelineJson()
-                : stage == UniformRegistry.Stage.POST ? new JsonObject()
-                : ChimeraShaderLoader.loadJson("chimera_terrain.json").deepCopy();
-        json.addProperty("fragment", "pack_" + program);
-        json.add("samplers", new JsonArray());
+    private static PackDescriptorLayout pipelineJsonLayout(UniformRegistry.Stage stage,
+                                                           UniformRegistry.ProgramInterface iface, int[] slots) {
+        PackDescriptorLayout layout;
         if (stage == UniformRegistry.Stage.POST) {
-            json.add("UBOs", PackPipelines.uniformUboArray(iface, 0, "all"));
-            json.add("PushConstants", new JsonArray());
+            // A post program's only block is the pack's uniforms, at binding 0, and it pushes nothing.
+            layout = new PackDescriptorLayout(packUniformBlock(iface, 0, VK_SHADER_STAGE_ALL_GRAPHICS),
+                    List.of(), PackDescriptorLayout.EMPTY_PUSH_CONSTANTS);
         } else {
-            json.getAsJsonArray("UBOs").addAll(PackPipelines.uniformUboArray(iface, 3, "all"));
+            PackDescriptorLayout host = PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson(
+                    stage == UniformRegistry.Stage.SHADOW ? "chimera_shadow.json" : "chimera_terrain.json"));
+            List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(host.uniformBlocks());
+            blocks.addAll(packUniformBlock(iface, host.bindingAfterBlocks(), VK_SHADER_STAGE_ALL_GRAPHICS));
+            layout = new PackDescriptorLayout(blocks, List.of(), host.pushConstants());
         }
-        PipelineConfig parsed = PipelineConfig.fromJson("pack_" + program, json);
-        int base = parsed.ubs.stream().mapToInt(ub -> ub.binding + 1).max().orElse(0);
-        List<PipelineConfig.ImageDescriptorInfo> images = new ArrayList<>();
-        for (int index = 0; index < slots.length; index++) images.add(
-                new PipelineConfig.ImageDescriptorInfo(base + index, "sampler2D",
-                        "Sampler" + slots[index], slots[index]));
-        return new PipelineConfig(parsed.shaderPaths, parsed.ubs, images, parsed.pushConstantsInfo);
+        return layout.withImages(samplerImages(layout.bindingAfterBlocks(), slots));
+    }
+
+    /**
+     * The pack's uniform block at {@code binding}, empty when the program has no uniforms. A GLSL
+     * bool occupies an int word in std140, and the host's layout builder accepts int, not bool.
+     */
+    static List<PackDescriptorLayout.UniformBlock> packUniformBlock(UniformRegistry.ProgramInterface iface,
+                                                                    int binding, int stages) {
+        if (iface.executableUniforms().isEmpty()) return List.of();
+        return List.of(new PackDescriptorLayout.UniformBlock(binding, stages, 0, iface.executableUniforms().stream()
+                .map(uniform -> new PackDescriptorLayout.Field(
+                        uniform.glslType().equals("bool") ? "int" : uniform.glslType(), uniform.name()))
+                .toList()));
+    }
+
+    /** One sampler2D descriptor per slot, named Sampler&lt;slot&gt;, on consecutive bindings from {@code base}. */
+    static List<PackDescriptorLayout.ImageSlot> samplerImages(int base, int[] slots) {
+        List<PackDescriptorLayout.ImageSlot> images = new ArrayList<>();
+        for (int index = 0; index < slots.length; index++) images.add(new PackDescriptorLayout.ImageSlot(
+                base + index, "sampler2D", "Sampler" + slots[index], slots[index]));
+        return images;
     }
 
     /** A family layout: the host transform blocks, the pack's uniform block, then samplers. */
-    private static PipelineConfig familyConfig(PackProgramPlan plan, UniformRegistry.Stage stage,
-                                               UniformRegistry.ProgramInterface iface, int[] slots) {
-        PipelineConfig.Builder builder = PipelineConfig.builder()
-                .addUB(PipelineConfig.UB.builder(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
-                                VK_SHADER_STAGE_VERTEX_BIT)
-                        .addUniform("mat4", "ModelViewMat").addUniform("vec4", "ColorModulator")
-                        .addUniform("vec3", "ModelOffset").addUniform("mat4", "TextureMat").build())
-                .addUB(PipelineConfig.UB.builder(UniformRegistry.PROJECTION_BINDING,
-                        VK_SHADER_STAGE_VERTEX_BIT)
-                        .addUniform("mat4", "ProjMat").build());
+    private static PackDescriptorLayout familyLayout(PackProgramPlan plan, UniformRegistry.Stage stage,
+                                                     UniformRegistry.ProgramInterface iface, int[] slots) {
+        List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(List.of(
+                new PackDescriptorLayout.UniformBlock(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
+                        VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(
+                        new PackDescriptorLayout.Field("mat4", "ModelViewMat"),
+                        new PackDescriptorLayout.Field("vec4", "ColorModulator"),
+                        new PackDescriptorLayout.Field("float", "LineWidth"),
+                        new PackDescriptorLayout.Field("mat4", "TextureMat"))),
+                new PackDescriptorLayout.UniformBlock(UniformRegistry.PROJECTION_BINDING,
+                        VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(new PackDescriptorLayout.Field("mat4", "ProjMat")))));
         boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
         if (!iface.executableUniforms().isEmpty()) {
             // Entity-family vertex shaders may declare the same pack
@@ -123,38 +127,30 @@ final class PackDescriptorContracts {
             // whenever the converted vertex actually declares it.
             boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
                     .contains("layout(binding = 2) uniform ");
-            int uniformStages = vertexUniforms
+            blocks.addAll(packUniformBlock(iface, 2, vertexUniforms
                     ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                    : VK_SHADER_STAGE_FRAGMENT_BIT;
-            var uniforms = PipelineConfig.UB.builder(2, uniformStages);
-            // std140 bool occupies an integer word; VulkanMod's native
-            // layout builder accepts int, not GLSL bool. Keep GLSL unchanged.
-            for (var uniform : iface.executableUniforms()) uniforms.addUniform(
-                    uniform.glslType().equals("bool") ? "int" : uniform.glslType(), uniform.name());
-            builder.addUB(uniforms.build());
+                    : VK_SHADER_STAGE_FRAGMENT_BIT));
         } else if (sky) {
-            builder.addUB(PipelineConfig.UB.builder(2, VK_SHADER_STAGE_FRAGMENT_BIT).setSize(16).build());
+            blocks.add(new PackDescriptorLayout.UniformBlock(2, VK_SHADER_STAGE_FRAGMENT_BIT, 16, List.of()));
         }
         int base = sky || !iface.executableUniforms().isEmpty() ? 3 : 2;
-        for (int index = 0; index < slots.length; index++) builder.addImageDescriptor(
-                base + index, "sampler2D", "Sampler" + slots[index], slots[index]);
-        return builder.build();
+        return new PackDescriptorLayout(blocks, samplerImages(base, slots), null);
     }
 
-    static ProgramImageBindingManifest legacyImageBindings(PipelineConfig config,
+    static ProgramImageBindingManifest legacyImageBindings(PackDescriptorLayout layout,
             UniformRegistry.ProgramInterface iface) {
         return ProgramImageBindingManifest.from(null,
-                new OrdinaryDescriptorContract(config, ordinaryResources(config, iface)));
+                new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface)));
     }
 
-    static List<PackResourceBinding> ordinaryResources(PipelineConfig config,
+    static List<PackResourceBinding> ordinaryResources(PackDescriptorLayout layout,
             UniformRegistry.ProgramInterface iface) {
         List<PackResourceBinding> resources = new ArrayList<>();
-        for (var image : config.imageDescriptors) {
-            String name = iface.samplers().stream().filter(value -> value.slot() == image.imageIdx())
+        for (var image : layout.images()) {
+            String name = iface.samplers().stream().filter(value -> value.slot() == image.textureSlot())
                     .map(UniformRegistry.SamplerBinding::name).findFirst().orElse(null);
             if (name == null && iface.stage() != UniformRegistry.Stage.POST) {
-                name = image.imageIdx() == 0 ? "texture" : image.imageIdx() == 2 ? "lightmap" : null;
+                name = image.textureSlot() == 0 ? "texture" : image.textureSlot() == 2 ? "lightmap" : null;
             }
             if (name == null) continue;
             String key = PackResourcePlan.canonicalResource(name);
@@ -165,7 +161,7 @@ final class PackDescriptorContracts {
                     : key.equals("noisetex") ? PackResourceKind.NOISE
                     : key.equals("normals") || key.equals("specular") ? PackResourceKind.MATERIAL_MAP
                     : PackResourceKind.UNSERVED;
-            resources.add(new PackResourceBinding("", name, key, kind, "", image.imageIdx(),
+            resources.add(new PackResourceBinding("", name, key, kind, "", image.textureSlot(),
                     "nearest", "repeat", PackResourceStatus.HOST_ALIAS, List.of()));
         }
         return List.copyOf(resources);
@@ -213,59 +209,38 @@ final class PackDescriptorContracts {
         return UniformRegistry.Stage.ENTITY;
     }
 
-    static void addStorageBufferDescriptors(
-            Pipeline.Builder builder,
-            String program,
-            PackAdvancedResourcePlan advancedResources
-    ) {
-        if (builder == null || advancedResources == null) return;
-        for (PackAdvancedResourcePlan.StorageBufferBinding binding
-                : advancedResources.bindingLayout(program).storageBuffers()) {
+    /**
+     * A program's whole descriptor set: its ordinary layout, then the storage buffers, storage
+     * images and advanced samplers its binding layout places. An advanced sampler reads a pack
+     * storage image, which stays in the general layout because a graphics or compute stage may
+     * also write it.
+     */
+    static PackDescriptorLayout withAdvancedDescriptors(PackDescriptorLayout ordinary, String program,
+                                                        PackAdvancedResourcePlan advancedResources) {
+        if (advancedResources == null) return ordinary;
+        ProgramBindingLayout layout = advancedResources.bindingLayout(program);
+        List<PackDescriptorLayout.StorageBuffer> buffers = new ArrayList<>();
+        for (PackAdvancedResourcePlan.StorageBufferBinding binding : layout.storageBuffers()) {
             if (!binding.supported() || binding.rewrittenBinding() < 0
                     || binding.size() <= 0 || binding.size() > Integer.MAX_VALUE) {
                 continue;
             }
-            builder.addUBO(new PackStorageBufferDescriptor(
-                    "PackStorageBuffer" + binding.logicalIndex(),
-                    binding.rewrittenBinding(), binding.stageMask(), (int) binding.size()));
+            buffers.add(new PackDescriptorLayout.StorageBuffer(binding.rewrittenBinding(), binding.stageMask(),
+                    (int) binding.size(), binding.logicalIndex()));
         }
-    }
-
-    static void addStorageImageDescriptors(
-            Pipeline.Builder builder,
-            String program,
-            PackAdvancedResourcePlan advancedResources
-    ) {
-        if (builder == null || advancedResources == null) return;
-        int index = 0;
-        for (PackAdvancedResourcePlan.GraphicsImageBinding binding
-                : advancedResources.bindingLayout(program).storageImages()) {
-            builder.addImageDescriptor(new ImageDescriptor(
-                    advancedResources.bindingLayout(program).imageBase() + index++, "image3D",
-                            "Sampler" + binding.selectorSlot(),
-                    binding.selectorSlot(), VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));
-        }
-    }
-
-    static void addAdvancedSamplerDescriptors(
-            Pipeline.Builder builder,
-            String program,
-            PackAdvancedResourcePlan advancedResources
-    ) {
-        if (builder == null || advancedResources == null) return;
-        int index = 0;
-        for (PackAdvancedResourcePlan.GraphicsImageBinding binding
-                : advancedResources.bindingLayout(program).advancedSamplers()) {
-            ImageDescriptor descriptor = new ImageDescriptor(
-                    advancedResources.bindingLayout(program).samplerBase() + index++,
-                    advancedSamplerType(advancedResources, binding),
+        List<PackDescriptorLayout.ImageSlot> images = new ArrayList<>();
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.storageImages()) {
+            images.add(new PackDescriptorLayout.ImageSlot(layout.imageBase() + images.size(), "image3D",
                     "Sampler" + binding.selectorSlot(), binding.selectorSlot(),
-                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-            // PackStorageImage deliberately stays in GENERAL because the same
-            // image may also be written by a graphics or compute stage.
-            descriptor.setLayout(VK_IMAGE_LAYOUT_GENERAL);
-            builder.addImageDescriptor(descriptor);
+                    PackDescriptorLayout.ImageAccess.STORAGE));
         }
+        int samplerIndex = 0;
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.advancedSamplers()) {
+            images.add(new PackDescriptorLayout.ImageSlot(layout.samplerBase() + samplerIndex++,
+                    advancedSamplerType(advancedResources, binding), "Sampler" + binding.selectorSlot(),
+                    binding.selectorSlot(), PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL));
+        }
+        return ordinary.withAdvanced(buffers, images);
     }
 
     static String bindStorageImages(String source, String program,
@@ -457,39 +432,15 @@ final class PackDescriptorContracts {
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    static void verifyAdvancedLayout(Pipeline.Builder builder, String program,
+    /** Checks the shaders and the program's binding plan against the whole descriptor set. */
+    static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
             PackAdvancedResourcePlan resources, String vertex, String fragment,
             PackStorageBufferOwner owner) {
-        List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = builderDescriptors(builder);
+        List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = layout.descriptorBindings();
         String mismatch = owner == null ? PackAdvancedResourcePlan.layoutMismatch(
                 resources.bindingLayout(program), vertex, fragment, descriptors)
                 : owner.verifyLayout(program, vertex, fragment, descriptors);
         if (mismatch != null) throw new PackPipelines.PreparationFailure("descriptor-contract", mismatch);
-    }
-
-    static List<PackAdvancedResourcePlan.DescriptorBinding> builderDescriptors(Pipeline.Builder builder) {
-        List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = new ArrayList<>();
-        for (UBO descriptor : builder.getUBOs()) descriptors.add(new PackAdvancedResourcePlan.DescriptorBinding(
-                descriptor.name, 0, descriptor.getBinding(), descriptor.getType(), descriptor.getStages(),
-                nativeDescriptorIdentity(descriptor.name, descriptor.getType(), descriptor.getBinding())));
-        for (ImageDescriptor descriptor : ((ChimeraPipelineBuilderAccessor) (Object) builder)
-                .chimera$imageDescriptors()) descriptors.add(new PackAdvancedResourcePlan.DescriptorBinding(
-                descriptor.name, 0, descriptor.getBinding(), descriptor.getType(), descriptor.getStages(),
-                nativeDescriptorIdentity(descriptor.name, descriptor.getType(), descriptor.getBinding())));
-        return List.copyOf(descriptors);
-    }
-
-    static String nativeDescriptorIdentity(String name, int type, int binding) {
-        Matcher sampler = Pattern.compile("Sampler(\\d+)").matcher(name == null ? "" : name);
-        if (sampler.matches() && (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                || type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)) {
-            return "resource:" + sampler.group(1) + ":" + type;
-        }
-        if (type == 9 && name != null && name.startsWith("PackStorageBuffer")) {
-            return "storage:" + name.substring("PackStorageBuffer".length());
-        }
-        if (type == 8) return "ubo:" + binding;
-        return name == null ? "" : name;
     }
 
     static String advancedSamplerType(

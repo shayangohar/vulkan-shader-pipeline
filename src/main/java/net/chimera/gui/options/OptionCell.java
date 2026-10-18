@@ -5,9 +5,10 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.Component;
+import net.minecraft.sounds.SoundEvents;
 
 import java.util.Optional;
 
@@ -44,22 +45,22 @@ abstract class OptionCell extends AbstractWidget {
     abstract void renderCell(GuiGraphics graphics, int mouseX, int mouseY);
 
     /** A mouse press the row routed here; true when the cell acted on it. */
-    abstract boolean press(MouseButtonEvent event);
+    abstract boolean press(int button);
 
     /** A key while the cell has focus; true when the cell acted on it. */
-    abstract boolean key(KeyEvent event);
+    abstract boolean key(int key);
 
     Optional<OptionOverlay.Comment> comment() {
         return Optional.empty();
     }
 
     @Override
-    public final boolean keyPressed(KeyEvent event) {
-        return key(event);
+    public final boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        return key(keyCode);
     }
 
     @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
         return false;
     }
 
@@ -102,11 +103,15 @@ abstract class OptionCell extends AbstractWidget {
     }
 
     static boolean shiftDown() {
-        return Minecraft.getInstance().hasShiftDown();
+        return Screen.hasShiftDown();
+    }
+
+    static boolean controlDown() {
+        return Screen.hasControlDown();
     }
 
     static void click() {
-        playButtonClickSound(Minecraft.getInstance().getSoundManager());
+        Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
     }
 
     /** A blank cell: padding, {@code <empty>}, or a name the pack does not define. */
@@ -120,12 +125,12 @@ abstract class OptionCell extends AbstractWidget {
         void renderCell(GuiGraphics graphics, int mouseX, int mouseY) {}
 
         @Override
-        boolean press(MouseButtonEvent event) {
+        boolean press(int button) {
             return false;
         }
 
         @Override
-        boolean key(KeyEvent event) {
+        boolean key(int key) {
             return false;
         }
     }

@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "3559be1009794821624298315f970c6d488ee95549cad191632ac2ce498e8304",
+      "reportSha256": "2cded5c0f60d9499a4551c391ab031c7d1b26bedbe6be5789059540a82004724",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -24,7 +24,7 @@
         "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
         "ALPHA_TEST_DYNAMIC:gbuffers_water",
         "BLOCK_ENTITY_ID_DEFAULTED",
-        "BLOCK_ENTITY_TEXT_LAYOUT_INSTALLED",
+        "BLOCK_TRANSLUCENT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
         "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
         "BLOCK_VERTEX_CONVERSION_FAILED:crumbling BLOCK has no material mid-coordinate or tangent attribute",

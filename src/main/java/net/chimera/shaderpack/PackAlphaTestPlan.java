@@ -28,6 +28,9 @@ record PackAlphaTestPlan(
         FIXED
     }
 
+    /** The vertex colour's alpha, forwarded to a fragment whose draw test reads it. */
+    static final String VERTEX_ALPHA_VARYING = "chimeraVertexAlpha";
+
     private static final Pattern VERSION_LINE =
             Pattern.compile("(?m)^[ \\t]*#[ \\t]*version\\b[^\\r\\n]*\\R?");
     private static final Pattern MODERN_OUTPUT_ZERO = Pattern.compile(
@@ -82,13 +85,20 @@ record PackAlphaTestPlan(
         return null;
     }
 
+    String injectDrawTest(String fragment) {
+        return injectDrawTest(fragment, false);
+    }
+
     /**
      * Appends the entity-family alpha test to the authored fragment, as Iris
      * does, before its interface is planned. The dynamic test declares the
      * per-draw reference uniform, so the ordinary descriptor contract carries
      * it. A fragment with no location-0 colour output is left unchanged.
+     * With {@code vertexAlpha} a negative reference tests against the vertex
+     * colour's alpha instead (Iris AlphaTests.VERTEX_ALPHA), which the entity
+     * vertex bridge forwards as {@link #VERTEX_ALPHA_VARYING}.
      */
-    String injectDrawTest(String fragment) {
+    String injectDrawTest(String fragment, boolean vertexAlpha) {
         if (fragment == null || !active()
                 || (!perDrawReference() && mode != Mode.FIXED)) return fragment;
         String output = GlslTokenRewriter.containsIdentifier(fragment, "gl_FragData") ? "gl_FragData[0]"
@@ -96,9 +106,12 @@ record PackAlphaTestPlan(
                 : modernOutputZero(fragment);
         if (output == null) return fragment;
         String reference = UniformRegistry.ENTITY_ALPHA_REFERENCE;
+        String referenceTest = reference + " > 0.0 && !(" + output + ".a > " + reference + ")";
+        String test = vertexAlpha
+                ? reference + " < 0.0 ? !(" + output + ".a > " + VERTEX_ALPHA_VARYING + ") : " + referenceTest
+                : referenceTest;
         String rejection = perDrawReference()
-                ? "if (" + reference + " > 0.0 && !(" + output + ".a > " + reference + ")) {\n"
-                + "        discard;\n    }"
+                ? "if (" + test + ") {\n        discard;\n    }"
                 : rejection(output, null);
         if (rejection.isBlank()) return fragment;
         String tested = GlslTokenRewriter.appendMainEpilogue(fragment, rejection);

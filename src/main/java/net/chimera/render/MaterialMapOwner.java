@@ -1,12 +1,8 @@
 package net.chimera.render;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.vulkanmod.render.engine.VkSampler;
-import net.vulkanmod.render.engine.VkTextureView;
+import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +18,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalDouble;
 import java.util.Set;
 
 /**
@@ -73,8 +68,6 @@ public final class MaterialMapOwner implements AutoCloseable {
     private final VulkanImage specularImage;
     private final CompanionFactory companionFactory;
     private final MaterialSamplerFactory materialSamplerFactory;
-    /** Cached owned material samplers by full effective profile; closed with the owner. */
-    private final Map<MaterialSamplerKey, OwnedMaterialSampler> ownedSamplers = new LinkedHashMap<>();
     private final Object companionsLock = new Object();
     /** Latest pending upload per atlas location; the pump drains this on the render thread. */
     private final Map<String, PendingUpload> pendingUploads = new LinkedHashMap<>();
@@ -213,26 +206,11 @@ public final class MaterialMapOwner implements AutoCloseable {
     private record CompanionMatch(VulkanImage image, boolean labPbr, boolean simple) {}
 
     /**
-     * Cache key for one owned material sampler: every Vulkan sampler field
-     * Chimera controls. Two profiles that differ in any field, including
-     * max LOD, own different samplers.
-     */
-    private record MaterialSamplerKey(AddressMode addressU, AddressMode addressV,
-            FilterMode minFilter, FilterMode magFilter, int anisotropy, float maxLod) {}
-
-    /** One cached material sampler owned by this owner. */
-    public interface OwnedMaterialSampler extends AutoCloseable {
-        long id();
-        @Override void close();
-    }
-
-    /**
-     * Allocates owned material samplers. Production wraps VkSampler;
-     * tests record the requested fields.
+     * The Vulkan sampler for a derived material sampler key. Production takes VulkanMod's cached
+     * sampler for the key; tests record the requested keys.
      */
     public interface MaterialSamplerFactory {
-        OwnedMaterialSampler create(AddressMode addressU, AddressMode addressV,
-                FilterMode minFilter, FilterMode magFilter, int anisotropy, float maxLod);
+        long sampler(SamplerManager.SamplerKey key);
     }
 
     private MaterialMapOwner(DynamicTexture normalsTexture, VulkanImage normalsImage,
@@ -257,7 +235,7 @@ public final class MaterialMapOwner implements AutoCloseable {
     public static MaterialMapOwner withImages(VulkanImage normalsImage, VulkanImage specularImage,
             CompanionFactory companionFactory) {
         return withImages(normalsImage, specularImage, companionFactory,
-                (addressU, addressV, minFilter, magFilter, anisotropy, maxLod) -> {
+                key -> {
                     throw new UnsupportedOperationException("MATERIAL_MAP_NO_GPU:test owner");
                 });
     }
@@ -287,29 +265,7 @@ public final class MaterialMapOwner implements AutoCloseable {
                 normals.image().getId(), specular.image().getId());
         return new MaterialMapOwner(normals.texture(), normals.image(),
                 specular.texture(), specular.image(), MaterialCompanionPixels::buildGpuCompanions,
-                MaterialMapOwner::buildMaterialSampler);
-    }
-
-    private static OwnedMaterialSampler buildMaterialSampler(
-            AddressMode addressU, AddressMode addressV,
-            FilterMode minFilter, FilterMode magFilter, int anisotropy, float maxLod) {
-        OptionalDouble lod =
-                maxLod >= 1000.0f ? OptionalDouble.empty() : OptionalDouble.of(maxLod);
-        VkSampler sampler = new VkSampler(addressU, addressV, minFilter, magFilter, anisotropy, lod);
-        LOGGER.info("[chimera] material maps: owned sampler {} min={} mag={} address={}/{} "
-                        + "anisotropy={} maxLod={}",
-                sampler.getId(), minFilter, magFilter, addressU, addressV, anisotropy, maxLod);
-        return new OwnedMaterialSampler() {
-            @Override
-            public long id() {
-                return sampler.getId();
-            }
-
-            @Override
-            public void close() {
-                sampler.close();
-            }
-        };
+                SamplerManager::getTextureSampler);
     }
 
     private record FlatImage(DynamicTexture texture, VulkanImage image) {}
@@ -318,17 +274,10 @@ public final class MaterialMapOwner implements AutoCloseable {
         NativeImage pixels = new NativeImage(1, 1, false);
         boolean owned = true;
         try {
-            pixels.setPixelABGR(0, 0, kind.fallbackAbgr());
-            DynamicTexture texture = new DynamicTexture(
-                    () -> "chimera_material_flat_" + kind.sampler(), pixels);
+            pixels.setPixelRGBA(0, 0, kind.fallbackAbgr());
+            DynamicTexture texture = new DynamicTexture(pixels);
             owned = false;
-            texture.upload();
-            GpuTextureView view = texture.getTextureView();
-            if (!(view instanceof VkTextureView vulkanView)) {
-                texture.close();
-                throw new IllegalStateException("material fallback has no Vulkan view: " + kind.sampler());
-            }
-            VulkanImage image = vulkanView.texture().getVulkanImage();
+            VulkanImage image = ChimeraTextures.image(texture);
             if (image == null) {
                 texture.close();
                 throw new IllegalStateException("material fallback has no Vulkan image: " + kind.sampler());
@@ -437,10 +386,8 @@ public final class MaterialMapOwner implements AutoCloseable {
     }
 
     /**
-     * Writes every animated slot that changed since the last pump: each
-     * animated mip level ({@link MaterialAnimation#animatedLevels()}, Iris's
-     * Sodium-limited redraw), including its replicated padding, at the
-     * slot's own origin.
+     * Writes every animated slot that changed since the last pump: each mip
+     * level, including its replicated padding, at the slot's own origin.
      * Runs at the pump, where no render pass is open. A failed write warns
      * and leaves that slot showing its last good frame.
      */
@@ -466,7 +413,7 @@ public final class MaterialMapOwner implements AutoCloseable {
 
     private static void writeSlot(CompanionSet set, AnimatedSlot slot, int atlasWidth, int atlasHeight) {
         MaterialAnimation animation = slot.animation;
-        for (int level = 0; level < animation.animatedLevels(); level++) {
+        for (int level = 0; level < animation.levels(); level++) {
             int pad = slot.sprite.padX() >> level;
             int width = MaterialMapPixels.levelSize(animation.width(), level);
             int height = MaterialMapPixels.levelSize(animation.height(), level);
@@ -583,22 +530,18 @@ public final class MaterialMapOwner implements AutoCloseable {
         if (profile == null) {
             return fallbackSampler(base, match);
         }
-        // Owned samplers: atlas labPBR specular filters NEAREST inside its
+        // Derived samplers: atlas labPBR specular filters NEAREST inside its
         // mip levels with the source ceiling; every simple map keeps the
-        // source min/mag/address/anisotropy policy but clamps to LOD zero
-        // (NEAREST pair for labPBR specular).
-        FilterMode minFilter = labSpecular ? FilterMode.NEAREST : profile.minFilter();
-        FilterMode magFilter = labSpecular ? FilterMode.NEAREST : profile.magFilter();
-        float maxLod = match.simple() ? 0.0f : profile.maxLod();
-        if (profile.addressU() == null || profile.addressV() == null
-                || minFilter == null || magFilter == null) {
+        // source filter and wrap policy but clamps to LOD zero (NEAREST for
+        // labPBR specular).
+        SamplerManager.SamplerKey key = profile.derive(labSpecular, match.simple());
+        if (key == null) {
             // The draw sampler ID is still meaningful; only derivation is impossible.
             return drawSampler(profile, base, match);
         }
-        Long owned = ownedSamplerId(profile.addressU(), profile.addressV(),
-                minFilter, magFilter, profile.anisotropy(), maxLod);
-        if (owned != null) return owned;
-        return fallbackSampler(base, match);
+        synchronized (companionsLock) {
+            return closed ? fallbackSampler(base, match) : materialSamplerFactory.sampler(key);
+        }
     }
 
     /** The draw's own sampler ID when it has one, else the fallback. */
@@ -610,25 +553,6 @@ public final class MaterialMapOwner implements AutoCloseable {
     private static long fallbackSampler(VulkanImage base, CompanionMatch match) {
         if (base.getSampler() != 0) return base.getSampler();
         return match.image().getSampler();
-    }
-
-    /**
-     * Cached owned sampler for one effective profile. Returns null when the
-     * owner is closed mid-draw; the caller falls back to the base image ID.
-     */
-    private Long ownedSamplerId(AddressMode addressU, AddressMode addressV,
-            FilterMode minFilter, FilterMode magFilter, int anisotropy, float maxLod) {
-        MaterialSamplerKey key = new MaterialSamplerKey(
-                addressU, addressV, minFilter, magFilter, anisotropy, maxLod);
-        synchronized (companionsLock) {
-            if (closed) return null;
-            OwnedMaterialSampler existing = ownedSamplers.get(key);
-            if (existing != null) return existing.id();
-            OwnedMaterialSampler created = materialSamplerFactory.create(
-                    addressU, addressV, minFilter, magFilter, anisotropy, maxLod);
-            ownedSamplers.put(key, created);
-            return created.id();
-        }
     }
 
     private CompanionMatch findCompanion(VulkanImage base, MaterialMapKind kind) {
@@ -864,14 +788,6 @@ public final class MaterialMapOwner implements AutoCloseable {
             }
             simpleCompanions.clear();
             simpleMisses.clear();
-            for (OwnedMaterialSampler owned : ownedSamplers.values()) {
-                try {
-                    owned.close();
-                } catch (RuntimeException failure) {
-                    LOGGER.warn("[chimera] material maps: owned sampler close failed", failure);
-                }
-            }
-            ownedSamplers.clear();
             closeRetiredLocked();
         }
         if (normalsTexture != null) normalsTexture.close();

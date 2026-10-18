@@ -6,7 +6,7 @@ import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackResourceStatus;
 import net.chimera.shaderpack.RawTextureSpec;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
@@ -83,9 +83,9 @@ public final class PackResourceOwner implements AutoCloseable {
 
     private static PackNoiseTexture loadGameResource(PackResourceBinding binding) throws IOException {
         String source = binding.source();
-        Identifier location;
+        ResourceLocation location;
         try {
-            location = Identifier.parse(source);
+            location = ResourceLocation.parse(source);
         } catch (RuntimeException failure) {
             return null;
         }

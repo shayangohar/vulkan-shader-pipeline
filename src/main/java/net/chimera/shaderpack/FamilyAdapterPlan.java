@@ -20,6 +20,11 @@ public record FamilyAdapterPlan(
          * SHADOW_ENTITIES_CUTOUT, ProgramId.ShadowEntities, falling back to shadow).
          */
         SHADOW_ENTITIES,
+        /**
+         * shadow_block: block entities' models in the shadow pass (Iris SHADOW_BLOCK,
+         * ProgramId.ShadowBlock, falling back to shadow), on the entity layout.
+         */
+        SHADOW_BLOCK,
         /** shadow_lines: line draws in the shadow pass (Iris SHADOW_LINES, ProgramId.Shadow). */
         SHADOW_LINES,
         /** shadow_leash: leads in the shadow pass (Iris SHADOW_LEASH, ProgramId.Shadow). */
@@ -42,8 +47,8 @@ public record FamilyAdapterPlan(
         SPIDER_EYES,
         BLOCK,
         /**
-         * gbuffers_block_translucent: text drawn by block entities, such as signs (Iris TEXT_BE,
-         * ProgramId.BlockTrans). Iris 1.21.11 assigns it no block-entity model draws.
+         * gbuffers_block_translucent: block entities' translucent models (Iris BE_TRANSLUCENT) and
+         * text, such as signs (TEXT_BE), both ProgramId.BlockTrans.
          */
         BLOCK_TRANSLUCENT,
         DAMAGED_BLOCK,
@@ -79,7 +84,7 @@ public record FamilyAdapterPlan(
         EXTENDED_ENTITY,
         EXTENDED_PARTICLE,
         HOST_PARTICLE,
-        /** DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, drawn as quads. */
+        /** DefaultVertexFormat.POSITION_COLOR_NORMAL lines (outlines, hitboxes, debug lines). */
         HOST_LINE,
         /** DefaultVertexFormat.POSITION_TEX glint layers. */
         HOST_GLINT,
@@ -100,17 +105,8 @@ public record FamilyAdapterPlan(
         SKY_POSITION_COLOR,
         SKY_POSITION_UV,
         SKY_POSITION_COLOR_UV,
-        /**
-         * Vanilla's cloud faces, decoded as Iris's cloud program decodes them, in
-         * DefaultVertexFormat.POSITION_COLOR_NORMAL (PackCloudRenderer).
-         */
-        CLOUD_POSITION_COLOR_NORMAL,
-        /** @deprecated VulkanMod's normal-less cloud mesh; retained so reports from older builds still parse. */
-        @Deprecated
-        CLOUD_POSITION_COLOR,
-        /** @deprecated retained so reports from older builds still parse. */
-        @Deprecated
-        CLOUD_GENERATED,
+        /** Vanilla's cloud mesh, DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL. */
+        CLOUD_POSITION_UV_COLOR_NORMAL,
         FULLSCREEN,
         HOST_FALLBACK;
 

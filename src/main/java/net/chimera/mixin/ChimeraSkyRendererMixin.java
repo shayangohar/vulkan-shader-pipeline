@@ -2,87 +2,152 @@ package net.chimera.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
+import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackRenderingPhase;
-import net.minecraft.client.renderer.SkyRenderer;
-import net.minecraft.world.level.MoonPhase;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.DimensionSpecialEffects;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.vulkanmod.render.chunk.TerrainRenderState;
+import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Slice;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** The sun and moon share a native pipeline; their semantic phase does not. */
-@Mixin(SkyRenderer.class)
+/**
+ * The sky and clouds under a pack, as Iris 1.21.1 MixinLevelRenderer phases them. renderSky opens
+ * the sky window in the CUSTOM_SKY phase, so a sky a mod draws in its place is still the pack's
+ * sky; each part of the vanilla sky then sets its phase at the call that starts it. As in Iris,
+ * the sky draws even in thick fog (a boss's or a foggy dimension's), so the pack's sky programs
+ * always write the sky the composite passes read. The pack horizon draws in the SKY phase before
+ * anything else in the window, as Iris draws it ahead of the sky, wherever the sky is the normal
+ * one or the dimension has skylight. The celestial plane turns by the pack's sun path rotation
+ * after vanilla's -90 degree Y turn. renderClouds draws in the CLOUDS phase, and not at all when
+ * the pack's cloud program draws nothing.
+ */
+@Mixin(LevelRenderer.class)
 public abstract class ChimeraSkyRendererMixin {
-    /** Iris rotates the celestial plane after vanilla's initial -90deg Y turn. */
-    @Inject(method = "renderSunMoonAndStars", at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/vertex/PoseStack;mulPose(Lorg/joml/Quaternionfc;)V",
-            ordinal = 0, shift = At.Shift.AFTER), require = 1)
-    private void chimera$sunPath(PoseStack pose, float sun, float moon, float stars, MoonPhase phase,
-                                float alpha, float brightness, CallbackInfo callback) {
+    @WrapMethod(method = "renderSky")
+    private void chimera$skyWindow(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                                   boolean foggy, Runnable skyFog, Operation<Void> original) {
+        if (!ChimeraRenderer.segmentsActive()) {
+            original.call(frustum, projection, partialTick, camera, foggy, skyFog);
+            return;
+        }
+        var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.SKY);
+        ChimeraSkyBridge.beginSky();
+        try {
+            chimera$horizon(frustum, projection);
+            PackUniformProvider.setRenderingPhase(PackRenderingPhase.CUSTOM_SKY);
+            original.call(frustum, projection, partialTick, camera, false, skyFog);
+        } finally {
+            ChimeraSkyBridge.endSky();
+            PackUniformProvider.setRenderingPhase(previous);
+        }
+    }
+
+    /** Iris IrisRenderingPipeline.beginLevelRendering's horizon, under the state the sky draws with. */
+    @Unique
+    private static void chimera$horizon(Matrix4f frustum, Matrix4f projection) {
+        ClientLevel level = Minecraft.getInstance().level;
+        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+        if (pass == null || level == null || (level.effects().skyType() != DimensionSpecialEffects.SkyType.NORMAL
+                && !level.dimensionType().hasSkyLight())) {
+            return;
+        }
+        // VulkanMod sets this state at the head of renderSky, which the horizon draws ahead of.
+        TerrainRenderState.prepareWorldTerrainState();
+        pass.drawPackHorizon(frustum, projection);
+    }
+
+    @Inject(method = "renderSky", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/FogRenderer;levelFogColor()V"), require = 1)
+    private void chimera$skyDisc(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                                 boolean foggy, Runnable skyFog, CallbackInfo callback) {
+        chimera$phase(PackRenderingPhase.SKY);
+    }
+
+    @Inject(method = "renderSky", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/DimensionSpecialEffects;getSunriseColor(FF)[F"), require = 1)
+    private void chimera$sunset(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                                boolean foggy, Runnable skyFog, CallbackInfo callback) {
+        chimera$phase(PackRenderingPhase.SUNSET);
+    }
+
+    @Inject(method = "renderSky", at = @At(value = "FIELD",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;"
+                    + "SUN_LOCATION:Lnet/minecraft/resources/ResourceLocation;"),
+            require = 1)
+    private void chimera$sun(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                             boolean foggy, Runnable skyFog, CallbackInfo callback) {
+        chimera$phase(PackRenderingPhase.SUN);
+    }
+
+    @Inject(method = "renderSky", at = @At(value = "FIELD",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;"
+                    + "MOON_LOCATION:Lnet/minecraft/resources/ResourceLocation;"),
+            require = 1)
+    private void chimera$moon(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                              boolean foggy, Runnable skyFog, CallbackInfo callback) {
+        chimera$phase(PackRenderingPhase.MOON);
+    }
+
+    @Inject(method = "renderSky", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/multiplayer/ClientLevel;getStarBrightness(F)F"), require = 1)
+    private void chimera$stars(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                               boolean foggy, Runnable skyFog, CallbackInfo callback) {
+        chimera$phase(PackRenderingPhase.STARS);
+    }
+
+    @Inject(method = "renderSky", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/player/LocalPlayer;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"),
+            require = 1)
+    private void chimera$void(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                              boolean foggy, Runnable skyFog, CallbackInfo callback) {
+        chimera$phase(PackRenderingPhase.VOID);
+    }
+
+    @Inject(method = "renderSky", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/vertex/PoseStack;mulPose(Lorg/joml/Quaternionf;)V", ordinal = 0,
+            shift = At.Shift.AFTER),
+            slice = @Slice(from = @At(value = "FIELD", target = "Lcom/mojang/math/Axis;YP:Lcom/mojang/math/Axis;")),
+            require = 1)
+    private void chimera$sunPath(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
+                                 boolean foggy, Runnable skyFog, CallbackInfo callback, @Local PoseStack pose) {
         if (ChimeraRenderer.segmentsActive()) {
             pose.mulPose(Axis.ZP.rotationDegrees(PackUniformProvider.currentSunPathRotation()));
         }
     }
-    @WrapMethod(method = "renderSkyDisc")
-    private void chimera$sky(int color, Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.SKY, () -> {
-            var pass = ChimeraRenderer.getMainPass();
-            if (pass != null && ChimeraRenderer.segmentsActive()) pass.drawPackHorizon();
-            original.call(color);
-        });
-    }
 
-    @WrapMethod(method = "renderDarkDisc")
-    private void chimera$void(Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.VOID, () -> original.call());
-    }
-
-    @WrapMethod(method = "renderSun")
-    private void chimera$sun(float alpha, PoseStack pose, Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.SUN, () -> original.call(alpha, pose));
-    }
-
-    @WrapMethod(method = "renderMoon")
-    private void chimera$moon(MoonPhase moon, float alpha, PoseStack pose, Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.MOON, () -> original.call(moon, alpha, pose));
-    }
-
-    @WrapMethod(method = "renderStars")
-    private void chimera$stars(float alpha, PoseStack pose, Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.STARS, () -> original.call(alpha, pose));
-    }
-
-    @WrapMethod(method = "renderSunriseAndSunset")
-    private void chimera$sunset(PoseStack pose, float angle, int color, Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.SUNSET, () -> original.call(pose, angle, color));
-    }
-
-    @WrapMethod(method = "renderEndSky")
-    private void chimera$endSky(Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.SKY, () -> original.call());
-    }
-
-    @WrapMethod(method = "renderEndFlash")
-    private void chimera$endFlash(PoseStack pose, float alpha, float angle, float size, Operation<Void> original) {
-        chimera$phase(PackRenderingPhase.SKY, () -> original.call(pose, alpha, angle, size));
-    }
-
-    @Unique
-    private void chimera$phase(PackRenderingPhase phase, Runnable draw) {
+    @WrapMethod(method = "renderClouds")
+    private void chimera$clouds(PoseStack pose, Matrix4f frustum, Matrix4f projection, float partialTick,
+                                double cameraX, double cameraY, double cameraZ, Operation<Void> original) {
+        if (ChimeraSkyBridge.skipHostClouds()) return;
         if (!ChimeraRenderer.segmentsActive()) {
-            draw.run();
+            original.call(pose, frustum, projection, partialTick, cameraX, cameraY, cameraZ);
             return;
         }
-        var previous = PackUniformProvider.setRenderingPhase(phase);
+        var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.CLOUDS);
         try {
-            draw.run();
+            original.call(pose, frustum, projection, partialTick, cameraX, cameraY, cameraZ);
         } finally {
             PackUniformProvider.setRenderingPhase(previous);
         }
+    }
+
+    /** Enters {@code phase} for the rest of the sky window, while a pack draws the sky. */
+    @Unique
+    private static void chimera$phase(PackRenderingPhase phase) {
+        if (ChimeraRenderer.segmentsActive()) PackUniformProvider.setRenderingPhase(phase);
     }
 }

@@ -28,21 +28,18 @@ import java.util.regex.Pattern;
 public final class FragmentConverter {
     private FragmentConverter() {}
 
-    private static final Pattern ELYTRA_FLYING_BOOL = Pattern.compile("\\buniform\\s+bool\\s+isElytraFlying\\b");
-    /** A read of the int catalog field that stands for Iris's bool isElytraFlying. */
-    static final String ELYTRA_FLYING_READ = "(isElytraFlying != 0)";
-
     static final Pattern MODERN_GEOMETRY_OUTPUT_DECL = Pattern.compile(
             "(?m)^\\s*out\\s+vec4\\s+(\\w+)\\s*;\\s*");
 
     static final Pattern POST_DRAWBUFFERS_DEFINE = Pattern.compile(
             "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
 
-    /** Three UBO blocks precede samplers in the terrain pipeline config. */
-    static final int GEOMETRY_SAMPLER_BINDING_BASE = 3;
-
-    static int geometrySamplerBindingBase() {
-        return GEOMETRY_SAMPLER_BINDING_BASE;
+    /**
+     * The host blocks ahead of a terrain-lane program's own uniform block: chimera_terrain.json's
+     * view and fog blocks for terrain and water, chimera_shadow.json's view block for shadow.
+     */
+    static int terrainHostBlocks(UniformRegistry.Stage stage) {
+        return stage == UniformRegistry.Stage.SHADOW ? 1 : 2;
     }
 
     /**
@@ -269,14 +266,10 @@ public final class FragmentConverter {
             src = LegacyGlslConverter.removePackMetadataConstants(src);
             src = LegacyGlslConverter.stripUnusedConsumedConsts(src, packConstants);
             src = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
-            boolean elytraFlyingBool = declaresElytraFlyingBool(src);
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
                 src = EntityVertexBridge.removeEntityIdDeclarations(src, interfacePlan);
                 src = EntityVertexBridge.replaceEntityIdReferences(src, request.terrainLayout());
-            }
-            if (elytraFlyingBool) {
-                src = rewriteElytraFlyingBool(src, interfacePlan);
             }
             if (geometryStage && modern && request.geometryOutputPlan() == null && !stage.shadowPass()) {
                 src = convertModernGeometryOutputs(src);
@@ -636,7 +629,7 @@ public final class FragmentConverter {
 
     /**
      * gbuffers_terrain and gbuffers_water share one terrain contract: the
-     * terrain vertex inputs, the generated pack uniform block at binding 3,
+     * terrain vertex inputs, the generated pack uniform block at binding 2,
      * the host terrain block at binding 1, and the terrain alpha test. They
      * differ only in the sampled inputs their stage table admits.
      */
@@ -644,7 +637,6 @@ public final class FragmentConverter {
         return stage == UniformRegistry.Stage.GEOMETRY || stage == UniformRegistry.Stage.TRANSLUCENT;
     }
 
-    /** Position of the sampler's registry slot in the emitted geometry config array. */
     /** First sampler binding of a geometry-family program, after its host and pack UBOs. */
     static int geometrySamplerBindingBase(UniformRegistry.ProgramInterface interfacePlan) {
         UniformRegistry.Stage stage = interfacePlan.stage();
@@ -654,7 +646,12 @@ public final class FragmentConverter {
                 || stage == UniformRegistry.Stage.SHADOW_ENTITY) {
             return uniforms ? 3 : 2;
         }
-        return GEOMETRY_SAMPLER_BINDING_BASE + (uniforms ? 1 : 0);
+        if (terrainContract(stage) || stage == UniformRegistry.Stage.SHADOW) {
+            return terrainHostBlocks(stage) + (uniforms ? 1 : 0);
+        }
+        // Sky and clouds: binding 2 holds the pack's uniform block, or an empty block in its place
+        // (PackDescriptorContracts.familyLayout).
+        return 3;
     }
 
     /**
@@ -688,11 +685,11 @@ public final class FragmentConverter {
     }
 
     /**
-     * The shadow program's pack uniform block follows its lane's host blocks: binding 3 after
-     * the terrain blocks, binding 2 after the entity transform blocks.
+     * The shadow program's pack uniform block follows its lane's host blocks: binding 1 after
+     * the shadow view block, binding 2 after the entity transform blocks.
      */
     static int shadowUniformBinding(UniformRegistry.Stage stage) {
-        return stage == UniformRegistry.Stage.SHADOW_ENTITY ? 2 : 3;
+        return stage == UniformRegistry.Stage.SHADOW_ENTITY ? 2 : terrainHostBlocks(stage);
     }
 
     static String generatedShadowUniformBlock(
@@ -724,11 +721,12 @@ public final class FragmentConverter {
                 ? source : GlslTokenRewriter.replaceIdentifiers(source, replacements);
     }
 
-    /** Ordinary terrain pack uniforms share the binding reserved after host section data. */
+    /** Terrain and water pack uniforms follow the terrain host blocks. */
     static String generatedGeometryUniformBlock(
             List<UniformRegistry.UniformDeclaration> uniforms
     ) {
-        StringBuilder block = new StringBuilder("layout(binding = 3) uniform ChimeraTerrainPackUniforms {\n");
+        StringBuilder block = new StringBuilder("layout(binding = "
+                + terrainHostBlocks(UniformRegistry.Stage.GEOMETRY) + ") uniform ChimeraTerrainPackUniforms {\n");
         for (UniformRegistry.UniformDeclaration uniform : uniforms) {
             block.append("    ").append(uniform.glslType()).append(' ')
                     .append(uniform.name()).append(";\n");
@@ -736,22 +734,15 @@ public final class FragmentConverter {
         return block.append("};\n").toString();
     }
 
-    /** Exact binding-1 layout, with an instance reserved for generated alpha testing. */
+    /** chimera_terrain.json's binding-1 fog block, with an instance reserved for generated alpha testing. */
     static String terrainHostUniformBlock(String source, String instance) {
         String block = GlslTokenRewriter.uniqueIdentifier(source, "ChimeraTerrainHostBlock");
         return """
                 layout(binding = 1) uniform %s {
                     vec4 FogColor;
-                    float FogEnvironmentalStart;
-                    float FogEnvironmentalEnd;
-                    float FogRenderDistanceStart;
-                    float FogRenderDistanceEnd;
-                    float FogSkyEnd;
-                    float FogCloudsEnd;
+                    float FogStart;
+                    float FogEnd;
                     float AlphaCutout;
-                    ivec2 TextureSize;
-                    vec2 TexelSize;
-                    int UseRgss;
                 } %s;
                 """.formatted(block, instance);
     }
@@ -770,34 +761,6 @@ public final class FragmentConverter {
         GlslVersion.requireSupported(source, "entity fragment", true);
     }
 
-    /** True when the source declares Iris's isElytraFlying as the bool Iris serves. */
-    static boolean declaresElytraFlyingBool(String source) {
-        return source != null && ELYTRA_FLYING_BOOL.matcher(source).find();
-    }
-
-    /**
-     * Reads the boolean Iris isElytraFlying uniform from the live int catalog
-     * field: VulkanMod's admitted UBO types have no bool, so the generated
-     * block declares {@code int isElytraFlying} and every read becomes
-     * {@code (isElytraFlying != 0)}, which a pack's {@code !isElytraFlying}
-     * also accepts. Any stage that reads it: Complementary's HIDE_ARMOR reads
-     * it in the entity and the shadow programs.
-     */
-    static String rewriteElytraFlyingBool(
-            String source, UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        if (source == null || !GlslTokenRewriter.containsIdentifier(source, "isElytraFlying")
-                || source.contains(ELYTRA_FLYING_READ)) {
-            return source;
-        }
-        boolean live = interfacePlan != null && interfacePlan.executableUniforms().stream()
-                .anyMatch(uniform -> uniform.name().equals("isElytraFlying"));
-        if (!live) {
-            return source;
-        }
-        return GlslTokenRewriter.replaceIdentifiers(source, Map.of("isElytraFlying", ELYTRA_FLYING_READ));
-    }
-
     static String chimeraFragmentVaryings(LegacyGlslConverter.TerrainVaryingLayout layout) {
         if (layout == null) return "";
         String declarations = "";
@@ -808,9 +771,8 @@ public final class FragmentConverter {
                         + ") flat in uint " + varying + ";\n";
             }
         }
-        if (layout.locations().containsKey(EntityOverlayColor.UV_VARYING)) {
-            declarations += "layout(location = " + layout.location(EntityOverlayColor.UV_VARYING)
-                    + ") flat in ivec2 " + EntityOverlayColor.UV_VARYING + ";\n";
+        for (EntityVertexBridge.ForwardedVarying varying : EntityVertexBridge.ForwardedVarying.ALL) {
+            if (layout.locations().containsKey(varying.name())) declarations += varying.declaration(layout, "in");
         }
         return declarations;
     }

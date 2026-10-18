@@ -11,6 +11,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_SINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
+
 /** Vertex formats owned by Chimera rather than by the host renderer. */
 public final class ChimeraVertexFormats {
     public static final VertexFormatElement MATERIAL_ID =
@@ -21,9 +28,8 @@ public final class ChimeraVertexFormats {
                     VertexFormatElement.Usage.GENERIC, 1);
 
     /**
-     * Scalar metadata accepted by VulkanMod's generic format translator.
-     * ChimeraEntityVertexInputMixin replaces the Vulkan description with the
-     * packed four-component unsigned-short input at the same byte offset.
+     * The packed four-component unsigned-short entity ids, declared as one short and six bytes of
+     * padding; ChimeraEntityVertexInputMixin gives Vulkan the full input at the same byte offset.
      */
     public static final VertexFormatElement ENTITY_IDS =
             VertexFormatElement.register(16, 0, VertexFormatElement.Type.SHORT,
@@ -50,11 +56,15 @@ public final class ChimeraVertexFormats {
             new VertexFormatElement(7, 0, VertexFormatElement.Type.BYTE,
                     VertexFormatElement.Usage.NORMAL, 4);
 
+    /**
+     * VulkanMod's COMPRESSED_TERRAIN prefix (position and light, colour, UV), which its
+     * CompressedVertexBuilder writes, followed by the material attributes: 24 bytes.
+     */
     public static final VertexFormat EXTENDED_COMPRESSED_TERRAIN =
             VertexFormat.builder()
-                    .add("Position", CustomVertexFormat.ELEMENT_POSITION_INT16)
-                    .add("UV0", CustomVertexFormat.ELEMENT_UV0_UINT16)
-                    .add("Color", CustomVertexFormat.ELEMENT_COLOR_UINT)
+                    .add("Position", CustomVertexFormat.ELEMENT_POSITION)
+                    .add("Color", CustomVertexFormat.ELEMENT_COLOR)
+                    .add("UV0", CustomVertexFormat.ELEMENT_UV0)
                     .add("MaterialId", MATERIAL_ID)
                     .add("RenderType", RENDER_TYPE)
                     .build();
@@ -65,9 +75,9 @@ public final class ChimeraVertexFormats {
      */
     public static final VertexFormat MODERN_COMPRESSED_TERRAIN =
             VertexFormat.builder()
-                    .add("Position", CustomVertexFormat.ELEMENT_POSITION_INT16)
-                    .add("UV0", CustomVertexFormat.ELEMENT_UV0_UINT16)
-                    .add("Color", CustomVertexFormat.ELEMENT_COLOR_UINT)
+                    .add("Position", CustomVertexFormat.ELEMENT_POSITION)
+                    .add("Color", CustomVertexFormat.ELEMENT_COLOR)
+                    .add("UV0", CustomVertexFormat.ELEMENT_UV0)
                     .add("MaterialId", MATERIAL_ID)
                     .add("RenderType", RENDER_TYPE)
                     .add("MidTexCoord", TERRAIN_MID_TEX_COORD)
@@ -120,6 +130,14 @@ public final class ChimeraVertexFormats {
      */
     public static final VertexFormat EXTENDED_GLYPH = appendMaterialInputs(
             DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, true);
+    /**
+     * Host BLOCK followed by the pack-visible attributes: the chunk render types of falling blocks
+     * and moving pistons, which Iris extends to IrisVertexFormats.TERRAIN outside chunk meshes. Its
+     * elements match EXTENDED_GLYPH's, so VertexFormat.equals cannot tell the two apart; Chimera
+     * compares formats by identity, and their identical vertex inputs are harmless where a map does
+     * merge them.
+     */
+    public static final VertexFormat EXTENDED_BLOCK = appendMaterialInputs(DefaultVertexFormat.BLOCK);
     private static final VertexFormat EXTENDED_HAND_MAP_BACKGROUND = appendMaterialInputs(
             DefaultVertexFormat.POSITION_TEX_COLOR);
     private static final Map<VertexFormat, VertexFormat> HAND_FORMATS = handFormatsInOrder();
@@ -140,6 +158,39 @@ public final class ChimeraVertexFormats {
         formats.put(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, EXTENDED_GLYPH);
         formats.put(DefaultVertexFormat.POSITION_TEX_COLOR, EXTENDED_HAND_MAP_BACKGROUND);
         return Collections.unmodifiableMap(formats);
+    }
+
+    /** The widened format a family lane writes for a host layout, or null when none widens it. */
+    public static VertexFormat extendedLayout(VertexFormat host) {
+        return host == DefaultVertexFormat.BLOCK ? EXTENDED_BLOCK : HAND_FORMATS.get(host);
+    }
+
+    /** True for a widened format only a family lane writes: no host program reads its layout. */
+    public static boolean isFamilyFormat(VertexFormat format) {
+        return format == EXTENDED_BLOCK || HAND_FORMATS.containsValue(format);
+    }
+
+    /**
+     * The Vulkan format of each element of family format {@code format}, by location. Reforged's
+     * vertex translator rejects the family scalars (MidTexCoord is declared a generic float), so
+     * ChimeraEntityVertexInputMixin describes family formats from this list instead.
+     */
+    public static int[] vulkanInputFormats(VertexFormat format) {
+        return format.getElementAttributeNames().stream().mapToInt(ChimeraVertexFormats::vulkanInputFormat)
+                .toArray();
+    }
+
+    private static int vulkanInputFormat(String attribute) {
+        return switch (attribute) {
+            case "Position" -> VK_FORMAT_R32G32B32_SFLOAT;
+            case "Color" -> VK_FORMAT_R8G8B8A8_UNORM;
+            case "UV0", "MidTexCoord" -> VK_FORMAT_R32G32_SFLOAT;
+            case "UV1", "UV2" -> VK_FORMAT_R16G16_SINT;
+            case "EntityIds" -> VK_FORMAT_R16G16B16A16_UINT;
+            // Normal is three bytes plus a pad byte; the tangent frame packs four.
+            case "Normal", "Tangent" -> VK_FORMAT_R8G8B8A8_SNORM;
+            default -> throw new IllegalArgumentException("unsupported family attribute " + attribute);
+        };
     }
 
     /** True for a format whose normal Chimera computes per quad because the host writes none. */

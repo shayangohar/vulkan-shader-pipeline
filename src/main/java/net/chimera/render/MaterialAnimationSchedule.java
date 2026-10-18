@@ -3,8 +3,6 @@ package net.chimera.render;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.mojang.serialization.JsonOps;
-import net.minecraft.client.resources.metadata.animation.AnimationFrame;
 import net.minecraft.client.resources.metadata.animation.AnimationMetadataSection;
 import net.minecraft.client.resources.metadata.animation.FrameSize;
 
@@ -13,7 +11,7 @@ import java.util.List;
 
 /**
  * A material map's own animation table, read from its {@code .mcmeta} with
- * Minecraft's {@link AnimationMetadataSection} codec and frame-size rule.
+ * Minecraft's {@link AnimationMetadataSection} parser and frame-size rule.
  *
  * <p>A map keeps its own frame order, durations and interpolation flag,
  * independent of the albedo beside it. The whole table is validated up
@@ -36,9 +34,12 @@ record MaterialAnimationSchedule(int frameWidth, int frameHeight, int columns,
         }
         JsonObject object = root.getAsJsonObject();
         if (!object.has("animation")) return null;
-        AnimationMetadataSection section = AnimationMetadataSection.CODEC
-                .parse(JsonOps.INSTANCE, object.get("animation"))
-                .getOrThrow(message -> new IllegalArgumentException("MATERIAL_MAP_ANIMATION:" + message));
+        AnimationMetadataSection section;
+        try {
+            section = AnimationMetadataSection.SERIALIZER.fromJson(object.getAsJsonObject("animation"));
+        } catch (RuntimeException invalid) {
+            throw new IllegalArgumentException("MATERIAL_MAP_ANIMATION:" + invalid.getMessage(), invalid);
+        }
         FrameSize size = section.calculateFrameSize(imageWidth, imageHeight);
         if (size.width() <= 0 || size.height() <= 0
                 || imageWidth % size.width() != 0 || imageHeight % size.height() != 0) {
@@ -48,29 +49,28 @@ record MaterialAnimationSchedule(int frameWidth, int frameHeight, int columns,
         int columns = imageWidth / size.width();
         int count = columns * (imageHeight / size.height());
         List<MaterialAnimation.Frame> frames = new ArrayList<>();
-        if (section.frames().isPresent()) {
-            for (AnimationFrame frame : section.frames().get()) {
-                int time = frame.timeOr(section.defaultFrameTime());
-                if (frame.index() < 0 || frame.index() >= count) {
-                    throw new IllegalArgumentException("MATERIAL_MAP_ANIMATION:frame index "
-                            + frame.index() + " outside " + count + " frames");
-                }
-                if (time <= 0) {
-                    throw new IllegalArgumentException("MATERIAL_MAP_ANIMATION:frame duration " + time);
-                }
-                frames.add(new MaterialAnimation.Frame(frame.index(), time));
+        section.forEachFrame((index, time) -> {
+            if (index < 0 || index >= count) {
+                throw new IllegalArgumentException("MATERIAL_MAP_ANIMATION:frame index "
+                        + index + " outside " + count + " frames");
             }
-        } else {
-            if (section.defaultFrameTime() <= 0) {
+            if (time <= 0) {
+                throw new IllegalArgumentException("MATERIAL_MAP_ANIMATION:frame duration " + time);
+            }
+            frames.add(new MaterialAnimation.Frame(index, time));
+        });
+        if (frames.isEmpty()) {
+            // No frame list: every frame in order, as Minecraft's sprites play it.
+            if (section.getDefaultFrameTime() <= 0) {
                 throw new IllegalArgumentException("MATERIAL_MAP_ANIMATION:frame duration "
-                        + section.defaultFrameTime());
+                        + section.getDefaultFrameTime());
             }
             for (int index = 0; index < count; index++) {
-                frames.add(new MaterialAnimation.Frame(index, section.defaultFrameTime()));
+                frames.add(new MaterialAnimation.Frame(index, section.getDefaultFrameTime()));
             }
         }
         return new MaterialAnimationSchedule(size.width(), size.height(), columns,
-                List.copyOf(frames), section.interpolatedFrames());
+                List.copyOf(frames), section.isInterpolatedFrames());
     }
 
     /** True when the table cycles; a single entry is a static frame, as for the game's sprites. */

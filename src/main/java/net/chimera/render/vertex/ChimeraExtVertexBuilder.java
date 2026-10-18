@@ -35,14 +35,16 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
 
     /**
      * The block whose quads follow, as Iris's BlockContextHolder.setBlockData: its material,
-     * render type, light emission and position within the section. at_midBlock points from
-     * each vertex to this block's centre.
+     * render type and light emission.
      */
-    public void setBlockData(int materialId, int renderType, int emission,
-                             int localX, int localY, int localZ) {
+    public void setBlockData(int materialId, int renderType, int emission) {
         this.materialId = materialId;
         this.renderType = renderType;
         this.blockEmission = emission;
+    }
+
+    /** The position within the section of that block; at_midBlock points from each vertex to its centre. */
+    public void setBlockPosition(int localX, int localY, int localZ) {
         this.blockX = localX;
         this.blockY = localY;
         this.blockZ = localZ;
@@ -51,9 +53,9 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     @Override
     public void vertex(long ptr, float x, float y, float z, int color,
                        float u, float v, int light, int packedNormal) {
-        // TerrainBuilder shares one VertexBuilder instance across its facing
-        // buffers. A discontinuous pointer means a different buffer (or a
-        // cleared buffer), so never combine its vertices into one polygon.
+        // A discontinuous pointer means the builder restarted its buffer
+        // (cleared, or grown into a new allocation), so never combine
+        // vertices from either side into one polygon.
         if (lastPointer != 0L && ptr != lastPointer + vertexSize) {
             polygonVertices = 0;
             Arrays.fill(polygonPointers, 0L);
@@ -106,20 +108,17 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         }
         midU = clamp01(midU * 0.25F);
         midV = clamp01(midV * 0.25F);
-        // VulkanMod's fluid renderer emits packed normal 0. Iris derives the
-        // face normal from the quad's diagonals, so do the same whenever the
-        // host supplied none; otherwise the pack normalizes a zero vector.
-        if ((polygonNormals[0] & 0x00FFFFFF) == 0 && ChimeraEntityVertexData.faceNormal(faceNormal,
+        // Iris derives a terrain quad's normal from its diagonals. VulkanMod
+        // passes the quad's facing axis instead (unit bytes, not scaled to
+        // 127), and none at all for fluids, so derive it here. A degenerate
+        // quad keeps the host's word.
+        if (ChimeraEntityVertexData.faceNormal(faceNormal,
                 polygonValues[0], polygonValues[1], polygonValues[2],
                 polygonValues[5], polygonValues[6], polygonValues[7],
                 polygonValues[10], polygonValues[11], polygonValues[12],
                 polygonValues[15], polygonValues[16], polygonValues[17])) {
-            int packed = ChimeraEntityVertexData.pack(faceNormal[0], faceNormal[1], faceNormal[2], 0.0F);
-            for (int index = 0; index < 4; index++) {
-                if ((polygonNormals[index] & 0x00FFFFFF) == 0) {
-                    polygonNormals[index] = packed;
-                }
-            }
+            Arrays.fill(polygonNormals,
+                    ChimeraEntityVertexData.pack(faceNormal[0], faceNormal[1], faceNormal[2], 0.0F));
         }
         // Iris's at_tangent: the texture U direction of the quad's first
         // triangle, with the V handedness in w.
@@ -138,7 +137,7 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
             int into = index * 5;
             MemoryUtil.memPutInt(ptr + 28, encodeMidBlock(
                     polygonValues[into], polygonValues[into + 1], polygonValues[into + 2]));
-            // VulkanMod's packed face normal, with the quad tangent frame in
+            // The packed face normal, with the quad tangent frame in
             // its spare byte (TerrainTangentCodec).
             MemoryUtil.memPutInt(ptr + 32, TerrainTangentCodec.encode(polygonNormals[index], tangent));
         }

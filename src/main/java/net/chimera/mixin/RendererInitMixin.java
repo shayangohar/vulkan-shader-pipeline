@@ -26,7 +26,7 @@ public abstract class RendererInitMixin {
      * here, but command recording has not started. This is the one safe seam for
      * replacing pack-owned Vulkan resources during a dimension transition.
      */
-    @Inject(method = "beginMainRenderPass", at = @At("HEAD"))
+    @Inject(method = "beginRenderPass(Lorg/lwjgl/system/MemoryStack;)V", at = @At("HEAD"))
     private void chimera$beforeMainCommandBuffer(MemoryStack stack, CallbackInfo ci) {
         ChimeraRenderer.beforeMainCommandBuffer();
     }

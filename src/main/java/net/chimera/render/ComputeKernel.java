@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.SpirvLocalInitializer;
@@ -99,7 +100,7 @@ final class ComputeKernel implements AutoCloseable {
         if (code == null) return null;
         ComputeKernel kernel = new ComputeKernel(label, descriptorTypes, uniformBufferSize);
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            if (kernel.build(stack, code)) return kernel;
+            if (kernel.build(stack, SpirvLocalInitializer.apply(code))) return kernel;
             LOGGER.warn("[chimera] {} pipeline build failed", label);
             kernel.close();
             return null;
@@ -272,34 +273,16 @@ final class ComputeKernel implements AutoCloseable {
         return true;
     }
 
-    /** VulkanMod's shaderc target (Vulkan 1.2); null, with the error logged, when compilation fails. */
+    /** The module, freed by the caller; null, with the error logged, when compilation fails. */
     private static ByteBuffer compileSpirv(String label, String source) {
-        long compiler = Shaderc.shaderc_compiler_initialize();
-        long options = Shaderc.shaderc_compile_options_initialize();
-        long result = 0L;
         try {
-            Shaderc.shaderc_compile_options_set_target_env(options,
-                    Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
-            Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
-            Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
-            result = Shaderc.shaderc_compile_into_spv(compiler, source,
-                    Shaderc.shaderc_glsl_compute_shader, label, "main", options);
-            if (result == 0L || Shaderc.shaderc_result_get_compilation_status(result)
-                    != Shaderc.shaderc_compilation_status_success) {
-                if (result != 0L) {
-                    LOGGER.warn("[chimera] {} shaderc compile failed: {}", label,
-                            Shaderc.shaderc_result_get_error_message(result));
-                }
-                return null;
-            }
-            ByteBuffer bytes = SpirvLocalInitializer.apply(Shaderc.shaderc_result_get_bytes(result));
-            ByteBuffer copy = MemoryUtil.memAlloc(bytes.remaining());
-            MemoryUtil.memCopy(bytes, copy);
-            return copy;
-        } finally {
-            if (result != 0L) Shaderc.shaderc_result_release(result);
-            if (options != 0L) Shaderc.shaderc_compile_options_release(options);
-            if (compiler != 0L) Shaderc.shaderc_compiler_release(compiler);
+            return GlslCompiler.compile(label, source, Shaderc.shaderc_glsl_compute_shader, options -> {
+                Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
+                Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
+            });
+        } catch (IllegalStateException failure) {
+            LOGGER.warn("[chimera] {} shaderc compile failed: {}", label, failure.getMessage());
+            return null;
         }
     }
 

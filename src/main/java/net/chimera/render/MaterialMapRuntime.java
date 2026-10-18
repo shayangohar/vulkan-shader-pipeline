@@ -1,7 +1,7 @@
 package net.chimera.render;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 
 import java.io.IOException;
 import java.util.Optional;
@@ -42,7 +42,7 @@ final class MaterialMapRuntime {
             var manager = Minecraft.getInstance().getResourceManager();
             MaterialMapOwner.ResourceLookup lookup = (namespace, path) -> {
                 try {
-                    return manager.getResource(Identifier.fromNamespaceAndPath(namespace, path))
+                    return manager.getResource(ResourceLocation.fromNamespaceAndPath(namespace, path))
                             .map(resource -> {
                                 try {
                                     return resource.open();

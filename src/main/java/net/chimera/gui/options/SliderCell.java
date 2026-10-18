@@ -2,9 +2,9 @@ package net.chimera.gui.options;
 
 import net.chimera.shaderpack.options.ShaderOption;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.navigation.CommonInputs;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
 
 /**
  * A choice the pack lists under {@code sliders}. At rest it looks like a choice with a small handle
@@ -126,9 +126,9 @@ final class SliderCell extends ChoiceCell {
     }
 
     @Override
-    boolean press(MouseButtonEvent event) {
-        if (event.button() != 0) return false;
-        if (event.hasShiftDown()) {
+    boolean press(int button) {
+        if (button != 0) return false;
+        if (shiftDown()) {
             context.editor().reset(option.name());
         } else {
             dragging = true;
@@ -140,13 +140,13 @@ final class SliderCell extends ChoiceCell {
     }
 
     @Override
-    boolean key(KeyEvent event) {
-        if (event.isConfirmation()) {
-            confirm(event.hasShiftDown());
+    boolean key(int key) {
+        if (CommonInputs.selected(key)) {
+            confirm(shiftDown());
             return true;
         }
-        if (!editing || !(event.isLeft() || event.isRight())) return false;
-        working = Math.clamp(working + (event.isRight() ? 1 : -1), 0, option.values().size() - 1);
+        if (!editing || !(key == GLFW.GLFW_KEY_LEFT || key == GLFW.GLFW_KEY_RIGHT)) return false;
+        working = Math.clamp(working + (key == GLFW.GLFW_KEY_RIGHT ? 1 : -1), 0, option.values().size() - 1);
         return true;
     }
 

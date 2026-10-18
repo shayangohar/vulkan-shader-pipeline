@@ -1,9 +1,7 @@
 package net.chimera.mixin;
 
 import net.chimera.render.ChimeraRenderer;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
-import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -20,16 +18,12 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 @Mixin(GameRenderer.class)
 public abstract class ChimeraProjectionFarMixin {
     @Shadow private float renderDistance;
-    @Shadow @Final private Minecraft minecraft;
 
+    /** Vanilla 1.21.1's getDepthFar: four times the render distance in blocks. */
     @ModifyArg(method = "getProjectionMatrix", at = @At(value = "INVOKE",
             target = "Lorg/joml/Matrix4f;perspective(FFFF)Lorg/joml/Matrix4f;", remap = false),
             index = 3, require = 1)
     private float chimera$vanillaDepthFar(float hostFar) {
-        if (!ChimeraRenderer.packProjectionActive()) {
-            return hostFar;
-        }
-        return Math.max(this.renderDistance * 4.0F,
-                this.minecraft.options.cloudRange().get() * 16.0F);
+        return ChimeraRenderer.packProjectionActive() ? this.renderDistance * 4.0F : hostFar;
     }
 }

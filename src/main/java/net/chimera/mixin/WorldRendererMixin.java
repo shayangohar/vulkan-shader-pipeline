@@ -1,11 +1,13 @@
 package net.chimera.mixin;
 
+import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.TerrainLayers;
 import net.chimera.render.shader.PackUniformProvider;
-import net.chimera.shaderpack.PackRenderingPhase;
+import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import org.joml.Matrix4f;
@@ -15,69 +17,71 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Positions chimera's shadow segment deterministically inside the frame:
- * it renders at the HEAD of VulkanMod's effective opaque section layer
- * (TerrainRenderType.getRemapped(SOLID) = CUTOUT under uniqueOpaqueLayer,
- * else SOLID), before that layer's first draw, as Iris renders shadows
- * before any terrain. At the layer's tail, the opaque layer sampled the
- * previous frame's map while every later layer sampled this frame's.
+ * Chimera's frame around VulkanMod's section layers.
  *
- * Ordering contract: openLevelSegment (HEAD of LevelRenderer.renderLevel)
- * opens HDR and arms shadowPending; by the time the opaque layer starts,
- * cullTerrain has updated the section graph. The shadow phase draws its own
- * light-volume sections (ShadowSectionQueue), never the camera's culled
- * queues. The earlier hook point (right after compileSections) raced
- * section-graph updates and recorded zero draws. renderSectionLayer rebinds
- * the main target and applies its own MVP before drawing, so the layer is
- * unaffected by the shadow pass's state.
- *
- * No recursion: consumeShadowPending() clears the flag before
- * renderShadowSegment runs, so the nested renderSectionLayer(SOLID) call
- * inside the shadow pass hits this handler with the flag already down.
+ * <p>Every layer call runs in its Iris rendering phase. Only the layers VulkanMod draws
+ * ({@link TerrainLayers}) open Chimera's windows:</p>
+ * <ul>
+ *   <li>The shadow segment renders at the head of the first drawn layer, before any terrain,
+ *   as Iris renders shadows. openLevelSegment (at the world clear) armed it, and cullTerrain has
+ *   updated the section graph by then. The shadow phase draws its own light-volume sections
+ *   (ShadowSectionQueue), never the camera's culled queues. consumeShadowPending() clears the
+ *   flag first, so the layer calls the shadow pass makes do not recurse.</li>
+ *   <li>Depth is captured before translucent terrain, ahead of the pack window, whose guarded
+ *   attachments must not intercept that fullscreen pass.</li>
+ *   <li>The pack coverage window spans the layer's draws.</li>
+ *   <li>Every layer opens on the main target (ChimeraMainPass.rebindMainTarget), which opens the
+ *   shadow pass or a pending pack geometry window. Upstream VulkanMod's renderSectionLayer did this
+ *   itself; Reforged's draws into whatever is bound.</li>
+ * </ul>
  */
 @Mixin(value = WorldRenderer.class, remap = false)
 public abstract class WorldRendererMixin {
 
     @WrapMethod(method = "renderSectionLayer")
-    private void chimera$terrainPhase(TerrainRenderType type, double x, double y, double z,
-                                     Matrix4f view, Matrix4f projection, Operation<Void> original) {
-        if (!ChimeraRenderer.segmentsActive()) {
-            original.call(type, x, y, z, view, projection);
+    private void chimera$terrainLayer(RenderType renderType, double camX, double camY, double camZ,
+                                      Matrix4f view, Matrix4f projection, Operation<Void> original) {
+        TerrainRenderType type = ChimeraRenderer.segmentsActive() ? TerrainRenderType.get(renderType) : null;
+        if (type == null) {
+            original.call(renderType, camX, camY, camZ, view, projection);
             return;
         }
-        var phase = switch (type) {
-            case SOLID -> PackRenderingPhase.TERRAIN_SOLID;
-            case CUTOUT -> PackRenderingPhase.TERRAIN_CUTOUT;
-            case TRANSLUCENT -> PackRenderingPhase.TERRAIN_TRANSLUCENT;
-            case TRIPWIRE -> PackRenderingPhase.TRIPWIRE;
-        };
-        var previous = PackUniformProvider.setRenderingPhase(phase);
+        var previous = PackUniformProvider.setRenderingPhase(TerrainLayers.phase(type));
         try {
-            original.call(type, x, y, z, view, projection);
+            ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            if (pass == null || !TerrainLayers.drawn(type)) {
+                // Reforged binds the pipeline of a layer it merged away too.
+                if (pass != null) pass.rebindMainTarget();
+                original.call(renderType, camX, camY, camZ, view, projection);
+                return;
+            }
+            if (type == TerrainLayers.OPAQUE && pass.consumeShadowPending()) {
+                pass.renderShadowSegment(camX, camY, camZ);
+            }
+            if (type == TerrainRenderType.TRANSLUCENT) {
+                pass.captureOpaqueDepthBeforeTranslucent();
+            }
+            pass.beginPackCoverageWindow(type);
+            try {
+                pass.rebindMainTarget();
+                original.call(renderType, camX, camY, camZ, view, projection);
+            } finally {
+                pass.endPackCoverageWindow(type);
+            }
         } finally {
             PackUniformProvider.setRenderingPhase(previous);
         }
     }
 
-    @Inject(method = "renderSectionLayer", at = @At("HEAD"))
-    private void chimera$beginLayer(TerrainRenderType renderType, double camX, double camY,
-            double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
-        if (!ChimeraRenderer.segmentsActive()) return;
-        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass == null) return;
-        // The shadow pass runs before the opaque layer's coverage window opens,
-        // so its own render passes are never intercepted as terrain rendering.
-        if (renderType == TerrainRenderType.getRemapped(TerrainRenderType.SOLID)
-                && pass.consumeShadowPending()) {
-            pass.renderShadowSegment(camX, camY, camZ);
-        }
-        // Capture depth before the pack geometry window can install its guarded
-        // dynamic-rendering attachments. The depth conversion is an independent
-        // fullscreen pass and must never be intercepted as terrain rendering.
-        if (renderType == TerrainRenderType.TRANSLUCENT) {
-            pass.captureOpaqueDepthBeforeTranslucent();
-        }
-        pass.beginPackCoverageWindow(renderType);
+    /**
+     * Keeps back faces culled, as upstream VulkanMod and vanilla do for every layer. Reforged
+     * draws translucent terrain unculled, so a water surface and its reversed copy both passed the
+     * depth test and the reversed one, lit from below, overwrote it; every far face of glass drew.
+     */
+    @WrapWithCondition(method = "renderSectionLayer", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;disableCull()V"), require = 1)
+    private boolean chimera$keepBackFacesCulled() {
+        return !ChimeraRenderer.segmentsActive();
     }
 
     @Inject(method = "renderSectionLayer",
@@ -86,19 +90,11 @@ public abstract class WorldRendererMixin {
                             + "bindShaderTextures(Lnet/vulkanmod/vulkan/shader/Pipeline;)V",
                     shift = At.Shift.AFTER),
             require = 1)
-    private void chimera$bindActualTerrainAtlas(TerrainRenderType renderType, double camX, double camY,
+    private void chimera$bindTerrainImages(RenderType renderType, double camX, double camY,
             double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
         if (!ChimeraRenderer.segmentsActive()) return;
+        TerrainRenderType type = TerrainRenderType.get(renderType);
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass != null) pass.bindTerrainAtlasAfterSelector(renderType);
+        if (pass != null && type != null && TerrainLayers.drawn(type)) pass.bindTerrainImagesAfterSelector(type);
     }
-
-    @Inject(method = "renderSectionLayer", at = @At("RETURN"))
-    private void chimera$endPackCoverage(TerrainRenderType renderType, double camX, double camY,
-            double camZ, Matrix4f modelView, Matrix4f projection, CallbackInfo ci) {
-        if (!ChimeraRenderer.segmentsActive()) return;
-        ChimeraMainPass pass = ChimeraRenderer.getMainPass();
-        if (pass != null) pass.endPackCoverageWindow(renderType);
-    }
-
 }

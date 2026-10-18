@@ -1,10 +1,6 @@
 package net.chimera.render;
 
-import net.vulkanmod.vulkan.texture.SamplerInfo;
-import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
-
-import static org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
 
 /**
  * Owns the comparison sampler that pack shadow lookups need.
@@ -23,28 +19,15 @@ import static org.lwjgl.vulkan.VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
  * gone and the descriptor sampler carries the contract instead.</p>
  */
 public final class PackShadowDepth {
-    /** Address mode and filters of the engine shadow sampler, mirrored for pack lookups. */
-    private static final int SHADOW_ADDRESS_MODE = 2;
-    private static final int SHADOW_FILTER = 1;
-
     private long compareSampler;
 
-    /** Creates the shared comparison sampler. Safe to call for every pack load. */
-    public void install() {
-        this.compareSampler = SamplerManager.getSampler(compareSamplerInfo());
-    }
-
     /**
-     * Compare-enabled sampler description for shadow lookups: the engine shadow
-     * sampler's clamp state with the OpenGL shadow comparison the packs author
-     * against.
+     * Takes the shared comparison sampler: the engine shadow sampler's linear filter and edge
+     * clamp, with the OpenGL shadow comparison the packs author against. Safe to call for every
+     * pack load.
      */
-    static SamplerInfo compareSamplerInfo() {
-        return SamplerInfo.builder()
-                .setAddressMode(SHADOW_ADDRESS_MODE)
-                .setFiltering(SHADOW_FILTER, SHADOW_FILTER, SHADOW_FILTER)
-                .setCompare(true, VK_COMPARE_OP_LESS_OR_EQUAL)
-                .createSamplerInfo();
+    public void install() {
+        this.compareSampler = ChimeraSamplers.depthCompare();
     }
 
     /** Compare-enabled sampler, or 0 before {@link #install()}. */

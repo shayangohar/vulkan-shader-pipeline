@@ -333,7 +333,7 @@ final class PackPostChain {
         // Re-reading every target/history/depth here adds cost but no new evidence.
         pass.packPostTargets.resetMipmapSampling();
         pass.packPostTargets.generateMipmaps(commandBuffer, pass.pipelines.finalPost.name());
-        Renderer.getInstance().beginRenderPass(pass.targets.packFinalRenderPass, pass.targets.packFinalFramebuffer);
+        Renderer.getInstance().beginRendering(pass.targets.packFinalRenderPass, pass.targets.packFinalFramebuffer);
         ChimeraMainPass.PackRenderState finalState = pass.capturePackRenderState();
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
         try {
@@ -413,7 +413,7 @@ final class PackPostChain {
         ChimeraMainPass.preparePackFullscreenState();
         try (var bindings = pass.images.bindProgramImages(pass.compositePipeline, null, hdrColor,
                 DrawMaterialContext.captureLive())) {
-            Renderer.getInstance().beginRenderPass(pass.targets.compositeRenderPass, pass.targets.compositeFramebuffer);
+            Renderer.getInstance().beginRendering(pass.targets.compositeRenderPass, pass.targets.compositeFramebuffer);
             pass.drawFullscreen(commandBuffer, pass.compositePipeline);
             pass.currentFramebuffer = pass.targets.compositeFramebuffer;
         } finally {

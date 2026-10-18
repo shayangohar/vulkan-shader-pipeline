@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.shaderpack.GeometryOutputPlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 
@@ -48,6 +49,10 @@ final class PackPipelineSet {
 
     /** shadow_entities on the shadow pass's entity lane; null leaves entities out of the shadow map. */
     PackPipelines.PackEntity shadowEntities;
+    /** shadow_entities on the block layout, for moving blocks in the shadow pass. */
+    PackPipelines.PackEntity shadowMovingBlock;
+    /** shadow_block, for block entities' models in the shadow pass; null leaves them to shadow_entities. */
+    PackPipelines.PackEntity shadowBlock;
 
     /** Pack world-entity program on the guarded delayed model batch. */
     PackPipelines.PackEntity entity;
@@ -60,6 +65,12 @@ final class PackPipelineSet {
 
     /** Pack block-entity program on the guarded delayed model batch. */
     PackPipelines.PackEntity block;
+
+    /** gbuffers_block_translucent: block entities' translucent models (Iris BE_TRANSLUCENT). */
+    PackPipelines.PackEntity blockTranslucent;
+
+    /** gbuffers_block on the block layout: falling blocks and moving pistons (Iris MOVING_BLOCK). */
+    PackPipelines.PackEntity movingBlock;
 
     /** Pack damaged-block program on the guarded block draw lane. */
     PackPipelines.PackEntity damagedBlock;
@@ -106,8 +117,8 @@ final class PackPipelineSet {
         terrainRoute = null;
         waterRoute = null;
         if (shadowPipeline != null) shadowPipeline.cleanUp();
-        Stream.of(shadowEntities, entity, translucentEntity, spiderEyes, block, damagedBlock,
-                        translucentEntityText, blockTranslucentText)
+        Stream.of(shadowEntities, shadowMovingBlock, shadowBlock, entity, translucentEntity, spiderEyes, block,
+                        blockTranslucent, movingBlock, damagedBlock, translucentEntityText, blockTranslucentText)
                 .filter(Objects::nonNull).forEach(value -> value.pipeline().cleanUp());
         if (hand != null) hand.cleanUp();
         if (handWater != null) handWater.cleanUp();
@@ -138,10 +149,14 @@ final class PackPipelineSet {
         shadowPipeline = null;
         shadowSlots = null;
         shadowEntities = null;
+        shadowMovingBlock = null;
+        shadowBlock = null;
         entity = null;
         translucentEntity = null;
         spiderEyes = null;
         block = null;
+        blockTranslucent = null;
+        movingBlock = null;
         damagedBlock = null;
         translucentEntityText = null;
         blockTranslucentText = null;
@@ -156,27 +171,36 @@ final class PackPipelineSet {
         cloudsDrawNothing = false;
     }
 
-    /** Returns the installed pack pipeline for a family window request. */
-    public PackPipelines.PackEntity familyPipeline(
-            ChimeraEntityBridge.Family family) {
+    /** The installed program of a family lane, whose outputs its window opens. */
+    private PackPipelines.PackEntity familyPipeline(ChimeraEntityBridge.Family family) {
         return switch (family) {
             case ENTITY -> this.entity;
             case ENTITY_TRANSLUCENT -> this.translucentEntity;
             case SPIDER_EYES -> this.spiderEyes;
             case BLOCK -> this.block;
-            // Block-entity text draws in gbuffers_block_translucent's own target window.
-            case BLOCK_TRANSLUCENT -> this.blockTranslucentText;
+            // Block-entity models and text draw in gbuffers_block_translucent's own target window.
+            case BLOCK_TRANSLUCENT -> this.blockTranslucent != null ? this.blockTranslucent : this.blockTranslucentText;
+            case MOVING_BLOCK -> this.movingBlock;
             case DAMAGED_BLOCK -> this.damagedBlock;
             case HAND -> this.hand == null ? null : this.hand.primary();
             case HAND_WATER -> this.handWater == null ? null : this.handWater.primary();
             // The shadow pass owns the shadow map's attachments; casters open no window.
             case SHADOW_ENTITIES -> this.shadowEntities;
+            case SHADOW_BLOCK -> this.shadowBlock;
             default -> null;
         };
     }
 
+    /** The authored outputs of a lane's installed program, or null when the lane has none. */
+    GeometryOutputPlan laneOutputs(ChimeraEntityBridge.Family family) {
+        PackPipelines.PackEntity entity = familyPipeline(family);
+        if (entity != null) return entity.outputPlan();
+        PackPipelines.PackParticle lane = particlePipeline(family);
+        return lane == null ? null : lane.outputPlan();
+    }
+
     /** The selected host-particle or host-layout lane retains its own authored output contract. */
-    public PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
+    private PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
         return switch (family) {
             case PARTICLE -> this.particle;
             case PARTICLE_TRANSLUCENT -> this.translucentParticle;

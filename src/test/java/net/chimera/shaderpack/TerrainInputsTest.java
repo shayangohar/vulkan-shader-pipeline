@@ -105,9 +105,8 @@ final class TerrainInputsTest {
                         && source.contains("return " + projectionName
                                 + " * ModelViewMat * chimeraEntityVertexValue();"),
                 family + " explicit MVP and ftransform disagree");
-        boolean offset = family.equals("block") || family.equals("crumbling");
-        assertTrue(source.contains(offset ? "return vec4(Position + ModelOffset, 1.0);"
-                        : "return vec4(Position, 1.0);"), family + " host position offset");
+        // No 1.21.1 host draw carries a model offset: the pose places the vertices.
+        assertTrue(source.contains("return vec4(Position, 1.0);"), family + " host position");
         assertTrue(source.contains("mat4 textureMatrix = TextureMat;")
                         && source.contains("light1 = (lightMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
                         && source.contains("light2 = (lightAliasMatrix * vec4(vec2(UV2), 0.0, 1.0)).xy;")
@@ -237,12 +236,10 @@ final class TerrainInputsTest {
     @Test
     void separateAoColour() throws IOException {
         // Iris XHFPTerrainVertex: ColorABGR.withAlpha(tint, brightness) instead of mulRGB.
-        assertEquals(0x7F336699, SeparateAoColor.argb(0xFF336699, 0.5F),
-                "a block quad keeps its tint and carries the brightness in alpha");
-        assertEquals(0xFF336699, SeparateAoColor.argb(0x00336699, 1.0004F),
-                "a brightness rounding just above 1 stays opaque instead of wrapping to 0");
         assertEquals(0xCC3F7FFF, SeparateAoColor.rgba(1.0F, 0.5F, 0.25F, 0.8F),
-                "a fluid vertex keeps its tint and carries brightness times shade in alpha");
+                "a vertex keeps its tint and carries the brightness in alpha");
+        assertEquals(0xFF3F7FFF, SeparateAoColor.rgba(1.0F, 0.5F, 0.25F, 1.0004F),
+                "a brightness rounding just above 1 stays opaque instead of wrapping to 0");
         String fixedVertex = MixinBytecode.resourceText("assets/chimera/shaders/chimera_terrain/chimera_terrain.vsh");
         String separateAoVertex = ChimeraTerrainPipelines.withSeparateAo(fixedVertex);
         assertTrue(fixedVertex.contains("#ifdef CHIMERA_SEPARATE_AO")
@@ -269,19 +266,21 @@ final class TerrainInputsTest {
                 && shadeArgument,
                 "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
         var blockMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraBlockSeparateAoMixin");
-        assertTrue(MixinBytecode.mixinTargets(blockMixin,
-                "net/vulkanmod/render/chunk/build/frapi/render/AbstractBlockRenderContext")
-                        && MixinBytecode.injects(blockMixin, "Lorg/spongepowered/asm/mixin/injection/Redirect;",
-                                "shadeQuad",
-                        "Lnet/vulkanmod/render/chunk/build/frapi/helper/ColorHelper;multiplyRGB(IF)I"),
-                "block quads route VulkanMod's brightness multiply through separateAo");
-        var fluidMixin = MixinBytecode.nativeClass("net/chimera/mixin/FluidRendererMixin");
-        assertTrue(MixinBytecode.mixinTargets(fluidMixin, "net/vulkanmod/render/chunk/build/renderer/FluidRenderer")
+        assertTrue(MixinBytecode.mixinTargets(blockMixin, "net/vulkanmod/render/chunk/build/BlockRenderer")
+                        && MixinBytecode.injects(blockMixin,
+                                "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;",
+                                "putQuadData(Lnet/vulkanmod/render/vertex/TerrainBufferBuilder;Lorg/joml/Vector3f;"
+                                        + "Lnet/vulkanmod/render/model/quad/QuadView;"
+                                        + "Lnet/vulkanmod/render/chunk/build/light/data/QuadLightData;FFF)V",
+                                "Lnet/vulkanmod/vulkan/util/ColorUtil$RGBA;pack(FFFF)I"),
+                "block quads route VulkanMod's brightness through separateAo where it packs the colour");
+        var fluidMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLiquidRendererMixin");
+        assertTrue(MixinBytecode.mixinTargets(fluidMixin, "net/vulkanmod/render/chunk/build/LiquidRenderer")
                         && MixinBytecode.injects(fluidMixin, "Lorg/spongepowered/asm/mixin/injection/Inject;",
                                 "updateColor", null),
                 "fluid colours apply separateAo after VulkanMod computes them");
-        for (String name
-                : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin", "FluidRendererMixin")) {
+        for (String name : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin",
+                "ChimeraLiquidRendererMixin")) {
             MixinBytecode.assertMixinRegistered(name);
         }
     }

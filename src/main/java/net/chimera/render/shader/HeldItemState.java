@@ -1,10 +1,9 @@
 package net.chimera.render.shader;
 
+import net.chimera.render.LightEmission;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
@@ -17,9 +16,9 @@ import java.util.Set;
  * Iris's held-item uniforms (IdMapUniforms.HeldItemSupplier), captured once per frame: each
  * hand's item.properties id, the light its item emits and that light's colour.
  *
- * <p>The id comes from the stack's item_model component, falling back to the item's registry
- * name, and is -1 when the pack lists neither. The light is a block item's default block state
- * emission and 0 for any other item; the colour is white, as Iris's default
+ * <p>The id comes from the item's registry name, and is -1 when the pack does not list it. The
+ * light is a block item's default block state emission and 0 for any other item; the colour is
+ * white, as Iris's default
  * IrisItemLightProvider gives every vanilla item. With oldHandLight on, the main hand reports the
  * off hand's light when that is brighter. Without a player every value is Iris's invalid one.</p>
  */
@@ -89,14 +88,13 @@ final class HeldItemState {
     /** IrisItemLightProvider's default: a block item emits its block's default light. */
     static int lightEmission(ItemStack stack) {
         return stack != null && stack.getItem() instanceof BlockItem item
-                ? item.getBlock().defaultBlockState().getLightEmission() : 0;
+                ? LightEmission.of(item.getBlock().defaultBlockState()) : 0;
     }
 
     private static String itemName(ItemStack stack) {
         if (stack == null) {
             return null;
         }
-        Identifier model = stack.get(DataComponents.ITEM_MODEL);
-        return (model != null ? model : BuiltInRegistries.ITEM.getKey(stack.getItem())).toString();
+        return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
     }
 }

@@ -1,16 +1,11 @@
 package net.chimera.shaderpack;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.ProgramImageBindingTransaction;
 import net.chimera.testing.InstanceOptions;
 import net.chimera.testing.TestPacks;
-import net.vulkanmod.vulkan.shader.Pipeline;
-import net.vulkanmod.vulkan.shader.PipelineConfig;
-import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
-import net.vulkanmod.vulkan.shader.descriptor.UBO;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -143,11 +138,11 @@ final class StorageBufferPlanTest {
                 "storage block rewrite lost std430 members or instance");
 
         PackStorageBufferDescriptor descriptor = new PackStorageBufferDescriptor(
-                "test", shadowBinding.rewrittenBinding(), shadowBinding.stageMask(), 64);
+                shadowBinding.rewrittenBinding(), shadowBinding.stageMask(), 64, shadowBinding.logicalIndex());
         assertTrue(descriptor.getType() == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
                 "descriptor is not dynamic storage-buffer type");
-        assertTrue(descriptor.getSize() == 64 && !descriptor.useGlobalBuffer(),
-                "descriptor range or global-buffer policy is incorrect");
+        assertTrue(descriptor.getSize() == 64 && descriptor.logicalIndex() == 0,
+                "descriptor range or buffer index is incorrect");
     }
 
     /** Invalid storage disables only the program that depends on it. */
@@ -224,17 +219,18 @@ final class StorageBufferPlanTest {
                     assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(layout, vertex, fragment,
                             nativeDescriptors), "Shadow resource layout disagrees with actual builder metadata");
                 } else {
-                    for (int binding = 0; binding < 4; binding++) {
+                    // The shadow view block, then the pack's uniform block.
+                    for (int binding = 0; binding < 2; binding++) {
                         final int target = binding;
                         var actual = nativeDescriptors.stream().filter(value -> value.type() == 8
                                 && value.binding() == target).findFirst().orElseThrow();
-                        int stages = binding < 3 ? VK_SHADER_STAGE_VERTEX_BIT
+                        int stages = binding < 1 ? VK_SHADER_STAGE_VERTEX_BIT
                                 : VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
                         assertEquals(stages, actual.stages() & 17, "Actual shadow UBO stage contract at " + binding);
                     }
                     assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(layout,
                             shadow.convertedVertex(), shadow.convertedFragment(), nativeDescriptors),
-                            "Shadow UBO plan disagrees with actual Pipeline.Builder.applyConfig metadata");
+                            "Shadow UBO plan disagrees with the prepared descriptor set");
                 }
             } catch (AssertionError | Exception failure) {
                 String reason = regression + ": " + failure.getClass().getName() + ": " + failure.getMessage();
@@ -251,69 +247,15 @@ final class StorageBufferPlanTest {
         assertTrue(failures.isEmpty(), "Shadow regressions failed: " + String.join("; ", failures));
     }
 
-    /** Baseline mirrors the current runtime JSON path, never the predicted descriptor list. */
+    /**
+     * The shadow program's descriptor set as the runtime hands it to the host's pipeline builder,
+     * which creates one descriptor per entry at the same binding (HostPipelineLayout).
+     */
     private static List<PackAdvancedResourcePlan.DescriptorBinding> baselineShadowBuilderDescriptors(
             PackProgramPlan shadow, PackAdvancedResourcePlan resources
     ) {
-        var iface = shadow.interfacePlan().effective(UniformRegistry.Stage.SHADOW);
-        var layout = resources.bindingLayout("shadow");
-        Set<String> advancedNames = layout.advancedSamplers().stream()
-                .map(PackAdvancedResourcePlan.GraphicsImageBinding::sampler)
-                .collect(Collectors.toSet());
-        var json = PackPipelines.shadowPipelineJson();
-        var samplers = new JsonArray();
-        int[] slots = PackPipelines.shadowSamplerSlots(iface.samplers().stream()
-                .filter(value -> !advancedNames.contains(value.name()))
-                .mapToInt(UniformRegistry.SamplerBinding::slot).distinct().toArray());
-        for (int slot : slots) {
-            var sampler = new JsonObject();
-            sampler.addProperty("name", "Sampler" + slot);
-            samplers.add(sampler);
-        }
-        json.add("samplers", samplers);
-        var generated = new JsonObject();
-        generated.addProperty("type", "all");
-        generated.addProperty("binding", 3);
-        var fields = new JsonArray();
-        for (var uniform : iface.executableUniforms()) {
-            var field = new JsonObject();
-            field.addProperty("name", uniform.name());
-            field.addProperty("type", UniformRegistry.pipelineType(uniform.glslType()));
-            field.addProperty("count", UniformRegistry.pipelineCount(uniform.glslType()));
-            fields.add(field);
-        }
-        generated.add("fields", fields);
-        assertTrue(!fields.isEmpty(), "Synthetic shadow must include a generated UBO");
-        json.getAsJsonArray("UBOs").add(generated);
-        var builder = new Pipeline.Builder("shadow_regression");
-        List<UBO> buffers = new ArrayList<>();
-        List<ImageDescriptor> images = new ArrayList<>();
-        builder.setUniforms(buffers, images);
-        // Descriptor preparation installs suppliers but does not execute them or access Vulkan.
-        builder.setUniformSupplierGetter(info -> () -> null);
-        builder.applyConfig(PipelineConfig.fromJson("shadow_regression", json));
-        int index = 0;
-        for (var binding : layout.storageImages()) {
-            builder.addImageDescriptor(new ImageDescriptor(
-                    layout.imageBase() + index++, "image3D", "Sampler" + binding.selectorSlot(),
-                    binding.selectorSlot(), 3));
-        }
-        index = 0;
-        for (var binding : layout.advancedSamplers()) {
-            builder.addImageDescriptor(new ImageDescriptor(
-                    layout.samplerBase() + index++, "sampler3D", "Sampler" + binding.selectorSlot(),
-                    binding.selectorSlot(), 1));
-        }
-        List<PackAdvancedResourcePlan.DescriptorBinding> actual = new ArrayList<>();
-        for (var buffer : builder.getUBOs()) {
-            actual.add(new PackAdvancedResourcePlan.DescriptorBinding(buffer.name, 0, buffer.getBinding(),
-                    buffer.getType(), buffer.getStages(), "ubo:" + buffer.getBinding()));
-        }
-        for (var image : images) {
-            actual.add(new PackAdvancedResourcePlan.DescriptorBinding(image.name, 0, image.getBinding(),
-                    image.getType(), image.getStages(), "resource:" + image.name.substring(7) + ":" + image.getType()));
-        }
-        return List.copyOf(actual);
+        return PackPipelines.prepareLayout(PackPipelines.prepareShadow(shadow, resources), shadow.name(), resources)
+                .descriptorBindings();
     }
 
     @Test
@@ -366,9 +308,8 @@ final class StorageBufferPlanTest {
         var layout = new PackAdvancedResourcePlan.ProgramBindingLayout(1, 1, 1,
                 List.of(), List.of(), List.of(), List.of(descriptor), List.of(descriptor));
         try {
-            PackPipelines.prepareBuilder(new PackPipelines.PreparedPipeline(null, "", "", layout,
-                    new ProgramImageBindingManifest(List.of())),
-                    "future", PackAdvancedResourcePlan.empty(), null, info -> () -> null);
+            PackPipelines.prepareLayout(new PackPipelines.PreparedPipeline(null, "", "", layout,
+                    new ProgramImageBindingManifest(List.of())), "future", PackAdvancedResourcePlan.empty());
             throw new AssertionError("Future selector reached builder creation");
         } catch (PackPipelines.PreparationFailure failure) {
             assertEquals("descriptor-contract", failure.phase, "Wrong selector failure phase");
@@ -466,13 +407,12 @@ final class StorageBufferPlanTest {
     private static void verifyShadowBuilderParity(String label, PackProgramPlan shadow,
                                                   PackAdvancedResourcePlan resources) {
         PackPipelines.PreparedPipeline prepared = PackPipelines.prepareShadow(shadow, resources);
-        var builder = PackPipelines.prepareBuilder(prepared, shadow.name(), resources, null,
-                info -> () -> null);
-        var actual = PackDescriptorContracts.builderDescriptors(builder);
+        var actual = PackPipelines.prepareLayout(prepared, shadow.name(), resources).descriptorBindings();
         assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
                 prepared.vertex(), prepared.fragment(), actual), label);
         prepared.imageBindings().verify(actual);
-        assertTrue(actual.stream().filter(d -> d.type() == 8).count() >= 3,
+        // The shadow view block and the pack's uniform block.
+        assertTrue(actual.stream().filter(d -> d.type() == 8).count() >= 2,
                 label + ": shadow UBO contract lost base blocks");
         for (var sampler : resources.bindingLayout("shadow").advancedSamplers()) {
             var descriptor = actual.stream()
@@ -487,9 +427,8 @@ final class StorageBufferPlanTest {
     private static void verifyPostBuilderParity(String packName, String label, PackProgramPlan post,
                                                 PackAdvancedResourcePlan resources) {
         PackPipelines.PreparedPipeline prepared = PackPipelines.preparePost(post, "", resources);
-        var builder = PackPipelines.prepareBuilder(prepared, post.name(), resources, null,
-                info -> () -> null);
-        var actual = PackDescriptorContracts.builderDescriptors(builder);
+        PackDescriptorLayout layout = PackPipelines.prepareLayout(prepared, post.name(), resources);
+        var actual = layout.descriptorBindings();
         assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
                 prepared.vertex(), prepared.fragment(), actual), label + " " + post.name());
         prepared.imageBindings().verify(actual);
@@ -501,10 +440,11 @@ final class StorageBufferPlanTest {
         }
         int extraBinding = actual.stream().mapToInt(PackAdvancedResourcePlan.DescriptorBinding::binding)
                 .max().orElse(0) + 1;
-        builder.addImageDescriptor(new ImageDescriptor(
-                extraBinding, "sampler2D", "Sampler24", 24, 1));
+        var images = new ArrayList<>(layout.images());
+        images.add(new PackDescriptorLayout.ImageSlot(extraBinding, "sampler2D", "Sampler24", 24));
         try {
-            PackPipelines.createNative(builder, prepared.imageBindings());
+            PackPipelines.createNative(post.name(), DefaultVertexFormat.POSITION, layout.withImages(images),
+                    prepared.vertex(), prepared.fragment(), prepared.imageBindings());
             throw new AssertionError("Unresolved actual builder descriptor reached native creation");
         } catch (PackPipelines.PreparationFailure failure) {
             assertEquals("descriptor-contract", failure.phase, "unresolved descriptor phase");

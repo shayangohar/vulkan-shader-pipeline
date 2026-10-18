@@ -1,19 +1,18 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import net.vulkanmod.render.engine.VkGpuDevice;
-import net.vulkanmod.render.engine.VkGpuTexture;
-import net.vulkanmod.vulkan.Renderer;
+import net.chimera.mixin.ChimeraRenderPassAccessor;
+import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
+import net.vulkanmod.vulkan.framebuffer.MainDepthSnapshot;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import static org.lwjgl.vulkan.VK10.*;
 
 /**
  * The main pass's render targets: the HDR world framebuffer, the composite and pack-final output
- * framebuffers with their render passes, and the GPU texture views the host reads them through.
+ * framebuffers with their render passes, and the OpenGL texture names the host reads the world
+ * and output images through (Minecraft's main target asks the main pass for them).
  */
 final class MainPassTargets {
     private final ChimeraMainPass pass;
@@ -29,34 +28,52 @@ final class MainPassTargets {
     RenderPass compositeAuxRenderPass;
     RenderPass compositeAuxClearDepthRenderPass;
     RenderPass presentRenderPass;
-    GpuTexture hdrColorTexture;
-    GpuTextureView hdrColorTextureView;
-    GpuTexture hdrDepthTexture;
-    GpuTextureView hdrDepthTextureView;
-    GpuTexture compositeColorTexture;
-    GpuTextureView compositeColorTextureView;
-    GpuTexture compositeDepthTexture;
-    GpuTextureView compositeDepthTextureView;
+    /** OpenGL names aliasing the HDR world images, 0 when none. */
+    int hdrColorGlId;
+    int hdrDepthGlId;
+    /** OpenGL names aliasing the output images, 0 when none. */
+    int compositeColorGlId;
+    int compositeDepthGlId;
 
     MainPassTargets(ChimeraMainPass pass) {
         this.pass = pass;
     }
 
+    /**
+     * Creates the HDR framebuffer and points the HDR render passes at it. A screen recreates it at a
+     * frame boundary, and a Reforged RenderPass transitions the images of the framebuffer it holds,
+     * so passes left on the old one transitioned its freed images. Following the framebuffer, rather
+     * than rebuilding the passes, keeps the pipeline variants Reforged caches per RenderPass. The
+     * format only changes in createResources, which builds new passes.
+     */
     void createHdrFramebuffer(int width, int height) {
-        this.hdrFramebuffer = new Framebuffer.Builder("chimeraHdr", width, height, 1, true)
-                .setFormat(pass.packHdrFormat)
-                .build();
+        this.hdrFramebuffer = framebuffer(width, height, pass.packHdrFormat);
+        for (RenderPass hdrPass : new RenderPass[] {hdrRenderPass, hdrAuxRenderPass, hdrAuxClearDepthRenderPass}) {
+            if (hdrPass != null) ((ChimeraRenderPassAccessor) hdrPass).chimera$setFramebuffer(this.hdrFramebuffer);
+        }
     }
 
     void createOutputFramebuffer(int width, int height) {
         // Beryl's stable MainPass output uses VK_FORMAT_R8G8B8A8_UNORM (37).
-        this.compositeFramebuffer = new Framebuffer.Builder("chimeraOutput", width, height, 1, true)
-                .setFormat(37)
-                .build();
+        this.compositeFramebuffer = framebuffer(width, height, 37);
         // Pack final renders here in GL row order, with the output's formats.
-        this.packFinalFramebuffer = new Framebuffer.Builder("chimeraPackFinal", width, height, 1, true)
-                .setFormat(37)
-                .build();
+        this.packFinalFramebuffer = framebuffer(width, height, 37);
+    }
+
+    /**
+     * A framebuffer as Reforged's builder makes one, except that its colour image also allows
+     * transfers: the post chain copies colortex0 into and out of the HDR image, and screenshots copy
+     * the output. Reforged's builder drops the transfer usage upstream VulkanMod gave colour images.
+     */
+    private static Framebuffer framebuffer(int width, int height, int colorFormat) {
+        VulkanImage color = VulkanImage.builder(width, height)
+                .setFormat(colorFormat)
+                .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                .setLinearFiltering(true).setClamp(true).createVulkanImage();
+        VulkanImage depth = VulkanImage.createDepthImage(Vulkan.getDefaultDepthFormat(), width, height,
+                MainDepthSnapshot.depthAttachmentUsage(), false, true);
+        return Framebuffer.builder(color, depth).build();
     }
 
     void createRenderPasses() {
@@ -106,7 +123,7 @@ final class MainPassTargets {
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
         this.packFinalRenderPass = b.build();
 
-        b = RenderPass.builder(Renderer.getInstance().getSwapChain());
+        b = RenderPass.builder(Vulkan.getSwapChain());
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE);
@@ -114,43 +131,21 @@ final class MainPassTargets {
     }
 
     void createHdrInteropTextures() {
-        VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
-        VkGpuTexture color = device.gpuTextureFromVulkanImage(this.hdrFramebuffer.getColorAttachment());
-        this.hdrColorTexture = color;
-        this.hdrColorTextureView = device.createTextureView(color);
-        pass.mainFamilyViews.add(this.hdrColorTextureView);
-        this.hdrDepthTexture = device.gpuTextureFromVulkanImage(this.hdrFramebuffer.getDepthAttachment());
-        this.hdrDepthTextureView = device.createTextureView(this.hdrDepthTexture);
+        this.hdrColorGlId = GlImageAlias.create(this.hdrFramebuffer.getColorAttachment());
+        this.hdrDepthGlId = GlImageAlias.create(this.hdrFramebuffer.getDepthAttachment());
     }
 
     void createOutputInteropTextures() {
-        VkGpuDevice device = (VkGpuDevice) RenderSystem.getDevice();
-        VkGpuTexture color = device.gpuTextureFromVulkanImage(this.compositeFramebuffer.getColorAttachment());
-        this.compositeColorTexture = color;
-        this.compositeColorTextureView = device.createTextureView(color);
-        this.compositeDepthTexture = device.gpuTextureFromVulkanImage(this.compositeFramebuffer.getDepthAttachment());
-        pass.mainFamilyViews.add(this.compositeColorTextureView);
-        this.compositeDepthTextureView = device.createTextureView(this.compositeDepthTexture);
+        this.compositeColorGlId = GlImageAlias.create(this.compositeFramebuffer.getColorAttachment());
+        this.compositeDepthGlId = GlImageAlias.create(this.compositeFramebuffer.getDepthAttachment());
     }
 
     boolean hdrResourcesLive() {
-        return this.hdrFramebuffer != null
-                && this.hdrColorTexture != null
-                && !this.hdrColorTexture.isClosed()
-                && this.hdrDepthTexture != null
-                && !this.hdrDepthTexture.isClosed()
-                && this.hdrFramebuffer.getColorAttachment().getId() != 0L
-                && this.hdrFramebuffer.getDepthAttachment().getId() != 0L;
+        return live(this.hdrFramebuffer, this.hdrColorGlId, this.hdrDepthGlId);
     }
 
     boolean outputResourcesLive() {
-        return this.compositeFramebuffer != null
-                && this.compositeColorTexture != null
-                && !this.compositeColorTexture.isClosed()
-                && this.compositeDepthTexture != null
-                && !this.compositeDepthTexture.isClosed()
-                && this.compositeFramebuffer.getColorAttachment().getId() != 0L
-                && this.compositeFramebuffer.getDepthAttachment().getId() != 0L;
+        return live(this.compositeFramebuffer, this.compositeColorGlId, this.compositeDepthGlId);
     }
 
     long hdrImageId() {
@@ -158,25 +153,17 @@ final class MainPassTargets {
     }
 
     void releaseHdrInteropTextures() {
-        if (this.hdrColorTextureView != null) this.hdrColorTextureView.close();
-        if (this.hdrDepthTextureView != null) this.hdrDepthTextureView.close();
-        if (this.hdrColorTexture != null) this.hdrColorTexture.close();
-        if (this.hdrDepthTexture != null) this.hdrDepthTexture.close();
-        this.hdrColorTexture = null;
-        this.hdrColorTextureView = null;
-        this.hdrDepthTexture = null;
-        this.hdrDepthTextureView = null;
+        GlImageAlias.retire(this.hdrColorGlId);
+        GlImageAlias.retire(this.hdrDepthGlId);
+        this.hdrColorGlId = 0;
+        this.hdrDepthGlId = 0;
     }
 
     void releaseOutputInteropTextures() {
-        if (this.compositeColorTextureView != null) this.compositeColorTextureView.close();
-        if (this.compositeDepthTextureView != null) this.compositeDepthTextureView.close();
-        if (this.compositeColorTexture != null) this.compositeColorTexture.close();
-        if (this.compositeDepthTexture != null) this.compositeDepthTexture.close();
-        this.compositeColorTexture = null;
-        this.compositeColorTextureView = null;
-        this.compositeDepthTexture = null;
-        this.compositeDepthTextureView = null;
+        GlImageAlias.retire(this.compositeColorGlId);
+        GlImageAlias.retire(this.compositeDepthGlId);
+        this.compositeColorGlId = 0;
+        this.compositeDepthGlId = 0;
     }
 
     void cleanUpFramebuffersAndPasses() {
@@ -185,9 +172,9 @@ final class MainPassTargets {
         pass.depth.hdrDepthReadable = false;
         releaseHdrInteropTextures();
         releaseOutputInteropTextures();
-        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp(false);
-        if (this.compositeFramebuffer != null) this.compositeFramebuffer.cleanUp(false);
-        if (this.packFinalFramebuffer != null) this.packFinalFramebuffer.cleanUp(true);
+        if (this.hdrFramebuffer != null) this.hdrFramebuffer.cleanUp();
+        if (this.compositeFramebuffer != null) this.compositeFramebuffer.cleanUp();
+        if (this.packFinalFramebuffer != null) this.packFinalFramebuffer.cleanUp();
         ChimeraRasterOrientation.unmark(this.hdrRenderPass);
         ChimeraRasterOrientation.unmark(this.hdrAuxRenderPass);
         ChimeraRasterOrientation.unmark(this.hdrAuxClearDepthRenderPass);
@@ -211,5 +198,11 @@ final class MainPassTargets {
         this.compositeAuxRenderPass = null;
         this.compositeAuxClearDepthRenderPass = null;
         this.presentRenderPass = null;
+    }
+
+    private static boolean live(Framebuffer framebuffer, int colorGlId, int depthGlId) {
+        return framebuffer != null && colorGlId != 0 && depthGlId != 0
+                && framebuffer.getColorAttachment().getId() != 0L
+                && framebuffer.getDepthAttachment().getId() != 0L;
     }
 }

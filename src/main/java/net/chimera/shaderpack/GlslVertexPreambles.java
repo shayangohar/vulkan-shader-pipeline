@@ -60,36 +60,27 @@ final class GlslVertexPreambles {
                 mat4 LightMVP;
             };
 
-            layout(binding = 2) uniform SectionData {
-                ivec4 SectionOffsets[128];
-                vec4 SectionFadeFactors[128];
-            };
-
             layout(push_constant) uniform Push {
-                vec3 ModelOffset;
+                vec3 ChunkOffset;
             };
 
             layout(location = 0) in ivec4 inPositionLight;
-            layout(location = 1) in uvec2 inUV;
-            layout(location = 2) in uint inPackedColor;
+            layout(location = 1) in vec4 inColor;
+            layout(location = 2) in uvec2 inUV;
             layout(location = 3) in int inMaterialId;
             layout(location = 4) in int inRenderType;
 
             const float CHIMERA_UV_SCALE = 1.0 / 32768.0;
             const vec3 CHIMERA_POSITION_SCALE = vec3(1.0 / 2048.0);
-            const vec3 CHIMERA_POSITION_BIAS = vec3(4.0);
 
-            vec3 chimeraSectionOffset(int encoded) {
-                return vec3(
-                    float(bitfieldExtract(encoded, 0, 8)),
-                    float(bitfieldExtract(encoded, 16, 8)),
-                    float(bitfieldExtract(encoded, 8, 8)));
+            // The draw's base instance holds the section's offset in its area: x, z and y bytes.
+            vec3 chimeraSectionOffset() {
+                return vec3(bitfieldExtract(ivec3(gl_InstanceIndex) >> ivec3(0, 16, 8), 0, 8));
             }
 
             vec3 chimeraWorldPosition() {
-                int encoded = SectionOffsets[gl_InstanceIndex >> 2][gl_InstanceIndex & 3];
                 return fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
-                        ModelOffset + chimeraSectionOffset(encoded));
+                        ChunkOffset + chimeraSectionOffset());
             }
 
             vec4 chimeraVertexValue() {
@@ -97,20 +88,19 @@ final class GlslVertexPreambles {
             }
 
             vec4 chimeraColorValue() {
-                return unpackUnorm4x8(inPackedColor);
+                return inColor;
             }
 
             vec4 chimeraTexCoord0Value() {
                 return vec4(vec2(inUV) * CHIMERA_UV_SCALE, 0.0, 1.0);
             }
 
-            // Raw UV2 light coordinates (level * 16, 0..240), as Iris supplies
-            // gl_MultiTexCoord1; gl_TextureMatrix[1] normalizes them.
+            // Raw UV2 light coordinates, one byte each (block, sky), as Iris supplies
+            // gl_MultiTexCoord1 from Sodium's vertices; gl_TextureMatrix[1] normalizes
+            // them. Smooth lighting keeps fractions of a level below the top nibble.
             vec4 chimeraTexCoord1Value() {
-                return vec4(
-                        vec2(float((uint(inPositionLight.w) >> 4u) & 0xFu),
-                             float((uint(inPositionLight.w) >> 12u) & 0xFu)) * 16.0,
-                        0.0, 1.0);
+                uint light = uint(inPositionLight.w);
+                return vec4(float(light & 0xFFu), float((light >> 8u) & 0xFFu), 0.0, 1.0);
             }
 
             vec2 chimeraMcEntityValue() {
@@ -181,12 +171,15 @@ final class GlslVertexPreambles {
     static final String SHADOW_VERTEX_PREAMBLE = TERRAIN_VERTEX_PREAMBLE
             .replace("mat4 LightMVP;\n", "");
 
-    /** Host entity transform blocks and the append-only EXTENDED_ENTITY inputs. */
+    /**
+     * Host transform blocks and the append-only EXTENDED_ENTITY inputs. Every value is the host's
+     * (RenderSystem state through VulkanMod's uniform suppliers); LineWidth serves the line lane.
+     */
     static final String ENTITY_VERTEX_PREAMBLE = """
             layout(binding = 0) uniform DynamicTransforms {
                 mat4 ModelViewMat;
                 vec4 ColorModulator;
-                vec3 ModelOffset;
+                float LineWidth;
                 mat4 TextureMat;
             };
 
@@ -301,11 +294,7 @@ final class GlslVertexPreambles {
 
             """;
 
-    /** Block entities use the host block shader's camera-relative offset. */
-    static final String BLOCK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("return vec4(Position, 1.0);", "return vec4(Position + ModelOffset, 1.0);");
-
-    static final String CRUMBLING_VERTEX_PREAMBLE = BLOCK_VERTEX_PREAMBLE
+    static final String CRUMBLING_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
             .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
@@ -340,7 +329,7 @@ final class GlslVertexPreambles {
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /**
-     * DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH, drawn as quads. Iris supplies the
+     * DefaultVertexFormat.POSITION_COLOR_NORMAL, each segment drawn as a quad. Iris supplies the
      * missing inputs as for any host format: UV0 (0.5, 0.5) and full light (240, 240). The
      * line offset is zero except while {@link #prepareLineVertex} widens a fallback program.
      */
@@ -349,7 +338,6 @@ final class GlslVertexPreambles {
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 2) in vec3 Normal;\n"
-                    + "layout(location = 3) in float LineWidth;\n"
                     + "#define chimeraLineWidth LineWidth\n"
                     + "#define chimeraLineDirection Normal\n"
                     + "#define chimeraLineVertexIndex gl_VertexIndex")
@@ -631,17 +619,17 @@ final class GlslVertexPreambles {
     }
 
     /**
-     * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud faces (PackCloudRenderer
-     * decodes them into DefaultVertexFormat.POSITION_COLOR_NORMAL), gl_Vertex with the frame's
-     * CloudOffset added (the draw carries it in ModelOffset), the face colour times the cloud colour
-     * (ColorModulator), the face's axis normal, UV0 (0.5, 0.5) and full light (240, 240).
+     * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud mesh
+     * (DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL), gl_Vertex in the mesh's own space (the
+     * draw's model view carries the cloud offset), the clouds texture coordinate, the face colour
+     * (the cloud colour times the face shade), the face's axis normal and full light (240, 240).
      */
     static final String CLOUD_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("return vec4(Position, 1.0);", "return vec4(Position + ModelOffset, 1.0);")
-            .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
+            .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
+            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
-            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 2) in vec3 Normal;")
+            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 3) in vec3 Normal;")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",

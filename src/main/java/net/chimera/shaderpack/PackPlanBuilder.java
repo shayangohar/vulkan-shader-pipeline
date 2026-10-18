@@ -267,7 +267,8 @@ public final class PackPlanBuilder {
             }
             if (FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isParticleLike(name)
                     || FamilyAdapterRegistry.isWeatherFamily(name) || FamilyAdapterRegistry.isGlintFamily(name)) {
-                fragment = alphaTestPlan.injectDrawTest(fragment);
+                // Iris draws ENTITIES_ALPHA (the dying dragon) with gbuffers_entities alone.
+                fragment = alphaTestPlan.injectDrawTest(fragment, name.equals("gbuffers_entities"));
                 if (FamilyAdapterRegistry.isEntityLike(name) && !name.equals("gbuffers_damagedblock")) {
                     fragment = EntityOverlayColor.inject(fragment);
                 }
@@ -493,7 +494,7 @@ public final class PackPlanBuilder {
                 executable = false;
             } else if (FamilyAdapterRegistry.isCloudFamily(name)) {
                 familyAdapter = familyAdapter.withVertexContract(
-                        FamilyAdapterPlan.VertexContract.CLOUD_POSITION_COLOR_NORMAL);
+                        FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL);
                 acceptVertex(HostLayoutVertexBridge.convertCloudVertex(vertex, vertexFile(), fragment,
                                 stageMatch.locations(), allowStorageBuffers,
                                 interfacePlan.project("fragment", stage).executableUniforms()),
@@ -806,7 +807,7 @@ public final class PackPlanBuilder {
     private static String vertexBridgeDeviation(String name) {
         return switch (name) {
             case "shadow" -> "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
-            case "shadow_entities" -> "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
+            case "shadow_entities", "shadow_block" -> "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_water" -> "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_particles", "gbuffers_particles_translucent"
                     -> "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED";

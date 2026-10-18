@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import net.chimera.render.ChimeraRenderingPass;
 import net.chimera.render.PackPostTargets;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
@@ -90,8 +91,13 @@ public final class PackGeometryContext {
 
     public static List<VulkanImage> colors() { return colors; }
 
-    public static void beginRendering(VkCommandBuffer commandBuffer, MemoryStack stack) {
-        if (!active) return;
+    /**
+     * Begins dynamic rendering into the window's attachments and returns the pass VulkanMod binds
+     * for it, in GL row order when {@code glOriented}.
+     */
+    public static ChimeraRenderingPass beginRendering(VkCommandBuffer commandBuffer, MemoryStack stack,
+                                                      boolean glOriented) {
+        if (!active) throw new IllegalStateException("no pack geometry window is pending");
         if (commandBuffer == null || commandBuffer.address() == 0L || depth == null
                 || depth.getId() == 0L || colors.stream().anyMatch(value -> value.getId() == 0L)) {
             throw new IllegalStateException("pack geometry attachments are not live");
@@ -120,6 +126,8 @@ public final class PackGeometryContext {
         vkCmdBeginRenderingKHR(commandBuffer, rendering);
         clearFirstColor = false;
         clearShadowAttachments = false;
+        return ChimeraRenderingPass.of(colors.stream().mapToInt(image -> image.format).toArray(), depth.format,
+                glOriented);
     }
 
     /** The color attachments: shadow colors clear to 1, a fresh coverage window's target to 0, the rest load. */

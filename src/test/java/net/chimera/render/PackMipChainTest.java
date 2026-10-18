@@ -43,7 +43,7 @@ final class PackMipChainTest {
     }
 
     private static TargetSpec spec(int width, int height, boolean mipmapped) {
-        return new TargetSpec(0, FORMAT, width, height, true, null, false, false, mipmapped, List.of());
+        return new TargetSpec(0, FORMAT, width, height, true, null, false, false, mipmapped, false, List.of());
     }
 
     private static void ok(int result) {
@@ -68,7 +68,7 @@ final class PackMipChainTest {
                                 .pApplicationName(stack.UTF8("Chimera mip chain test"))
                                 .apiVersion(VK_MAKE_VERSION(1, 2, 0)));
                 ok(vkCreateInstance(create, null, pointer));
-                instance = new VkInstance(pointer.get(0), create);
+                instance = HeadlessVulkan.instance(pointer.get(0), create);
                 var count = stack.mallocInt(1);
                 ok(vkEnumeratePhysicalDevices(instance, count, null));
                 assertTrue(count.get(0) > 0, "no Vulkan device");

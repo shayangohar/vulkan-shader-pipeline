@@ -189,11 +189,9 @@ final class IrisCoreProfile {
      * Iris applies EntityPatcher only to entity and text formats. On any other host layout
      * entityId and blockEntityId stay uniforms (CommonUniforms). blockEntityId is the constant
      * -1. entityId is Iris's fallback "for when entityId via attributes cannot be used
-     * (lightning)", read from CapturedRenderingState when the batch draws. Iris 1.21.11 never
-     * sets it for these draws: its lightning override is commented out, and a custom-geometry
-     * batch flushes after CustomFeatureRenderer has reset the entity to 0. Complementary's
-     * shadow program cuts entity shadows past 26 blocks, so a bolt drawn with its own id lost
-     * most of its shadow. Applied to both stages of a host-layout program before planning.
+     * (lightning)", read from CapturedRenderingState when the batch draws: here the per-draw
+     * {@link UniformRegistry#HOST_ENTITY_ID}, which is 0 except while a lightning bolt draws.
+     * Applied to both stages of a host-layout program before planning.
      */
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;
@@ -210,8 +208,10 @@ final class IrisCoreProfile {
         if (types.isEmpty()) return source;
         String src = EntityVertexBridge.removeEntityIdDeclarations(source);
         Map<String, String> replacements = new HashMap<>();
+        String entityId = UniformRegistry.HOST_ENTITY_ID;
         if (types.containsKey("entityId")) {
-            replacements.put("entityId", "float".equals(types.get("entityId")) ? "(0.0)" : "(0)");
+            replacements.put("entityId", "float".equals(types.get("entityId")) ? "float(" + entityId + ")"
+                    : "(" + entityId + ")");
         }
         if (types.containsKey("blockEntityId")) {
             replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
@@ -221,7 +221,8 @@ final class IrisCoreProfile {
             replacements.put("currentRenderedItemId",
                     "float".equals(types.get("currentRenderedItemId")) ? "(0.0)" : "(0)");
         }
-        return GlslTokenRewriter.replaceIdentifiers(src, replacements);
+        String folded = GlslTokenRewriter.replaceIdentifiers(src, replacements);
+        return types.containsKey("entityId") ? insertAfterHeader(folded, "uniform int " + entityId + ";\n") : folded;
     }
 
     static String expandIncludes(String source, Path sourceFile) {

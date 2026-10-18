@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.chimera.mixin.ChimeraDeviceAccessor;
+import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackPipelines;
@@ -14,8 +15,6 @@ import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
-import net.vulkanmod.vulkan.framebuffer.RenderPass;
-import net.vulkanmod.vulkan.texture.SamplerManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkClearColorValue;
@@ -105,7 +104,6 @@ public final class PackPostTargets {
     private VulkanImage hdrIdentitySource;
     private PackTargetGraphPlan graph;
     private Framebuffer pipelineFramebuffer;
-    private RenderPass pipelineRenderPass;
     private boolean configured;
     private boolean rendering;
     private final PackTemporalState temporal = new PackTemporalState();
@@ -163,7 +161,6 @@ public final class PackPostTargets {
             throw new IllegalStateException("target graph does not contain colortex0");
         }
         this.pipelineFramebuffer = Framebuffer.builder(this.images[0][0], null).build();
-        this.pipelineRenderPass = RenderPass.builder(this.pipelineFramebuffer).build();
         this.configured = true;
         trace("configure done target0=" + imageId(this.images[0][0])
                 + " target1=" + imageId(this.images[1][0])
@@ -174,18 +171,21 @@ public final class PackPostTargets {
     /** A target image; one a pass compute writes through {@code colorimgN} also allows storage. */
     private static VulkanImage createTargetImage(TargetSpec target, String side, boolean storage) {
         VulkanImage image = VulkanImage.builder(target.width(), target.height())
-                .setName("chimeraPackColortex" + target.index() + side)
                 .setFormat(target.format())
                 .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                         | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
                         | (storage && PackPassComputes.storageSupported(target.format())
                         ? VK_IMAGE_USAGE_STORAGE_BIT : 0))
                 .setMipLevels(target.mipLevels())
+                // Reforged makes per-level views only on request. A mipmapped target renders to level 0
+                // through one, as does a padded-alpha target, whose main view reads alpha as 1.
+                .setLevelViews(target.mipLevels() > 1 || target.paddedAlpha())
                 .setLinearFiltering(true)
                 .setClamp(true)
                 .createVulkanImage();
+        if (target.paddedAlpha()) ImageViews.sampleAlphaAsOne(image);
         // Iris samples the base level until a program's pass generates the chain.
-        if (image.mipLevels > 1) image.setSampler(baseLevelSampler());
+        if (image.mipLevels > 1) sampleWith(image, baseLevelSampler());
         return image;
     }
 
@@ -483,7 +483,7 @@ public final class PackPostTargets {
                 if (!needsMipChain(image == null || graphImage == null ? 0 : graphImage.mipLevels)) continue;
                 if (image == this.hdrIdentitySource) image = adoptIdentitySource(stack, commandBuffer, target, image);
                 buildMipChain(stack, commandBuffer, image);
-                image.setSampler(SamplerManager.getSampler(true, true, image.mipLevels - 1));
+                sampleWith(image, ChimeraSamplers.linearMipmapped(image.mipLevels - 1));
                 this.mipSampling.add(image);
             }
         }
@@ -497,13 +497,15 @@ public final class PackPostTargets {
 
     /** Iris resets every target's filter after each deferred, composite and final renderer. */
     public void resetMipmapSampling() {
-        for (VulkanImage image : this.mipSampling) image.setSampler(baseLevelSampler());
+        for (VulkanImage image : this.mipSampling) {
+            sampleWith(image, baseLevelSampler());
+        }
         this.mipSampling.clear();
     }
 
-    /** Pack targets render to level 0 only: an attachment view has exactly one level. */
+    /** Pack targets render to level 0 only, through an identity view of exactly one level. */
     public static long attachmentView(VulkanImage image) {
-        return image.mipLevels > 1 ? image.getLevelImageView(0) : image.getImageView();
+        return image.getLevelImageViews() != null ? image.getLevelImageView(0) : image.getImageView();
     }
 
     /**
@@ -576,8 +578,13 @@ public final class PackPostTargets {
                 0, null, null, barrier);
     }
 
+    /** Iris samples a target's base level, linearly and clamped to the edge. */
     private static long baseLevelSampler() {
-        return SamplerManager.getSampler(true, true, 0);
+        return ChimeraSamplers.flat(true, true);
+    }
+
+    private static void sampleWith(VulkanImage image, long sampler) {
+        ((ChimeraVulkanImageAccessor) image).chimera$setSampler(sampler);
     }
 
     /** Begins dynamic rendering for the graph step represented by this post. */
@@ -617,7 +624,7 @@ public final class PackPostTargets {
 
             MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit);
             Renderer.getInstance().setBoundFramebuffer(this.pipelineFramebuffer);
-            Renderer.getInstance().setBoundRenderPass(this.pipelineRenderPass);
+            Renderer.getInstance().setBoundRenderPass(ChimeraRenderingPass.of(plan.outputFormatsArray(), 0, false));
             Renderer.setViewport(0, 0, renderWidth, renderHeight, stack);
             VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
             scissor.get(0).offset().set(0, 0);
@@ -812,9 +819,7 @@ public final class PackPostTargets {
                 + " target1=" + imageId(this.images[1][0])
                 + " configured=" + this.configured);
         if (this.rendering) throw new IllegalStateException("cannot clean up active pack post rendering");
-        if (this.pipelineRenderPass != null) this.pipelineRenderPass.cleanUp();
         if (this.pipelineFramebuffer != null) this.pipelineFramebuffer.cleanUp(false);
-        this.pipelineRenderPass = null;
         this.pipelineFramebuffer = null;
         for (int side = 0; side < images.length; side++) {
             for (int target = 0; target < TARGET_COUNT; target++) {

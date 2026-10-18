@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.PackConfig;
 import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.SwapChain;
 
@@ -35,7 +36,7 @@ final class MainPassResources {
         pass.targets.cleanUpFramebuffersAndPasses();
         pass.cleanUpPipelines();
 
-        SwapChain swapChain = Renderer.getInstance().getSwapChain();
+        SwapChain swapChain = Vulkan.getSwapChain();
         int width = Math.max(swapChain.getWidth(), 1);
         int height = Math.max(swapChain.getHeight(), 1);
 
@@ -71,7 +72,7 @@ final class MainPassResources {
         pass.levelPhase = false;
         pass.pendingDepthClear = false;
         pass.shadowPass.shadowPending = false;
-        if (oldHdr == null && pass.targets.hdrColorTexture == null && pass.targets.hdrDepthTexture == null) {
+        if (oldHdr == null && pass.targets.hdrColorGlId == 0 && pass.targets.hdrDepthGlId == 0) {
             return;
         }
 
@@ -82,11 +83,11 @@ final class MainPassResources {
             Renderer.getInstance().endRenderPass();
             PackGeometryContext.close();
         }
-        if (Renderer.getInstance().getBoundFramebuffer() == oldHdr) {
+        if (ChimeraMainPass.boundFramebuffer() == oldHdr) {
             Renderer.getInstance().endRenderPass();
         }
         pass.targets.releaseHdrInteropTextures();
-        if (oldHdr != null) oldHdr.cleanUp(false);
+        if (oldHdr != null) oldHdr.cleanUp();
         pass.targets.hdrFramebuffer = null;
         if (pass.currentFramebuffer == oldHdr) {
             pass.currentFramebuffer = pass.targets.compositeFramebuffer;
@@ -117,9 +118,9 @@ final class MainPassResources {
 
     void recreateWorldAttachments() {
         Framebuffer output = pass.targets.compositeFramebuffer;
-        int width = output != null ? output.getWidth() : Math.max(Renderer.getInstance().getSwapChain().getWidth(), 1);
+        int width = output != null ? output.getWidth() : Math.max(Vulkan.getSwapChain().getWidth(), 1);
         int height = output != null ? output.getHeight()
-                : Math.max(Renderer.getInstance().getSwapChain().getHeight(), 1);
+                : Math.max(Vulkan.getSwapChain().getHeight(), 1);
         pass.targets.createHdrFramebuffer(width, height);
         pass.targets.createHdrInteropTextures();
         pass.depth.hdrDepthReadable = false;

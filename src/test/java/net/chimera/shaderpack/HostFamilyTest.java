@@ -1,16 +1,18 @@
 package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.HostAlphaTest;
 import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.vertex.ChimeraVertexFormats;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.vulkanmod.vulkan.shader.Pipeline;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.tree.AnnotationNode;
+import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
@@ -21,8 +23,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_SINT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32B32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32_SFLOAT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 
 /** Host program families: requested-family fallback, particles, lines, glint, host-layout lanes and hands. */
 final class HostFamilyTest {
@@ -136,11 +145,15 @@ final class HostFamilyTest {
                     && glyph.contains("layout(location = 7) in vec4 ChimeraPackedTangent;"),
                             "entity-family GLYPH inputs");
         }
-        var raster = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, true);
+        // Minecraft 1.21.1's GL projection; the host (Reforged's VRenderSystem.applyProjectionMatrix)
+        // maps the depth row onto Vulkan's [0,1].
+        var raster = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, false);
         var snapshot = new Matrix4f(raster);
-        var drawn = ChimeraHandRenderer.projection(raster);
-        var iris = new Matrix4f().scale(1, 1, ChimeraHandRenderer.DEPTH)
-                .mul(new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128F, false));
+        var squeezed = ChimeraHandRenderer.projection(raster);
+        var drawn = new Matrix4f(squeezed).m02(0.5F * (squeezed.m02() + squeezed.m03()))
+                .m12(0.5F * (squeezed.m12() + squeezed.m13())).m22(0.5F * (squeezed.m22() + squeezed.m23()))
+                .m32(0.5F * (squeezed.m32() + squeezed.m33()));
+        var iris = new Matrix4f().scale(1, 1, ChimeraHandRenderer.DEPTH).mul(raster);
         for (float z : new float[]{-0.05F, -0.5F, -1.0F, -128F}) {
             var point = new Vector4f(0.02F, -0.03F, z, 1);
             var actual = drawn.transform(new Vector4f(point));
@@ -155,83 +168,155 @@ final class HostFamilyTest {
         assertEquals(snapshot, raster, "hand projection must not mutate world matrices");
     }
 
+    /**
+     * Falling blocks and moving pistons: gbuffers_block on the block layout, as Iris draws MOVING_BLOCK
+     * on IrisVertexFormats.TERRAIN with mc_Entity (-1, -1) and no overlay.
+     */
+    @Test
+    void movingBlockLayout() {
+        String vertex = """
+                #version 120
+                attribute vec4 mc_Entity;
+                attribute vec4 at_tangent;
+                varying vec4 tint;
+                void main() {
+                    tint = vec4(mc_Entity.xy, at_tangent.w, 1.0) * gl_Color;
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = "#version 120\nvarying vec4 tint;\nvoid main() { gl_FragColor = tint; }\n";
+        var block = EntityVertexBridge.convertBlockVertexChecked(vertex, null, fragment, Map.of(), false, List.of());
+        String moving = EntityVertexBridge.layoutVertexForFormat(block.source(), DefaultVertexFormat.BLOCK);
+        assertTrue(PackCompileTest.compile(moving, true) == null, "moving-block layout fails compilation: " + moving);
+        assertTrue(moving.contains("layout(location = 3) in ivec2 UV2;")
+                        && moving.contains("layout(location = 4) in vec3 Normal;")
+                        && moving.contains("layout(location = 5) in uvec4 EntityIds;")
+                        && moving.contains("const ivec2 UV1 = ivec2(0);"), "moving-block inputs: " + moving);
+        assertTrue(moving.contains("const vec4 mc_Entity = vec4(-1.0, -1.0, 0.0, 1.0);")
+                        && block.source().contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);"),
+                "mc_Entity reads (-1, -1) on the block layout and the unbound default on the entity layout");
+        // A shadow program reads mc_Entity through its preamble's helper.
+        assertTrue(EntityVertexBridge.movingBlockEntity(GlslVertexPreambles.ENTITY_SHADOW_VERTEX_PREAMBLE)
+                        .matches("(?s).*vec2 chimeraMcEntityValue\\(\\) \\{\\s*return vec2\\(-1\\.0\\);.*"),
+                "shadow casters read mc_Entity (-1, -1) on the block layout");
+        var extended = ChimeraVertexFormats.EXTENDED_BLOCK;
+        assertEquals(DefaultVertexFormat.BLOCK.getVertexSize() + 20, extended.getVertexSize(),
+                "block prefix plus 20-byte material inputs");
+        assertEquals(extended, ChimeraVertexFormats.extendedLayout(DefaultVertexFormat.BLOCK));
+        assertTrue(ChimeraVertexFormats.isFamilyFormat(extended), "only a family lane writes the block layout");
+    }
+
+    /**
+     * Chimera describes every family format to Vulkan itself, since Reforged's translator rejects
+     * the family scalars: one input per element, at the element's offset, typed as the converted
+     * shaders declare them (ivec2 UV1/UV2, uvec4 EntityIds, vec2 MidTexCoord).
+     */
+    @Test
+    void familyVertexInputs() {
+        Set<VertexFormat> family = new HashSet<>(ChimeraVertexFormats.handFormats().values());
+        family.add(ChimeraVertexFormats.EXTENDED_BLOCK);
+        for (VertexFormat format : family) {
+            assertTrue(ChimeraVertexFormats.isFamilyFormat(format), "family format " + format);
+            assertEquals(format.getElements().size(), ChimeraVertexFormats.vulkanInputFormats(format).length);
+        }
+        VertexFormat entity = ChimeraVertexFormats.EXTENDED_ENTITY;
+        assertArrayEquals(new int[] {VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32G32_SFLOAT,
+                        VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R8G8B8A8_SNORM,
+                        VK_FORMAT_R16G16B16A16_UINT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R8G8B8A8_SNORM},
+                ChimeraVertexFormats.vulkanInputFormats(entity));
+        assertArrayEquals(new int[] {0, 12, 16, 24, 28, 32, 36, 44, 52},
+                entity.getElements().stream().mapToInt(entity::getOffset).toArray());
+    }
+
+    /** Iris 1.21.1's AlphaTests per ShaderKey, for the entity-format and moving-block keys. */
+    @Test
+    void entityAlphaReferences() {
+        var eyes = "rendertype_eyes";
+        var solid = "rendertype_entity_solid";
+        assertEquals(0.0001F, HostAlphaTest.reference(eyes, ChimeraEntityBridge.Family.SPIDER_EYES, false),
+                "ENTITIES_EYES tests NON_ZERO_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference("rendertype_entity_translucent_emissive",
+                ChimeraEntityBridge.Family.SPIDER_EYES, false), "ENTITIES_EYES_TRANS tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference(eyes, ChimeraEntityBridge.Family.BLOCK, false),
+                "a block entity's eyes are BLOCK_ENTITY, ONE_TENTH_ALPHA");
+        assertEquals(0.0F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.ENTITY, false),
+                "ENTITIES_SOLID_DIFFUSE draws untested");
+        assertEquals(0.1F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.BLOCK, false),
+                "BLOCK_ENTITY_DIFFUSE tests ONE_TENTH_ALPHA");
+        assertEquals(-1.0F, HostAlphaTest.reference("rendertype_entity_alpha", ChimeraEntityBridge.Family.ENTITY,
+                false), "ENTITIES_ALPHA tests the vertex alpha (AlphaTests.VERTEX_ALPHA)");
+        assertEquals(0.1F, HostAlphaTest.reference("rendertype_energy_swirl", ChimeraEntityBridge.Family.ENTITY, false),
+                "ENTITIES_CUTOUT tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference("rendertype_solid", ChimeraEntityBridge.Family.MOVING_BLOCK, false),
+                "MOVING_BLOCK tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.SHADOW_BLOCK, true),
+                "SHADOW_BLOCK tests ONE_TENTH_ALPHA");
+    }
+
+    /**
+     * The opaque hand draws where renderLevel enters its "translucent" section, before translucent
+     * terrain in both of its branches (Iris draws it there too).
+     */
     @Test
     void opaqueHandSeamPrecedesTranslucency() throws IOException {
-        var level = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer");
-        var opaque = level.methods.stream().filter(method ->
-                method.name.equals("method_62214")).findFirst().orElseThrow();
-        int flushes = 0;
-        boolean translucentAfterSolidHand = false;
-        for (var instruction : opaque.instructions) {
-            if (instruction instanceof MethodInsnNode call) {
-                if (call.owner.equals("net/minecraft/client/renderer/MultiBufferSource$BufferSource")
-                        && call.name.equals("endBatch") && call.desc.equals("()V")) flushes++;
-                if (call.name.equals("renderGroup") && flushes >= 2) translucentAfterSolidHand = true;
+        var level = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
+                .filter(method -> method.name.equals("renderLevel")).findFirst().orElseThrow();
+        int seams = 0;
+        boolean open = false;
+        for (var instruction : level.instructions) {
+            if (instruction instanceof LdcInsnNode constant && "translucent".equals(constant.cst)) {
+                open = true;
+            } else if (open && instruction instanceof MethodInsnNode call && call.name.equals("translucent")
+                    && call.owner.equals("net/minecraft/client/renderer/RenderType")) {
+                seams++;
+                open = false;
             }
         }
-        assertTrue(flushes >= 2 && translucentAfterSolidHand, "opaque hand seam must precede terrain translucency");
+        assertEquals(2, seams, "each translucent section must open before its translucent terrain layer");
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin");
+        boolean hooked = mixin.methods.stream()
+                .flatMap(method -> MixinBytecode.annotations(method.visibleAnnotations, method.invisibleAnnotations)
+                        .stream())
+                .filter(annotation -> annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;"))
+                .flatMap(annotation -> ((List<?>) MixinBytecode.annotationValue(annotation, "at")).stream())
+                .anyMatch(at -> at instanceof AnnotationNode node
+                        && "CONSTANT".equals(MixinBytecode.annotationValue(node, "value"))
+                        && MixinBytecode.annotationValue(node, "args") instanceof List<?> args
+                        && args.contains("stringValue=translucent"));
+        assertTrue(hooked, "the opaque hand must draw at the translucent section");
     }
 
+    /**
+     * Every pack draw opens its program's attachment window around the host's own draw call: host
+     * meshes from the immediate and vertex-buffer paths (PackHostDraws) and buffered family batches.
+     */
     @Test
-    void lateHandHooksMatchNativeApi() throws IOException {
-        var game = MixinBytecode.nativeClass("net/minecraft/client/renderer/GameRenderer");
-        var late = game.methods.stream().filter(method ->
-                method.name.equals("renderItemInHand")).findFirst().orElseThrow();
-        int calls = 0;
-        for (var instruction : late.instructions) {
-            if (instruction instanceof MethodInsnNode call
-                    && call.name.equals("renderHandsWithItems")
-                    && call.desc.equals("(FLcom/mojang/blaze3d/vertex/PoseStack;"
-                            + "Lnet/minecraft/client/renderer/SubmitNodeCollector;"
-                            + "Lnet/minecraft/client/player/LocalPlayer;I)V")) calls++;
+    void packDrawsOwnTheirAttachments() throws IOException {
+        for (String mixin : List.of("ChimeraBufferUploaderMixin", "ChimeraVertexBufferMixin")) {
+            var node = MixinBytecode.nativeClass("net/chimera/mixin/" + mixin);
+            assertTrue(MixinBytecode.instructionsThrough(node, "chimera$packProgram").stream().anyMatch(instruction ->
+                            instruction instanceof MethodInsnNode call && call.name.equals("draw")
+                                    && call.owner.equals("net/chimera/render/shader/PackHostDraws")),
+                    mixin + " must draw through PackHostDraws");
         }
-        assertEquals(1, calls, "native late-hand redirect must have exactly one target");
-        assertTrue(MixinBytecode.nativeClass("net/minecraft/client/renderer/"
-                + "ItemInHandRenderer").methods.stream().anyMatch(method ->
-                        method.name.equals("renderArmWithItem")
-                                && method.desc.equals("(Lnet/minecraft/client/player/AbstractClientPlayer;"
-                                        + "FFLnet/minecraft/world/InteractionHand;"
-                                        + "FLnet/minecraft/world/item/ItemStack;FLcom/mojang/blaze3d/vertex/PoseStack;"
-                                        + "Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V")),
-                "hand partition hook must match the native arm submission API");
+        assertOwnsWindow("net/chimera/render/shader/PackHostDraws", "draw");
+        assertOwnsWindow("net/chimera/render/PackFamilyWindows", "drawFamilyBatches");
     }
 
-    @Test
-    void immediateHandDrawOwnsAttachmentWindow() throws IOException {
-        // Check the installed renderer's overwrite, not just vanilla bytecode.
-        var immediate = MixinBytecode.nativeClass("net/vulkanmod/mixin/render/RenderTypeM").methods.stream()
-                .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
-        boolean directDrawer = false;
-        for (var instruction : immediate.instructions) {
+    private static void assertOwnsWindow(String owner, String method) throws IOException {
+        boolean begin = false;
+        boolean end = false;
+        for (var instruction : MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), method)) {
             if (instruction instanceof MethodInsnNode call) {
-                assertTrue(!call.name.equals("drawIndexed"), "re-audit native immediate attachment ownership");
-                if (call.owner.equals("net/vulkanmod/vulkan/Drawer") && call.name.equals("draw")) directDrawer = true;
+                begin |= call.name.equals("beginPackFamilyWindow");
+                end |= call.name.equals("endPackFamilyWindow");
             }
         }
-        assertTrue(directDrawer, "expected VulkanMod immediate Drawer.draw path");
-        var owner = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraRenderTypeMixin");
-        boolean handScope = false;
-        boolean attachments = false;
-        for (var instruction : MixinBytecode.instructionsThrough(owner, "chimera$immediateFamilyWindow")) {
-            if (instruction instanceof MethodInsnNode call) {
-                if (call.owner.equals("net/chimera/render/ChimeraHandRenderer")
-                        && call.name.equals("active")) handScope = true;
-                if (call.name.equals("beginPackFamilyWindow")) attachments = true;
-            }
-        }
-        assertTrue(handScope && attachments, "immediate hand draw must own the authored attachment window");
+        assertTrue(begin && end, owner + "." + method + " must open and close its pack window");
     }
 
     @Test
     void requestedFamilyFallbackAndCrumbling(@TempDir Path root) throws IOException {
-        var host = RenderPipelines.CRUMBLING;
-        assertEquals(DefaultVertexFormat.BLOCK, host.getVertexFormat(),
-                "crumbling host format changed");
-        assertTrue(!host.isWriteDepth() && host.getBlendFunction().isPresent()
-                        && host.getDepthBiasConstant() == -10.0F && host.getDepthBiasScaleFactor() == -1.0F,
-                "crumbling host overlay state changed: depthWrite=" + host.isWriteDepth()
-                        + ", blend=" + host.getBlendFunction() + ", constant=" + host.getDepthBiasConstant()
-                        + ", slope=" + host.getDepthBiasScaleFactor());
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         List<String> names = List.of("gbuffers_entities", "gbuffers_entities_translucent",
                 "gbuffers_textured_lit", "gbuffers_damagedblock", "final");
@@ -294,14 +379,10 @@ final class HostFamilyTest {
             var handPlan = analysis.plan().program(name);
             assertTrue(handPlan.convertedFragment().contains("bool hasSkylight;"), "GLSL bool semantics changed");
             var ordinary = PackDescriptorContracts.ordinaryDescriptorContract(handPlan, Set.of());
-            var nativeBuilder = new Pipeline.Builder(
-                    ChimeraVertexFormats.EXTENDED_ENTITY, "test_" + name);
-            nativeBuilder.setUniformSupplierGetter(info -> () -> null);
-            ordinary.apply(nativeBuilder); // Regression used to throw "not admitted type: bool".
-            var boolField = nativeBuilder.getUBOs().stream().flatMap(block -> block.getUniforms().stream())
-                    .filter(field -> field.getName().equals("hasSkylight")).findFirst().orElseThrow();
-            assertEquals("int", boolField.getInfo().type, "native std140 bool storage");
-            assertEquals(1, boolField.getSize(), "native std140 bool word count");
+            var boolField = ordinary.layout().uniformBlocks().stream().flatMap(block -> block.fields().stream())
+                    .filter(field -> field.name().equals("hasSkylight")).findFirst().orElseThrow();
+            // Regression: the host builder rejects "not admitted type: bool"; std140 stores it as int.
+            assertEquals("int", boolField.type(), "std140 bool storage");
         }
     }
 
@@ -350,16 +431,10 @@ final class HostFamilyTest {
      */
     @Test
     void lineLane() {
-        for (var host : List.of(RenderPipelines.LINES,
-                RenderPipelines.LINES_TRANSLUCENT,
-                RenderPipelines.SECONDARY_BLOCK_OUTLINE)) {
-            assertTrue(HostLayoutLane.forDraw(host, host.getVertexFormat(),
-                            HostLayoutLane.Pass.WORLD)
-                            == HostLayoutLane.LINE,
-                    host.getLocation() + " must route to gbuffers_line");
-            assertEquals(0.0F, ChimeraEntityBridge.alphaReference(host),
-                    "Iris LINES uses AlphaTests.OFF");
-        }
+        assertTrue(HostLayoutLane.forDraw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
+                        HostLayoutLane.Pass.WORLD) == HostLayoutLane.LINE,
+                "lines and line strips (rendertype_lines) must route to gbuffers_line");
+        assertEquals(0.0F, HostLayoutLane.LINE.alphaReference(), "Iris LINES uses AlphaTests.OFF");
     }
 
     @Test
@@ -383,7 +458,7 @@ final class HostFamilyTest {
         assertEquals(FamilyAdapterPlan.VertexContract.HOST_LINE, plan.familyAdapter().vertexContract(),
                 "line keeps the host layout");
         String converted = plan.convertedVertex();
-        assertTrue(converted.contains("layout(location = 3) in float LineWidth;")
+        assertTrue(converted.contains("#define chimeraLineWidth LineWidth")
                         && converted.contains("void chimeraLineMain()")
                         && converted.contains("chimeraLineOffset = chimeraLineDirection;")
                         && converted.contains("chimeraLineViewScale")
@@ -432,14 +507,10 @@ final class HostFamilyTest {
      */
     @Test
     void glintLane(@TempDir Path root) throws IOException {
-        var host = RenderPipelines.GLINT;
-        assertEquals(DefaultVertexFormat.POSITION_TEX, host.getVertexFormat(),
-                "glint host format changed");
-        assertEquals(0.0001F, ChimeraEntityBridge.alphaReference(host),
-                "Iris GLINT uses AlphaTests.NON_ZERO_ALPHA");
+        assertEquals(0.0001F, HostLayoutLane.GLINT.alphaReference(), "Iris GLINT uses AlphaTests.NON_ZERO_ALPHA");
         // A held foil item flushes its glint inside the hand scope; the hand lane has no
         // POSITION_TEX variant, so the lookup must answer host fallback, not throw.
-        assertTrue(new PackPipelines.PackHand(Map.of()).forFormat(host.getVertexFormat()) == null,
+        assertTrue(new PackPipelines.PackHand(Map.of()).forFormat(DefaultVertexFormat.POSITION_TEX) == null,
                 "hand glint must fall back to its host draw");
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("gbuffers_armor_glint.vsh"), """
@@ -497,10 +568,9 @@ final class HostFamilyTest {
         for (var lane : lanes) {
             assertTrue(HostLayoutLane.of(lane.family()) == lane,
                     lane + " family must name its lane");
-            for (var host : lane.pipelines()) {
-                assertEquals(lane.format(), host.getVertexFormat(), host.getLocation() + " host format changed");
-                assertTrue(HostLayoutLane.forDraw(host, lane.format(), lane.pass()) == lane
-                        && lane.serves(host), host.getLocation() + " must route to " + lane);
+            for (String shader : lane.shaders()) {
+                assertTrue(HostLayoutLane.forDraw(shader, lane.format(), lane.pass()) == lane,
+                        shader + " must route to " + lane);
             }
             FamilyAdapterPlan adapter = FamilyAdapterRegistry.forProgram(lane.program());
             if (lane == HostLayoutLane.WEATHER) {
@@ -535,18 +605,11 @@ final class HostFamilyTest {
                         && !HostLayoutLane.SHADOW_TEXT.whiteAlbedo()
                         && !HostLayoutLane.BEACON_BEAM.whiteAlbedo(),
                 "Iris binds white to unit 0 exactly for host formats without UV0: " + table.getSimpleName());
-        assertTrue(HostLayoutLane.forDraw(
-                        RenderPipelines.LINES,
-                        RenderPipelines.LINES.getVertexFormat(),
+        assertTrue(HostLayoutLane.forDraw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
                         HostLayoutLane.Pass.HAND) == null,
                 "a world-only lane must not take a first-person draw");
-        for (var host : List.of(RenderPipelines.LIGHTNING,
-                RenderPipelines.DRAGON_RAYS,
-                RenderPipelines.BEACON_BEAM_OPAQUE,
-                RenderPipelines.BEACON_BEAM_TRANSLUCENT,
-                RenderPipelines.LEASH)) {
-            assertEquals(0.0F, ChimeraEntityBridge.alphaReference(host),
-                    "Iris LIGHTNING, BEACON and LEASH use AlphaTests.OFF");
+        for (var lane : List.of(HostLayoutLane.LIGHTNING, HostLayoutLane.BEACON_BEAM, HostLayoutLane.LEASH)) {
+            assertEquals(0.0F, lane.alphaReference(), "Iris LIGHTNING, BEACON and LEASH use AlphaTests.OFF");
         }
     }
 
@@ -606,7 +669,7 @@ final class HostFamilyTest {
                         "const vec3 Normal = vec3(0.0, 0.0, 1.0);"),
                 "gbuffers_beaconbeam", List.of("layout(location = 2) in vec2 UV0;",
                         "layout(location = 3) in ivec2 UV2;", "layout(location = 4) in vec3 Normal;",
-                        "return vec4(Position + ModelOffset, 1.0);"),
+                        "return vec4(Position, 1.0);"),
                 "gbuffers_basic", List.of("layout(location = 1) in vec4 Color;",
                         "const vec2 UV0 = vec2(0.5);", "layout(location = 2) in ivec2 UV2;",
                         "const vec3 Normal = vec3(0.0, 0.0, 1.0);"));
@@ -635,39 +698,15 @@ final class HostFamilyTest {
         for (String line : inputs) {
             assertTrue(vertex.contains(line), program + " lost Iris host input " + line + ": " + vertex);
         }
-        // Iris draws these batches with its fallback entityId already reset to 0.
+        // Iris reads its fallback entityId per draw: 0 by the time these batches draw.
         assertTrue(vertex.contains("(Color * ColorModulator)")
-                        && vertex.contains("(0) == 10101")
+                        && vertex.contains("(chimeraHostEntityId) == 10101")
                         && vertex.contains("float((-1))")
                         && !vertex.contains("chimeraEntityId")
-                        && plan.convertedFragment().contains("(0) == 10101"),
-                program + " must read entityId 0 and blockEntityId -1: " + vertex);
+                        && plan.convertedFragment().contains("(chimeraHostEntityId) == 10101"),
+                program + " must read the per-draw entityId and blockEntityId -1: " + vertex);
         assertTrue(!plan.alphaTestPlan().perDrawReference(),
                 program + " has no Iris alpha test (AlphaTests.OFF)");
-    }
-
-    /**
-     * Every text draw Iris routes has a hook on the game's own call, as many times as it requires:
-     * plain and outlined (glowing) text, and both name-tag passes (see-through, then normal).
-     */
-    @Test
-    void textHooks() throws IOException {
-        String feature = "net/minecraft/client/renderer/feature/";
-        String buffers = "Lorg/joml/Matrix4f;Lnet/minecraft/client/renderer/MultiBufferSource;";
-        String text = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/util/FormattedCharSequence;FFIZ"
-                + buffers + "Lnet/minecraft/client/gui/Font$DisplayMode;II)V";
-        String outlined = "Lnet/minecraft/client/gui/Font;drawInBatch8xOutline("
-                + "Lnet/minecraft/util/FormattedCharSequence;FFII" + buffers + "I)V";
-        String nameTag = "Lnet/minecraft/client/gui/Font;drawInBatch(Lnet/minecraft/network/chat/Component;FFIZ"
-                + buffers + "Lnet/minecraft/client/gui/Font$DisplayMode;II)V";
-        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", "render", text, 1);
-        assertWrapsCalls("ChimeraTextFeatureRendererMixin", feature + "TextFeatureRenderer", "render", outlined, 1);
-        assertWrapsCalls("ChimeraNameTagFeatureRendererMixin", feature + "NameTagFeatureRenderer", "render",
-                nameTag, 2);
-        MixinBytecode.assertMixinRegistered("ChimeraNameTagSubmitMixin");
-        assertTrue(MixinBytecode.mixinTargets(MixinBytecode.nativeClass("net/chimera/mixin/ChimeraNameTagSubmitMixin"),
-                "net/minecraft/client/renderer/SubmitNodeStorage$NameTagSubmit"),
-                "name tag nodes carry their entity's identity");
     }
 
     /**
@@ -676,9 +715,8 @@ final class HostFamilyTest {
      */
     @Test
     void worldClearHook() throws IOException {
-        assertWrapsCalls("ChimeraLevelRendererMixin", "net/minecraft/client/renderer/LevelRenderer", "method_62218",
-                "Lcom/mojang/blaze3d/systems/CommandEncoder;clearColorAndDepthTextures("
-                        + "Lcom/mojang/blaze3d/textures/GpuTexture;ILcom/mojang/blaze3d/textures/GpuTexture;D)V", 1);
+        assertWrapsCalls("ChimeraLevelRendererMixin", "net/minecraft/client/renderer/LevelRenderer", "renderLevel",
+                "Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V", 1);
     }
 
     private static void assertWrapsCalls(String mixinName, String owner, String method, String target, int calls)
@@ -698,23 +736,33 @@ final class HostFamilyTest {
 
     @Test
     void particleAndTextAlphaReferences() {
-        for (var host : List.of(RenderPipelines.OPAQUE_PARTICLE,
-                RenderPipelines.TRANSLUCENT_PARTICLE,
-                RenderPipelines.WEATHER_DEPTH_WRITE,
-                RenderPipelines.WEATHER_NO_DEPTH_WRITE)) {
-            assertEquals(0.1F, ChimeraEntityBridge.alphaReference(host),
-                    "particle/weather fixed core cutout must not depend on an absent ALPHA_CUTOUT define");
+        for (var family : List.of(ChimeraEntityBridge.Family.PARTICLE,
+                ChimeraEntityBridge.Family.PARTICLE_TRANSLUCENT)) {
+            assertEquals(0.1F, HostAlphaTest.reference("particle", family, false),
+                    "particle fixed core cutout must not depend on an absent ALPHA_CUTOUT define");
         }
-        for (var host : List.of(RenderPipelines.TEXT,
-                RenderPipelines.TEXT_POLYGON_OFFSET,
-                RenderPipelines.TEXT_SEE_THROUGH)) {
-            assertEquals(0.1F, ChimeraEntityBridge.alphaReference(host),
+        assertEquals(0.1F, HostLayoutLane.WEATHER.alphaReference(), "Iris WEATHER tests ONE_TENTH_ALPHA");
+        for (String shader : List.of("rendertype_text", "rendertype_text_see_through")) {
+            assertEquals(0.1F, HostAlphaTest.reference(shader, ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT, false),
                     "world text tests ONE_TENTH_ALPHA as Iris TEXT/TEXT_BE; untested glyph quads fill solid");
+            assertEquals(0.0001F, HostAlphaTest.reference(shader, ChimeraEntityBridge.Family.HAND, false),
+                    "first-person text tests NON_ZERO_ALPHA as Iris HAND_TEXT");
         }
         assertEquals(0.1F, HostLayoutLane.TEXT_BG.alphaReference(), "Iris TEXT_BG tests ONE_TENTH_ALPHA");
-        assertTrue(!ChimeraEntityBridge.isTextPipeline(RenderPipelines.TEXT_INTENSITY)
-                        && !ChimeraEntityBridge.isTextPipeline(RenderPipelines.TEXT_INTENSITY_SEE_THROUGH),
-                "intensity text keeps its host draw: Iris swizzles its glyph texture to RRRR");
+        var glyphs = DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
+        // TrueType glyphs (Iris TEXT_INTENSITY and TEXT_INTENSITY_BE) read their RRRR page alike.
+        for (String text : List.of("rendertype_text", "rendertype_text_see_through", "position_color_tex_lightmap",
+                "rendertype_text_intensity", "rendertype_text_intensity_see_through")) {
+            assertTrue(ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.ENTITY)
+                            == ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT
+                            && ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.BLOCK)
+                            == ChimeraEntityBridge.Family.BLOCK_TRANSLUCENT,
+                    text + " must draw as Iris TEXT and TEXT_BE");
+        }
+        assertEquals(0.0001F, HostAlphaTest.reference("rendertype_text_intensity", ChimeraEntityBridge.Family.HAND,
+                false), "first-person TrueType text tests NON_ZERO_ALPHA as Iris HAND_TEXT_INTENSITY");
+        assertEquals(HostLayoutLane.SHADOW_TEXT, HostLayoutLane.forDraw("rendertype_text_intensity", glyphs,
+                HostLayoutLane.Pass.SHADOW), "TrueType text casts with shadow_text (Iris SHADOW_TEXT_INTENSITY)");
     }
 
     @Test

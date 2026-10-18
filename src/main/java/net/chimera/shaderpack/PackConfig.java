@@ -95,6 +95,11 @@ public final class PackConfig {
             "RGB16F", 97,
             "R11F_G11F_B10F", 97
     );
+    /**
+     * The approximations whose GL format has no alpha channel. GL reads alpha as 1 from them, and
+     * Solas, for one, keeps its reflections only where that alpha is above 0.
+     */
+    private static final Set<String> PADDED_ALPHA_FORMATS = Set.of("RGB8", "RGB8_SNORM", "RGB16F", "R11F_G11F_B10F");
     private static final Map<Integer, String> VK_TO_NAME;
     static {
         Map<Integer, String> reverse = new HashMap<>();
@@ -237,7 +242,9 @@ public final class PackConfig {
             PackSettingsPlan settings,
             Map<Integer, TargetSettings> targetSettings,
             Map<String, List<Integer>> flips,
-            Map<String, List<Integer>> preFlips
+            Map<String, List<Integer>> preFlips,
+            // Targets declared in a format without alpha and stored with it (PADDED_ALPHA_FORMATS).
+            Set<Integer> paddedAlphaTargets
     ) {
         public PackConfigData(
                 Map<Integer, Integer> colortexFormats,
@@ -247,11 +254,13 @@ public final class PackConfig {
                 List<String> deviations
         ) {
             this(colortexFormats, drawBufferCount, shadowSettings, shaderConstants,
-                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of());
+                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Set.of());
         }
 
         public PackConfigData {
             colortexFormats = Collections.unmodifiableMap(new TreeMap<>(colortexFormats));
+            paddedAlphaTargets = Collections.unmodifiableSet(new TreeSet<>(paddedAlphaTargets == null
+                    ? Set.of() : paddedAlphaTargets));
             shaderConstants = Collections.unmodifiableMap(new TreeMap<>(shaderConstants));
             deviations = List.copyOf(new TreeSet<>(deviations));
             settings = settings == null ? PackSettingsPlan.empty() : settings;
@@ -322,12 +331,13 @@ public final class PackConfig {
         addShadowConstants(shadowSettings, collected.shadowValues, collected.shaderConstants);
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
                 shadowSettings, collected.shaderConstants, collected.deviations, settings,
-                collected.targetSettings, collected.flips, collected.preFlips);
+                collected.targetSettings, collected.flips, collected.preFlips, collected.paddedAlphaTargets);
     }
 
     /** What parsing gathers from the sources and shaders.properties before shadow validation. */
     private static final class Collected {
         final Map<Integer, Integer> colortexFormats = new HashMap<>();
+        final Set<Integer> paddedAlphaTargets = new TreeSet<>();
         final Map<String, String> shadowValues = new TreeMap<>();
         final Map<String, String> shaderConstants = new TreeMap<>();
         final Map<Integer, TargetSettings> targetSettings = new TreeMap<>();
@@ -349,6 +359,16 @@ public final class PackConfig {
         return code;
     }
 
+    /** Records a target's format, a later declaration replacing an earlier one; returns the previous format. */
+    private static Integer putFormat(int slot, String token, int code, Collected collected) {
+        if (PADDED_ALPHA_FORMATS.contains(token)) {
+            collected.paddedAlphaTargets.add(slot);
+        } else {
+            collected.paddedAlphaTargets.remove(slot);
+        }
+        return collected.colortexFormats.put(slot, code);
+    }
+
     /** The {@code const int colortexNFormat} declarations of one program's fragment source. */
     private static void collectSourceFormats(String program, String src, Collected collected) {
         Matcher fmt = COLORTEX_FMT_CONST.matcher(src);
@@ -365,7 +385,7 @@ public final class PackConfig {
                         program, slot, token);
                 continue;
             }
-            Integer previous = collected.colortexFormats.put(slot, code);
+            Integer previous = putFormat(slot, token, code, collected);
             if (previous != null && !previous.equals(code)) {
                 LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
             }
@@ -407,7 +427,7 @@ public final class PackConfig {
             LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
             return false;
         }
-        collected.colortexFormats.put(slot, code);
+        putFormat(slot, value, code, collected);
         LOGGER.info("[chimera] pack properties: {}={}", key, value);
         return true;
     }

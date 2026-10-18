@@ -20,16 +20,10 @@ public record DrawMaterialContext(VulkanImage albedo, SamplerProfile profile) {
         }
     }
 
-    /** Terrain path: the authoritative chunk profile, or the image sampler when it is missing. */
+    /** Terrain path: the atlas and the sampler its texture parameters chose. */
     public static DrawMaterialContext forTerrain(VulkanImage albedo) {
-        if (albedo == null) {
-            return new DrawMaterialContext(null, null);
-        }
-        SamplerProfile chunk = ChimeraTextureBindingState.terrainSamplerProfile();
-        SamplerProfile profile = chunk != null && chunk.id() != 0
-                ? chunk
-                : SamplerProfile.ofId(albedo.getSampler());
-        return new DrawMaterialContext(albedo, profile);
+        return albedo == null ? new DrawMaterialContext(null, null)
+                : new DrawMaterialContext(albedo, SamplerProfile.of(albedo));
     }
 
     /** Legacy query for callers with no captured seam: live slot 0 plus its recorded profile. */
@@ -41,7 +35,7 @@ public record DrawMaterialContext(VulkanImage albedo, SamplerProfile profile) {
         SamplerProfile recorded = ChimeraTextureBindingState.samplerProfile(0);
         SamplerProfile profile = recorded != null
                 ? recorded
-                : SamplerProfile.ofId(albedo.getSampler());
+                : SamplerProfile.of(albedo);
         return new DrawMaterialContext(albedo, profile);
     }
 }

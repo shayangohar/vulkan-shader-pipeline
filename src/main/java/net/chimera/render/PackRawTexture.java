@@ -1,10 +1,11 @@
 package net.chimera.render;
 
 import net.chimera.shaderpack.RawTextureSpec;
-import net.vulkanmod.render.texture.ImageUploadHelper;
+import net.vulkanmod.vulkan.Synchronization;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.device.DeviceManager;
-import net.vulkanmod.vulkan.memory.buffer.StagingBuffer;
+import net.vulkanmod.vulkan.memory.StagingBuffer;
+import net.vulkanmod.vulkan.queue.CommandPool;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -57,15 +58,16 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
 
     private final long allocation;
     private final long view;
+    private long sampler;
     private boolean freed;
 
-    private PackRawTexture(String name, long image, long allocation, int format, int width, int height,
+    private PackRawTexture(long image, long allocation, int format, int width, int height,
                            int texelBytes, long view, long sampler) {
-        super(name, image, format, 1, width, height, texelBytes, VK_IMAGE_USAGE_SAMPLED_BIT
+        super(image, format, 1, width, height, texelBytes, VK_IMAGE_USAGE_SAMPLED_BIT
                 | VK_IMAGE_USAGE_TRANSFER_DST_BIT, view);
         this.allocation = allocation;
         this.view = view;
-        setSampler(sampler);
+        this.sampler = sampler;
         setCurrentLayout(VK_IMAGE_LAYOUT_UNDEFINED);
     }
 
@@ -134,9 +136,9 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
             if (vmaCreateImage(Vulkan.getAllocator(), info, allocationInfo, image, allocation, null) != VK_SUCCESS) {
                 throw new IllegalStateException("raw texture allocation failed: " + name);
             }
-            long view = VulkanImage.createImageView(image.get(0), dimensions == 1 ? VK_IMAGE_VIEW_TYPE_1D
+            long view = ImageViews.create(image.get(0), dimensions == 1 ? VK_IMAGE_VIEW_TYPE_1D
                     : dimensions == 2 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_3D,
-                    format, VK_IMAGE_ASPECT_COLOR_BIT, 1, 0, 1);
+                    format, VK_IMAGE_ASPECT_COLOR_BIT);
             int address = clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;
             int vkFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
             // Iris GlTexture: no mipmaps, LOD pinned to 0, no bias.
@@ -157,21 +159,21 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
                 vmaDestroyImage(Vulkan.getAllocator(), image.get(0), allocation.get(0));
                 throw new IllegalStateException("raw texture sampler allocation failed: " + name);
             }
-            return new PackRawTexture(name, image.get(0), allocation.get(0), format, spec.width(), spec.extentHeight(),
+            return new PackRawTexture(image.get(0), allocation.get(0), format, spec.width(), spec.extentHeight(),
                     storage.uploadedChannels() * storage.bits() / 8, view, sampler.get(0));
         }
     }
 
-    /** Queues the copy on VulkanMod's image upload commands, which run before the next frame draws. */
+    /**
+     * Records the copy as VulkanMod records its texture uploads: into the graphics queue's upload
+     * commands, which run before the next frame draws. The staging buffer grows to fit.
+     */
     private void upload(ByteBuffer pixels, RawTextureSpec spec, int texelBytes) {
         StagingBuffer staging = Vulkan.getStagingBuffer();
-        if (pixels.remaining() > staging.getBufferSize()) {
-            staging = new StagingBuffer(pixels.remaining());
-            staging.scheduleFree();
-        }
         staging.align(texelBytes);
         staging.copyBuffer(pixels.remaining(), pixels);
-        VkCommandBuffer commandBuffer = ImageUploadHelper.INSTANCE.getOrStartCommandBuffer().getHandle();
+        CommandPool.CommandBuffer commands = DeviceManager.getGraphicsQueue().getCommandBuffer();
+        VkCommandBuffer commandBuffer = commands.getHandle();
         try (MemoryStack stack = stackPush()) {
             transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
@@ -182,6 +184,9 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
             vkCmdCopyBufferToImage(commandBuffer, staging.getId(), getId(),
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
             transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        if (DeviceManager.getGraphicsQueue().endIfNeeded(commands) != VK_NULL_HANDLE) {
+            Synchronization.INSTANCE.addCommandBuffer(commands);
         }
     }
 
@@ -220,8 +225,9 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
     @Override
     public long getImageView() { return view; }
 
+    /** The texture's own sampler: its pack's filter and wrap, on one level. */
     @Override
-    public long getImageView(int ignoredFormat) { return view; }
+    public long getSampler() { return sampler; }
 
     @Override
     public void close() {
@@ -232,9 +238,9 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
     public void free() {
         if (freed) return;
         freed = true;
-        if (getSampler() != 0L) {
-            vkDestroySampler(Vulkan.getVkDevice(), getSampler(), null);
-            setSampler(0L);
+        if (sampler != 0L) {
+            vkDestroySampler(Vulkan.getVkDevice(), sampler, null);
+            sampler = 0L;
         }
         vkDestroyImageView(Vulkan.getVkDevice(), view, null);
         vmaDestroyImage(Vulkan.getAllocator(), getId(), allocation);
