@@ -1,5 +1,6 @@
 package net.chimera.mixin;
 
+import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.chimera.render.ChimeraMainPass;
@@ -70,6 +71,17 @@ public abstract class WorldRendererMixin {
         } finally {
             PackUniformProvider.setRenderingPhase(previous);
         }
+    }
+
+    /**
+     * Keeps back faces culled, as upstream VulkanMod and vanilla do for every layer. Reforged
+     * draws translucent terrain unculled, so a water surface and its reversed copy both passed the
+     * depth test and the reversed one, lit from below, overwrote it; every far face of glass drew.
+     */
+    @WrapWithCondition(method = "renderSectionLayer", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;disableCull()V"), require = 1)
+    private boolean chimera$keepBackFacesCulled() {
+        return !ChimeraRenderer.segmentsActive();
     }
 
     @Inject(method = "renderSectionLayer",
