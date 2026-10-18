@@ -223,12 +223,29 @@ final class GlslResourceUsage {
 
         private void traceFrom(FunctionDefinition main, List<FunctionDefinition> functions) {
             pending.add(main);
-            seedTopLevelCalls(tokens, functions, functionsByName, macroCalls, pending);
+            seedTopLevelCalls(tokens, functions, functionsByName, macroCalls, pending, live, declared.names());
+            addTopLevelResources(functions);
             while (!pending.isEmpty()) {
                 FunctionDefinition function = pending.removeFirst();
                 if (reachable.add(function)) {
                     visitBody(function);
                 }
+            }
+        }
+
+        /**
+         * A global initializer runs before main, so the resources it reads are live: Spring reads
+         * {@code vec4 CT4 = texture(colortex4, texcoord);} at file scope. A #define line is not a read.
+         */
+        private void addTopLevelResources(List<FunctionDefinition> functions) {
+            Set<Integer> functionTokens = functionTokens(functions);
+            for (int index = 0; index < tokens.size(); index++) {
+                GlslLexer.Token token = tokens.get(index);
+                if (functionTokens.contains(index) || declared.tokens().contains(index) || !token.significant()
+                        || token.kind() != GlslLexer.Kind.IDENTIFIER || onDirectiveLine(tokens, index)) {
+                    continue;
+                }
+                live.addDeclared(token.text(), declared.names());
             }
         }
 
@@ -252,7 +269,7 @@ final class GlslResourceUsage {
                 }
                 if (macroCalls.containsKey(name)) {
                     addMacroDependencies(name, macroCalls, functionsByName,
-                            pending, new HashSet<>());
+                            pending, new HashSet<>(), live, declared.names());
                 }
             }
         }
@@ -368,7 +385,9 @@ final class GlslResourceUsage {
             List<FunctionDefinition> functions,
             Map<String, List<FunctionDefinition>> functionsByName,
             Map<String, List<String>> macroCalls,
-            ArrayDeque<FunctionDefinition> pending
+            ArrayDeque<FunctionDefinition> pending,
+            Resources live,
+            Resources declared
     ) {
         Set<Integer> functionTokens = functionTokens(functions);
         for (int index = 0; index < tokens.size(); index++) {
@@ -384,7 +403,7 @@ final class GlslResourceUsage {
             // An object-like macro is used by any reference outside its own #define line.
             if (macroCalls.containsKey(token.text()) && (call || !onDirectiveLine(tokens, index))) {
                 addMacroDependencies(token.text(), macroCalls, functionsByName,
-                        pending, new HashSet<>());
+                        pending, new HashSet<>(), live, declared);
             }
         }
     }
@@ -400,40 +419,26 @@ final class GlslResourceUsage {
     }
 
     /**
-     * The functions each macro can call once expanded. A function-like
-     * macro calls what its body calls. An object-like macro can name a
-     * function its use then calls ({@code #define tonemap tonemap_lottes},
-     * then {@code tonemap(x)}), so every identifier in its body counts. The
-     * replacement text is tokenized so names in comments and string literals
-     * cannot keep an unrelated GLSL function alive.
+     * The names each macro's body uses once expanded: the functions it can call and the
+     * resources it reads. An object-like macro can name a function its use then calls
+     * ({@code #define tonemap tonemap_lottes}, then {@code tonemap(x)}), and a function-like
+     * macro can read a sampler (Noble's WAVE_GERSTNER_SETUP() samples noisetex), so every
+     * identifier in a body counts. The replacement text is tokenized so names in comments and
+     * string literals cannot keep an unrelated GLSL function alive.
      */
     private static Map<String, List<String>> collectFunctionMacros(String source) {
         Map<String, List<String>> result = new HashMap<>();
         String defines = defineLines(source == null ? "" : source);
-        Matcher objectLike = OBJECT_MACRO.matcher(defines);
-        while (objectLike.find()) {
-            Set<String> named = new TreeSet<>();
-            for (GlslLexer.Token token : GlslLexer.lex(objectLike.group(2))) {
-                if (token.kind() == GlslLexer.Kind.IDENTIFIER) named.add(token.text());
-            }
-            result.put(objectLike.group(1), List.copyOf(named));
-        }
-        Matcher matcher = FUNCTION_MACRO.matcher(defines);
-        while (matcher.find()) {
-            Set<String> called = new TreeSet<>();
-            List<GlslLexer.Token> replacement = GlslLexer.lex(matcher.group(2));
-            for (int index = 0; index < replacement.size(); index++) {
-                GlslLexer.Token token = replacement.get(index);
-                if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
-                        || FUNCTION_KEYWORDS.contains(token.text())) {
-                    continue;
+        for (Matcher macro : List.of(OBJECT_MACRO.matcher(defines), FUNCTION_MACRO.matcher(defines))) {
+            while (macro.find()) {
+                Set<String> named = new TreeSet<>();
+                for (GlslLexer.Token token : GlslLexer.lex(macro.group(2))) {
+                    if (token.kind() == GlslLexer.Kind.IDENTIFIER && !FUNCTION_KEYWORDS.contains(token.text())) {
+                        named.add(token.text());
+                    }
                 }
-                int next = GlslLexer.nextSignificant(replacement, index);
-                if (next >= 0 && replacement.get(next).symbol("(")) {
-                    called.add(token.text());
-                }
+                result.put(macro.group(1), List.copyOf(named));
             }
-            result.put(matcher.group(1), List.copyOf(called));
         }
         return result;
     }
@@ -457,18 +462,22 @@ final class GlslResourceUsage {
         return lines.toString();
     }
 
+    /** Queues the functions a used macro can call and marks the resources its body reads live. */
     private static void addMacroDependencies(
             String macro,
             Map<String, List<String>> macroCalls,
             Map<String, List<FunctionDefinition>> functionsByName,
             ArrayDeque<FunctionDefinition> pending,
-            Set<String> visited
+            Set<String> visited,
+            Resources live,
+            Resources declared
     ) {
         if (!visited.add(macro)) return;
         for (String dependency : macroCalls.getOrDefault(macro, List.of())) {
             pending.addAll(functionsByName.getOrDefault(dependency, List.of()));
+            live.addDeclared(dependency, declared);
             if (macroCalls.containsKey(dependency)) {
-                addMacroDependencies(dependency, macroCalls, functionsByName, pending, visited);
+                addMacroDependencies(dependency, macroCalls, functionsByName, pending, visited, live, declared);
             }
         }
     }

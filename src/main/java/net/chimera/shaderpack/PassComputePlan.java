@@ -96,6 +96,11 @@ public final class PassComputePlan {
 
     public List<PassCompute> computes() { return computes; }
 
+    /** Whether {@code <program>.csh} is a pass compute: one this plan runs before the pass, not a stage of it. */
+    static boolean isPassComputeProgram(String program) {
+        return program != null && SOURCE_NAME.matcher(program + ".csh").matches();
+    }
+
     /** The computes that run before this pass, in Iris's order. */
     public List<PassCompute> before(String pass) {
         return computes.stream().filter(value -> value.supported() && value.pass().equals(pass)).toList();

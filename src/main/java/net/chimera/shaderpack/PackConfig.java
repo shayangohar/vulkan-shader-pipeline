@@ -79,7 +79,9 @@ public final class PackConfig {
             Map.entry("RG8", 16),        // VK_FORMAT_R8G8_UNORM
             Map.entry("RGBA8", 37),      // VK_FORMAT_R8G8B8A8_UNORM
             Map.entry("RGB10_A2", 64),   // VK_FORMAT_A2B10G10R10_UNORM_PACK32 (GL_RGB10_A2 bit order)
+            Map.entry("R16", 70),        // VK_FORMAT_R16_UNORM
             Map.entry("R16F", 76),       // VK_FORMAT_R16_SFLOAT
+            Map.entry("RG16", 77),       // VK_FORMAT_R16G16_UNORM
             Map.entry("RG16F", 83),      // VK_FORMAT_R16G16_SFLOAT
             Map.entry("RGBA16", 91),     // VK_FORMAT_R16G16B16A16_UNORM (not RGBA16F)
             Map.entry("RGBA16F", 97),    // VK_FORMAT_R16G16B16A16_SFLOAT
@@ -92,6 +94,7 @@ public final class PackConfig {
             "RGB8", 37,
             "RGB8_SNORM", 97,
             "RGBA8_SNORM", 97,
+            "RGB16", 91,
             "RGB16F", 97,
             "R11F_G11F_B10F", 97
     );
@@ -99,7 +102,8 @@ public final class PackConfig {
      * The approximations whose GL format has no alpha channel. GL reads alpha as 1 from them, and
      * Solas, for one, keeps its reflections only where that alpha is above 0.
      */
-    private static final Set<String> PADDED_ALPHA_FORMATS = Set.of("RGB8", "RGB8_SNORM", "RGB16F", "R11F_G11F_B10F");
+    private static final Set<String> PADDED_ALPHA_FORMATS = Set.of(
+            "RGB8", "RGB8_SNORM", "RGB16", "RGB16F", "R11F_G11F_B10F");
     private static final Map<Integer, String> VK_TO_NAME;
     static {
         Map<Integer, String> reverse = new HashMap<>();
@@ -117,8 +121,8 @@ public final class PackConfig {
     public static int formatBytes(int vkFormat) {
         return switch (vkFormat) {
             case 9 -> 1;
-            case 16, 76 -> 2;
-            case 37, 64, 83, 100 -> 4;
+            case 16, 70, 76 -> 2;
+            case 37, 64, 77, 83, 100 -> 4;
             case 91, 97, 103 -> 8;
             case 109 -> 16;
             default -> 0;

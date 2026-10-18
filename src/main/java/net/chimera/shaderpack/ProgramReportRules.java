@@ -165,9 +165,11 @@ final class ProgramReportRules {
     static void addSourceDeviations(PackProbe.Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
                                             String source, List<String> samplers, boolean relaxed, boolean modern,
                                             Set<String> deviations) {
+        // Noble's composite99.csh is a pass compute, planned and run apart from composite99's draw.
+        boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
         if (inventory.stages.stream().anyMatch(stage ->
                 stage.equals("geometry") || stage.equals("tess_control")
-                        || stage.equals("tess_evaluation") || stage.equals("compute"))) {
+                        || stage.equals("tess_evaluation") || stage.equals("compute") && !passCompute)) {
             deviations.add("UNSUPPORTED_PACK_STAGE");
         }
         if (modern) {

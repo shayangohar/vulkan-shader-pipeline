@@ -27,6 +27,9 @@ final class PostVertexBridge {
             "(?m)^([ \\t]*)layout\\s*\\([^;{}()]*\\)\\s*((?:(?:flat|noperspective|smooth|centroid|sample)\\s+)?)"
                     + "(in|varying)\\b");
 
+    /** A legacy {@code attribute} declaration, read as the vertex input it is. */
+    private static final Pattern LEGACY_ATTRIBUTE = Pattern.compile("(?m)^([ \\t]*)attribute\\b");
+
     /**
      * Normalizes modern post syntax before interface scanning: the version,
      * precision and input layouts go, and the existing token translator
@@ -97,9 +100,13 @@ final class PostVertexBridge {
                 throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + input.name());
             }
             Map<String, Integer> locations = outputLocations(vertexInterface, match);
+            converted = LEGACY_ATTRIBUTE.matcher(converted).replaceAll("$1in");
             converted = GlslInterfaceScanner.rewrite(LegacyGlslConverter.VERSION_LINE.matcher(converted).replaceAll(""),
                     true,
                     declaration -> {
+                        // A fullscreen pass feeds no vertex attributes; Iris leaves an unread
+                        // one unbound (I Like Vanilla's composites declare mc_Entity in a header).
+                        if (declaration.input() && !declaration.referenced()) return "";
                         Integer location = locations.get(declaration.name());
                         if (declaration.input() || location == null) {
                             throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + declaration.name());

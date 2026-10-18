@@ -379,8 +379,8 @@ public final class LegacyGlslConverter {
             }
         }
         Pattern declarations = Pattern.compile(
-                "(?m)^\\s*uniform\\s+(?:highp|mediump|lowp\\s+)?"
-                        + "(?:bool|int|float|vec[234]|ivec[234]|mat[234])\\s+([^;]+);\\s*$");
+                "(?m)^\\s*uniform\\s+(?:(?:highp|mediump|lowp)\\s+)?"
+                        + "(?:bool|int|float|vec[234]|ivec[234]|mat[234])\\s+([^;]+);[ \\t]*(?://[^\\r\\n]*)?\\s*$");
         Matcher matcher = declarations.matcher(source);
         StringBuffer stripped = new StringBuffer();
         while (matcher.find()) {

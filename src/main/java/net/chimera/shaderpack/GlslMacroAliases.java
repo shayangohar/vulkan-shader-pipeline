@@ -26,14 +26,15 @@ final class GlslMacroAliases {
     static final Pattern SAMPLER_DECLARATION = Pattern.compile(
             "\\buniform\\s+(?:(?:lowp|mediump|highp)\\s+)?[iu]?sampler\\w*\\s+([A-Za-z_]\\w*)");
 
-    /** {@code #define attribute in}: a macro renaming one storage qualifier to another. */
+    /** {@code #define attribute in} or {@code #define in_out out}: a macro standing for a storage qualifier. */
     static final Pattern STORAGE_ALIAS_DEFINE = Pattern.compile(
-            "^\\s*#\\s*define\\s+(attribute|varying)\\s+(in|out|attribute|varying)\\s*(?://.*)?$");
+            "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)\\s+(in|out|attribute|varying)\\s*(?://.*)?$");
 
     /**
-     * Applies macros that rename a storage qualifier and drops their definitions, so every
+     * Applies macros that stand for a storage qualifier and drops their definitions, so every
      * converter reads a declaration in the spelling it was compiled with. Photon defines
-     * {@code attribute} as {@code in} for strict drivers. Each alias holds from its definition to
+     * {@code attribute} as {@code in} for strict drivers; I Like Vanilla declares its varyings
+     * with {@code in_out}. Each alias holds from its definition to
      * its #undef; the removed lines stay empty, so line numbers do not move.
      */
     static String expandStorageQualifierAliases(String source) {
