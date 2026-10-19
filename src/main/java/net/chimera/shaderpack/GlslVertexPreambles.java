@@ -2,7 +2,12 @@ package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The GLSL Chimera prepends to converted vertex stages: each family's host inputs, transform
@@ -587,6 +592,36 @@ final class GlslVertexPreambles {
                 || preamble == GLINT_VERTEX_PREAMBLE || preamble == LIGHTNING_VERTEX_PREAMBLE
                 || preamble == BEACON_VERTEX_PREAMBLE || preamble == LEASH_VERTEX_PREAMBLE
                 || preamble == CLOUD_VERTEX_PREAMBLE || isSkyPreamble(preamble);
+    }
+
+    /** The inputs and transforms the entity preambles declare, under vanilla's core-shader names. */
+    private static final Set<String> ENTITY_HOST_NAMES = Set.of("Position", "Color", "UV0", "UV1", "UV2", "Normal",
+            "EntityIds", "MidTexCoord", "ChimeraPackedTangent", "ModelViewMat", "ColorModulator", "LineWidth",
+            "TextureMat", "ProjMat");
+    /** Names the entity bridge reads as host inputs, which a pack may also declare as outputs. */
+    private static final Set<String> ENTITY_INPUT_ALIASES = Set.of("Tangent");
+    private static final Pattern GLOBAL_OUTPUT = Pattern.compile("(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
+            + "(?:(?:flat|smooth|noperspective|centroid)\\s+)*out\\s+(?:(?:flat|smooth|noperspective|centroid)\\s+)*"
+            + "\\w+\\s+([A-Za-z_]\\w*)");
+
+    /**
+     * Renames the pack's own identifiers that share an entity preamble's names. Before the legacy
+     * inputs become those names, every such identifier in a pack source is the pack's: Mellow
+     * declares {@code out vec3 Normal}, which the preamble's {@code Normal} would redefine.
+     */
+    static String renameHostNameCollisions(String packSource) {
+        Map<String, String> renames = new HashMap<>();
+        for (String name : ENTITY_HOST_NAMES) {
+            if (GlslTokenRewriter.containsIdentifier(packSource, name)) renames.put(name, "chimera_pack_" + name);
+        }
+        // The bridge reads Tangent as the host tangent, unless the pack writes its own (Mellow's out vec4 Tangent).
+        Matcher output = GLOBAL_OUTPUT.matcher(packSource);
+        while (output.find()) {
+            if (ENTITY_INPUT_ALIASES.contains(output.group(1))) {
+                renames.put(output.group(1), "chimera_pack_" + output.group(1));
+            }
+        }
+        return renames.isEmpty() ? packSource : GlslTokenRewriter.replaceIdentifiers(packSource, renames);
     }
 
     static boolean isSkyPreamble(String preamble) {

@@ -1,0 +1,15 @@
+filename = 'Spring v2 260618.zip'
+name = 'Spring Shaders (Chun)'
+side = 'client'
+x-modrinth-version-number = '260618'
+x-modrinth-release-type = 'release'
+
+[download]
+hash = '74d3ff4499c9bdd48524c25fb2ef3592808bcde38b3ec6870329ffed1354d93b969c8204d0fc9e6147069b9c552b7e3b7af9f313f34368b3d087b0ac817bd833'
+hash-format = 'sha512'
+mode = 'url'
+url = 'https://cdn.modrinth.com/data/68DAChCV/versions/wqeySncE/%E6%98%A5%20v2%20260618.zip'
+
+[update.modrinth]
+mod-id = '68DAChCV'
+version = 'wqeySncE'

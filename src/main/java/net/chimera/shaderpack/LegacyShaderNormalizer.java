@@ -1,11 +1,13 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -13,7 +15,10 @@ import java.util.regex.Pattern;
  * Small token-safe normalization pass shared by planning and conversion.
  * It contains only legacy built-ins that Iris rewrites the same way in every
  * program: gl_Fog fields to Chimera's fog uniforms, and gl_FogFragCoord to
- * an ordinary varying. In the vertex stage it starts every referenced output
+ * an ordinary varying. The legacy colour and texture-coordinate varyings
+ * (gl_FrontColor and gl_Color, gl_TexCoord[n]) become ordinary varyings too,
+ * which GL's compatibility profile gives packs and Vulkan does not. In the
+ * vertex stage it starts every referenced output
  * at zero, the value GL drivers leave in one a path never writes. It also
  * gives every uniform its own declaration, so
  * per-name rewriters never meet a declarator list, and expands macros that
@@ -36,18 +41,13 @@ final class LegacyShaderNormalizer {
     private LegacyShaderNormalizer() {}
 
     /**
-     * Built-in functions GLSL added after 1.20. A pre-1.30 pack may define its own (Bliss defines
-     * {@code float tanh(float)}); every call in that source means the pack's function, but the
-     * #version 460 Chimera compiles at rejects the redefinition, so the pack's copy is renamed.
+     * Built-in functions GLSL added after 1.20, each with the version that added it. A pack
+     * authored before that version may define its own (Bliss defines {@code float tanh(float)} at
+     * 1.20, Bloop {@code uint packSnorm4x8(vec4)} at 1.40); every call in that source means the
+     * pack's function, but the #version 460 Chimera compiles at rejects the redefinition, so the
+     * pack's copy is renamed.
      */
-    private static final Set<String> LATE_BUILTINS = Set.of(
-            "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "trunc", "round", "roundEven",
-            "modf", "isnan", "isinf", "floatBitsToInt", "floatBitsToUint", "intBitsToFloat",
-            "uintBitsToFloat", "determinant", "inverse", "fma", "frexp", "ldexp",
-            "packUnorm2x16", "unpackUnorm2x16", "packSnorm2x16", "unpackSnorm2x16",
-            "packHalf2x16", "unpackHalf2x16", "packUnorm4x8", "unpackUnorm4x8",
-            "packSnorm4x8", "unpackSnorm4x8", "bitfieldExtract", "bitfieldInsert",
-            "bitfieldReverse", "bitCount", "findLSB", "findMSB");
+    private static final Map<String, Integer> LATE_BUILTINS = lateBuiltins();
     private static final Pattern VERSION_NUMBER = Pattern.compile("(?m)^[ \\t]*#version[ \\t]+(\\d+)");
     /** Interface types whose {@code T(0)} constructor is zero: scalars, vectors and matrices. */
     private static final Pattern ZEROABLE_TYPE = Pattern.compile(
@@ -76,15 +76,33 @@ final class LegacyShaderNormalizer {
         }
     }
 
+    private static Map<String, Integer> lateBuiltins() {
+        Map<String, Integer> versions = new HashMap<>();
+        for (String name : List.of("sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "trunc", "round",
+                "roundEven", "modf", "isnan", "isinf")) versions.put(name, 130);
+        versions.put("inverse", 140);
+        versions.put("determinant", 150);
+        for (String name : List.of("floatBitsToInt", "floatBitsToUint", "intBitsToFloat", "uintBitsToFloat")) {
+            versions.put(name, 330);
+        }
+        for (String name : List.of("fma", "frexp", "ldexp", "packUnorm2x16", "unpackUnorm2x16", "packUnorm4x8",
+                "unpackUnorm4x8", "packSnorm4x8", "unpackSnorm4x8", "bitfieldExtract", "bitfieldInsert",
+                "bitfieldReverse", "bitCount", "findLSB", "findMSB")) versions.put(name, 400);
+        for (String name : List.of("packSnorm2x16", "unpackSnorm2x16", "packHalf2x16", "unpackHalf2x16")) {
+            versions.put(name, 420);
+        }
+        return Map.copyOf(versions);
+    }
+
     private static void renameLateBuiltinDefinitions(List<GlslLexer.Token> tokens, int version) {
-        if (version >= 130) return;
         Set<String> defined = new HashSet<>();
         int depth = 0;
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
             if (token.symbol("{")) depth++;
             else if (token.symbol("}")) depth = Math.max(0, depth - 1);
-            if (depth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER || !LATE_BUILTINS.contains(token.text())) {
+            if (depth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER
+                    || version >= LATE_BUILTINS.getOrDefault(token.text(), 0)) {
                 continue;
             }
             // `type name(` at file scope declares or defines the pack's own function.
@@ -120,8 +138,16 @@ final class LegacyShaderNormalizer {
                 return unsupported(unsupportedField);
             }
             boolean fogFragCoord = renameFogFragCoord(tokens);
+            Set<String> privateGlobals = new TreeSet<>();
+            Set<String> varyings = renameLegacyVaryings(tokens, vertexStage, privateGlobals);
 
             String normalized = GlslLexer.render(tokens);
+            if (!varyings.isEmpty() || !privateGlobals.isEmpty()) {
+                StringBuilder declarations = new StringBuilder();
+                varyings.forEach(name -> declarations.append("varying vec4 ").append(name).append(";\n"));
+                privateGlobals.forEach(name -> declarations.append("vec4 ").append(name).append(";\n"));
+                normalized = insertDeclarations(normalized, declarations.toString());
+            }
             if (vertexStage) {
                 normalized = zeroReferencedOutputs(normalized);
             }
@@ -261,6 +287,62 @@ final class LegacyShaderNormalizer {
             }
         }
         return found;
+    }
+
+    /**
+     * Renames the legacy colour and texture-coordinate varyings to ordinary ones: a vertex stage's
+     * gl_FrontColor, gl_FrontSecondaryColor and gl_TexCoord[n] become the varyings a fragment
+     * stage's gl_Color, gl_SecondaryColor and gl_TexCoord[n] read. The back colours, which GL
+     * interpolates only under two-sided lighting, become globals into {@code privateGlobals}.
+     * A gl_TexCoord index that is not a literal is left for the compiler to reject. Returns the
+     * varyings the source now uses.
+     */
+    private static Set<String> renameLegacyVaryings(List<GlslLexer.Token> tokens, boolean vertexStage,
+                                                    Set<String> privateGlobals) {
+        Set<String> varyings = new TreeSet<>();
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() != GlslLexer.Kind.IDENTIFIER) continue;
+            String name = legacyVarying(tokens, index, vertexStage);
+            if (vertexStage && (token.text().equals("gl_BackColor") || token.text().equals("gl_BackSecondaryColor"))) {
+                String global = "chimera_" + token.text().substring(3);
+                privateGlobals.add(global);
+                tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, global));
+                continue;
+            }
+            if (name == null) continue;
+            varyings.add(name);
+            tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, name));
+        }
+        return varyings;
+    }
+
+    /** The ordinary varying that stands for the legacy one at {@code index} in this stage, or null. */
+    private static String legacyVarying(List<GlslLexer.Token> tokens, int index, boolean vertexStage) {
+        return switch (tokens.get(index).text()) {
+            case "gl_FrontColor" -> vertexStage ? "chimera_FrontColor" : null;
+            case "gl_FrontSecondaryColor" -> vertexStage ? "chimera_SecondaryColor" : null;
+            case "gl_Color" -> vertexStage ? null : "chimera_FrontColor";
+            case "gl_SecondaryColor" -> vertexStage ? null : "chimera_SecondaryColor";
+            case "gl_TexCoord" -> texCoordVarying(tokens, index);
+            default -> null;
+        };
+    }
+
+    /** {@code chimera_TexCoordN} for {@code gl_TexCoord[N]}, clearing the subscript; null for any other index. */
+    private static String texCoordVarying(List<GlslLexer.Token> tokens, int name) {
+        int open = GlslLexer.nextSignificant(tokens, name);
+        int number = open < 0 ? -1 : GlslLexer.nextSignificant(tokens, open);
+        int close = number < 0 ? -1 : GlslLexer.nextSignificant(tokens, number);
+        if (close < 0 || !tokens.get(open).symbol("[") || !tokens.get(close).symbol("]")
+                || !tokens.get(number).text().matches("\\d+")) {
+            return null;
+        }
+        String varying = "chimera_TexCoord" + Integer.parseInt(tokens.get(number).text());
+        for (int index = name + 1; index <= close; index++) {
+            tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.TRIVIA, ""));
+        }
+        return varying;
     }
 
     private static Result unsupported(String field) {

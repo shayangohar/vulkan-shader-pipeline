@@ -72,12 +72,29 @@ public record PackPlan(
         PackProgramPlan program = program(name);
         return program != null && program.executable() && resolution.shouldAttempt(name)
                 && resources.programAllowed(name)
+                && !writesUnsupportedFormat(program)
+                && !advancedResources.declaresUnplannedResource(name)
                 && (!advancedResources.dependentPrograms().contains(name)
                 || advancedResources.imageProgramsServable())
                 && (!advancedResources.bufferDependentPrograms().contains(name)
                 || advancedResources.storageBufferProgramSupported(name))
                 && (!advancedResources.customImageFeaturePrograms().contains(name)
                 || advancedResources.capabilityPossible());
+    }
+
+    /**
+     * Whether the program writes a target whose declared format has no Vulkan image here, as the
+     * report reads it (Noble's RGBA32UI colortex1). The target keeps the default format, which
+     * the program's output does not fit.
+     */
+    private boolean writesUnsupportedFormat(PackProgramPlan program) {
+        PostTargetPlan targets = program.targetPlan() != null ? program.targetPlan()
+                : program.geometryOutputPlan() != null ? program.geometryOutputPlan().targetPlan() : null;
+        if (targets == null || config == null) return false;
+        return config.deviations().stream()
+                .filter(deviation -> deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:"))
+                .map(PackProbe::targetIndex)
+                .anyMatch(target -> target != null && targets.targetSlots().contains(target));
     }
 
     public String selectedDimension() {

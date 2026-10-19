@@ -1,0 +1,15 @@
+filename = 'Escheridia_V4.1.zip'
+name = 'Escheridia'
+side = 'client'
+x-modrinth-version-number = '4.1'
+x-modrinth-release-type = 'release'
+
+[download]
+hash = '2dd08e821828db9128a5a15e17d2e52243575f47bfa8cbd3bf1ae37319b584e80810796da1f3f879ac5952e3e7f109c0ac48337825fe9ba40bc9a8fde6aa50bd'
+hash-format = 'sha512'
+mode = 'url'
+url = 'https://cdn.modrinth.com/data/iCrp3Ew5/versions/jaZMWfYJ/Escheridia_V4.1.zip'
+
+[update.modrinth]
+mod-id = 'iCrp3Ew5'
+version = 'jaZMWfYJ'

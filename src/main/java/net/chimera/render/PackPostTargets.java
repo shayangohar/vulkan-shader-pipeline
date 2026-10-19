@@ -56,6 +56,8 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_UNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16_UNORM;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -126,11 +128,10 @@ public final class PackPostTargets {
             return false;
         }
         this.graph = graph;
-        // RGBA16's sampled/attachment features are not mandatory on every device.
-        // Reject unsupported storage rather than silently substituting floating point.
-        if (graph.targets().stream().anyMatch(target -> target.format() == VK_FORMAT_R16G16B16A16_UNORM)) {
-            verifyNormalizedRgba16Support();
-        }
+        // The 16-bit normalized formats' sampled/attachment features are not mandatory on every
+        // device. Reject unsupported storage rather than silently substituting floating point.
+        graph.targets().stream().map(TargetSpec::format).filter(NORMALIZED_16_FORMATS::contains)
+                .distinct().forEach(PackPostTargets::verifyNormalized16Support);
         graph.targets().stream().filter(TargetSpec::mipmapped).map(TargetSpec::format)
                 .distinct().forEach(PackPostTargets::verifyMipmapSupport);
         Arrays.fill(this.used, false);
@@ -207,22 +208,25 @@ public final class PackPostTargets {
         }
     }
 
-    /** Check the optional exact normalized format before allocating any target images. */
-    private static void verifyNormalizedRgba16Support() {
+    /** R16, RG16 and RGBA16 in their exact normalized formats, whose target features are optional. */
+    private static final Set<Integer> NORMALIZED_16_FORMATS = Set.of(
+            VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16A16_UNORM);
+
+    /** Check an optional exact normalized format before allocating any target images. */
+    private static void verifyNormalized16Support(int format) {
         if (DeviceManager.physicalDevice == null) {
-            throw new IllegalStateException("Vulkan physical device is unavailable for RGBA16 targets");
+            throw new IllegalStateException("Vulkan physical device is unavailable for 16-bit normalized targets");
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkFormatProperties properties = VkFormatProperties.calloc(stack);
-            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice,
-                    VK_FORMAT_R16G16B16A16_UNORM, properties);
+            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice, format, properties);
             int required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
                     | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
                     | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT
                     | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
                     | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
             if ((properties.optimalTilingFeatures() & required) != required) {
-                throw new IllegalArgumentException("RGBA16 target format lacks "
+                throw new IllegalArgumentException("16-bit normalized target format " + format + " lacks "
                         + "sampled/linear/attachment/blend/transfer support"
                         + " (required=0x" + Integer.toHexString(required)
                         + ", supported=0x" + Integer.toHexString(properties.optimalTilingFeatures()) + ")");

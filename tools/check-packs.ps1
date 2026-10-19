@@ -4,11 +4,15 @@ The frozen Fabric 1.21.11 line (CHIMERA instance) runs from the fabric/1.21.11 b
 
   .\tools\check-packs.ps1                          the full gate: check build
   .\tools\check-packs.ps1 packTest                 one task
+  .\tools\check-packs.ps1 -Corpus optionSweep      also the corpus packs in testpacks\corpus\packs
   .\tools\check-packs.ps1 evidenceTest --tests '*ParityBaselineEvidenceTest' `
       -ComplementaryVersion r5.9.3 -BslVersion v10.1.8 `
       -Evidence @{ complementaryLog = 'logs\c.log'; complementaryCapture = 'captures\c.rdc' }
 
 Every value becomes a -Pchimera.* property, which build.gradle passes to the tests.
+The corpus zips are not committed: testpacks\corpus\pins holds their Modrinth pins.
+The tests read the locked packs from copies in build\locked-packs, without the instance's
+<pack>.txt option files: the baselines assume default options (KNOW-615).
 #>
 [CmdletBinding(PositionalBinding = $false)]
 param(
@@ -17,11 +21,19 @@ param(
     [string]$BslVersion = '',
     [hashtable]$Evidence = @{},
     [switch]$PrintBaselines,
+    [switch]$Corpus,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$GradleArguments
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Option files an owner saves in game sit beside the zips; copying the zips alone leaves them out.
+$lockedPacks = Join-Path $PSScriptRoot '..\build\locked-packs'
+if (Test-Path -LiteralPath $lockedPacks) { Remove-Item -LiteralPath $lockedPacks -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $lockedPacks | Out-Null
+Copy-Item -Path (Join-Path $PackRoot '*.zip') -Destination $lockedPacks
+$PackRoot = (Resolve-Path -LiteralPath $lockedPacks).Path
 
 function Find-Pack([string]$filter) {
     $packs = @(Get-ChildItem -LiteralPath $PackRoot -Filter $filter)
@@ -31,8 +43,12 @@ function Find-Pack([string]$filter) {
     return $packs[0].FullName
 }
 
-$extra = @(Get-ChildItem -LiteralPath $PackRoot -Filter '*.zip' |
-        Where-Object { $_.Name -match 'Bliss|MakeUp|photon|Unbound|Solas' }).FullName -join ';'
+$extraPacks = @(Get-ChildItem -LiteralPath $PackRoot -Filter '*.zip' |
+        Where-Object { $_.Name -match 'Bliss|MakeUp|photon|Unbound|Solas' }).FullName
+if ($Corpus) {
+    $extraPacks += @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..\testpacks\corpus\packs') -Filter '*.zip').FullName
+}
+$extra = $extraPacks -join ';'
 $properties = @(
     "-Pchimera.pack.complementary=$(Find-Pack 'ComplementaryReimagined*.zip')",
     "-Pchimera.pack.bsl=$(Find-Pack 'BSL*.zip')",

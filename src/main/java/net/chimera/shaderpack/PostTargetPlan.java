@@ -32,7 +32,8 @@ public final class PostTargetPlan {
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     /** {@code [layout(...)] out T name;}, the layout possibly spanning lines. */
     private static final Pattern MODERN_OUTPUT = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\(([^;{}()]*)\\)\\s*)?out\\s+(float|vec[234])\\s+([A-Za-z_]\\w*)\\s*;");
+            "(?m)^[ \\t]*(?:layout\\s*\\(([^;{}()]*)\\)\\s*)?out\\s+(float|int|uint|[iu]?vec[234])"
+                    + "\\s+([A-Za-z_]\\w*)\\s*;");
     private static final Pattern LOCATION = Pattern.compile("\\blocation\\s*=\\s*(\\d+)");
 
     /** One modern fragment output: its declaration's source range, type, name and location. */

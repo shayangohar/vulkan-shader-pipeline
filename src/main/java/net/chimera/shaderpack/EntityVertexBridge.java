@@ -361,7 +361,7 @@ public final class EntityVertexBridge {
         if (samplerPlan != null) {
             converted = bindVertexSamplers(converted, samplerPlan);
         }
-        converted = GlslTokenRewriter.replaceIdentifiers(converted,
+        converted = GlslTokenRewriter.replaceIdentifiers(GlslVertexPreambles.renameHostNameCollisions(converted),
                 entityInputReplacements(vertexPreamble, stripped, layout));
         converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]",
                 "TextureMat");

@@ -571,6 +571,7 @@ public final class PackAdvancedResourcePlan {
             storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
                     plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
         }
+        addUnplannedDeclarations(plan, graphics.dependent, bufferDependent, deviations);
         return new PackAdvancedResourcePlan(images, compute, graphics.writers, graphics.readers, buffers,
                 storageBuffers, graphics.dependent, bufferDependent, storageEligible,
                 graphics.customImageFeaturePrograms, deviations, ordinaryContracts, bindingBases);
@@ -696,6 +697,30 @@ public final class PackAdvancedResourcePlan {
     }
     public boolean storageBufferProgramSupported(String program) {
         return storageBuffers(program).stream().allMatch(StorageBufferBinding::supported);
+    }
+
+    private static final String UNPLANNED_DECLARATION = "ADVANCED_DECLARATION_UNPLANNED:";
+
+    /**
+     * Whether the program declares an image or storage block that no binding here serves, as the
+     * report reads it (ADVANCED_RESOURCE_UNSUPPORTED). Rethinking Voxels' prepare stores to
+     * {@code colorimg9}, which Chimera binds only for pass computes.
+     */
+    public boolean declaresUnplannedResource(String program) {
+        return deviations.contains(UNPLANNED_DECLARATION + program);
+    }
+
+    /** Records each program that declares an advanced resource but depends on none this plan serves. */
+    private static void addUnplannedDeclarations(PackPlan plan, List<String> imagePrograms,
+                                                 List<String> bufferPrograms, List<String> deviations) {
+        for (PackProgramPlan program : plan.programs()) {
+            if (program == null || imagePrograms.contains(program.name())
+                    || bufferPrograms.contains(program.name())) continue;
+            if (program.stages().values().stream().anyMatch(stage -> stage != null && stage.source() != null
+                    && containsAdvancedDeclarations(stage.source()))) {
+                deviations.add(UNPLANNED_DECLARATION + program.name());
+            }
+        }
     }
 
     static boolean containsStorageBlock(String source) {

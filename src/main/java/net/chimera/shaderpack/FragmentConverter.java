@@ -707,7 +707,8 @@ public final class FragmentConverter {
     /**
      * Vulkan GLSL requires named shadow-block members to be accessed through
      * the block instance. Keep canonical field names in PipelineConfig and
-     * qualify only executable source references.
+     * qualify only executable source references; a parameter or local that
+     * shares a uniform's name keeps it (GlslScopedReferences).
      */
     static String qualifyShadowUniformReferences(
             String source,
@@ -717,8 +718,7 @@ public final class FragmentConverter {
         for (UniformRegistry.UniformDeclaration uniform : uniforms) {
             replacements.put(uniform.name(), "chimeraShadowUniforms." + uniform.name());
         }
-        return replacements.isEmpty()
-                ? source : GlslTokenRewriter.replaceIdentifiers(source, replacements);
+        return GlslScopedReferences.replace(source, replacements);
     }
 
     /** Terrain and water pack uniforms follow the terrain host blocks. */

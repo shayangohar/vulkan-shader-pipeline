@@ -690,8 +690,9 @@ public final class UniformRegistry {
         return usage.successful() && !usage.liveSamplers().contains(name);
     }
 
+    /** Whether {@code source} declares {@code name}, alone or later in a declarator list ({@code vec3 a, name}). */
     static boolean isLocallyDeclared(String source, String name) {
-        return Pattern.compile("\\b(?:const\\s+)?[A-Za-z_]\\w*\\s+"
+        return Pattern.compile("\\b(?:const\\s+)?[A-Za-z_]\\w*\\s+(?:[A-Za-z_]\\w*\\s*(?:\\[[^\\]]*\\]\\s*)?,\\s*)*"
                 + Pattern.quote(name) + "\\b").matcher(source).find();
     }
 

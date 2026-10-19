@@ -1,0 +1,15 @@
+filename = 'rethinking-voxels_r0.1-beta9.zip'
+name = 'Rethinking Voxels'
+side = 'client'
+x-modrinth-version-number = 'r0.1-beta9'
+x-modrinth-release-type = 'beta'
+
+[download]
+hash = '1e32f41e67e527c3c60149677a05b61c6d305e440812e29abba745b8ed304954780ca48d58b834c49835790bc3c4d38f37c893c5cbdfea9edc07b72e1dabd296'
+hash-format = 'sha512'
+mode = 'url'
+url = 'https://cdn.modrinth.com/data/kmwfVOoi/versions/cpD4esk9/rethinking-voxels_r0.1-beta9.zip'
+
+[update.modrinth]
+mod-id = 'kmwfVOoi'
+version = 'cpD4esk9'
