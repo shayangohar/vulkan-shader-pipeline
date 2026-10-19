@@ -77,6 +77,34 @@ final class GlslDeclarationsTest {
                 """, prepared);
     }
 
+    /** Post inputs are read from the tree; a replaced one still takes the blank lines before it. */
+    @Test
+    void postInputsKeepTheirSpansAndLoseTheirLayouts() {
+        String converted = PostVertexBridge.convertPostVaryings("""
+                #version 120
+                uniform sampler2D colortex0;
+
+                  varying vec2 texcoord;
+                varying vec4 unused;
+                void main() { gl_FragColor = texture2D(colortex0, texcoord); }
+                """);
+        assertEquals("""
+                #version 120
+                uniform sampler2D colortex0;
+                layout(location = 0) in vec2 texcoord;
+
+                void main() { gl_FragColor = texture2D(colortex0, texcoord); }
+                """, converted);
+        String normalized = PostVertexBridge.normalizeModernPost("""
+                #version 330
+                layout(location = 0) flat in vec2 uv;
+                layout(location = 0) out vec4 color;
+                void main() { color = vec4(uv, 0.0, 1.0); }
+                """);
+        assertTrue(normalized.contains("\nflat in vec2 uv;") && normalized.contains("layout(location = 0) out vec4"),
+                normalized);
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {

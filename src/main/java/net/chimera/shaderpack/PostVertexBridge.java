@@ -7,9 +7,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
  * Converts a post program's authored vertex stage and pairs its varyings with the fragment stage;
@@ -18,17 +15,8 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
 final class PostVertexBridge {
     private PostVertexBridge() {}
 
-    static final Pattern POST_VARYING_DECL = Pattern.compile(
-            "(?m)^\\s*(?:(flat|noperspective|smooth|centroid|sample)\\s+)?"
-                    + "(varying|in)\\s+([A-Za-z_]\\w*)\\s+([^;]+);");
-
-    /** Post inputs get Chimera's varying locations; outputs keep theirs for PostTargetPlan.modernOutputs. */
-    static final Pattern MODERN_INPUT_LAYOUT_DECL = Pattern.compile(
-            "(?m)^([ \\t]*)layout\\s*\\([^;{}()]*\\)\\s*((?:(?:flat|noperspective|smooth|centroid|sample)\\s+)?)"
-                    + "(in|varying)\\b");
-
-    /** A legacy {@code attribute} declaration, read as the vertex input it is. */
-    private static final Pattern LEGACY_ATTRIBUTE = Pattern.compile("(?m)^([ \\t]*)attribute\\b");
+    private static final Set<String> INTERPOLATION = Set.of("flat", "noperspective", "smooth", "centroid", "sample");
+    private static final Set<String> INPUT_STORAGE = Set.of("in", "varying");
 
     /**
      * Normalizes modern post syntax before interface scanning: the version,
@@ -43,10 +31,54 @@ final class PostVertexBridge {
         String result = LegacyGlslConverter.VERSION_LINE.matcher(source).replaceAll("");
         result = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
         result = LegacyGlslConverter.PRECISION_DECL.matcher(result).replaceAll("");
-        result = MODERN_INPUT_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
+        result = withoutInputLayouts(result);
         result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(
                 "lowp", "", "mediump", "", "highp", ""));
         return GlslTokenRewriter.relaxNonConstantGlobals(result);
+    }
+
+    /**
+     * Post inputs get Chimera's varying locations, and outputs keep theirs for
+     * PostTargetPlan.modernOutputs: an input's {@code layout(...)} goes with the space after it,
+     * and its interpolation and storage qualifiers stay.
+     */
+    private static String withoutInputLayouts(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            List<GlslTree.Qualifier> qualifiers = switch (external) {
+                case GlslTree.Declaration declaration -> declaration.qualifiers();
+                case GlslTree.InterfaceBlock block -> block.qualifiers();
+                default -> List.of();
+            };
+            if (qualifiers.size() < 2 || !keyword(tree, qualifiers.get(0)).equals("layout")) continue;
+            int storage = INTERPOLATION.contains(keyword(tree, qualifiers.get(1))) && qualifiers.size() > 2 ? 2 : 1;
+            if (INPUT_STORAGE.contains(keyword(tree, qualifiers.get(storage)))) {
+                edits.add(new GlslDeclarations.TextEdit(tree.offset(qualifiers.get(0).range().start()),
+                        tree.offset(qualifiers.get(1).range().start()), ""));
+            }
+        }
+        return GlslDeclarations.apply(source, edits);
+    }
+
+    /** A legacy {@code attribute} declaration, read as the vertex input it is. */
+    private static String attributesAsInputs(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Declaration declaration)) continue;
+            for (GlslTree.Qualifier qualifier : declaration.qualifiers()) {
+                if (keyword(tree, qualifier).equals("attribute")) {
+                    edits.add(new GlslDeclarations.TextEdit(tree.offset(qualifier.keyword()),
+                            tree.offset(qualifier.keyword() + 1), "in"));
+                }
+            }
+        }
+        return GlslDeclarations.apply(source, edits);
+    }
+
+    private static String keyword(GlslTree tree, GlslTree.Qualifier qualifier) {
+        return tree.text(qualifier.keyword());
     }
 
     static boolean supportsModernPost(String source) {
@@ -93,14 +125,14 @@ final class PostVertexBridge {
                 throw new IllegalArgumentException("POST_VERTEX_RESOURCE_ANALYSIS_UNSUPPORTED");
             }
             converted = GlslTokenRewriter.removeUnreachableFunctions(converted, usage);
-            if (!stripComments(converted).matches("(?s).*\\bvoid\\s+main\\s*\\(.*")) {
+            if (GlslDeclarations.main(GlslTree.parse(converted)) == null) {
                 throw new IllegalArgumentException("POST_VERTEX_MAIN_MISSING");
             }
             for (GlslInterfaceScanner.Declaration input : vertexInterface.inputs()) {
                 throw new IllegalArgumentException("POST_VERTEX_INPUT_UNSUPPORTED:" + input.name());
             }
             Map<String, Integer> locations = outputLocations(vertexInterface, match);
-            converted = LEGACY_ATTRIBUTE.matcher(converted).replaceAll("$1in");
+            converted = attributesAsInputs(converted);
             converted = GlslInterfaceScanner.rewrite(LegacyGlslConverter.VERSION_LINE.matcher(converted).replaceAll(""),
                     true,
                     declaration -> {
@@ -128,7 +160,7 @@ final class PostVertexBridge {
             // Post passes keep VulkanMod's negative-height viewport, which maps y = -1 to the
             // last row, so the authored position is mirrored once here. Packs that draw a
             // partial quad and address it by gl_FragCoord (Bliss's exposure texel) need this.
-            converted = converted.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraPostMain()");
+            converted = GlslDeclarations.renameMain(converted, "chimeraPostMain");
             converted += "\nvoid main() { chimeraPostMain(); gl_Position.y = -gl_Position.y; }\n";
             String uniforms = interfacePlan.executableUniforms().isEmpty() ? ""
                     : FragmentConverter.generatedUniformBlock(interfacePlan.executableUniforms(), converted);
@@ -283,26 +315,58 @@ final class PostVertexBridge {
                 .append(declaration.declarator()).append(";\n").toString();
     }
 
+    /**
+     * The inputs a post source declares as {@code [interpolation] in|varying type names;} at the
+     * start of a line. A declaration's span starts at the first line start after the text before
+     * it, so the blank lines and indentation before it go with it when it is replaced.
+     */
     static List<PostVaryingDeclaration> postVaryingDeclarations(String source) {
+        GlslTree tree = GlslTree.parse(source);
         List<PostVaryingDeclaration> declarations = new ArrayList<>();
-        Matcher matcher = POST_VARYING_DECL.matcher(source);
-        while (matcher.find()) {
-            declarations.add(new PostVaryingDeclaration(matcher.start(), matcher.end(),
-                    matcher.group(1), matcher.group(3), parsePostVaryingNames(matcher.group(4))));
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Declaration declaration) || declaration.type() == null) continue;
+            int start = lineStartBefore(source, tree.offset(declaration.range().start()));
+            PostVaryingDeclaration varying = start < 0 ? null
+                    : postVarying(tree, declaration, start, tree.offset(declaration.range().end()));
+            if (varying != null) declarations.add(varying);
         }
         return declarations;
     }
 
-    static List<String> parsePostVaryingNames(String names) {
-        List<String> result = new ArrayList<>();
-        for (String value : names.split(",")) {
-            String name = value.trim();
-            if (!name.matches("[A-Za-z_]\\w*")) {
-                throw new IllegalArgumentException("unsupported post varying declaration: " + names);
-            }
-            result.add(name);
+    /**
+     * One input declaration; null for another declaration. An input with more than one leading
+     * interpolation qualifier, a precision qualifier, an array or an initializer is refused.
+     */
+    private static PostVaryingDeclaration postVarying(GlslTree tree, GlslTree.Declaration declaration, int start,
+                                                      int end) {
+        List<String> qualifiers = declaration.qualifiers().stream().map(value -> keyword(tree, value)).toList();
+        int storage = !qualifiers.isEmpty() && INTERPOLATION.contains(qualifiers.get(0)) ? 1 : 0;
+        if (qualifiers.size() <= storage || !INPUT_STORAGE.contains(qualifiers.get(storage))) return null;
+        boolean plain = qualifiers.size() == storage + 1 && declaration.type().name() >= 0
+                && declaration.type().arrays().isEmpty() && declaration.declarators().stream()
+                .allMatch(value -> value.arrays().isEmpty() && value.initializer() == null);
+        if (!plain) {
+            throw new IllegalArgumentException("unsupported post varying declaration: "
+                    + tree.text(declaration.range()));
         }
-        return result;
+        List<String> names = declaration.declarators().stream().map(value -> tree.text(value.name())).toList();
+        return new PostVaryingDeclaration(start, end, storage == 1 ? qualifiers.get(0) : null,
+                tree.text(declaration.type().name()), names);
+    }
+
+    /**
+     * The first line start between the text before {@code offset} and {@code offset}: where a
+     * {@code (?m)^\s*} match ending there begins. -1 when the declaration does not start a line.
+     */
+    private static int lineStartBefore(String source, int offset) {
+        int text = offset;
+        while (text > 0 && " \t\n\u000B\f\r".indexOf(source.charAt(text - 1)) >= 0) text--;
+        for (int index = text; index <= offset; index++) {
+            boolean lineStart = index == 0 || source.charAt(index - 1) == '\n'
+                    || source.charAt(index - 1) == '\r' && (index == source.length() || source.charAt(index) != '\n');
+            if (lineStart) return index;
+        }
+        return -1;
     }
 
     static List<String> referencedPostVaryings(

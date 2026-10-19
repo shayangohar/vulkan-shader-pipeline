@@ -76,6 +76,26 @@ final class GlslDeclarations {
         return alone ? new TextEdit(lineStart, lineEnd, "") : new TextEdit(from, to, "");
     }
 
+    /** The first {@code void main} the source declares, a prototype or a definition; null without one. */
+    static GlslTree.Function main(GlslTree tree) {
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Function function && tree.text(function.name()).equals("main")
+                    && tree.text(function.returnType().range()).equals("void") && function.qualifiers().isEmpty()) {
+                return function;
+            }
+        }
+        return null;
+    }
+
+    /** The source with its first main renamed {@code name}, its signature written {@code void name()}. */
+    static String renameMain(String source, String name) {
+        GlslTree tree = GlslTree.parse(source);
+        GlslTree.Function main = main(tree);
+        if (main == null) return null;
+        return apply(source, List.of(new TextEdit(tree.offset(main.returnType().range().start()),
+                tree.offset(main.parameterList().end()), "void " + name + "()")));
+    }
+
     /** {@code source} with each edit applied; edits must not overlap. */
     static String apply(String source, List<TextEdit> edits) {
         List<TextEdit> ordered = new ArrayList<>(edits);

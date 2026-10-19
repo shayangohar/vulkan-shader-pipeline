@@ -141,17 +141,11 @@ final class IrisCoreProfile {
 
     /** The source with its first main renamed {@code chimeraLineMain}, signature normalized to {@code ()}. */
     private static String renameMain(String source) {
-        GlslTree tree = GlslTree.parse(source);
-        for (GlslTree.External external : tree.externals()) {
-            if (external instanceof GlslTree.Function function && tree.text(function.name()).equals("main")
-                    && tree.text(function.returnType().range()).equals("void") && function.qualifiers().isEmpty()) {
-                return GlslDeclarations.apply(source, List.of(new GlslDeclarations.TextEdit(
-                        tree.offset(function.returnType().range().start()),
-                        tree.offset(function.parameterList().end()), "void chimeraLineMain()")));
-            }
-        }
-        throw new IllegalArgumentException("line vertex requires main");
+        String renamed = GlslDeclarations.renameMain(source, "chimeraLineMain");
+        if (renamed == null) throw new IllegalArgumentException("line vertex requires main");
+        return renamed;
     }
+
     /**
      * Applies Iris's line handling to an authored vertex source before its interface is
      * planned. Iris compiles the pack's own gbuffers_line through VanillaCoreTransformer
