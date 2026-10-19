@@ -77,7 +77,7 @@ final class GlslScopes {
     private static GlslTree.Binding declared(GlslTree tree, GlslTree.Declaration declaration, String name,
                                              int token) {
         for (GlslTree.Declarator declarator : declaration.declarators()) {
-            if (named(tree, declarator.name(), name, token)) return new GlslTree.Binding(declarator, declarator.name());
+            if (visible(tree, declarator, name, token)) return new GlslTree.Binding(declarator, declarator.name());
         }
         GlslTree.Struct struct = declaration.type() == null ? null : declaration.type().struct();
         if (struct != null && named(tree, struct.name(), name, token)) {
@@ -98,6 +98,16 @@ final class GlslScopes {
             if (binding != null) return binding;
         }
         return null;
+    }
+
+    /**
+     * A declarator names itself, and its scope begins after its initializer (GLSL 4.60 section
+     * 4.2.2): in {@code { int x = x; }} the initializer reads the outer {@code x}.
+     */
+    private static boolean visible(GlslTree tree, GlslTree.Declarator declarator, String name, int token) {
+        if (!named(tree, declarator.name(), name, token)) return false;
+        return token == declarator.name() || declarator.initializer() == null
+                || token >= declarator.initializer().end();
     }
 
     private static boolean named(GlslTree tree, int nameToken, String name, int token) {

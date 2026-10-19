@@ -100,6 +100,8 @@ final class GlslTreeTest {
         assertEquals("(vec3 n, const in float[2] weights)", tree.text(lit.parameterList()));
         assertEquals(List.of("const", "in"), lit.parameters().get(1).qualifiers().stream()
                 .map(value -> tree.text(value.range())).toList());
+        assertEquals("float[2]", tree.text(lit.parameters().get(1).type().range()), "a type spans its array sizes");
+        assertEquals("const in float[2] weights", tree.text(lit.parameters().get(1).range()));
         List<GlslTree.Statement> body = lit.body().statements();
         assertEquals(5, body.size());
         assertInstanceOf(GlslTree.Declaration.class, body.get(0));
@@ -129,6 +131,11 @@ final class GlslTreeTest {
         assertEquals(uniform, tree.resolve(uses.get(6)), "the block closed");
         assertNull(tree.resolve(uses.get(7)), "a field is no variable");
         assertNull(tree.resolve(occurrences(tree, "x").get(0)));
+
+        GlslTree initialized = GlslTree.parse("int x = 1;\nvoid main() { { int x = x + 1, y = x; } }\n");
+        List<Integer> xs = occurrences(initialized, "x");
+        assertEquals(xs.get(0), initialized.resolve(xs.get(2)).name(), "an initializer reads the outer x");
+        assertEquals(xs.get(1), initialized.resolve(xs.get(3)).name(), "the next declarator sees the inner x");
     }
 
     @Test

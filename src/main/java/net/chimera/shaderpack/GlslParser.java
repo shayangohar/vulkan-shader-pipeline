@@ -113,7 +113,8 @@ final class GlslParser {
         int start = at;
         GlslTree.Struct struct = identifier() && text().equals("struct") ? struct() : null;
         int name = struct == null ? expectIdentifier() : -1;
-        return new GlslTree.TypeSpec(range(start), name, struct, arrays());
+        List<GlslTree.Range> arrays = arrays();
+        return new GlslTree.TypeSpec(range(start), name, struct, arrays);
     }
 
     private GlslTree.Struct struct() {
@@ -211,7 +212,8 @@ final class GlslParser {
         List<GlslTree.Qualifier> qualifiers = qualifiers();
         GlslTree.TypeSpec type = typeSpec();
         int name = identifier() ? significant[at++] : -1;
-        return new GlslTree.Parameter(range(start), qualifiers, type, name, arrays());
+        List<GlslTree.Range> arrays = arrays();
+        return new GlslTree.Parameter(range(start), qualifiers, type, name, arrays);
     }
 
     private GlslTree.Block block() {
