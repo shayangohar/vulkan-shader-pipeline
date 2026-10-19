@@ -72,11 +72,11 @@
   "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "b37072d38b82d1d9 def03ae0ccfa5f15",
   "gbuffers_skybasic.fsh": "952f633451e4ad3f 221636c41656d7e3",
   "gbuffers_skybasic.vsh": "8ce3046e23a30cee 251987dd1fe29798",
-  "shadow.fsh": "534978ca5affdb62 7f64fd8160bbfbdf",
-  "shadow.vsh": "78dc1a057068cb38 02f191ac2849bcf3",
-  "shadow_block.fsh": "429825ae2d9d6804 9601bfbdf4787339",
-  "shadow_block.vsh": "12b221f44c5894fd c41fa79b61abf300",
-  "shadow_entities [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "741327b5db474cf7 7a3f59aeb5e02d12",
-  "shadow_entities.fsh": "429825ae2d9d6804 9601bfbdf4787339",
-  "shadow_entities.vsh": "12b221f44c5894fd c41fa79b61abf300"
+  "shadow.fsh": "446371e1f9316ae9 518f061b6d5d8fb9",
+  "shadow.vsh": "ecdb73826f3b820b 1ebad7fd2bfdbd81",
+  "shadow_block.fsh": "e6d7c58c915b4d37 dda4e421c1641e31",
+  "shadow_block.vsh": "517b4c1ec1945f0d 7256ff11eb399c6a",
+  "shadow_entities [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "3d3854031528c9e9 8c8aea41a277fb7d",
+  "shadow_entities.fsh": "e6d7c58c915b4d37 dda4e421c1641e31",
+  "shadow_entities.vsh": "517b4c1ec1945f0d 7256ff11eb399c6a"
 }

@@ -28,8 +28,10 @@ public final class ShaderSourcePreprocessor {
     private static final Pattern DIRECTIVE = Pattern.compile("^\\s*#(\\w+)(?:\\s+(.*?))?\\s*$");
     private static final Pattern INCLUDE = Pattern.compile("^[<\"]([^>\"]+)[>\"]$");
     private static final Pattern DEFINE = Pattern.compile("^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
+    // A macro is function-like only when "(" follows its name directly, as in C: Noble's
+    // "#define ANIMATIONS_ENABLED (WAVING_PLANTS == 1 || ...)" is an object-like macro.
     private static final Pattern FUNCTION_DEFINE = Pattern.compile(
-            "^([A-Za-z_]\\w*)\\s*\\([^)]*\\)(?:\\s+(.*))?$");
+            "^([A-Za-z_]\\w*)\\([^)]*\\)(?:\\s*(.*))?$");
 
     /** Deviations that only record a fact the preprocessor handled; every other one fails the source. */
     private static final List<String> WARNINGS = List.of(

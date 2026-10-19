@@ -132,9 +132,11 @@ final class MaterialPlanTest {
 
         PackProgramPlan composite = analysis.plan().program("composite");
         assertTrue(composite != null, "material fixture composite is missing");
-        assertTrue(composite.deviations().contains("SAMPLER_NOT_MAPPED:normals")
-                        && composite.deviations().contains("SAMPLER_NOT_MAPPED:specular"),
-                "post material declarations are not explicitly unsupported: " + composite.deviations());
+        // Iris binds material maps only to world programs: in a fullscreen pass both names stay on
+        // unit 0 and read colortex0 (KNOW-635).
+        assertTrue(composite.deviations().contains("SAMPLER_UNIT0_COLORTEX0:normals")
+                        && composite.deviations().contains("SAMPLER_UNIT0_COLORTEX0:specular"),
+                "post material declarations do not read colortex0: " + composite.deviations());
         assertTrue(analysis.plan().resources().bindings("composite").stream()
                         .noneMatch(value -> value.kind() == PackResourceKind.MATERIAL_MAP),
                 "post program gained material descriptors");

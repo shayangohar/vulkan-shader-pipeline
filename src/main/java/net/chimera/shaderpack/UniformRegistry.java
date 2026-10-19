@@ -156,9 +156,13 @@ public final class UniformRegistry {
             defaultPolicy = defaultPolicy == null ? DefaultPolicy.ZERO : defaultPolicy;
         }
 
+        /** Iris sets a bool declaration as an int one (ProgramUniforms expects INT for GL_BOOL). */
         public boolean accepts(String glslType) {
-            return acceptedTypes.contains(glslType);
+            return acceptedTypes.contains(glslType) || INTEGRAL.contains(glslType)
+                    && acceptedTypes.stream().anyMatch(INTEGRAL::contains);
         }
+
+        private static final Set<String> INTEGRAL = Set.of("int", "bool");
     }
 
     /** Immutable interface plan shared by scanning, conversion, and building. */
@@ -518,9 +522,11 @@ public final class UniformRegistry {
             return spec;
         }
         if (custom != null) {
-            return custom.availability() == Availability.REJECTED || !custom.accepts(glslType) ? null : custom;
+            if (custom.availability() == Availability.REJECTED) return null;
+            return custom.accepts(glslType) ? custom : disabledDescriptor(name, glslType);
         }
-        return unsetDescriptor(name, glslType);
+        UniformDescriptor unset = unsetDescriptor(name, glslType);
+        return unset != null || descriptor(name) == null ? unset : disabledDescriptor(name, glslType);
     }
 
     /**
@@ -570,6 +576,17 @@ public final class UniformRegistry {
             return null;
         }
         return new UniformDescriptor(name, List.of(glslType), Availability.DEFAULTED, name, DefaultPolicy.ZERO);
+    }
+
+    /**
+     * A value Iris serves, declared with another type. Iris's {@code ProgramUniforms} logs "Wrong uniform
+     * type" and disables it, so the program runs and reads zero (Insanity's {@code uniform float
+     * worldTime}). The source key names no value, so the zero default is what is written.
+     */
+    static UniformDescriptor disabledDescriptor(String name, String glslType) {
+        if (name == null || !SUPPORTED_TYPES.contains(glslType)) return null;
+        return new UniformDescriptor(name, List.of(glslType), Availability.DEFAULTED, "disabled:" + name,
+                DefaultPolicy.ZERO);
     }
 
     /**

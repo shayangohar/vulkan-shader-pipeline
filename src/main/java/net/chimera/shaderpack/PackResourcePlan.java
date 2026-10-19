@@ -670,7 +670,7 @@ public final class PackResourcePlan {
     public static Path resolvePath(Path shadersDir, String source) {
         if (shadersDir == null || source == null || source.isBlank()
                 || source.contains("\0")) return null;
-        String normalized = source.replace('\\', '/');
+        String normalized = packRelative(source);
         if (normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*")) return null;
         Path root = shadersDir.toAbsolutePath().normalize();
         Path path = root.resolve(normalized).normalize();
@@ -708,9 +708,18 @@ public final class PackResourcePlan {
         }
     }
 
+    /**
+     * A texture path relative to the shaders folder. Iris drops one leading slash
+     * ({@code /img/smaaArea.png} in Mellow, Continuum's {@code /tex/...}); a second one stays.
+     */
+    private static String packRelative(String source) {
+        String normalized = source.replace('\\', '/');
+        return normalized.startsWith("/") ? normalized.substring(1) : normalized;
+    }
+
     private static boolean isUnsafePath(String source) {
         if (source == null || source.isBlank()) return true;
-        String normalized = source.replace('\\', '/');
+        String normalized = packRelative(source);
         return normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*")
                 || normalized.equals("..") || normalized.startsWith("../")
                 || normalized.contains("/../") || normalized.contains("/./")
@@ -728,7 +737,7 @@ public final class PackResourcePlan {
                 && source.trim().equalsIgnoreCase("minecraft:textures/atlas/blocks.png");
     }
 
-    private static String advancedImageName(Map<String, String> propertyValues, String sampler) {
+    static String advancedImageName(Map<String, String> propertyValues, String sampler) {
         if (propertyValues == null || sampler == null || sampler.isBlank()) return null;
         for (Map.Entry<String, String> entry : new TreeMap<>(propertyValues).entrySet()) {
             if (!entry.getKey().startsWith("image.")) continue;
