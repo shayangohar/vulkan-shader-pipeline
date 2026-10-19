@@ -1,11 +1,11 @@
 package net.chimera.shaderpack;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.Set;
 
 import static net.chimera.shaderpack.GlslLexer.stripComments;
 
@@ -146,28 +146,31 @@ final class HostLayoutVertexBridge {
                 sharedLocations, preamble, allowStorageBuffers, uniforms, samplerPlan);
     }
 
-    static final Pattern MATERIAL_ATTRIBUTE_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:attribute|in)[ \\t]+(float|vec2|vec3|vec4)[ \\t]+(mc_midTexCoord|at_tangent)[ \\t]*;"
-                    + "[ \\t]*$");
+    private static final Set<String> MATERIAL_ATTRIBUTES = Set.of("mc_midTexCoord", "at_tangent");
+
+    /** GL's unbound attribute value (0, 0, 0, 1), cut to the declared type. */
+    private static final Map<String, String> UNBOUND_VALUES = Map.of("float", "0.0", "vec2", "vec2(0.0)",
+            "vec3", "vec3(0.0)", "vec4", "vec4(0.0, 0.0, 0.0, 1.0)");
 
     /**
      * A host layout without mid-coordinates or tangents leaves those attributes unbound in
      * Iris, so GL reads its default (0, 0, 0, 1) cut to the declared type.
      */
     static String unboundMaterialAttributes(String source) {
+        GlslTree tree = GlslTree.parse(source);
         Map<String, String> defaults = new HashMap<>();
-        Matcher declaration = MATERIAL_ATTRIBUTE_DECLARATION.matcher(source);
-        while (declaration.find()) {
-            defaults.put(declaration.group(2), switch (declaration.group(1)) {
-                case "float" -> "0.0";
-                case "vec2" -> "vec2(0.0)";
-                case "vec3" -> "vec3(0.0)";
-                default -> "vec4(0.0, 0.0, 0.0, 1.0)";
-            });
+        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            String unbound = UNBOUND_VALUES.get(variable.type());
+            if (!MATERIAL_ATTRIBUTES.contains(variable.name()) || unbound == null || !variable.plain()
+                    || !variable.qualified("attribute") && !variable.qualified("in")) {
+                continue;
+            }
+            defaults.put(variable.name(), unbound);
+            removals.add(GlslDeclarations.remove(tree, variable.declaration()));
         }
         if (defaults.isEmpty()) return source;
-        return GlslTokenRewriter.replaceIdentifiers(
-                MATERIAL_ATTRIBUTE_DECLARATION.matcher(source).replaceAll(""), defaults);
+        return GlslTokenRewriter.replaceIdentifiers(GlslDeclarations.apply(source, removals), defaults);
     }
 
     public static final List<FamilyAdapterPlan.VertexContract> SKY_CONTRACTS = List.of(
