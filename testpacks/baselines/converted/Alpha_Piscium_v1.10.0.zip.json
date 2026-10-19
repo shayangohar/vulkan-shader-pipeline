@@ -1,0 +1,22 @@
+{
+  "gbuffers_beaconbeam.fsh": "819f3af33ebb404d 221636c41656d7e3",
+  "gbuffers_beaconbeam.vsh": "50bfa455354584c6 66cece7af17f9404",
+  "gbuffers_clouds.fsh": "819f3af33ebb404d 221636c41656d7e3",
+  "gbuffers_clouds.vsh": "4e88e788fdb66483 92714b4b4e68311b",
+  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "133c38495ef4b4f5 64079a6a1e08265b",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "054bab8ce1142a55 12093d95f42fce00",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "ab44232d28bd0e0e b887aa49eafd1b4e",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "f41da16cb83fef9c f1ead17b03bdd286",
+  "gbuffers_skybasic.fsh": "819f3af33ebb404d 221636c41656d7e3",
+  "gbuffers_skybasic.vsh": "133c38495ef4b4f5 64079a6a1e08265b",
+  "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "133c38495ef4b4f5 64079a6a1e08265b",
+  "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "054bab8ce1142a55 12093d95f42fce00",
+  "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "ab44232d28bd0e0e b887aa49eafd1b4e",
+  "gbuffers_skytextured [sky input variant SKY_POSITION_UV].vsh": "f41da16cb83fef9c f1ead17b03bdd286",
+  "gbuffers_skytextured.fsh": "819f3af33ebb404d 221636c41656d7e3",
+  "gbuffers_skytextured.vsh": "f41da16cb83fef9c f1ead17b03bdd286",
+  "gbuffers_spidereyes.fsh": "819f3af33ebb404d 221636c41656d7e3",
+  "gbuffers_spidereyes.vsh": "02b15c202234f440 0b05b35f151b4e11",
+  "gbuffers_weather.fsh": "819f3af33ebb404d 221636c41656d7e3",
+  "gbuffers_weather.vsh": "f29a46d5b003686f 9c62419cbd4e8813"
+}

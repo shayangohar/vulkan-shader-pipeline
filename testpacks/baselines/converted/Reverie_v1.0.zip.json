@@ -1,0 +1,14 @@
+{
+  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "34951a0b9b9ffd23 83e7bfba4aa6db50",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "4105c0a893472efd abb1e888d6f0a418",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "4ec50580bc4a0f49 8658b231a9113030",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "7493802282f1b0b4 6432c19abe9f5c4d",
+  "gbuffers_skybasic.fsh": "85d69fa2af53499d 5527388afc2811c3",
+  "gbuffers_skybasic.vsh": "34951a0b9b9ffd23 83e7bfba4aa6db50",
+  "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "34951a0b9b9ffd23 83e7bfba4aa6db50",
+  "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "4105c0a893472efd abb1e888d6f0a418",
+  "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "4ec50580bc4a0f49 8658b231a9113030",
+  "gbuffers_skytextured [sky input variant SKY_POSITION_UV].vsh": "7493802282f1b0b4 6432c19abe9f5c4d",
+  "gbuffers_skytextured.fsh": "50206c65545fffd7 5527388afc2811c3",
+  "gbuffers_skytextured.vsh": "7493802282f1b0b4 6432c19abe9f5c4d"
+}

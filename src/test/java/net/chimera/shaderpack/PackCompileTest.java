@@ -27,7 +27,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeMap;
@@ -49,18 +48,27 @@ final class PackCompileTest {
     }
 
     static Result run(Path pack, PackProbe.Analysis analysis) {
+        return run(pack, analysis, null);
+    }
+
+    /** As {@link #run(Path, PackProbe.Analysis)}, recording every compiled shader in {@code snapshot} when given. */
+    static Result run(Path pack, PackProbe.Analysis analysis, ConvertedOutputSnapshot snapshot) {
         if (analysis.plan() == null) return new Result(0, List.of());
         try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            return run(pack, loaded.shadersDir(), analysis);
+            return run(pack, loaded.shadersDir(), analysis, snapshot);
         }
     }
 
     /** As {@link #run(Path, PackProbe.Analysis)}, with computes read from {@code shadersDir}: a load with options. */
     static Result run(Path pack, Path shadersDir, PackProbe.Analysis analysis) {
+        return run(pack, shadersDir, analysis, null);
+    }
+
+    static Result run(Path pack, Path shadersDir, PackProbe.Analysis analysis, ConvertedOutputSnapshot snapshot) {
         if (analysis.plan() == null) return new Result(0, List.of());
         int compiled = 0;
         List<String> failures = new ArrayList<>();
-        var compiler = new ProgramCompiler(pack, analysis.plan().advancedResources(), failures);
+        var compiler = new ProgramCompiler(pack, analysis.plan().advancedResources(), failures, snapshot);
         for (PackProgramPlan program : analysis.plan().activePrograms()) {
             // Runtime also gates on the report. Compiling alone cannot prove admission.
             if (analysis.plan().shouldAttempt(program.name())
@@ -74,14 +82,14 @@ final class PackCompileTest {
             }
             if (compiler.compiles(program)) compiled++;
         }
-        String computeError = compileShadowCompute(pack, shadersDir, analysis.plan());
+        String computeError = compileShadowCompute(pack, shadersDir, analysis.plan(), snapshot);
         if (computeError != null) {
             failures.add("shadowcomp: " + computeError);
         } else if (hasShadowCompute(analysis.plan())) {
             compiled++;
         }
         List<String> passComputes = new ArrayList<>();
-        compiled += compilePassComputes(pack, shadersDir, analysis.plan(), failures, passComputes);
+        compiled += compilePassComputes(pack, shadersDir, analysis.plan(), failures, passComputes, snapshot);
         return new Result(compiled, List.copyOf(failures), List.copyOf(passComputes));
     }
 
@@ -91,14 +99,15 @@ final class PackCompileTest {
      * light the deferred pass reads.
      */
     static int compilePassComputes(Path pack, Path shadersDir, PackPlan plan, List<String> failures,
-                                   List<String> compiledNames) {
+                                   List<String> compiledNames, ConvertedOutputSnapshot snapshot) {
         int compiled = 0;
         try {
             for (var compute : PassComputePlan.build(plan, shadersDir).computes()) {
                 if (!compute.supported()) continue;
                 Map<String, Integer> written = new LinkedHashMap<>();
                 for (var value : compute.values()) written.put(value.name(), value.offset());
-                String error = compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, written);
+                String error = compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, written,
+                        snapshot, compute.name() + ".csh");
                 if (compute.name().equals(System.getProperty("chimera.packCompile.dumpProgram"))) {
                     dump(pack, compute.name() + ".csh", compute.source());
                 }
@@ -121,6 +130,7 @@ final class PackCompileTest {
         private final Path pack;
         private final PackAdvancedResourcePlan resources;
         private final List<String> failures;
+        private final ConvertedOutputSnapshot snapshot;
         private final String fixedPostVertex = ChimeraShaderLoader.loadSource(
                 "chimera_composite/chimera_composite.vsh");
         private final String fixedTerrainVertex = ChimeraShaderLoader.loadSource(
@@ -128,10 +138,20 @@ final class PackCompileTest {
         /** The current program's vertex error: its own stage's, or the last failing input variant's. */
         private String vertexError;
 
-        ProgramCompiler(Path pack, PackAdvancedResourcePlan resources, List<String> failures) {
+        ProgramCompiler(Path pack, PackAdvancedResourcePlan resources, List<String> failures,
+                        ConvertedOutputSnapshot snapshot) {
             this.pack = pack;
             this.resources = resources;
             this.failures = failures;
+            this.snapshot = snapshot;
+        }
+
+        /** Compiles one prepared stage and records it under {@code key}; returns the error, or null. */
+        private String check(String key, String source, boolean vertex) {
+            Outcome outcome = vertex ? outcome(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
+                    : outcome(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+            if (snapshot != null) snapshot.record(key, source, outcome.spirvHash());
+            return outcome.error();
         }
 
         /** Compiles the program's prepared stages and input variants; true when every one compiles. */
@@ -145,8 +165,9 @@ final class PackCompileTest {
                 failures.add(program.name() + " preparation: " + failure);
                 return false;
             }
-            vertexError = program.convertedVertex() == null ? null : compile(prepared.vertex(), true);
-            String fragmentError = compile(prepared.fragment(), false);
+            vertexError = program.convertedVertex() == null ? null
+                    : check(program.name() + ".vsh", prepared.vertex(), true);
+            String fragmentError = check(program.name() + ".fsh", prepared.fragment(), false);
             compileInputVariants(program, stage);
             // -Pchimera.packCompile.dumpProgram=<name> writes that program's prepared stages for review.
             if (program.name().equals(System.getProperty("chimera.packCompile.dumpProgram"))) {
@@ -202,7 +223,8 @@ final class PackCompileTest {
 
         private void compileVariant(PackProgramPlan program, UniformRegistry.Stage stage, String label,
                                     String variant) {
-            String error = compile(PackPipelines.prepare(program, resources, stage, variant).vertex(), true);
+            String error = check(variantKey(program, label, ".vsh"),
+                    PackPipelines.prepare(program, resources, stage, variant).vertex(), true);
             if (error != null) {
                 failures.add(program.name() + " " + label + ": " + error);
                 vertexError = error;
@@ -215,14 +237,19 @@ final class PackCompileTest {
             String fragment = EntityVertexBridge.fragmentForFormat(program.convertedFragment(), host);
             var prepared = PackPipelines.prepare(program, resources, stage,
                     EntityVertexBridge.layoutVertexForFormat(program.convertedVertex(), host), fragment);
-            String error = compile(prepared.vertex(), true);
+            String layout = label + " " + String.join(",", host.getElementAttributeNames());
+            String error = check(variantKey(program, layout, ".vsh"), prepared.vertex(), true);
             if (error != null) {
                 failures.add(program.name() + " " + label + ": " + error);
                 vertexError = error;
             }
             String fragmentError = fragment.equals(program.convertedFragment())
-                    ? null : compile(prepared.fragment(), false);
+                    ? null : check(variantKey(program, layout, ".fsh"), prepared.fragment(), false);
             if (fragmentError != null) failures.add(program.name() + " " + label + " fragment: " + fragmentError);
+        }
+
+        private static String variantKey(PackProgramPlan program, String label, String extension) {
+            return program.name() + " [" + label + "]" + extension;
         }
     }
 
@@ -248,6 +275,10 @@ final class PackCompileTest {
     }
 
     static String compileShadowCompute(Path pack, Path shadersDir, PackPlan plan) {
+        return compileShadowCompute(pack, shadersDir, plan, null);
+    }
+
+    static String compileShadowCompute(Path pack, Path shadersDir, PackPlan plan, ConvertedOutputSnapshot snapshot) {
         if (!hasShadowCompute(plan)) return null;
         try {
             var module = PackShadowCompute.translatedModule(
@@ -255,7 +286,8 @@ final class PackCompileTest {
                     plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
             Map<String, Integer> written = new LinkedHashMap<>();
             for (var uniform : module.uniforms()) written.put(uniform.name(), uniform.offset());
-            String error = compileComputeValues(module.source(), "ChimeraShadowComputeValues", written);
+            String error = compileComputeValues(module.source(), "ChimeraShadowComputeValues", written,
+                    snapshot, "shadowcomp.csh");
             if (error != null) error += " [" + dump(pack, "shadowcomp.csh", module.source()) + "]";
             return error;
         } catch (IOException | RuntimeException failure) {
@@ -270,7 +302,15 @@ final class PackCompileTest {
      * packing and stayed 0, so its floodfill wrote one image only and flickered.
      */
     static String compileComputeValues(String source, String block, Map<String, Integer> written) {
+        return compileComputeValues(source, block, written, null, null);
+    }
+
+    private static String compileComputeValues(String source, String block, Map<String, Integer> written,
+                                               ConvertedOutputSnapshot snapshot, String key) {
         Compiled compiled = spirv(source, Shaderc.shaderc_glsl_compute_shader, "pack.csh");
+        if (snapshot != null) {
+            snapshot.record(key, source, compiled.words() == null ? null : spirvHash(compiled.words()));
+        }
         if (compiled.error() != null) return compiled.error();
         Map<String, Integer> read = blockMemberOffsets(compiled.words(), block);
         for (var value : written.entrySet()) {
@@ -331,23 +371,35 @@ final class PackCompileTest {
 
     /** VulkanMod's shaderc settings; returns the first error line, or null on success. */
     static String compile(String source, boolean vertex) {
-        return vertex ? compile(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
-                : compile(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+        return vertex ? outcome(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh").error()
+                : outcome(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh").error();
     }
 
     /** A shaderc result: the SPIR-V words on success, otherwise the first error line. */
     private record Compiled(int[] words, String error) {}
 
+    /** A cached compile: the first error line or null, and the SPIR-V's short hash when it compiled. */
+    private record Outcome(String error, String spirvHash) {}
+
     /**
      * Each distinct source compiles once per run: the option sweep prepares the same program
      * source under most of its variants.
      */
-    private static final Map<String, Optional<String>> COMPILED = new ConcurrentHashMap<>();
+    private static final Map<String, Outcome> COMPILED = new ConcurrentHashMap<>();
 
-    private static String compile(String source, int kind, String fileName) {
+    private static Outcome outcome(String source, int kind, String fileName) {
         String key = kind + ":" + ConformanceReport.sha256(source.getBytes(StandardCharsets.UTF_8));
-        return COMPILED.computeIfAbsent(key, ignored -> Optional.ofNullable(spirv(source, kind, fileName).error()))
-                .orElse(null);
+        return COMPILED.computeIfAbsent(key, ignored -> {
+            Compiled compiled = spirv(source, kind, fileName);
+            return new Outcome(compiled.error(), compiled.words() == null ? null : spirvHash(compiled.words()));
+        });
+    }
+
+    /** The short hash of a SPIR-V module's words, as {@link ConvertedOutputSnapshot} records it. */
+    private static String spirvHash(int[] words) {
+        ByteBuffer bytes = ByteBuffer.allocate(words.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        bytes.asIntBuffer().put(words);
+        return ConformanceReport.sha256(bytes.array()).substring(0, 16);
     }
 
     /** Compiled as the runtime compiles (GlslCompiler), without the optimizer. */
@@ -418,7 +470,9 @@ final class PackCompileTest {
      * see a program the plan newly rejects (MakeUp 9.5g terrain fell back in game while every
      * admitted program compiled). The packs are the
      * locked pair plus {@code chimera.pack.extra}; {@code -Pchimera.packCompile.updateAdmission=true}
-     * rewrites the baseline after review.
+     * rewrites the baseline after review. Every compiled shader must also match its
+     * converted-output baseline ({@link ConvertedOutputSnapshot}); {@code -Pchimera.snapshot.update=true}
+     * rewrites that, and {@code -Pchimera.snapshot.spirvOnly=true} compares SPIR-V alone.
      */
     @Test
     void compileLockedPacks() throws Exception {
@@ -436,7 +490,10 @@ final class PackCompileTest {
         for (Path pack : packs) {
             String key = pack.getFileName().toString();
             PackProbe.Analysis analysis = PackProbe.analyze(pack);
-            Result result = run(pack, analysis);
+            ConvertedOutputSnapshot snapshot = new ConvertedOutputSnapshot(key);
+            Result result = run(pack, analysis, snapshot);
+            failures.addAll(snapshot.compareWithBaseline(Boolean.getBoolean("chimera.snapshot.update"),
+                    Boolean.getBoolean("chimera.snapshot.spirvOnly")));
             SortedSet<String> rejected = rejectedPrograms(pack, analysis);
             System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected,"
                     + " pass computes %s%n", key, result.compiled(), result.failures().size(), rejected.size(),
