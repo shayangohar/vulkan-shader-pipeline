@@ -91,7 +91,7 @@ final class OptionSweepFixesTest {
                 uniform sampler2D DEBUG_SAMPLER;
                 void main() { gl_FragColor = texelFetch(DEBUG_SAMPLER, ivec2(0), 0); }
                 """;
-        String expanded = GlslMacroAliases.expandSamplerAliases(source);
+        String expanded = GlslMacroExpander.expand(source);
         assertTrue(expanded.contains("uniform sampler2D colortex1;"), expanded);
         assertTrue(expanded.contains("texelFetch(colortex1,"), expanded);
     }

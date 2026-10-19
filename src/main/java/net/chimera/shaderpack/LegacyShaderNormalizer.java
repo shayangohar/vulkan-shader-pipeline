@@ -21,9 +21,8 @@ import java.util.regex.Pattern;
  * vertex stage it starts every referenced output
  * at zero, the value GL drivers leave in one a path never writes. It also
  * gives every uniform its own declaration, so
- * per-name rewriters never meet a declarator list, and expands macros that
- * alias a sampler, so planning sees every sampler a program uses, or a
- * storage qualifier, so every converter reads declarations in one spelling.
+ * per-name rewriters never meet a declarator list. Its input is already
+ * macro-expanded ({@link ShaderSourcePreprocessor}).
  */
 final class LegacyShaderNormalizer {
     /** Iris's name for the legacy built-in fog distance varying. */
@@ -126,9 +125,8 @@ final class LegacyShaderNormalizer {
             return new Result(null, List.of(), false);
         }
         try {
-            List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(GlslMacroAliases.expandSamplerAliases(
-                    GlslTokenRewriter.splitUniformDeclarators(
-                            GlslMacroAliases.expandStorageQualifierAliases(source)))));
+            List<GlslLexer.Token> tokens = new ArrayList<>(
+                    GlslLexer.lex(GlslTokenRewriter.splitUniformDeclarators(source)));
             int version = authoredVersion(source);
             renameLateBuiltinDefinitions(tokens, version);
             endLineCommentsAtTheirLine(tokens, version);

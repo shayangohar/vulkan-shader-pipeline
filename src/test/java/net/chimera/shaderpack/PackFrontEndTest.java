@@ -560,8 +560,8 @@ final class PackFrontEndTest {
 
     @Test
     void samplerMacroAliases() {
-        // Photon reaches samplers through macros; only those aliases expand, and only while defined.
-        String aliased = GlslMacroAliases.expandSamplerAliases("""
+        // Photon reaches samplers through macros; each expands while it is defined.
+        String aliased = GlslMacroExpander.expand("""
                 uniform sampler2D colortex0;
                 uniform sampler2D colortex5;
                 #define rec709_to_working_color rec709_to_rec2020
@@ -574,24 +574,23 @@ final class PackFrontEndTest {
                 vec4 b = texture(SRC_SAMPLER, vec2(0.0));
                 vec3 c = rec709_to_working_color[0];
                 """);
-        assertTrue(!aliased.contains("SRC_SAMPLER") && !aliased.contains("#define LUT")
-                        && aliased.contains("vec4 a = texture(colortex5, vec2(0.0)) + texture(colortex5, vec2(0.0))")
-                        && aliased.contains("#define SAMPLE(uv) texture(colortex5, uv)")
+        assertTrue(!aliased.contains("SRC_SAMPLER") && !aliased.contains("#define")
+                        && aliased.contains("vec4 a = texture(colortex5, vec2(0.0)) + texture(colortex5, vec2(0.0))"
+                                + " + texture(colortex5, vec2(1.0));")
                         && aliased.contains("vec4 b = texture(colortex0, vec2(0.0));")
-                        && aliased.contains("#define rec709_to_working_color rec709_to_rec2020")
-                        && aliased.contains("vec3 c = rec709_to_working_color[0];"),
+                        && aliased.contains("vec3 c = rec709_to_rec2020[0];"),
                 "sampler alias expansion:\n" + aliased);
     }
 
     @Test
     void objectMacroReachability() {
-        // Photon calls tonemap_lottes only as tonemap(x) through an object-like alias.
-        String reachable = """
+        // Photon calls tonemap_lottes only as tonemap(x) through an object-like alias, which preparation expands.
+        String reachable = GlslMacroExpander.expand("""
                 #define tonemap tonemap_lottes
                 vec3 tonemap_lottes(vec3 rgb) { return rgb; }
                 vec3 unused_operator(vec3 rgb) { return rgb * 2.0; }
                 void main() { gl_FragColor = vec4(tonemap(vec3(1.0)), 1.0); }
-                """;
+                """);
         String pruned = GlslTokenRewriter.removeUnreachableFunctions(reachable,
                 GlslResourceUsage.analyze(reachable));
         assertTrue(pruned.contains("vec3 tonemap_lottes(vec3 rgb)") && !pruned.contains("unused_operator"),

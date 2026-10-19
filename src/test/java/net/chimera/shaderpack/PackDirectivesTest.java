@@ -45,7 +45,7 @@ final class PackDirectivesTest {
                 GlslTokenRewriter.splitUniformDeclarators("#define W writeonly\nuniform sampler3D a, b;"),
                 "a directive before the declaration is not a qualifier");
         assertEquals("/* a comment\nover two lines */\n\nin vec3 mc_Entity;",
-                GlslMacroAliases.expandStorageQualifierAliases(
+                GlslMacroExpander.expand(
                         "/* a comment\nover two lines */\n#define attribute in\nattribute vec3 mc_Entity;"),
                 "a storage-qualifier alias applies after its definition, lexed as one stream");
     }

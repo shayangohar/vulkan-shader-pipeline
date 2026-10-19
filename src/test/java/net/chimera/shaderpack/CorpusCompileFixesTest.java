@@ -49,12 +49,12 @@ final class CorpusCompileFixesTest {
     /** I Like Vanilla declares varyings through #define in_out in; Bloop defines packSnorm4x8 at 1.40. */
     @Test
     void qualifierMacrosExpandAndLateBuiltinsAreRenamedByVersion() {
-        String fragment = LegacyShaderNormalizer.normalize("""
+        String fragment = LegacyShaderNormalizer.normalize(GlslMacroExpander.expand("""
                 #version 330
                 #define in_out in
                 in_out vec2 texcoord;
                 void main() {}
-                """, false).source();
+                """), false).source();
         assertTrue(fragment.contains("in vec2 texcoord;") && !fragment.contains("in_out"), fragment);
         String bloop = LegacyShaderNormalizer.normalize("""
                 #version 140
@@ -98,7 +98,7 @@ final class CorpusCompileFixesTest {
     /** Spring reads a sampler in a global initializer; Noble reads one inside a macro body. */
     @Test
     void globalInitializersAndUsedMacroBodiesReadSamplers() {
-        Set<String> live = GlslResourceUsage.liveSamplers("""
+        Set<String> live = GlslResourceUsage.liveSamplers(GlslMacroExpander.expand("""
                 uniform sampler2D colortex4;
                 uniform sampler2D colortex5;
                 uniform sampler2D colortex6;
@@ -106,7 +106,7 @@ final class CorpusCompileFixesTest {
                 #define UNUSED texture(colortex6, vec2(0.0))
                 vec2 texel = 1.0 / vec2(textureSize(colortex4, 0));
                 void main() { vec4 c = SAMPLE(texel); }
-                """);
+                """));
         assertEquals(Set.of("colortex4", "colortex5"), live);
     }
 
@@ -118,8 +118,10 @@ final class CorpusCompileFixesTest {
                 #define projectionMatrix gbufferProjection
                 void main() { vec4 p = projectionMatrix[0]; }
                 """;
-        String prepared = IrisCoreProfile.prepareIrisCoreProfile(source, null, false, "ivec2(0)", true);
+        String prepared = IrisCoreProfile.prepareIrisCoreProfile(GlslMacroExpander.expand(source), null, false,
+                "ivec2(0)", true);
         assertFalse(prepared.contains("gl_ProjectionMatrix"), prepared);
+        assertTrue(prepared.contains("vec4 p = gbufferProjection[0];"), prepared);
     }
 
     /** I Like Vanilla writes integer data through a modern uvec4 output. */
