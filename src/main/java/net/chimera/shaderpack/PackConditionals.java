@@ -84,7 +84,7 @@ final class PackConditionals {
             switch (directive.toLowerCase()) {
                 case "if", "ifdef", "ifndef" -> {
                     boolean parent = active();
-                    boolean result = parent && evaluate(condition(directive, argument), macros);
+                    boolean result = parent && PreprocessorExpression.evaluate(condition(directive, argument), macros);
                     branches.push(new Branch(parent, parent && result, result, false));
                 }
                 case "elif" -> elseIf(argument);
@@ -108,7 +108,7 @@ final class PackConditionals {
                 throw new IllegalArgumentException("conditional after else");
             }
             boolean result = previous.parentActive() && !previous.taken()
-                    && evaluate(argument, macros);
+                    && PreprocessorExpression.evaluate(argument, macros);
             branches.push(new Branch(previous.parentActive(),
                     previous.parentActive() && result,
                     previous.taken() || result, false));
@@ -140,14 +140,15 @@ final class PackConditionals {
         private record Branch(boolean parentActive, boolean active, boolean taken, boolean elseSeen) {}
     }
 
+    /** A conditional directive's expression, as JCPP evaluates it ({@link PreprocessorExpression}). */
     static boolean evaluate(String expression, Map<String, String> macros) {
-        return evaluate(expression, macros, false);
+        return PreprocessorExpression.evaluate(expression, macros);
     }
 
     /**
-     * Evaluates the small boolean expression language used by pack conditions.
-     * Unknown names normally mean zero. Property program toggles may opt into
-     * the Iris behavior where an unknown option name remains enabled.
+     * Evaluates the small boolean expression language of shaders.properties program switches
+     * ({@code program.X.enabled}). Unknown names mean zero, unless the switch opts into the Iris
+     * behavior where an unknown option name remains enabled.
      */
     static boolean evaluate(
             String expression,

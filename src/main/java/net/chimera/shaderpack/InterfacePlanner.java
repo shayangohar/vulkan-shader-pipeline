@@ -203,10 +203,11 @@ final class InterfacePlanner {
             deviations.add(unusedOr(name, unused, "CUSTOM_VALUE_REJECTED:" + name));
             return;
         }
-        if (!UniformRegistry.SUPPORTED_TYPES.contains(type) || !compatibleType(name, type, spec)) {
+        if (!UniformRegistry.SUPPORTED_TYPES.contains(type)) {
             deviations.add(unusedOr(name, unused, "UNIFORM_TYPE_UNSUPPORTED:" + name));
             return;
         }
+        spec = typed(name, type, spec, unused, deviations);
         if (spec == null) {
             spec = UniformRegistry.unsetDescriptor(name, type);
             if (spec != null) {
@@ -222,6 +223,14 @@ final class InterfacePlanner {
             return;
         }
         addLiveBridge(name, spec, customDescriptors, deviations);
+    }
+
+    /** Iris disables a value the program declares with another type, and it reads zero (KNOW-732). */
+    private static UniformRegistry.UniformDescriptor typed(String name, String type,
+            UniformRegistry.UniformDescriptor spec, boolean unused, Set<String> deviations) {
+        if (compatibleType(name, type, spec)) return spec;
+        if (!unused) deviations.add("UNIFORM_TYPE_MISMATCH_ZERO:" + name);
+        return UniformRegistry.disabledDescriptor(name, type);
     }
 
     /** A per-vertex entity id plans as vertex data when it is an int or a float. */

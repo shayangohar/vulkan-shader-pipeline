@@ -153,8 +153,12 @@ final class OptionSweepTest {
                 StandardCopyOption.REPLACE_EXISTING);
         Outcome defaults = evaluate(pack, Map.of());
         List<Variant> variants;
+        Set<String> undeclared = new TreeSet<>();
         try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            variants = variants(loaded.options().pack(), structuralNames(loaded.shadersDir()));
+            ShaderPackOptions options = loaded.options().pack();
+            variants = variants(options, structuralNames(loaded.shadersDir()));
+            options.profiles().declared().forEach(profile -> profile.values().keySet().stream()
+                    .filter(name -> defaultText(options, name) == null).forEach(undeclared::add));
         }
         long started = System.nanoTime();
         int threads = Math.max(1, Math.min(8, Runtime.getRuntime().availableProcessors() / 2));
@@ -174,12 +178,13 @@ final class OptionSweepTest {
         json.put("variants", variants.size());
         json.put("seconds", seconds);
         json.put("defaults", defaults);
+        json.put("undeclaredProfileEntries", undeclared);
         json.put("changes", mattering);
         Files.writeString(OUTPUT.resolve(source.getFileName() + ".json"),
                 new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(json));
         System.out.printf("[chimera] option sweep %s: %d variants in %ds, %d change what runs%n",
                 source.getFileName(), variants.size(), seconds, mattering.size());
-        return markdown(source.getFileName().toString(), variants.size(), defaults, mattering);
+        return markdown(source.getFileName().toString(), variants.size(), defaults, undeclared, mattering);
     }
 
     /**
@@ -251,6 +256,9 @@ final class OptionSweepTest {
             PackProbe.Analysis analysis = PackProbe.analyze(pack, loaded);
             SortedMap<String, List<String>> rejected = new TreeMap<>();
             for (String program : PackCompileTest.rejectedProgramsIn(loaded.shadersDir(), analysis)) {
+                // A pass with no fragment source draws nothing in Iris either; its computes are planned apart.
+                var report = analysis.report().program(program);
+                if (report != null && report.deviations().contains("MISSING_FRAGMENT_SOURCE")) continue;
                 rejected.put(program, PackCompileTest.rejectionReasons(analysis, program));
             }
             // shadowcomp and the other advanced computes are planned apart from the program list.
@@ -266,11 +274,13 @@ final class OptionSweepTest {
                 failures.add(failure.replaceAll(" \\[[^\\]]*]$", ""));
             }
             // A variant whose value never reached the sources would sweep nothing; say so. A
-            // profile's entries at their defaults are no change.
+            // profile's entries at their defaults are no change, and Iris ignores an entry that
+            // names no declared option (listed apart: undeclaredProfileEntries).
             ShaderPackOptions staged = loaded.options().pack();
             Map<String, String> changed = staged.values().changes();
             boolean applied = values.entrySet().stream()
-                    .filter(entry -> !entry.getValue().equals(defaultText(staged, entry.getKey())))
+                    .filter(entry -> defaultText(staged, entry.getKey()) != null
+                            && !entry.getValue().equals(defaultText(staged, entry.getKey())))
                     .allMatch(entry -> changed.containsKey(entry.getKey()));
             return new Outcome(rejected, failures, null, applied);
         } catch (RuntimeException | AssertionError failure) {
@@ -293,11 +303,16 @@ final class OptionSweepTest {
         return new Change(variant.label(), newlyRejected, newFailures, outcome.error(), outcome.applied());
     }
 
-    private static String markdown(String pack, int variants, Outcome defaults, List<Change> changes) {
+    private static String markdown(String pack, int variants, Outcome defaults, Set<String> undeclared,
+                                   List<Change> changes) {
         StringBuilder text = new StringBuilder("\n## ").append(pack).append("\n\n")
                 .append(variants).append(" variants; ").append(changes.size()).append(" change what runs. ")
                 .append("Defaults reject ").append(defaults.rejected().keySet()).append(" and fail ")
                 .append(defaults.failures().size()).append(" compiles.\n\n");
+        if (!undeclared.isEmpty()) {
+            text.append("Profiles name options no source declares, which Iris ignores too: ")
+                    .append(undeclared).append("\n\n");
+        }
         for (Change change : changes) {
             text.append("- `").append(change.variant()).append("`");
             change.newlyRejected().forEach((program, reasons) ->

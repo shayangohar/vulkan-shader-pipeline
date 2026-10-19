@@ -16,8 +16,8 @@ import java.util.regex.Pattern;
  * parameter after its {@code lightDir} uniform ({@code projectedCaustic(..., vec3 lightDir)}).
  */
 final class GlslScopedReferences {
-    private static final Pattern BUILT_IN_TYPE =
-            Pattern.compile("void|bool|int|uint|float|double|[biud]?vec[234]|d?mat[234](x[234])?");
+    private static final Pattern BUILT_IN_TYPE = Pattern.compile(
+            "void|bool|int|uint|float|double|[biud]?vec[234]|d?mat[234](x[234])?|[iu]?(sampler|image)\\w+");
 
     private GlslScopedReferences() {}
 
@@ -67,6 +67,9 @@ final class GlslScopedReferences {
         String name = tokens.get(index).text();
         int previous = GlslLexer.previousSignificant(tokens, index);
         if (previous >= 0 && tokens.get(previous).symbol(".")) return;
+        // A call is a function's name: a sampler named texture never renames texture(...).
+        int next = GlslLexer.nextSignificant(tokens, index);
+        if (next >= 0 && tokens.get(next).symbol("(")) return;
         if (!scopes.isEmpty() && declaredHere(tokens, index, types)) {
             scopes.peek().add(name);
             return;
