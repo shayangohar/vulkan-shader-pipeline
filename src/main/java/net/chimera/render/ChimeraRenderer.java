@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
@@ -158,6 +159,11 @@ public final class ChimeraRenderer {
         if (!ready || chimeraPass == null) {
             return;
         }
+        // VulkanMod copies RenderSystem's texture matrix into VRenderSystem.TextureMatrix only when it is
+        // set or reset on the render thread, and allocates that copy uninitialized. Pack entity and hand
+        // stages read it as gl_TextureMatrix[0], which Iris serves from RenderSystem.getTextureMatrix():
+        // until the first glint draw Solas's hand sampled its skin through a zero matrix and drew black.
+        VRenderSystem.setTextureMatrix(RenderSystem.getTextureMatrix());
         // Material companions are independent of shader-pack state: atlas
         // uploads arrive whether or not a pack is installed.
         chimeraPass.pumpMaterialMapBuilds();

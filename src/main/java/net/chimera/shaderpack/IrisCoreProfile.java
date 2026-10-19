@@ -28,7 +28,6 @@ final class IrisCoreProfile {
             "(?m)^[ \\t]*uniform[ \\t]+(\\w+)[ \\t]+(modelViewMatrix|modelViewMatrixInverse|projectionMatrix"
                     + "|projectionMatrixInverse|normalMatrix|textureMatrix|chunkOffset)[ \\t]*;[ \\t]*$");
 
-    private static final Pattern MACRO_NAME = Pattern.compile("(?m)^[ \\t]*#[ \\t]*define[ \\t]+(\\w+)");
 
     /** Iris SodiumCoreTransformer's overlay for a format without one: no hurt flash, no white flash. */
     public static final String NO_OVERLAY = "ivec2(0, 10)";
@@ -72,16 +71,12 @@ final class IrisCoreProfile {
         while (uniforms.find()) declared.put(uniforms.group(2), uniforms.group(1));
         result = uniforms.replaceAll("");
         if (coreMode) {
+            // The source is macro-expanded, as Iris's is: a core name the pack defines as a macro
+            // (Noble's #define projectionMatrix gbufferProjection) has expanded away.
             String stripped = stripComments(result);
-            // Iris transforms the preprocessed source: a core name the pack defines as a macro
-            // (Noble's #define projectionMatrix gbufferProjection) has expanded away by then.
-            Set<String> macros = new HashSet<>();
-            Matcher define = MACRO_NAME.matcher(stripped);
-            while (define.find()) macros.add(define.group(1));
             for (Map.Entry<String, String> name : CORE_NAME_TYPES.entrySet()) {
                 boolean input = name.getKey().startsWith("va");
-                if ((vertexStage || !input) && !macros.contains(name.getKey())
-                        && LegacyGlslConverter.containsIdentifier(stripped, name.getKey())) {
+                if ((vertexStage || !input) && LegacyGlslConverter.containsIdentifier(stripped, name.getKey())) {
                     declared.putIfAbsent(name.getKey(), name.getValue());
                 }
             }

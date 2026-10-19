@@ -15,8 +15,10 @@ import java.util.regex.Pattern;
 
 /**
  * Small, source-agnostic preprocessor for the wrapper patterns used by
- * OptiFine and Iris packs. It expands includes and removes inactive branches
- * before the pack interface is inspected or converted.
+ * OptiFine and Iris packs. It expands includes, removes inactive branches and
+ * then expands every macro ({@link GlslMacroExpander}) before the pack
+ * interface is inspected or converted, as Iris preprocesses before it reads a
+ * program.
  */
 public final class ShaderSourcePreprocessor {
     private static final int MAX_INCLUDE_DEPTH = 32;
@@ -71,7 +73,13 @@ public final class ShaderSourcePreprocessor {
             } catch (RuntimeException failure) {
                 throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
-            return new Result(context.output.toString(),
+            String expanded;
+            try {
+                expanded = GlslMacroExpander.expand(context.output.toString());
+            } catch (IllegalArgumentException failure) {
+                throw new PreparationFailure("PREPROCESSOR_MACRO_EXPANSION_FAILED");
+            }
+            return new Result(expanded,
                     List.copyOf(new TreeSet<>(context.deviations)),
                     List.copyOf(new TreeSet<>(context.dependencies)));
         } catch (PreparationFailure e) {
@@ -169,6 +177,9 @@ public final class ShaderSourcePreprocessor {
             try {
                 String[] lines = source.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
                 StringBuilder logical = new StringBuilder();
+                // A line that starts inside a block comment is comment text, not a directive: BSL
+                // documents its options with "#define FEATURE ..." lines inside /* */.
+                boolean inComment = false;
                 for (String line : lines) {
                     // GLSL 3.3 section 3.1: a backslash right before a newline
                     // splices the two lines before any directive is parsed.
@@ -180,10 +191,11 @@ public final class ShaderSourcePreprocessor {
                         line = logical.append(line).toString();
                         logical.setLength(0);
                     }
-                    processLine(line, sourceFile, depth);
+                    processLine(line, sourceFile, depth, inComment);
+                    inComment = inCommentAfter(line, inComment);
                 }
                 if (!logical.isEmpty()) {
-                    processLine(logical.toString(), sourceFile, depth);
+                    processLine(logical.toString(), sourceFile, depth, inComment);
                 }
             } finally {
                 if (normalized != null) {
@@ -192,8 +204,8 @@ public final class ShaderSourcePreprocessor {
             }
         }
 
-        private void processLine(String line, Path sourceFile, int depth) throws IOException {
-            Matcher matcher = directive(line);
+        private void processLine(String line, Path sourceFile, int depth, boolean inComment) throws IOException {
+            Matcher matcher = inComment ? null : directive(line);
             if (matcher == null) {
                 if (active()) {
                     emitLockedDefinitions();
@@ -390,6 +402,27 @@ public final class ShaderSourcePreprocessor {
             int lineComment = argument.indexOf("//");
             return lineComment >= 0 ? argument.substring(0, lineComment) : argument;
         }
+    }
+
+    /** Whether a block comment is still open after {@code line}, given whether one was open before it. */
+    static boolean inCommentAfter(String line, boolean inComment) {
+        boolean open = inComment;
+        int index = 0;
+        while (index < line.length()) {
+            if (open) {
+                int end = line.indexOf("*/", index);
+                if (end < 0) return true;
+                open = false;
+                index = end + 2;
+            } else {
+                int lineComment = line.indexOf("//", index);
+                int block = line.indexOf("/*", index);
+                if (block < 0 || (lineComment >= 0 && lineComment < block)) return false;
+                open = true;
+                index = block + 2;
+            }
+        }
+        return open;
     }
 
     /** The line's directive match, or null for a line that is not a directive. */

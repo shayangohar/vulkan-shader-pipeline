@@ -13,7 +13,7 @@
 // pixel anchored to a texel center, same as the host's own fragment.
 const int colortex0Format = RGBA16F;
 const int shadowMapResolution = 2048;
-#define DRAWBUFFERS1
+/* DRAWBUFFERS:0 */
 varying vec4 color;
 varying vec2 texcoord;
 uniform sampler2D texture;

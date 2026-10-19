@@ -31,7 +31,7 @@ final class OptionSweepFixesTest {
         var result = ShaderSourcePreprocessor.prepare(dir, dir.resolve("composite1.fsh"), source,
                 PackEngineDefines.forPack(Map.of()), Set.of());
         assertTrue(result.successful(), result.deviations().toString());
-        assertTrue(result.source().contains("#define MULT_M"), result.source());
+        assertTrue(result.source().contains("d *= 25 * 0.01;"), result.source());
     }
 
     /**
@@ -91,7 +91,7 @@ final class OptionSweepFixesTest {
                 uniform sampler2D DEBUG_SAMPLER;
                 void main() { gl_FragColor = texelFetch(DEBUG_SAMPLER, ivec2(0), 0); }
                 """;
-        String expanded = GlslMacroAliases.expandSamplerAliases(source);
+        String expanded = GlslMacroExpander.expand(source);
         assertTrue(expanded.contains("uniform sampler2D colortex1;"), expanded);
         assertTrue(expanded.contains("texelFetch(colortex1,"), expanded);
     }
