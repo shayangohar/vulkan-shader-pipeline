@@ -43,6 +43,23 @@ final class GlslDeclarationsTest {
                 new GlslDeclarations.TextEdit(0, 5, ""), new GlslDeclarations.TextEdit(3, 8, ""))));
     }
 
+    /** The entity check reads uniforms and inputs from the tree: a precision qualifier no longer hides one. */
+    @Test
+    void entityFeatureCheckSeesEveryDeclarationShape() {
+        String main = "\nvoid main() { gl_Position = vec4(strength); }\n";
+        IllegalArgumentException custom = assertThrows(IllegalArgumentException.class,
+                () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
+                        "uniform highp float strength;" + main, false, false));
+        assertEquals("unsupported entity vertex uniform: strength", custom.getMessage());
+        IllegalArgumentException attribute = assertThrows(IllegalArgumentException.class,
+                () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
+                        "in highp vec3 mc_midTexCoord;\nvoid main() { gl_Position = vec4(mc_midTexCoord, 1.0); }\n",
+                        false, false));
+        assertEquals("unsupported entity attribute: mc_midTexCoord", attribute.getMessage());
+        EntityVertexFeatureCheck.rejectEntityVertexFeatures("uniform float unread;\nin vec2 mc_midTexCoord;\n"
+                + "void main() { gl_Position = vec4(mc_midTexCoord, 0.0, 1.0); }\n", false, false);
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {
