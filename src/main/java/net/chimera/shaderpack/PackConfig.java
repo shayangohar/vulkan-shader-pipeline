@@ -55,7 +55,6 @@ public final class PackConfig {
                     + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|"
                     + "shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
                     + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
-    private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile("#define\\s+DRAWBUFFERS(\\d+)");
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
@@ -753,18 +752,8 @@ public final class PackConfig {
         }
     }
 
-    /** The number of draw targets a program writes: DRAWBUFFERS, RENDERTARGETS comment, or gl_FragData usage. */
+    /** The number of draw targets a program writes: its DRAWBUFFERS comment, or its gl_FragData usage. */
     public static int drawBufferCountOf(String source) {
-        Matcher def = DRAWBUFFERS_DEFINE.matcher(source);
-        if (def.find()) {
-            try {
-                int count = Integer.parseInt(def.group(1));
-                if (count >= 1) {
-                    return count;
-                }
-            } catch (NumberFormatException ignored) {
-            }
-        }
         Matcher comment = DRAWBUFFERS_COMMENT.matcher(source);
         if (comment.find()) {
             int count = comment.group(1).split(",").length;

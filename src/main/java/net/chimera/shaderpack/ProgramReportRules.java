@@ -647,10 +647,6 @@ final class ProgramReportRules {
 
     static List<Integer> scanTargets(String source) {
         TreeSet<Integer> result = new TreeSet<>();
-        Matcher define = PackProbe.DRAWBUFFERS_DEFINE.matcher(source);
-        if (define.find()) {
-            addSequentialTargets(result, define.group(1));
-        }
         Matcher comment = PackProbe.TARGET_COMMENT.matcher(source);
         while (comment.find()) {
             result.addAll(PostTargetPlan.parseCommentTargets(
@@ -664,16 +660,6 @@ final class ProgramReportRules {
             result.add(0);
         }
         return List.copyOf(result);
-    }
-
-    static void addSequentialTargets(Set<Integer> result, String targetText) {
-        try {
-            int count = Integer.parseInt(targetText);
-            for (int index = 0; index < count; index++) {
-                result.add(index);
-            }
-        } catch (NumberFormatException ignored) {
-        }
     }
 
     static void addTarget(Set<Integer> result, String targetText) {

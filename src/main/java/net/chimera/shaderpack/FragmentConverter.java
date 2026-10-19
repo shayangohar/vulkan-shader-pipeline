@@ -31,9 +31,6 @@ public final class FragmentConverter {
     static final Pattern MODERN_GEOMETRY_OUTPUT_DECL = Pattern.compile(
             "(?m)^\\s*out\\s+vec4\\s+(\\w+)\\s*;\\s*");
 
-    static final Pattern POST_DRAWBUFFERS_DEFINE = Pattern.compile(
-            "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
-
     /**
      * The host blocks ahead of a terrain-lane program's own uniform block: chimera_terrain.json's
      * view and fog blocks for terrain and water, chimera_shadow.json's view block for shadow.
@@ -448,8 +445,7 @@ public final class FragmentConverter {
     }
 
     static String convertPostOutputs(String source, PostTargetPlan targetPlan) {
-        String result = POST_DRAWBUFFERS_DEFINE.matcher(source).replaceAll("");
-        result = rewriteModernOutputs(result, targetPlan);
+        String result = rewriteModernOutputs(source, targetPlan);
         return GlslTokenRewriter.rewritePostOutputs(result, targetPlan);
     }
 

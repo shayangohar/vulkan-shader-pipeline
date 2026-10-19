@@ -22,8 +22,6 @@ public final class PostTargetPlan {
     public static final int MAX_TARGET = 15;
     public static final int DEFAULT_FORMAT = 97;
 
-    private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
-            "(?m)^\\s*#define\\s+DRAWBUFFERS([0-9]+)\\s*$");
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");
     private static final Pattern DIRECTIVE_WORD = Pattern.compile(
@@ -151,18 +149,13 @@ public final class PostTargetPlan {
     }
 
     /**
-     * The routes the DRAWBUFFERS defines, then the target comments, declare. A malformed directive,
-     * or a directive word that no directive parses from, is recorded and declares no route.
+     * The routes the target comments declare, as Iris reads them ({@code /* DRAWBUFFERS:01 *}{@code /},
+     * {@code /* RENDERTARGETS: 0,2 *}{@code /}). A malformed directive, or a directive word that no
+     * directive parses from, is recorded and declares no route.
      */
     private static List<List<Integer>> parseDirectives(String text, List<String> deviations) {
         List<List<Integer>> directives = new ArrayList<>();
         boolean directiveSeen = false;
-
-        Matcher define = DRAWBUFFERS_DEFINE.matcher(text);
-        while (define.find()) {
-            addDirective(parseDigits(define.group(1), deviations), directives, deviations);
-            directiveSeen = true;
-        }
 
         Matcher comment = TARGET_COMMENT.matcher(text);
         while (comment.find()) {
