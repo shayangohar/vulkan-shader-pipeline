@@ -10,8 +10,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Random;
 
-/** One pack-owned noisetex image for the narrow real-pack post path. */
+/** One pack-owned sampled image: a pack PNG or game texture, or the noise Iris generates. */
 public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
     private static final int MAX_ENCODED_BYTES = 8 * 1024 * 1024;
     private static final int MAX_DIMENSION = 4096;
@@ -56,6 +57,28 @@ public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
             throw new IOException("texture dimensions exceed limit");
         }
 
+        return upload(pixels, name, filter, wrap);
+    }
+
+    /**
+     * The noise Iris generates for a pack without texture.noise: {@code size} squared opaque
+     * texels whose red, green and blue are the low three bytes of successive {@code java.util.Random}
+     * ints from seed 0, drawn column by column, sampled linear and repeating.
+     */
+    public static PackNoiseTexture generated(int size, String name) throws IOException {
+        NativeImage pixels = new NativeImage(NativeImage.Format.RGBA, size, size, false);
+        Random random = new Random(0);
+        for (int x = 0; x < size; x++) {
+            for (int y = 0; y < size; y++) {
+                // NativeImage packs a texel as ABGR: red is the low byte.
+                pixels.setPixelRGBA(x, y, random.nextInt() | 0xFF000000);
+            }
+        }
+        return upload(pixels, name, "linear", "repeat");
+    }
+
+    private static PackNoiseTexture upload(NativeImage pixels, String name, String filter, String wrap)
+            throws IOException {
         DynamicTexture texture = new DynamicTexture(pixels);
         try {
             VulkanImage image = ChimeraTextures.image(texture);

@@ -148,6 +148,46 @@ final class CorpusCompileFixesTest {
                 config.deviations().toString());
     }
 
+    /** Pegasus keeps includes in shaders/shaders/; the shaders folder at the zip's root is the pack. */
+    @Test
+    void aShadersFolderAtTheRootWinsOverANestedOne() {
+        assertEquals("", PackSource.findShadersPrefix(List.of("shaders/composite.fsh", "shaders/shaders/clouds.glsl")));
+        assertEquals("Pack/", PackSource.findShadersPrefix(List.of("Pack/shaders/final.fsh")));
+        assertEquals(null, PackSource.findShadersPrefix(List.of("A/shaders/final.fsh", "B/shaders/final.fsh")),
+                "two nested packs stay ambiguous");
+    }
+
+    /** Mellow, RedHat and Sildur's sample noisetex without texture.noise: Iris generates it. */
+    @Test
+    void aPackWithoutTextureNoiseSamplesGeneratedNoise(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.createDirectories(shaders.resolve("tex"));
+        Files.writeString(shaders.resolve("tex/noise.png"), "not read without texture.noise");
+        Files.writeString(shaders.resolve("final.fsh"), """
+                #version 120
+                const int noiseTextureResolution = 128;
+                uniform sampler2D noisetex;
+                void main() { gl_FragColor = texture2D(noisetex, gl_FragCoord.xy / 128.0); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackResourceBinding noise = plan.resources().bindings("final").stream()
+                .filter(binding -> binding.sampler().equals("noisetex")).findFirst().orElseThrow();
+        assertEquals(PackResourceStatus.GENERATED, noise.status(), noise.deviations().toString());
+        assertEquals(128, PackResourcePlan.generatedNoiseSize(noise.source()));
+        assertTrue(plan.shouldAttempt("final"), "the program samples the generated noise");
+    }
+
+    /** Sildur's terrain and water pass varying mat3 tbnMatrix; the fragment reads it at the layout's location. */
+    @Test
+    void legacyMatrixVaryingsTakeTheirLayoutLocation() {
+        LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("color", "vec4", "tbnMatrix", "mat3"), Map.of("color", 0, "tbnMatrix", 1));
+        String converted = LegacyGlslConverter.convertVaryings(
+                "#version 120\nvarying vec4 color;\nvarying mat3 tbnMatrix;\nvoid main() {}\n",
+                true, layout, null, UniformRegistry.Stage.GEOMETRY);
+        assertTrue(converted.contains("layout(location = 1) in mat3 tbnMatrix;"), converted);
+    }
+
     /** Noble's composite99.csh runs before composite99's draw; it is not a stage of that program. */
     @Test
     void passComputesShareTheirPassName() {

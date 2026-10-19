@@ -869,7 +869,7 @@ public final class PackSource {
         return false;
     }
 
-    private static String findShadersPrefix(List<String> names) {
+    static String findShadersPrefix(List<String> names) {
         TreeSet<String> candidates = new TreeSet<>();
         for (String name : names) {
             if (name.equals("shaders") || name.startsWith("shaders/")) {
@@ -884,6 +884,9 @@ public final class PackSource {
                 }
             }
         }
+        // A shaders folder at the root wins, as in Iris's walk of the zip: Pegasus keeps its
+        // includes in shaders/shaders/, which also reads as a nested pack root.
+        if (candidates.contains("")) return "";
         return candidates.size() == 1 ? candidates.first() : null;
     }
 
