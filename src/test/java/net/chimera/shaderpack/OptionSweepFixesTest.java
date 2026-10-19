@@ -31,7 +31,7 @@ final class OptionSweepFixesTest {
         var result = ShaderSourcePreprocessor.prepare(dir, dir.resolve("composite1.fsh"), source,
                 PackEngineDefines.forPack(Map.of()), Set.of());
         assertTrue(result.successful(), result.deviations().toString());
-        assertTrue(result.source().contains("#define MULT_M"), result.source());
+        assertTrue(result.source().contains("d *= 25 * 0.01;"), result.source());
     }
 
     /**

@@ -3,7 +3,7 @@
 uniform sampler2D colortex0;
 uniform sampler2D colortex1;
 varying vec2 texcoord;
-#define DRAWBUFFERS01
+/* DRAWBUFFERS:01 */
 
 void main() {
     vec4 world = texture2D(colortex0, texcoord);

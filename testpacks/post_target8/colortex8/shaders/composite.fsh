@@ -1,7 +1,7 @@
 #version 120
 const int colortex8Format = RGBA16F;
 uniform sampler2D colortex8;
-#define DRAWBUFFERS05
+/* DRAWBUFFERS:05 */
 void main() {
     vec4 reflection = texture2D(colortex8, vec2(0.5));
     gl_FragData[0] = reflection;

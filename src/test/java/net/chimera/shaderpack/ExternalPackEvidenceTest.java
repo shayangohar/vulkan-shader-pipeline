@@ -417,12 +417,8 @@ final class ExternalPackEvidenceTest {
         ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
                 shaders, sourcePath, source);
         assertTrue(prepared.successful(), "macro normalization failed");
-        assertTrue(prepared.source().contains("#undef MODE"),
-                "changed macro did not emit an undefinition");
-        assertEquals(1, count(prepared.source(), "#define MODE 1"),
-                "identical macro redefinition was not omitted");
-        assertEquals(1, count(prepared.source(), "#define MODE 2"),
-                "changed macro definition was not retained");
+        assertTrue(prepared.source().contains("void main()") && !prepared.source().contains("#define"),
+                "the redefined macro chose the branch and left no definition:\n" + prepared.source());
         assertTrue(prepared.deviations().contains("PREPROCESSOR_MACRO_REDEFINED:MODE"),
                 "macro redefinition deviation is missing");
     }

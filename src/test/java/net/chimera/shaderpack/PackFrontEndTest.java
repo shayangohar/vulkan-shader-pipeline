@@ -224,8 +224,7 @@ final class PackFrontEndTest {
         assertTrue(result.successful(), "continued #if rejected: " + result.deviations());
         assertTrue(result.source().contains("kept") && !result.source().contains("dropped"),
                 "continued #if chose the wrong branch:\n" + result.source());
-        assertTrue(result.source().lines().anyMatch(line ->
-                        line.startsWith("#define SUM(x, y)") && line.endsWith("((x) + (y))")),
+        assertTrue(result.source().contains("float total = ((1.0) + (2.0));"),
                 "continued #define was not spliced:\n" + result.source());
     }
 

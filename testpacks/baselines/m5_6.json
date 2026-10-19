@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "post_chain": {
-      "reportSha256": "aab2defb6d0b835269a5df528836d4fad272eb3a25b3b259dea2642821ce03df",
+      "reportSha256": "6b60555b0a80cd5adc875cdcabe67ed3bfd7b6aeffa488c30301f9d1adb5347a",
       "expectedPassInventory": ["composite", "final"],
       "expectedStages": {
         "composite": ["fragment"],
@@ -18,7 +18,7 @@
         "final": []
       },
       "sourceHashes": {
-        "composite.fsh": "9ef8d469b4f61d93832a7808fab9defefa384db3120cc64c3297513dfb020c06",
+        "composite.fsh": "c6b124e855337a8fa85d9515a127d215dc054c95f8bb9ef6aed73f346e0b9ff8",
         "composite1.fsh": "f721245e37a5382e35a1d89e800beed6fcf697e66caf623dbc243475a2af500b",
         "deferred.fsh": "c59ee8266514c65cba46c59a105fa98a24a56195d6db2ffec4f5575f3055d1b3",
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",

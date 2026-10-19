@@ -1,5 +1,5 @@
 #version 120e
-#define DRAWBUFFERS1
+/* DRAWBUFFERS:0 */
 varying vec4 color;
 varying vec2 texcoord;
 uniform sampler2D texture;

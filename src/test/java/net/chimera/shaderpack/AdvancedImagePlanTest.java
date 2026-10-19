@@ -490,7 +490,7 @@ final class AdvancedImagePlanTest {
                         + blockAtlas);
     }
 
-    /** BSL's 3D light volume slots and its composite4 macro and function plan. */
+    /** BSL's 3D light volume slots and its composite4 plan, whose Bayer4/Bayer8 macros arrive expanded. */
     private static void verifyBslResources(PackProbe.Analysis analysis) {
         PackPlan packPlan = analysis.plan();
         Map<String, Integer> slots = analysis.settings().customSamplerSlots();
@@ -498,13 +498,12 @@ final class AdvancedImagePlanTest {
                         && slots.containsKey("lighttex1"),
                 "BSL advanced sampler slots are incomplete: " + slots);
         PackProgramPlan composite4 = packPlan.program("composite4");
-        assertTrue(composite4 != null && composite4.executable()
-                        && composite4.convertedFragment() != null
-                        && composite4.stageSource("fragment") != null
-                        && composite4.stageSource("fragment").contains("#define Bayer4")
-                        && composite4.stageSource("fragment").contains("#define Bayer8"),
+        assertTrue(composite4 != null && composite4.executable() && composite4.convertedFragment() != null,
                 "BSL composite4 macro/function plan is not executable: "
                         + (composite4 == null ? "missing" : composite4.deviations()));
+        String fragment = composite4.stageSource("fragment");
+        assertTrue(fragment != null && !GlslLexer.stripComments(fragment).contains("#define"),
+                "BSL composite4 kept a macro: " + fragment);
     }
 
     /** Terrain stays executable with the advanced resources, and BSL's terrain binds its light volumes. */
