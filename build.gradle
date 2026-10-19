@@ -77,6 +77,8 @@ tasks.register('packReport', JavaExec) {
 //   -Pchimera.pack.extra=<zip>;<zip>                             broadening packs for PackCompileTest
 //   -Pchimera.gpu=true                                           the headless Vulkan checks
 //   -Pchimera.printBaselines=true                                print what a baseline test would record
+//   -Pchimera.snapshot.update=true                               rewrite the converted-output baselines
+//   -Pchimera.snapshot.spirvOnly=true                            compare converted output by SPIR-V alone
 def chimeraProperties = providers.gradlePropertiesPrefixedBy('chimera.')
 
 tasks.withType(Test).configureEach {
