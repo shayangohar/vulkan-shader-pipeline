@@ -60,6 +60,23 @@ final class GlslDeclarationsTest {
                 + "void main() { gl_Position = vec4(mc_midTexCoord, 0.0, 1.0); }\n", false, false);
     }
 
+    /** Core-profile names are read from the tree: a precision qualifier or trailing comment no longer hides one. */
+    @Test
+    void coreProfileDeclarationsAreReadFromTheTree() {
+        String prepared = IrisCoreProfile.prepareIrisCoreProfile("""
+                #version 330 core
+                layout(location = 0) in highp vec3 vaPosition;
+                uniform mat4 modelViewMatrix; // host matrix
+                void main() { gl_Position = modelViewMatrix * vec4(vaPosition, 1.0); }
+                """, null, true, IrisCoreProfile.NO_OVERLAY, true);
+        assertEquals("""
+                #version 330 core
+
+                 // host matrix
+                void main() { gl_Position = gl_ModelViewMatrix * vec4(gl_Vertex.xyz, 1.0); }
+                """, prepared);
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {
