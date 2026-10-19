@@ -15,9 +15,11 @@ import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /** Owns immutable pack-sampled images for one pack session. */
 public final class PackResourceOwner implements AutoCloseable {
@@ -28,6 +30,10 @@ public final class PackResourceOwner implements AutoCloseable {
         @Override
         void close();
     }
+
+    /** The statuses whose image this owner makes: a pack file, a game resource or the generated noise. */
+    private static final Set<PackResourceStatus> LOADED_STATUSES = EnumSet.of(
+            PackResourceStatus.PACK_FILE, PackResourceStatus.GAME_RESOURCE, PackResourceStatus.GENERATED);
 
     private final PackResourcePlan plan;
     private final Map<String, LoadedTexture> textures = new HashMap<>();
@@ -44,8 +50,7 @@ public final class PackResourceOwner implements AutoCloseable {
                 .flatMap(Collection::stream)
                 .sorted(Comparator.comparing(PackResourceBinding::resourceKey))
                 .toList()) {
-            if (binding.status() != PackResourceStatus.PACK_FILE
-                    && binding.status() != PackResourceStatus.GAME_RESOURCE) {
+            if (!LOADED_STATUSES.contains(binding.status())) {
                 continue;
             }
             if (owner.textures.containsKey(binding.resourceKey())
@@ -53,9 +58,13 @@ public final class PackResourceOwner implements AutoCloseable {
                 continue;
             }
             try {
-                LoadedTexture texture = binding.status() == PackResourceStatus.PACK_FILE
-                        ? loadPackFile(binding, shadersDir)
-                        : loadGameResource(binding);
+                LoadedTexture texture = switch (binding.status()) {
+                    case PACK_FILE -> loadPackFile(binding, shadersDir);
+                    case GENERATED -> PackNoiseTexture.generated(
+                            PackResourcePlan.generatedNoiseSize(binding.source()),
+                            "chimera_pack_" + binding.resourceKey());
+                    default -> loadGameResource(binding);
+                };
                 if (texture == null) {
                     owner.failures.put(binding.resourceKey(), "resource unavailable");
                 } else {
@@ -131,8 +140,7 @@ public final class PackResourceOwner implements AutoCloseable {
     /** Returns the first deterministic runtime-load deviation for a program. */
     public String failureDeviationForProgram(String program) {
         return plan.bindings(program).stream()
-                .filter(binding -> binding.status() == PackResourceStatus.PACK_FILE
-                        || binding.status() == PackResourceStatus.GAME_RESOURCE)
+                .filter(binding -> LOADED_STATUSES.contains(binding.status()))
                 .filter(binding -> !textures.containsKey(binding.resourceKey()))
                 .map(binding -> "PACK_TEXTURE_LOAD_FAILED:" + binding.resourceKey())
                 .sorted()

@@ -23,6 +23,12 @@ import java.util.regex.Pattern;
 /** Immutable load-time resource plan shared by probing, pipelines, and runtime. */
 public final class PackResourcePlan {
     private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-9]+)");
+    /** A generated noisetex binding's source: this prefix, then the image's side in texels. */
+    public static final String GENERATED_NOISE = "generated-noise:";
+    private static final int DEFAULT_NOISE_RESOLUTION = 256;
+    private static final int MAX_NOISE_RESOLUTION = 4096;
+    private static final Pattern NOISE_RESOLUTION = Pattern.compile(
+            "(?m)^\\s*const\\s+int\\s+noiseTextureResolution\\s*=\\s*(\\d{1,5})\\s*;");
 
     /** Chimera's name for the host entity overlay, which entityColor is made from. */
     public static final String OVERLAY_SAMPLER = "chimeraOverlay";
@@ -94,6 +100,7 @@ public final class PackResourcePlan {
         }
 
         Map<String, Set<Integer>> writtenEarlier = targetsWrittenEarlierInChain(plan);
+        int noiseResolution = noiseResolution(plan);
         for (PackProgramPlan programPlan : plan.programs()) {
             if (programPlan == null || programPlan.interfacePlan() == null) continue;
             UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(programPlan.name());
@@ -112,6 +119,9 @@ public final class PackResourcePlan {
                     binding = new PackResourceBinding(programPlan.name(), binding.sampler(), binding.resourceKey(),
                             binding.kind(), binding.source(), binding.slot(), binding.filter(), binding.wrap(),
                             binding.status(), binding.deviations());
+                }
+                if (binding.status() == PackResourceStatus.GENERATED) {
+                    binding = withNoiseResolution(binding, noiseResolution);
                 }
                 programBindings.add(binding);
                 deviations.addAll(binding.deviations());
@@ -203,7 +213,7 @@ public final class PackResourcePlan {
                     PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
-        return standardBinding(program, name, programResource(name, waterShadow), slot, shadersDir, deviations);
+        return standardBinding(program, name, programResource(name, waterShadow), slot, deviations);
     }
 
     /** Whether a pack raw texture serves this sampler, of this GLSL type, in this program. */
@@ -343,7 +353,7 @@ public final class PackResourcePlan {
 
     /** A sampler named for a logical target, shadow map, noise texture or material map. */
     private static PackResourceBinding standardBinding(String program, String name, String canonical, int slot,
-                                                       Path shadersDir, List<String> deviations) {
+                                                       List<String> deviations) {
         Integer target = targetIndex(canonical);
         if (target != null && target > PostTargetPlan.MAX_TARGET) {
             deviations.add("POST_TARGET_INDEX_UNSUPPORTED:" + target);
@@ -377,7 +387,7 @@ public final class PackResourcePlan {
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
         if (canonical.equals("noisetex")) {
-            return noiseBinding(program, name, shadersDir, deviations);
+            return noiseBinding(program, name, deviations);
         }
         if (materialMapAtSlot(name, slot)) {
             return new PackResourceBinding(program, name, name,
@@ -390,23 +400,42 @@ public final class PackResourcePlan {
                 PackResourceStatus.UNSUPPORTED, deviations);
     }
 
-    /** The pack's tex/noise.png at its fixed slot, or why it is unavailable. */
-    private static PackResourceBinding noiseBinding(String program, String name, Path shadersDir,
-                                                    List<String> deviations) {
-        String source = "tex/noise.png";
-        Path packFile = resolvePath(shadersDir, source);
-        if (packFile != null) {
-            deviations.add("PACK_TEXTURE_APPLIED:noisetex");
-            return new PackResourceBinding(program, name, "noisetex",
-                    PackResourceKind.NOISE, source, 7, mcmetaFilter(packFile, "linear"),
-                    mcmetaWrap(packFile, "repeat"), PackResourceStatus.PACK_FILE, deviations);
+    /**
+     * Iris's generated noise at the fixed slot. A pack without texture.noise samples it whatever
+     * files it ships (CustomTextureManager); Mellow, RedHat and Sildur's read noisetex so.
+     */
+    private static PackResourceBinding noiseBinding(String program, String name, List<String> deviations) {
+        deviations.add("PACK_TEXTURE_GENERATED:noisetex");
+        return new PackResourceBinding(program, name, "noisetex", PackResourceKind.NOISE,
+                GENERATED_NOISE + DEFAULT_NOISE_RESOLUTION, 7, "linear", "repeat",
+                PackResourceStatus.GENERATED, deviations);
+    }
+
+    /** The generated noise's binding at the pack's noiseTextureResolution. */
+    private static PackResourceBinding withNoiseResolution(PackResourceBinding binding, int resolution) {
+        return new PackResourceBinding(binding.program(), binding.sampler(), binding.resourceKey(), binding.kind(),
+                GENERATED_NOISE + resolution, binding.slot(), binding.filter(), binding.wrap(), binding.status(),
+                binding.deviations());
+    }
+
+    /** The side of the generated noise: the pack's const int noiseTextureResolution, else Iris's 256. */
+    static int noiseResolution(PackPlan plan) {
+        int resolution = DEFAULT_NOISE_RESOLUTION;
+        for (PackProgramPlan program : plan.programs()) {
+            if (program == null) continue;
+            for (PreparedShaderSource stage : program.stages().values()) {
+                Matcher matcher = NOISE_RESOLUTION.matcher(stage == null || stage.source() == null
+                        ? "" : stage.source());
+                if (matcher.find()) resolution = Integer.parseInt(matcher.group(1));
+            }
         }
-        deviations.add(isUnsafePath(source)
-                ? "PACK_TEXTURE_PATH_UNSAFE:noisetex"
-                : "PACK_TEXTURE_MISSING:noisetex");
-        return new PackResourceBinding(program, name, "noisetex",
-                PackResourceKind.NOISE, source, 7, "linear", "repeat",
-                PackResourceStatus.UNAVAILABLE, deviations);
+        return Math.max(1, Math.min(MAX_NOISE_RESOLUTION, resolution));
+    }
+
+    /** The side a generated noise binding's source names. */
+    public static int generatedNoiseSize(String source) {
+        if (source == null || !source.startsWith(GENERATED_NOISE)) return DEFAULT_NOISE_RESOLUTION;
+        return Integer.parseInt(source.substring(GENERATED_NOISE.length()));
     }
 
     /** Whether a normals or specular sampler sits at the selector slot reserved for it. */

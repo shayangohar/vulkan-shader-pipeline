@@ -24,8 +24,9 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  */
 public final class LegacyGlslConverter {
     static final Pattern VERSION_LINE = Pattern.compile("(?m)^\\s*#version\\s+\\S+.*$");
+    /** A legacy varying of any type the vertex layout sized: Sildur's passes {@code varying mat3 tbnMatrix}. */
     private static final Pattern VARYING_DECL =
-            Pattern.compile("(?m)^\\s*varying\\s+(float|vec2|vec3|vec4)\\s+(\\w+)\\s*;");
+            Pattern.compile("(?m)^\\s*varying\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
     private static final Pattern MODERN_VARYING_LIST_DECL = Pattern.compile(
             "(?m)^([ \\t]*)(?:(flat|noperspective|smooth|centroid|sample)\\s+)?"
                     + "(in|out|varying)\\s+(float|int|vec2|vec3|vec4)\\s+"
