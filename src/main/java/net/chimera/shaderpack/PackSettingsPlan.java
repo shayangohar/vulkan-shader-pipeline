@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,7 +41,9 @@ record PackSettingsPlan(
         boolean samplerSlotsFinalized,
         // The macros in force at the end of shaders.properties, option values included: Iris
         // expands them throughout the file, so an image may be COLORED_LIGHTING texels wide.
-        Map<String, String> propertyMacros
+        Map<String, String> propertyMacros,
+        // Resolved during the parse: propertyValues is sorted, and Iris applies these keys in file order.
+        ParticleDirectives particleDirectives
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Pattern DEFINE = Pattern.compile(
@@ -81,12 +84,13 @@ record PackSettingsPlan(
                 ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(resourceDeclarations));
         samplerSlots = samplerSlots == null
                 ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(samplerSlots));
+        particleDirectives = particleDirectives == null ? ParticleDirectives.DEFAULTS : particleDirectives;
     }
 
     static PackSettingsPlan empty() {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default", PackRuntimeSettings.empty(),
-                Map.of(), Map.of(), false, Map.of());
+                Map.of(), Map.of(), false, Map.of(), null);
     }
 
     static PackSettingsPlan parse(List<PackProgram> programs, Path shadersDir) {
@@ -130,7 +134,8 @@ record PackSettingsPlan(
         defaults.keySet().removeAll(disabled);
 
         Map<String, Profile> profiles = new TreeMap<>();
-        Map<String, String> properties = new TreeMap<>();
+        // In file order until the plan sorts it: the particle directives depend on that order.
+        Map<String, String> properties = new LinkedHashMap<>();
         Map<String, Boolean> programEnabled = new TreeMap<>();
         Set<String> required = new TreeSet<>();
         Set<String> optional = new TreeSet<>();
@@ -151,7 +156,8 @@ record PackSettingsPlan(
                 customValues, defaults, deviations, BiomeIds.constants());
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
-                runtimeSettings, resourceDeclarations, Map.of(), false, macros);
+                runtimeSettings, resourceDeclarations, Map.of(), false, macros,
+                ParticleDirectives.fromOrderedProperties(properties));
     }
 
     /** The programs' fragment and vertex sources by relative path; the first program by name wins a path. */
@@ -424,7 +430,7 @@ record PackSettingsPlan(
         return new PackSettingsPlan(options, defaults, profiles, propertyValues, programEnabled,
                 requiredFeatures, optionalFeatures, unsupportedRequiredFeatures, deviations,
                 activeProfile, runtimeSettings, resourceDeclarations,
-                resolved == null ? Map.of() : resolved, true, propertyMacros);
+                resolved == null ? Map.of() : resolved, true, propertyMacros, particleDirectives);
     }
 
     private String resourceFingerprint() {

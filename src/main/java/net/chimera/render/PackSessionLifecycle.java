@@ -23,6 +23,7 @@ import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackSource;
+import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.SelectorNamespace;
@@ -511,6 +512,9 @@ final class PackSessionLifecycle {
         LOGGER.info("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
                 pass.screenOverlays.vignette(), pass.screenOverlays.underwaterOverlay(),
                 pass.screenOverlays.deviations().isEmpty() ? "" : " " + pass.screenOverlays.deviations());
+        ParticleDirectives particles = pass.packPlan.particleDirectives();
+        LOGGER.info("[chimera] pack particle ordering: {}, separateEntityDraws={}{}", particles.ordering(),
+                particles.separateEntityDraws(), particles.deviations().isEmpty() ? "" : " " + particles.deviations());
         installRuntimeSettings();
         pass.packNeedsHdrDepth = pass.conformanceReport.programs().stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))

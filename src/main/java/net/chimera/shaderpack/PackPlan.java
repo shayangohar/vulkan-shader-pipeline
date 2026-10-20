@@ -186,6 +186,11 @@ public record PackPlan(
         return ScreenOverlayDirectives.fromProperties(settings.propertyValues());
     }
 
+    /** Where particles draw against the deferred passes (Iris particles.ordering and its older keys). */
+    public ParticleDirectives particleDirectives() {
+        return settings.particleDirectives();
+    }
+
     /** How the shadow pass culls its casters (Iris shadow.culling and the shadow distances). */
     public ShadowCullingPlan shadowCulling() {
         PackConfig.ShadowSettings shadow = config != null ? config.shadowSettings()

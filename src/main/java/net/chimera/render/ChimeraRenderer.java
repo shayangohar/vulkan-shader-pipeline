@@ -5,6 +5,7 @@ import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.StagedOptions;
 import net.minecraft.client.Minecraft;
@@ -220,6 +221,14 @@ public final class ChimeraRenderer {
      */
     public static ScreenOverlayDirectives packScreenOverlays() {
         return packProjectionActive() ? chimeraPass.screenOverlays() : null;
+    }
+
+    /**
+     * Where the pack rendering this frame's world draws particles against its deferred passes, or
+     * null when the world is not pack-rendered and NeoForge's split stands (Iris answers MIXED then).
+     */
+    public static ParticleDirectives.Ordering packParticleOrdering() {
+        return packProjectionActive() ? chimeraPass.packPlan.particleDirectives().ordering() : null;
     }
 
     /**
