@@ -151,6 +151,24 @@ final class GlslTreeTest {
                 new GlslTree.Edit(declaration.qualifiers().get(0).range(), ""))));
     }
 
+    /**
+     * An empty range inserts: at a node's first token, where the old printer dropped it
+     * (KNOW-740), at the end of the source, and in the given order ahead of a replacement there.
+     */
+    @Test
+    void emptyEditsInsert() {
+        GlslTree tree = GlslTree.parse("uniform float a;\nvoid main() { }\n");
+        GlslTree.Function main = (GlslTree.Function) tree.externals().get(1);
+        int start = main.range().start();
+        int end = tree.tokens().size();
+        String edited = tree.print(List.of(
+                new GlslTree.Edit(new GlslTree.Range(start, start + 1), "int"),
+                new GlslTree.Edit(new GlslTree.Range(start, start), "// first\n"),
+                new GlslTree.Edit(new GlslTree.Range(start, start), "// second\n"),
+                new GlslTree.Edit(new GlslTree.Range(end, end), "// last\n")));
+        assertEquals("uniform float a;\n// first\n// second\nint main() { }\n// last\n", edited);
+    }
+
     @Test
     void aFailureNamesItsLine() {
         GlslParser.ParseFailure failure = assertThrows(GlslParser.ParseFailure.class,

@@ -283,7 +283,7 @@ public final class GlslTokenRewriter {
                 + indent(epilogue) + "\n}\nvoid main() {\n    " + wrapper + "();\n}\n";
         int close = main.body().range().end() - 1;
         return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(main.name(), main.name() + 1), authored),
-                new GlslTree.Edit(new GlslTree.Range(close, close + 1), tree.text(close) + generated)));
+                new GlslTree.Edit(new GlslTree.Range(close + 1, close + 1), generated)));
     }
 
     /**
@@ -420,8 +420,8 @@ public final class GlslTokenRewriter {
         if (source == null || prologue == null || prologue.isBlank()) return source;
         GlslTree tree = GlslTree.parse(source);
         int open = mainDefinition(tree).body().range().start();
-        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(open, open + 1),
-                tree.text(open) + "\n" + indent(prologue))));
+        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(open + 1, open + 1),
+                "\n" + indent(prologue))));
     }
 
     /** The source's one main definition; only {@code void main()} is supported. */
