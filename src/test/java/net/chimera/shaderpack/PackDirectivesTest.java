@@ -18,7 +18,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Pack-wide directives: GLSL versions, property syntax, held items, screen overlays and particle ordering. */
+/** Pack-wide directives: GLSL versions, property syntax, held items, screen overlays, particles and the sky. */
 final class PackDirectivesTest {
     /**
      * One version rule (any desktop 110-460, compatibility or core), Iris's core mode, and the
@@ -321,23 +321,24 @@ final class PackDirectivesTest {
                 "net/minecraft/client/renderer/ScreenEffectRenderer", "renderWater", true);
         MixinBytecode.assertMixinRegistered("ChimeraGuiVignetteMixin");
         MixinBytecode.assertMixinRegistered("ChimeraScreenEffectWaterMixin");
+        assertTrue(sessionScoped("screenOverlays", "screenOverlays"),
+                "the main pass reads the overlay switches per pack session and drops them with it");
+    }
 
+    /** Whether loading a pack reads {@code planMethod} from its plan and unloading clears the pass's {@code field}. */
+    private static boolean sessionScoped(String planMethod, String field) throws IOException {
         var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
         boolean loads = false;
         boolean clears = false;
         for (var instruction : MixinBytecode.instructionsThrough(pass, "loadPackConfig")) {
-            if (instruction instanceof MethodInsnNode call
-                    && call.owner.equals("net/chimera/shaderpack/PackPlan") && call.name.equals("screenOverlays")) {
-                loads = true;
-            }
+            loads |= instruction instanceof MethodInsnNode call
+                    && call.owner.equals("net/chimera/shaderpack/PackPlan") && call.name.equals(planMethod);
         }
         for (var instruction : MixinBytecode.instructionsThrough(pass, "cleanUpPackVariant")) {
-            if (instruction instanceof FieldInsnNode field
-                    && field.getOpcode() == Opcodes.PUTFIELD && field.name.equals("screenOverlays")) {
-                clears = true;
-            }
+            clears |= instruction instanceof FieldInsnNode put
+                    && put.getOpcode() == Opcodes.PUTFIELD && put.name.equals(field);
         }
-        assertTrue(loads && clears, "the main pass reads the overlay switches per pack session and drops them with it");
+        return loads && clears;
     }
 
     /**
@@ -428,6 +429,39 @@ final class PackDirectivesTest {
         }
         assertTrue(ordinals.contains(1) && ordinals.contains(2),
                 "NeoForge's early (ordinal 1) and late (ordinal 2) particle calls are both ordered: " + ordinals);
+    }
+
+    /**
+     * Iris's sun, moon, stars and sky switches, all on by default. Bliss turns the stars off, and
+     * Mellow's {@code sun=off} is not a boolean to Iris, so the sun stays.
+     */
+    @Test
+    void skyDirectives() {
+        assertEquals(SkyDirectives.DEFAULTS, SkyDirectives.fromProperties(Map.of()), "every part of the sky draws");
+        var bliss = SkyDirectives.fromProperties(Map.of("stars", "false", "sun", "0", "moon", "true"));
+        assertTrue(!bliss.stars() && !bliss.sun() && bliss.moon() && bliss.sky() && bliss.deviations().isEmpty(),
+                "stars=false and sun=0 drop those parts: " + bliss);
+        var mellow = SkyDirectives.fromProperties(Map.of("sun", "off", "sky", "false"));
+        assertTrue(mellow.sun() && !mellow.sky() && mellow.deviations().equals(List.of("SKY_DIRECTIVE_MALFORMED:sun")),
+                "an unexpected value keeps Iris's default and is reported: " + mellow);
+    }
+
+    @Test
+    void skyHooks() throws IOException {
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraSkyRendererMixin");
+        String wrap = "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;";
+        for (String target : List.of(
+                "Lcom/mojang/blaze3d/vertex/BufferUploader;drawWithShader(Lcom/mojang/blaze3d/vertex/MeshData;)V",
+                "Lcom/mojang/blaze3d/vertex/VertexBuffer;drawWithShader(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;"
+                        + "Lnet/minecraft/client/renderer/ShaderInstance;)V",
+                "Lnet/minecraft/client/renderer/DimensionSpecialEffects;getSunriseColor(FF)[F",
+                "Lnet/minecraft/client/multiplayer/ClientLevel$ClientLevelData;"
+                        + "getHorizonHeight(Lnet/minecraft/world/level/LevelHeightAccessor;)D",
+                "Lnet/minecraft/client/multiplayer/ClientLevel;getStarBrightness(F)F")) {
+            assertTrue(MixinBytecode.injects(mixin, wrap, "renderSky", target), "renderSky wraps " + target);
+        }
+        assertTrue(sessionScoped("skyDirectives", "skyDirectives"),
+                "the main pass reads the sky switches per pack session and drops them with it");
     }
 
     private static ParticleDirectives particles(String... keyValues) {

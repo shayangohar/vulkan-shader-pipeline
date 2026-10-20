@@ -161,9 +161,9 @@ public record PackPlan(
         return trimmed.equals("off") || trimmed.equals("fast") || trimmed.equals("fancy") ? trimmed : null;
     }
 
-    /** Iris's sky directive controls the extra horizon coverage. */
-    public boolean skyEnabled() {
-        return !"false".equalsIgnoreCase(settings.propertyValues().get("sky"));
+    /** Which parts of Minecraft's sky the pack keeps (Iris sun, moon, stars and sky, all default on). */
+    public SkyDirectives skyDirectives() {
+        return SkyDirectives.fromProperties(settings.propertyValues());
     }
 
     /** Which entities and block entities the pack lets cast shadows (Iris shadowEntities and friends). */

@@ -7,6 +7,7 @@ import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
+import net.chimera.shaderpack.SkyDirectives;
 import net.chimera.shaderpack.StagedOptions;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -221,6 +222,14 @@ public final class ChimeraRenderer {
      */
     public static ScreenOverlayDirectives packScreenOverlays() {
         return packProjectionActive() ? chimeraPass.screenOverlays() : null;
+    }
+
+    /**
+     * The sky switches of the pack rendering this frame's world, or null when the world is not
+     * pack-rendered and Minecraft's whole sky draws (Iris MixinLevelRenderer_SunMoonToggle).
+     */
+    public static SkyDirectives packSkyDirectives() {
+        return packProjectionActive() ? chimeraPass.skyDirectives() : null;
     }
 
     /**
