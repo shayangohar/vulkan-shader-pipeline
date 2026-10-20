@@ -1,13 +1,15 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Token-based parser and binding rewrite for the bounded std430 bridge. */
+/**
+ * The storage blocks of a prepared source, read from the parse tree, and the binding rewrite for
+ * the bounded std430 bridge. Prepared sources hold no macros (KNOW-725), so a block's qualifiers
+ * are the ones its declaration spells.
+ */
 final class GlslStorageBufferParser {
     private static final Set<String> MEMORY_QUALIFIERS = Set.of(
             "readonly", "writeonly", "coherent", "volatile", "restrict");
@@ -16,231 +18,106 @@ final class GlslStorageBufferParser {
             String blockName,
             String instanceName,
             int originalBinding,
-            boolean std430,
-            String qualifierMacro
+            boolean std430
     ) {}
+
+    /** One storage block's node and the layout qualifier directly before its memory qualifiers. */
+    private record Declared(GlslTree.InterfaceBlock block, GlslTree.Qualifier layout) {}
 
     private GlslStorageBufferParser() {}
 
     static List<Block> scan(String source) {
-        String input = source == null ? "" : source;
-        List<GlslLexer.Token> tokens = GlslLexer.lex(input);
+        GlslTree tree = GlslTree.parse(source == null ? "" : source);
         List<Block> result = new ArrayList<>();
-        for (int index = 0; index < tokens.size(); index++) {
-            if (!tokens.get(index).identifier("buffer")) continue;
-            int blockName = GlslLexer.nextSignificant(tokens, index);
-            if (blockName < 0 || tokens.get(blockName).kind() != GlslLexer.Kind.IDENTIFIER) continue;
-            int open = GlslLexer.nextSignificant(tokens, blockName);
-            if (open < 0 || !tokens.get(open).symbol("{")) continue;
-            int close = GlslLexer.matching(tokens, open, "{", "}");
-            if (close < 0) throw new IllegalArgumentException("unbalanced GLSL storage block");
-            int instance = GlslLexer.nextSignificant(tokens, close);
-            String instanceName = instance >= 0 && tokens.get(instance).kind() == GlslLexer.Kind.IDENTIFIER
-                    ? tokens.get(instance).text() : "";
-            result.add(block(tokens, index, tokens.get(blockName).text(), instanceName));
+        for (Declared declared : storageBlocks(tree)) {
+            GlslTree.InterfaceBlock block = declared.block();
+            String instanceName = block.instances().isEmpty() ? "" : tree.text(block.instances().get(0).name());
+            if (declared.layout() == null) {
+                // A block without layout is inventory-only. The caller will
+                // report it as unsupported rather than inventing a binding.
+                result.add(new Block(tree.text(block.name()), instanceName, -1, false));
+                continue;
+            }
+            Map<String, String> arguments = GlslDeclarations.layoutArguments(tree, declared.layout());
+            String binding = arguments.get("binding");
+            result.add(new Block(tree.text(block.name()), instanceName, binding == null ? -1 : parseInt(binding),
+                    arguments.containsKey("std430")));
         }
         return List.copyOf(result);
     }
 
-    /** The block declared at {@code buffer}, as its layout(...) and qualifiers describe it. */
-    private static Block block(List<GlslLexer.Token> tokens, int buffer, String blockName, String instanceName) {
-        // Macro state is evaluated at the declaration. A later #define or
-        // #undef must not change the meaning of an earlier storage block.
-        Map<String, String> macros = objectMacrosAt(tokens, buffer);
-        int before = findLayoutClose(tokens, buffer, macros);
-        if (before < 0 || !tokens.get(before).symbol(")")) {
-            // A block without layout is inventory-only. The caller will
-            // report it as unsupported rather than inventing a binding.
-            return new Block(blockName, instanceName, -1, false, "");
+    /** The file-scope {@code buffer} blocks, each with its layout when one precedes its memory qualifiers. */
+    private static List<Declared> storageBlocks(GlslTree tree) {
+        List<Declared> blocks = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.InterfaceBlock block)) continue;
+            List<GlslTree.Qualifier> qualifiers = block.qualifiers();
+            int buffer = qualifiers.size() - 1;
+            while (buffer >= 0 && !tree.text(qualifiers.get(buffer).keyword()).equals("buffer")) buffer--;
+            if (buffer < 0) continue;
+            int layout = buffer - 1;
+            while (layout >= 0 && MEMORY_QUALIFIERS.contains(tree.text(qualifiers.get(layout).keyword()))) layout--;
+            boolean laidOut = layout >= 0 && tree.text(qualifiers.get(layout).keyword()).equals("layout");
+            blocks.add(new Declared(block, laidOut ? qualifiers.get(layout) : null));
         }
-        int layout = matchingOpen(tokens, before, "(", ")");
-        int layoutName = layout < 0 ? -1 : GlslLexer.previousSignificant(tokens, layout);
-        if (layout < 0 || layoutName < 0 || !tokens.get(layoutName).identifier("layout")) {
-            return new Block(blockName, instanceName, -1, false, "");
-        }
-        List<Integer> layoutTokens = significantBetween(tokens, layout + 1, before);
-        boolean std430 = layoutTokens.stream().anyMatch(position -> tokens.get(position).identifier("std430"));
-        int binding = layoutBinding(tokens, layoutTokens);
-        String macro = qualifierMacro(tokens, before, buffer, macros);
-        return new Block(blockName, instanceName, binding, std430, macro);
-    }
-
-    /** The binding number a layout list names, or -1 when it names none. */
-    private static int layoutBinding(List<GlslLexer.Token> tokens, List<Integer> layoutTokens) {
-        int binding = -1;
-        boolean expectBinding = false;
-        for (int position : layoutTokens) {
-            GlslLexer.Token token = tokens.get(position);
-            if (token.identifier("binding")) expectBinding = true;
-            else if (expectBinding && token.kind() == GlslLexer.Kind.NUMBER) {
-                binding = parseInt(token.text());
-                expectBinding = false;
-            } else if (token.symbol(",")) {
-                expectBinding = false;
-            }
-        }
-        return binding;
+        return blocks;
     }
 
     /**
-     * The qualifier macro written between the layout's closing parenthesis and {@code buffer}, or ""
-     * when there is none; a macro that does not expand to memory qualifiers is refused.
+     * Whether the source declares a storage block. A source the tree cannot parse still reports
+     * one spelled as {@code buffer}, a name and an opening brace, so the report names the program.
      */
-    private static String qualifierMacro(List<GlslLexer.Token> tokens, int layoutClose, int buffer,
-                                         Map<String, String> macros) {
-        String macro = "";
-        int qualifier = GlslLexer.nextSignificant(tokens, layoutClose);
-        while (qualifier >= 0 && qualifier < buffer && !tokens.get(qualifier).identifier("buffer")) {
-            GlslLexer.Token value = tokens.get(qualifier);
-            if (value.kind() == GlslLexer.Kind.IDENTIFIER && !MEMORY_QUALIFIERS.contains(value.text())) {
-                String expansion = macros.get(value.text());
-                if (expansion == null || !supportedMacroExpansion(expansion, macros, new HashSet<>())) {
-                    throw new IllegalArgumentException("unsupported storage qualifier: " + value.text());
-                }
-                macro = value.text();
-            }
-            qualifier = GlslLexer.nextSignificant(tokens, qualifier);
-        }
-        return macro;
-    }
-
     static boolean hasBlock(String source) {
         try {
             return !scan(source).isEmpty();
         } catch (RuntimeException failure) {
-            return source != null && source.matches("(?s).*\\bbuffer\\s+[A-Za-z_]\\w*\\s*\\{");
+            List<GlslLexer.Token> tokens = GlslLexer.lex(source);
+            for (int index = 0; index < tokens.size(); index++) {
+                if (!tokens.get(index).identifier("buffer")) continue;
+                int name = GlslLexer.nextSignificant(tokens, index);
+                int open = name < 0 ? -1 : GlslLexer.nextSignificant(tokens, name);
+                if (open >= 0 && tokens.get(name).kind() == GlslLexer.Kind.IDENTIFIER
+                        && tokens.get(open).symbol("{")) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
+    /** {@code source} with each keyed block's layout binding number replaced. */
     static String rewrite(String source, Map<String, Integer> bindings) {
         if (source == null || bindings == null || bindings.isEmpty()) return source;
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        List<Block> blocks = scan(source);
-        for (Block block : blocks) {
-            Integer replacement = bindings.get(key(block));
-            if (replacement == null) continue;
-            int binding = bindingNumber(tokens, block.blockName());
-            if (binding >= 0) {
-                tokens.set(binding, new GlslLexer.Token(GlslLexer.Kind.NUMBER,
-                        Integer.toString(replacement)));
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslTree.Edit> edits = new ArrayList<>();
+        for (Declared declared : storageBlocks(tree)) {
+            GlslTree.InterfaceBlock block = declared.block();
+            String instanceName = block.instances().isEmpty() ? "" : tree.text(block.instances().get(0).name());
+            Integer replacement = bindings.get(tree.text(block.name()) + "\u0000" + instanceName);
+            int number = declared.layout() == null ? -1 : bindingNumber(tree, declared.layout().range());
+            if (replacement != null && number >= 0) {
+                edits.add(new GlslTree.Edit(new GlslTree.Range(number, number + 1), Integer.toString(replacement)));
             }
         }
-        return GlslLexer.render(tokens);
+        return edits.isEmpty() ? source : tree.print(edits);
     }
 
-    /**
-     * The binding number token in the layout of the first declaration of {@code blockName} that
-     * has one, or -1 when that layout names no binding or no declaration has a layout.
-     */
-    private static int bindingNumber(List<GlslLexer.Token> tokens, String blockName) {
-        for (int index = 0; index < tokens.size(); index++) {
-            if (!tokens.get(index).identifier("buffer")) continue;
-            int name = GlslLexer.nextSignificant(tokens, index);
-            if (name < 0 || !tokens.get(name).text().equals(blockName)) continue;
-            int open = GlslLexer.nextSignificant(tokens, name);
-            if (open < 0 || !tokens.get(open).symbol("{")) continue;
-            int before = findLayoutClose(tokens, index, objectMacrosAt(tokens, index));
-            if (before < 0 || !tokens.get(before).symbol(")")) continue;
-            int layout = matchingOpen(tokens, before, "(", ")");
-            if (layout < 0) continue;
-            return bindingNumberBetween(tokens, layout, before);
-        }
-        return -1;
-    }
-
-    /** The first {@code binding = N} number token between the layout's parentheses, or -1. */
-    private static int bindingNumberBetween(List<GlslLexer.Token> tokens, int open, int close) {
-        for (int cursor = open + 1; cursor < close; cursor++) {
+    /** The first {@code binding = N} number token in a layout qualifier, or -1. */
+    private static int bindingNumber(GlslTree tree, GlslTree.Range layout) {
+        List<GlslLexer.Token> tokens = tree.tokens();
+        for (int cursor = layout.start(); cursor < layout.end(); cursor++) {
             if (!tokens.get(cursor).identifier("binding")) continue;
             int equals = GlslLexer.nextSignificant(tokens, cursor);
             int number = equals < 0 ? -1 : GlslLexer.nextSignificant(tokens, equals);
-            if (number >= 0 && tokens.get(number).kind() == GlslLexer.Kind.NUMBER) return number;
+            if (number >= 0 && number < layout.end() && tokens.get(number).kind() == GlslLexer.Kind.NUMBER) {
+                return number;
+            }
         }
         return -1;
     }
 
     static String key(Block block) {
         return block.blockName() + "\u0000" + block.instanceName();
-    }
-
-    private static Map<String, String> objectMacros(String source) {
-        Map<String, String> result = new HashMap<>();
-        for (String line : source.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1)) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("#define ")) {
-                String rest = trimmed.substring(8).trim();
-                int space = rest.indexOf(' ');
-                String name = space < 0 ? rest : rest.substring(0, space);
-                if (name.contains("(")) {
-                    result.put(name, "<function>");
-                } else {
-                    result.put(name, space < 0 ? "" : rest.substring(space + 1).trim());
-                }
-            } else if (trimmed.startsWith("#undef ")) {
-                result.remove(trimmed.substring(7).trim());
-            }
-        }
-        return result;
-    }
-
-    private static Map<String, String> objectMacrosAt(List<GlslLexer.Token> tokens, int end) {
-        int safeEnd = Math.max(0, Math.min(end, tokens.size()));
-        return objectMacros(GlslLexer.render(tokens.subList(0, safeEnd)));
-    }
-
-    private static boolean supportedMacroExpansion(
-            String expansion,
-            Map<String, String> macros,
-            Set<String> visiting
-    ) {
-        String value = expansion == null ? "" : expansion.trim();
-        if (value.isEmpty()) return true;
-        if (value.equals("<function>")) return false;
-        for (String token : value.split("\\s+")) {
-            if (MEMORY_QUALIFIERS.contains(token)) continue;
-            String nested = macros.get(token);
-            if (nested == null || !visiting.add(token)
-                    || !supportedMacroExpansion(nested, macros, visiting)) return false;
-            visiting.remove(token);
-        }
-        return true;
-    }
-
-    private static int matchingOpen(List<GlslLexer.Token> tokens, int close,
-                                    String left, String right) {
-        int depth = 0;
-        for (int index = close; index >= 0; index--) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol(right)) depth++;
-            else if (token.symbol(left) && --depth == 0) return index;
-        }
-        return -1;
-    }
-
-    private static int findLayoutClose(
-            List<GlslLexer.Token> tokens,
-            int buffer,
-            Map<String, String> macros
-    ) {
-        int cursor = GlslLexer.previousSignificant(tokens, buffer);
-        while (cursor >= 0) {
-            GlslLexer.Token token = tokens.get(cursor);
-            if (token.kind() == GlslLexer.Kind.IDENTIFIER
-                    && (MEMORY_QUALIFIERS.contains(token.text()) || macros.containsKey(token.text()))) {
-                cursor = GlslLexer.previousSignificant(tokens, cursor);
-                continue;
-            }
-            return token.symbol(")") ? cursor : -1;
-        }
-        return -1;
-    }
-
-    private static List<Integer> significantBetween(List<GlslLexer.Token> tokens, int start, int end) {
-        List<Integer> result = new ArrayList<>();
-        for (int index = start; index < end; index++) {
-            if (tokens.get(index).significant()) result.add(index);
-        }
-        return result;
     }
 
     private static int parseInt(String value) {

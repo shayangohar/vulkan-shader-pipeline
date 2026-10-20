@@ -676,25 +676,26 @@ final class StorageBufferPlanTest {
 
     @Test
     void storageParserAndLiveResourceUse() {
-        String source = "#define SSBO_QUALIFIER\n"
+        // The parser reads prepared source, whose qualifier macros are already expanded (KNOW-725).
+        String source = GlslMacroExpander.expand("#define SSBO_QUALIFIER\n"
                 + "layout(std430, binding = 0) SSBO_QUALIFIER buffer blockDataBuffer {\n"
                 + " uint values[];\n} blockDataBuffer;\n"
                 + "#undef SSBO_QUALIFIER\n"
                 + "#define SSBO_QUALIFIER readonly\n"
                 + "layout(std430, binding = 1) SSBO_QUALIFIER buffer reader {\n"
-                + " uint values[];\n};\n";
+                + " uint values[];\n};\n");
         List<GlslStorageBufferParser.Block> blocks = GlslStorageBufferParser.scan(source);
         assertTrue(blocks.size() == 2 && blocks.get(0).std430()
                         && blocks.get(0).originalBinding() == 0
-                        && blocks.get(0).qualifierMacro().equals("SSBO_QUALIFIER")
+                        && blocks.get(0).instanceName().equals("blockDataBuffer")
                         && blocks.get(1).std430()
-                        && blocks.get(1).originalBinding() == 1,
-                "qualifier-macro storage parsing is not line ordered");
+                        && blocks.get(1).originalBinding() == 1
+                        && blocks.get(1).instanceName().isEmpty(),
+                "storage blocks are not read in source order");
         String rewritten = GlslStorageBufferParser.rewrite(source,
                 Map.of(GlslStorageBufferParser.key(blocks.get(0)), 7));
-        assertTrue(rewritten.contains("binding = 7")
-                        && rewritten.contains("#define SSBO_QUALIFIER\n"),
-                "token storage rewrite changed the authored declaration");
+        assertTrue(rewritten.equals(source.replace("binding = 0", "binding = 7")),
+                "the storage rewrite changed more than the binding number");
 
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(
                 "uniform sampler3D liveSampler; uniform sampler3D unusedSampler;\n"
