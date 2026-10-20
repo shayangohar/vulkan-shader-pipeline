@@ -6,7 +6,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Token-safe rewrites for the small legacy-to-Vulkan GLSL bridge. */
+/**
+ * Rewrites for the legacy-to-Vulkan GLSL bridge. The function and declaration rewrites read and
+ * edit the parse tree (KNOW-737): unreachable functions, main's prologue and epilogue, reserved
+ * parameter names, uniform declarator lists and global consts. The rest stay token rewrites,
+ * because the tree holds expressions as token ranges:
+ * <ul>
+ *   <li>renaming a name everywhere it is spelled, which built-ins and the authored entry point
+ *       need whatever scope they appear in ({@link #replaceIdentifiers}), and a sampler named like
+ *       a lookup function, which only its calls tell apart ({@link #renameSamplerIdentifier});</li>
+ *   <li>rewriting calls and their arguments: texture lookups, bounded texelFetch and legacy
+ *       shadow lookups, innermost first;</li>
+ *   <li>replacing {@code gl_FragData[N]} subscripts with the outputs they write;</li>
+ *   <li>deciding whether a const initializer is a constant expression;</li>
+ *   <li>asking whether, or how often, a name is spelled ({@link #containsIdentifier}).</li>
+ * </ul>
+ */
 public final class GlslTokenRewriter {
     private GlslTokenRewriter() {}
 
@@ -42,7 +57,7 @@ public final class GlslTokenRewriter {
         return tree.print(edits);
     }
 
-    static String lineBreaks(String text) {
+    private static String lineBreaks(String text) {
         StringBuilder result = new StringBuilder();
         for (int index = 0; index < text.length(); index++) {
             char value = text.charAt(index);
@@ -499,7 +514,7 @@ public final class GlslTokenRewriter {
         return defined;
     }
 
-    static String singleIdentifier(List<GlslLexer.Token> tokens, int[] range) {
+    private static String singleIdentifier(List<GlslLexer.Token> tokens, int[] range) {
         int first = -1;
         int last = -1;
         for (int index = range[0]; index < range[1]; index++) {
@@ -623,11 +638,11 @@ public final class GlslTokenRewriter {
         return count;
     }
 
-    static GlslLexer.Token identifier(String value) {
+    private static GlslLexer.Token identifier(String value) {
         return new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, value);
     }
 
-    static GlslLexer.Token raw(String value) {
+    private static GlslLexer.Token raw(String value) {
         return new GlslLexer.Token(GlslLexer.Kind.TRIVIA, value);
     }
 
