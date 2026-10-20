@@ -47,7 +47,7 @@ final class GlslScopedReferences {
     }
 
     /** Whether a binding is a parameter or a declaration inside a function body. */
-    private static boolean insideFunction(GlslTree tree, GlslTree.Binding binding) {
+    static boolean insideFunction(GlslTree tree, GlslTree.Binding binding) {
         if (binding.node() instanceof GlslTree.Parameter) return true;
         for (GlslTree.External external : tree.externals()) {
             if (external instanceof GlslTree.Function function && function.body() != null
@@ -62,7 +62,7 @@ final class GlslScopedReferences {
      * The names that file scope declares but never sees as globals: struct and interface-block
      * members, and a prototype's parameters.
      */
-    private static Set<Integer> memberNames(GlslTree tree) {
+    static Set<Integer> memberNames(GlslTree tree) {
         Set<Integer> names = new HashSet<>();
         for (GlslTree.External external : tree.externals()) {
             switch (external) {
