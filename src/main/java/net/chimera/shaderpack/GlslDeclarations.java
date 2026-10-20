@@ -2,7 +2,9 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The file-scope variable declarations of a {@link GlslTree}, and text edits on them. The
@@ -29,6 +31,11 @@ final class GlslDeclarations {
         /** Whether a qualifier keyword is {@code keyword}. */
         boolean qualified(String keyword) {
             return declaration.qualifiers().stream().anyMatch(value -> tree.text(value.keyword()).equals(keyword));
+        }
+
+        /** The qualifier keywords in source order, {@code layout} for a layout list. */
+        List<String> qualifiers() {
+            return declaration.qualifiers().stream().map(value -> tree.text(value.keyword())).toList();
         }
 
         /** Whether this is the declaration's only name, without array sizes or an initializer. */
@@ -74,6 +81,48 @@ final class GlslDeclarations {
         boolean alone = (lineStart == 0 || isLineBreak(source.charAt(lineStart - 1)))
                 && (lineEnd == source.length() || isLineBreak(source.charAt(lineEnd)));
         return alone ? new TextEdit(lineStart, lineEnd, "") : new TextEdit(from, to, "");
+    }
+
+    /**
+     * The arguments of a {@code layout(...)} qualifier, name to value ({@code ""} for a bare
+     * name): {@code layout(location = 2, index = 0)} gives location 2 and index 0.
+     */
+    static Map<String, String> layoutArguments(GlslTree tree, GlslTree.Qualifier qualifier) {
+        Map<String, String> arguments = new LinkedHashMap<>();
+        String text = tree.text(qualifier.range());
+        int open = text.indexOf('(');
+        if (!tree.text(qualifier.keyword()).equals("layout") || open < 0) return arguments;
+        for (String argument : text.substring(open + 1, text.lastIndexOf(')')).split(",")) {
+            int equals = argument.indexOf('=');
+            String name = (equals < 0 ? argument : argument.substring(0, equals)).trim();
+            if (!name.isEmpty()) arguments.put(name, equals < 0 ? "" : argument.substring(equals + 1).trim());
+        }
+        return arguments;
+    }
+
+    /** The {@code location} a declaration's layout gives it; null without one. */
+    static Integer location(GlslTree tree, GlslTree.Declaration declaration) {
+        for (GlslTree.Qualifier qualifier : declaration.qualifiers()) {
+            String value = layoutArguments(tree, qualifier).get("location");
+            if (value != null && value.matches("\\d+")) return Integer.parseInt(value);
+        }
+        return null;
+    }
+
+    /**
+     * Where a {@code (?m)^\s*} match that ends at {@code offset} begins: the first line start
+     * after the text before {@code offset}, so the blank lines and indentation before a
+     * declaration belong to its span. -1 when the declaration does not start a line.
+     */
+    static int lineStartBefore(String source, int offset) {
+        int text = offset;
+        while (text > 0 && " \t\n\u000B\f\r".indexOf(source.charAt(text - 1)) >= 0) text--;
+        for (int index = text; index <= offset; index++) {
+            boolean lineStart = index == 0 || source.charAt(index - 1) == '\n'
+                    || source.charAt(index - 1) == '\r' && (index == source.length() || source.charAt(index) != '\n');
+            if (lineStart) return index;
+        }
+        return -1;
     }
 
     /** The first {@code void main} the source declares, a prototype or a definition; null without one. */

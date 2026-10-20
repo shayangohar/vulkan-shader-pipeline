@@ -105,6 +105,30 @@ final class GlslDeclarationsTest {
                 normalized);
     }
 
+    /** Pegasus comments out a sampler declaration above the real one; only the real one takes the binding. */
+    @Test
+    void samplerBindingsGoOnRealDeclarations() {
+        String source = "//uniform sampler2D depthtex0;\nlayout(location = 0) out vec4 color;\n"
+                + "uniform sampler2D depthtex0; // depth\nvoid main() { color = texture(depthtex0, vec2(0.0)); }\n";
+        assertTrue(FragmentConverter.hasSamplerDeclaration(source, "depthtex0"));
+        assertFalse(FragmentConverter.hasSamplerDeclaration("// uniform sampler2D other;\n", "other"));
+        assertEquals("//uniform sampler2D depthtex0;\nlayout(location = 0) out vec4 color;\n"
+                        + "layout(binding = 3) uniform sampler2D depthtex0; // depth\n"
+                        + "void main() { color = texture(depthtex0, vec2(0.0)); }\n",
+                FragmentConverter.rewriteSamplerDeclaration(source, "depthtex0", 3));
+        assertTrue(FragmentConverter.withCoverageOutput("#version 460\n" + source)
+                .contains("layout(location = 1) out float chimeraCoverage;"));
+    }
+
+    /** A modern terrain fragment's one output goes with the blank lines before it and the space after it. */
+    @Test
+    void modernGeometryOutputKeepsThePatternsSpan() {
+        assertEquals("#version 330\nlayout(location = 0) out vec4 fragColor;\nuniform float a;\n"
+                        + "void main() { fragColor = vec4(a); }\n",
+                FragmentConverter.convertModernGeometryOutputs(
+                        "#version 330\nuniform float a;\n\n  out vec4 color;\n\nvoid main() { color = vec4(a); }\n"));
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {

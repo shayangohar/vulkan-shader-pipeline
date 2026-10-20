@@ -325,7 +325,7 @@ final class PostVertexBridge {
         List<PostVaryingDeclaration> declarations = new ArrayList<>();
         for (GlslTree.External external : tree.externals()) {
             if (!(external instanceof GlslTree.Declaration declaration) || declaration.type() == null) continue;
-            int start = lineStartBefore(source, tree.offset(declaration.range().start()));
+            int start = GlslDeclarations.lineStartBefore(source, tree.offset(declaration.range().start()));
             PostVaryingDeclaration varying = start < 0 ? null
                     : postVarying(tree, declaration, start, tree.offset(declaration.range().end()));
             if (varying != null) declarations.add(varying);
@@ -352,21 +352,6 @@ final class PostVertexBridge {
         List<String> names = declaration.declarators().stream().map(value -> tree.text(value.name())).toList();
         return new PostVaryingDeclaration(start, end, storage == 1 ? qualifiers.get(0) : null,
                 tree.text(declaration.type().name()), names);
-    }
-
-    /**
-     * The first line start between the text before {@code offset} and {@code offset}: where a
-     * {@code (?m)^\s*} match ending there begins. -1 when the declaration does not start a line.
-     */
-    private static int lineStartBefore(String source, int offset) {
-        int text = offset;
-        while (text > 0 && " \t\n\u000B\f\r".indexOf(source.charAt(text - 1)) >= 0) text--;
-        for (int index = text; index <= offset; index++) {
-            boolean lineStart = index == 0 || source.charAt(index - 1) == '\n'
-                    || source.charAt(index - 1) == '\r' && (index == source.length() || source.charAt(index) != '\n');
-            if (lineStart) return index;
-        }
-        return -1;
     }
 
     static List<String> referencedPostVaryings(
