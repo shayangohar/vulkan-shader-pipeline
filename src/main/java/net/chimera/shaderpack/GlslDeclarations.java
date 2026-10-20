@@ -49,6 +49,29 @@ final class GlslDeclarations {
     /** Replaces source characters {@code [from, to)} with {@code text}. */
     record TextEdit(int from, int to, String text) {}
 
+    /**
+     * The tree of {@code source}, or null when it does not parse. A reader that only gathers
+     * declarations (target directives, outputs) treats such a source as declaring none: it
+     * compiles nowhere, and the converters refuse it with the parse failure.
+     */
+    static GlslTree parseOrNull(String source) {
+        try {
+            return GlslTree.parse(source);
+        } catch (IllegalArgumentException unparsed) {
+            return null;
+        }
+    }
+
+    /**
+     * Where a {@code (?m)^[ \t]*} match that ends at {@code offset} begins: the start of the
+     * indentation before it, or -1 when other text shares its line.
+     */
+    static int indentationStart(String source, int offset) {
+        int start = offset;
+        while (start > 0 && (source.charAt(start - 1) == ' ' || source.charAt(start - 1) == '\t')) start--;
+        return start == 0 || source.charAt(start - 1) == '\n' || source.charAt(start - 1) == '\r' ? start : -1;
+    }
+
     /** Every name declared by a variable declaration at file scope, in source order. */
     static List<Variable> variables(GlslTree tree) {
         List<Variable> variables = new ArrayList<>();

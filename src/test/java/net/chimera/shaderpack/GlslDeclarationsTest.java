@@ -129,6 +129,19 @@ final class GlslDeclarationsTest {
                         "#version 330\nuniform float a;\n\n  out vec4 color;\n\nvoid main() { color = vec4(a); }\n"));
     }
 
+    /** Mipmap directives are const bool declarations; a later false removes an earlier true, in source order. */
+    @Test
+    void mipmapDirectivesAreConstDeclarations() {
+        PostTargetPlan plan = PostTargetPlan.parse("composite1", """
+                /* RENDERTARGETS: 0 */
+                const bool colortex3MipmapEnabled = true; // bloom
+                const bool gaux1MipmapEnabled = true;
+                const bool colortex3MipmapEnabled = false;
+                void main() { gl_FragColor = vec4(0.0); }
+                """).plan();
+        assertEquals(List.of(4), plan.mipmappedTargets());
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {
