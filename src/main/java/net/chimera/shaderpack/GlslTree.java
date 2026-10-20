@@ -148,6 +148,36 @@ final class GlslTree {
         return externals;
     }
 
+    /** Every directive, at file scope and inside function bodies, in source order. */
+    List<Directive> directives() {
+        List<Directive> directives = new ArrayList<>();
+        for (External external : externals) {
+            if (external instanceof Directive directive) directives.add(directive);
+            if (external instanceof Function function && function.body() != null) {
+                collectDirectives(function.body(), directives);
+            }
+        }
+        return directives;
+    }
+
+    private static void collectDirectives(Statement statement, List<Directive> directives) {
+        switch (statement) {
+            case Directive directive -> directives.add(directive);
+            case Block block -> block.statements().forEach(inner -> collectDirectives(inner, directives));
+            case Control control -> control.bodies().forEach(body -> collectDirectives(body, directives));
+            default -> { }
+        }
+    }
+
+    /** Which tokens belong to a directive: {@code directive[token]} for every token. */
+    boolean[] directiveTokens() {
+        boolean[] directive = new boolean[tokens.size()];
+        for (Directive value : directives()) {
+            for (int index = value.range().start(); index < value.range().end(); index++) directive[index] = true;
+        }
+        return directive;
+    }
+
     String text(int token) {
         return tokens.get(token).text();
     }
