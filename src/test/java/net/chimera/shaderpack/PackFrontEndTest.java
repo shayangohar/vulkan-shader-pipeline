@@ -643,7 +643,7 @@ final class PackFrontEndTest {
     @Test
     void entityDefaultAttribute() {
         // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
-        String entity = EntityVertexBridge.removeEntityAttributes(
+        String entity = EntityDeclarations.removeEntityAttributes(
                 "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
         assertTrue(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
                         && !entity.contains("mc_midTexCoord"),

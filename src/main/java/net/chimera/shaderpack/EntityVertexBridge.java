@@ -11,8 +11,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static net.chimera.shaderpack.GlslLexer.stripComments;
@@ -25,9 +25,11 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
 public final class EntityVertexBridge {
     private EntityVertexBridge() {}
 
-    static final Pattern ENTITY_ID_DECLARATION = Pattern.compile(
-            "(?m)\\b(uniform|attribute|in)\\s+(int|float)\\s+"
-                    + "([^;{}]*\\b(?:entityId|blockEntityId|currentRenderedItemId)\\b[^;{}]*);\\s*");
+    /** The storage keywords of a declaration the conversion must have consumed. */
+    private static final Set<String> INTERFACE_STORAGES = Set.of("attribute", "varying", "in", "out");
+    /** A leftover declaration's text: from its keyword through the rest of its line. */
+    private static final Pattern REST_OF_LINE = Pattern.compile("\\s+.*$", Pattern.MULTILINE);
+    private static final Pattern SAMPLER_TYPE = Pattern.compile("[iu]?sampler\\w*");
 
     /**
      * Iris EntityPatcher identities: each name reads one component of the
@@ -286,8 +288,9 @@ public final class EntityVertexBridge {
             List<UniformRegistry.UniformDeclaration> fragmentUniforms,
             VertexSamplerPlan samplerPlan
     ) {
-        String liveInputs = stripComments(removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
-                LegacyGlslConverter.prepareSource(source, sourceFile, true))));
+        String liveInputs = stripComments(EntityDeclarations.removeEntityAttributes(
+                LegacyGlslConverter.pruneUnreachableVertexFunctions(
+                        LegacyGlslConverter.prepareSource(source, sourceFile, true))));
         if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord")
                 || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")) {
             throw new IllegalArgumentException("crumbling BLOCK has no material mid-coordinate or tangent attribute");
@@ -334,7 +337,7 @@ public final class EntityVertexBridge {
         src = LegacyGlslConverter.pruneUnreachableVertexFunctions(src);
         String stripped = stripComments(src);
         GlslVersion.requireSupported(stripped, "entity vertex", true);
-        if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
+        if (GlslDeclarations.main(GlslTree.parse(stripped)) == null
                 || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
             throw new IllegalArgumentException("entity vertex requires main and gl_Position");
         }
@@ -342,7 +345,7 @@ public final class EntityVertexBridge {
         // Catalog uniforms, legacy matrix built-ins, and stage-level
         // flat/layout qualifiers in real entity sources are translated
         // below; reject only what no adapter path can serve.
-        String beforeFeatures = removeEntityIdDeclarations(stripped);
+        String beforeFeatures = EntityDeclarations.removeEntityIdDeclarations(stripped);
         EntityVertexFeatureCheck.rejectEntityVertexFeatures(
                 LegacyGlslConverter.stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
                 allowStorageBuffers, samplerPlan != null);
@@ -450,8 +453,8 @@ public final class EntityVertexBridge {
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
         String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
-        converted = removeEntityIdDeclarations(converted);
-        converted = removeEntityAttributes(converted);
+        converted = EntityDeclarations.removeEntityIdDeclarations(converted);
+        converted = EntityDeclarations.removeEntityAttributes(converted);
         converted = replaceEntityVaryings(converted, layout, "out", true);
         // Served and dead uniform declarations leave before identifier
         // replacement: the replacement would otherwise rewrite names
@@ -485,7 +488,7 @@ public final class EntityVertexBridge {
                 Map.entry("gl_ProjectionMatrix", "ProjMat"),
                 Map.entry("gbufferModelView", "ModelViewMat"),
                 Map.entry("gbufferModelViewInverse", "chimeraEntityInverseModelView()"),
-                Map.entry("mc_midTexCoord", midTexCoordValue(stripped)),
+                Map.entry("mc_midTexCoord", EntityDeclarations.midTexCoordValue(stripped)),
                 Map.entry("at_tangent", "chimeraEntityTangentValue()"),
                 Map.entry("Tangent", "chimeraEntityTangentValue()"),
                 // Vulkan's index counts from the draw's first vertex, as GL's does.
@@ -524,12 +527,22 @@ public final class EntityVertexBridge {
 
     /** Fails on an attribute, varying or interface declaration the conversion did not consume. */
     private static void requireConsumedDeclarations(String converted) {
-        Matcher leftoverDeclaration = Pattern.compile("(?m)^\\s*(?:attribute|varying|in|out)\\s+.*$")
-                .matcher(stripComments(converted));
-        if (leftoverDeclaration.find()) {
-            String line = leftoverDeclaration.group().trim();
-            throw new IllegalArgumentException("entity declaration was not consumed: "
-                    + line.substring(0, Math.min(80, line.length())));
+        String stripped = stripComments(converted);
+        GlslTree tree = GlslTree.parse(stripped);
+        for (GlslTree.External external : tree.externals()) {
+            List<GlslTree.Qualifier> qualifiers = external instanceof GlslTree.Declaration declaration
+                    ? declaration.qualifiers()
+                    : external instanceof GlslTree.InterfaceBlock block ? block.qualifiers() : List.of();
+            if (qualifiers.isEmpty()) continue;
+            String storage = tree.text(qualifiers.get(0).keyword());
+            int start = tree.offset(qualifiers.get(0).keyword());
+            int end = GlslDeclarations.tailEnd(stripped, start + storage.length(), REST_OF_LINE);
+            if (INTERFACE_STORAGES.contains(storage) && end >= 0
+                    && GlslDeclarations.lineStartBefore(stripped, start) >= 0) {
+                String line = stripped.substring(start, end).trim();
+                throw new IllegalArgumentException("entity declaration was not consumed: "
+                        + line.substring(0, Math.min(80, line.length())));
+            }
         }
     }
 
@@ -540,14 +553,12 @@ public final class EntityVertexBridge {
     private static String wrapProjectedMain(String converted, String vertexPreamble) {
         String wrapped = converted;
         if (vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE) {
-            wrapped = wrapped.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
-                    "void chimeraHandMain()");
+            wrapped = renamedMain(wrapped, "chimeraHandMain");
             wrapped += "\nvoid main() { chimeraHandMain();"
                     + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
         }
         if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
-            wrapped = wrapped.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)",
-                    "void chimeraSkyMain()");
+            wrapped = renamedMain(wrapped, "chimeraSkyMain");
             wrapped += "\nvoid main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"
                     + " }\n";
         }
@@ -686,122 +697,17 @@ public final class EntityVertexBridge {
         });
     }
 
-    static String removeEntityIdDeclarations(String source) {
-        return removeEntityIdDeclarations(source, null);
-    }
-
-    static String removeEntityIdDeclarations(
-            String source,
-            UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        String input = source == null ? "" : source;
-        Matcher matcher = ENTITY_ID_DECLARATION.matcher(input);
-        StringBuffer output = new StringBuffer();
-        while (matcher.find()) {
-            List<String> remaining = new ArrayList<>();
-            for (String declarator : matcher.group(3).split(",")) {
-                String value = declarator.trim();
-                int equals = value.indexOf('=');
-                String name = equals < 0 ? value : value.substring(0, equals).trim();
-                boolean executable = interfacePlan != null && interfacePlan.executableUniforms().stream()
-                        .anyMatch(uniform -> uniform.name().equals(name));
-                if (!ENTITY_ID_NAMES.contains(name) && !executable) {
-                    remaining.add(value);
-                }
-            }
-            String replacement = remaining.isEmpty()
-                    ? ""
-                    : matcher.group(1) + " " + matcher.group(2) + " "
-                    + String.join(", ", remaining) + ";";
-            matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(output);
-        return output.toString();
-    }
-
-    /**
-     * Terrain-format programs carry no iris_Entity, and Iris applies EntityPatcher only
-     * to vanilla-format programs, so an entityId/blockEntityId attribute there stays
-     * unbound and GL reads 0 (MakeUp 9.5g declares attribute int blockEntityId in its
-     * shared block vertex). Serve that value instead of rejecting the program.
-     */
-    static String defaultUnboundIdentityAttributes(String source) {
-        Matcher matcher = Pattern.compile(
-                "(?m)^[ \\t]*(?:attribute|in)[ \\t]+(int|float)[ \\t]+(entityId|blockEntityId)[ \\t]*;")
-                .matcher(source == null ? "" : source);
-        StringBuilder output = new StringBuilder();
-        while (matcher.find()) {
-            String zero = matcher.group(1).equals("int") ? "0" : "0.0";
-            matcher.appendReplacement(output, Matcher.quoteReplacement(
-                    "const " + matcher.group(1) + " " + matcher.group(2) + " = " + zero + ";"));
-        }
-        matcher.appendTail(output);
-        return output.toString();
-    }
-
-    static String removeEntityAttributes(String source) {
-        // The trailing class eats spaces and tabs but never newlines: an
-        // eager \s* would swallow the next line's indentation and hide the
-        // following declaration from the ^ anchor, silently keeping every
-        // second consecutive attribute.
-        Matcher matcher = Pattern.compile(
-                "(?m)^\\s*(?:attribute|in)\\s+(float|vec2|vec3|vec4)\\s+"
-                        + "(mc_Entity|at_midBlock|mc_midTexCoord|at_tangent|Tangent)[ \\t]*;[ \\t]*")
-                .matcher(source == null ? "" : source);
-        StringBuilder output = new StringBuilder();
-        while (matcher.find()) {
-            // Iris's entity vertex format has no mc_Entity or at_midBlock (terrain inputs),
-            // so GL reads the unbound attribute's default (0, 0, 0, 1).
-            String name = matcher.group(2);
-            String replacement = !name.equals("mc_Entity") && !name.equals("at_midBlock") ? ""
-                    : "\nconst " + matcher.group(1) + " " + name + " = " + switch (matcher.group(1)) {
-                        case "float" -> "0.0";
-                        case "vec2" -> "vec2(0.0)";
-                        case "vec3" -> "vec3(0.0)";
-                        default -> "vec4(0.0, 0.0, 0.0, 1.0)";
-                    } + ";";
-            matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(output);
-        return output.toString();
-    }
-
     static String entityIdentifierType(String name, String vertexSource, String fragmentSource) {
         String vertex = vertexSource == null ? "" : vertexSource;
         String fragment = fragmentSource == null ? "" : stripComments(fragmentSource);
-        String declared = declaredEntityIdType(vertex, name);
-        if (declared == null) declared = declaredEntityIdType(fragment, name);
+        String declared = EntityDeclarations.declaredEntityIdType(vertex, name);
+        if (declared == null) declared = EntityDeclarations.declaredEntityIdType(fragment, name);
         if (declared != null) return declared;
         if (LegacyGlslConverter.containsIdentifier(vertex, name)
                 || LegacyGlslConverter.containsIdentifier(fragment, name)) {
             return "int";
         }
         return null;
-    }
-
-    static String declaredEntityIdType(String source, String name) {
-        Matcher declaration = ENTITY_ID_DECLARATION.matcher(source);
-        while (declaration.find()) {
-            for (String declarator : declaration.group(3).split(",")) {
-                String value = declarator.trim();
-                int equals = value.indexOf('=');
-                if ((equals < 0 ? value : value.substring(0, equals).trim()).equals(name)) {
-                    return declaration.group(2);
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Mid-texture coordinates arrive as a host vec2. A vec4-authored
-     * declaration (BSL advanced materials) keeps matrix-multiplication
-     * shape through an explicit constructor; vec2 uses the value directly.
-     */
-    static String midTexCoordValue(String strippedSource) {
-        boolean vec4 = Pattern.compile("(?m)^\\s*(?:attribute|in)\\s+vec4\\s+mc_midTexCoord\\s*;")
-                .matcher(strippedSource).find();
-        return vec4 ? "vec4(MidTexCoord, 0.0, 1.0)" : "MidTexCoord";
     }
 
     static String entityIdExpression(LegacyGlslConverter.TerrainVaryingLayout layout, String name) {
@@ -888,12 +794,30 @@ public final class EntityVertexBridge {
             }
             converted = FragmentConverter.rewriteSamplerDeclaration(converted, name, binding);
         }
-        Matcher unbound = Pattern.compile("(?m)^\\s*uniform\\s+[iu]?sampler\\w*\\s+([A-Za-z_]\\w*)")
-                .matcher(converted);
-        if (unbound.find()) {
-            throw new IllegalArgumentException("unsupported entity vertex sampler: " + unbound.group(1));
+        String unbound = unboundSampler(converted);
+        if (unbound != null) {
+            throw new IllegalArgumentException("unsupported entity vertex sampler: " + unbound);
         }
         return converted;
+    }
+
+    /** The first sampler a line-starting {@code uniform samplerX name} declares, without a binding; null if none. */
+    private static String unboundSampler(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            int start = tree.offset(variable.declaration().range().start());
+            if (variable.qualifiers().equals(List.of("uniform")) && SAMPLER_TYPE.matcher(variable.type()).matches()
+                    && GlslDeclarations.lineStartBefore(source, start) >= 0) {
+                return variable.name();
+            }
+        }
+        return null;
+    }
+
+    /** The source with its main renamed {@code name}; unchanged without one. */
+    private static String renamedMain(String source, String name) {
+        String renamed = GlslDeclarations.renameMain(source, name);
+        return renamed == null ? source : renamed;
     }
 
     /** Same immutable hand program, adapted only to the host inputs of this draw. */
@@ -953,19 +877,12 @@ public final class EntityVertexBridge {
     static String movingBlockEntity(String source) {
         source = source.replaceFirst("(vec2 chimeraMcEntityValue\\(\\) \\{\\s*return )vec2\\(0\\.0\\);",
                 "$1vec2(-1.0);");
-        Matcher matcher = Pattern.compile("const (float|vec2|vec3|vec4) mc_Entity = [^;]+;").matcher(source);
-        StringBuilder output = new StringBuilder();
-        while (matcher.find()) {
-            String value = switch (matcher.group(1)) {
-                case "float" -> "-1.0";
-                case "vec2" -> "vec2(-1.0)";
-                case "vec3" -> "vec3(-1.0, -1.0, 0.0)";
-                default -> "vec4(-1.0, -1.0, 0.0, 1.0)";
-            };
-            matcher.appendReplacement(output, "const " + matcher.group(1) + " mc_Entity = " + value + ";");
-        }
-        matcher.appendTail(output);
-        return output.toString();
+        return EntityDeclarations.withEntityConstants(source, type -> switch (type) {
+            case "float" -> "-1.0";
+            case "vec2" -> "vec2(-1.0)";
+            case "vec3" -> "vec3(-1.0, -1.0, 0.0)";
+            default -> "vec4(-1.0, -1.0, 0.0, 1.0)";
+        });
     }
 
     /**
@@ -989,7 +906,7 @@ public final class EntityVertexBridge {
         if (start < 0) throw new IllegalArgumentException("not a converted glint vertex");
         String body = converted.substring(start + GlslVertexPreambles.GLINT_VERTEX_PREAMBLE.length());
         body = GlslTokenRewriter.replaceIdentifiers(body, Map.of("ProjMat", "chimeraHandProjection()"));
-        body = body.replaceFirst("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)", "void chimeraHandMain()");
+        body = renamedMain(body, "chimeraHandMain");
         return converted.substring(0, start) + GlslVertexPreambles.GLINT_HAND_VERTEX_PREAMBLE + body
                 + "\nvoid main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
     }

@@ -222,17 +222,14 @@ final class IrisCoreProfile {
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;
         Map<String, String> types = new HashMap<>();
-        Matcher declaration = EntityVertexBridge.ENTITY_ID_DECLARATION.matcher(stripComments(source));
-        while (declaration.find()) {
-            for (String declarator : declaration.group(3).split(",")) {
-                String value = declarator.trim();
-                int equals = value.indexOf('=');
-                String name = equals < 0 ? value : value.substring(0, equals).trim();
-                if (EntityVertexBridge.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.group(2));
+        for (EntityDeclarations.IdentityDeclaration declaration
+                : EntityDeclarations.identityDeclarations(stripComments(source))) {
+            for (String name : declaration.names()) {
+                if (EntityVertexBridge.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.type());
             }
         }
         if (types.isEmpty()) return source;
-        String src = EntityVertexBridge.removeEntityIdDeclarations(source);
+        String src = EntityDeclarations.removeEntityIdDeclarations(source);
         Map<String, String> replacements = new HashMap<>();
         String entityId = UniformRegistry.HOST_ENTITY_ID;
         if (types.containsKey("entityId")) {

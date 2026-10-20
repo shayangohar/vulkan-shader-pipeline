@@ -266,7 +266,7 @@ public final class FragmentConverter {
             src = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
-                src = EntityVertexBridge.removeEntityIdDeclarations(src, interfacePlan);
+                src = EntityDeclarations.removeEntityIdDeclarations(src, interfacePlan);
                 src = EntityVertexBridge.replaceEntityIdReferences(src, request.terrainLayout());
             }
             if (geometryStage && modern && request.geometryOutputPlan() == null && !stage.shadowPass()) {

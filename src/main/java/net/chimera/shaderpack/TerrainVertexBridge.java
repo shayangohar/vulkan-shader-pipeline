@@ -139,7 +139,7 @@ final class TerrainVertexBridge {
             boolean allowStorageBuffers
     ) {
         boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
-        String prepared = EntityVertexBridge.defaultUnboundIdentityAttributes(
+        String prepared = EntityDeclarations.defaultUnboundIdentityAttributes(
                 LegacyGlslConverter.prepareSource(source, sourceFile, true));
         String vertex = shadowStage ? normalizeShadowTerrain(prepared) : normalizeModernTerrain(prepared);
         String fragment = normalizedFragment(fragmentSource, shadowStage);
@@ -153,7 +153,7 @@ final class TerrainVertexBridge {
                 ? stripShadowUniformDeclarations(vertex)
                 : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
         if (entityInputs) {
-            vertex = EntityVertexBridge.removeEntityIdDeclarations(vertex, interfacePlan);
+            vertex = EntityDeclarations.removeEntityIdDeclarations(vertex, interfacePlan);
         }
         requireSupportedModernVertex(stripComments(vertex), allowStorageBuffers);
         LegacyGlslConverter.TerrainVaryingLayout layout = modernVaryingLayout(vertex, fragment, entityIdTypes);
@@ -398,7 +398,7 @@ final class TerrainVertexBridge {
             boolean allowStorageBuffers
     ) {
         try {
-            String src = EntityVertexBridge.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source,
+            String src = EntityDeclarations.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source,
                     sourceFile, true));
             String stripped = stripComments(src);
             GlslVersion.requireSupported(stripped, "legacy vertex", true);

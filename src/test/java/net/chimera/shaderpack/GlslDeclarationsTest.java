@@ -209,6 +209,35 @@ final class GlslDeclarationsTest {
         assertTrue(converted.contains("}\n\nlayout(location = 0) out vec2 texcoord; // uv\nvoid main() {"), converted);
     }
 
+    /**
+     * An entity identity leaves its declaration from the storage keyword through the whitespace
+     * after it, other declarators staying; a commented declaration is not one.
+     */
+    @Test
+    void entityIdentityDeclarationsKeepTheirOtherDeclarators() {
+        String source = "uniform int entityId, frame = 2;\n\nin float blockEntityId;\n// uniform int entityId;\n"
+                + "void main() {}\n";
+        assertEquals("int", EntityDeclarations.declaredEntityIdType(source, "entityId"));
+        assertEquals("float", EntityDeclarations.declaredEntityIdType(source, "blockEntityId"));
+        assertEquals("uniform int frame = 2;// uniform int entityId;\nvoid main() {}\n",
+                EntityDeclarations.removeEntityIdDeclarations(source));
+    }
+
+    /**
+     * Unbound identity attributes become zero constants in place of their line; terrain attributes
+     * go with the blank lines before them, mc_Entity and at_midBlock becoming GL's unbound default.
+     */
+    @Test
+    void entityAttributesBecomeTheirUnboundDefaults() {
+        assertEquals("const int blockEntityId = 0; // id\nin float entityId = 1.0;\n",
+                EntityDeclarations.defaultUnboundIdentityAttributes(
+                        "  attribute int blockEntityId; // id\nin float entityId = 1.0;\n"));
+        assertEquals("\n\nconst vec2 mc_Entity = vec2(0.0);\nin vec3 vaNormal;\n",
+                EntityDeclarations.removeEntityAttributes(
+                        "in vec4 at_tangent; \n\n  attribute vec2 mc_Entity;\nin vec3 vaNormal;\n"));
+        assertEquals("vec4(MidTexCoord, 0.0, 1.0)", EntityDeclarations.midTexCoordValue("in vec4 mc_midTexCoord;\n"));
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {

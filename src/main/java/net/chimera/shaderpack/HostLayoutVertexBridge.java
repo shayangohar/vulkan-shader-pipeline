@@ -74,7 +74,7 @@ final class HostLayoutVertexBridge {
     ) {
         try {
             String live = stripComments(
-                    EntityVertexBridge.removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
+                    EntityDeclarations.removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
                     LegacyGlslConverter.prepareSource(source, sourceFile, true))));
             if (LegacyGlslConverter.containsIdentifier(live, "mc_midTexCoord")
                     || LegacyGlslConverter.containsIdentifier(live, "at_tangent")
