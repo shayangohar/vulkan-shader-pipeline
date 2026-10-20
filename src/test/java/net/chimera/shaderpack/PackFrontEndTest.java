@@ -184,7 +184,7 @@ final class PackFrontEndTest {
         PackSettingsPlan settings = new PackSettingsPlan(Map.of(), Map.of(), Map.of(), Map.of(),
                 Map.of("world0/composite2", false, "composite3", false), Set.of(),
                 Set.of(), Set.of(), List.of(), "default",
-                PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of());
+                PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of(), null);
         assertTrue(!settings.enabled("world0", "composite2"), "folder-scoped switch ignored");
         assertTrue(settings.enabled("world-1", "composite2"), "another folder's switch applied");
         assertTrue(settings.enabled("world0", "composite3") && !settings.enabled("", "composite3"),

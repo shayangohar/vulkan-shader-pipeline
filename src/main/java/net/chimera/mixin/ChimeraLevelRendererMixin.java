@@ -10,6 +10,7 @@ import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.ParticleDirectives;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -35,13 +36,18 @@ import java.util.function.Predicate;
  * - The world clear opens the internal RGBA16F world target instead, cleared as the pack asks,
  *   with the fog colour FogRenderer has just set.
  * - The entity and block-entity family batches draw where vanilla finishes each of those loops.
- * - Particles and weather draw in their lanes' windows.
+ * - Particles and weather draw in their lanes' windows; particles move between NeoForge's early
+ *   and late calls as the pack's particle ordering asks.
  * - The translucent phase first draws the solid hand, as Iris does.
  * - RETURN draws the translucent hand and resolves the finished HDR world into the stable
  *   output target used by the hand, the GUI and VulkanMod's post chain.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraLevelRendererMixin {
+    private static final String PARTICLES = "Lnet/minecraft/client/particle/ParticleEngine;render("
+            + "Lnet/minecraft/client/renderer/LightTexture;Lnet/minecraft/client/Camera;F"
+            + "Lnet/minecraft/client/renderer/culling/Frustum;Ljava/util/function/Predicate;)V";
+
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void chimera$beginFrame(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
                                     GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f modelView,
@@ -91,10 +97,7 @@ public abstract class ChimeraLevelRendererMixin {
         ChimeraHandRenderer.drawSolid();
     }
 
-    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/particle/ParticleEngine;render(Lnet/minecraft/client/renderer/LightTexture;"
-                    + "Lnet/minecraft/client/Camera;FLnet/minecraft/client/renderer/culling/Frustum;"
-                    + "Ljava/util/function/Predicate;)V"), require = 1)
+    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = PARTICLES), require = 1)
     private void chimera$particleLanes(ParticleEngine particles, LightTexture lightTexture, Camera camera,
                                        float partialTick, Frustum frustum, Predicate<ParticleRenderType> types,
                                        Operation<Void> original) {
@@ -103,6 +106,42 @@ public abstract class ChimeraLevelRendererMixin {
             original.call(particles, lightTexture, camera, partialTick, frustum, types);
         } finally {
             ChimeraEntityBridge.endParticles();
+        }
+    }
+
+    /**
+     * NeoForge's early particle call: opaque particles, before translucent terrain and so before the
+     * pack's deferred passes. Ordinal 0 is the Fabulous path, which Iris leaves alone too.
+     */
+    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = PARTICLES, ordinal = 1), require = 1)
+    private void chimera$earlyParticles(ParticleEngine particles, LightTexture lightTexture, Camera camera,
+                                        float partialTick, Frustum frustum, Predicate<ParticleRenderType> types,
+                                        Operation<Void> original) {
+        chimera$orderParticles(true, particles, lightTexture, camera, partialTick, frustum, types, original);
+    }
+
+    /** NeoForge's late particle call: translucent particles, after translucent terrain. */
+    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = PARTICLES, ordinal = 2), require = 1)
+    private void chimera$lateParticles(ParticleEngine particles, LightTexture lightTexture, Camera camera,
+                                       float partialTick, Frustum frustum, Predicate<ParticleRenderType> types,
+                                       Operation<Void> original) {
+        chimera$orderParticles(false, particles, lightTexture, camera, partialTick, frustum, types, original);
+    }
+
+    /**
+     * Moves particles between NeoForge's two calls as the pack's ordering asks, as Iris's NeoForge
+     * MixinLevelRenderer does: before draws every particle early, after every particle late, and
+     * mixed keeps NeoForge's split.
+     */
+    private static void chimera$orderParticles(boolean early, ParticleEngine particles, LightTexture lightTexture,
+                                               Camera camera, float partialTick, Frustum frustum,
+                                               Predicate<ParticleRenderType> types, Operation<Void> original) {
+        ParticleDirectives.Ordering ordering = ChimeraRenderer.packParticleOrdering();
+        if (ordering == null) {
+            original.call(particles, lightTexture, camera, partialTick, frustum, types);
+        } else if (ordering.drawsIn(early)) {
+            Predicate<ParticleRenderType> ordered = type -> ordering.early(type.isTranslucent()) == early;
+            original.call(particles, lightTexture, camera, partialTick, frustum, ordered);
         }
     }
 

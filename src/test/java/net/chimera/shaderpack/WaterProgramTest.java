@@ -458,7 +458,7 @@ final class WaterProgramTest {
     private static PackSettingsPlan properties(Map<String, String> values) {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), values, Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default",
-                PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of());
+                PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of(), null);
     }
 
     private static String terrainVertex() {

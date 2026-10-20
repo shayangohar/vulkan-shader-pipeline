@@ -3,19 +3,22 @@ package net.chimera.shaderpack;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Pack-wide directives: GLSL versions, property syntax, held items and screen overlays. */
+/** Pack-wide directives: GLSL versions, property syntax, held items, screen overlays and particle ordering. */
 final class PackDirectivesTest {
     /**
      * One version rule (any desktop 110-460, compatibility or core), Iris's core mode, and the
@@ -335,6 +338,104 @@ final class PackDirectivesTest {
             }
         }
         assertTrue(loads && clears, "the main pass reads the overlay switches per pack session and drops them with it");
+    }
+
+    /**
+     * Iris's particle ordering: particles.ordering names it, separateEntityDraws (either value) sets
+     * mixed, particles.before.deferred sets before while nothing else has, and unset means after.
+     * The keys apply in the order they first appear, each with its last value.
+     */
+    @Test
+    void particleOrdering() {
+        assertEquals(ParticleDirectives.DEFAULTS, particles(), "no keys: every particle draws after deferred");
+        assertEquals(ParticleDirectives.Ordering.MIXED, particles("particles.ordering", "mixed").ordering());
+        assertEquals(ParticleDirectives.Ordering.BEFORE, particles("particles.ordering", " Before ").ordering(),
+                "Iris trims and upper-cases the name");
+        assertEquals(ParticleDirectives.Ordering.BEFORE, particles("particles.before.deferred", "true").ordering());
+        assertEquals(ParticleDirectives.Ordering.AFTER,
+                particles("particles.ordering", "after", "particles.before.deferred", "true").ordering(),
+                "particles.before.deferred only applies while the ordering is unset");
+        assertEquals(new ParticleDirectives(ParticleDirectives.Ordering.MIXED, false, List.of()),
+                particles("separateEntityDraws", "false"), "separateEntityDraws=false still sets mixed");
+        assertEquals(ParticleDirectives.Ordering.MIXED,
+                particles("particles.ordering", "after", "separateEntityDraws", "true").ordering(),
+                "superDuperVanilla: the separateEntityDraws below particles.ordering=after wins");
+        assertEquals(ParticleDirectives.Ordering.AFTER,
+                particles("separateEntityDraws", "true", "particles.ordering", "after").ordering());
+        Map<String, String> repeated = new LinkedHashMap<>();
+        repeated.put("particles.ordering", "after");
+        repeated.put("separateEntityDraws", "true");
+        repeated.put("particles.ordering", "before");
+        assertEquals(ParticleDirectives.Ordering.MIXED, ParticleDirectives.fromOrderedProperties(repeated).ordering(),
+                "a repeated key keeps its first position");
+        var unknown = particles("particles.ordering", "sideways", "separateEntityDraws", "yes");
+        assertTrue(unknown.ordering() == ParticleDirectives.Ordering.AFTER && unknown.deviations().containsAll(List.of(
+                        "PARTICLE_ORDERING_UNKNOWN:sideways", "PARTICLE_DIRECTIVE_MALFORMED:separateEntityDraws")),
+                "unknown values are reported and leave the ordering unset: " + unknown);
+
+        var before = ParticleDirectives.Ordering.BEFORE;
+        var mixed = ParticleDirectives.Ordering.MIXED;
+        var after = ParticleDirectives.Ordering.AFTER;
+        assertTrue(before.early(true) && before.early(false) && before.drawsIn(true) && !before.drawsIn(false),
+                "before draws every particle in NeoForge's early call and skips the late one");
+        assertTrue(mixed.early(false) && !mixed.early(true) && mixed.drawsIn(true) && mixed.drawsIn(false),
+                "mixed keeps NeoForge's split: opaque early, translucent late");
+        assertTrue(!after.early(true) && !after.early(false) && !after.drawsIn(true) && after.drawsIn(false),
+                "after draws every particle in the late call");
+    }
+
+    /** The parse keeps file order, which sorting would lose: here it puts separateEntityDraws first. */
+    @Test
+    void particleOrderingFollowsTheFile(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                separateEntityDraws = true
+                #ifdef NEVER_DEFINED
+                particles.ordering = before
+                #else
+                particles.ordering = after
+                #endif
+                """);
+        Files.writeString(shaders.resolve("final.fsh"), """
+                #version 120
+                uniform sampler2D colortex0;
+                void main() {
+                    gl_FragColor = texture2D(colortex0, vec2(0.5));
+                }
+                """);
+        var particles = PackProbe.analyze(root).plan().particleDirectives();
+        assertEquals(new ParticleDirectives(ParticleDirectives.Ordering.AFTER, true, List.of()), particles);
+    }
+
+    @Test
+    void particleOrderingHooks() throws IOException {
+        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin");
+        List<Object> ordinals = new ArrayList<>();
+        for (var handler : mixin.methods) {
+            for (var annotation : MixinBytecode.annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
+                if (!annotation.desc.equals("Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;")
+                        || !(MixinBytecode.annotationValue(annotation, "at") instanceof List<?> ats)) {
+                    continue;
+                }
+                for (Object at : ats) {
+                    if (at instanceof AnnotationNode node
+                            && String.valueOf(MixinBytecode.annotationValue(node, "target"))
+                                    .startsWith("Lnet/minecraft/client/particle/ParticleEngine;render(")) {
+                        ordinals.add(MixinBytecode.annotationValue(node, "ordinal"));
+                    }
+                }
+            }
+        }
+        assertTrue(ordinals.contains(1) && ordinals.contains(2),
+                "NeoForge's early (ordinal 1) and late (ordinal 2) particle calls are both ordered: " + ordinals);
+    }
+
+    private static ParticleDirectives particles(String... keyValues) {
+        Map<String, String> properties = new LinkedHashMap<>();
+        for (int index = 0; index + 1 < keyValues.length; index += 2) {
+            properties.put(keyValues[index], keyValues[index + 1]);
+        }
+        return ParticleDirectives.fromOrderedProperties(properties);
     }
 
     static boolean screenOverlay(ScreenOverlayDirectives directives, String key) {
