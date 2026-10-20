@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -27,8 +26,6 @@ import java.util.regex.Pattern;
 final class LegacyShaderNormalizer {
     /** Iris's name for the legacy built-in fog distance varying. */
     static final String FOG_FRAG_COORD = "iris_FogFragCoord";
-    private static final Pattern VERSION_LINE = Pattern.compile(
-            "(?im)^([ \\t]*#version[^\\r\\n]*(?:\\r?\\n|$))");
 
     record Result(String source, List<String> deviations, boolean successful) {
         Result {
@@ -47,15 +44,31 @@ final class LegacyShaderNormalizer {
      * pack's copy is renamed.
      */
     private static final Map<String, Integer> LATE_BUILTINS = lateBuiltins();
-    private static final Pattern VERSION_NUMBER = Pattern.compile("(?m)^[ \\t]*#version[ \\t]+(\\d+)");
     /** Interface types whose {@code T(0)} constructor is zero: scalars, vectors and matrices. */
     private static final Pattern ZEROABLE_TYPE = Pattern.compile(
             "(?:float|double|int|uint|bool|[biud]?vec[234]|d?mat[234](?:x[234])?)");
+    /** The rest of the #version line after its last token, through its line break. */
+    private static final Pattern REST_OF_LINE = Pattern.compile("[^\\r\\n]*(?:\\r?\\n|$)", Pattern.MULTILINE);
+
+    /** The first {@code #version} directive, or null without one. */
+    private static GlslTree.Directive versionDirective(GlslTree tree) {
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Directive directive)) continue;
+            int keyword = GlslLexer.nextSignificant(tree.tokens(), directive.range().start());
+            if (keyword >= 0 && keyword < directive.range().end() && tree.text(keyword).equalsIgnoreCase("version")) {
+                return directive;
+            }
+        }
+        return null;
+    }
 
     /** The authored #version; GLSL treats a source without one as 110. */
-    private static int authoredVersion(String source) {
-        Matcher version = VERSION_NUMBER.matcher(source);
-        return version.find() ? Integer.parseInt(version.group(1)) : 110;
+    private static int authoredVersion(GlslTree tree) {
+        GlslTree.Directive version = versionDirective(tree);
+        int keyword = version == null ? -1 : GlslLexer.nextSignificant(tree.tokens(), version.range().start());
+        int number = keyword < 0 ? -1 : GlslLexer.nextSignificant(tree.tokens(), keyword);
+        return number >= 0 && number < version.range().end() && tree.text(number).matches("\\d+")
+                ? Integer.parseInt(tree.text(number)) : 110;
     }
 
     /**
@@ -93,24 +106,13 @@ final class LegacyShaderNormalizer {
         return Map.copyOf(versions);
     }
 
-    private static void renameLateBuiltinDefinitions(List<GlslLexer.Token> tokens, int version) {
+    /** Renames every use of the late built-ins the pack declares or defines as its own functions. */
+    private static void renameLateBuiltinDefinitions(GlslTree tree, List<GlslLexer.Token> tokens, int version) {
         Set<String> defined = new HashSet<>();
-        int depth = 0;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol("{")) depth++;
-            else if (token.symbol("}")) depth = Math.max(0, depth - 1);
-            if (depth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER
-                    || version >= LATE_BUILTINS.getOrDefault(token.text(), 0)) {
-                continue;
-            }
-            // `type name(` at file scope declares or defines the pack's own function.
-            int type = GlslLexer.previousSignificant(tokens, index);
-            int open = GlslLexer.nextSignificant(tokens, index);
-            if (type >= 0 && tokens.get(type).kind() == GlslLexer.Kind.IDENTIFIER
-                    && open >= 0 && tokens.get(open).symbol("(")) {
-                defined.add(token.text());
-            }
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Function function)) continue;
+            String name = tree.text(function.name());
+            if (version < LATE_BUILTINS.getOrDefault(name, 0)) defined.add(name);
         }
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
@@ -125,13 +127,13 @@ final class LegacyShaderNormalizer {
             return new Result(null, List.of(), false);
         }
         try {
-            List<GlslLexer.Token> tokens = new ArrayList<>(
-                    GlslLexer.lex(GlslTokenRewriter.splitUniformDeclarators(source)));
-            int version = authoredVersion(source);
-            renameLateBuiltinDefinitions(tokens, version);
+            GlslTree split = GlslTree.parse(GlslTokenRewriter.splitUniformDeclarators(source));
+            List<GlslLexer.Token> tokens = new ArrayList<>(split.tokens());
+            int version = authoredVersion(split);
+            renameLateBuiltinDefinitions(split, tokens, version);
             endLineCommentsAtTheirLine(tokens, version);
             Map<String, String> required = new TreeMap<>();
-            String unsupportedField = rewriteFogFields(tokens, required);
+            String unsupportedField = rewriteFogFields(tokens, required, declaredUniformType(split, "fogColor"));
             if (unsupportedField != null) {
                 return unsupported(unsupportedField);
             }
@@ -150,9 +152,9 @@ final class LegacyShaderNormalizer {
                 normalized = zeroReferencedOutputs(normalized);
             }
             List<String> missing = new ArrayList<>();
-            List<GlslLexer.Token> normalizedTokens = GlslLexer.lex(normalized);
+            GlslTree normalizedTree = GlslTree.parse(normalized);
             for (Map.Entry<String, String> uniform : required.entrySet()) {
-                if (declaredUniformType(normalizedTokens, uniform.getKey()) == null) {
+                if (declaredUniformType(normalizedTree, uniform.getKey()) == null) {
                     missing.add("uniform " + uniform.getValue() + " " + uniform.getKey() + ";");
                 }
             }
@@ -177,7 +179,8 @@ final class LegacyShaderNormalizer {
      * Rewrites each {@code gl_Fog.<field>} to Chimera's fog uniforms and records the uniforms the
      * rewrites read. Returns the first field it cannot serve, or null when it serves them all.
      */
-    private static String rewriteFogFields(List<GlslLexer.Token> tokens, Map<String, String> required) {
+    private static String rewriteFogFields(List<GlslLexer.Token> tokens, Map<String, String> required,
+                                           String fogColorType) {
         for (int index = 0; index < tokens.size(); index++) {
             if (!tokens.get(index).identifier("gl_Fog")) {
                 continue;
@@ -189,7 +192,7 @@ final class LegacyShaderNormalizer {
                 return "unknown";
             }
             String fieldName = tokens.get(field).text();
-            String replacement = fogFieldValue(fieldName, tokens, required);
+            String replacement = fogFieldValue(fieldName, required, fogColorType);
             if (replacement == null) {
                 return fieldName;
             }
@@ -200,9 +203,11 @@ final class LegacyShaderNormalizer {
         return null;
     }
 
-    /** The expression that serves one gl_Fog field, or null for a field Chimera does not serve. */
-    private static String fogFieldValue(String fieldName, List<GlslLexer.Token> tokens,
-                                        Map<String, String> required) {
+    /**
+     * The expression that serves one gl_Fog field, or null for a field Chimera does not serve;
+     * {@code fogColorType} is the type the pack declares fogColor as, null when it does not.
+     */
+    private static String fogFieldValue(String fieldName, Map<String, String> required, String fogColorType) {
         return switch (fieldName) {
             case "start" -> {
                 required.put("fogStart", "float");
@@ -220,11 +225,10 @@ final class LegacyShaderNormalizer {
             // Iris's iris_FogParameters.color is the fog RGBA, iris_FogColor. Chimera's fogColor is
             // the same value; a pack that already declares it vec3 keeps its declaration.
             case "color" -> {
-                String declared = declaredUniformType(tokens, "fogColor");
-                if (declared == null) {
+                if (fogColorType == null) {
                     required.put("fogColor", "vec4");
                 }
-                yield "vec3".equals(declared) ? "vec4(fogColor, 1.0)" : "fogColor";
+                yield "vec3".equals(fogColorType) ? "vec4(fogColor, 1.0)" : "fogColor";
             }
             default -> null;
         };
@@ -348,43 +352,21 @@ final class LegacyShaderNormalizer {
     }
 
     /** The declared type of a uniform, or null when the source does not declare it. */
-    private static String declaredUniformType(List<GlslLexer.Token> tokens, String name) {
-        for (int index = 0; index < tokens.size(); index++) {
-            if (!tokens.get(index).identifier("uniform")) {
-                continue;
-            }
-            int type = GlslLexer.nextSignificant(tokens, index);
-            if (type < 0) {
-                continue;
-            }
-            boolean expectName = true;
-            for (int cursor = type + 1; cursor < tokens.size(); cursor++) {
-                GlslLexer.Token token = tokens.get(cursor);
-                if (!token.significant()) {
-                    continue;
-                }
-                if (token.symbol(";")) {
-                    break;
-                }
-                if (token.symbol(",")) {
-                    expectName = true;
-                    continue;
-                }
-                if (expectName && token.identifier(name)) {
-                    return tokens.get(type).text();
-                }
-                if (expectName && token.kind() == GlslLexer.Kind.IDENTIFIER) {
-                    expectName = false;
-                }
-            }
+    private static String declaredUniformType(GlslTree tree, String name) {
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (variable.qualified("uniform") && variable.name().equals(name)) return variable.type();
         }
         return null;
     }
 
+    /** {@code source} with {@code declarations} on the lines after its #version line, or first. */
     private static String insertDeclarations(String source, String declarations) {
-        Matcher version = VERSION_LINE.matcher(source);
-        if (version.find()) {
-            return source.substring(0, version.end()) + declarations + source.substring(version.end());
+        GlslTree tree = GlslTree.parse(source);
+        GlslTree.Directive version = versionDirective(tree);
+        int end = version == null ? -1
+                : GlslDeclarations.tailEnd(source, tree.offset(version.range().end()), REST_OF_LINE);
+        if (end >= 0) {
+            return source.substring(0, end) + declarations + source.substring(end);
         }
         return declarations + source;
     }
