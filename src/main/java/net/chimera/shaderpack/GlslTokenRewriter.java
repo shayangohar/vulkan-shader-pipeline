@@ -190,7 +190,7 @@ public final class GlslTokenRewriter {
         List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
         // A program may define a function under one of these names (Solas's own
         // texture2DShadow); its calls and its definition are the program's, not legacy lookups.
-        Set<String> userDefined = userDefinedFunctions(tokens, LEGACY_SHADOW_CALLS);
+        Set<String> userDefined = userDefinedFunctions(GlslTree.parse(source), LEGACY_SHADOW_CALLS);
         // Work from the innermost calls outward. This keeps nested legacy
         // lookups valid when the outer coordinate expression is rendered.
         for (int index = tokens.size() - 1; index >= 0; index--) {
@@ -281,97 +281,27 @@ public final class GlslTokenRewriter {
      */
     public static String splitUniformDeclarators(String source) {
         if (source == null || !source.contains("uniform") || !source.contains(",")) return source;
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        boolean changed = false;
-        int depth = 0;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol("{")) depth++;
-            if (token.symbol("}")) depth--;
-            if (depth != 0 || !token.identifier("uniform") || inDirective(tokens, index)) continue;
-            int end = splitUniformStatement(tokens, index);
-            if (end < 0) continue;
-            index = end;
-            changed = true;
-        }
-        return changed ? GlslLexer.render(tokens) : source;
-    }
-
-    /**
-     * Rewrites the statement around {@code uniform} as one declaration per name and returns the
-     * index of its semicolon. An interface block, a single name or an unterminated statement is
-     * left alone and gives -1.
-     */
-    private static int splitUniformStatement(List<GlslLexer.Token> tokens, int uniform) {
-        int start = qualifierStart(tokens, uniform);
-        int type = GlslLexer.nextSignificant(tokens, uniform);
-        while (type >= 0 && (PRECISION_QUALIFIERS.contains(tokens.get(type).text())
-                || MEMORY_QUALIFIERS.contains(tokens.get(type).text()))) {
-            type = GlslLexer.nextSignificant(tokens, type);
-        }
-        int first = type < 0 ? -1 : GlslLexer.nextSignificant(tokens, type);
-        if (first < 0 || tokens.get(first).symbol("{")
-                || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) return -1;
-        List<int[]> declarators = declaratorRanges(tokens, first);
-        if (declarators == null || declarators.size() < 2) return -1;
-        int end = declarators.get(declarators.size() - 1)[1];
-        String prefix = GlslLexer.render(tokens.subList(start, type + 1));
-        StringBuilder split = new StringBuilder();
-        for (int[] declarator : declarators) {
-            if (split.length() > 0) split.append('\n');
-            split.append(prefix).append(' ')
-                    .append(GlslLexer.render(tokens.subList(declarator[0], declarator[1])).strip())
-                    .append(';');
-        }
-        for (int cursor = start; cursor <= end; cursor++) tokens.set(cursor, raw(""));
-        tokens.set(start, raw(split.toString()));
-        return end;
-    }
-
-    /**
-     * The token range of each top-level declarator from {@code first} through the statement's
-     * semicolon, which ends the last range; null when no semicolon closes the statement.
-     */
-    private static List<int[]> declaratorRanges(List<GlslLexer.Token> tokens, int first) {
-        List<int[]> declarators = new ArrayList<>();
-        int declaratorStart = first;
-        int nesting = 0;
-        for (int cursor = first; cursor < tokens.size(); cursor++) {
-            GlslLexer.Token current = tokens.get(cursor);
-            if (current.symbol("(") || current.symbol("[")) nesting++;
-            if (current.symbol(")") || current.symbol("]")) nesting--;
-            if (nesting != 0 || (!current.symbol(",") && !current.symbol(";"))) continue;
-            declarators.add(new int[] {declaratorStart, cursor});
-            declaratorStart = cursor + 1;
-            if (current.symbol(";")) return declarators;
-        }
-        return null;
-    }
-
-    /** The first token of the memory qualifiers and layout(...) written before {@code uniform}. */
-    private static int qualifierStart(List<GlslLexer.Token> tokens, int uniform) {
-        int start = uniform;
-        while (true) {
-            int before = GlslLexer.previousSignificant(tokens, start);
-            if (before < 0 || inDirective(tokens, before)) return start;
-            GlslLexer.Token previous = tokens.get(before);
-            if (previous.kind() == GlslLexer.Kind.IDENTIFIER
-                    && MEMORY_QUALIFIERS.contains(previous.text())) {
-                start = before;
-            } else if (previous.symbol(")")) {
-                int open = matchingBackward(tokens, before);
-                int keyword = open < 0 ? -1 : GlslLexer.previousSignificant(tokens, open);
-                if (keyword < 0 || !tokens.get(keyword).identifier("layout")) return start;
-                start = keyword;
-            } else {
-                return start;
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslTree.Edit> edits = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Declaration declaration) || declaration.declarators().size() < 2
+                    || declaration.type() == null || declaration.type().struct() != null
+                    || declaration.qualifiers().stream()
+                    .noneMatch(value -> tree.text(value.keyword()).equals("uniform"))) {
+                continue;
             }
+            // The qualifiers and type, as written, start every declaration of the list.
+            String prefix = tree.text(new GlslTree.Range(declaration.range().start(),
+                    declaration.type().range().end()));
+            StringBuilder split = new StringBuilder();
+            for (GlslTree.Declarator declarator : declaration.declarators()) {
+                if (split.length() > 0) split.append('\n');
+                split.append(prefix).append(' ').append(tree.text(declarator.range())).append(';');
+            }
+            edits.add(new GlslTree.Edit(declaration.range(), split.toString()));
         }
+        return edits.isEmpty() ? source : tree.print(edits);
     }
-
-    private static final Set<String> PRECISION_QUALIFIERS = Set.of("lowp", "mediump", "highp");
-    private static final Set<String> MEMORY_QUALIFIERS = Set.of(
-            "writeonly", "readonly", "coherent", "volatile", "restrict");
 
     /**
      * Desktop GL drivers accept a global {@code const} whose initializer is
@@ -382,46 +312,37 @@ public final class GlslTokenRewriter {
      */
     static String relaxNonConstantGlobals(String source) {
         if (source == null || !source.contains("const")) return source;
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        Set<String> userFunctions = globalFunctionNames(tokens);
-        List<ConstDeclaration> declarations = globalConstDeclarations(tokens);
-        Set<String> constant = constantNames(tokens, declarations, userFunctions);
-        boolean relaxed = false;
+        GlslTree tree = GlslTree.parse(source);
+        Set<String> userFunctions = userDefinedFunctions(tree, null);
+        List<ConstDeclaration> declarations = globalConstDeclarations(tree);
+        Set<String> constant = constantNames(tree.tokens(), declarations, userFunctions);
+        List<GlslTree.Edit> edits = new ArrayList<>();
         for (ConstDeclaration declaration : declarations) {
             if (constant.containsAll(declaration.names())) continue;
-            tokens.set(declaration.keyword(), raw(""));
-            relaxed = true;
+            edits.add(new GlslTree.Edit(new GlslTree.Range(declaration.keyword(), declaration.keyword() + 1), ""));
         }
-        return relaxed ? GlslLexer.render(tokens) : source;
+        return edits.isEmpty() ? source : tree.print(edits);
     }
 
-    /** Every parsable {@code const} declaration that starts a statement at global scope, in source order. */
-    private static List<ConstDeclaration> globalConstDeclarations(List<GlslLexer.Token> tokens) {
+    /** Every file-scope {@code const} declaration, with its names and initializer token ranges, in source order. */
+    private static List<ConstDeclaration> globalConstDeclarations(GlslTree tree) {
         List<ConstDeclaration> declarations = new ArrayList<>();
-        int depth = 0;
-        int parentheses = 0;
-        int previous = -1;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant()) continue;
-            if (token.symbol("{")) depth++;
-            if (token.symbol("}")) depth--;
-            if (token.symbol("(")) parentheses++;
-            if (token.symbol(")")) parentheses--;
-            if (depth == 0 && parentheses == 0 && token.identifier("const")
-                    && startsStatement(tokens, previous, index)) {
-                ConstDeclaration declaration = parseConstDeclaration(tokens, index);
-                if (declaration != null) declarations.add(declaration);
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Declaration declaration) || declaration.type() == null) continue;
+            GlslTree.Qualifier keyword = declaration.qualifiers().stream()
+                    .filter(value -> tree.text(value.keyword()).equals("const")).findFirst().orElse(null);
+            if (keyword == null || declaration.declarators().isEmpty()) continue;
+            List<String> names = new ArrayList<>();
+            List<int[]> initializers = new ArrayList<>();
+            for (GlslTree.Declarator declarator : declaration.declarators()) {
+                names.add(tree.text(declarator.name()));
+                if (declarator.initializer() != null) {
+                    initializers.add(new int[] {declarator.initializer().start(), declarator.initializer().end()});
+                }
             }
-            previous = index;
+            declarations.add(new ConstDeclaration(keyword.keyword(), names, initializers));
         }
         return declarations;
-    }
-
-    /** True when the token at {@code index}, after the significant token {@code previous}, begins a statement. */
-    private static boolean startsStatement(List<GlslLexer.Token> tokens, int previous, int index) {
-        return previous < 0 || tokens.get(previous).symbol(";")
-                || tokens.get(previous).symbol("}") || firstOnLine(tokens, index);
     }
 
     /**
@@ -478,106 +399,6 @@ public final class GlslTokenRewriter {
     }
 
     private record ConstDeclaration(int keyword, List<String> names, List<int[]> initializers) {}
-
-    /** The const keyword's declarators and initializer token ranges, or null for anything else. */
-    private static ConstDeclaration parseConstDeclaration(List<GlslLexer.Token> tokens, int keyword) {
-        int type = GlslLexer.nextSignificant(tokens, keyword);
-        while (type >= 0 && PRECISION_QUALIFIERS.contains(tokens.get(type).text())) {
-            type = GlslLexer.nextSignificant(tokens, type);
-        }
-        if (type < 0 || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) return null;
-        int cursor = skipArray(tokens, GlslLexer.nextSignificant(tokens, type));
-        List<String> names = new ArrayList<>();
-        List<int[]> initializers = new ArrayList<>();
-        while (cursor >= 0 && tokens.get(cursor).kind() == GlslLexer.Kind.IDENTIFIER) {
-            names.add(tokens.get(cursor).text());
-            int next = skipArray(tokens, GlslLexer.nextSignificant(tokens, cursor));
-            if (next < 0) return null;
-            if (tokens.get(next).symbol("=")) {
-                int end = initializerEnd(tokens, next + 1);
-                if (end < 0) return null;
-                initializers.add(new int[] {next + 1, end});
-                next = end;
-            }
-            if (tokens.get(next).symbol(";")) return new ConstDeclaration(keyword, names, initializers);
-            if (!tokens.get(next).symbol(",")) return null;
-            cursor = GlslLexer.nextSignificant(tokens, next);
-        }
-        return null;
-    }
-
-    /** The comma or semicolon that ends an initializer starting at {@code start}, outside any brackets; -1 if none. */
-    private static int initializerEnd(List<GlslLexer.Token> tokens, int start) {
-        int nesting = 0;
-        for (int index = start; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol("(") || token.symbol("[") || token.symbol("{")) nesting++;
-            if (token.symbol(")") || token.symbol("]") || token.symbol("}")) nesting--;
-            if (nesting == 0 && (token.symbol(",") || token.symbol(";"))) return index;
-        }
-        return -1;
-    }
-
-    /** Steps over an array suffix such as {@code [3]}; returns the next significant index. */
-    private static int skipArray(List<GlslLexer.Token> tokens, int index) {
-        if (index < 0 || !tokens.get(index).symbol("[")) return index;
-        int close = GlslLexer.matching(tokens, index, "[", "]");
-        return close < 0 ? -1 : GlslLexer.nextSignificant(tokens, close);
-    }
-
-    private static boolean firstOnLine(List<GlslLexer.Token> tokens, int index) {
-        for (int cursor = index - 1; cursor >= 0; cursor--) {
-            GlslLexer.Token token = tokens.get(cursor);
-            if (token.kind() == GlslLexer.Kind.TRIVIA) {
-                if (token.text().contains("\n")) return true;
-                continue;
-            }
-            return false;
-        }
-        return true;
-    }
-
-    /** Names of functions defined or declared at global scope. */
-    private static Set<String> globalFunctionNames(List<GlslLexer.Token> tokens) {
-        Set<String> names = new HashSet<>();
-        int depth = 0;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol("{")) depth++;
-            if (token.symbol("}")) depth--;
-            if (depth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER) continue;
-            int before = GlslLexer.previousSignificant(tokens, index);
-            int open = GlslLexer.nextSignificant(tokens, index);
-            if (before < 0 || open < 0 || !tokens.get(open).symbol("(")
-                    || tokens.get(before).kind() != GlslLexer.Kind.IDENTIFIER) continue;
-            int close = GlslLexer.matching(tokens, open, "(", ")");
-            int body = close < 0 ? -1 : GlslLexer.nextSignificant(tokens, close);
-            if (body >= 0 && (tokens.get(body).symbol("{") || tokens.get(body).symbol(";"))) {
-                names.add(token.text());
-            }
-        }
-        return names;
-    }
-
-    private static int matchingBackward(List<GlslLexer.Token> tokens, int close) {
-        int depth = 0;
-        for (int index = close; index >= 0; index--) {
-            if (tokens.get(index).symbol(")")) depth++;
-            if (tokens.get(index).symbol("(") && --depth == 0) return index;
-        }
-        return -1;
-    }
-
-    /** True when the token sits on a preprocessor line, such as a #define body. */
-    private static boolean inDirective(List<GlslLexer.Token> tokens, int index) {
-        GlslLexer.Token lineStart = tokens.get(index);
-        for (int cursor = index - 1; cursor >= 0; cursor--) {
-            GlslLexer.Token token = tokens.get(cursor);
-            if (token.kind() == GlslLexer.Kind.TRIVIA && token.text().contains("\n")) break;
-            if (token.significant()) lineStart = token;
-        }
-        return lineStart.text().startsWith("#");
-    }
 
     /** Inserts statements at the start of the one real GLSL main body (Iris prependMainFunctionBody). */
     static String prependMainPrologue(String source, String prologue) {
@@ -664,26 +485,15 @@ public final class GlslTokenRewriter {
     }
 
     /**
-     * The names among {@code candidates} the source defines or declares as functions: a return
-     * type, the name, a parameter list, then a body or a semicolon.
+     * The names the source defines or declares as functions at file scope, among {@code candidates}
+     * when they are given.
      */
-    static Set<String> userDefinedFunctions(List<GlslLexer.Token> tokens, Set<String> candidates) {
+    static Set<String> userDefinedFunctions(GlslTree tree, Set<String> candidates) {
         Set<String> defined = new HashSet<>();
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.kind() != GlslLexer.Kind.IDENTIFIER || !candidates.contains(token.text())) {
-                continue;
-            }
-            int type = GlslLexer.previousSignificant(tokens, index);
-            int open = GlslLexer.nextSignificant(tokens, index);
-            if (type < 0 || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER
-                    || open < 0 || !tokens.get(open).symbol("(")) {
-                continue;
-            }
-            int close = GlslLexer.matching(tokens, open, "(", ")");
-            int after = close < 0 ? -1 : GlslLexer.nextSignificant(tokens, close);
-            if (after >= 0 && (tokens.get(after).symbol("{") || tokens.get(after).symbol(";"))) {
-                defined.add(token.text());
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Function function
+                    && (candidates == null || candidates.contains(tree.text(function.name())))) {
+                defined.add(tree.text(function.name()));
             }
         }
         return defined;
