@@ -11,7 +11,7 @@ import java.util.TreeMap;
 import java.util.function.Function;
 
 /**
- * Token-based scan of a stage's cross-stage interface: every {@code in}, {@code out} and
+ * Tree-based scan of a stage's cross-stage interface: every {@code in}, {@code out} and
  * {@code varying} declaration at file scope, of any type GLSL allows there.
  *
  * <p>A declaration may be a scalar, vector or matrix of 32-bit components, a {@code struct}
@@ -241,174 +241,140 @@ public final class GlslInterfaceScanner {
         return locations;
     }
 
+
+    /**
+     * The interface statements of the tree's file-scope declarations, in source order. A source
+     * the tree cannot parse has an interface this cannot read.
+     */
     private static Parse parse(String source, boolean vertexStage) {
-        List<GlslLexer.Token> tokens = GlslLexer.lex(source);
-        Map<String, Integer> structSlots = structSlots(tokens);
+        GlslTree tree;
+        try {
+            tree = GlslTree.parse(source);
+        } catch (GlslParser.ParseFailure failure) {
+            return new Parse(GlslLexer.lex(source), List.of(), List.of(DECLARATION_UNSUPPORTED));
+        }
+        Map<String, Integer> structSlots = structSlots(tree);
         List<Statement> statements = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
-        int braceDepth = 0;
-        int parenDepth = 0;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol("#") && atLineStart(tokens, index)) {
-                // A directive is not a declaration: `#define attribute in` must not read the
-                // next line's `const` as a varying type.
-                index = endOfLine(tokens, index);
-                continue;
-            }
-            if (token.symbol("{")) {
-                braceDepth++;
-                continue;
-            }
-            if (token.symbol("}")) {
-                braceDepth = Math.max(0, braceDepth - 1);
-                continue;
-            }
-            if (braceDepth == 0 && token.symbol("(")) {
-                parenDepth++;
-                continue;
-            }
-            if (braceDepth == 0 && token.symbol(")")) {
-                parenDepth = Math.max(0, parenDepth - 1);
-                continue;
-            }
-            // Parameter lists are not program interfaces, whatever qualifiers precede `in`
-            // (Bliss: float linearizeDepthFast(const in float depth, ...)).
-            if (braceDepth != 0 || parenDepth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER) {
-                continue;
-            }
-            Statement statement = statementAt(tokens, index, vertexStage, structSlots, deviations);
-            if (statement != null) {
-                statements.add(statement);
-                index = statement.end() - 1;
-            }
+        for (GlslTree.External external : tree.externals()) {
+            List<GlslTree.Qualifier> qualifiers = external instanceof GlslTree.Declaration declaration
+                    ? declaration.qualifiers()
+                    : external instanceof GlslTree.InterfaceBlock block ? block.qualifiers() : List.of();
+            int[] storage = storageQualifier(tree, qualifiers);
+            if (storage == null) continue;
+            Statement statement = statement(tree, external, qualifiers, storage, vertexStage, structSlots, deviations);
+            if (statement != null) statements.add(statement);
         }
-        return new Parse(tokens, statements, deviations);
+        return new Parse(tree.tokens(), statements, deviations);
+    }
+
+    private static final String DECLARATION_UNSUPPORTED = "PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED";
+
+    /**
+     * Where a declaration's interface statement starts and where its {@code in}, {@code out} or
+     * {@code varying} sits, as qualifier indices: the first {@code [layout(...)] [interpolation]
+     * storage} run of its qualifiers. A qualifier before that run (invariant) stays outside the
+     * statement. Null when the declaration has no storage qualifier.
+     */
+    private static int[] storageQualifier(GlslTree tree, List<GlslTree.Qualifier> qualifiers) {
+        for (int start = 0; start < qualifiers.size(); start++) {
+            int at = start;
+            if (keyword(tree, qualifiers, at).equals("layout")) at++;
+            if (at < qualifiers.size() && isInterpolation(keyword(tree, qualifiers, at))) at++;
+            if (at < qualifiers.size() && isStorage(keyword(tree, qualifiers, at))) return new int[] {start, at};
+        }
+        return null;
+    }
+
+    private static String keyword(GlslTree tree, List<GlslTree.Qualifier> qualifiers, int index) {
+        return tree.text(qualifiers.get(index).keyword());
     }
 
     /**
-     * The interface statement starting at {@code start}, or null when the tokens there declare
-     * none. A declaration this cannot read adds its deviation and also yields null.
+     * The interface statement a declaration makes, or null when it declares none this can read,
+     * with its deviation added. Only precision may follow the storage qualifier: another word
+     * there reads as the type, which no interface variable has.
      */
-    private static Statement statementAt(List<GlslLexer.Token> tokens, int start, boolean vertexStage,
-                                         Map<String, Integer> structSlots, List<String> deviations) {
-        Qualifier qualifier = storageQualifier(tokens, start, deviations);
-        if (qualifier == null) {
+    private static Statement statement(GlslTree tree, GlslTree.External external, List<GlslTree.Qualifier> qualifiers,
+                                       int[] storage, boolean vertexStage, Map<String, Integer> structSlots,
+                                       List<String> deviations) {
+        for (int index = storage[1] + 1; index < qualifiers.size(); index++) {
+            if (!isPrecision(keyword(tree, qualifiers, index))) {
+                deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + keyword(tree, qualifiers, index));
+                return null;
+            }
+        }
+        if (external instanceof GlslTree.InterfaceBlock block) {
+            deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + tree.text(block.name()));
             return null;
         }
-        int typeIndex = GlslLexer.nextSignificant(tokens, qualifier.index());
-        while (typeIndex >= 0 && isPrecision(tokens.get(typeIndex).text())) {
-            typeIndex = GlslLexer.nextSignificant(tokens, typeIndex);
-        }
-        if (typeIndex < 0 || tokens.get(typeIndex).kind() != GlslLexer.Kind.IDENTIFIER) {
-            deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
+        GlslTree.Declaration declaration = (GlslTree.Declaration) external;
+        if (declaration.type() == null) {
+            deviations.add(DECLARATION_UNSUPPORTED);
             return null;
         }
-        String type = tokens.get(typeIndex).text();
+        String type = typeName(tree, declaration.type());
         Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structSlots.get(type);
         if (typeSlots == null) {
             deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + type);
             return null;
         }
-        int statementEnd = findStatementEnd(tokens, typeIndex);
-        GlslLexer.Token storage = tokens.get(qualifier.index());
-        boolean varying = storage.identifier("varying");
-        boolean input = storage.identifier("in") || (varying && !vertexStage);
-        boolean output = storage.identifier("out") || (varying && vertexStage);
-        List<Declaration> declared = declarators(tokens, start, typeIndex, statementEnd,
-                new InterfaceType(type, qualifier.interpolation(), input, output, typeSlots));
+        String direction = keyword(tree, qualifiers, storage[1]);
+        boolean varying = direction.equals("varying");
+        String interpolation = storage[1] > storage[0] && isInterpolation(keyword(tree, qualifiers, storage[1] - 1))
+                ? keyword(tree, qualifiers, storage[1] - 1) : null;
+        InterfaceType kind = new InterfaceType(type, interpolation, direction.equals("in") || varying && !vertexStage,
+                direction.equals("out") || varying && vertexStage, typeSlots);
+        int start = qualifiers.get(storage[0]).range().start();
+        int end = declaration.range().end();
+        List<Declaration> declared = declarators(tree, declaration, start, end, kind);
         if (declared == null || declared.isEmpty()) {
-            deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
+            deviations.add(DECLARATION_UNSUPPORTED);
             return null;
         }
-        return new Statement(start, statementEnd, declared);
+        return new Statement(start, end, declared);
     }
 
-    /** Where a declaration's storage qualifier sits, and the interpolation qualifier written before it. */
-    private record Qualifier(int index, String interpolation) {}
-
-    /**
-     * The {@code in}, {@code out} or {@code varying} of a declaration starting at {@code start},
-     * past any layout(...) and interpolation qualifier, or null when there is none.
-     */
-    private static Qualifier storageQualifier(List<GlslLexer.Token> tokens, int start, List<String> deviations) {
-        int qualifierIndex = start;
-        if (tokens.get(start).identifier("layout")) {
-            int open = GlslLexer.nextSignificant(tokens, start);
-            int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
-            if (open < 0 || close < 0) {
-                deviations.add("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED");
-                return null;
-            }
-            qualifierIndex = GlslLexer.nextSignificant(tokens, close);
-            if (qualifierIndex < 0) {
-                return null;
-            }
-        }
-        String interpolation = null;
-        if (isInterpolation(tokens.get(qualifierIndex).text())) {
-            interpolation = tokens.get(qualifierIndex).text();
-            qualifierIndex = GlslLexer.nextSignificant(tokens, qualifierIndex);
-            if (qualifierIndex < 0) {
-                return null;
-            }
-        }
-        GlslLexer.Token qualifierToken = tokens.get(qualifierIndex);
-        if (!qualifierToken.identifier("varying")
-                && !qualifierToken.identifier("in")
-                && !qualifierToken.identifier("out")) {
-            return null;
-        }
-        return new Qualifier(qualifierIndex, interpolation);
+    /** The type's name; {@code struct} for an inline struct. */
+    private static String typeName(GlslTree tree, GlslTree.TypeSpec type) {
+        return type.name() >= 0 ? tree.text(type.name()) : "struct";
     }
 
     /** What one interface statement's declarators share: type, interpolation, direction and size. */
     private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots) {}
 
     /**
-     * The variables one interface statement declares after its type, each with any array size, or
-     * null when a declarator is malformed.
+     * The variables one interface statement declares, each with any array size, or null when the
+     * type has array sizes or a declarator has an initializer or a size this cannot read.
      */
-    private static List<Declaration> declarators(List<GlslLexer.Token> tokens, int statementStart, int typeIndex,
-                                                 int statementEnd, InterfaceType kind) {
+    private static List<Declaration> declarators(GlslTree tree, GlslTree.Declaration declaration, int start, int end,
+                                                 InterfaceType kind) {
+        if (!declaration.type().arrays().isEmpty()) return null;
         List<Declaration> declared = new ArrayList<>();
-        int nameIndex = GlslLexer.nextSignificant(tokens, typeIndex);
-        while (nameIndex >= 0 && nameIndex < statementEnd - 1) {
-            if (tokens.get(nameIndex).kind() != GlslLexer.Kind.IDENTIFIER) return null;
-            String name = tokens.get(nameIndex).text();
-            ArraySuffix array = arraySuffix(tokens, nameIndex);
-            if (array == null) return null;
-            int separator = array.next();
-            if (separator < 0 || separator >= statementEnd
-                    || (!tokens.get(separator).symbol(",") && !tokens.get(separator).symbol(";"))) return null;
-            boolean referenced = referencedOutsideDeclaration(tokens, name, statementStart, statementEnd);
+        for (GlslTree.Declarator declarator : declaration.declarators()) {
+            int length = arrayLength(tree, declarator);
+            if (length < 0 || declarator.initializer() != null) return null;
+            String name = tree.text(declarator.name());
+            boolean referenced = referencedOutsideDeclaration(tree.tokens(), name, start, end);
             declared.add(new Declaration(name, kind.type(), kind.interpolation(), kind.input(), kind.output(),
-                    referenced, array.length(), kind.slots() * Math.max(array.length(), 1)));
-            if (tokens.get(separator).symbol(";")) break;
-            nameIndex = GlslLexer.nextSignificant(tokens, separator);
+                    referenced, length, kind.slots() * Math.max(length, 1)));
         }
         return List.copyOf(declared);
     }
 
-    /** A declarator's array length, 0 when it has none, and the next significant token after it. */
-    private record ArraySuffix(int length, int next) {}
-
     /**
-     * The optional {@code [N]} after the name at {@code nameIndex}, or null when the length is not
-     * a positive literal or the bracket does not close right after it.
+     * A declarator's array length: 0 without one, the literal {@code N} of one {@code [N]}, or -1
+     * for anything else (a named or unsized length, more than one dimension).
      */
-    private static ArraySuffix arraySuffix(List<GlslLexer.Token> tokens, int nameIndex) {
-        int separator = GlslLexer.nextSignificant(tokens, nameIndex);
-        if (separator < 0 || !tokens.get(separator).symbol("[")) {
-            return new ArraySuffix(0, separator);
-        }
-        int size = GlslLexer.nextSignificant(tokens, separator);
-        int close = size < 0 ? -1 : GlslLexer.nextSignificant(tokens, size);
-        int length = size < 0 ? -1 : arraySize(tokens.get(size));
-        if (length <= 0 || close < 0 || !tokens.get(close).symbol("]")) {
-            return null;
-        }
-        return new ArraySuffix(length, GlslLexer.nextSignificant(tokens, close));
+    private static int arrayLength(GlslTree tree, GlslTree.Declarator declarator) {
+        if (declarator.arrays().isEmpty()) return 0;
+        if (declarator.arrays().size() > 1) return -1;
+        GlslTree.Range array = declarator.arrays().get(0);
+        int size = GlslLexer.nextSignificant(tree.tokens(), array.start());
+        int close = size < 0 ? -1 : GlslLexer.nextSignificant(tree.tokens(), size);
+        if (close != array.end() - 1) return -1;
+        int length = arraySize(tree.tokens().get(size));
+        return length > 0 ? length : -1;
     }
 
     /**
@@ -416,106 +382,37 @@ public final class GlslInterfaceScanner {
      * or an earlier struct, times any array length. A struct with a member this cannot size is
      * left out, so an interface variable of that type is reported unsupported.
      */
-    private static Map<String, Integer> structSlots(List<GlslLexer.Token> tokens) {
+    private static Map<String, Integer> structSlots(GlslTree tree) {
         Map<String, Integer> result = new HashMap<>();
-        int braceDepth = 0;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol("{")) {
-                braceDepth++;
-            } else if (token.symbol("}")) {
-                braceDepth = Math.max(0, braceDepth - 1);
-            }
-            if (braceDepth != 0 || !token.identifier("struct")) {
-                continue;
-            }
-            int nameIndex = GlslLexer.nextSignificant(tokens, index);
-            int open = nameIndex < 0 ? -1 : GlslLexer.nextSignificant(tokens, nameIndex);
-            if (open < 0 || tokens.get(nameIndex).kind() != GlslLexer.Kind.IDENTIFIER
-                    || !tokens.get(open).symbol("{")) {
-                continue;
-            }
-            int close = GlslLexer.matching(tokens, open, "{", "}");
-            if (close < 0) {
-                continue;
-            }
-            Integer slots = memberSlots(tokens, open + 1, close, result);
-            if (slots != null && slots > 0) {
-                result.put(tokens.get(nameIndex).text(), slots);
-            }
-            index = close - 1;
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Declaration declaration) || declaration.type() == null) continue;
+            GlslTree.Struct struct = declaration.type().struct();
+            if (struct == null || struct.name() < 0) continue;
+            Integer slots = memberSlots(tree, struct.members(), result);
+            if (slots != null && slots > 0) result.put(tree.text(struct.name()), slots);
         }
         return result;
     }
 
-    /** Sum of member locations in {@code [start, end)}, or null for a member this cannot size. */
-    private static Integer memberSlots(List<GlslLexer.Token> tokens, int start, int end,
+    /** Sum of member locations, or null for a member this cannot size. */
+    private static Integer memberSlots(GlslTree tree, List<GlslTree.Declaration> members,
                                        Map<String, Integer> structs) {
         int total = 0;
-        int index = start;
-        while (true) {
-            int typeIndex = significantAtOrAfter(tokens, index, end);
-            if (typeIndex < 0) {
-                return total;
-            }
-            while (typeIndex >= 0 && isPrecision(tokens.get(typeIndex).text())) {
-                typeIndex = GlslLexer.nextSignificant(tokens, typeIndex);
-            }
-            if (typeIndex < 0 || typeIndex >= end) {
+        for (GlslTree.Declaration member : members) {
+            if (member.type() == null || !member.type().arrays().isEmpty() || member.declarators().isEmpty()
+                    || member.qualifiers().stream().anyMatch(value -> !isPrecision(tree.text(value.keyword())))) {
                 return null;
             }
-            String type = tokens.get(typeIndex).text();
+            String type = typeName(tree, member.type());
             Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structs.get(type);
-            if (typeSlots == null) {
-                return null;
-            }
-            MemberStatement member = memberStatement(tokens, typeIndex, end, typeSlots);
-            if (member == null) {
-                return null;
-            }
-            total += member.slots();
-            index = member.next();
-        }
-    }
-
-    /** The locations one member statement's names take, and the index just past its semicolon. */
-    private record MemberStatement(int slots, int next) {}
-
-    /**
-     * The names one member statement declares after its type, each taking {@code typeSlots} times
-     * its array length, or null when a declarator is malformed or cannot be sized.
-     */
-    private static MemberStatement memberStatement(List<GlslLexer.Token> tokens, int typeIndex, int end,
-                                                   int typeSlots) {
-        int slots = 0;
-        int cursor = GlslLexer.nextSignificant(tokens, typeIndex);
-        while (true) {
-            if (cursor < 0 || cursor >= end || tokens.get(cursor).kind() != GlslLexer.Kind.IDENTIFIER) {
-                return null;
-            }
-            ArraySuffix array = arraySuffix(tokens, cursor);
-            if (array == null || array.next() < 0 || array.next() >= end) {
-                return null;
-            }
-            int separator = array.next();
-            slots += typeSlots * Math.max(array.length(), 1);
-            if (tokens.get(separator).symbol(";")) {
-                return new MemberStatement(slots, separator + 1);
-            }
-            if (!tokens.get(separator).symbol(",")) {
-                return null;
-            }
-            cursor = GlslLexer.nextSignificant(tokens, separator);
-        }
-    }
-
-    private static int significantAtOrAfter(List<GlslLexer.Token> tokens, int index, int end) {
-        for (int current = index; current < end; current++) {
-            if (tokens.get(current).significant()) {
-                return current;
+            if (typeSlots == null) return null;
+            for (GlslTree.Declarator declarator : member.declarators()) {
+                int length = arrayLength(tree, declarator);
+                if (length < 0 || declarator.initializer() != null) return null;
+                total += typeSlots * Math.max(length, 1);
             }
         }
-        return -1;
+        return total;
     }
 
     /** A literal array length; a named length is not resolved here. */
@@ -547,15 +444,7 @@ public final class GlslInterfaceScanner {
         return Map.copyOf(slots);
     }
 
-    private static int findStatementEnd(List<GlslLexer.Token> tokens, int start) {
-        for (int index = start; index < tokens.size(); index++) {
-            if (tokens.get(index).symbol(";")) {
-                return index + 1;
-            }
-        }
-        return tokens.size();
-    }
-
+    /** Whether {@code name} is spelled anywhere outside the statement's tokens {@code [start, end)}. */
     private static boolean referencedOutsideDeclaration(
             List<GlslLexer.Token> tokens,
             String name,
@@ -573,28 +462,8 @@ public final class GlslInterfaceScanner {
         return false;
     }
 
-    private static boolean atLineStart(List<GlslLexer.Token> tokens, int index) {
-        for (int previous = index - 1; previous >= 0; previous--) {
-            GlslLexer.Token token = tokens.get(previous);
-            if (token.kind() != GlslLexer.Kind.TRIVIA) {
-                return false;
-            }
-            if (token.text().indexOf('\n') >= 0) {
-                return true;
-            }
-        }
-        return true;
-    }
-
-    /** The last token of the directive line starting at {@code index}. */
-    private static int endOfLine(List<GlslLexer.Token> tokens, int index) {
-        for (int next = index + 1; next < tokens.size(); next++) {
-            GlslLexer.Token token = tokens.get(next);
-            if (token.kind() == GlslLexer.Kind.TRIVIA && token.text().indexOf('\n') >= 0) {
-                return next;
-            }
-        }
-        return tokens.size() - 1;
+    private static boolean isStorage(String value) {
+        return value.equals("in") || value.equals("out") || value.equals("varying");
     }
 
     private static boolean isInterpolation(String value) {
