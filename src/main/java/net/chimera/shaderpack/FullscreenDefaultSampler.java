@@ -1,11 +1,10 @@
 package net.chimera.shaderpack;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Iris binds colortex0 to texture unit 0 in every fullscreen pass (begin, prepare, deferred, composite
@@ -22,36 +21,58 @@ final class FullscreenDefaultSampler {
             "shadow", "watershadow", "shadowtex0", "shadowtex1", "shadowtex0HW", "shadowtex1HW", "shadowtex0DH",
             "shadowtex1DH", "shadowcolor", "shadowcolor0", "shadowcolor1", "noisetex", "dhDepthTex", "dhDepthTex0",
             "dhDepthTex1", "iris_centerDepthSmooth");
-    private static final Pattern SAMPLER_2D = Pattern.compile(
-            "(?m)^[ \\t]*uniform\\s+sampler2D\\s+([A-Za-z_]\\w*)\\s*;");
-    private static final Pattern COLORTEX0 = Pattern.compile("\\buniform\\s+(\\w+)\\s+colortex0\\s*;");
-
     private FullscreenDefaultSampler() {}
 
-    /** {@code source} with each sampler2D that neither Iris nor the pack serves read as colortex0. */
+    /**
+     * {@code source} with each sampler2D that neither Iris nor the pack serves read as colortex0. A
+     * source the tree cannot parse stays as written; its conversion reports the failure.
+     */
     static String apply(String source, PackSettingsPlan settings, List<String> deviations) {
         if (source == null) return null;
-        String stripped = GlslLexer.stripComments(source);
-        Matcher colortex0 = COLORTEX0.matcher(stripped);
-        boolean declared = colortex0.find();
-        if (declared && !colortex0.group(1).equals("sampler2D")) return source;
+        GlslTree tree = GlslDeclarations.parseOrNull(source);
+        if (tree == null) return source;
+        String colortex0 = null;
         Set<String> names = new TreeSet<>();
-        Matcher matcher = SAMPLER_2D.matcher(stripped);
-        while (matcher.find()) names.add(matcher.group(1));
-        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(stripped);
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (variable.name().equals("colortex0") && variable.qualified("uniform") && colortex0 == null) {
+                colortex0 = variable.type();
+            }
+            if (lineSampler2D(tree, variable)) names.add(variable.name());
+        }
+        if (colortex0 != null && !colortex0.equals("sampler2D")) return source;
+        boolean declared = colortex0 != null;
+        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(GlslLexer.stripComments(source));
         String result = source;
         for (String name : names) {
             boolean unused = usage.successful() && !usage.liveSamplers().contains(name);
             if (unused || served(name, settings)) continue;
             // colortex0 is declared once: a second sampler that reads it loses its own declaration.
-            if (declared) {
-                result = result.replaceAll("(?m)^([ \\t]*)uniform\\s+sampler2D\\s+" + name + "\\s*;", "$1");
-            }
+            if (declared) result = withoutDeclaration(result, name);
             result = GlslScopedReferences.replace(result, Map.of(name, "colortex0"));
             deviations.add("SAMPLER_UNIT0_COLORTEX0:" + name);
             declared = true;
         }
         return result;
+    }
+
+    /** {@code uniform sampler2D name;} alone at the start of its line, after any indentation. */
+    private static boolean lineSampler2D(GlslTree tree, GlslDeclarations.Variable variable) {
+        return variable.qualifiers().equals(List.of("uniform")) && variable.type().equals("sampler2D")
+                && variable.plain() && GlslDeclarations.indentationStart(tree.source(),
+                tree.offset(variable.declaration().range().start())) >= 0;
+    }
+
+    /** The source without the line-starting {@code uniform sampler2D name;}; its indentation stays. */
+    private static String withoutDeclaration(String source, String name) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (variable.name().equals(name) && lineSampler2D(tree, variable)) {
+                edits.add(new GlslDeclarations.TextEdit(tree.offset(variable.declaration().range().start()),
+                        tree.offset(variable.declaration().range().end()), ""));
+            }
+        }
+        return GlslDeclarations.apply(source, edits);
     }
 
     private static boolean served(String name, PackSettingsPlan settings) {

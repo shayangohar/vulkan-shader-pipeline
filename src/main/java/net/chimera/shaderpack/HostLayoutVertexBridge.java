@@ -42,7 +42,7 @@ final class HostLayoutVertexBridge {
             String source, boolean textured
     ) {
         String stripped = stripComments(source == null ? "" : source);
-        boolean color = stripped.matches("(?s).*\\bgl_Color\\b.*");
+        boolean color = GlslTokenRewriter.containsIdentifier(stripped, "gl_Color");
         if (textured) {
             return color ? FamilyAdapterPlan.VertexContract.SKY_POSITION_COLOR_UV
                     : FamilyAdapterPlan.VertexContract.SKY_POSITION_UV;

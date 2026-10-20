@@ -612,6 +612,12 @@ final class ProgramReportRules {
      * (GlslVersion), or syntax beyond the legacy subset. A validated conversion
      * clears it, so the version number alone never rejects a program.
      */
+    /** Syntax the post and entity converters cannot take; their stage declarations convert. */
+    private static final Set<String> CONVERTED_STAGE_SYNTAX = Set.of("layout", "buffer", "shared", "subroutine");
+    /** Syntax beyond the legacy subset in the other families. */
+    private static final Set<String> MODERN_STAGE_SYNTAX = Set.of("layout", "in", "out", "flat", "noperspective",
+            "buffer");
+
     static boolean usesUnsupportedModernGlsl(String source, boolean post, boolean entity) {
         if (!GlslVersion.supportedIfDeclared(source)) {
             return true;
@@ -619,9 +625,9 @@ final class ProgramReportRules {
         if (post || entity) {
             // Stage declarations convert in these families; the converter still
             // performs the authoritative feature check.
-            return source.matches("(?s).*\\b(?:layout|buffer|shared|subroutine)\\b.*");
+            return GlslTokenRewriter.containsIdentifier(source, CONVERTED_STAGE_SYNTAX::contains);
         }
-        return source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective|buffer)\\b.*");
+        return GlslTokenRewriter.containsIdentifier(source, MODERN_STAGE_SYNTAX::contains);
     }
 
     static List<String> relevantTargetDeviations(

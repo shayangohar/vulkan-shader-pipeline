@@ -57,8 +57,7 @@ final class AtlasSampleRewriter {
                 .replace("{p}", prefix);
         // The helpers go just before the first function definition.
         int insertion = functions.get(0).range().start();
-        calls.edits.add(new GlslTree.Edit(new GlslTree.Range(insertion, insertion + 1),
-                definitions + tree.text(insertion)));
+        calls.edits.add(new GlslTree.Edit(new GlslTree.Range(insertion, insertion), definitions));
         return tree.print(calls.edits);
     }
 

@@ -197,53 +197,31 @@ final class GlslTree {
         return line;
     }
 
-    /** The source, walked node by node: what lies between two nodes is trivia, printed as it stands. */
+    /** The source as written: every token, trivia included. */
     String print() {
         return print(List.of());
     }
 
-    /** The source with each edit's range replaced by its text; edits must not overlap. */
+    /**
+     * The source with each edit's range replaced by its text. An empty range inserts its text
+     * before the token it starts at, or at the end of the source; several insertions at one
+     * position keep their given order, ahead of a replacement starting there. Edits must not
+     * overlap.
+     */
     String print(List<Edit> edits) {
         List<Edit> ordered = new ArrayList<>(edits);
-        ordered.sort(Comparator.comparingInt(edit -> edit.range().start()));
-        for (int index = 1; index < ordered.size(); index++) {
-            if (ordered.get(index).range().start() < ordered.get(index - 1).range().end()) {
-                throw new IllegalArgumentException("edits overlap");
-            }
-        }
+        ordered.sort(Comparator.comparingInt((Edit edit) -> edit.range().start())
+                .thenComparingInt(edit -> edit.range().end()));
         StringBuilder result = new StringBuilder();
         int at = 0;
-        int next = 0;
-        for (External external : externals) {
-            at = appendUpTo(result, at, external.range().start(), ordered, next);
-            next = skipEdits(ordered, next, at);
-            at = appendUpTo(result, at, external.range().end(), ordered, next);
-            next = skipEdits(ordered, next, at);
+        for (Edit edit : ordered) {
+            if (edit.range().start() < at) throw new IllegalArgumentException("edits overlap");
+            while (at < edit.range().start()) result.append(tokens.get(at++).text());
+            result.append(edit.text());
+            at = edit.range().end();
         }
-        appendUpTo(result, at, tokens.size(), ordered, next);
+        while (at < tokens.size()) result.append(tokens.get(at++).text());
         return result.toString();
-    }
-
-    /** Appends tokens {@code [from, to)}, an edit's text in place of its range; returns where it stopped. */
-    private int appendUpTo(StringBuilder result, int from, int to, List<Edit> edits, int next) {
-        int at = from;
-        int edit = next;
-        while (at < to) {
-            if (edit < edits.size() && edits.get(edit).range().start() == at) {
-                Edit current = edits.get(edit++);
-                result.append(current.text());
-                at = current.range().end();
-                continue;
-            }
-            result.append(tokens.get(at++).text());
-        }
-        return at;
-    }
-
-    private static int skipEdits(List<Edit> edits, int next, int at) {
-        int edit = next;
-        while (edit < edits.size() && edits.get(edit).range().end() <= at) edit++;
-        return edit;
     }
 
     /**

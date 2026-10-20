@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Rewrites for the legacy-to-Vulkan GLSL bridge. The function and declaration rewrites read and
@@ -283,7 +284,7 @@ public final class GlslTokenRewriter {
                 + indent(epilogue) + "\n}\nvoid main() {\n    " + wrapper + "();\n}\n";
         int close = main.body().range().end() - 1;
         return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(main.name(), main.name() + 1), authored),
-                new GlslTree.Edit(new GlslTree.Range(close, close + 1), tree.text(close) + generated)));
+                new GlslTree.Edit(new GlslTree.Range(close + 1, close + 1), generated)));
     }
 
     /**
@@ -420,8 +421,8 @@ public final class GlslTokenRewriter {
         if (source == null || prologue == null || prologue.isBlank()) return source;
         GlslTree tree = GlslTree.parse(source);
         int open = mainDefinition(tree).body().range().start();
-        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(open, open + 1),
-                tree.text(open) + "\n" + indent(prologue))));
+        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(open + 1, open + 1),
+                "\n" + indent(prologue))));
     }
 
     /** The source's one main definition; only {@code void main()} is supported. */
@@ -625,6 +626,15 @@ public final class GlslTokenRewriter {
             if (token.identifier(name)) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /** True when an identifier token, outside comments and literals, is one {@code accepted} takes. */
+    public static boolean containsIdentifier(String source, Predicate<String> accepted) {
+        if (source == null) return false;
+        for (GlslLexer.Token token : GlslLexer.lex(source)) {
+            if (token.kind() == GlslLexer.Kind.IDENTIFIER && accepted.test(token.text())) return true;
         }
         return false;
     }
