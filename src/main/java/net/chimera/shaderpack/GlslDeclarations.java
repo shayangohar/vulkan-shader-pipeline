@@ -5,6 +5,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The file-scope variable declarations of a {@link GlslTree}, and text edits on them. The
@@ -123,6 +125,19 @@ final class GlslDeclarations {
         return arguments;
     }
 
+    /**
+     * Where a line-anchored declaration rewrite's span ends: {@code tail} (its trailing spaces,
+     * comment and line breaks, compiled MULTILINE) matched from just after the declaration; -1
+     * when the tail does not match there, so the old pattern did not match that declaration.
+     */
+    static int tailEnd(String source, int from, Pattern tail) {
+        Matcher matcher = tail.matcher(source);
+        matcher.region(from, source.length());
+        matcher.useAnchoringBounds(false);
+        matcher.useTransparentBounds(true);
+        return matcher.lookingAt() ? matcher.end() : -1;
+    }
+
     /** The {@code location} a declaration's layout gives it; null without one. */
     static Integer location(GlslTree tree, GlslTree.Declaration declaration) {
         for (GlslTree.Qualifier qualifier : declaration.qualifiers()) {
@@ -138,8 +153,17 @@ final class GlslDeclarations {
      * declaration belong to its span. -1 when the declaration does not start a line.
      */
     static int lineStartBefore(String source, int offset) {
+        return lineStartBefore(source, offset, 0);
+    }
+
+    /**
+     * {@link #lineStartBefore(String, int)} for a pattern searched repeatedly: the search resumes at
+     * the previous match's end, {@code minimum}, so a span never starts before it, however many
+     * blank lines that match's tail took.
+     */
+    static int lineStartBefore(String source, int offset, int minimum) {
         int text = offset;
-        while (text > 0 && " \t\n\u000B\f\r".indexOf(source.charAt(text - 1)) >= 0) text--;
+        while (text > minimum && " \t\n\u000B\f\r".indexOf(source.charAt(text - 1)) >= 0) text--;
         for (int index = text; index <= offset; index++) {
             boolean lineStart = index == 0 || source.charAt(index - 1) == '\n'
                     || source.charAt(index - 1) == '\r' && (index == source.length() || source.charAt(index) != '\n');
@@ -152,6 +176,18 @@ final class GlslDeclarations {
     static GlslTree.Function main(GlslTree tree) {
         for (GlslTree.External external : tree.externals()) {
             if (external instanceof GlslTree.Function function && tree.text(function.name()).equals("main")
+                    && tree.text(function.returnType().range()).equals("void") && function.qualifiers().isEmpty()) {
+                return function;
+            }
+        }
+        return null;
+    }
+
+    /** The first {@code void main} with a body; null without one. */
+    static GlslTree.Function mainDefinition(GlslTree tree) {
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Function function && function.body() != null
+                    && tree.text(function.name()).equals("main")
                     && tree.text(function.returnType().range()).equals("void") && function.qualifiers().isEmpty()) {
                 return function;
             }

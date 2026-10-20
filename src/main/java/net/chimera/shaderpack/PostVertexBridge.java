@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
 
 /**
  * Converts a post program's authored vertex stage and pairs its varyings with the fragment stage;
@@ -30,7 +29,7 @@ final class PostVertexBridge {
         GlslVersion.requireSupported(source, "modern post", true);
         String result = LegacyGlslConverter.VERSION_LINE.matcher(source).replaceAll("");
         result = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
-        result = LegacyGlslConverter.PRECISION_DECL.matcher(result).replaceAll("");
+        result = LegacyGlslConverter.withoutPrecisionStatements(result);
         result = withoutInputLayouts(result);
         result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(
                 "lowp", "", "mediump", "", "highp", ""));
@@ -408,20 +407,18 @@ final class PostVertexBridge {
      * Flashing outside the program that sets it). GL links such a declaration as dead, so Iris
      * accepts it; it is dropped. One that is read stays an error, as it is a link error in GL.
      */
-    static boolean unproducedAndUnread(String source, Matcher declaration, String name,
+    static boolean unproducedAndUnread(String source, int start, int end, String name,
                                                LegacyGlslConverter.TerrainVaryingLayout layout) {
         if (layout == null || layout.locations().containsKey(name)) {
             return false;
         }
-        return !LegacyGlslConverter.containsIdentifier(source.substring(0, declaration.start())
-                + source.substring(declaration.end()), name);
+        return !LegacyGlslConverter.containsIdentifier(source.substring(0, start)
+                + source.substring(end), name);
     }
 
     static void validatePostVersion(String source) {
         GlslVersion.requireSupported(source, "post", false);
     }
-
-    record PostVarying(int start, int end, String type, String name) {}
 
     record PostVaryingDeclaration(
             int start,

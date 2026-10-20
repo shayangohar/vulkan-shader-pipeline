@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,20 +25,65 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  */
 public final class LegacyGlslConverter {
     static final Pattern VERSION_LINE = Pattern.compile("(?m)^\\s*#version\\s+\\S+.*$");
-    /** A legacy varying of any type the vertex layout sized: Sildur's passes {@code varying mat3 tbnMatrix}. */
-    private static final Pattern VARYING_DECL =
-            Pattern.compile("(?m)^\\s*varying\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
-    private static final Pattern MODERN_VARYING_LIST_DECL = Pattern.compile(
-            "(?m)^([ \\t]*)(?:(flat|noperspective|smooth|centroid|sample)\\s+)?"
-                    + "(in|out|varying)\\s+(float|int|vec2|vec3|vec4)\\s+"
-                    + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)+)\\s*;");
+    static final Pattern KNOWN_LEGACY_EXTENSIONS = Pattern.compile(
+            "(?im)^\\s*#extension\\s+GL_ARB_shader_texture_lod\\s*:\\s*(?:enable|require|disable)\\s*$\\r?\\n?");
+
+    // What follows a rewritten declaration on its line, as each rewrite's span has always ended: the
+    // tree finds the declarations, and these match only the trivia after one.
+    private static final Pattern TAIL_TO_LINE_END = Pattern.compile("\\s*(?://.*)?$", Pattern.MULTILINE);
+    private static final Pattern TAIL_PRECISION = Pattern.compile("\\s*$\\r?\\n?", Pattern.MULTILINE);
+    private static final Pattern TAIL_UNIFORM = Pattern.compile("[ \\t]*(?://[^\\r\\n]*)?\\s*$", Pattern.MULTILINE);
+    private static final Pattern TAIL_SAMPLER = Pattern.compile("[ \\t]*(?://[^\\n]*)?$", Pattern.MULTILINE);
+
+    private static final Set<String> INTERPOLATION = Set.of("flat", "noperspective", "smooth", "centroid", "sample");
+    private static final Set<String> INTERFACE_STORAGE = Set.of("in", "out", "varying");
+    private static final Set<String> PRECISIONS = Set.of("lowp", "mediump", "highp");
+    private static final Set<String> LIST_TYPES = Set.of("float", "int", "vec2", "vec3", "vec4");
+    private static final Set<String> CONSTANT_TYPES = Set.of("int", "float", "bool", "vec4");
+    private static final Pattern VALUE_TYPE = Pattern.compile("bool|int|float|vec[234]|ivec[234]|mat[234]");
+    private static final Pattern OPAQUE_TYPE = Pattern.compile("[iu]?sampler\\w*|u?i?image\\w*");
+
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
-    private static final Pattern CONSUMED_CONSTS =
-            Pattern.compile("(?m)^\\s*(?:const\\s+)?(?:int|float|bool|vec4)\\s+"
-                    + "(colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)"
+    private static final Pattern CONSUMED_CONST_NAME = Pattern.compile(
+            "colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)"
                     + "|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov"
-                    + "|shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
-                    + "\\s*=\\s*[A-Za-z0-9+_.(), /-]+\\s*;\\s*(?://.*)?$");
+                    + "|shadowDistanceRenderMul|sunPathRotation|sunPathOffset");
+    private static final Pattern CONSUMED_CONST_VALUE = Pattern.compile("[A-Za-z0-9+_.(), /-]+");
+    private static final Pattern METADATA_CONST_NAME = Pattern.compile(
+            "(?:colortex|gaux)\\d+(?:Format|Clear|ClearColor|MipmapEnabled)");
+
+    /** A rewritten declaration's characters {@code [start, end)}, its blank lines and trailing trivia included. */
+    private record Span(int start, int end, GlslDeclarations.Variable variable) {
+        String name() {
+            return variable.name();
+        }
+    }
+
+    /**
+     * The spans of the file-scope declarations {@code test} accepts that start a line, each ending
+     * where {@code tail} matches after it; a declaration the tail does not fit is skipped.
+     */
+    private static List<Span> lineSpans(String source, GlslTree tree, Pattern tail,
+                                        Predicate<GlslDeclarations.Variable> test) {
+        List<Span> spans = new ArrayList<>();
+        int previousEnd = 0;
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (!test.test(variable)) continue;
+            int start = GlslDeclarations.lineStartBefore(source, tree.offset(variable.declaration().range().start()),
+                    previousEnd);
+            int end = GlslDeclarations.tailEnd(source, tree.offset(variable.declaration().range().end()), tail);
+            if (start >= 0 && end >= 0) {
+                spans.add(new Span(start, end, variable));
+                previousEnd = Math.max(previousEnd, end);
+            }
+        }
+        return spans;
+    }
+
+    private static String without(String source, List<Span> spans) {
+        return GlslDeclarations.apply(source, spans.stream()
+                .map(span -> new GlslDeclarations.TextEdit(span.start(), span.end(), "")).toList());
+    }
 
     /**
      * Removes consumed metadata constants unless something reads them
@@ -49,27 +95,81 @@ public final class LegacyGlslConverter {
     static String stripUnusedConsumedConsts(
             String source, Map<String, String> packConstants) {
         if (source == null || source.isBlank()) return source;
-        String checkSource = CONSUMED_CONSTS.matcher(source).replaceAll("");
-        Matcher matcher = CONSUMED_CONSTS.matcher(source);
-        StringBuffer output = new StringBuffer();
-        while (matcher.find()) {
-            String name = matcher.group(1);
-            boolean injected = packConstants != null && packConstants.containsKey(name);
-            boolean referenced =
-                    GlslTokenRewriter.containsIdentifier(checkSource, name);
-            matcher.appendReplacement(output,
-                    !referenced || injected ? "" : Matcher.quoteReplacement(matcher.group(0)));
-        }
-        matcher.appendTail(output);
-        return output.toString();
+        GlslTree tree = GlslTree.parse(source);
+        List<Span> consumed = lineSpans(source, tree, TAIL_TO_LINE_END, variable -> {
+            GlslTree.Range value = variable.declarator().initializer();
+            return variable.declaration().declarators().size() == 1 && value != null
+                    && variable.qualifiers().stream().allMatch("const"::equals)
+                    && CONSTANT_TYPES.contains(variable.type()) && variable.declarator().arrays().isEmpty()
+                    && CONSUMED_CONST_NAME.matcher(variable.name()).matches()
+                    && CONSUMED_CONST_VALUE.matcher(tree.text(value)).matches();
+        });
+        String checkSource = without(source, consumed);
+        return without(source, consumed.stream().filter(span -> {
+            boolean injected = packConstants != null && packConstants.containsKey(span.name());
+            return !GlslTokenRewriter.containsIdentifier(checkSource, span.name()) || injected;
+        }).toList());
     }
-    static final Pattern KNOWN_LEGACY_EXTENSIONS = Pattern.compile(
-            "(?im)^\\s*#extension\\s+GL_ARB_shader_texture_lod\\s*:\\s*(?:enable|require|disable)\\s*$\\r?\\n?");
-    static final Pattern MODERN_LAYOUT_DECL = Pattern.compile(
-            "(?m)^([ \\t]*)layout\\s*\\([^;{}\\r\\n]*\\)\\s*((?:(?:flat|noperspective|smooth|centroid|sample)\\s+)?)"
-                    + "(in|out|varying)\\b");
-    static final Pattern PRECISION_DECL = Pattern.compile(
-            "(?m)^\\s*precision\\s+(?:lowp|mediump|highp)\\s+(?:float|int)\\s*;\\s*$\\r?\\n?");
+
+    /** The source without its {@code precision lowp|mediump|highp float|int;} statements. */
+    static String withoutPrecisionStatements(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        int previousEnd = 0;
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Declaration declaration) || !isPrecisionStatement(tree, declaration)) {
+                continue;
+            }
+            int start = GlslDeclarations.lineStartBefore(source, tree.offset(declaration.range().start()),
+                    previousEnd);
+            int end = GlslDeclarations.tailEnd(source, tree.offset(declaration.range().end()), TAIL_PRECISION);
+            if (start >= 0 && end >= 0) {
+                removals.add(new GlslDeclarations.TextEdit(start, end, ""));
+                previousEnd = end;
+            }
+        }
+        return GlslDeclarations.apply(source, removals);
+    }
+
+    private static boolean isPrecisionStatement(GlslTree tree, GlslTree.Declaration declaration) {
+        if (declaration.type() == null || !declaration.declarators().isEmpty()
+                || declaration.qualifiers().size() != 2) {
+            return false;
+        }
+        String type = tree.text(declaration.type().range());
+        return tree.text(declaration.qualifiers().get(0).keyword()).equals("precision")
+                && PRECISIONS.contains(tree.text(declaration.qualifiers().get(1).keyword()))
+                && (type.equals("float") || type.equals("int"));
+    }
+
+    /**
+     * An interface declaration's {@code layout(...)} goes with the space after it, and its
+     * interpolation and storage qualifiers stay. Only a layout written on one line, on a line of
+     * its own declaration's, is removed.
+     */
+    static String withoutInterfaceLayouts(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            List<GlslTree.Qualifier> qualifiers = switch (external) {
+                case GlslTree.Declaration declaration -> declaration.qualifiers();
+                case GlslTree.InterfaceBlock block -> block.qualifiers();
+                default -> List.of();
+            };
+            if (qualifiers.size() < 2 || !tree.text(qualifiers.get(0).keyword()).equals("layout")
+                    || tree.text(qualifiers.get(0).range()).matches("(?s).*[\\r\\n].*")
+                    || GlslDeclarations.indentationStart(source, tree.offset(external.range().start())) < 0) {
+                continue;
+            }
+            int storage = INTERPOLATION.contains(tree.text(qualifiers.get(1).keyword())) && qualifiers.size() > 2
+                    ? 2 : 1;
+            if (INTERFACE_STORAGE.contains(tree.text(qualifiers.get(storage).keyword()))) {
+                removals.add(new GlslDeclarations.TextEdit(tree.offset(qualifiers.get(0).range().start()),
+                        tree.offset(qualifiers.get(1).range().start()), ""));
+            }
+        }
+        return GlslDeclarations.apply(source, removals);
+    }
 
     /** Geometry fragments receive the fixed chimera terrain vertex's outputs by name. */
     private static final Map<String, Integer> GEOMETRY_VARYING_LOCATIONS = Map.of(
@@ -257,7 +357,7 @@ public final class LegacyGlslConverter {
             String qualifier = modern.group(1);
             String type = modern.group(2);
             String name = modern.group(3);
-            if (PostVertexBridge.unproducedAndUnread(src, modern, name, terrainLayout)) {
+            if (PostVertexBridge.unproducedAndUnread(src, modern.start(), modern.end(), name, terrainLayout)) {
                 modernOut.append(src, modernLast, modern.start());
                 modernLast = modern.end();
                 continue;
@@ -282,15 +382,24 @@ public final class LegacyGlslConverter {
 
     /** Gives a legacy geometry fragment's varyings the terrain layout's locations, or the fixed vertex's. */
     private static String convertLegacyGeometryVaryings(String src, TerrainVaryingLayout terrainLayout) {
-        Matcher matcher = VARYING_DECL.matcher(src);
+        // A legacy varying of any type the vertex layout sized: Sildur's passes varying mat3 tbnMatrix.
+        GlslTree tree = GlslTree.parse(src);
+        List<Span> varyings = new ArrayList<>();
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            int start = GlslDeclarations.lineStartBefore(src, tree.offset(variable.declaration().range().start()));
+            if (start >= 0 && variable.qualifiers().equals(List.of("varying")) && variable.plain()
+                    && !variable.type().equals("struct")) {
+                varyings.add(new Span(start, tree.offset(variable.declaration().range().end()), variable));
+            }
+        }
         StringBuilder out = new StringBuilder();
         int last = 0;
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
-            if (PostVertexBridge.unproducedAndUnread(src, matcher, name, terrainLayout)) {
-                out.append(src, last, matcher.start());
-                last = matcher.end();
+        for (Span varying : varyings) {
+            String type = varying.variable().type();
+            String name = varying.name();
+            if (PostVertexBridge.unproducedAndUnread(src, varying.start(), varying.end(), name, terrainLayout)) {
+                out.append(src, last, varying.start());
+                last = varying.end();
                 continue;
             }
             int location;
@@ -305,10 +414,10 @@ public final class LegacyGlslConverter {
                 }
                 location = slot;
             }
-            out.append(src, last, matcher.start());
+            out.append(src, last, varying.start());
             out.append("layout(location = ").append(location).append(") "
                     + "in ").append(type).append(' ').append(name).append(';');
-            last = matcher.end();
+            last = varying.end();
         }
         out.append(src, last, src.length());
         return out.toString();
@@ -318,24 +427,22 @@ public final class LegacyGlslConverter {
         return GlslTokenRewriter.containsIdentifier(source, name);
     }
 
+    /** Removes the {@code const} target metadata PackConfig reads; a program that reads one is refused. */
     static String removePackMetadataConstants(String source) {
-        Matcher declarations = Pattern.compile(
-                "(?m)^\\s*const\\s+(?:int|float|bool|vec4)\\s+"
-                        + "((?:colortex|gaux)\\d+(?:Format|Clear|ClearColor|MipmapEnabled))"
-                        + "\\s*=\\s*[^;]+;\\s*(?://.*)?$").matcher(source);
-        List<PostVertexBridge.PostVarying> matches = new ArrayList<>();
-        while (declarations.find()) {
-            matches.add(new PostVertexBridge.PostVarying(declarations.start(), declarations.end(),
-                    declarations.group(1), declarations.group(1)));
-        }
-        for (PostVertexBridge.PostVarying declaration : matches) {
+        GlslTree tree = GlslTree.parse(source);
+        List<Span> metadata = lineSpans(source, tree, TAIL_TO_LINE_END, variable ->
+                variable.qualifiers().equals(List.of("const")) && CONSTANT_TYPES.contains(variable.type())
+                        && variable.declaration().declarators().size() == 1
+                        && variable.declarator().arrays().isEmpty() && variable.declarator().initializer() != null
+                        && METADATA_CONST_NAME.matcher(variable.name()).matches());
+        for (Span declaration : metadata) {
             String withoutDeclaration = source.substring(0, declaration.start())
                     + source.substring(declaration.end());
             if (containsIdentifier(withoutDeclaration, declaration.name())) {
                 throw new IllegalArgumentException("pack metadata constant is used: " + declaration.name());
             }
         }
-        return declarations.reset().replaceAll("");
+        return without(source, metadata);
     }
 
     static String injectPackConstants(String source, Map<String, String> packConstants) {
@@ -379,39 +486,38 @@ public final class LegacyGlslConverter {
                 served.add(uniform.name());
             }
         }
-        Pattern declarations = Pattern.compile(
-                "(?m)^\\s*uniform\\s+(?:(?:highp|mediump|lowp)\\s+)?"
-                        + "(?:bool|int|float|vec[234]|ivec[234]|mat[234])\\s+([^;]+);[ \\t]*(?://[^\\r\\n]*)?\\s*$");
-        Matcher matcher = declarations.matcher(source);
-        StringBuffer stripped = new StringBuffer();
-        while (matcher.find()) {
-            boolean removable = true;
-            for (String name : declaratorNames(matcher.group(1))) {
-                if (name == null || !served.contains(name)) {
-                    removable = false;
-                    break;
-                }
-            }
-            matcher.appendReplacement(stripped, removable ? "" : Matcher.quoteReplacement(matcher.group(0)));
-        }
-        matcher.appendTail(stripped);
-        String withoutServed = stripped.toString();
-        String checkSource = declarations.matcher(withoutServed).replaceAll("");
-        Matcher remaining = declarations.matcher(withoutServed);
-        StringBuffer output = new StringBuffer();
-        while (remaining.find()) {
-            boolean referenced = false;
-            for (String name : declaratorNames(remaining.group(1))) {
-                if (name != null && GlslTokenRewriter.containsIdentifier(checkSource, name)) {
-                    referenced = true;
-                    break;
-                }
-            }
-            remaining.appendReplacement(output,
-                    referenced ? Matcher.quoteReplacement(remaining.group(0)) : "");
-        }
-        remaining.appendTail(output);
-        return output.toString();
+        String withoutServed = without(source, valueUniforms(source).stream()
+                .filter(span -> declaratorNames(span).stream().allMatch(name -> name != null && served.contains(name)))
+                .toList());
+        List<Span> remaining = valueUniforms(withoutServed);
+        String checkSource = without(withoutServed, remaining);
+        return without(withoutServed, remaining.stream().filter(span -> declaratorNames(span).stream()
+                .noneMatch(name -> name != null && GlslTokenRewriter.containsIdentifier(checkSource, name))).toList());
+    }
+
+    /** Value-type uniforms on lines of their own: {@code uniform [precision] type names;} and a trailing comment. */
+    private static List<Span> valueUniforms(String source) {
+        return onePerDeclaration(lineSpans(source, GlslTree.parse(source), TAIL_UNIFORM,
+                LegacyGlslConverter::isValueUniform));
+    }
+
+    private static boolean isValueUniform(GlslDeclarations.Variable variable) {
+        List<String> qualifiers = variable.qualifiers();
+        boolean uniform = qualifiers.equals(List.of("uniform")) || qualifiers.size() == 2
+                && qualifiers.get(0).equals("uniform") && PRECISIONS.contains(qualifiers.get(1));
+        return uniform && VALUE_TYPE.matcher(variable.type()).matches()
+                && variable.declaration().type().arrays().isEmpty();
+    }
+
+    private static boolean isOpaqueUniform(GlslDeclarations.Variable variable) {
+        return variable.qualifiers().equals(List.of("uniform")) && OPAQUE_TYPE.matcher(variable.type()).matches()
+                && variable.declaration().type().arrays().isEmpty();
+    }
+
+    /** The first span of each declaration: a declarator list is one span. */
+    private static List<Span> onePerDeclaration(List<Span> spans) {
+        Set<GlslTree.Declaration> seen = new HashSet<>();
+        return spans.stream().filter(span -> seen.add(span.variable().declaration())).toList();
     }
 
     /**
@@ -432,14 +538,12 @@ public final class LegacyGlslConverter {
         }
     }
 
-    /** Plain declarator names from a uniform declaration list, or null entries for exotic forms. */
-    private static List<String> declaratorNames(String declarators) {
+    /** Each declarator's name, or null for one with array sizes, which these rewrites leave alone. */
+    private static List<String> declaratorNames(Span span) {
+        GlslTree tree = span.variable().tree();
         List<String> names = new ArrayList<>();
-        for (String declarator : declarators.split(",")) {
-            String name = declarator.trim();
-            int equals = name.indexOf('=');
-            if (equals >= 0) name = name.substring(0, equals).trim();
-            names.add(name.matches("[A-Za-z_]\\w*") ? name : null);
+        for (GlslTree.Declarator declarator : span.variable().declaration().declarators()) {
+            names.add(declarator.arrays().isEmpty() ? tree.text(declarator.name()) : null);
         }
         return names;
     }
@@ -452,36 +556,29 @@ public final class LegacyGlslConverter {
      */
     static String stripUnreferencedSamplerDeclarations(String source) {
         if (source == null || source.isBlank()) return source;
-        Matcher matcher = Pattern.compile(
-                // A trailing line comment (Bliss: `uniform sampler2D noisetex;//depth`) still ends it.
-                "(?m)^\\s*uniform\\s+(?:[iu]?sampler\\w*|u?i?image\\w*)\\s+([^;]+);[ \\t]*(?://[^\\n]*)?$")
-                .matcher(source);
-        StringBuffer output = new StringBuffer();
-        while (matcher.find()) {
-            String checkSource = source.substring(0, matcher.start())
-                    + source.substring(matcher.end());
-            boolean referenced = false;
-            for (String name : declaratorNames(matcher.group(1))) {
-                if (name != null && GlslTokenRewriter.containsIdentifier(checkSource, name)) {
-                    referenced = true;
-                    break;
-                }
+        GlslTree tree = GlslTree.parse(source);
+        // A trailing line comment (Bliss: `uniform sampler2D noisetex;//depth`) still ends it.
+        List<Span> unreferenced = new ArrayList<>();
+        List<Span> samplers = lineSpans(source, tree, TAIL_SAMPLER, LegacyGlslConverter::isOpaqueUniform);
+        for (Span span : onePerDeclaration(samplers)) {
+            String checkSource = source.substring(0, span.start()) + source.substring(span.end());
+            if (declaratorNames(span).stream()
+                    .noneMatch(name -> name != null && GlslTokenRewriter.containsIdentifier(checkSource, name))) {
+                unreferenced.add(span);
             }
-            matcher.appendReplacement(output, referenced
-                    ? Matcher.quoteReplacement(matcher.group(0)) : "");
         }
-        matcher.appendTail(output);
-        return output.toString();
+        return without(source, unreferenced);
     }
 
+    /** {@code statement} as the first line of main's body. */
     static String injectMainPrologue(String source, String statement) {
-        Matcher main = Pattern.compile(
-                "\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)\\s*\\{")
-                .matcher(source);
-        if (!main.find()) {
+        GlslTree tree = GlslTree.parse(source);
+        GlslTree.Function main = GlslDeclarations.mainDefinition(tree);
+        if (main == null) {
             throw new IllegalArgumentException("entity vertex main body is missing");
         }
-        return source.substring(0, main.end()) + "\n    " + statement + source.substring(main.end());
+        int body = tree.offset(main.body().range().start()) + 1;
+        return source.substring(0, body) + "\n    " + statement + source.substring(body);
     }
 
     static String convertTextureCalls(String src) {
@@ -493,21 +590,41 @@ public final class LegacyGlslConverter {
         if (source == null || source.isEmpty()) {
             return source;
         }
-        Matcher matcher = MODERN_VARYING_LIST_DECL.matcher(source);
-        StringBuilder result = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            result.append(source, last, matcher.start());
-            String indent = matcher.group(1);
-            String qualifier = matcher.group(2) == null ? "" : matcher.group(2) + " ";
-            String type = matcher.group(4);
-            for (String name : matcher.group(5).split(",")) {
-                result.append(indent).append(qualifier).append(matcher.group(3)).append(' ')
-                        .append(type).append(' ').append(name.trim()).append(';').append('\n');
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> expansions = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Declaration declaration)) continue;
+            String expanded = expandedList(source, tree, declaration);
+            if (expanded != null) {
+                expansions.add(new GlslDeclarations.TextEdit(
+                        GlslDeclarations.indentationStart(source, tree.offset(declaration.range().start())),
+                        tree.offset(declaration.range().end()), expanded));
             }
-            last = matcher.end();
         }
-        result.append(source, last, source.length());
+        return GlslDeclarations.apply(source, expansions);
+    }
+
+    /**
+     * {@code [interpolation] in|out|varying type a, b;} written one declaration a line, each line
+     * ending in a line break; null for any other declaration.
+     */
+    private static String expandedList(String source, GlslTree tree, GlslTree.Declaration declaration) {
+        List<String> qualifiers = declaration.qualifiers().stream().map(value -> tree.text(value.keyword())).toList();
+        int storage = qualifiers.size() == 2 && INTERPOLATION.contains(qualifiers.get(0)) ? 1 : 0;
+        int start = tree.offset(declaration.range().start());
+        int indent = GlslDeclarations.indentationStart(source, start);
+        if (indent < 0 || qualifiers.size() != storage + 1 || !INTERFACE_STORAGE.contains(qualifiers.get(storage))
+                || declaration.type() == null || !LIST_TYPES.contains(tree.text(declaration.type().range()))
+                || declaration.declarators().size() < 2 || declaration.declarators().stream()
+                .anyMatch(value -> !value.arrays().isEmpty() || value.initializer() != null)) {
+            return null;
+        }
+        String prefix = source.substring(indent, start) + (storage == 1 ? qualifiers.get(0) + " " : "")
+                + qualifiers.get(storage) + " " + tree.text(declaration.type().range()) + " ";
+        StringBuilder result = new StringBuilder();
+        for (GlslTree.Declarator declarator : declaration.declarators()) {
+            result.append(prefix).append(tree.text(declarator.name())).append(";\n");
+        }
         return result.toString();
     }
 

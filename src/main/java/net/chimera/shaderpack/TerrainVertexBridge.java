@@ -575,8 +575,8 @@ final class TerrainVertexBridge {
         GlslVersion.requireSupported(source, stage, true);
         String result = LegacyGlslConverter.VERSION_LINE.matcher(source).replaceAll("");
         result = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
-        result = LegacyGlslConverter.PRECISION_DECL.matcher(result).replaceAll("");
-        result = LegacyGlslConverter.MODERN_LAYOUT_DECL.matcher(result).replaceAll("$1$2$3");
+        result = LegacyGlslConverter.withoutPrecisionStatements(result);
+        result = LegacyGlslConverter.withoutInterfaceLayouts(result);
         result = GlslTokenRewriter.replaceIdentifiers(result, Map.of("lowp", "", "mediump", "", "highp", ""));
         return "#version 460\n" + GlslTokenRewriter.relaxNonConstantGlobals(result);
     }
