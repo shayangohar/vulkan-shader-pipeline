@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 
@@ -11,8 +12,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -50,21 +53,59 @@ public final class PackMaterialResolver {
         }
     }
 
+    /**
+     * The chunk render layer a {@code layer.<name>} line puts its blocks in, as OptiFine names them: the
+     * pack draws them through that layer's program. Complementary and Bliss put glass, panes and beacons
+     * in {@code layer.translucent}, so the water program draws them.
+     */
+    public enum Layer {
+        SOLID, CUTOUT, CUTOUT_MIPPED, TRANSLUCENT;
+
+        /** The layer a {@code layer.<name>} key names, or null for another name. */
+        static Layer named(String name) {
+            return switch (name) {
+                case "solid" -> SOLID;
+                case "cutout" -> CUTOUT;
+                case "cutout_mipped" -> CUTOUT_MIPPED;
+                case "translucent" -> TRANSLUCENT;
+                default -> null;
+            };
+        }
+    }
+
     private final Map<String, Integer> ids;
     private final Map<String, List<Selector>> selectors;
+    private final Map<String, Layer> layers;
     private final List<String> deviations;
     private final Map<BlockState, Integer> stateCache = new ConcurrentHashMap<>();
+    private final Map<Block, Optional<Layer>> layerCache = new ConcurrentHashMap<>();
 
     private PackMaterialResolver(
             Map<String, Integer> ids,
             Map<String, List<Selector>> selectors,
+            Map<String, Layer> layers,
             Collection<String> deviations
     ) {
         this.ids = Collections.unmodifiableMap(new TreeMap<>(ids));
         Map<String, List<Selector>> copy = new TreeMap<>();
         selectors.forEach((name, list) -> copy.put(name, List.copyOf(list)));
         this.selectors = Collections.unmodifiableMap(copy);
+        this.layers = Collections.unmodifiableMap(new TreeMap<>(layers));
         this.deviations = List.copyOf(new TreeSet<>(deviations));
+    }
+
+    /** What one block.properties read collects: ids, state selectors, each layer key's value, deviations. */
+    private record Collected(Map<String, Integer> ids, Map<String, List<Selector>> selectors,
+                             Map<Layer, String> layerLines, Set<String> deviations) {
+        Collected() {
+            this(new TreeMap<>(), new TreeMap<>(), new EnumMap<>(Layer.class), new TreeSet<>());
+        }
+
+        void clear() {
+            ids.clear();
+            selectors.clear();
+            layerLines.clear();
+        }
     }
 
     public record ParseResult(
@@ -96,9 +137,7 @@ public final class PackMaterialResolver {
             return new ParseResult(empty(), false, null, List.of("BLOCK_PROPERTIES_MISSING"));
         }
 
-        Map<String, Integer> ids = new TreeMap<>();
-        Map<String, List<Selector>> selectors = new TreeMap<>();
-        Set<String> deviations = new TreeSet<>();
+        Collected collected = new Collected();
         String sourceHash;
         try {
             byte[] bytes = Files.readAllBytes(file);
@@ -109,16 +148,15 @@ public final class PackMaterialResolver {
             for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
                 if (PackSettingsPlan.PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
                     // A directive line ends the open continuation.
-                    parseLine(joiner.finish(), ids, selectors, deviations);
+                    parseLine(joiner.finish(), collected);
                 }
                 Matcher directive = CONDITION.matcher(raw);
                 if (directive.matches()) {
                     try {
                         conditions.apply(directive.group(1), directive.group(2).trim());
                     } catch (RuntimeException failure) {
-                        deviations.add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
-                        ids.clear();
-                        selectors.clear();
+                        collected.deviations().add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
+                        collected.clear();
                         failed = true;
                         break;
                     }
@@ -129,23 +167,64 @@ public final class PackMaterialResolver {
                 }
                 String line = joiner.accept(raw);
                 if (line != null) {
-                    parseLine(line, ids, selectors, deviations);
+                    parseLine(line, collected);
                 }
             }
             String last = failed ? null : joiner.finish();
             if (last != null) {
-                parseLine(last, ids, selectors, deviations);
+                parseLine(last, collected);
             }
         } catch (IOException e) {
-            deviations.add("BLOCK_PROPERTIES_READ_FAILED");
+            collected.deviations().add("BLOCK_PROPERTIES_READ_FAILED");
             sourceHash = null;
         }
-        return new ParseResult(new PackMaterialResolver(ids, selectors, deviations), true, sourceHash,
-                List.copyOf(deviations));
+        Map<String, Layer> layers = layers(collected.layerLines(), collected.deviations());
+        return new ParseResult(new PackMaterialResolver(collected.ids(), collected.selectors(), layers,
+                collected.deviations()), true, sourceHash, List.copyOf(collected.deviations()));
     }
 
     public static PackMaterialResolver empty() {
-        return new PackMaterialResolver(Map.of(), Map.of(), List.of());
+        return new PackMaterialResolver(Map.of(), Map.of(), Map.of(), List.of());
+    }
+
+    /**
+     * The blocks each {@code layer.<name>} line names, by normalized block name. A properties file
+     * keeps a key's last value, as Iris reads it; a block two layers name takes the later layer in
+     * {@link Layer} order. A tag or a state selector names no block here, as in Iris.
+     */
+    private static Map<String, Layer> layers(Map<Layer, String> layerLines, Set<String> deviations) {
+        Map<String, Layer> layers = new TreeMap<>();
+        layerLines.forEach((layer, value) -> {
+            for (String token : value.trim().split("\\s+")) {
+                if (token.isBlank()) continue;
+                String normalized = token.startsWith("%") || token.indexOf('=') >= 0 ? null : normalizeName(token);
+                if (normalized == null) {
+                    deviations.add(token.startsWith("%") ? "BLOCK_TAG_UNSUPPORTED" : "BLOCK_LAYER_INVALID");
+                    continue;
+                }
+                layers.put(normalized, layer);
+            }
+        });
+        return layers;
+    }
+
+    /** The layer the pack's {@code layer.*} lines put this block state's block in; null when none does. */
+    public Layer layer(BlockState state) {
+        if (state == null || layers.isEmpty()) {
+            return null;
+        }
+        return layerCache.computeIfAbsent(state.getBlock(), block -> {
+            try {
+                return Optional.ofNullable(layers.get(BuiltInRegistries.BLOCK.getKey(block).toString()));
+            } catch (RuntimeException ignored) {
+                return Optional.empty();
+            }
+        }).orElse(null);
+    }
+
+    /** The {@code layer.*} overrides, by normalized block name. */
+    public Map<String, Layer> layers() {
+        return layers;
     }
 
     public int resolve(BlockState state) {
@@ -204,21 +283,23 @@ public final class PackMaterialResolver {
         return deviations;
     }
 
-    private static void parseLine(
-            String rawLine,
-            Map<String, Integer> ids,
-            Map<String, List<Selector>> selectors,
-            Set<String> deviations
-    ) {
+    private static void parseLine(String rawLine, Collected collected) {
         String line = rawLine;
         int comment = line.indexOf('#');
         if (comment >= 0) {
             line = line.substring(0, comment);
         }
         line = line.trim();
+        if (line.startsWith("layer.")) {
+            parseLayerLine(line, collected);
+            return;
+        }
         if (line.isEmpty() || !line.startsWith("block.")) {
             return;
         }
+        Map<String, Integer> ids = collected.ids();
+        Map<String, List<Selector>> selectors = collected.selectors();
+        Set<String> deviations = collected.deviations();
 
         Matcher matcher = MAPPING.matcher(line);
         Integer mappedId = matchMappingId(matcher);
@@ -251,6 +332,17 @@ public final class PackMaterialResolver {
                 deviations.add("BLOCK_MAPPING_CONFLICT");
             }
         }
+    }
+
+    /** Keeps a {@code layer.<name> = <blocks>} line's value under its layer; the key's last value wins. */
+    private static void parseLayerLine(String line, Collected collected) {
+        int equals = line.indexOf('=');
+        Layer layer = equals < 0 ? null : Layer.named(line.substring("layer.".length(), equals).trim());
+        if (layer == null) {
+            collected.deviations().add("BLOCK_LAYER_INVALID");
+            return;
+        }
+        collected.layerLines().put(layer, line.substring(equals + 1));
     }
 
     /**

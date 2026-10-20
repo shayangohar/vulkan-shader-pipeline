@@ -8,6 +8,7 @@ import net.chimera.shaderpack.PackMaterialResolver;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.TerrainShadingDirectives;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.vulkanmod.render.chunk.build.thread.ThreadBuilderPack;
 import net.vulkanmod.render.PipelineManager;
@@ -33,7 +34,8 @@ public final class ChimeraTerrainPipelines {
     private static boolean extendedMode;
     /** Chimera's own terrain pipelines by vertex layout (bit 1: modern) and separateAo (bit 0). */
     private static final GraphicsPipeline[] fixedPipelines = new GraphicsPipeline[4];
-    private static PackMaterialResolver materialResolver = PackMaterialResolver.empty();
+    /** Read by the chunk-build threads, through the render-layer overrides; replaced on the render thread. */
+    private static volatile PackMaterialResolver materialResolver = PackMaterialResolver.empty();
     private static TerrainMaterialPlan materialPlan = TerrainMaterialPlan.legacy();
     /** Pack geometry program (gbuffers_terrain) installed over the chimera terrain pipeline; null = none. */
     private static GraphicsPipeline geometryOverride;
@@ -178,6 +180,21 @@ public final class ChimeraTerrainPipelines {
     /** The pack block.properties id of a block state, or -1 when unmapped (Iris BlockMaterialMapping). */
     public static int blockStateId(BlockState state) {
         return materialResolver.resolve(state);
+    }
+
+    /**
+     * The chunk render type the pack's {@code layer.*} lines give a block (Iris BlockRenderType), or
+     * null to keep the host's. A new resolver rebuilds the live level, so every mesh takes its layers.
+     */
+    public static RenderType packRenderType(BlockState state) {
+        PackMaterialResolver.Layer layer = materialResolver.layer(state);
+        if (layer == null) return null;
+        return switch (layer) {
+            case SOLID -> RenderType.solid();
+            case CUTOUT -> RenderType.cutout();
+            case CUTOUT_MIPPED -> RenderType.cutoutMipped();
+            case TRANSLUCENT -> RenderType.translucent();
+        };
     }
 
     public static void setMaterialResolver(PackMaterialResolver resolver) {

@@ -16,6 +16,7 @@ import net.chimera.shaderpack.PackEngineDefines;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.chimera.shaderpack.PackMaterialResolver;
+import net.chimera.shaderpack.PackOptionMacros;
 import net.chimera.shaderpack.PackOptionSources;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProbe;
@@ -596,12 +597,12 @@ final class PackSessionLifecycle {
 
     /** Parses the pack's block and item id maps and installs them with its hand-light setting. */
     private void installIdMaps(Path shadersDir) {
-        PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(shadersDir,
-                PackEngineDefines.forPack(pass.packPlan.settingsPreprocessorDefines()));
+        // Iris preprocesses the id maps with every option the pack's shader files declare.
+        Map<String, String> macros = PackEngineDefines.forPack(PackOptionMacros.forIdMaps(shadersDir,
+                pass.packPlan.settingsPreprocessorDefines(), pass.packPlan.settingsOverriddenNames()));
+        PackMaterialResolver.ParseResult material = PackMaterialResolver.parse(shadersDir, macros);
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
-        PackItemIdResolver.ParseResult items = PackItemIdResolver.parse(
-                shadersDir,
-                PackEngineDefines.forPack(pass.packPlan.settingsPreprocessorDefines()));
+        PackItemIdResolver.ParseResult items = PackItemIdResolver.parse(shadersDir, macros);
         HandLightDirectives handLight = pass.packPlan.handLight();
         LOGGER.info("[chimera] pack held items: item ids={}, oldHandLight={}{}",
                 items.resolver().mappings().size(), handLight.oldHandLight(),
