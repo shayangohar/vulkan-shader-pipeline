@@ -25,44 +25,21 @@ public final class GlslTokenRewriter {
                 || usage.unreachableFunctions().isEmpty()) {
             return source;
         }
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        boolean[] directives = directiveTokens(tokens);
+        GlslTree tree = GlslTree.parse(source);
+        boolean[] directives = tree.directiveTokens();
+        List<GlslTree.Edit> edits = new ArrayList<>();
         for (GlslResourceUsage.FunctionDefinition function : usage.unreachableFunctions()) {
-            int start = Math.max(0, function.definitionStart());
-            int end = Math.min(tokens.size() - 1, function.definitionEnd());
-            for (int index = start; index <= end; index++) {
-                if (directives[index]) continue;
-                String text = tokens.get(index).text();
-                tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.TRIVIA,
-                        lineBreaks(text)));
+            int run = -1;
+            for (int index = function.definitionStart(); index <= function.definitionEnd() + 1; index++) {
+                boolean blank = index <= function.definitionEnd() && !directives[index];
+                if (blank && run < 0) run = index;
+                if (blank || run < 0) continue;
+                edits.add(new GlslTree.Edit(new GlslTree.Range(run, index),
+                        lineBreaks(tree.text(new GlslTree.Range(run, index)))));
+                run = -1;
             }
         }
-        return GlslLexer.render(tokens);
-    }
-
-    /** Which tokens sit on a preprocessor directive line: from a '#' that starts a line to that line's end. */
-    private static boolean[] directiveTokens(List<GlslLexer.Token> tokens) {
-        boolean[] directive = new boolean[tokens.size()];
-        boolean lineStart = true;
-        boolean inDirective = false;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.kind() == GlslLexer.Kind.TRIVIA) {
-                int newline = token.text().lastIndexOf('\n');
-                if (newline >= 0) {
-                    inDirective = false;
-                    lineStart = token.text().substring(newline + 1).isBlank();
-                } else {
-                    directive[index] = inDirective;
-                    if (!token.text().isBlank()) lineStart = false;
-                }
-                continue;
-            }
-            if (lineStart && token.kind() == GlslLexer.Kind.SYMBOL && token.text().equals("#")) inDirective = true;
-            directive[index] = inDirective;
-            lineStart = false;
-        }
-        return directive;
+        return tree.print(edits);
     }
 
     static String lineBreaks(String text) {
@@ -145,26 +122,22 @@ public final class GlslTokenRewriter {
     /** Vulkan GLSL reserves 'sampler'; legacy GL permits it as a function parameter name. */
     static String renameReservedSamplerParameters(String source) {
         if (source == null || !source.contains("sampler")) return source;
-        var usage = GlslResourceUsage.analyze(source);
-        if (!usage.successful()) return source;
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        Set<String> names = new HashSet<>();
-        for (var token : tokens) if (token.kind() == GlslLexer.Kind.IDENTIFIER) names.add(token.text());
-        String replacement = "chimeraSamplerParameter";
-        while (names.contains(replacement)) replacement += "_";
-        List<GlslResourceUsage.FunctionDefinition> functions = new ArrayList<>(usage.reachableFunctions());
-        functions.addAll(usage.unreachableFunctions());
-        for (var function : functions) {
-            boolean reservedParameter = false;
-            for (int i = function.definitionStart(); i < function.bodyStart(); i++) {
-                if (tokens.get(i).identifier("sampler")) reservedParameter = true;
+        if (!GlslResourceUsage.analyze(source).successful()) return source;
+        GlslTree tree = GlslTree.parse(source);
+        String replacement = uniqueIdentifier(source, "chimeraSamplerParameter");
+        List<GlslTree.Edit> edits = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Function function) || function.body() == null
+                    || function.parameters().stream().noneMatch(value -> tree.text(value.name()).equals("sampler"))) {
+                continue;
             }
-            if (!reservedParameter) continue;
-            for (int i = function.definitionStart(); i <= function.definitionEnd(); i++) {
-                if (tokens.get(i).identifier("sampler")) tokens.set(i, identifier(replacement));
+            for (int index = function.range().start(); index < function.range().end(); index++) {
+                if (tree.tokens().get(index).identifier("sampler")) {
+                    edits.add(new GlslTree.Edit(new GlslTree.Range(index, index + 1), replacement));
+                }
             }
         }
-        return GlslLexer.render(tokens);
+        return edits.isEmpty() ? source : tree.print(edits);
     }
 
     /**
@@ -287,16 +260,15 @@ public final class GlslTokenRewriter {
      */
     static String appendMainEpilogue(String source, String epilogue) {
         if (source == null || epilogue == null || epilogue.isBlank()) return source;
-        MainFunction main = locateMain(source);
-        List<GlslLexer.Token> tokens = main.tokens();
+        GlslTree tree = GlslTree.parse(source);
+        GlslTree.Function main = mainDefinition(tree);
         String authored = uniqueIdentifier(source, "chimeraAuthoredMain");
         String wrapper = uniqueIdentifier(source, "chimeraGeneratedMain");
-        tokens.set(main.nameIndex(), identifier(authored));
-        String indented = indent(epilogue);
         String generated = "\nvoid " + wrapper + "() {\n    " + authored + "();\n"
-                + indented + "\n}\nvoid main() {\n    " + wrapper + "();\n}\n";
-        tokens.add(main.bodyEnd() + 1, raw(generated));
-        return GlslLexer.render(tokens);
+                + indent(epilogue) + "\n}\nvoid main() {\n    " + wrapper + "();\n}\n";
+        int close = main.body().range().end() - 1;
+        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(main.name(), main.name() + 1), authored),
+                new GlslTree.Edit(new GlslTree.Range(close, close + 1), tree.text(close) + generated)));
     }
 
     /**
@@ -610,65 +582,35 @@ public final class GlslTokenRewriter {
     /** Inserts statements at the start of the one real GLSL main body (Iris prependMainFunctionBody). */
     static String prependMainPrologue(String source, String prologue) {
         if (source == null || prologue == null || prologue.isBlank()) return source;
-        MainFunction main = locateMain(source);
-        List<GlslLexer.Token> tokens = main.tokens();
-        tokens.add(main.bodyOpen() + 1, raw("\n" + indent(prologue)));
-        return GlslLexer.render(tokens);
+        GlslTree tree = GlslTree.parse(source);
+        int open = mainDefinition(tree).body().range().start();
+        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(open, open + 1),
+                tree.text(open) + "\n" + indent(prologue))));
     }
 
-    private record MainFunction(List<GlslLexer.Token> tokens, int nameIndex, int bodyOpen, int bodyEnd) {}
-
-    private static MainFunction locateMain(String source) {
-        GlslResourceUsage.FunctionDefinition main = mainDefinition(source);
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        int nameIndex = -1;
-        for (int index = main.definitionStart(); index < main.bodyStart(); index++) {
-            if (tokens.get(index).identifier("main")) {
-                nameIndex = index;
-                break;
+    /** The source's one main definition; only {@code void main()} is supported. */
+    private static GlslTree.Function mainDefinition(GlslTree tree) {
+        List<GlslTree.Function> mains = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Function function && function.body() != null
+                    && tree.text(function.name()).equals("main")) {
+                mains.add(function);
             }
         }
-        if (nameIndex < 0) throw new IllegalArgumentException("main function name is missing");
-        return new MainFunction(tokens, nameIndex, mainBodyOpen(tokens, nameIndex), main.bodyEnd());
-    }
-
-    /** The source's one main definition, found by the resource analysis. */
-    private static GlslResourceUsage.FunctionDefinition mainDefinition(String source) {
-        GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source);
-        if (!usage.successful()) throw new IllegalArgumentException("main function is malformed");
-        List<GlslResourceUsage.FunctionDefinition> mains = new ArrayList<>();
-        usage.reachableFunctions().stream()
-                .filter(value -> value.name().equals("main"))
-                .forEach(mains::add);
-        usage.unreachableFunctions().stream()
-                .filter(value -> value.name().equals("main"))
-                .forEach(mains::add);
-        mains = mains.stream().distinct().toList();
         if (mains.size() != 1) {
             throw new IllegalArgumentException(mains.isEmpty()
                     ? "main function is missing" : "main function is ambiguous");
         }
-        return mains.get(0);
-    }
-
-    /** The opening brace of main's body; only {@code void main()} is supported. */
-    private static int mainBodyOpen(List<GlslLexer.Token> tokens, int nameIndex) {
-        int returnType = GlslLexer.previousSignificant(tokens, nameIndex);
-        int open = GlslLexer.nextSignificant(tokens, nameIndex);
-        int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
-        int bodyOpen = close < 0 ? -1 : GlslLexer.nextSignificant(tokens, close);
-        if (returnType < 0 || !tokens.get(returnType).identifier("void")
-                || open < 0 || close < 0 || bodyOpen < 0
-                || !tokens.get(open).symbol("(") || !tokens.get(close).symbol(")")
-                || !tokens.get(bodyOpen).symbol("{")) {
+        GlslTree.Function main = mains.get(0);
+        int returnType = GlslLexer.previousSignificant(tree.tokens(), main.name());
+        if (returnType < 0 || !tree.tokens().get(returnType).identifier("void")) {
             throw new IllegalArgumentException("main signature is unsupported");
         }
-        for (int index = open + 1; index < close; index++) {
-            if (tokens.get(index).significant()) {
-                throw new IllegalArgumentException("main parameters are unsupported");
-            }
+        GlslTree.Range parameters = main.parameterList();
+        if (GlslLexer.nextSignificant(tree.tokens(), parameters.start()) != parameters.end() - 1) {
+            throw new IllegalArgumentException("main parameters are unsupported");
         }
-        return bodyOpen;
+        return main;
     }
 
     /** Returns a source-safe identifier that is absent from the token stream. */
