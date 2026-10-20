@@ -21,6 +21,7 @@
     "ChimeraShadowSectionsMixin",
     "WorldRendererLevelMixin",
     "ChimeraLiquidRendererMixin",
+    "ChimeraItemBlockRenderTypesMixin",
     "ChimeraTerrainBufferBuilderAccessor",
     "ChimeraBlockRendererMixin",
     "ChimeraBlockSeparateAoMixin",
