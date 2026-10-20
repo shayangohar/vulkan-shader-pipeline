@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Rewrites for the legacy-to-Vulkan GLSL bridge. The function and declaration rewrites read and
@@ -625,6 +626,15 @@ public final class GlslTokenRewriter {
             if (token.identifier(name)) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    /** True when an identifier token, outside comments and literals, is one {@code accepted} takes. */
+    public static boolean containsIdentifier(String source, Predicate<String> accepted) {
+        if (source == null) return false;
+        for (GlslLexer.Token token : GlslLexer.lex(source)) {
+            if (token.kind() == GlslLexer.Kind.IDENTIFIER && accepted.test(token.text())) return true;
         }
         return false;
     }

@@ -605,7 +605,7 @@ public final class FragmentConverter {
     /** Adds the coverage output to a converted geometry fragment. */
     public static String withCoverageOutput(String source) {
         if (source == null || source.contains("gl_FragDepth")
-                || source.matches("(?s).*\\bchimeraCoverage\\b.*")) {
+                || GlslTokenRewriter.containsIdentifier(source, "chimeraCoverage")) {
             throw new IllegalArgumentException("coverage requires implicit fragment depth");
         }
         GlslTree tree = GlslTree.parse(source);

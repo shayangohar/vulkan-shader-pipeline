@@ -338,7 +338,7 @@ public final class EntityVertexBridge {
         String stripped = stripComments(src);
         GlslVersion.requireSupported(stripped, "entity vertex", true);
         if (GlslDeclarations.main(GlslTree.parse(stripped)) == null
-                || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+                || !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
             throw new IllegalArgumentException("entity vertex requires main and gl_Position");
         }
         Map<String, String> entityIdTypes = entityIdTypes(stripped, fragmentSource);

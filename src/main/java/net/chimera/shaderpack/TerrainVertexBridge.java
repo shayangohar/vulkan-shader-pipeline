@@ -24,6 +24,20 @@ final class TerrainVertexBridge {
     private static final Pattern OPAQUE_PREFIX =
             Pattern.compile("(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)).*");
 
+    /** Stage names a terrain vertex may not mention: it runs as a plain vertex stage. */
+    private static final Set<String> OTHER_STAGES = Set.of("geometry", "tessellation", "compute");
+    /** Modern interface syntax, and inputs only the extended terrain format carries. */
+    private static final Set<String> EXTENDED_TERRAIN_WORDS = Set.of("in", "out", "flat", "noperspective",
+            "mc_midTexCoord", "at_tangent", "gl_NormalMatrix", "gl_ModelViewMatrix", "gl_ProjectionMatrix",
+            "gl_TextureMatrix");
+    /** What the 24-byte legacy terrain bridge cannot serve; any {@code image*} name is refused too. */
+    private static final Set<String> LEGACY_TERRAIN_REFUSED = Set.of("uniform", "gl_Normal", "gl_NormalMatrix",
+            "gl_ModelViewMatrix", "gl_ProjectionMatrix", "gl_ModelViewProjectionMatrix", "gl_TextureMatrix",
+            "mc_midTexCoord", "at_tangent", "tangent");
+    private static final Set<String> MODERN_SYNTAX = Set.of("layout", "in", "out", "flat", "noperspective");
+    private static final Set<String> EXTENDED_SHADOW_WORDS = Set.of("flat", "noperspective", "mc_midTexCoord",
+            "at_midBlock");
+
     /** Whether the stage still declares or names {@code attribute} anywhere outside comments. */
     private static boolean namesAttribute(String source) {
         return GlslTokenRewriter.containsIdentifier(source, "attribute");
@@ -240,11 +254,11 @@ final class TerrainVertexBridge {
     /** The strict modern subset: a main that writes gl_Position, and no unsupported resource or stage. */
     private static void requireSupportedModernVertex(String stripped, boolean allowStorageBuffers) {
         GlslTree tree = GlslTree.parse(stripped);
-        if (GlslDeclarations.main(tree) == null || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+        if (GlslDeclarations.main(tree) == null || !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
             throw new IllegalArgumentException("modern terrain vertex main or position is missing");
         }
-        if ((!allowStorageBuffers && stripped.matches("(?s).*\\bbuffer\\b.*"))
-                || stripped.matches("(?s).*\\b(?:geometry|tessellation|compute)\\b.*")
+        if ((!allowStorageBuffers && GlslTokenRewriter.containsIdentifier(stripped, "buffer"))
+                || GlslTokenRewriter.containsIdentifier(stripped, OTHER_STAGES::contains)
                 || declaresValueUniform(tree)) {
             throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
         }
@@ -402,7 +416,7 @@ final class TerrainVertexBridge {
             String stripped = stripComments(src);
             GlslVersion.requireSupported(stripped, "legacy vertex", true);
             if (GlslDeclarations.main(GlslTree.parse(stripped)) == null
-                    || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+                    || !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
                 throw new IllegalArgumentException("legacy vertex requires main and gl_Position");
             }
             rejectTerrainVertexFeatures(stripped, allowStorageBuffers);
@@ -437,7 +451,7 @@ final class TerrainVertexBridge {
                 converted = converted.replaceAll("\\bmc_Entity\\b",
                         entityType.equals("vec2") ? "chimeraMcEntityValue()" : "chimeraMcEntityValue().x");
             }
-            if (converted.matches("(?s).*\\bmc_Entity\\b.*")) {
+            if (GlslTokenRewriter.containsIdentifier(converted, "mc_Entity")) {
                 throw new IllegalArgumentException("mc_Entity is used without a supported declaration");
             }
             return new LegacyGlslConverter.TerrainVertexConversion(
@@ -470,8 +484,7 @@ final class TerrainVertexBridge {
         if (stripped.isBlank()) return false;
         if (!GlslVersion.supportedIfDeclared(source)) return false;
         return (hasModernTerrainVersion(source) && modernTerrainVersion(source) >= 130)
-                || stripped.matches("(?s).*\\b(?:in|out|flat|noperspective|mc_midTexCoord|at_tangent|"
-                + "gl_NormalMatrix|gl_ModelViewMatrix|gl_ProjectionMatrix|gl_TextureMatrix)\\b.*");
+                || GlslTokenRewriter.containsIdentifier(stripped, EXTENDED_TERRAIN_WORDS::contains);
     }
 
     public static boolean supportsModernShadow(String source, String fragmentSource) {
@@ -565,15 +578,14 @@ final class TerrainVertexBridge {
     }
 
     static void rejectTerrainVertexFeatures(String source, boolean allowStorageBuffers) {
-        if (source.matches("(?s).*\\b(?:uniform|gl_Normal|gl_NormalMatrix|gl_ModelViewMatrix|"
-                + "gl_ProjectionMatrix|gl_ModelViewProjectionMatrix|gl_TextureMatrix|"
-                + "mc_midTexCoord|at_tangent|tangent|image\\w*)\\b.*")) {
+        if (GlslTokenRewriter.containsIdentifier(source,
+                name -> LEGACY_TERRAIN_REFUSED.contains(name) || name.startsWith("image"))) {
             throw new IllegalArgumentException("unsupported terrain vertex feature");
         }
-        if (!allowStorageBuffers && source.matches("(?s).*\\bbuffer\\b.*")) {
+        if (!allowStorageBuffers && GlslTokenRewriter.containsIdentifier(source, "buffer")) {
             throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
         }
-        if (source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective)\\b.*")) {
+        if (GlslTokenRewriter.containsIdentifier(source, MODERN_SYNTAX::contains)) {
             throw new IllegalArgumentException("modern GLSL is not supported in terrain vertex");
         }
         List<TerrainDeclarations.Declaration> attributes = TerrainDeclarations.keyword(source, "attribute");
@@ -625,7 +637,7 @@ final class TerrainVertexBridge {
     static boolean usesExtendedShadowInputs(String source) {
         String stripped = stripComments(source);
         return shadowVersion(source) >= 130
-                || stripped.matches("(?s).*\\b(?:flat|noperspective|mc_midTexCoord|at_midBlock)\\b.*");
+                || GlslTokenRewriter.containsIdentifier(stripped, EXTENDED_SHADOW_WORDS::contains);
     }
 
     /**
