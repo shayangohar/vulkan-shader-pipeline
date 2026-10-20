@@ -29,6 +29,21 @@ final class CorpusCompileFixesTest {
                 """, GlslScopedReferences.replace(source, Map.of("lightDir", "u.lightDir")));
     }
 
+    /** A struct member and a prototype's parameter are declarations, never references to the global. */
+    @Test
+    void membersAndPrototypeParametersKeepTheirNames() {
+        String source = """
+                struct Light { vec3 lightDir; };
+                float f(vec3 lightDir);
+                void main() { for (int lightDir = 0; lightDir < 1; lightDir++) {} vec3 a = lightDir; }
+                """;
+        assertEquals("""
+                struct Light { vec3 lightDir; };
+                float f(vec3 lightDir);
+                void main() { for (int lightDir = 0; lightDir < 1; lightDir++) {} vec3 a = u.lightDir; }
+                """, GlslScopedReferences.replace(source, Map.of("lightDir", "u.lightDir")));
+    }
+
     /** RedHat writes gl_FrontColor and gl_TexCoord[0]; Vulkan has no such built-in varyings. */
     @Test
     void legacyColourAndTexCoordVaryingsBecomeOrdinaryOnes() {
