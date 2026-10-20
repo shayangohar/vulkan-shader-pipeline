@@ -496,11 +496,14 @@ public final class LegacyGlslConverter {
             return source;
         }
         String stripped = stripComments(source);
+        // A constant the source defines as a macro keeps its own value.
+        Set<String> defined = new HashSet<>();
+        for (GlslDirectives.Line line : GlslDirectives.lines(stripped)) {
+            if (line.is("define") && line.adjacent() && !line.words().isEmpty()) defined.add(line.words().get(0));
+        }
         StringBuilder declarations = new StringBuilder();
         for (Map.Entry<String, String> entry : new TreeMap<>(packConstants).entrySet()) {
-            if (!containsIdentifier(stripped, entry.getKey())
-                    || Pattern.compile("(?m)^\\s*#define\\s+" + Pattern.quote(entry.getKey()) + "\\b")
-                    .matcher(stripped).find()) {
+            if (!containsIdentifier(stripped, entry.getKey()) || defined.contains(entry.getKey())) {
                 continue;
             }
             String type = entry.getKey().equals("shadowMapResolution") ? "int" : "float";
