@@ -35,28 +35,31 @@ final class AtlasSampleRewriter {
             }
             """;
 
-    /** Load-time bridge for resolved terrain atlas samples; ambiguous scopes stay authored. */
+
+    /** Load-time bridge for resolved terrain atlas samples; a lookup of a parameter or local stays authored. */
     public static String rewriteTerrainAtlasSamples(String source, Set<String> atlasSamplers) {
         if (source == null || source.isBlank() || atlasSamplers.isEmpty()) return source;
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        GlslResourceUsage.Analysis analysis = GlslResourceUsage.analyze(source);
-        if (!analysis.successful()) return source;
-        List<GlslResourceUsage.FunctionDefinition> functions = new ArrayList<>(analysis.reachableFunctions());
-        functions.addAll(analysis.unreachableFunctions());
+        if (!GlslResourceUsage.analyze(source).successful()) return source;
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslTree.Function> functions = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Function function && function.body() != null) functions.add(function);
+        }
         if (functions.isEmpty()) return source;
-        String prefix = atlasPrefix(tokens);
-        AtlasCalls calls = new AtlasCalls(tokens, prefix, functions);
+        String prefix = atlasPrefix(tree.tokens());
+        AtlasCalls calls = new AtlasCalls(tree, prefix, functions);
         for (var function : functions) calls.rewrite(function, atlasSamplers);
         if (!calls.plainRewritten && !calls.gradRewritten) return source;
-        int insertion = functions.stream().mapToInt(
-                GlslResourceUsage.FunctionDefinition::definitionStart).min().orElseThrow();
         // The plain helper delegates so both call shapes share one
         // pixel-center correction; it is always emitted with its target.
         String helpers = calls.plainRewritten ? ATLAS_GRADIENT_HELPER + ATLAS_PLAIN_HELPER : ATLAS_GRADIENT_HELPER;
         String definitions = helpers.replace("{grad}", calls.gradHelper).replace("{plain}", calls.helper)
                 .replace("{p}", prefix);
-        tokens.add(insertion, GlslTokenRewriter.raw(definitions));
-        return GlslLexer.render(tokens);
+        // The helpers go just before the first function definition.
+        int insertion = functions.get(0).range().start();
+        calls.edits.add(new GlslTree.Edit(new GlslTree.Range(insertion, insertion + 1),
+                definitions + tree.text(insertion)));
+        return tree.print(calls.edits);
     }
 
     /** {@code chimeraAtlas}, with underscores added until no identifier in the source starts with it. */
@@ -70,115 +73,88 @@ final class AtlasSampleRewriter {
 
     private static final Set<String> ATLAS_LOOKUPS = Set.of("texture2D", "texture", "chimeraTexture", "textureGrad");
 
-    /** Rewrites a source's atlas lookups in place, remembering which helpers the rewritten calls need. */
+    /** Rewrites a source's atlas lookups as tree edits, remembering which helpers the rewritten calls need. */
     private static final class AtlasCalls {
+        private final GlslTree tree;
         private final List<GlslLexer.Token> tokens;
         private final boolean[] directive;
         private final Set<String> callableShadows;
         private final String helper;
         private final String gradHelper;
+        private final List<GlslTree.Edit> edits = new ArrayList<>();
         private boolean plainRewritten;
         private boolean gradRewritten;
 
-        private AtlasCalls(List<GlslLexer.Token> tokens, String prefix,
-                           List<GlslResourceUsage.FunctionDefinition> functions) {
-            this.tokens = tokens;
+        private AtlasCalls(GlslTree tree, String prefix, List<GlslTree.Function> functions) {
+            this.tree = tree;
+            this.tokens = tree.tokens();
             this.helper = prefix + "Sample";
             this.gradHelper = prefix + "SampleGrad";
-            this.directive = atlasDirectiveTokens(tokens);
+            this.directive = tree.directiveTokens();
             this.callableShadows = callableShadows(functions);
         }
 
         /** The source's function names and macro names, which a lookup name may stand for. */
-        private Set<String> callableShadows(List<GlslResourceUsage.FunctionDefinition> functions) {
+        private Set<String> callableShadows(List<GlslTree.Function> functions) {
             Set<String> names = new HashSet<>();
-            for (var function : functions) names.add(function.name());
+            for (var function : functions) names.add(tree.text(function.name()));
             // A macro with one of these names is not a known GLSL sampling operation.
-            for (int i = 0; i < tokens.size(); i++) {
-                if (directive[i] && tokens.get(i).identifier("define")) {
-                    int name = GlslLexer.nextSignificant(tokens, i);
-                    if (name >= 0) names.add(tokens.get(name).text());
-                }
+            for (GlslTree.Directive value : tree.directives()) {
+                int keyword = GlslLexer.nextSignificant(tokens, value.range().start());
+                int name = keyword < 0 ? -1 : GlslLexer.nextSignificant(tokens, keyword);
+                if (name >= 0 && tokens.get(keyword).identifier("define")) names.add(tokens.get(name).text());
             }
             return names;
         }
 
-        /** Points one function's lookups of an atlas sampler it does not redeclare at the helpers. */
-        private void rewrite(GlslResourceUsage.FunctionDefinition function, Set<String> atlasSamplers) {
-            Set<String> eligible = eligibleSamplers(function, atlasSamplers);
-            for (int i = function.bodyStart(); i < function.bodyEnd(); i++) {
+        /** Points one function's lookups of a global atlas sampler at the helpers. */
+        private void rewrite(GlslTree.Function function, Set<String> atlasSamplers) {
+            GlslTree.Range body = function.body().range();
+            for (int i = body.start() + 1; i < body.end() - 1; i++) {
                 var token = tokens.get(i);
                 if (directive[i] || token.kind() != GlslLexer.Kind.IDENTIFIER
                         || !ATLAS_LOOKUPS.contains(token.text())
                         || callableShadows.contains(token.text())) continue;
-                String sampler = lookupSampler(i);
-                if (sampler == null || !eligible.contains(sampler)) continue;
+                int sampler = lookupSampler(i);
+                if (sampler < 0 || !atlasSamplers.contains(tokens.get(sampler).text()) || !global(sampler)) continue;
                 boolean explicit = token.text().equals("textureGrad");
-                tokens.set(i, GlslTokenRewriter.identifier(explicit ? gradHelper : helper));
+                edits.add(new GlslTree.Edit(new GlslTree.Range(i, i + 1), explicit ? gradHelper : helper));
                 if (explicit) gradRewritten = true;
                 else plainRewritten = true;
             }
         }
 
-        /** The atlas samplers a function does not redeclare as a parameter or local. */
-        private Set<String> eligibleSamplers(GlslResourceUsage.FunctionDefinition function,
-                                             Set<String> atlasSamplers) {
-            Set<String> eligible = new HashSet<>(atlasSamplers);
-            for (int i = function.definitionStart(); i < function.bodyEnd(); i++) {
-                if (directive[i] || !eligible.contains(tokens.get(i).text())) continue;
-                int previous = GlslLexer.previousSignificant(tokens, i);
-                if (previous >= 0 && tokens.get(previous).kind() == GlslLexer.Kind.IDENTIFIER
-                        && !tokens.get(previous).identifier("return")) eligible.remove(tokens.get(i).text());
-                // Multiple declarators and parameter lists: fail closed for the symbol.
-                if (previous >= 0 && tokens.get(previous).symbol(",")) eligible.remove(tokens.get(i).text());
-            }
-            return eligible;
+        /** Whether the sampler named at {@code index} is the global one, not a parameter or local. */
+        private boolean global(int index) {
+            GlslTree.Binding binding = tree.resolve(index);
+            return binding == null || !GlslScopedReferences.insideFunction(tree, binding);
         }
 
         /**
-         * The sampler identifier the lookup call named at {@code name} reads, or null when the call
-         * has an unsupported shape.
+         * The token of the sampler identifier the lookup call named at {@code name} reads, or -1 when
+         * the call has an unsupported shape.
          */
-        private String lookupSampler(int name) {
+        private int lookupSampler(int name) {
             int open = GlslLexer.nextSignificant(tokens, name);
-            if (open < 0 || !tokens.get(open).symbol("(")) return null;
+            if (open < 0 || !tokens.get(open).symbol("(")) return -1;
             int close = GlslLexer.matching(tokens, open, "(", ")");
-            if (close < 0) return null;
+            if (close < 0) return -1;
             List<int[]> arguments = GlslTokenRewriter.argumentRanges(tokens, open + 1, close);
             // Plain lookups keep their two-argument shape; only authored
             // explicit-gradient textureGrad calls take the gradient path.
             // Every other arity is an unsupported overload: leave it.
             boolean explicit = tokens.get(name).text().equals("textureGrad");
-            if (explicit ? arguments.size() != 4 : arguments.size() != 2) return null;
-            try {
-                return GlslTokenRewriter.singleIdentifier(tokens, arguments.get(0));
-            } catch (IllegalArgumentException ignored) {
-                return null;
-            }
+            if (explicit ? arguments.size() != 4 : arguments.size() != 2) return -1;
+            int[] range = arguments.get(0);
+            int first = GlslLexer.nextSignificant(tokens, range[0] - 1);
+            boolean single = first >= 0 && first < range[1] && tokens.get(first).kind() == GlslLexer.Kind.IDENTIFIER
+                    && GlslLexer.nextSignificant(tokens, first) >= range[1];
+            return single ? first : -1;
         }
     }
 
     static boolean atlasPrefixUsed(Set<String> identifiers, String prefix) {
         for (String name : identifiers) if (name.startsWith(prefix)) return true;
         return false;
-    }
-
-    static boolean[] atlasDirectiveTokens(List<GlslLexer.Token> tokens) {
-        boolean[] result = new boolean[tokens.size()];
-        boolean lineStart = true, inDirective = false, escaped = false;
-        for (int i = 0; i < tokens.size(); i++) {
-            var token = tokens.get(i);
-            if (lineStart && token.symbol("#")) inDirective = true;
-            result[i] = inDirective;
-            if (token.text().contains("\n") || token.text().contains("\r")) {
-                if (!escaped) inDirective = false;
-                lineStart = true;
-                escaped = false;
-            } else if (token.significant()) {
-                lineStart = false;
-                escaped = token.symbol("\\");
-            }
-        }
-        return result;
     }
 }

@@ -14,7 +14,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Small token-aware resource use analysis for prepared legacy GLSL.
+ * Resource use analysis for prepared GLSL, read from the parse tree.
  *
  * <p>The analysis distinguishes source inventory from entry-point use. It is
  * intentionally conservative for overloaded calls, recursive calls, and
@@ -23,19 +23,6 @@ import java.util.TreeSet;
 final class GlslResourceUsage {
     private static final Set<String> FUNCTION_KEYWORDS = Set.of(
             "if", "for", "while", "switch", "catch", "sizeof");
-    private static final Set<String> VALUE_TYPES = Set.of(
-            "bool", "int", "uint", "float", "double", "vec2", "vec3", "vec4",
-            "ivec2", "ivec3", "ivec4", "uvec2", "uvec3", "uvec4", "bvec2",
-            "bvec3", "bvec4", "mat2", "mat3", "mat4");
-    private static final Set<String> STORAGE_QUALIFIERS = Set.of(
-            "uniform", "attribute", "varying", "in", "out");
-    private static final Set<String> FUNCTION_QUALIFIERS = Set.of(
-            "const", "inline", "static", "highp", "mediump", "lowp", "precise",
-            "invariant");
-    /** Qualifiers GLSL allows between {@code uniform} and an opaque type. */
-    private static final Set<String> TYPE_QUALIFIERS = Set.of(
-            "highp", "mediump", "lowp", "writeonly", "readonly", "coherent", "volatile",
-            "restrict");
 
     /** Complete token range for one top-level function definition. */
     record FunctionDefinition(
@@ -104,7 +91,7 @@ final class GlslResourceUsage {
 
     /**
      * The latest analyses. Planning one program asks about the same prepared source many times, once
-     * per sampler among others, and each answer would lex and trace the whole program again.
+     * per sampler among others, and each answer would trace the whole program again.
      */
     private static final Map<AnalysisKey, Analysis> RECENT = new LinkedHashMap<>(32, 0.75F, true) {
         @Override
@@ -115,40 +102,68 @@ final class GlslResourceUsage {
 
     private static Analysis analyzeUncached(String text, Set<String> injectedSamplers) {
         try {
-            List<GlslLexer.Token> tokens = GlslLexer.lex(text);
-            Declarations declared = collectDeclarations(tokens, injectedSamplers);
-            List<FunctionDefinition> functions = collectFunctions(tokens);
-            Map<String, List<FunctionDefinition>> functionsByName = new HashMap<>();
-            for (FunctionDefinition function : functions) {
-                functionsByName.computeIfAbsent(function.name(), ignored -> new ArrayList<>())
-                        .add(function);
+            GlslTree tree = GlslTree.parse(text);
+            Declared declared = declared(tree, injectedSamplers);
+            Map<FunctionDefinition, Uses> bodies = new LinkedHashMap<>();
+            for (GlslTree.External external : tree.externals()) {
+                if (external instanceof GlslTree.Function function && function.body() != null) {
+                    GlslTree.Range body = function.body().range();
+                    bodies.put(new FunctionDefinition(tree.text(function.name()), function.range().start(),
+                            body.start() + 1, body.end() - 1, body.end() - 1), uses(tree, declared, body));
+                }
             }
-            FunctionDefinition main = functionsByName.getOrDefault("main", List.of()).stream()
+            Uses topLevel = topLevelUses(tree, declared);
+            Resources referenced = new Resources();
+            bodies.values().forEach(uses -> referenced.addAll(uses.reads()));
+            referenced.addAll(topLevel.reads());
+            List<FunctionDefinition> functions = List.copyOf(bodies.keySet());
+            FunctionDefinition main = functions.stream().filter(value -> value.name().equals("main"))
                     .findFirst().orElse(null);
-            Resources referenced = referencedResources(tokens, functions, declared);
-
-            CallGraph graph = new CallGraph(tokens, declared, functionsByName);
+            Set<FunctionDefinition> reachable = new HashSet<>();
+            Resources live = new Resources();
             if (main == null) {
                 // Interface-only snippets and compute wrappers without a
                 // conventional main are retained conservatively.
-                graph.keepEverything(functions, referenced);
+                reachable.addAll(functions);
+                live.addAll(referenced);
             } else {
-                graph.traceFrom(main, functions);
+                trace(main, bodies, topLevel, reachable, live);
             }
-
-            List<FunctionDefinition> reachableFunctions = functions.stream()
-                    .filter(graph.reachable::contains).toList();
-            List<FunctionDefinition> unreachableFunctions = main == null
-                    ? List.of()
-                    : functions.stream().filter(value -> !graph.reachable.contains(value)).toList();
+            List<FunctionDefinition> unreachable = main == null ? List.of()
+                    : functions.stream().filter(value -> !reachable.contains(value)).toList();
             Resources names = declared.names();
-            return new Analysis(names.samplers(), referenced.samplers(), graph.live.samplers(),
-                    names.images(), graph.live.images(), names.storage(),
-                    graph.live.storage(), reachableFunctions, unreachableFunctions, true, List.of());
+            return new Analysis(names.samplers(), referenced.samplers(), live.samplers(),
+                    names.images(), live.images(), names.storage(), live.storage(),
+                    functions.stream().filter(reachable::contains).toList(), unreachable, true, List.of());
         } catch (RuntimeException failure) {
             return new Analysis(Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
                     Set.of(), List.of(), List.of(), false,
                     List.of("RESOURCE_USAGE_UNCLASSIFIABLE"));
+        }
+    }
+
+    /**
+     * Follows calls from main through function bodies, collecting the functions it reaches and the
+     * resources their bodies read. A global initializer runs before main, so what it reads is live
+     * and what it calls is reached: Spring reads {@code vec4 CT4 = texture(colortex4, texcoord);} at
+     * file scope. Every overload of a called name is reached.
+     */
+    private static void trace(FunctionDefinition main, Map<FunctionDefinition, Uses> bodies, Uses topLevel,
+                              Set<FunctionDefinition> reachable, Resources live) {
+        Map<String, List<FunctionDefinition>> byName = new HashMap<>();
+        for (FunctionDefinition function : bodies.keySet()) {
+            byName.computeIfAbsent(function.name(), ignored -> new ArrayList<>()).add(function);
+        }
+        Deque<FunctionDefinition> pending = new ArrayDeque<>();
+        pending.add(main);
+        topLevel.calls().forEach(name -> pending.addAll(byName.getOrDefault(name, List.of())));
+        live.addAll(topLevel.reads());
+        while (!pending.isEmpty()) {
+            FunctionDefinition function = pending.removeFirst();
+            if (!reachable.add(function)) continue;
+            Uses uses = bodies.get(function);
+            live.addAll(uses.reads());
+            uses.calls().forEach(name -> pending.addAll(byName.getOrDefault(name, List.of())));
         }
     }
 
@@ -179,86 +194,89 @@ final class GlslResourceUsage {
         }
     }
 
-    /** The resource names a source declares, and the indices of the tokens that declare them. */
-    private record Declarations(Resources names, Set<Integer> tokens) {}
+    /** The resource names a source declares, every one of them, and the tokens that declare them. */
+    private record Declared(Resources names, Set<String> all, Set<Integer> tokens) {}
+
+    /** What one stretch of source reads and calls. */
+    private record Uses(Resources reads, Set<String> calls) {}
 
     /**
-     * Follows calls from main through function bodies, collecting the functions it reaches and the
-     * resources their bodies read. The source is macro-expanded (ShaderSourcePreprocessor), so every
-     * call and read is written out.
+     * The file-scope uniform samplers and 3D images (every name of a list: {@code writeonly uniform
+     * image3D a, b;}) and storage blocks with their instances, starting from the injected samplers.
      */
-    private static final class CallGraph {
-        private final List<GlslLexer.Token> tokens;
-        private final Declarations declared;
-        private final Map<String, List<FunctionDefinition>> functionsByName;
-        private final Set<FunctionDefinition> reachable = new HashSet<>();
-        private final Resources live = new Resources();
-        private final ArrayDeque<FunctionDefinition> pending = new ArrayDeque<>();
-
-        private CallGraph(
-                List<GlslLexer.Token> tokens,
-                Declarations declared,
-                Map<String, List<FunctionDefinition>> functionsByName
-        ) {
-            this.tokens = tokens;
-            this.declared = declared;
-            this.functionsByName = functionsByName;
+    private static Declared declared(GlslTree tree, Set<String> injectedSamplers) {
+        Resources names = new Resources();
+        Set<Integer> tokens = new HashSet<>();
+        if (injectedSamplers != null) {
+            injectedSamplers.stream().filter(value -> value != null && !value.isBlank())
+                    .forEach(names.samplers()::add);
         }
-
-        /** Treats every function as reachable and every referenced resource as live. */
-        private void keepEverything(List<FunctionDefinition> functions, Resources referenced) {
-            reachable.addAll(functions);
-            live.addAll(referenced);
-        }
-
-        private void traceFrom(FunctionDefinition main, List<FunctionDefinition> functions) {
-            pending.add(main);
-            seedTopLevelCalls(tokens, functions, functionsByName, pending);
-            addTopLevelResources(functions);
-            while (!pending.isEmpty()) {
-                FunctionDefinition function = pending.removeFirst();
-                if (reachable.add(function)) {
-                    visitBody(function);
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Declaration declaration && declaration.type() != null
+                    && declaration.type().name() >= 0) {
+                String type = tree.text(declaration.type().name());
+                boolean uniform = declaration.qualifiers().stream()
+                        .anyMatch(qualifier -> tree.text(qualifier.keyword()).equals("uniform"));
+                Set<String> kind = uniform && isSampler(type) ? names.samplers()
+                        : isImageType(type) ? names.images() : null;
+                if (kind == null) continue;
+                for (GlslTree.Declarator declarator : declaration.declarators()) {
+                    kind.add(tree.text(declarator.name()));
+                    tokens.add(declarator.name());
+                }
+            } else if (external instanceof GlslTree.InterfaceBlock block && block.qualifiers().stream()
+                    .anyMatch(qualifier -> tree.text(qualifier.keyword()).equals("buffer"))) {
+                names.storage().add(tree.text(block.name()));
+                tokens.add(block.name());
+                for (GlslTree.Declarator instance : block.instances()) {
+                    names.storage().add(tree.text(instance.name()));
+                    tokens.add(instance.name());
                 }
             }
         }
+        return new Declared(names, names.all(), tokens);
+    }
 
-        /**
-         * A global initializer runs before main, so the resources it reads are live: Spring reads
-         * {@code vec4 CT4 = texture(colortex4, texcoord);} at file scope. A #define line is not a read.
-         */
-        private void addTopLevelResources(List<FunctionDefinition> functions) {
-            Set<Integer> functionTokens = functionTokens(functions);
-            for (int index = 0; index < tokens.size(); index++) {
-                GlslLexer.Token token = tokens.get(index);
-                if (functionTokens.contains(index) || declared.tokens().contains(index) || !token.significant()
-                        || token.kind() != GlslLexer.Kind.IDENTIFIER || onDirectiveLine(tokens, index)) {
-                    continue;
-                }
-                live.addDeclared(token.text(), declared.names());
+    /** What file scope reads and calls: global initializers, array sizes and prototypes. */
+    private static Uses topLevelUses(GlslTree tree, Declared declared) {
+        Uses uses = new Uses(new Resources(), new HashSet<>());
+        for (GlslTree.External external : tree.externals()) {
+            boolean definition = external instanceof GlslTree.Function function && function.body() != null;
+            if (definition || external instanceof GlslTree.Directive) continue;
+            Uses part = uses(tree, declared, external.range());
+            uses.reads().addAll(part.reads());
+            uses.calls().addAll(part.calls());
+        }
+        return uses;
+    }
+
+    /**
+     * The resources {@code range} reads, where a name resolves to the global (a parameter or local
+     * that shares a resource's name hides it), and the names it calls.
+     */
+    private static Uses uses(GlslTree tree, Declared declared, GlslTree.Range range) {
+        List<GlslLexer.Token> tokens = tree.tokens();
+        Uses uses = new Uses(new Resources(), new HashSet<>());
+        for (int index = range.start(); index < range.end(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() != GlslLexer.Kind.IDENTIFIER || declared.tokens().contains(index)) continue;
+            int next = GlslLexer.nextSignificant(tokens, index);
+            if (next >= 0 && tokens.get(next).symbol("(") && !FUNCTION_KEYWORDS.contains(token.text())) {
+                uses.calls().add(token.text());
+            }
+            if (declared.all().contains(token.text()) && readsGlobal(tree, index)) {
+                uses.reads().addDeclared(token.text(), declared.names());
             }
         }
+        return uses;
+    }
 
-        /** Records the resources one reachable body reads and queues every function it can call. */
-        private void visitBody(FunctionDefinition function) {
-            Set<Integer> shadowed = localResourceReferences(tokens, function, declared.names());
-            for (int index = function.bodyStart(); index < function.bodyEnd(); index++) {
-                GlslLexer.Token token = tokens.get(index);
-                if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
-                        || declared.tokens().contains(index)) {
-                    continue;
-                }
-                String name = token.text();
-                if (!shadowed.contains(index)) {
-                    live.addDeclared(name, declared.names());
-                }
-                int next = GlslLexer.nextSignificant(tokens, index);
-                if (next >= 0 && tokens.get(next).symbol("(")
-                        && !FUNCTION_KEYWORDS.contains(name)) {
-                    pending.addAll(functionsByName.getOrDefault(name, List.of()));
-                }
-            }
-        }
+    /** Whether the name at {@code index} reads a global: not a field, a declaration, a parameter or a local. */
+    private static boolean readsGlobal(GlslTree tree, int index) {
+        int previous = GlslLexer.previousSignificant(tree.tokens(), index);
+        if (previous >= 0 && tree.tokens().get(previous).symbol(".")) return false;
+        GlslTree.Binding binding = tree.resolve(index);
+        return binding == null || binding.name() != index && !GlslScopedReferences.insideFunction(tree, binding);
     }
 
     static Set<String> referencedSamplers(String source) {
@@ -272,35 +290,24 @@ final class GlslResourceUsage {
     /**
      * Finds canonical uniform names used as values, not calls or declarations.
      * This deliberately does not use a builtin-name denylist. A name is a
-     * value reference only when the token context proves that it is one.
+     * value reference only when the tree reads it as one.
      */
     static Set<String> referencedValueIdentifiers(String source, Set<String> candidates) {
         if (source == null || source.isBlank() || candidates == null || candidates.isEmpty()) {
             return Set.of();
         }
         try {
-            List<GlslLexer.Token> tokens = GlslLexer.lex(source);
-            Set<Integer> preprocessor = preprocessorTokens(tokens);
+            GlslTree tree = GlslTree.parse(source);
+            List<GlslLexer.Token> tokens = tree.tokens();
+            Set<Integer> members = GlslScopedReferences.memberNames(tree);
+            Set<Integer> directives = directiveTokens(tree);
             Set<String> result = new TreeSet<>();
             for (int index = 0; index < tokens.size(); index++) {
                 GlslLexer.Token token = tokens.get(index);
-                if (token.kind() != GlslLexer.Kind.IDENTIFIER
-                        || !candidates.contains(token.text())
-                        || preprocessor.contains(index)) {
-                    continue;
+                if (token.kind() == GlslLexer.Kind.IDENTIFIER && candidates.contains(token.text())
+                        && !members.contains(index) && !directives.contains(index) && valueReference(tree, index)) {
+                    result.add(token.text());
                 }
-                int previous = GlslLexer.previousSignificant(tokens, index);
-                int next = GlslLexer.nextSignificant(tokens, index);
-                if (previous >= 0 && tokens.get(previous).symbol(".")) {
-                    continue;
-                }
-                if (next >= 0 && tokens.get(next).symbol("(")) {
-                    continue;
-                }
-                if (isDeclarationName(tokens, index)) {
-                    continue;
-                }
-                result.add(token.text());
             }
             return Collections.unmodifiableSet(result);
         } catch (RuntimeException failure) {
@@ -308,369 +315,25 @@ final class GlslResourceUsage {
         }
     }
 
-    /** Every declared resource the source reads: in function bodies, unless shadowed, and at file scope. */
-    private static Resources referencedResources(
-            List<GlslLexer.Token> tokens,
-            List<FunctionDefinition> functions,
-            Declarations declared
-    ) {
-        Resources referenced = new Resources();
-        for (FunctionDefinition function : functions) {
-            collectResourceReferences(tokens, function, declared, referenced);
-        }
-        collectTopLevelReferences(tokens, functions, declared, referenced);
-        return referenced;
+    /** Whether the name at {@code index} is a value: not a field, a call or a declaration's own name. */
+    private static boolean valueReference(GlslTree tree, int index) {
+        List<GlslLexer.Token> tokens = tree.tokens();
+        int previous = GlslLexer.previousSignificant(tokens, index);
+        int next = GlslLexer.nextSignificant(tokens, index);
+        if (previous >= 0 && tokens.get(previous).symbol(".")) return false;
+        if (next >= 0 && tokens.get(next).symbol("(")) return false;
+        GlslTree.Binding binding = tree.resolve(index);
+        return binding == null || binding.name() != index;
     }
 
-    private static void collectResourceReferences(
-            List<GlslLexer.Token> tokens,
-            FunctionDefinition function,
-            Declarations declared,
-            Resources referenced
-    ) {
-        Set<Integer> shadowed = localResourceReferences(tokens, function, declared.names());
-        for (int index = function.bodyStart(); index < function.bodyEnd(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
-                    || declared.tokens().contains(index) || shadowed.contains(index)) {
-                continue;
-            }
-            referenced.addDeclared(token.text(), declared.names());
-        }
-    }
-
-    private static void collectTopLevelReferences(
-            List<GlslLexer.Token> tokens,
-            List<FunctionDefinition> functions,
-            Declarations declared,
-            Resources referenced
-    ) {
-        Set<Integer> functionTokens = functionTokens(functions);
-        for (int index = 0; index < tokens.size(); index++) {
-            if (functionTokens.contains(index)) continue;
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
-                    || declared.tokens().contains(index)) continue;
-            referenced.addDeclared(token.text(), declared.names());
-        }
-    }
-
-    /** The indices of every token inside a function definition. */
-    private static Set<Integer> functionTokens(List<FunctionDefinition> functions) {
+    /** The tokens of file-scope directives. */
+    private static Set<Integer> directiveTokens(GlslTree tree) {
         Set<Integer> tokens = new HashSet<>();
-        for (FunctionDefinition function : functions) {
-            for (int index = function.definitionStart(); index <= function.definitionEnd(); index++) {
-                tokens.add(index);
-            }
+        for (GlslTree.External external : tree.externals()) {
+            if (!(external instanceof GlslTree.Directive directive)) continue;
+            for (int index = directive.range().start(); index < directive.range().end(); index++) tokens.add(index);
         }
         return tokens;
-    }
-
-    /** Queues the functions a global initializer calls: they run before main. */
-    private static void seedTopLevelCalls(
-            List<GlslLexer.Token> tokens,
-            List<FunctionDefinition> functions,
-            Map<String, List<FunctionDefinition>> functionsByName,
-            ArrayDeque<FunctionDefinition> pending
-    ) {
-        Set<Integer> functionTokens = functionTokens(functions);
-        for (int index = 0; index < tokens.size(); index++) {
-            if (functionTokens.contains(index)) continue;
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
-                    || FUNCTION_KEYWORDS.contains(token.text())) continue;
-            int next = GlslLexer.nextSignificant(tokens, index);
-            if (next >= 0 && tokens.get(next).symbol("(")) {
-                pending.addAll(functionsByName.getOrDefault(token.text(), List.of()));
-            }
-        }
-    }
-
-    private static boolean onDirectiveLine(List<GlslLexer.Token> tokens, int index) {
-        GlslLexer.Token first = tokens.get(index);
-        for (int cursor = index - 1; cursor >= 0; cursor--) {
-            GlslLexer.Token token = tokens.get(cursor);
-            if (token.kind() == GlslLexer.Kind.TRIVIA && token.text().contains("\n")) break;
-            if (token.significant()) first = token;
-        }
-        return first.symbol("#");
-    }
-
-    /** The declared resources, starting from the injected sampler names. */
-    private static Declarations collectDeclarations(List<GlslLexer.Token> tokens, Set<String> injectedSamplers) {
-        Declarations declared = new Declarations(new Resources(), new HashSet<>());
-        if (injectedSamplers != null) {
-            injectedSamplers.stream()
-                    .filter(value -> value != null && !value.isBlank())
-                    .forEach(declared.names().samplers()::add);
-        }
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER) continue;
-            if (token.identifier("uniform")) {
-                collectUniformDeclaration(tokens, index, declared);
-            } else if (isImageType(token.text())) {
-                collectImageDeclaration(tokens, index, declared);
-            } else if (token.identifier("buffer")) {
-                collectStorageDeclaration(tokens, index, declared);
-            }
-        }
-        return declared;
-    }
-
-    /** A {@code uniform} sampler or 3D image declaration, with every name of its list. */
-    private static void collectUniformDeclaration(List<GlslLexer.Token> tokens, int uniform, Declarations declared) {
-        int type = GlslLexer.nextSignificant(tokens, uniform);
-        while (type >= 0 && TYPE_QUALIFIERS.contains(tokens.get(type).text())) {
-            type = GlslLexer.nextSignificant(tokens, type);
-        }
-        if (type < 0 || tokens.get(type).kind() != GlslLexer.Kind.IDENTIFIER) return;
-        String typeName = tokens.get(type).text();
-        if (isSampler(typeName)) {
-            collectUniformNames(tokens, type, declared.names().samplers(), declared.tokens());
-        } else if (isImageType(typeName)) {
-            // Every name of a list: writeonly uniform image3D a, b;
-            declared.tokens().add(uniform);
-            collectUniformNames(tokens, type, declared.names().images(), declared.tokens());
-        }
-    }
-
-    /** A 3D image type followed by its name, with or without {@code uniform}. */
-    private static void collectImageDeclaration(List<GlslLexer.Token> tokens, int type, Declarations declared) {
-        int name = GlslLexer.nextSignificant(tokens, type);
-        if (name >= 0 && tokens.get(name).kind() == GlslLexer.Kind.IDENTIFIER) {
-            declared.names().images().add(tokens.get(name).text());
-            declared.tokens().add(type);
-            declared.tokens().add(name);
-        }
-    }
-
-    /** A {@code buffer} block's name and, after its closing brace, any instance name. */
-    private static void collectStorageDeclaration(List<GlslLexer.Token> tokens, int buffer, Declarations declared) {
-        int block = GlslLexer.nextSignificant(tokens, buffer);
-        if (block < 0 || tokens.get(block).kind() != GlslLexer.Kind.IDENTIFIER) return;
-        declared.names().storage().add(tokens.get(block).text());
-        declared.tokens().add(buffer);
-        declared.tokens().add(block);
-        int open = GlslLexer.nextSignificant(tokens, block);
-        int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "{", "}");
-        int instance = close < 0 ? -1 : GlslLexer.nextSignificant(tokens, close);
-        if (instance >= 0 && tokens.get(instance).kind() == GlslLexer.Kind.IDENTIFIER) {
-            declared.names().storage().add(tokens.get(instance).text());
-            declared.tokens().add(instance);
-        }
-    }
-
-    private static void collectUniformNames(
-            List<GlslLexer.Token> tokens,
-            int type,
-            Set<String> names,
-            Set<Integer> declarationTokens
-    ) {
-        boolean expectName = true;
-        declarationTokens.add(type);
-        for (int index = type + 1; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant()) continue;
-            if (token.symbol(";")) return;
-            if (token.symbol(",")) {
-                expectName = true;
-                continue;
-            }
-            if (expectName && token.kind() == GlslLexer.Kind.IDENTIFIER) {
-                names.add(token.text());
-                declarationTokens.add(index);
-                expectName = false;
-            }
-        }
-    }
-
-    private static List<FunctionDefinition> collectFunctions(List<GlslLexer.Token> tokens) {
-        List<FunctionDefinition> result = new ArrayList<>();
-        int braceDepth = 0;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant()) continue;
-            if (token.symbol("{")) {
-                braceDepth++;
-                continue;
-            }
-            if (token.symbol("}")) {
-                braceDepth--;
-                if (braceDepth < 0) throw new IllegalArgumentException("unbalanced GLSL braces");
-                continue;
-            }
-            if (braceDepth != 0 || token.kind() != GlslLexer.Kind.IDENTIFIER
-                    || FUNCTION_KEYWORDS.contains(token.text())) continue;
-            FunctionDefinition function = functionDefinitionAt(tokens, index);
-            if (function != null) result.add(function);
-        }
-        if (braceDepth != 0) throw new IllegalArgumentException("unbalanced GLSL braces");
-        return result;
-    }
-
-    /** The function named at {@code nameIndex} when a parameter list and a body follow it, else null. */
-    private static FunctionDefinition functionDefinitionAt(List<GlslLexer.Token> tokens, int nameIndex) {
-        int open = GlslLexer.nextSignificant(tokens, nameIndex);
-        if (open < 0 || !tokens.get(open).symbol("(")) return null;
-        int close = GlslLexer.matching(tokens, open, "(", ")");
-        int body = close < 0 ? -1 : GlslLexer.nextSignificant(tokens, close);
-        if (body < 0 || !tokens.get(body).symbol("{")) return null;
-        int end = GlslLexer.matching(tokens, body, "{", "}");
-        if (end < 0) throw new IllegalArgumentException("unbalanced GLSL function body");
-        int definitionStart = functionDefinitionStart(tokens, nameIndex);
-        return new FunctionDefinition(tokens.get(nameIndex).text(), definitionStart, body + 1, end, end);
-    }
-
-    private static int functionDefinitionStart(List<GlslLexer.Token> tokens, int nameIndex) {
-        int returnType = GlslLexer.previousSignificant(tokens, nameIndex);
-        if (returnType < 0) {
-            return nameIndex;
-        }
-        int start = returnType;
-        // An array return type (Photon: float[9] sh_coeff_order_2(...)) reaches back to its element type.
-        while (tokens.get(start).symbol("]")) {
-            int depth = 0;
-            int cursor = start;
-            for (; cursor >= 0; cursor = GlslLexer.previousSignificant(tokens, cursor)) {
-                if (tokens.get(cursor).symbol("]")) depth++;
-                else if (tokens.get(cursor).symbol("[") && --depth == 0) break;
-            }
-            int element = cursor < 0 ? -1 : GlslLexer.previousSignificant(tokens, cursor);
-            if (element < 0) break;
-            start = element;
-        }
-        int previous = GlslLexer.previousSignificant(tokens, start);
-        while (previous >= 0
-                && tokens.get(previous).kind() == GlslLexer.Kind.IDENTIFIER
-                && FUNCTION_QUALIFIERS.contains(tokens.get(previous).text())) {
-            start = previous;
-            previous = GlslLexer.previousSignificant(tokens, start);
-        }
-        return start;
-    }
-
-    private static boolean isDeclarationName(List<GlslLexer.Token> tokens, int index) {
-        int previous = GlslLexer.previousSignificant(tokens, index);
-        if (previous < 0) {
-            return false;
-        }
-        GlslLexer.Token previousToken = tokens.get(previous);
-        if (startsDeclaration(previousToken)) {
-            return true;
-        }
-        if (!previousToken.symbol(",")) {
-            return false;
-        }
-        for (int cursor = previous; cursor >= 0; cursor = GlslLexer.previousSignificant(tokens, cursor)) {
-            GlslLexer.Token token = tokens.get(cursor);
-            if (token.symbol(";") || token.symbol("{") || token.symbol("}")) {
-                return false;
-            }
-            if (startsDeclaration(token)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** A value type or a storage qualifier, which a declared name may follow. */
-    private static boolean startsDeclaration(GlslLexer.Token token) {
-        return token.kind() == GlslLexer.Kind.IDENTIFIER
-                && (VALUE_TYPES.contains(token.text()) || STORAGE_QUALIFIERS.contains(token.text()));
-    }
-
-    private static Set<Integer> preprocessorTokens(List<GlslLexer.Token> tokens) {
-        Set<Integer> result = new HashSet<>();
-        boolean lineStart = true;
-        boolean directive = false;
-        int previousSignificant = -1;
-        for (int index = 0; index < tokens.size(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.significant()) {
-                if (containsLineBreak(token.text())) {
-                    String suffix = token.text().substring(Math.max(
-                            token.text().lastIndexOf('\n'), token.text().lastIndexOf('\r')) + 1);
-                    lineStart = suffix.isBlank();
-                    boolean escaped = previousSignificant >= 0
-                            && tokens.get(previousSignificant).symbol("\\");
-                    if (directive && !continuesDirective(token.text(), escaped)) {
-                        directive = false;
-                    }
-                }
-                continue;
-            }
-            if (directive) {
-                result.add(index);
-                lineStart = false;
-                previousSignificant = index;
-                continue;
-            }
-            if (lineStart && token.symbol("#")) {
-                result.add(index);
-                directive = true;
-                lineStart = false;
-                previousSignificant = index;
-                continue;
-            }
-            lineStart = false;
-            previousSignificant = index;
-        }
-        return result;
-    }
-
-    private static boolean containsLineBreak(String text) {
-        return text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0;
-    }
-
-    private static boolean continuesDirective(String trivia, boolean escapedToken) {
-        if (escapedToken) {
-            return true;
-        }
-        int lineBreak = Math.max(trivia.lastIndexOf('\n'), trivia.lastIndexOf('\r'));
-        if (lineBreak < 0) return true;
-        int cursor = lineBreak - 1;
-        while (cursor >= 0 && (trivia.charAt(cursor) == ' ' || trivia.charAt(cursor) == '\t')) {
-            cursor--;
-        }
-        return cursor >= 0 && trivia.charAt(cursor) == '\\';
-    }
-
-    /**
-     * The token positions in a function body where a resource's name means a local the body
-     * declares: from that declaration to the end of its block, as GLSL scopes it. Bliss's
-     * GetVolumetricFog reads the global {@code shadow} sampler, then declares a {@code float shadow}
-     * in a later block; the earlier read is still the sampler's.
-     */
-    private static Set<Integer> localResourceReferences(
-            List<GlslLexer.Token> tokens,
-            FunctionDefinition function,
-            Resources declared
-    ) {
-        Set<String> resources = declared.all();
-        Set<Integer> result = new HashSet<>();
-        Deque<Set<String>> scopes = new ArrayDeque<>();
-        scopes.push(new HashSet<>());
-        int start = function.bodyStart();
-        for (int index = start; index < function.bodyEnd(); index++) {
-            GlslLexer.Token token = tokens.get(index);
-            if (token.symbol("{")) {
-                scopes.push(new HashSet<>());
-            } else if (token.symbol("}") && scopes.size() > 1) {
-                scopes.pop();
-            }
-            if (!token.significant() || token.kind() != GlslLexer.Kind.IDENTIFIER
-                    || !resources.contains(token.text())) continue;
-            int previous = GlslLexer.previousSignificant(tokens, index);
-            boolean declaration = previous >= start
-                    && tokens.get(previous).kind() == GlslLexer.Kind.IDENTIFIER
-                    && (VALUE_TYPES.contains(tokens.get(previous).text())
-                    || isSampler(tokens.get(previous).text())
-                    || isImageType(tokens.get(previous).text()));
-            if (declaration) scopes.peek().add(token.text());
-            if (declaration || scopes.stream().anyMatch(scope -> scope.contains(token.text()))) result.add(index);
-        }
-        return result;
     }
 
     private static boolean isSampler(String type) {
