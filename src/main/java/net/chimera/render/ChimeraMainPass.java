@@ -19,6 +19,7 @@ import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
+import net.chimera.shaderpack.SkyDirectives;
 import net.chimera.shaderpack.TargetSpec;
 import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.vertex.TerrainRenderType;
@@ -197,6 +198,8 @@ public final class ChimeraMainPass implements MainPass {
     boolean packTranslucentSuspendLogged;
     /** Which of Minecraft's screen overlays this pack session keeps (Iris vignette and underwaterOverlay). */
     ScreenOverlayDirectives screenOverlays;
+    /** Which parts of Minecraft's sky this pack session keeps (Iris sun, moon, stars and sky). */
+    SkyDirectives skyDirectives;
     /** True after renderLevel opens the internal HDR world target. */
     boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
@@ -361,7 +364,7 @@ public final class ChimeraMainPass implements MainPass {
 
     /** Called as the sky window opens, ahead of the sky, under its model-view and projection. */
     public void drawPackHorizon(Matrix4f modelView, Matrix4f projection) {
-        if (this.levelPhase && this.packPlan != null && this.packPlan.skyEnabled()
+        if (this.levelPhase && this.skyDirectives != null && this.skyDirectives.sky()
                 && ChimeraSkyBridge.hasBasicSky()) this.horizonRenderer.draw(modelView, projection);
     }
 
@@ -908,6 +911,9 @@ public final class ChimeraMainPass implements MainPass {
 
     /** The loaded pack's screen overlay switches, or null while no pack session is loaded. */
     public ScreenOverlayDirectives screenOverlays() { return this.screenOverlays; }
+
+    /** The loaded pack's sky switches, or null while no pack session is loaded. */
+    public SkyDirectives skyDirectives() { return this.skyDirectives; }
 
     public void recordShadowDraw() {
         shadowPass.recordShadowDraw();

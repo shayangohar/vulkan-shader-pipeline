@@ -242,6 +242,7 @@ final class PackSessionLifecycle {
         pass.packPlan = null;
         pass.shadowPass.shadowCulling = null;
         pass.screenOverlays = null;
+        pass.skyDirectives = null;
         pass.packTargetGraph = null;
         pass.packFrameSchedule = PackFrameSchedulePlan.empty();
         pass.packPrograms = null;
@@ -512,6 +513,10 @@ final class PackSessionLifecycle {
         LOGGER.info("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
                 pass.screenOverlays.vignette(), pass.screenOverlays.underwaterOverlay(),
                 pass.screenOverlays.deviations().isEmpty() ? "" : " " + pass.screenOverlays.deviations());
+        pass.skyDirectives = pass.packPlan.skyDirectives();
+        LOGGER.info("[chimera] pack sky: sun={}, moon={}, stars={}, sky={}{}", pass.skyDirectives.sun(),
+                pass.skyDirectives.moon(), pass.skyDirectives.stars(), pass.skyDirectives.sky(),
+                pass.skyDirectives.deviations().isEmpty() ? "" : " " + pass.skyDirectives.deviations());
         ParticleDirectives particles = pass.packPlan.particleDirectives();
         LOGGER.info("[chimera] pack particle ordering: {}, separateEntityDraws={}{}", particles.ordering(),
                 particles.separateEntityDraws(), particles.deviations().isEmpty() ? "" : " " + particles.deviations());
