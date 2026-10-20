@@ -249,7 +249,8 @@ public final class FragmentConverter {
             }
             GlslVersion version = GlslVersion.first(src);
             modern = (version != null && version.number() >= 450)
-                    || (stage.shadowPass() && TerrainVertexBridge.MODERN_TERRAIN_DECL.matcher(src).find());
+                    || (stage.shadowPass() && !TerrainDeclarations.modern(
+                            src, TerrainDeclarations.MODERN_STORAGES).isEmpty());
             // One version line for Vulkan, where an authored profile means nothing.
             src = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
             if (modern) {

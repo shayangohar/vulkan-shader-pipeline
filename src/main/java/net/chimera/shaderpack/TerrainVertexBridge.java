@@ -1,10 +1,11 @@
 package net.chimera.shaderpack;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static net.chimera.shaderpack.GlslLexer.stripComments;
@@ -17,23 +18,16 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
 final class TerrainVertexBridge {
     private TerrainVertexBridge() {}
 
-    static final Pattern TERRAIN_VARYING_DECL =
-            Pattern.compile("(?m)\\bvarying\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
+    /** The whitespace after a removed declaration, up to the next text. */
+    private static final Pattern WHITESPACE_TAIL = Pattern.compile("\\s*");
+    /** A modern terrain vertex may declare only these uniforms: samplers and images. */
+    private static final Pattern OPAQUE_PREFIX =
+            Pattern.compile("(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)).*");
 
-    static final Pattern TERRAIN_ATTRIBUTE_DECL =
-            Pattern.compile("(?m)\\battribute\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
-
-    static final Pattern SHADOW_ATTRIBUTE_DECL = Pattern.compile(
-            "(?m)^[ \\t]*attribute[ \\t]+([A-Za-z_]\\w*)[ \\t]+"
-                    + "(mc_Entity|mc_midTexCoord|at_midBlock)[ \\t]*;[ \\t]*(?:\\r?\\n|$)");
-
-    static final Pattern MODERN_TERRAIN_DECL = Pattern.compile(
-            "(?m)^\\s*(?:(flat|noperspective|smooth|centroid|sample)\\s+)?"
-                    + "(in|out|varying)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
-
-    static final Pattern MODERN_TERRAIN_INPUT_DECL = Pattern.compile(
-            "(?m)^\\s*(?:(flat|noperspective|smooth|centroid|sample)\\s+)?"
-                    + "(?:in|varying)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;");
+    /** Whether the stage still declares or names {@code attribute} anywhere outside comments. */
+    private static boolean namesAttribute(String source) {
+        return GlslTokenRewriter.containsIdentifier(source, "attribute");
+    }
 
     /**
      * Converts the strict terrain vertex subset. A null result means that
@@ -188,7 +182,8 @@ final class TerrainVertexBridge {
         }
         converted = rewriteModernTerrainSamplers(converted, interfacePlan, shadowStage);
         converted = LegacyGlslConverter.convertTextureCalls(converted);
-        if (MODERN_TERRAIN_INPUT_DECL.matcher(stripComments(converted)).find()) {
+        if (!TerrainDeclarations.modern(stripComments(converted), TerrainDeclarations.MODERN_INPUT_STORAGES)
+                .isEmpty()) {
             throw new IllegalArgumentException("modern terrain input was not consumed");
         }
         String uniformBlock = modernUniformBlock(interfacePlan, shadowStage);
@@ -245,16 +240,46 @@ final class TerrainVertexBridge {
 
     /** The strict modern subset: a main that writes gl_Position, and no unsupported resource or stage. */
     private static void requireSupportedModernVertex(String stripped, boolean allowStorageBuffers) {
-        if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
-                || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
+        GlslTree tree = GlslTree.parse(stripped);
+        if (GlslDeclarations.main(tree) == null || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
             throw new IllegalArgumentException("modern terrain vertex main or position is missing");
         }
         if ((!allowStorageBuffers && stripped.matches("(?s).*\\bbuffer\\b.*"))
                 || stripped.matches("(?s).*\\b(?:geometry|tessellation|compute)\\b.*")
-                || stripped.matches(
-                        "(?s).*\\buniform\\s+(?!(?:sampler|isampler|usampler|u?i?image(?:1D|2D|3D|Cube)))\\w+.*")) {
+                || declaresValueUniform(tree)) {
             throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
         }
+    }
+
+    /**
+     * Whether a {@code uniform} qualifier is followed by a word that names no sampler or image:
+     * the next qualifier, the type, or an interface block's name.
+     */
+    private static boolean declaresValueUniform(GlslTree tree) {
+        for (GlslTree.External external : tree.externals()) {
+            List<GlslTree.Qualifier> qualifiers = declarationQualifiers(external);
+            for (int index = 0; index < qualifiers.size(); index++) {
+                if (!tree.text(qualifiers.get(index).keyword()).equals("uniform")) continue;
+                String next = index + 1 < qualifiers.size()
+                        ? tree.text(qualifiers.get(index + 1).keyword()) : typeName(tree, external);
+                if (!next.isEmpty() && !OPAQUE_PREFIX.matcher(next).matches()) return true;
+            }
+        }
+        return false;
+    }
+
+    /** The qualifiers of a file-scope declaration or interface block; none for anything else. */
+    private static List<GlslTree.Qualifier> declarationQualifiers(GlslTree.External external) {
+        if (external instanceof GlslTree.Declaration declaration) return declaration.qualifiers();
+        if (external instanceof GlslTree.InterfaceBlock block) return block.qualifiers();
+        return List.of();
+    }
+
+    /** The word after a declaration's qualifiers: its type's name, or an interface block's name; empty otherwise. */
+    private static String typeName(GlslTree tree, GlslTree.External external) {
+        if (external instanceof GlslTree.InterfaceBlock block) return tree.text(block.name());
+        if (!(external instanceof GlslTree.Declaration declaration) || declaration.type() == null) return "";
+        return declaration.type().name() >= 0 ? tree.text(declaration.type().name()) : "struct";
     }
 
     /**
@@ -377,7 +402,7 @@ final class TerrainVertexBridge {
                     sourceFile, true));
             String stripped = stripComments(src);
             GlslVersion.requireSupported(stripped, "legacy vertex", true);
-            if (!stripped.matches("(?s).*\\bvoid\\s+main\\s*\\(.*")
+            if (GlslDeclarations.main(GlslTree.parse(stripped)) == null
                     || !stripped.matches("(?s).*\\bgl_Position\\b.*")) {
                 throw new IllegalArgumentException("legacy vertex requires main and gl_Position");
             }
@@ -401,8 +426,7 @@ final class TerrainVertexBridge {
                     locations);
 
             String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceFirst("");
-            converted = converted.replaceAll(
-                    "(?m)^\\s*attribute\\s+(?:float|vec2)\\s+mc_Entity\\s*;\\s*", "");
+            converted = withoutEntityAttributes(converted);
             converted = replaceTerrainVaryings(converted, layout, "out");
             converted = converted.replaceAll("\\bgl_Vertex\\b", "chimeraVertexValue()");
             converted = converted.replaceAll("\\bgl_Color\\b", "chimeraColorValue()");
@@ -463,60 +487,51 @@ final class TerrainVertexBridge {
         return convertShadowVertex(source, null, fragmentSource) != null;
     }
 
+    /** The types a legacy terrain varying may have, and the types the legacy mc_Entity attribute may have. */
+    private static final Set<String> LEGACY_VARYING_TYPES = Set.of("float", "vec2", "vec3", "vec4");
+    private static final Set<String> LEGACY_ENTITY_TYPES = Set.of("float", "vec2");
+
     static String replaceTerrainVaryings(
             String source,
             LegacyGlslConverter.TerrainVaryingLayout layout,
             String direction
     ) {
-        Matcher matcher = TERRAIN_VARYING_DECL.matcher(source);
-        StringBuilder out = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
-            if (!layout.types().containsKey(name)
-                    || !layout.types().get(name).equals(type)
-                    || !(type.equals("float") || type.equals("vec2")
-                    || type.equals("vec3") || type.equals("vec4"))) {
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        for (TerrainDeclarations.Declaration varying : TerrainDeclarations.keyword(source, "varying")) {
+            String type = varying.type();
+            String name = varying.name();
+            if (!type.equals(layout.types().get(name)) || !LEGACY_VARYING_TYPES.contains(type)) {
                 throw new IllegalArgumentException("unsupported terrain varying: " + name);
             }
-            out.append(source, last, matcher.start());
-            out.append("layout(location = ").append(layout.location(name)).append(") ")
-                    .append(direction).append(' ').append(type).append(' ').append(name).append(';');
-            last = matcher.end();
+            edits.add(new GlslDeclarations.TextEdit(varying.start(), varying.end(), "layout(location = "
+                    + layout.location(name) + ") " + direction + ' ' + type + ' ' + name + ';'));
         }
-        out.append(source, last, source.length());
-        return out.toString();
+        return GlslDeclarations.apply(source, edits);
     }
 
     static Map<String, String> parseTerrainVaryings(String source) {
         Map<String, String> result = new TreeMap<>();
-        Matcher matcher = TERRAIN_VARYING_DECL.matcher(source);
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
-            if (!(type.equals("float") || type.equals("vec2")
-                    || type.equals("vec3") || type.equals("vec4"))) {
+        for (TerrainDeclarations.Declaration varying : TerrainDeclarations.keyword(source, "varying")) {
+            String type = varying.type();
+            if (!LEGACY_VARYING_TYPES.contains(type)) {
                 throw new IllegalArgumentException("unsupported terrain varying type: " + type);
             }
-            String previous = result.putIfAbsent(name, type);
+            String previous = result.putIfAbsent(varying.name(), type);
             if (previous != null && !previous.equals(type)) {
-                throw new IllegalArgumentException("terrain varying declared with two types: " + name);
+                throw new IllegalArgumentException("terrain varying declared with two types: " + varying.name());
             }
         }
         return result;
     }
 
     static String terrainEntityType(String source) {
-        Matcher matcher = TERRAIN_ATTRIBUTE_DECL.matcher(source);
         String entityType = null;
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
-            if (!name.equals("mc_Entity")) {
-                throw new IllegalArgumentException("unsupported terrain attribute: " + name);
+        for (TerrainDeclarations.Declaration attribute : TerrainDeclarations.keyword(source, "attribute")) {
+            String type = attribute.type();
+            if (!attribute.name().equals("mc_Entity")) {
+                throw new IllegalArgumentException("unsupported terrain attribute: " + attribute.name());
             }
-            if (!type.equals("float") && !type.equals("vec2")) {
+            if (!LEGACY_ENTITY_TYPES.contains(type)) {
                 throw new IllegalArgumentException("unsupported mc_Entity type: " + type);
             }
             if (entityType != null && !entityType.equals(type)) {
@@ -525,6 +540,29 @@ final class TerrainVertexBridge {
             entityType = type;
         }
         return entityType;
+    }
+
+    /**
+     * Removes each line-starting {@code attribute float|vec2 mc_Entity;} with the blank lines
+     * before it and the whitespace after it, each span starting where the previous one ended.
+     */
+    private static String withoutEntityAttributes(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        int previousEnd = 0;
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (!variable.qualifiers().equals(List.of("attribute")) || !variable.plain()
+                    || !variable.name().equals("mc_Entity") || !LEGACY_ENTITY_TYPES.contains(variable.type())) {
+                continue;
+            }
+            int start = GlslDeclarations.lineStartBefore(source,
+                    tree.offset(variable.declaration().range().start()), previousEnd);
+            if (start < 0) continue;
+            previousEnd = GlslDeclarations.tailEnd(source, tree.offset(variable.declaration().range().end()),
+                    WHITESPACE_TAIL);
+            edits.add(new GlslDeclarations.TextEdit(start, previousEnd, ""));
+        }
+        return GlslDeclarations.apply(source, edits);
     }
 
     static void rejectTerrainVertexFeatures(String source, boolean allowStorageBuffers) {
@@ -539,17 +577,12 @@ final class TerrainVertexBridge {
         if (source.matches("(?s).*\\b(?:layout|in|out|flat|noperspective)\\b.*")) {
             throw new IllegalArgumentException("modern GLSL is not supported in terrain vertex");
         }
-        Matcher attributes = TERRAIN_ATTRIBUTE_DECL.matcher(source);
-        if (attributes.find()) {
-            attributes.reset();
-            while (attributes.find()) {
-                if (!attributes.group(2).equals("mc_Entity")) {
-                    throw new IllegalArgumentException("unsupported terrain attribute");
-                }
-            }
+        List<TerrainDeclarations.Declaration> attributes = TerrainDeclarations.keyword(source, "attribute");
+        if (attributes.stream().anyMatch(attribute -> !attribute.name().equals("mc_Entity"))) {
+            throw new IllegalArgumentException("unsupported terrain attribute");
         }
-        if (source.matches("(?s).*\\battribute\\b.*")
-                && !source.matches("(?s).*\\battribute\\s+(?:float|vec2)\\s+mc_Entity\\s*;.*")) {
+        if (namesAttribute(source)
+                && attributes.stream().noneMatch(attribute -> LEGACY_ENTITY_TYPES.contains(attribute.type()))) {
             throw new IllegalArgumentException("unsupported terrain attribute declaration");
         }
     }
@@ -596,9 +629,24 @@ final class TerrainVertexBridge {
                 || stripped.matches("(?s).*\\b(?:flat|noperspective|mc_midTexCoord|at_midBlock)\\b.*");
     }
 
+    /**
+     * Removes every uniform declaration and uniform block from its {@code uniform} keyword through
+     * the whitespace after it; a layout before the keyword stays, as the old pattern left it.
+     */
     static String stripShadowUniformDeclarations(String source) {
-        return Pattern.compile("(?m)\\buniform\\s+[A-Za-z_]\\w*\\s+[^;]+;\\s*")
-                .matcher(source).replaceAll("");
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (!typeName(tree, external).isEmpty()) {
+                for (GlslTree.Qualifier qualifier : declarationQualifiers(external)) {
+                    if (!tree.text(qualifier.keyword()).equals("uniform")) continue;
+                    edits.add(new GlslDeclarations.TextEdit(tree.offset(qualifier.keyword()), GlslDeclarations
+                            .tailEnd(source, tree.offset(external.range().end()), WHITESPACE_TAIL), ""));
+                    break;
+                }
+            }
+        }
+        return GlslDeclarations.apply(source, edits);
     }
 
     static String normalizeShadowTerrain(String source) {
@@ -609,51 +657,48 @@ final class TerrainVertexBridge {
             String source,
             LegacyGlslConverter.TerrainVaryingLayout layout
     ) {
-        Matcher matcher = MODERN_TERRAIN_DECL.matcher(source);
-        StringBuilder result = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            String qualifier = matcher.group(2);
-            String type = matcher.group(3);
-            String name = matcher.group(4);
-            result.append(source, last, matcher.start());
-            if (qualifier.equals("in")) {
-                if (!modernTerrainInputExpression(type, name).isBlank()) {
-                    // The declaration is synthesized by the fixed preamble.
-                } else {
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        for (TerrainDeclarations.Declaration declaration
+                : TerrainDeclarations.modern(source, TerrainDeclarations.MODERN_STORAGES)) {
+            String name = declaration.name();
+            String replacement = "";
+            if (declaration.storage().equals("in")) {
+                // The declaration is synthesized by the fixed preamble.
+                if (modernTerrainInputExpression(declaration.type(), name).isBlank()) {
                     throw new IllegalArgumentException("modern terrain input is unsupported: " + name);
                 }
-            } else if (qualifier.equals("out") || qualifier.equals("varying")) {
-                if (!layout.types().containsKey(name)) {
-                    throw new IllegalArgumentException("modern terrain output is not in the shared layout: " + name);
-                }
-                result.append("layout(location = ").append(layout.location(name)).append(") ");
-                // Keep the authored interpolation so both stages agree (flat mat3 tbn);
-                // integers are always flat.
-                String interpolation = layout.qualifier(name);
-                if (!interpolation.isEmpty()) {
-                    result.append(interpolation).append(' ');
-                } else if (type.equals("int") || type.startsWith("ivec")
-                        || type.equals("uint") || type.startsWith("uvec")) {
-                    result.append("flat ");
-                }
-                result.append("out ").append(type).append(' ').append(name).append(';');
+            } else if (!layout.types().containsKey(name)) {
+                throw new IllegalArgumentException("modern terrain output is not in the shared layout: " + name);
+            } else {
+                replacement = modernTerrainOutput(declaration, layout);
             }
-            last = matcher.end();
+            edits.add(new GlslDeclarations.TextEdit(declaration.start(), declaration.end(), replacement));
         }
-        result.append(source, last, source.length());
-        return result.toString();
+        return GlslDeclarations.apply(source, edits);
+    }
+
+    /** An output at its shared-layout location with the layout's interpolation; integers are always flat. */
+    private static String modernTerrainOutput(
+            TerrainDeclarations.Declaration output, LegacyGlslConverter.TerrainVaryingLayout layout) {
+        String type = output.type();
+        StringBuilder result = new StringBuilder("layout(location = ")
+                .append(layout.location(output.name())).append(") ");
+        // Keep the authored interpolation so both stages agree (flat mat3 tbn).
+        String interpolation = layout.qualifier(output.name());
+        if (!interpolation.isEmpty()) {
+            result.append(interpolation).append(' ');
+        } else if (type.equals("int") || type.startsWith("ivec") || type.equals("uint") || type.startsWith("uvec")) {
+            result.append("flat ");
+        }
+        return result.append("out ").append(type).append(' ').append(output.name()).append(';').toString();
     }
 
     static String removeShadowAttributes(String source, boolean shadowStage) {
         if (!shadowStage) return source;
-        Matcher matcher = SHADOW_ATTRIBUTE_DECL.matcher(source);
-        StringBuilder result = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
-            boolean supported = switch (name) {
+        List<TerrainDeclarations.Declaration> attributes = TerrainDeclarations.shadowAttributes(source);
+        for (TerrainDeclarations.Declaration attribute : attributes) {
+            String type = attribute.type();
+            boolean supported = switch (attribute.name()) {
                 case "mc_Entity" -> type.equals("float") || type.equals("vec2") || type.equals("vec3")
                         || type.equals("vec4");
                 case "mc_midTexCoord" -> type.equals("vec2") || type.equals("vec4");
@@ -662,16 +707,14 @@ final class TerrainVertexBridge {
                 default -> false;
             };
             if (!supported) {
-                throw new IllegalArgumentException("unsupported shadow attribute: " + name);
+                throw new IllegalArgumentException("unsupported shadow attribute: " + attribute.name());
             }
-            result.append(source, last, matcher.start());
-            last = matcher.end();
         }
-        result.append(source, last, source.length());
-        if (result.toString().matches("(?s).*\\battribute\\b.*")) {
+        String result = TerrainDeclarations.without(source, attributes);
+        if (namesAttribute(result)) {
             throw new IllegalArgumentException("unsupported shadow attribute declaration");
         }
-        return result.toString();
+        return result;
     }
 
     /** The legacy attributes the extended terrain format backs, with the types each may be declared as. */
@@ -685,41 +728,29 @@ final class TerrainVertexBridge {
         if (shadowStage) {
             return source;
         }
-        Matcher matcher = TERRAIN_ATTRIBUTE_DECL.matcher(source == null ? "" : source);
-        StringBuilder result = new StringBuilder();
-        int last = 0;
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
-            Set<String> servedTypes = TERRAIN_ATTRIBUTE_TYPES.get(name);
+        List<TerrainDeclarations.Declaration> attributes = TerrainDeclarations.keyword(source, "attribute");
+        for (TerrainDeclarations.Declaration attribute : attributes) {
+            Set<String> servedTypes = TERRAIN_ATTRIBUTE_TYPES.get(attribute.name());
             if (servedTypes == null) {
-                throw new IllegalArgumentException("unsupported terrain attribute: " + name);
+                throw new IllegalArgumentException("unsupported terrain attribute: " + attribute.name());
             }
-            if (!servedTypes.contains(type)) {
-                throw new IllegalArgumentException("unsupported " + name + " type: " + type);
+            if (!servedTypes.contains(attribute.type())) {
+                throw new IllegalArgumentException("unsupported " + attribute.name() + " type: " + attribute.type());
             }
-            result.append(source, last, matcher.start());
-            last = matcher.end();
         }
-        result.append(source, last, source.length());
-        if (result.toString().matches("(?s).*\\battribute\\b.*")) {
+        String result = TerrainDeclarations.without(source, attributes);
+        if (namesAttribute(result)) {
             throw new IllegalArgumentException("unsupported terrain attribute declaration");
         }
-        return result.toString();
+        return result;
     }
 
     static Map<String, String> modernTerrainInputReplacements(String source) {
         Map<String, String> replacements = new TreeMap<>();
-        Matcher matcher = MODERN_TERRAIN_DECL.matcher(source);
-        while (matcher.find()) {
-            if (!matcher.group(2).equals("in")) {
-                continue;
-            }
-            String type = matcher.group(3);
-            String name = matcher.group(4);
-            String expression = modernTerrainInputExpression(type, name);
+        for (TerrainDeclarations.Declaration input : TerrainDeclarations.modern(source, Set.of("in"))) {
+            String expression = modernTerrainInputExpression(input.type(), input.name());
             if (!expression.isBlank()) {
-                replacements.put(name, expression);
+                replacements.put(input.name(), expression);
             }
         }
         replacements.putIfAbsent("gl_Vertex", "chimeraVertexValue()");
@@ -736,10 +767,9 @@ final class TerrainVertexBridge {
         replacements.putIfAbsent("gl_NormalMatrix", GlslVertexPreambles.normalMatrix("gbufferModelView"));
         replacements.putIfAbsent("gl_ProjectionMatrix", "(MVP * inverse(gbufferModelView))");
         replacements.putIfAbsent("gl_ModelViewProjectionMatrix", "MVP");
-        Matcher legacyAttributes = TERRAIN_ATTRIBUTE_DECL.matcher(source == null ? "" : source);
-        while (legacyAttributes.find()) {
-            String type = legacyAttributes.group(1);
-            String name = legacyAttributes.group(2);
+        for (TerrainDeclarations.Declaration attribute : TerrainDeclarations.keyword(source, "attribute")) {
+            String type = attribute.type();
+            String name = attribute.name();
             if (name.equals("mc_midTexCoord")) {
                 replacements.put(name, type.equals("vec4")
                         ? "vec4(chimeraMidTexCoordValue(), 0.0, 1.0)"
@@ -795,10 +825,10 @@ final class TerrainVertexBridge {
 
     static Map<String, String> shadowAttributeInputReplacements(String source) {
         Map<String, String> replacements = new TreeMap<>();
-        Matcher matcher = SHADOW_ATTRIBUTE_DECL.matcher(source == null ? "" : source);
-        while (matcher.find()) {
-            String type = matcher.group(1);
-            String name = matcher.group(2);
+        for (TerrainDeclarations.Declaration attribute
+                : TerrainDeclarations.shadowAttributes(source == null ? "" : source)) {
+            String type = attribute.type();
+            String name = attribute.name();
             String replacement = switch (name) {
                 case "mc_Entity" -> switch (type) {
                     case "float" -> "chimeraMcEntityValue().x";

@@ -155,6 +155,60 @@ final class GlslDeclarationsTest {
                 LegacyGlslConverter.stripUnusedConsumedConsts(source, Map.of()));
     }
 
+    /**
+     * A modern terrain interface declaration starts a line and takes the blank lines before it; a
+     * second declaration on the line, a layout, an array or a commented one is not one.
+     */
+    @Test
+    void modernTerrainDeclarationsStartALine() {
+        String source = "#version 460\nuniform float a;\n\n  flat out int id;\nin vec3 vaPosition; in vec2 skipped;\n"
+                + "layout(location = 1) in vec2 laidOut;\nout vec2 pair[2];\n/*\nin vec2 commented;\n*/\n"
+                + "void main() {}\n";
+        List<TerrainDeclarations.Declaration> declarations =
+                TerrainDeclarations.modern(source, TerrainDeclarations.MODERN_STORAGES);
+        assertEquals(List.of("id", "vaPosition"),
+                declarations.stream().map(TerrainDeclarations.Declaration::name).toList());
+        TerrainDeclarations.Declaration id = declarations.get(0);
+        assertEquals("\n  flat out int id;", source.substring(id.start(), id.end()));
+        assertEquals("flat", id.interpolation());
+    }
+
+    /**
+     * A shadow attribute goes with its line only when nothing follows it there; uniforms go from
+     * their keyword through the whitespace after, leaving a layout before the keyword.
+     */
+    @Test
+    void shadowAttributesTakeTheirLineAndUniformsTheirKeyword() {
+        String source = "attribute vec4 mc_Entity;  \r\n  attribute vec2 mc_midTexCoord; // uv\n"
+                + "layout(binding = 0) uniform sampler2D tex;\n\nuniform float a, b;\nvoid main() {}\n";
+        assertEquals(List.of("mc_Entity"), TerrainDeclarations.shadowAttributes(source).stream()
+                .map(TerrainDeclarations.Declaration::name).toList());
+        IllegalArgumentException left = assertThrows(IllegalArgumentException.class,
+                () -> TerrainVertexBridge.removeShadowAttributes(source, true));
+        assertEquals("unsupported shadow attribute declaration", left.getMessage());
+        assertEquals("attribute vec4 mc_Entity;  \r\n  attribute vec2 mc_midTexCoord; // uv\n"
+                + "layout(binding = 0) void main() {}\n", TerrainVertexBridge.stripShadowUniformDeclarations(source));
+    }
+
+    /** A legacy terrain vertex loses its mc_Entity line with the blank lines after it; varyings get locations. */
+    @Test
+    void legacyTerrainAttributesAndVaryingsAreDeclarations() {
+        LegacyGlslConverter.TerrainVertexConversion conversion = TerrainVertexBridge.convertTerrainVertex("""
+                #version 120
+                attribute float mc_Entity;
+
+                varying vec2 texcoord; // uv
+                void main() { texcoord = vec2(mc_Entity); gl_Position = ftransform(); }
+                """, null, """
+                #version 120
+                varying vec2 texcoord;
+                void main() { gl_FragColor = vec4(texcoord, 0.0, 1.0); }
+                """);
+        String converted = conversion.source();
+        assertFalse(converted.contains("attribute"), converted);
+        assertTrue(converted.contains("}\n\nlayout(location = 0) out vec2 texcoord; // uv\nvoid main() {"), converted);
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {

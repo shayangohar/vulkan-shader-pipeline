@@ -11,7 +11,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Predicate;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static net.chimera.shaderpack.GlslLexer.stripComments;
@@ -350,16 +349,12 @@ public final class LegacyGlslConverter {
 
     /** Gives a modern geometry fragment's inputs the terrain layout's locations, or the fixed vertex's. */
     private static String convertModernGeometryVaryings(String src, TerrainVaryingLayout terrainLayout) {
-        Matcher modern = TerrainVertexBridge.MODERN_TERRAIN_INPUT_DECL.matcher(src);
-        StringBuilder modernOut = new StringBuilder();
-        int modernLast = 0;
-        while (modern.find()) {
-            String qualifier = modern.group(1);
-            String type = modern.group(2);
-            String name = modern.group(3);
-            if (PostVertexBridge.unproducedAndUnread(src, modern.start(), modern.end(), name, terrainLayout)) {
-                modernOut.append(src, modernLast, modern.start());
-                modernLast = modern.end();
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        for (TerrainDeclarations.Declaration input
+                : TerrainDeclarations.modern(src, TerrainDeclarations.MODERN_INPUT_STORAGES)) {
+            String name = input.name();
+            if (PostVertexBridge.unproducedAndUnread(src, input.start(), input.end(), name, terrainLayout)) {
+                edits.add(new GlslDeclarations.TextEdit(input.start(), input.end(), ""));
                 continue;
             }
             int location = terrainLayout == null
@@ -368,16 +363,11 @@ public final class LegacyGlslConverter {
             if (location < 0) {
                 throw new IllegalArgumentException("modern geometry varying has no fixed slot: " + name);
             }
-            modernOut.append(src, modernLast, modern.start());
-            modernOut.append("layout(location = ").append(location).append(") ");
-            if (qualifier != null) {
-                modernOut.append(qualifier).append(' ');
-            }
-            modernOut.append("in ").append(type).append(' ').append(name).append(';');
-            modernLast = modern.end();
+            String interpolation = input.interpolation() == null ? "" : input.interpolation() + " ";
+            edits.add(new GlslDeclarations.TextEdit(input.start(), input.end(), "layout(location = " + location
+                    + ") " + interpolation + "in " + input.type() + " " + name + ";"));
         }
-        modernOut.append(src, modernLast, src.length());
-        return modernOut.toString();
+        return GlslDeclarations.apply(src, edits);
     }
 
     /** Gives a legacy geometry fragment's varyings the terrain layout's locations, or the fixed vertex's. */
