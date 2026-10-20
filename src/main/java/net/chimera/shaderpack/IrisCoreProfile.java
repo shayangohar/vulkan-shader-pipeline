@@ -1,8 +1,10 @@
 package net.chimera.shaderpack;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -18,16 +20,13 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
 final class IrisCoreProfile {
     private IrisCoreProfile() {}
 
-    /** Iris core-profile vertex inputs, as a pack declares them. */
-    static final Pattern CORE_INPUT_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout[ \\t]*\\([^;{}()]*\\)[ \\t]*)?(?:in|attribute)[ \\t]+(\\w+)[ \\t]+"
-                    + "(vaPosition|vaColor|vaNormal|vaUV0|vaUV1|vaUV2)[ \\t]*;[ \\t]*$");
+    /** Iris core-profile vertex inputs. */
+    private static final Set<String> CORE_INPUTS = Set.of("vaPosition", "vaColor", "vaNormal", "vaUV0", "vaUV1",
+            "vaUV2");
 
-    /** Iris core-profile uniforms: the host matrices, the chunk offset. */
-    static final Pattern CORE_UNIFORM_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*uniform[ \\t]+(\\w+)[ \\t]+(modelViewMatrix|modelViewMatrixInverse|projectionMatrix"
-                    + "|projectionMatrixInverse|normalMatrix|textureMatrix|chunkOffset)[ \\t]*;[ \\t]*$");
-
+    /** Iris core-profile matrices. */
+    private static final Set<String> CORE_MATRICES = Set.of("modelViewMatrix", "modelViewMatrixInverse",
+            "projectionMatrix", "projectionMatrixInverse", "normalMatrix", "textureMatrix");
 
     /** Iris SodiumCoreTransformer's overlay for a format without one: no hurt flash, no white flash. */
     public static final String NO_OVERLAY = "ivec2(0, 10)";
@@ -61,15 +60,7 @@ final class IrisCoreProfile {
                                                 String overlay, boolean coreMode) {
         if (source == null) return null;
         Map<String, String> declared = new TreeMap<>();
-        String result = expandIncludes(source, sourceFile);
-        if (vertexStage) {
-            Matcher inputs = CORE_INPUT_DECLARATION.matcher(result);
-            while (inputs.find()) declared.put(inputs.group(2), inputs.group(1));
-            result = inputs.replaceAll("");
-        }
-        Matcher uniforms = CORE_UNIFORM_DECLARATION.matcher(result);
-        while (uniforms.find()) declared.put(uniforms.group(2), uniforms.group(1));
-        result = uniforms.replaceAll("");
+        String result = withoutCoreDeclarations(expandIncludes(source, sourceFile), vertexStage, declared);
         if (coreMode) {
             // The source is macro-expanded, as Iris's is: a core name the pack defines as a macro
             // (Noble's #define projectionMatrix gbufferProjection) has expanded away.
@@ -110,13 +101,50 @@ final class IrisCoreProfile {
         };
     }
 
-    static final Pattern LINE_CORE_INPUT_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:in|attribute)[ \\t]+\\w+[ \\t]+(?:vaPosition|vaColor|vaNormal|vaUV0|vaUV1|vaUV2)"
-                    + "[ \\t]*;[ \\t]*$");
+    /**
+     * The source without its plain declarations of the core inputs (a vertex stage's) and of the
+     * core uniforms, each recorded in {@code declared} with the type the stage gave it.
+     */
+    private static String withoutCoreDeclarations(String source, boolean vertexStage, Map<String, String> declared) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            boolean input = vertexStage && CORE_INPUTS.contains(variable.name()) && isInput(variable);
+            boolean uniform = variable.qualified("uniform") && (CORE_MATRICES.contains(variable.name())
+                    || variable.name().equals("chunkOffset"));
+            if ((input || uniform) && variable.plain()) {
+                declared.put(variable.name(), variable.type());
+                removals.add(GlslDeclarations.remove(tree, variable.declaration()));
+            }
+        }
+        return GlslDeclarations.apply(source, removals);
+    }
 
-    static final Pattern LINE_CORE_MATRIX_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*uniform[ \\t]+mat[34][ \\t]+(?:modelViewMatrix|modelViewMatrixInverse|projectionMatrix"
-                    + "|projectionMatrixInverse|normalMatrix|textureMatrix)[ \\t]*;[ \\t]*$");
+    private static boolean isInput(GlslDeclarations.Variable variable) {
+        return variable.qualified("in") || variable.qualified("attribute");
+    }
+
+    /** The source without its plain declarations of the core inputs and of the core matrices as mat3 or mat4. */
+    private static String withoutLineCoreDeclarations(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            boolean input = CORE_INPUTS.contains(variable.name()) && isInput(variable);
+            boolean matrix = CORE_MATRICES.contains(variable.name()) && variable.qualified("uniform")
+                    && (variable.type().equals("mat3") || variable.type().equals("mat4"));
+            if ((input || matrix) && variable.plain()) {
+                removals.add(GlslDeclarations.remove(tree, variable.declaration()));
+            }
+        }
+        return GlslDeclarations.apply(source, removals);
+    }
+
+    /** The source with its first main renamed {@code chimeraLineMain}, signature normalized to {@code ()}. */
+    private static String renameMain(String source) {
+        String renamed = GlslDeclarations.renameMain(source, "chimeraLineMain");
+        if (renamed == null) throw new IllegalArgumentException("line vertex requires main");
+        return renamed;
+    }
 
     /**
      * Applies Iris's line handling to an authored vertex source before its interface is
@@ -131,8 +159,7 @@ final class IrisCoreProfile {
         String src = expandIncludes(source, sourceFile);
         src = GlslTokenRewriter.replaceIdentifiers(src, Map.of("gl_VertexID", "chimeraLineVertexIndex"));
         if (packLineProgram) {
-            src = LINE_CORE_INPUT_DECLARATION.matcher(src).replaceAll("");
-            src = LINE_CORE_MATRIX_DECLARATION.matcher(src).replaceAll("");
+            src = withoutLineCoreDeclarations(src);
             return GlslTokenRewriter.replaceIdentifiers(src, Map.ofEntries(
                     Map.entry("vaPosition", "gl_Vertex.xyz"),
                     Map.entry("vaColor", "gl_Color"),
@@ -154,11 +181,7 @@ final class IrisCoreProfile {
                 "gl_ModelViewProjectionMatrix", "(gl_ProjectionMatrix * chimeraLineViewScale * gl_ModelViewMatrix)",
                 // Iris feeds a widened program +Z; only the wrapper reads the line direction.
                 "gl_Normal", "vec3(0.0, 0.0, 1.0)"));
-        Matcher main = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)").matcher(src);
-        if (!main.find()) {
-            throw new IllegalArgumentException("line vertex requires main");
-        }
-        src = src.substring(0, main.start()) + "void chimeraLineMain()" + src.substring(main.end());
+        src = renameMain(src);
         String globals = GlslVertexPreambles.LINE_WIDEN_GLOBALS;
         Set<String> declared = new HashSet<>();
         UniformRegistry.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
@@ -199,17 +222,14 @@ final class IrisCoreProfile {
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;
         Map<String, String> types = new HashMap<>();
-        Matcher declaration = EntityVertexBridge.ENTITY_ID_DECLARATION.matcher(stripComments(source));
-        while (declaration.find()) {
-            for (String declarator : declaration.group(3).split(",")) {
-                String value = declarator.trim();
-                int equals = value.indexOf('=');
-                String name = equals < 0 ? value : value.substring(0, equals).trim();
-                if (EntityVertexBridge.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.group(2));
+        for (EntityDeclarations.IdentityDeclaration declaration
+                : EntityDeclarations.identityDeclarations(stripComments(source))) {
+            for (String name : declaration.names()) {
+                if (EntityVertexBridge.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.type());
             }
         }
         if (types.isEmpty()) return source;
-        String src = EntityVertexBridge.removeEntityIdDeclarations(source);
+        String src = EntityDeclarations.removeEntityIdDeclarations(source);
         Map<String, String> replacements = new HashMap<>();
         String entityId = UniformRegistry.HOST_ENTITY_ID;
         if (types.containsKey("entityId")) {

@@ -263,7 +263,7 @@ final class MaterialPlanTest {
         assertEquals(List.of(0, 3, 6), listed.targetSlots(), "list targets kept");
         // Post plan keeps the same rule.
         PostTargetPlan post = PostTargetPlan.parse("composite1",
-                "#define DRAWBUFFERS036\n", Map.of()).plan();
+                "/* DRAWBUFFERS:036 */\n", Map.of()).plan();
         assertEquals(List.of(0, 3, 6), post.targetSlots(), "post compact digits");
     }
 

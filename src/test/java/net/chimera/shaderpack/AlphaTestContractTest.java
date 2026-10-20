@@ -213,7 +213,7 @@ final class AlphaTestContractTest {
         assertTrue(single.locationZeroOutputName().equals("fragColor"),
                 "single output name changed");
         GeometryOutputPlan mrt = GeometryOutputPlan.parse(
-                "gbuffers_terrain", "#version 120\n#define DRAWBUFFERS0123\n"
+                "gbuffers_terrain", "#version 120\n/* DRAWBUFFERS:0123 */\n"
                         + "void main() { gl_FragData[0] = vec4(1.0); }", Map.of());
         assertTrue(mrt.locationZeroOutputName().equals("chimeraFragColor0"),
                 "MRT output name changed");

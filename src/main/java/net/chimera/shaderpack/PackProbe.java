@@ -26,8 +26,6 @@ import java.util.regex.Pattern;
 public final class PackProbe {
     private static final Set<String> STAGE_EXTENSIONS = Set.of(
             ".vsh", ".fsh", ".gsh", ".tcs", ".tes", ".csh");
-    static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
-            "#define\\s+DRAWBUFFERS(\\d+)");
     static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?i)(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([0-9,\\s]+)");
     static final Pattern FRAG_DATA = Pattern.compile(

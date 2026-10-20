@@ -442,15 +442,13 @@ final class FixturePackTest {
                 "output location 0 is missing");
         assertTrue(converted.contains("layout(location = 1) out vec4 chimeraFragColor1"),
                 "output location 1 is missing");
-        assertTrue(!converted.contains("DRAWBUFFERS01"),
-                "DRAWBUFFERS directive was not removed");
         verifyFixtureBaseline(report, baselinePath, "post_chain");
     }
 
     @Test
     void targetParserEdgeCases() {
         PostTargetPlan drawBuffers = PostTargetPlan.parse(
-                "composite", "#version 120\n#define DRAWBUFFERS0123\n").plan();
+                "composite", "#version 120\n/* DRAWBUFFERS:0123 */\n").plan();
         assertEquals(List.of(0, 1, 2, 3), drawBuffers.targetSlots(),
                 "DRAWBUFFERS digits are target slots");
 
@@ -466,7 +464,7 @@ final class FixturePackTest {
                 "malformed target deviation is missing");
 
         PostTargetPlan conflict = PostTargetPlan.parse(
-                "composite", "#define DRAWBUFFERS01\n/* RENDERTARGETS: 0,2 */").plan();
+                "composite", "/* DRAWBUFFERS:01 */\n/* RENDERTARGETS: 0,2 */").plan();
         assertTrue(!conflict.executable(), "conflicting target directives were accepted");
         assertTrue(conflict.deviations().contains("POST_TARGET_DIRECTIVE_CONFLICT"),
                 "target conflict deviation is missing");

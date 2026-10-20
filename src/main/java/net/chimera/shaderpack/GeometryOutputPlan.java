@@ -24,8 +24,6 @@ public record GeometryOutputPlan(
         boolean executable,
         List<Integer> snapshotTargets
 ) {
-    private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
-            "(?m)^\\s*#define\\s+DRAWBUFFERS([0-9]+)\\s*$");
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");
 
@@ -51,12 +49,6 @@ public record GeometryOutputPlan(
             Map<Integer, Integer> formats
     ) {
         String text = source == null ? "" : source;
-        // Preserve the legacy one-output form the older terrain fixtures
-        // use. Explicit DRAWBUFFERS comments remain target lists.
-        if (text.matches("(?s).*#define\\s+DRAWBUFFERS1\\s*(?:\\r?\\n|$).*")
-                && !text.matches("(?is).*DRAWBUFFERS\\s*:.*")) {
-            text = text.replaceFirst("(?m)(^\\s*#define\\s+DRAWBUFFERS)1(\\s*$)", "$1" + "0$2");
-        }
         List<List<Integer>> routes = routes(text);
         if (routes.size() > 1 && routes.stream().allMatch(route -> route != null && !route.isEmpty())) {
             // The analyzed source is already branch-resolved, so surviving
@@ -68,7 +60,6 @@ public record GeometryOutputPlan(
             List<Integer> selected = routes.get(routes.size() - 1);
             String canonical = selected.stream().map(String::valueOf)
                     .reduce((left, right) -> left + "," + right).orElse("0");
-            text = DRAWBUFFERS_DEFINE.matcher(text).replaceAll("");
             text = TARGET_COMMENT.matcher(text).replaceAll("");
             text = "/* RENDERTARGETS: " + canonical + " */\n" + text;
             PostTargetPlan.ParseResult parsed = PostTargetPlan.parse(programName, text, formats);
@@ -120,20 +111,12 @@ public record GeometryOutputPlan(
 
     private static List<List<Integer>> routes(String source) {
         List<List<Integer>> result = new ArrayList<>();
-        Matcher define = DRAWBUFFERS_DEFINE.matcher(source);
-        while (define.find()) result.add(parseDigits(define.group(1)));
         Matcher comment = TARGET_COMMENT.matcher(source);
         while (comment.find()) {
             List<String> deviations = new ArrayList<>();
             List<Integer> route = PostTargetPlan.parseCommentTargets(comment.group(1), comment.group(2), deviations);
             result.add(deviations.isEmpty() ? route : List.of());
         }
-        return result;
-    }
-
-    private static List<Integer> parseDigits(String value) {
-        List<Integer> result = new ArrayList<>();
-        for (int i = 0; i < value.length(); i++) result.add(value.charAt(i) - '0');
         return result;
     }
 

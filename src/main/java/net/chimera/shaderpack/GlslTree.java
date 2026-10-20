@@ -2,7 +2,9 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A lossless parse of one GLSL source over {@link GlslLexer} tokens (KNOW-714). Every node names a
@@ -84,18 +86,58 @@ final class GlslTree {
     /** The declaration a name resolves to: its declaring node and the token of the declared name. */
     record Binding(Node node, int name) {}
 
+    private final String source;
     private final List<GlslLexer.Token> tokens;
     private final List<External> externals;
+    private int[] offsets;
 
-    private GlslTree(List<GlslLexer.Token> tokens, List<External> externals) {
+    private GlslTree(String source, List<GlslLexer.Token> tokens, List<External> externals) {
+        this.source = source;
         this.tokens = tokens;
         this.externals = externals;
     }
 
+    /** The parsed text, as given. */
+    String source() {
+        return source;
+    }
+
+    /**
+     * The latest trees. A program's conversion steps each parse the source they are handed, and
+     * many hand on the same text unchanged.
+     */
+    private static final Map<String, GlslTree> RECENT = new LinkedHashMap<>(16, 0.75F, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, GlslTree> eldest) {
+            return size() > 8;
+        }
+    };
+
     /** Parses {@code source}; throws {@link GlslParser.ParseFailure} naming the line it stopped at. */
     static GlslTree parse(String source) {
-        List<GlslLexer.Token> tokens = GlslLexer.lex(source);
-        return new GlslTree(tokens, new GlslParser(tokens).unit());
+        String input = source == null ? "" : source;
+        synchronized (RECENT) {
+            GlslTree known = RECENT.get(input);
+            if (known != null) return known;
+        }
+        List<GlslLexer.Token> tokens = GlslLexer.lex(input);
+        GlslTree tree = new GlslTree(input, tokens, new GlslParser(tokens).unit());
+        synchronized (RECENT) {
+            RECENT.put(input, tree);
+        }
+        return tree;
+    }
+
+    /** The character offset where token {@code token} starts; the source length for {@code tokens().size()}. */
+    synchronized int offset(int token) {
+        if (offsets == null) {
+            int[] computed = new int[tokens.size() + 1];
+            for (int index = 0; index < tokens.size(); index++) {
+                computed[index + 1] = computed[index] + tokens.get(index).text().length();
+            }
+            offsets = computed;
+        }
+        return offsets[token];
     }
 
     List<GlslLexer.Token> tokens() {

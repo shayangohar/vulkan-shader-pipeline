@@ -9,8 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Converts a pack fragment stage to Vulkan GLSL for its family (post, terrain, water, shadow,
@@ -28,11 +26,10 @@ import java.util.regex.Pattern;
 public final class FragmentConverter {
     private FragmentConverter() {}
 
-    static final Pattern MODERN_GEOMETRY_OUTPUT_DECL = Pattern.compile(
-            "(?m)^\\s*out\\s+vec4\\s+(\\w+)\\s*;\\s*");
-
-    static final Pattern POST_DRAWBUFFERS_DEFINE = Pattern.compile(
-            "(?m)^\\s*#define\\s+DRAWBUFFERS[0-9]+\\s*$");
+    /** The sampler types a descriptor binding is written onto. */
+    private static final Set<String> BINDABLE_SAMPLERS = Set.of("sampler3D", "isampler3D", "usampler3D",
+            "sampler2D", "sampler2DShadow");
+    private static final Set<String> COVERAGE_PEER_TYPES = Set.of("float", "vec2", "vec3", "vec4");
 
     /**
      * The host blocks ahead of a terrain-lane program's own uniform block: chimera_terrain.json's
@@ -252,7 +249,8 @@ public final class FragmentConverter {
             }
             GlslVersion version = GlslVersion.first(src);
             modern = (version != null && version.number() >= 450)
-                    || (stage.shadowPass() && TerrainVertexBridge.MODERN_TERRAIN_DECL.matcher(src).find());
+                    || (stage.shadowPass() && !TerrainDeclarations.modern(
+                            src, TerrainDeclarations.MODERN_STORAGES).isEmpty());
             // One version line for Vulkan, where an authored profile means nothing.
             src = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
             if (modern) {
@@ -268,7 +266,7 @@ public final class FragmentConverter {
             src = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
-                src = EntityVertexBridge.removeEntityIdDeclarations(src, interfacePlan);
+                src = EntityDeclarations.removeEntityIdDeclarations(src, interfacePlan);
                 src = EntityVertexBridge.replaceEntityIdReferences(src, request.terrainLayout());
             }
             if (geometryStage && modern && request.geometryOutputPlan() == null && !stage.shadowPass()) {
@@ -448,8 +446,7 @@ public final class FragmentConverter {
     }
 
     static String convertPostOutputs(String source, PostTargetPlan targetPlan) {
-        String result = POST_DRAWBUFFERS_DEFINE.matcher(source).replaceAll("");
-        result = rewriteModernOutputs(result, targetPlan);
+        String result = rewriteModernOutputs(source, targetPlan);
         return GlslTokenRewriter.rewritePostOutputs(result, targetPlan);
     }
 
@@ -611,11 +608,15 @@ public final class FragmentConverter {
                 || source.matches("(?s).*\\bchimeraCoverage\\b.*")) {
             throw new IllegalArgumentException("coverage requires implicit fragment depth");
         }
-        Matcher matcher = Pattern.compile(
-                "layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*out\\s+"
-                        + "(?:float|vec2|vec3|vec4)\\s+\\w+\\s*;").matcher(source);
+        GlslTree tree = GlslTree.parse(source);
         int max = -1;
-        while (matcher.find()) max = Math.max(max, Integer.parseInt(matcher.group(1)));
+        for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
+            Integer location = GlslDeclarations.location(tree, output.declaration());
+            if (location != null && output.qualifiers().equals(List.of("layout", "out"))
+                    && COVERAGE_PEER_TYPES.contains(output.type()) && output.plain()) {
+                max = Math.max(max, location);
+            }
+        }
         if (max < 0 || max >= 7) {
             throw new IllegalArgumentException("coverage output has no safe color location");
         }
@@ -777,11 +778,25 @@ public final class FragmentConverter {
         return declarations;
     }
 
+    /**
+     * A modern terrain fragment's one {@code out vec4 name;} becomes fragColor at location 0. The
+     * declaration goes with the blank lines before it and the whitespace after it, as the
+     * {@code (?m)^\s*out vec4 name;\s*} pattern it replaces removed them.
+     */
     static String convertModernGeometryOutputs(String source) {
-        Matcher matcher = MODERN_GEOMETRY_OUTPUT_DECL.matcher(source);
+        GlslTree tree = GlslTree.parse(source);
         List<String> names = new ArrayList<>();
-        while (matcher.find()) {
-            names.add(matcher.group(1));
+        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
+            int start = GlslDeclarations.lineStartBefore(source, tree.offset(output.declaration().range().start()));
+            if (start < 0 || !output.qualifiers().equals(List.of("out")) || !output.type().equals("vec4")
+                    || !output.plain()) {
+                continue;
+            }
+            int end = tree.offset(output.declaration().range().end());
+            while (end < source.length() && " \t\n\u000B\f\r".indexOf(source.charAt(end)) >= 0) end++;
+            names.add(output.name());
+            removals.add(new GlslDeclarations.TextEdit(start, end, ""));
         }
         if (names.isEmpty()) {
             return source;
@@ -789,7 +804,7 @@ public final class FragmentConverter {
         if (names.size() != 1) {
             throw new IllegalArgumentException("modern terrain MRT output is unsupported");
         }
-        String result = matcher.replaceAll("");
+        String result = GlslDeclarations.apply(source, removals);
         String name = names.get(0);
         if (!name.equals("fragColor")) {
             result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(name, "fragColor"));
@@ -799,34 +814,75 @@ public final class FragmentConverter {
         return LegacyGlslConverter.insertAfterFirstLine(result, "layout(location = 0) out vec4 fragColor;\n");
     }
 
+    /**
+     * A pack's own {@code float texture2DShadow(sampler2DShadow s, vec3 c) { return shadow2D(s, c).x; }}
+     * goes: the shadow-sampler rewrite serves that name itself.
+     */
     static String removeLegacyShadowSamplerHelper(String source) {
         if (source == null || !source.contains("texture2DShadow")) return source;
-        return source.replaceAll(
-                "(?s)\\bfloat\\s+texture2DShadow\\s*\\(\\s*sampler2DShadow\\s+"
-                        + "([A-Za-z_]\\w*)\\s*,\\s*vec3\\s+([A-Za-z_]\\w*)\\s*\\)\\s*"
-                        + "\\{\\s*return\\s+shadow2D\\s*\\(\\s*\\1\\s*,\\s*\\2\\s*\\)"
-                        + "\\s*\\.x\\s*;\\s*\\}", "");
+        GlslTree tree = GlslTree.parse(source);
+        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Function function && isLegacyShadowHelper(tree, function)) {
+                removals.add(new GlslDeclarations.TextEdit(tree.offset(function.range().start()),
+                        tree.offset(function.range().end()), ""));
+            }
+        }
+        return GlslDeclarations.apply(source, removals);
     }
 
+    private static boolean isLegacyShadowHelper(GlslTree tree, GlslTree.Function function) {
+        if (function.body() == null || !function.qualifiers().isEmpty() || function.parameters().size() != 2
+                || !tree.text(function.name()).equals("texture2DShadow")
+                || !tree.text(function.returnType().range()).equals("float")) {
+            return false;
+        }
+        GlslTree.Parameter sampler = function.parameters().get(0);
+        GlslTree.Parameter coordinate = function.parameters().get(1);
+        if (!simpleParameter(tree, sampler, "sampler2DShadow") || !simpleParameter(tree, coordinate, "vec3")) {
+            return false;
+        }
+        List<String> body = new ArrayList<>();
+        for (int index = function.body().range().start(); index < function.body().range().end(); index++) {
+            if (tree.tokens().get(index).significant()) body.add(tree.text(index));
+        }
+        return body.equals(List.of("{", "return", "shadow2D", "(", tree.text(sampler.name()), ",",
+                tree.text(coordinate.name()), ")", ".", "x", ";", "}"));
+    }
+
+    private static boolean simpleParameter(GlslTree tree, GlslTree.Parameter parameter, String type) {
+        return parameter.qualifiers().isEmpty() && parameter.name() >= 0 && parameter.arrays().isEmpty()
+                && tree.text(parameter.type().range()).equals(type);
+    }
+
+    /** {@code [layout(...)] uniform sampler name;} for this one name, with the binding written onto it. */
     static String rewriteSamplerDeclaration(String source, String name, int binding) {
-        Pattern declaration = Pattern.compile(
-                "(?:layout\\s*\\([^;{}]*\\)\\s*)?uniform\\s+"
-                        + "((?:[iu]?sampler3D|sampler2D(?:Shadow)?))\\s+"
-                        + Pattern.quote(name) + "\\s*;");
-        Matcher matcher = declaration.matcher(source);
-        if (!matcher.find()) {
+        GlslTree tree = GlslTree.parse(source);
+        GlslTree.Declaration declaration = samplerDeclaration(tree, name);
+        if (declaration == null) {
             throw new IllegalArgumentException("sampler declaration is missing: " + name);
         }
         String replacement = "layout(binding = " + binding + ") uniform "
-                + matcher.group(1) + " " + name + ";";
-        return source.substring(0, matcher.start()) + replacement + source.substring(matcher.end());
+                + tree.text(declaration.type().name()) + " " + name + ";";
+        return GlslDeclarations.apply(source, List.of(new GlslDeclarations.TextEdit(
+                tree.offset(declaration.range().start()), tree.offset(declaration.range().end()), replacement)));
     }
 
     static boolean hasSamplerDeclaration(String source, String name) {
-        return Pattern.compile("(?:layout\\s*\\([^;{}]*\\)\\s*)?uniform\\s+"
-                + "(?:[iu]?sampler3D|sampler2D(?:Shadow)?)\\s+"
-                + Pattern.quote(name) + "\\s*;")
-                .matcher(source).find();
+        return samplerDeclaration(GlslTree.parse(source), name) != null;
+    }
+
+    /** The first declaration of {@code name} alone as a bindable sampler, qualified uniform and at most a layout. */
+    private static GlslTree.Declaration samplerDeclaration(GlslTree tree, String name) {
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            List<String> qualifiers = variable.qualifiers();
+            boolean uniform = qualifiers.equals(List.of("uniform")) || qualifiers.equals(List.of("layout", "uniform"));
+            if (uniform && variable.name().equals(name) && BINDABLE_SAMPLERS.contains(variable.type())
+                    && variable.plain()) {
+                return variable.declaration();
+            }
+        }
+        return null;
     }
 
     /**

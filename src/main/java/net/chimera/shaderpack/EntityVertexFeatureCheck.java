@@ -2,13 +2,13 @@ package net.chimera.shaderpack;
 
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
  * Rejects what the entity vertex bridge cannot serve before it converts a stage: referenced custom
  * uniforms and images, unmapped built-ins, unserved attributes and pack-authored layouts. Each
- * failure names the first offender.
+ * failure names the first offender. Declarations and names are read from the parse tree.
  */
 final class EntityVertexFeatureCheck {
     private EntityVertexFeatureCheck() {}
@@ -35,94 +35,83 @@ final class EntityVertexFeatureCheck {
             "mc_Entity", Set.of("float", "vec2", "vec3", "vec4"),
             "at_midBlock", Set.of("float", "vec2", "vec3", "vec4"));
 
+    /** The value types the catalog could serve; a leftover one is a custom value with no adapter. */
+    private static final Pattern VALUE_TYPE = Pattern.compile("bool|int|float|vec[234]|ivec[234]|mat[234]");
+    private static final Pattern SAMPLER_TYPE = Pattern.compile("[iu]?sampler\\w*|u?i?image\\w*");
+    private static final Pattern IMAGE_OR_STAGE = Pattern.compile("image\\w*|geometry|tessellation|compute");
+    private static final Set<String> ATTRIBUTE_DECLARATION_TYPES = Set.of("int", "float", "vec2", "vec3", "vec4");
+
+    /** {@code source} has its comments stripped already. */
     static void rejectEntityVertexFeatures(
             String source, boolean allowStorageBuffers, boolean allowSamplers
     ) {
-        rejectReferencedCustomUniforms(source);
-        rejectReferencedSamplers(source, allowSamplers);
-        rejectUnservedBuiltins(source);
-        if (source.matches("(?s).*\\b(?:image\\w*|geometry|tessellation|compute)\\b.*")) {
+        GlslTree tree = GlslTree.parse(source);
+        rejectReferencedCustomUniforms(tree);
+        rejectReferencedSamplers(tree, allowSamplers);
+        String builtin = firstIdentifier(tree, name -> name.matches("gl_[A-Za-z]\\w*")
+                && !ENTITY_SERVED_BUILTINS.contains(name));
+        if (builtin != null) throw new IllegalArgumentException("unsupported entity vertex builtin: " + builtin);
+        if (firstIdentifier(tree, name -> IMAGE_OR_STAGE.matcher(name).matches()) != null) {
             throw new IllegalArgumentException("unsupported entity vertex feature");
         }
-        if (!allowStorageBuffers && source.matches("(?s).*\\bbuffer\\b.*")) {
+        if (!allowStorageBuffers && firstIdentifier(tree, "buffer"::equals) != null) {
             throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
         }
-        rejectUnservedAttributes(source);
-        String withoutInterfaces = withoutScannedInterfaces(source);
-        if (withoutInterfaces.matches("(?s).*\\battribute\\b.*")
-                && !withoutInterfaces.matches("(?s).*\\battribute\\s+(?:int|float|vec2|vec3|vec4)\\s+"
-                + "(?:entityId|blockEntityId|mc_midTexCoord|at_tangent|Tangent|mc_Entity|at_midBlock)\\s*;.*")) {
-            throw new IllegalArgumentException("unsupported entity attribute declaration");
-        }
+        rejectUnservedAttributes(tree);
+        GlslTree withoutInterfaces = GlslTree.parse(withoutScannedInterfaces(source));
+        rejectUnservedAttributeDeclarations(withoutInterfaces);
         // Interpolation survives on scanned varyings via the shared layout. Pack-authored
         // explicit layouts would conflict with the generated locations, and interpolation
         // qualifiers anywhere else have no adapter path.
-        if (withoutInterfaces.matches("(?s).*\\b(?:layout|flat|noperspective)\\b.*")) {
+        if (firstIdentifier(withoutInterfaces, Set.of("layout", "flat", "noperspective")::contains) != null) {
             throw new IllegalArgumentException("entity vertex layout is fixed by Chimera");
         }
     }
 
-    private static void rejectReferencedCustomUniforms(String source) {
-        // Served and dead uniform declarations are stripped before this
-        // check, so a remaining value-type uniform names a referenced
-        // custom with no adapter. Matrix and texture built-ins have
-        // token mappings in the inputs table.
-        Matcher leftoverUniform = Pattern.compile(
-                "(?m)^\\s*uniform\\s+(?:highp|mediump|lowp\\s+)?(?:bool|int|float|vec[234]|ivec[234]|mat[234])\\s+"
-                        + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*;").matcher(source);
-        while (leftoverUniform.find()) {
-            String checkSource = withoutMatch(source, leftoverUniform);
-            for (String declarator : leftoverUniform.group(1).split(",")) {
-                String name = declarator.trim();
-                if (GlslTokenRewriter.containsIdentifier(checkSource, name)) {
-                    throw new IllegalArgumentException(
-                            "unsupported entity vertex uniform: " + name);
-                }
+    /**
+     * Served and dead uniform declarations are stripped before this check, so a remaining
+     * value-type uniform names a referenced custom with no adapter. Matrix and texture built-ins
+     * have token mappings in the inputs table.
+     */
+    private static void rejectReferencedCustomUniforms(GlslTree tree) {
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (variable.qualified("uniform") && VALUE_TYPE.matcher(variable.type()).matches()
+                    && referencedOutside(tree, variable.name(), variable.declaration())) {
+                throw new IllegalArgumentException("unsupported entity vertex uniform: " + variable.name());
             }
         }
     }
 
     /** A referenced image, or a referenced sampler when the plan binds no vertex samplers, has no binding. */
-    private static void rejectReferencedSamplers(String source, boolean allowSamplers) {
-        Matcher vertexSampler = Pattern.compile(
-                "(?m)^\\s*uniform\\s+(?:[iu]?sampler\\w*|u?i?image\\w*)\\s+"
-                        + "([A-Za-z_]\\w*(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*;\\s*$").matcher(source);
-        while (vertexSampler.find()) {
-            String checkSource = withoutMatch(source, vertexSampler);
-            boolean referenced = false;
-            for (String declarator : vertexSampler.group(1).split(",")) {
-                if (GlslTokenRewriter.containsIdentifier(checkSource, declarator.trim())) {
-                    referenced = true;
-                    break;
-                }
-            }
-            boolean image = vertexSampler.group().matches("(?s).*\\buniform\\s+u?i?image\\w*.*");
-            if (referenced && (image || !allowSamplers)) {
-                String first = vertexSampler.group(1).split(",")[0].trim();
-                throw new IllegalArgumentException(
-                        "unsupported entity vertex sampler: " + first);
+    private static void rejectReferencedSamplers(GlslTree tree, boolean allowSamplers) {
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (!variable.qualified("uniform") || !SAMPLER_TYPE.matcher(variable.type()).matches()) continue;
+            boolean image = variable.type().matches("u?i?image\\w*");
+            if ((image || !allowSamplers) && variable.declaration().declarators().stream()
+                    .anyMatch(name -> referencedOutside(tree, tree.text(name.name()), variable.declaration()))) {
+                String first = tree.text(variable.declaration().declarators().get(0).name());
+                throw new IllegalArgumentException("unsupported entity vertex sampler: " + first);
             }
         }
     }
 
-    private static void rejectUnservedBuiltins(String source) {
-        Matcher builtin = Pattern.compile("\\bgl_[A-Za-z]\\w*\\b").matcher(source);
-        while (builtin.find()) {
-            if (!ENTITY_SERVED_BUILTINS.contains(builtin.group())) {
-                throw new IllegalArgumentException(
-                        "unsupported entity vertex builtin: " + builtin.group());
+    /** Each input names a host input the bridge serves, declared as a type it serves that input as. */
+    private static void rejectUnservedAttributes(GlslTree tree) {
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if ((variable.qualified("attribute") || variable.qualified("in"))
+                    && !SERVED_ATTRIBUTE_TYPES.getOrDefault(variable.name(), Set.of()).contains(variable.type())) {
+                throw new IllegalArgumentException("unsupported entity attribute: " + variable.name());
             }
         }
     }
 
-    private static void rejectUnservedAttributes(String source) {
-        Matcher attributes = Pattern.compile(
-                "(?m)\\b(attribute|in)\\s+([A-Za-z_]\\w*)\\s+(\\w+)\\s*;").matcher(source);
-        while (attributes.find()) {
-            String type = attributes.group(2);
-            String name = attributes.group(3);
-            if (!SERVED_ATTRIBUTE_TYPES.getOrDefault(name, Set.of()).contains(type)) {
-                throw new IllegalArgumentException("unsupported entity attribute: " + name);
+    /** An attribute the interface scanner left behind is one it could not read as a served input. */
+    private static void rejectUnservedAttributeDeclarations(GlslTree tree) {
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (variable.qualified("attribute") && !(variable.plain()
+                    && ATTRIBUTE_DECLARATION_TYPES.contains(variable.type())
+                    && SERVED_ATTRIBUTE_TYPES.containsKey(variable.name()))) {
+                throw new IllegalArgumentException("unsupported entity attribute declaration");
             }
         }
     }
@@ -143,8 +132,18 @@ final class EntityVertexFeatureCheck {
         }
     }
 
-    /** The source without one matched declaration, to ask whether the rest of the stage reads a name. */
-    private static String withoutMatch(String source, Matcher match) {
-        return source.substring(0, match.start()) + source.substring(match.end());
+    /** Whether any identifier outside {@code declaration} is {@code name}: the rest of the stage reads it. */
+    private static boolean referencedOutside(GlslTree tree, String name, GlslTree.Declaration declaration) {
+        for (int index = 0; index < tree.tokens().size(); index++) {
+            if (!declaration.range().contains(index) && tree.tokens().get(index).identifier(name)) return true;
+        }
+        return false;
+    }
+
+    private static String firstIdentifier(GlslTree tree, Predicate<String> test) {
+        for (GlslLexer.Token token : tree.tokens()) {
+            if (token.kind() == GlslLexer.Kind.IDENTIFIER && test.test(token.text())) return token.text();
+        }
+        return null;
     }
 }

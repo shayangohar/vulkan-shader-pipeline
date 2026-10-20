@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,19 +21,15 @@ public final class PostTargetPlan {
     public static final int MAX_TARGET = 15;
     public static final int DEFAULT_FORMAT = 97;
 
-    private static final Pattern DRAWBUFFERS_DEFINE = Pattern.compile(
-            "(?m)^\\s*#define\\s+DRAWBUFFERS([0-9]+)\\s*$");
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");
     private static final Pattern DIRECTIVE_WORD = Pattern.compile(
             "(?i)\\b(?:DRAWBUFFERS|RENDERTARGETS)\\b");
     private static final Pattern FRAG_DATA = Pattern.compile(
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
-    /** {@code [layout(...)] out T name;}, the layout possibly spanning lines. */
-    private static final Pattern MODERN_OUTPUT = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\(([^;{}()]*)\\)\\s*)?out\\s+(float|int|uint|[iu]?vec[234])"
-                    + "\\s+([A-Za-z_]\\w*)\\s*;");
-    private static final Pattern LOCATION = Pattern.compile("\\blocation\\s*=\\s*(\\d+)");
+    private static final Pattern OUTPUT_TYPE = Pattern.compile("float|int|uint|[iu]?vec[234]");
+    private static final Pattern MIPMAP_DIRECTIVE_NAME = Pattern.compile(
+            "(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])MipmapEnabled");
 
     /** One modern fragment output: its declaration's source range, type, name and location. */
     public record ModernOutput(int start, int end, String type, String name, int location) {}
@@ -45,35 +40,36 @@ public final class PostTargetPlan {
      * the lowest location still free, in declaration order.
      */
     public static List<ModernOutput> modernOutputs(String source) {
-        Matcher matcher = MODERN_OUTPUT.matcher(source == null ? "" : source);
-        List<MatchResult> matches = new ArrayList<>();
+        String text = source == null ? "" : source;
+        GlslTree tree = GlslDeclarations.parseOrNull(text);
+        if (tree == null) return List.of();
+        List<GlslDeclarations.Variable> declared = new ArrayList<>();
         Set<Integer> explicit = new HashSet<>();
-        while (matcher.find()) {
-            matches.add(matcher.toMatchResult());
-            Integer location = explicitLocation(matcher.group(1));
-            if (location != null) explicit.add(location);
+        for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
+            List<String> qualifiers = output.qualifiers();
+            int start = tree.offset(output.declaration().range().start());
+            if ((qualifiers.equals(List.of("out")) || qualifiers.equals(List.of("layout", "out")))
+                    && OUTPUT_TYPE.matcher(output.type()).matches() && output.plain()
+                    && GlslDeclarations.indentationStart(text, start) >= 0) {
+                declared.add(output);
+                Integer location = GlslDeclarations.location(tree, output.declaration());
+                if (location != null) explicit.add(location);
+            }
         }
         List<ModernOutput> outputs = new ArrayList<>();
         int next = 0;
-        for (MatchResult match : matches) {
-            Integer location = explicitLocation(match.group(1));
+        for (GlslDeclarations.Variable output : declared) {
+            Integer location = GlslDeclarations.location(tree, output.declaration());
             if (location == null) {
                 while (explicit.contains(next)) next++;
                 location = next++;
             }
-            outputs.add(new ModernOutput(match.start(), match.end(), match.group(2), match.group(3), location));
+            int start = tree.offset(output.declaration().range().start());
+            outputs.add(new ModernOutput(GlslDeclarations.indentationStart(text, start),
+                    tree.offset(output.declaration().range().end()), output.type(), output.name(), location));
         }
         return List.copyOf(outputs);
     }
-
-    private static Integer explicitLocation(String layout) {
-        if (layout == null) return null;
-        Matcher location = LOCATION.matcher(layout);
-        return location.find() ? Integer.parseInt(location.group(1)) : null;
-    }
-    private static final Pattern MIPMAP_DIRECTIVE = Pattern.compile(
-            "(?m)^\\s*const\\s+bool\\s+(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])"
-                    + "MipmapEnabled\\s*=\\s*(true|false)\\s*;");
 
     private final String programName;
     private final List<Integer> targetSlots;
@@ -151,18 +147,13 @@ public final class PostTargetPlan {
     }
 
     /**
-     * The routes the DRAWBUFFERS defines, then the target comments, declare. A malformed directive,
-     * or a directive word that no directive parses from, is recorded and declares no route.
+     * The routes the target comments declare, as Iris reads them ({@code /* DRAWBUFFERS:01 *}{@code /},
+     * {@code /* RENDERTARGETS: 0,2 *}{@code /}). A malformed directive, or a directive word that no
+     * directive parses from, is recorded and declares no route.
      */
     private static List<List<Integer>> parseDirectives(String text, List<String> deviations) {
         List<List<Integer>> directives = new ArrayList<>();
         boolean directiveSeen = false;
-
-        Matcher define = DRAWBUFFERS_DEFINE.matcher(text);
-        while (define.find()) {
-            addDirective(parseDigits(define.group(1), deviations), directives, deviations);
-            directiveSeen = true;
-        }
 
         Matcher comment = TARGET_COMMENT.matcher(text);
         while (comment.find()) {
@@ -208,11 +199,20 @@ public final class PostTargetPlan {
      */
     private static List<Integer> parseMipmappedTargets(String source) {
         Set<Integer> targets = new TreeSet<>();
-        Matcher directive = MIPMAP_DIRECTIVE.matcher(source);
-        while (directive.find()) {
-            Integer target = PackResourcePlan.targetIndex(directive.group(1));
-            if (target == null || target < 0 || target > MAX_TARGET) continue;
-            if (Boolean.parseBoolean(directive.group(2))) {
+        GlslTree tree = GlslDeclarations.parseOrNull(source);
+        if (tree == null) return List.of();
+        for (GlslDeclarations.Variable directive : GlslDeclarations.variables(tree)) {
+            Matcher name = MIPMAP_DIRECTIVE_NAME.matcher(directive.name());
+            GlslTree.Range value = directive.declarator().initializer();
+            if (!name.matches() || !directive.qualifiers().equals(List.of("const"))
+                    || !directive.type().equals("bool") || value == null
+                    || directive.declaration().declarators().size() != 1) {
+                continue;
+            }
+            Integer target = PackResourcePlan.targetIndex(name.group(1));
+            String flag = tree.text(value).trim();
+            if (target == null || target < 0 || target > MAX_TARGET || !flag.matches("true|false")) continue;
+            if (Boolean.parseBoolean(flag)) {
                 targets.add(target);
             } else {
                 targets.remove(target);
