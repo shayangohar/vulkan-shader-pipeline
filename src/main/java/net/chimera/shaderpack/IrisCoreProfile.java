@@ -8,8 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static net.chimera.shaderpack.GlslLexer.stripComments;
 
@@ -260,11 +258,24 @@ final class IrisCoreProfile {
         return prepared.source();
     }
 
-    /** Inserts declarations after the #version and #extension lines that must lead the source. */
+    /**
+     * Inserts declarations after the #version and #extension lines that must lead the source, and
+     * the blank lines among them: after the last of the leading lines that end in a line break.
+     */
     static String insertAfterHeader(String source, String declarations) {
-        Matcher header = Pattern.compile("\\A(?:[ \\t]*(?:#version|#extension)[^\\n]*\\n|[ \\t]*\\r?\\n)*")
-                .matcher(source);
-        int insert = header.find() ? header.end() : 0;
+        Map<Integer, GlslDirectives.Line> directives = new HashMap<>();
+        for (GlslDirectives.Line line : GlslDirectives.lines(source)) directives.put(line.hash(), line);
+        int insert = 0;
+        for (int lineEnd = source.indexOf('\n'); lineEnd >= 0; lineEnd = source.indexOf('\n', insert)) {
+            int text = insert;
+            while (text < lineEnd && (source.charAt(text) == ' ' || source.charAt(text) == '\t')) text++;
+            GlslDirectives.Line directive = directives.get(text);
+            boolean blank = text == lineEnd || text == lineEnd - 1 && source.charAt(text) == '\r';
+            boolean header = directive != null && directive.adjacent()
+                    && (directive.is("version") || directive.is("extension"));
+            if (!blank && !header) break;
+            insert = lineEnd + 1;
+        }
         return source.substring(0, insert) + declarations + source.substring(insert);
     }
 }

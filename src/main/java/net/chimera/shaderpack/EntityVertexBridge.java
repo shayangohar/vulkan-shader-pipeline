@@ -452,7 +452,7 @@ public final class EntityVertexBridge {
             LegacyGlslConverter.TerrainVaryingLayout layout,
             List<UniformRegistry.UniformDeclaration> fragmentUniforms
     ) {
-        String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
+        String converted = LegacyGlslConverter.withoutVersionLines(src);
         converted = EntityDeclarations.removeEntityIdDeclarations(converted);
         converted = EntityDeclarations.removeEntityAttributes(converted);
         converted = replaceEntityVaryings(converted, layout, "out", true);

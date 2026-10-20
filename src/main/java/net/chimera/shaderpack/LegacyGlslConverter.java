@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -23,9 +24,64 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  * PostVertexBridge and FragmentConverter.
  */
 public final class LegacyGlslConverter {
-    static final Pattern VERSION_LINE = Pattern.compile("(?m)^\\s*#version\\s+\\S+.*$");
-    static final Pattern KNOWN_LEGACY_EXTENSIONS = Pattern.compile(
-            "(?im)^\\s*#extension\\s+GL_ARB_shader_texture_lod\\s*:\\s*(?:enable|require|disable)\\s*$\\r?\\n?");
+    /** The behaviours a removable GL_ARB_shader_texture_lod directive may ask for: the lookups are core. */
+    private static final Set<String> TEXTURE_LOD_BEHAVIOURS = Set.of("enable", "require", "disable");
+
+    /**
+     * {@code source} without its {@code #version} lines: each goes with the blank lines and
+     * indentation before it, its line break staying, each span starting where the previous ended.
+     */
+    static String withoutVersionLines(String source) {
+        return withoutDirectives(source, LegacyGlslConverter::isVersionLine, false, Integer.MAX_VALUE);
+    }
+
+    /** {@link #withoutVersionLines} for the first {@code #version} line only. */
+    static String withoutFirstVersionLine(String source) {
+        return withoutDirectives(source, LegacyGlslConverter::isVersionLine, false, 1);
+    }
+
+    /**
+     * {@code source} without its {@code #extension GL_ARB_shader_texture_lod} lines, whose texture
+     * lookups GLSL 1.30 made core: each goes with the blank lines before it and the whitespace
+     * after it through its last line break.
+     */
+    static String withoutKnownLegacyExtensions(String source) {
+        return withoutDirectives(source, LegacyGlslConverter::isTextureLodExtension, true, Integer.MAX_VALUE);
+    }
+
+    /** {@code #version} written as one word, with a version after it. */
+    private static boolean isVersionLine(GlslDirectives.Line line) {
+        return line.is("version") && line.adjacent() && !line.words().isEmpty();
+    }
+
+    /** {@code #extension GL_ARB_shader_texture_lod : enable|require|disable}, in any case, alone on its line. */
+    private static boolean isTextureLodExtension(GlslDirectives.Line line) {
+        List<String> words = line.words();
+        return line.keyword().equalsIgnoreCase("extension") && line.adjacent() && words.size() == 3
+                && words.get(0).equalsIgnoreCase("GL_ARB_shader_texture_lod") && words.get(1).equals(":")
+                && TEXTURE_LOD_BEHAVIOURS.contains(words.get(2).toLowerCase(Locale.ROOT)) && line.rest().isBlank();
+    }
+
+    /**
+     * Removes up to {@code limit} directive lines {@code removed} accepts, each from the first line
+     * start of the whitespace before it; through the trailing whitespace and last line break when
+     * {@code withTrailingWhitespace}, else to its line's end.
+     */
+    private static String withoutDirectives(String source, Predicate<GlslDirectives.Line> removed,
+                                            boolean withTrailingWhitespace, int limit) {
+        if (source == null) return null;
+        List<GlslDeclarations.TextEdit> edits = new ArrayList<>();
+        int previousEnd = 0;
+        for (GlslDirectives.Line line : GlslDirectives.lines(source)) {
+            if (edits.size() == limit || !removed.test(line)) continue;
+            int start = GlslDeclarations.lineStartBefore(source, line.hash(), previousEnd);
+            if (start < 0) continue;
+            previousEnd = withTrailingWhitespace
+                    ? GlslDeclarations.tailEnd(source, line.wordsEnd(), TAIL_PRECISION) : line.end();
+            edits.add(new GlslDeclarations.TextEdit(start, previousEnd, ""));
+        }
+        return edits.isEmpty() ? source : GlslDeclarations.apply(source, edits);
+    }
 
     // What follows a rewritten declaration on its line, as each rewrite's span has always ended: the
     // tree finds the declarations, and these match only the trivia after one.
@@ -454,9 +510,15 @@ public final class LegacyGlslConverter {
         if (declarations.length() == 0) {
             return source;
         }
-        return source.matches("(?s)^\\s*#version\\b.*")
+        return startsWithVersion(source)
                 ? insertAfterFirstLine(source, declarations.toString())
                 : declarations + source;
+    }
+
+    /** Whether the source's first text, after whitespace, is a {@code #version} directive. */
+    private static boolean startsWithVersion(String source) {
+        GlslDirectives.Line version = GlslDirectives.version(source);
+        return version != null && version.adjacent() && source.substring(0, version.hash()).isBlank();
     }
 
     /**

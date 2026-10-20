@@ -238,6 +238,25 @@ final class GlslDeclarationsTest {
         assertEquals("vec4(MidTexCoord, 0.0, 1.0)", EntityDeclarations.midTexCoordValue("in vec4 mc_midTexCoord;\n"));
     }
 
+    /**
+     * Directives are read from tokens: a #version inside a comment is not one, a line comment may
+     * follow one, and each removal takes the blank lines before its line.
+     */
+    @Test
+    void directivesAreReadFromTokens() {
+        String source = "/*\n#version 330\n*/\n#  VERSION 120e // fixture\n\n#extension GL_ARB_shader_texture_lod : "
+                + "enable \n\n  void main() {}\n";
+        assertEquals(List.of(new GlslVersion(120, null)), GlslVersion.all(source));
+        assertEquals("/*\n#version 330\n*/\n#  VERSION 120e // fixture\n  void main() {}\n",
+                LegacyGlslConverter.withoutKnownLegacyExtensions(source));
+        String modern = "\n\n#version 460\nlayout(location = 0) out vec4 color;\n";
+        assertEquals("\nlayout(location = 0) out vec4 color;\n", LegacyGlslConverter.withoutVersionLines(modern));
+        assertEquals("#version 460\n#extension GL_ARB_gpu_shader5 : enable\nuniform float a;\n"
+                        + "layout(location = 0) out vec4 color;\n",
+                IrisCoreProfile.insertAfterHeader("#version 460\n#extension GL_ARB_gpu_shader5 : enable\n"
+                        + "layout(location = 0) out vec4 color;\n", "uniform float a;\n"));
+    }
+
     /** A host layout leaves mid-coordinates and tangents unbound however their declarations are written. */
     @Test
     void unboundMaterialAttributesReadAsGlDefaults() {

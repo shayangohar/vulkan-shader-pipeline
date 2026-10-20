@@ -162,9 +162,8 @@ final class TerrainVertexBridge {
         // plan can inspect it. The generated bridge owns the final
         // directive, so remove the prepared copy before composing the
         // executable vertex shader.
-        String converted = LegacyGlslConverter.VERSION_LINE.matcher(removeShadowAttributes(
-                        removeTerrainAttributes(removeModernTerrainInputs(vertex, layout), shadowStage), shadowStage))
-                .replaceAll("");
+        String converted = LegacyGlslConverter.withoutVersionLines(removeShadowAttributes(
+                        removeTerrainAttributes(removeModernTerrainInputs(vertex, layout), shadowStage), shadowStage));
         Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
         if (shadowStage) {
             inputReplacements.putAll(shadowInputReplacements(vertex, entityInputs));
@@ -425,7 +424,7 @@ final class TerrainVertexBridge {
             LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
                     locations);
 
-            String converted = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceFirst("");
+            String converted = LegacyGlslConverter.withoutFirstVersionLine(src);
             converted = withoutEntityAttributes(converted);
             converted = replaceTerrainVaryings(converted, layout, "out");
             converted = converted.replaceAll("\\bgl_Vertex\\b", "chimeraVertexValue()");
@@ -606,8 +605,8 @@ final class TerrainVertexBridge {
      */
     static String normalizeTo460(String source, String stage) {
         GlslVersion.requireSupported(source, stage, true);
-        String result = LegacyGlslConverter.VERSION_LINE.matcher(source).replaceAll("");
-        result = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
+        String result = LegacyGlslConverter.withoutVersionLines(source);
+        result = LegacyGlslConverter.withoutKnownLegacyExtensions(result);
         result = LegacyGlslConverter.withoutPrecisionStatements(result);
         result = LegacyGlslConverter.withoutInterfaceLayouts(result);
         result = GlslTokenRewriter.replaceIdentifiers(result, Map.of("lowp", "", "mediump", "", "highp", ""));

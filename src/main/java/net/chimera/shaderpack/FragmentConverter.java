@@ -244,7 +244,7 @@ public final class FragmentConverter {
             src = GlslTokenRewriter.removeUnreachableFunctions(src, usage);
             if (!geometryStage) {
                 PostVertexBridge.validatePostVersion(src);
-                src = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
+                src = LegacyGlslConverter.withoutVersionLines(src);
                 return;
             }
             GlslVersion version = GlslVersion.first(src);
@@ -252,7 +252,7 @@ public final class FragmentConverter {
                     || (stage.shadowPass() && !TerrainDeclarations.modern(
                             src, TerrainDeclarations.MODERN_STORAGES).isEmpty());
             // One version line for Vulkan, where an authored profile means nothing.
-            src = LegacyGlslConverter.VERSION_LINE.matcher(src).replaceAll("");
+            src = LegacyGlslConverter.withoutVersionLines(src);
             if (modern) {
                 src = "#version 460\n" + src;
             }
@@ -263,7 +263,7 @@ public final class FragmentConverter {
             Map<String, String> packConstants = request.packConstants();
             src = LegacyGlslConverter.removePackMetadataConstants(src);
             src = LegacyGlslConverter.stripUnusedConsumedConsts(src, packConstants);
-            src = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(src).replaceAll("");
+            src = LegacyGlslConverter.withoutKnownLegacyExtensions(src);
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
                 src = EntityDeclarations.removeEntityIdDeclarations(src, interfacePlan);

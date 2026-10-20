@@ -27,8 +27,8 @@ final class PostVertexBridge {
             throw new IllegalArgumentException("post source is missing");
         }
         GlslVersion.requireSupported(source, "modern post", true);
-        String result = LegacyGlslConverter.VERSION_LINE.matcher(source).replaceAll("");
-        result = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(result).replaceAll("");
+        String result = LegacyGlslConverter.withoutVersionLines(source);
+        result = LegacyGlslConverter.withoutKnownLegacyExtensions(result);
         result = LegacyGlslConverter.withoutPrecisionStatements(result);
         result = withoutInputLayouts(result);
         result = GlslTokenRewriter.replaceIdentifiers(result, Map.of(
@@ -132,7 +132,7 @@ final class PostVertexBridge {
             }
             Map<String, Integer> locations = outputLocations(vertexInterface, match);
             converted = attributesAsInputs(converted);
-            converted = GlslInterfaceScanner.rewrite(LegacyGlslConverter.VERSION_LINE.matcher(converted).replaceAll(""),
+            converted = GlslInterfaceScanner.rewrite(LegacyGlslConverter.withoutVersionLines(converted),
                     true,
                     declaration -> {
                         // A fullscreen pass feeds no vertex attributes; Iris leaves an unread
@@ -145,7 +145,7 @@ final class PostVertexBridge {
                         return interfaceDeclaration(location, declaration, "out");
                     });
             converted = UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
-            converted = LegacyGlslConverter.KNOWN_LEGACY_EXTENSIONS.matcher(converted).replaceAll("");
+            converted = LegacyGlslConverter.withoutKnownLegacyExtensions(converted);
             converted = LegacyGlslConverter.removePackMetadataConstants(converted);
             converted = LegacyGlslConverter.stripUnusedConsumedConsts(converted, packConstants);
             converted = LegacyGlslConverter.injectPackConstants(converted, packConstants);
