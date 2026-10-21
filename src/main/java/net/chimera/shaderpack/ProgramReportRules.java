@@ -176,6 +176,10 @@ final class ProgramReportRules {
                 && !advancedResourcesArePlanned(inventory.name, packPlan)) {
             deviations.add("ADVANCED_RESOURCE_UNSUPPORTED");
         }
+        if (packPlan != null && packPlan.advancedResources() != null) {
+            packPlan.advancedResources().unservedImages(inventory.name)
+                    .forEach(image -> deviations.add("ADVANCED_IMAGE_UNSERVED:" + image));
+        }
         // PackPlanBuilder already resolved standard aliases and pack-owned
         // sampler slots through the shared interface plan. Keep the legacy
         // scan only for compatibility callers that do not have a plan.
@@ -589,7 +593,7 @@ final class ProgramReportRules {
             "GBUFFER_TARGET_FEEDBACK:", "PROGRAM_", "SOURCE_INCLUDE_",
             "TRANSLATION_UNSUPPORTED:", "STORAGE_BUFFER_", "POST_VARYING_UNSUPPORTED:",
             "ALPHA_TEST_MALFORMED:", "LEGACY_FOG_FIELD_UNSUPPORTED:", "SOURCE_NORMALIZATION_FAILED:",
-            "PREPROCESSOR_");
+            "PREPROCESSOR_", "ADVANCED_IMAGE_UNSERVED:");
 
     /** Members of a severe family that only record a fact. */
     static final List<String> BENIGN_PREFIXES = List.of(

@@ -76,14 +76,14 @@ final class GraphicsImageScan {
         // The pattern opens with optional parts, so it is tried at every character; a stage
         // without an image3D declaration (most of them) cannot match at all.
         // Vulkan GLSL needs a binding for every opaque declaration,
-        // even one in an unreachable helper or one never referenced
-        // (Solas declares voxelSampler in terrain but only the shadow
-        // pass writes voxel_img; Pegasus's gbuffers declare
-        // cimage3_colored_light and only voxelizing writes it).  Give
-        // every declared pack image and every declared or referenced
-        // pack image sampler a descriptor.  Runtime eligibility
-        // remains based on the live uses in usesAdvancedResource, and
-        // only a live store makes a program the image's producer.
+        // even one only an unreachable helper reads (Solas declares
+        // voxelSampler in terrain but only the shadow pass writes
+        // voxel_img).  An image declaration nothing reads is already
+        // gone (ProgramStageSources.withoutInactiveImages).  Give every
+        // declared pack image and every declared or referenced pack
+        // image sampler a descriptor.  Runtime eligibility remains
+        // based on the live uses in usesAdvancedResource, and only a
+        // live store makes a program the image's producer.
         Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image") ? source : "");
         while (image.find()) {
             String symbol = image.group(2);
@@ -93,7 +93,8 @@ final class GraphicsImageScan {
         Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
         imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(source));
         for (String sampler : imageSamplers) {
-            addReader(program, stage, sampler);
+            addReader(program, stage, sampler, usage.referencedSamplers().contains(sampler)
+                    || GlslTokenRewriter.identifierCount(source, sampler) > 1);
         }
         if (source.contains("IRIS_FEATURE_CUSTOM_IMAGES")
                 && source.contains("OPTIFINE_ACT_ERROR")) {
@@ -102,9 +103,8 @@ final class GraphicsImageScan {
     }
 
     /**
-     * A storage image declaration of a pack image, bound to its sampler's selector. A declaration
-     * the stage never references is inactive, as GL leaves it: one of an image Chimera does not
-     * create is dropped at preparation (PackDescriptorContracts) instead of refusing the program.
+     * A storage image declaration of a pack image, bound to its sampler's selector. An image
+     * Chimera does not create refuses the program only where the stage references it.
      */
     private void addWriter(String program, String stage, String glslType, String symbol, boolean live,
                            boolean referenced) {
@@ -119,10 +119,13 @@ final class GraphicsImageScan {
         if (live) producedImages.add(spec.name());
     }
 
-    /** A sampler of a supported pack image, bound to its selector as the image's storage type. */
-    private void addReader(String program, String stage, String sampler) {
+    /**
+     * A sampler of a pack image, bound to its selector as the image's storage type. As for a storage
+     * declaration, an unread sampler of an image Chimera does not create is inactive, not a refusal.
+     */
+    private void addReader(String program, String stage, String sampler, boolean referenced) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySampler(images, sampler);
-        if (spec == null) return;
+        if (spec == null || !spec.supported() && !referenced) return;
         int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         readers.computeIfAbsent(program, ignored -> new ArrayList<>())

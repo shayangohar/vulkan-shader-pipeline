@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
 
 /**
  * A program's stage sources as planning reads them: its prepared snapshots, or its executable
@@ -16,7 +17,8 @@ final class ProgramStageSources {
 
     /** The stages of a program planned under {@code name}; post and terrain-material stages normalized. */
     static Map<String, PreparedShaderSource> prepare(PackProgram program, String name, boolean terrainMaterial) {
-        Map<String, PreparedShaderSource> prepared = flattenInterfaceBlocks(preparedStages(program));
+        Map<String, PreparedShaderSource> prepared =
+                withoutInactiveImages(flattenInterfaceBlocks(preparedStages(program)));
         if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.POST) {
             return normalizeModernPostStages(prepared);
         }
@@ -56,6 +58,33 @@ final class ProgramStageSources {
             flattened.blocks().forEach(block -> deviations.add("INTERFACE_BLOCK_FLATTENED:" + block));
             result.put(entry.getKey(), new PreparedShaderSource(prepared.stage(), prepared.relativePath(),
                     flattened.source(), prepared.dependencies(), deviations));
+        }
+        return result;
+    }
+
+    /**
+     * Each stage without the image declarations nothing in it reads. GL leaves such a uniform
+     * inactive, and Vulkan GLSL would need a binding for it: Reverie's programs all declare its
+     * screen-sized images (image0-2, water_depth_min, atm_image) and most read none of them. Line
+     * breaks stay, so line numbers do not move.
+     */
+    private static Map<String, PreparedShaderSource> withoutInactiveImages(Map<String, PreparedShaderSource> stages) {
+        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
+        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
+            PreparedShaderSource prepared = entry.getValue();
+            String source = prepared.source();
+            if (source == null || !source.contains("image")) continue;
+            Matcher declaration = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source);
+            StringBuilder active = new StringBuilder();
+            while (declaration.find()) {
+                String kept = GlslTokenRewriter.identifierCount(source, declaration.group(2)) > 1
+                        ? declaration.group() : declaration.group().replaceAll("[^\\r\\n]", "");
+                declaration.appendReplacement(active, Matcher.quoteReplacement(kept));
+            }
+            String rewritten = declaration.appendTail(active).toString();
+            if (rewritten.equals(source)) continue;
+            result.put(entry.getKey(), new PreparedShaderSource(prepared.stage(), prepared.relativePath(),
+                    rewritten, prepared.dependencies(), prepared.deviations()));
         }
         return result;
     }

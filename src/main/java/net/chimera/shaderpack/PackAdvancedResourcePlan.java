@@ -726,7 +726,7 @@ public final class PackAdvancedResourcePlan {
     /**
      * Inventory real storage blocks, and images of real opaque types that the stage references, not
      * image-prefixed identifiers. An image the stage only declares is inactive, as GL leaves it,
-     * and preparation drops its declaration (PackDescriptorContracts).
+     * and stage preparation drops its declaration (ProgramStageSources.withoutInactiveImages).
      */
     static boolean containsAdvancedDeclarations(String source) {
         if (containsStorageBlock(source)) return true;
@@ -790,7 +790,14 @@ public final class PackAdvancedResourcePlan {
      * program on its own (GraphicsImageScan records an image it cannot bind).
      */
     public boolean imagesServable(String program) {
-        return deviations.stream().noneMatch(value -> value.startsWith(UNSERVED_IMAGE + program + ":"));
+        return unservedImages(program).isEmpty();
+    }
+
+    /** The pack images the program reads that Chimera does not create or cannot bind. */
+    public List<String> unservedImages(String program) {
+        String prefix = UNSERVED_IMAGE + program + ":";
+        return deviations.stream().filter(value -> value.startsWith(prefix))
+                .map(value -> value.substring(prefix.length())).toList();
     }
 
     /**

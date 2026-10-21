@@ -135,21 +135,26 @@ final class AdvancedImagePlanTest {
     }
 
     /**
-     * A storage image a program declares but never uses still needs a descriptor in Vulkan GLSL.
-     * Pegasus's gbuffers declare cimage3_colored_light and only voxelizing writes it; GL compiles
-     * the unused declaration, so Iris runs the program.
+     * A storage image a stage reads only in a helper main never calls still needs a descriptor:
+     * Vulkan GLSL compiles the helper. One nothing reads is inactive, as GL leaves it, and its
+     * declaration is dropped (Pegasus's gbuffers declare cimage3_colored_light, which only
+     * voxelizing writes).
      */
     @Test
-    void anUnusedImageDeclarationIsBoundWithoutAUse(@TempDir Path root) throws Exception {
+    void anImageOnlyADeadHelperReadsIsBoundAndAnUnreadOneIsDropped(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"),
-                "image.light = lightSampler RGBA RGBA8 BYTE false false 16 16 16\n");
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                image.light = lightSampler RGBA RGBA8 BYTE false false 16 16 16
+                image.spare = spareSampler RGBA RGBA8 BYTE false false 16 16 16
+                """);
         writeVolumeReader(shaders, "composite", "lightSampler");
         Files.writeString(shaders.resolve("composite.fsh"), """
                 #version 430 compatibility
                 uniform sampler3D lightSampler;
                 layout (rgba8) uniform image3D light;
+                layout (rgba8) uniform image3D spare;
                 in vec2 uv;
+                vec4 neverCalled() { return imageLoad(light, ivec3(0)); }
                 void main() { gl_FragData[0] = texture(lightSampler, vec3(uv, 0.5)); }
                 """);
         PackPlan plan = PackProbe.analyze(root).plan();
@@ -159,7 +164,8 @@ final class AdvancedImagePlanTest {
         PackProgramPlan composite = plan.program("composite");
         String fragment = PackDescriptorContracts.bindStorageImages(composite.convertedFragment(), "composite",
                 advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
-        assertTrue(fragment.matches("(?s).*layout\\(rgba8, binding = \\d+\\) uniform image3D light;.*"), fragment);
+        assertTrue(fragment.matches("(?s).*layout\\(rgba8, binding = \\d+\\) uniform image3D light;.*")
+                && !fragment.contains("image3D spare"), fragment);
     }
 
     /**
@@ -178,12 +184,17 @@ final class AdvancedImagePlanTest {
                 in vec2 uv;
                 void main() { gl_FragData[0] = vec4(uv, 0.0, 1.0)%s; }
                 """;
-        for (String program : List.of("composite", "composite1")) {
+        for (String program : List.of("composite", "composite1", "composite2")) {
             writeVolumeReader(shaders, program, "unused");
         }
         Files.writeString(shaders.resolve("composite.fsh"), fragment.formatted(""));
         Files.writeString(shaders.resolve("composite1.fsh"), fragment.formatted(" + imageLoad(screen, ivec2(0))"));
-        PackPlan plan = PackProbe.analyze(root).plan();
+        writeVolumeReader(shaders, "composite2", "screenSampler");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        assertTrue(!analysis.plan().shouldAttempt("composite2") && analysis.report().program("composite2")
+                        .deviations().contains("ADVANCED_IMAGE_UNSERVED:screen"),
+                "reading the sampler of an image Chimera does not create runs nothing in its place");
+        PackPlan plan = analysis.plan();
         PackAdvancedResourcePlan advanced = plan.advancedResources();
         assertTrue(plan.shouldAttempt("composite"), advanced.deviations().toString());
         String declaredOnly = PackDescriptorContracts.bindStorageImages(plan.program("composite").convertedFragment(),
