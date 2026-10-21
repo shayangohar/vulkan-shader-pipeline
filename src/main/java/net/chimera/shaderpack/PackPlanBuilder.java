@@ -135,15 +135,9 @@ public final class PackPlanBuilder {
             this.config = config;
             this.resolution = resolution;
             this.advancedResources = advancedResources;
-            Map<String, PreparedShaderSource> prepared = preparedStages(program);
-            if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.POST) {
-                prepared = normalizeModernPostStages(prepared);
-            } else if (isTerrainMaterialFamily(name)) {
-                prepared = normalizeModernTerrainStages(prepared);
-            }
-            this.stages = prepared;
-            this.fragment = source(stages, "fragment", program.executableFragmentSource());
-            this.vertex = source(stages, "vertex", program.executableVertexSource());
+            this.stages = ProgramStageSources.prepare(program, name, isTerrainMaterialFamily(name));
+            this.fragment = ProgramStageSources.source(stages, "fragment", program.executableFragmentSource());
+            this.vertex = ProgramStageSources.source(stages, "vertex", program.executableVertexSource());
             this.familyAdapter = FamilyAdapterRegistry.forProgram(name);
             this.terrainMaterial = TerrainMaterialPlan.forProgram(name, vertex, fragment);
             this.preparedSnapshot = !program.preparedSources().isEmpty();
@@ -407,7 +401,7 @@ public final class PackPlanBuilder {
             return FamilyAdapterRegistry.isExecutableFamily(name)
                     && fragment != null
                     && (!needsVertex() || vertex != null)
-                    && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
+                    && stages.values().stream().allMatch(ProgramStageSources::preparedSuccessfully)
                     && interfacePlan.executable()
                     && ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config).isEmpty()
                     && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
@@ -872,100 +866,6 @@ public final class PackPlanBuilder {
                 || name.equals("gbuffers_water");
     }
 
-    private static Map<String, PreparedShaderSource> preparedStages(PackProgram program) {
-        Map<String, PreparedShaderSource> result = new TreeMap<>(program.preparedSources());
-        if (result.isEmpty()) {
-            if (program.fragmentSource() != null) {
-                result.put("fragment", new PreparedShaderSource("fragment",
-                        relative(program.sourceRoot(), program.fragmentPath()),
-                        program.executableFragmentSource(), List.of(), List.of()));
-            }
-            if (program.vertexSource() != null) {
-                result.put("vertex", new PreparedShaderSource("vertex",
-                        relative(program.sourceRoot(), program.vertexPath()),
-                        program.executableVertexSource(), List.of(), List.of()));
-            }
-        }
-        return result;
-    }
-
-    private static Map<String, PreparedShaderSource> normalizeModernPostStages(
-            Map<String, PreparedShaderSource> stages
-    ) {
-        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
-        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
-            PreparedShaderSource prepared = entry.getValue();
-            if (prepared.source() == null || !hasModernVersion(prepared.source())) {
-                continue;
-            }
-            String normalized = PostVertexBridge.normalizeModernPost(prepared.source());
-            List<String> deviations = new ArrayList<>(prepared.deviations());
-            deviations.add("MODERN_GLSL_TRANSLATED");
-            result.put(entry.getKey(), new PreparedShaderSource(
-                    prepared.stage(), prepared.relativePath(), normalized,
-                    prepared.dependencies(), deviations));
-        }
-        return result;
-    }
-
-    private static Map<String, PreparedShaderSource> normalizeModernTerrainStages(
-            Map<String, PreparedShaderSource> stages
-    ) {
-        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
-        boolean extended = stages.values().stream().anyMatch(value ->
-                value.source() != null && TerrainVertexBridge.requiresExtendedTerrain(value.source()));
-        if (!extended) {
-            return result;
-        }
-        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
-            PreparedShaderSource prepared = entry.getValue();
-            if (prepared.source() == null || !TerrainVertexBridge.requiresExtendedTerrain(prepared.source())) {
-                continue;
-            }
-            String normalized;
-            try {
-                normalized = TerrainVertexBridge.normalizeModernTerrain(prepared.source());
-            } catch (IllegalArgumentException unsupportedVersion) {
-                // Leave unsupported versions authored so the program plan can
-                // record a per-program fallback instead of rejecting the pack.
-                continue;
-            }
-            List<String> deviations = new ArrayList<>(prepared.deviations());
-            deviations.add("MODERN_GLSL_TRANSLATED");
-            result.put(entry.getKey(), new PreparedShaderSource(
-                    prepared.stage(), prepared.relativePath(), normalized,
-                    prepared.dependencies(), deviations));
-        }
-        return result;
-    }
-
-    /** Post stages in modern syntax: GLSL 140 and later, where in/out and layouts appear. */
-    private static boolean hasModernVersion(String source) {
-        GlslVersion version = GlslVersion.first(source);
-        return version != null && version.supported() && version.number() >= 140;
-    }
-
-    private static String source(
-            Map<String, PreparedShaderSource> stages,
-            String stage,
-            String fallback
-    ) {
-        PreparedShaderSource prepared = stages.get(stage);
-        return prepared == null ? fallback : prepared.source();
-    }
-
-    private static String relative(Path root, Path path) {
-        if (root == null || path == null) {
-            return "";
-        }
-        try {
-            return root.toAbsolutePath().normalize()
-                    .relativize(path.toAbsolutePath().normalize())
-                    .toString().replace('\\', '/');
-        } catch (RuntimeException ignored) {
-            return "";
-        }
-    }
 
     /** The program's samplers as its vertex stage declares them, at the fragment stage's bindings. */
     private static EntityVertexBridge.VertexSamplerPlan vertexSamplerPlan(
@@ -985,15 +885,5 @@ public final class PackPlanBuilder {
         return plan.effective(stage).samplers().stream()
                 .mapToInt(UniformRegistry.SamplerBinding::slot)
                 .toArray();
-    }
-
-    private static boolean preparedSuccessfully(PreparedShaderSource source) {
-        if (source.source() == null) {
-            return false;
-        }
-        return source.deviations().stream().noneMatch(value ->
-                ((value.startsWith("SOURCE_") || value.startsWith("PREPROCESSOR_"))
-                        && !ShaderSourcePreprocessor.isWarning(value))
-                        || value.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:"));
     }
 }
