@@ -127,9 +127,10 @@ public final class PackProbe {
             addPackDeviations(packPlan);
             ConformanceReport report = conformanceReport();
             inventoryAliases(packPlan);
+            PassComputePlan passComputes = PassComputePlan.build(packPlan, shadersDir);
             for (Inventory inventory : inventories.values()) {
                 report.addProgram(ProgramReportRules.toProgram(inventory, packConfig,
-                        packPlan.program(inventory.name), resourcePlan, packPlan));
+                        packPlan.program(inventory.name), resourcePlan, packPlan, passComputes));
             }
             return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
         }

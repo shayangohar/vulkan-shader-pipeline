@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -85,6 +86,15 @@ public final class PackFrameSchedulePlan {
 
     public static PackFrameSchedulePlan build(List<PackProgramPlan> programs,
                                               PackTargetGraphPlan graph) {
+        return build(programs, graph, List.of());
+    }
+
+    /**
+     * The schedule with a stage for each pass in {@code computePasses} that has no program: Iris
+     * runs such a pass's computes at its place (CompositeRenderer.ComputeOnlyPass), drawing nothing.
+     */
+    public static PackFrameSchedulePlan build(List<PackProgramPlan> programs, PackTargetGraphPlan graph,
+                                              Collection<String> computePasses) {
         List<PostStage> stages = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
         boolean earlyDepth0 = false;
@@ -105,6 +115,7 @@ public final class PackFrameSchedulePlan {
                 deviations.add("SCHEDULE_STAGE_UNAVAILABLE:" + program.name());
             }
         }
+        addComputeOnlyStages(stages, computePasses, deviations);
 
         if (depth1) deviations.add("SCHEDULE_DEPTH_TEX1_BEFORE_TRANSLUCENT");
         if (depth2) deviations.add("SCHEDULE_DEPTH_TEX2_BEFORE_HAND");
@@ -163,6 +174,22 @@ public final class PackFrameSchedulePlan {
             deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
         }
         return window;
+    }
+
+    /**
+     * A stage for each compute pass no program scheduled, in the window its name gives a program
+     * (deferred computes run where deferred passes do), then every stage in pass order.
+     */
+    private static void addComputeOnlyStages(List<PostStage> stages, Collection<String> computePasses,
+                                             List<String> deviations) {
+        for (String pass : computePasses) {
+            if (stages.stream().anyMatch(stage -> stage.name().equals(pass))) continue;
+            PostWindow window = pass.startsWith("prepare") ? PostWindow.PREPARE
+                    : pass.startsWith("deferred") ? PostWindow.EARLY : PostWindow.LATE;
+            stages.add(new PostStage(pass, window, true, List.of(), List.of()));
+            deviations.add("SCHEDULE_COMPUTE_ONLY_PASS:" + pass);
+        }
+        stages.sort(Comparator.comparing(PostStage::name, PostTargetPlan.programComparator()));
     }
 
     /** A pass's stage in the schedule: the targets its graph step reads and writes, and whether it runs. */

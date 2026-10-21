@@ -114,6 +114,7 @@
   "gbuffers_terrain.vsh": "1c08f0b50f659641 a853bafb466222c8",
   "gbuffers_weather.fsh": "fc1adf98c9d93135 6102995349790146",
   "gbuffers_weather.vsh": "289a186b716f14a2 17bf2d7e5bc72452",
+  "prepare.csh": "9a62da702895c740 3f69bc1733a8ea62",
   "shadow.fsh": "b6d41104b50c9b58 ec9dd38a95702e55",
   "shadow.vsh": "6f6f02cfbcd64833 0421fcdf70e2e43e",
   "shadow_basic.fsh": "ec91a08b8f8b9603 64b50237a889e5a6",

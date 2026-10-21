@@ -72,6 +72,9 @@
   "gbuffers_terrain.vsh": "fe0a03e97002b1f5 69c29c2993001969",
   "gbuffers_weather.fsh": "50abdfa8c5eece52 e70b80b94a2a8c76",
   "gbuffers_weather.vsh": "774fe53610681d9e e848181f4d23cc69",
+  "prepare.csh": "fdb4a68376ab7822 551fc17523300bb3",
+  "prepare_a.csh": "d1350a4854aedcfe 2867acfc06d1a434",
+  "prepare_b.csh": "f551b66b9d91cd6e a0387c2fa6dfa199",
   "text_bg.fsh": "449449c84d8963cb 8a179214ae01a94c",
   "text_bg.vsh": "2d8eea54ed8b684e c789a90f3c718d20"
 }

@@ -148,8 +148,7 @@
     "gbuffers_damagedblock",
     "gbuffers_textured",
     "gbuffers_textured_lit",
-    "gbuffers_water",
-    "prepare"
+    "gbuffers_water"
   ],
   "Glimmer-v1.5.2.zip": [
     "clrwl_gbuffers",
@@ -242,9 +241,6 @@
     "gbuffers_textured_lit",
     "gbuffers_water",
     "physics_ocean",
-    "prepare",
-    "prepare_a",
-    "prepare_b",
     "shadow",
     "shadow_basic",
     "shadow_block",
@@ -306,10 +302,6 @@
     "deferred11",
     "deferred13",
     "deferred4",
-    "deferred5",
-    "deferred6",
-    "deferred7",
-    "deferred8",
     "dh_generic",
     "dh_shadow",
     "dh_terrain",
@@ -325,7 +317,6 @@
     "physics_ocean",
     "physics_ocean_shadow",
     "prepare2",
-    "prepare3",
     "shadow",
     "shadow_basic",
     "shadow_block",

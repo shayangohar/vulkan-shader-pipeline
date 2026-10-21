@@ -49,6 +49,10 @@
   "deferred10.vsh": "730fe1632e1e01f0 ea365eef33c60cfb",
   "deferred12.fsh": "92cbbe9866ad40e1 dc4e9401ac986102",
   "deferred12.vsh": "093e4f77f90a9503 36f48591c0fbdfde",
+  "deferred5.csh": "9762effc59534d39 4d0dbdef2f791df8",
+  "deferred6.csh": "78e4bcc40bc4ab13 2bea412819f0a719",
+  "deferred7.csh": "e2cc23506e12bcac e9151f5de440f9cd",
+  "deferred8.csh": "0493f470065d6578 112f98b97abd7793",
   "final.fsh": "9ed724a7778b3a44 8c2117191c2b7e67",
   "final.vsh": "91e2c64ac0749907 b65e7d52236bccdc",
   "gbuffers_armor_glint [hand glint variant].vsh": "3884ea08b1f5b0ba a74f3868a47503c5",
@@ -93,5 +97,6 @@
   "gbuffers_spidereyes.fsh": "de7c11e72ac85535 17399fcd18423aeb",
   "gbuffers_spidereyes.vsh": "2e260a63eb0e5d2f e949d12339b5ed6e",
   "gbuffers_weather.fsh": "864ccd88c035df15 0408555d23f50bb1",
-  "gbuffers_weather.vsh": "27368976d8bf9d63 813f7304c1d643e9"
+  "gbuffers_weather.vsh": "27368976d8bf9d63 813f7304c1d643e9",
+  "prepare3.csh": "807ab55ddd6b1455 316e69fc61c8a8e2"
 }

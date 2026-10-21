@@ -174,9 +174,12 @@ final class PackPostChain {
             ChimeraMainPass.preparePackFullscreenState();
             boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
-                if (!scheduledIn(stage, window) || !stageRunnable(stage)) {
+                if (!scheduledIn(stage, window)) continue;
+                if (stage.post() == null && computeOnly(stage.name())) {
+                    runComputeOnlyStage(commandBuffer, hdrColor, stage);
                     continue;
                 }
+                if (!stageRunnable(stage)) continue;
                 if (!tripwireSwept) {
                     tripwireSwept = true;
                     sweepNanTripwire(commandBuffer, "before " + window);
@@ -219,6 +222,16 @@ final class PackPostChain {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Runs a pass that has computes and no program: its computes over the images the chain holds
+     * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
+     */
+    private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
+        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, pass.packPostTargets.sourceImages(),
+                hdrColor.width, hdrColor.height);
+        if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
     }
 
     /** Draws one post stage into its graph targets; a failure aborts the targets it opened and rethrows. */
@@ -590,7 +603,7 @@ final class PackPostChain {
                         pass.coverage.packCoveragePlan.deviations());
             }
             pass.packFrameSchedule = PackFrameSchedulePlan.build(
-                    pass.packPlan.activePrograms(), pass.packTargetGraph);
+                    pass.packPlan.activePrograms(), pass.packTargetGraph, computePasses());
             pass.packNeedsHdrDepth = pass.packTargetGraph.depth().any();
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
             pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph,
@@ -635,6 +648,21 @@ final class PackPostChain {
             }
             pass.logPackRuntimeFailure("post-resource-allocation", e);
         }
+    }
+
+    /** The passes the session's loaded computes run before; one without a program runs only them. */
+    private Set<String> computePasses() {
+        return pass.packPassComputes == null ? Set.of() : pass.packPassComputes.passes();
+    }
+
+    /**
+     * Whether a pass runs only its computes: it has some, and no program or one the pack switches
+     * off (Iris builds a ComputeOnlyPass for a missing or invalid source). A program Chimera could
+     * not install is a fallback, not such a pass.
+     */
+    private boolean computeOnly(String name) {
+        return computePasses().contains(name) && (pass.packPlan == null
+                || pass.packPlan.program(name) == null || pass.packPlan.isProgramDisabled(name));
     }
 
     /** Builds the immutable post execution order once for the active pack. */
@@ -683,6 +711,18 @@ final class PackPostChain {
                 this.packFinalExecution = execution;
             }
         }
+        addComputeOnlyExecutions();
+    }
+
+    /** A pass with computes and no program runs them at its place (CompositeRenderer.ComputeOnlyPass). */
+    private void addComputeOnlyExecutions() {
+        for (String computePass : computePasses()) {
+            if (this.packPostExecution.stream().noneMatch(stage -> stage.name().equals(computePass))) {
+                this.packPostExecution.add(new PackPostExecution(computePass, List.of(), null, false));
+            }
+        }
+        this.packPostExecution.sort(Comparator.comparing(PackPostExecution::name,
+                PostTargetPlan.programComparator()));
     }
 
     /** Discards installed post pipelines when target graph setup fails. */

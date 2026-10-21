@@ -24,13 +24,12 @@ final class ProgramReportRules {
             PackConfig.PackConfigData packConfig,
             PackProgramPlan programPlan,
             PackResourcePlan resourcePlan,
-            PackPlan packPlan
+            PackPlan packPlan,
+            PassComputePlan passComputes
     ) {
         String name = inventory.name;
-        PackAdvancedResourcePlan.ComputeSpec computeSpec = nativeComputeSpec(inventory, packPlan);
-        if (computeSpec != null) {
-            return computeProgram(inventory, computeSpec, packPlan);
-        }
+        ConformanceReport.ProgramReport compute = computeOnlyProgram(inventory, packPlan, passComputes);
+        if (compute != null) return compute;
         ReportSources sources = ReportSources.of(inventory);
         boolean relaxed = sources.relaxed();
         String source = sources.source();
@@ -518,6 +517,38 @@ final class ProgramReportRules {
         } else {
             deviations.add("COMPUTE_CAPABILITY_UNAVAILABLE:" + computeSpec.program());
         }
+        return computeReport(inventory, executable, deviations);
+    }
+
+    /** The report of a program that is only a compute: a native compute stage or a pass compute; else null. */
+    private static ConformanceReport.ProgramReport computeOnlyProgram(PackProbe.Inventory inventory, PackPlan packPlan,
+                                                                      PassComputePlan passComputes) {
+        PackAdvancedResourcePlan.ComputeSpec computeSpec = nativeComputeSpec(inventory, packPlan);
+        if (computeSpec != null) {
+            return computeProgram(inventory, computeSpec, packPlan);
+        }
+        PassComputePlan.PassCompute passCompute = passComputes == null ? null : passComputes.compute(inventory.name);
+        if (passCompute != null && !inventory.stages.contains("fragment")) {
+            return passComputeProgram(inventory, passCompute);
+        }
+        return null;
+    }
+
+    /**
+     * The report of {@code <pass>[_x].csh} in a pass with no fragment stage: its own translation.
+     * Iris runs it before the pass, or alone as a ComputeOnlyPass where the pass has no program.
+     */
+    static ConformanceReport.ProgramReport passComputeProgram(PackProbe.Inventory inventory,
+                                                             PassComputePlan.PassCompute compute) {
+        TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
+        deviations.addAll(compute.deviations());
+        deviations.add(compute.supported() ? "PASS_COMPUTE_BRIDGE:" + compute.pass()
+                : "PASS_COMPUTE_UNSUPPORTED:" + compute.name());
+        return computeReport(inventory, compute.supported(), deviations);
+    }
+
+    private static ConformanceReport.ProgramReport computeReport(PackProbe.Inventory inventory, boolean executable,
+                                                                 TreeSet<String> deviations) {
         ConformanceReport.SupportStatus support = executable
                 ? ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION
                 : ConformanceReport.SupportStatus.IDENTITY_FALLBACK;

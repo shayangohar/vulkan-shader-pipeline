@@ -220,7 +220,8 @@ final class ComputePassTest {
                 computes.computes().stream().map(PassComputePlan.PassCompute::name).toList(),
                 "pass order, and nothing after the disabled deferred1_b: " + deviations);
         assertEquals(List.of("PASS_COMPUTE_SAMPLER_UNSUPPORTED:lut"), deviations.get("deferred_a"));
-        assertEquals(List.of("PASS_COMPUTE_WITHOUT_PROGRAM:composite"), deviations.get("composite_a"));
+        // composite has no program: its computes run alone (ComputeOnlyPass), so only the 3D sampler stops it.
+        assertEquals(List.of("PASS_COMPUTE_SAMPLER_UNSUPPORTED:lut"), deviations.get("composite_a"));
         PassComputePlan.PassCompute sky = computes.before("deferred1").get(0);
         assertEquals(List.of(
                 new PassComputePlan.Binding("colorimg4", 0, PassComputePlan.Kind.TARGET_IMAGE, 4, "rgba16f", null),
@@ -274,6 +275,40 @@ final class ComputePassTest {
                 compute.bindings(), compute.deviations().toString());
         String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
         assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+    }
+
+    /**
+     * A pass with computes and no fragment program runs its computes at its place in the chain
+     * (Iris CompositeRenderer.ComputeOnlyPass): Alpha Piscium's composite2 is composite2.csh alone.
+     * The schedule gives it the window its name gives a program, and the report its translation.
+     */
+    @Test
+    void computeOnlyPasses(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        String compute = """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() { imageStore(colorimg2, ivec2(gl_GlobalInvocationID.xy), vec4(1.0)); }
+                """;
+        Files.writeString(shaders.resolve("composite2.csh"), compute);
+        Files.writeString(shaders.resolve("deferred3_a.csh"), compute);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
+        assertTrue(computes.compute("composite2").supported() && computes.compute("deferred3_a").supported(),
+                computes.computes().toString());
+        PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(analysis.plan().activePrograms(), null,
+                Set.of("composite2", "deferred3"));
+        assertEquals(PackFrameSchedulePlan.PostWindow.LATE, schedule.postStage("composite2").window());
+        assertEquals(PackFrameSchedulePlan.PostWindow.EARLY, schedule.postStage("deferred3").window());
+        assertEquals(List.of("deferred3", "composite", "composite2"), schedule.postStages().stream()
+                .map(PackFrameSchedulePlan.PostStage::name).toList(), "pass order");
+        ConformanceReport.ProgramReport report = analysis.report().program("composite2");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION, report.support(),
+                report.deviations().toString());
+        assertTrue(report.deviations().contains("PASS_COMPUTE_BRIDGE:composite2"), report.deviations().toString());
     }
 
     @Test

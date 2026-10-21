@@ -125,6 +125,11 @@ public final class PassComputePlan {
         return computes.stream().filter(value -> value.supported() && value.pass().equals(pass)).toList();
     }
 
+    /** The compute translated from {@code <name>.csh}, or null. */
+    public PassCompute compute(String name) {
+        return computes.stream().filter(value -> value.name().equals(name)).findFirst().orElse(null);
+    }
+
     /** The targets a compute writes through {@code colorimgN}, which need storage usage. */
     public Set<Integer> storageTargets() {
         return computes.stream().filter(PassCompute::supported)
@@ -187,10 +192,13 @@ public final class PassComputePlan {
             this.lockedMacros = PackEngineDefines.lockedNames(plan.settingsOverriddenNames(), customImages, false);
         }
 
+        /**
+         * A pass with computes and no fragment program still runs them at its place in the chain
+         * (Iris CompositeRenderer.ComputeOnlyPass), so the program need not exist.
+         */
         PassCompute translate(String name, String pass, Path path) {
             Work work = new Work(name, pass);
-            if (plan.program(pass) == null) work.fail("PASS_COMPUTE_WITHOUT_PROGRAM:" + pass);
-            String text = work.failed ? null : prepare(path, work);
+            String text = prepare(path, work);
             if (text == null) return work.result(null, null, null, null);
             int[] localSize = localSize(text, work);
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
