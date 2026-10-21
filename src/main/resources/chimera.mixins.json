@@ -13,6 +13,8 @@
     "ChimeraGameRendererHandAccess",
     "ChimeraLevelRendererMixin",
     "ChimeraLevelRendererAccessor",
+    "ChimeraLocalPlayerAccessor",
+    "ChimeraBiomeAmbienceMixin",
     "ChimeraFogRendererMixin",
     "ChimeraSkyRendererMixin",
     "ChimeraMinecraftMixin",

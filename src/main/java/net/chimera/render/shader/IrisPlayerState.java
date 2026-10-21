@@ -1,8 +1,10 @@
 package net.chimera.render.shader;
 
+import net.chimera.mixin.ChimeraLocalPlayerAccessor;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.resources.sounds.AmbientSoundHandler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.level.GameType;
@@ -27,7 +29,7 @@ final class IrisPlayerState implements FrameValueSource {
             "hideGUI", "isRightHanded", "firstPersonCamera", "isSpectator",
             "currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger", "maxPlayerHunger",
             "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir", "maxPlayerAir",
-            "playerMood", "pi", "lastFrameTime", "currentColorSpace",
+            "playerMood", "constantMood", "pi", "lastFrameTime", "currentColorSpace",
             "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime",
             "dhNearPlane", "dhFarPlane", "dhRenderDistance",
@@ -48,6 +50,7 @@ final class IrisPlayerState implements FrameValueSource {
     private float air = -1.0f;
     private float maxAir = -1.0f;
     private float mood;
+    private float constantMood;
     private float lastFrameTime;
     private int renderDistance;
     private final float[] bodyVector = new float[3];
@@ -64,7 +67,18 @@ final class IrisPlayerState implements FrameValueSource {
         set(this.bodyVector, cameraEntity == null ? null : cameraEntity.getForward());
         this.mood = cameraEntity instanceof LocalPlayer local
                 ? Math.clamp(local.getCurrentMood(), 0.0f, 1.0f) : 0.0f;
+        this.constantMood = cameraEntity instanceof LocalPlayer local ? constantMood(local) : 0.0f;
         captureClock();
+    }
+
+    /** Iris's constantMood: the biome ambience handler's, 0 for a player without one. */
+    private static float constantMood(LocalPlayer player) {
+        for (AmbientSoundHandler handler : ((ChimeraLocalPlayerAccessor) player).chimera$ambientSoundHandlers()) {
+            if (handler instanceof AmbientMoodAccess ambience) {
+                return Math.clamp(ambience.chimera$constantMood(), 0.0f, 1.0f);
+            }
+        }
+        return 0.0f;
     }
 
     /** The HUD, hand, camera and spectator state from the options and game mode. */
@@ -124,7 +138,7 @@ final class IrisPlayerState implements FrameValueSource {
     void clear() {
         this.spectator = false;
         this.health = this.maxHealth = this.hunger = this.armor = this.air = this.maxAir = -1.0f;
-        this.mood = 0.0f;
+        this.mood = this.constantMood = 0.0f;
         set(this.bodyVector, null);
     }
 
@@ -141,15 +155,6 @@ final class IrisPlayerState implements FrameValueSource {
             case "isRightHanded" -> flag(this.rightHanded);
             case "firstPersonCamera" -> flag(this.firstPerson);
             case "isSpectator" -> flag(this.spectator);
-            case "currentPlayerHealth" -> this.health;
-            case "maxPlayerHealth" -> this.maxHealth;
-            case "currentPlayerHunger" -> this.hunger;
-            case "maxPlayerHunger" -> 20.0;
-            case "currentPlayerArmor" -> this.armor;
-            case "maxPlayerArmor" -> 50.0;
-            case "currentPlayerAir" -> this.air;
-            case "maxPlayerAir" -> this.maxAir;
-            case "playerMood" -> this.mood;
             case "pi" -> (float) Math.PI;
             case "lastFrameTime" -> this.lastFrameTime;
             // IrisVideoSettings.colorSpace defaults to SRGB, ordinal 0; Chimera has no colour-space setting.
@@ -160,6 +165,23 @@ final class IrisPlayerState implements FrameValueSource {
             case "currentYearTime" -> c < 2 ? this.yearTime[c] : Double.NaN;
             case "dhNearPlane", "dhFarPlane" -> DH_ABSENT_PLANE;
             case "dhRenderDistance" -> this.renderDistance;
+            default -> playerStat(name);
+        };
+    }
+
+    /** CommonUniforms' survival stats (-1 outside survival) and moods; a player flag for other names. */
+    private double playerStat(String name) {
+        return switch (name) {
+            case "currentPlayerHealth" -> this.health;
+            case "maxPlayerHealth" -> this.maxHealth;
+            case "currentPlayerHunger" -> this.hunger;
+            case "maxPlayerHunger" -> 20.0;
+            case "currentPlayerArmor" -> this.armor;
+            case "maxPlayerArmor" -> 50.0;
+            case "currentPlayerAir" -> this.air;
+            case "maxPlayerAir" -> this.maxAir;
+            case "playerMood" -> this.mood;
+            case "constantMood" -> this.constantMood;
             default -> playerFlag(name);
         };
     }

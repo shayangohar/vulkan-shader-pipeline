@@ -173,7 +173,7 @@ final class UniformCatalog {
         }
         for (String value : List.of("currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger",
                 "maxPlayerHunger", "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir",
-                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "dhNearPlane", "dhFarPlane")) {
+                "maxPlayerAir", "playerMood", "constantMood", "pi", "lastFrameTime", "dhNearPlane", "dhFarPlane")) {
             addLive(specs, value, "float");
         }
         for (String value : List.of("currentColorSpace", "dhRenderDistance")) {

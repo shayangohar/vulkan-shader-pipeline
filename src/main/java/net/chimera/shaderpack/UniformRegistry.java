@@ -570,7 +570,7 @@ public final class UniformRegistry {
      * matrices and chunkOffset are not here: IrisCoreProfile serves them in the stages whose Iris
      * transformer names them, and anywhere else Iris never sets them.
      */
-    private static final Set<String> IRIS_UNSERVED = Set.of("alphaTestRef", "constantMood");
+    private static final Set<String> IRIS_UNSERVED = Set.of("alphaTestRef");
 
     /**
      * Live values a fullscreen pass or compute dispatch cannot read. A pass's gtextureSize is the
