@@ -21,6 +21,7 @@ import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.util.vma.Vma.vmaCreateImage;
@@ -110,12 +111,15 @@ final class PackStorageImage extends VulkanImage {
 
     /**
      * The image {@code spec} declares at {@code extent} (width, height, depth), of its own dimensions.
-     * A program reading it through another format of the same size needs it {@code mutableFormat}.
+     * A program reading it through another format of its size needs it mutable, with a storage view
+     * in each of {@code viewFormats}; a format the device cannot store refuses the image.
      */
-    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec, int[] extent, boolean mutableFormat) {
+    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec, int[] extent, Set<Integer> viewFormats) {
         int format = spec.format().vkFormat();
         boolean integer = IrisColorFormats.integer(format);
+        boolean mutableFormat = !viewFormats.isEmpty();
         verifyFormatSupport(format, spec.name());
+        viewFormats.forEach(view -> verifyStorageSupport(view, spec.name()));
         String limit = extentLimitFailure(spec, extent);
         if (limit != null) throw new IllegalStateException(limit);
         int usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
@@ -163,9 +167,17 @@ final class PackStorageImage extends VulkanImage {
                 vmaDestroyImage(Vulkan.getAllocator(), imageId, allocation.get(0));
                 throw new IllegalStateException("advanced image sampler allocation failed");
             }
-            return new PackStorageImage(imageId,
+            PackStorageImage created = new PackStorageImage(imageId,
                     allocation.get(0), format, extent[0], extent[1], extent[2],
                     usage, imageView, viewType(spec.dimensions()), spec.format().bytes(), sampler.get(0));
+            try {
+                viewFormats.forEach(view -> created.views.put(view,
+                        ImageViews.createStorage(imageId, viewType(spec.dimensions()), view)));
+            } catch (RuntimeException failure) {
+                created.free();
+                throw failure;
+            }
+            return created;
         }
     }
 
@@ -197,6 +209,18 @@ final class PackStorageImage extends VulkanImage {
             }
         }
         return null;
+    }
+
+    /** A view format must store: a program writes the image through it. */
+    private static void verifyStorageSupport(int format, String name) {
+        try (MemoryStack stack = stackPush()) {
+            VkFormatProperties properties = VkFormatProperties.calloc(stack);
+            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice, format, properties);
+            if ((properties.optimalTilingFeatures() & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) {
+                throw new IllegalArgumentException("advanced image view format lacks storage support: "
+                        + name + " format=" + format);
+            }
+        }
     }
 
     private static void verifyFormatSupport(int format, String name) {
@@ -329,11 +353,10 @@ final class PackStorageImage extends VulkanImage {
     @Override
     public long getImageView() { return view; }
 
-    /** A view of the image in {@code format}, which the image was created mutable to allow; made once. */
+    /** The image's storage view in {@code format}, made with the image; its own view for its own format. */
     long view(int format) {
         if (format == ownFormat || format == 0) return view;
-        return views.computeIfAbsent(format,
-                value -> ImageViews.create(getId(), viewType, value, VK_IMAGE_ASPECT_COLOR_BIT));
+        return views.getOrDefault(format, view);
     }
 
     /** The image's own sampler: nearest for integer formats, linear otherwise, repeating, on one level. */

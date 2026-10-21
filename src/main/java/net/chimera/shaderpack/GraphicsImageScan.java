@@ -131,7 +131,7 @@ final class GraphicsImageScan {
         }
         if (!spec.supported() && !referenced) return;
         String viewFormat = spec.supported() ? viewFormat(program, spec, declared.format()) : "";
-        if (viewFormat == null) return;
+        if (viewFormat == null || formatConflict(program, spec, symbol, viewFormat)) return;
         int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         writers.computeIfAbsent(program, ignored -> new ArrayList<>())
@@ -139,6 +139,21 @@ final class GraphicsImageScan {
                         spec.name(), spec.sampler(), declared.glslType(), viewFormat, selectorSlot,
                         StorageBufferDeclarations.stageMask(stage)));
         if (live) producedImages.add(spec.name());
+    }
+
+    /**
+     * Whether another stage of the program declares the image in another format. The program binds
+     * one descriptor for it, so the stages cannot read it through two views: it is refused.
+     */
+    private boolean formatConflict(String program, PackAdvancedResourcePlan.ImageSpec spec, String symbol,
+                                   String viewFormat) {
+        boolean conflict = writers.getOrDefault(program, List.of()).stream()
+                .anyMatch(binding -> binding.symbol().equals(symbol) && !binding.viewFormat().equals(viewFormat));
+        if (conflict) {
+            deviations.add("ADVANCED_IMAGE_FORMAT_CONFLICT:" + program + ":" + spec.name());
+            deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + spec.name());
+        }
+        return conflict;
     }
 
     /**

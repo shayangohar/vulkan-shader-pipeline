@@ -716,10 +716,12 @@ public final class PackAdvancedResourcePlan {
         return graphicsImageReaders.getOrDefault(program, List.of());
     }
     /** Returns the union of writer and reader bindings for pipeline setup. */
-    /** Whether some program reads {@code image} through a format other than its own, which needs a mutable image. */
-    public boolean viewedInAnotherFormat(String image) {
+    /** The Vulkan formats programs read {@code image} through besides its own; any one needs a mutable image. */
+    public Set<Integer> viewFormats(String image) {
         return graphicsImages.values().stream().flatMap(List::stream)
-                .anyMatch(binding -> binding.imageName().equals(image) && !binding.viewFormat().isEmpty());
+                .filter(binding -> binding.imageName().equals(image) && !binding.viewFormat().isEmpty())
+                .map(GraphicsImageBinding::viewVkFormat)
+                .collect(Collectors.toCollection(TreeSet::new));
     }
 
     public List<GraphicsImageBinding> imageBindings(String program) {

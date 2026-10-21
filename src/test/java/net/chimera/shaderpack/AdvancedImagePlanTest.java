@@ -320,7 +320,8 @@ final class AdvancedImagePlanTest {
         Files.writeString(shaders.resolve("composite.fsh"), fragment.formatted("r32i"));
         PackPlan plan = PackProbe.analyze(root).plan();
         PackAdvancedResourcePlan advanced = plan.advancedResources();
-        assertTrue(plan.shouldAttempt("composite") && advanced.viewedInAnotherFormat("csr"),
+        assertTrue(plan.shouldAttempt("composite")
+                        && advanced.viewFormats("csr").equals(Set.of(IrisColorFormats.of("R32I").vkFormat())),
                 advanced.deviations().toString());
         String bound = PackDescriptorContracts.bindStorageImages(plan.program("composite").convertedFragment(),
                 "composite", advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -333,6 +334,19 @@ final class AdvancedImagePlanTest {
         assertTrue(!wider.shouldAttempt("composite") && wider.advancedResources().deviations()
                 .contains("ADVANCED_IMAGE_FORMAT_INCOMPATIBLE:csr:rgba16i"),
                 wider.advancedResources().deviations().toString());
+
+        // One descriptor binds the image for the whole program: two stages cannot read two views.
+        Files.writeString(shaders.resolve("composite.fsh"), fragment.formatted("r32i"));
+        Files.writeString(shaders.resolve("composite.vsh"), """
+                #version 430 compatibility
+                layout(r32f) uniform image2D csr;
+                out vec2 uv;
+                void main() { uv = imageLoad(csr, ivec2(0)).xy; gl_Position = ftransform(); }
+                """);
+        PackPlan split = PackProbe.analyze(root).plan();
+        assertTrue(!split.shouldAttempt("composite") && split.advancedResources().deviations()
+                .contains("ADVANCED_IMAGE_FORMAT_CONFLICT:composite:csr"),
+                split.advancedResources().deviations().toString());
     }
 
     private static void writeVolumeReader(Path shaders, String program, String sampler) throws Exception {
