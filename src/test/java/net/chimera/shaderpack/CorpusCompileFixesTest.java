@@ -82,6 +82,14 @@ final class CorpusCompileFixesTest {
         String tanh = "#version 130\nfloat tanh(float x) { return x; }\nvoid main() {}\n";
         assertFalse(LegacyShaderNormalizer.normalize(tanh, false).source().contains("chimera_tanh"),
                 "a built-in the authored version already has stays as written");
+        // RenderPearl, without a float16 extension: glslang declares unpackFloat2x16 at any version.
+        String renderPearl = LegacyShaderNormalizer.normalize("""
+                #version 460
+                vec2 unpackFloat2x16(uint v) { return unpackHalf2x16(v); }
+                void main() { vec2 octa = unpackFloat2x16(0u); }
+                """, false).source();
+        assertTrue(renderPearl.contains("vec2 chimera_unpackFloat2x16(uint v)")
+                && renderPearl.contains("= chimera_unpackFloat2x16(0u)"), renderPearl);
     }
 
     /**

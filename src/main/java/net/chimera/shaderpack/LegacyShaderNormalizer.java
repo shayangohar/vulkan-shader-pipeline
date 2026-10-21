@@ -103,6 +103,15 @@ final class LegacyShaderNormalizer {
         for (String name : List.of("packSnorm2x16", "unpackSnorm2x16", "packHalf2x16", "unpackHalf2x16")) {
             versions.put(name, 420);
         }
+        // Extension built-ins no GLSL version adds: GL declares them only when the source enables
+        // their extension, glslang at #version 460 whether it does or not. RenderPearl defines
+        // vec2 unpackFloat2x16(uint) when no float16 extension is on.
+        for (String name : List.of("packFloat2x16", "unpackFloat2x16", "packInt2x16", "unpackInt2x16",
+                "packUint2x16", "unpackUint2x16", "packInt4x16", "unpackInt4x16", "packUint4x16", "unpackUint4x16",
+                "packInt2x32", "unpackInt2x32", "packUint2x32", "unpackUint2x32", "float16BitsToInt16",
+                "float16BitsToUint16", "int16BitsToFloat16", "uint16BitsToFloat16", "min3", "max3", "mid3")) {
+            versions.put(name, Integer.MAX_VALUE);
+        }
         return Map.copyOf(versions);
     }
 
