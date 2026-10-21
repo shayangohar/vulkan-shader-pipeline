@@ -4,12 +4,28 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The bounded token translation boundary. */
 final class TokenTranslationTest {
+    /**
+     * The shadow bridge serves the legacy matrix built-ins from the shadow matrices, so a shadow
+     * source that reads them has those declared. RenderPearl's shadow vertex reads
+     * modelViewMatrix, which Iris's core profile makes gl_ModelViewMatrix.
+     */
+    @Test
+    void legacyMatricesInTheShadowPassDeclareTheShadowMatrices() {
+        String vertex = "#version 460 compatibility\n"
+                + "void main() { gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex; }\n";
+        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram("#version 460\nvoid main() {}\n",
+                vertex, UniformRegistry.Stage.SHADOW, null, false);
+        assertEquals(List.of("shadowModelView", "shadowProjection"), plan.executableUniforms().stream()
+                .map(UniformRegistry.UniformDeclaration::name).sorted().toList());
+    }
+
     @Test
     void localCatalogNameDoesNotBecomeUniform() {
         String source = "#version 120\n"

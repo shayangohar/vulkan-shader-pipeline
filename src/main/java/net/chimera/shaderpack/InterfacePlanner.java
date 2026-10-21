@@ -99,6 +99,13 @@ final class InterfacePlanner {
                 && !UniformRegistry.isLocallyDeclared(stripped, "gbufferModelView")) {
             declareImplicit("gbufferModelView", "mat4", declared, deviations);
         }
+        // The shadow bridge serves them from the shadow matrices
+        // (TerrainVertexBridge.shadowMatrixBuiltinReplacements): RenderPearl's shadow vertex
+        // reads modelViewMatrix, which Iris's core profile makes gl_ModelViewMatrix.
+        for (String name : shadowMatrixValues(stripped, stage)) {
+            if (declared.uniforms().containsKey(name) || UniformRegistry.isLocallyDeclared(stripped, name)) continue;
+            declareImplicit(name, "mat4", declared, deviations);
+        }
         return declared;
     }
 
@@ -151,18 +158,24 @@ final class InterfacePlanner {
     static Set<String> referencedValues(String stripped, UniformRegistry.Stage stage) {
         Set<String> referenced = new TreeSet<>(
                 GlslResourceUsage.referencedValueIdentifiers(stripped, UniformRegistry.UNIFORM_SPECS.keySet()));
-        if (stage == UniformRegistry.Stage.SHADOW) {
-            if (UniformRegistry.containsIdentifier(stripped, "gl_ModelViewMatrix")) {
-                referenced.add("shadowModelView");
-            }
-            if (UniformRegistry.containsIdentifier(stripped, "gl_NormalMatrix")) {
-                referenced.add("shadowModelViewInverse");
-            }
-            if (UniformRegistry.containsIdentifier(stripped, "gl_ProjectionMatrix")) {
-                referenced.add("shadowProjection");
-            }
-        }
+        referenced.addAll(shadowMatrixValues(stripped, stage));
         return referenced;
+    }
+
+    /** The shadow matrices that stand for the legacy matrix built-ins a shadow-pass source reads. */
+    private static Set<String> shadowMatrixValues(String stripped, UniformRegistry.Stage stage) {
+        Set<String> values = new TreeSet<>();
+        if (stage != UniformRegistry.Stage.SHADOW) return values;
+        if (UniformRegistry.containsIdentifier(stripped, "gl_ModelViewMatrix")) {
+            values.add("shadowModelView");
+        }
+        if (UniformRegistry.containsIdentifier(stripped, "gl_NormalMatrix")) {
+            values.add("shadowModelViewInverse");
+        }
+        if (UniformRegistry.containsIdentifier(stripped, "gl_ProjectionMatrix")) {
+            values.add("shadowProjection");
+        }
+        return values;
     }
 
     /** The descriptor a declared name plans against: a pack value of a VulkanMod host name is the pack's. */
