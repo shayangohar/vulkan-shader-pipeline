@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.IntConsumer;
 
@@ -30,11 +31,23 @@ public final class SelectorNamespace {
      */
     public static final int SHADOW_TEX0_HW_SLOT = HIGH_SHADOW_COLOR_FIRST_SLOT + 6;
     public static final int SHADOW_TEX1_HW_SLOT = SHADOW_TEX0_HW_SLOT + 1;
-    public static final int LAST_RESERVED = SHADOW_TEX1_HW_SLOT;
+    /**
+     * Slots 42 onward carry further pack-owned textures and images. Iris gives every custom
+     * texture and image its own unit; Escheridia's textures and Glimmer's LUT images outgrow the
+     * ten slots between the host's own.
+     */
+    public static final int PACK_EXTENDED_FIRST = SHADOW_TEX1_HW_SLOT + 1;
+    public static final int PACK_EXTENDED_COUNT = 32;
+    public static final int LAST_RESERVED = PACK_EXTENDED_FIRST + PACK_EXTENDED_COUNT - 1;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
-    /** Unreserved selector slots available to pack-owned sampled resources. */
-    public static final List<Integer> PACK_SELECTOR_SLOTS = List.of(
-            8, 9, 10, 11, 16, 17, 18, 19, 20, 21);
+    /** Unreserved selector slots available to pack-owned sampled resources, in assignment order. */
+    public static final List<Integer> PACK_SELECTOR_SLOTS = packSelectorSlots();
+
+    private static List<Integer> packSelectorSlots() {
+        List<Integer> slots = new ArrayList<>(List.of(8, 9, 10, 11, 16, 17, 18, 19, 20, 21));
+        for (int slot = PACK_EXTENDED_FIRST; slot <= LAST_RESERVED; slot++) slots.add(slot);
+        return List.copyOf(slots);
+    }
 
     private SelectorNamespace() {}
 
