@@ -104,10 +104,13 @@
   "gbuffers_water.vsh": "194381b4b9725211 6a66d7605c089394",
   "gbuffers_weather.fsh": "2abbf799556f52d3 5466bb1be70d35f8",
   "gbuffers_weather.vsh": "9481f0093d4a5729 34a66ef3f1626ecc",
+  "prepare.csh": "78f05f81d0389357 df849c1b79463a7a",
   "prepare1.fsh": "ef4d8cda948f215b cf4e9434b501a7a9",
   "prepare1.vsh": "a9a881f226199048 03c11c08e1e47e64",
+  "prepare2.csh": "2492a974b16b83d4 2adabb8e0bdf2653",
   "prepare2.fsh": "7574d5c3ee1fa97e 986b0a6a35def754",
   "prepare2.vsh": "eea3ac0f4195d034 a09da38afd4f279c",
+  "prepare3.csh": "edbbb6eadfc69789 a6d63a96365aaf8f",
   "text_bg.fsh": "4bd6048d5d65ea1d 07676df0b559e948",
   "text_bg.vsh": "e67716c0a61582ff 62d320099b5a8abb"
 }

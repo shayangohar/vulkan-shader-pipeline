@@ -631,14 +631,16 @@ final class PackSessionLifecycle {
         int width = Math.max(window.getWidth(), 1);
         int height = Math.max(window.getHeight(), 1);
         pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources(), width, height);
-        pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height);
+        PassComputePlan passComputes = PassComputePlan.build(pass.packPlan, shadersDir);
+        pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height,
+                passComputes.storageBuffers());
         pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),
                 pass.packAdvancedImageOwner, pass.packResourceOwner, shadersDir,
                 pass.packPlan.settingsPreprocessorDefines(),
                 pass.packPlan.settingsOverriddenNames());
         recordShadowComputeDisposition();
-        pass.packPassComputes = PackPassComputes.load(PassComputePlan.build(pass.packPlan, shadersDir),
-                pass.packResourceOwner, pass.packAdvancedImageOwner);
+        pass.packPassComputes = PackPassComputes.load(passComputes, pass.packResourceOwner,
+                pass.packAdvancedImageOwner, pass.packStorageBufferOwner);
         for (String compute : pass.packPassComputes.installedNames()) {
             if (pass.conformanceReport != null && pass.conformanceReport.program(compute) != null) {
                 pass.conformanceReport.markRuntime(compute, ConformanceReport.RuntimeDisposition.INSTALLED,

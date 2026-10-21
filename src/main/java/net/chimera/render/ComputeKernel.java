@@ -149,6 +149,19 @@ final class ComputeKernel implements AutoCloseable {
         }
     }
 
+    /** Points one storage-buffer binding of a frame slot's set at a whole buffer. */
+    void writeBuffer(FrameSlot frame, int binding, long buffer, long range) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
+                    .buffer(buffer).offset(0L).range(range);
+            VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
+            write.get(0).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
+                    .dstArrayElement(0).descriptorCount(1).descriptorType(descriptorTypes[binding])
+                    .pBufferInfo(info);
+            vkUpdateDescriptorSets(Vulkan.getVkDevice(), write, null);
+        }
+    }
+
     /** Binds the pipeline and the frame slot's set, and writes the frame's live values into its block. */
     void bind(VkCommandBuffer commandBuffer, MemoryStack stack, FrameSlot frame, List<ComputeValueBlock.Value> values) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);

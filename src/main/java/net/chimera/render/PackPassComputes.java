@@ -30,7 +30,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * target is in GENERAL for the dispatch and returns to the sampled layout afterwards, so the pass
  * and every later reader see what the compute stored. Pack images and their samplers bind the
  * session's images, which stay in GENERAL. Pack textures bind the session's, loaded on first use
- * when no program reads them.
+ * when no program reads them. Storage blocks bind the session's buffers whole, as programs do.
  */
 final class PackPassComputes implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -41,20 +41,23 @@ final class PackPassComputes implements AutoCloseable {
     private final List<Loaded> loaded;
     private final PackResourceOwner resources;
     private final PackAdvancedImageOwner packImages;
+    private final PackStorageBufferOwner buffers;
     private final Set<String> failed = new HashSet<>();
 
-    private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources, PackAdvancedImageOwner packImages) {
+    private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources, PackAdvancedImageOwner packImages,
+                             PackStorageBufferOwner buffers) {
         this.loaded = loaded;
         this.resources = resources;
         this.packImages = packImages;
+        this.buffers = buffers;
     }
 
     /** Builds a pipeline for every supported compute whose resources this session has; logs each outcome. */
     static PackPassComputes load(PassComputePlan plan, PackResourceOwner resources,
-                                 PackAdvancedImageOwner packImages) {
+                                 PackAdvancedImageOwner packImages, PackStorageBufferOwner buffers) {
         List<Loaded> loaded = new ArrayList<>();
         for (PassComputePlan.PassCompute compute : plan.computes()) {
-            String refusal = compute.supported() ? refusal(compute, resources, packImages)
+            String refusal = compute.supported() ? refusal(compute, resources, packImages, buffers)
                     : String.valueOf(compute.deviations());
             ComputeKernel kernel = refusal != null ? null : ComputeKernel.create("chimera_" + compute.name() + ".csh",
                     compute.source(), descriptorTypes(compute), ComputeValueBlock.bufferSize(compute.values()));
@@ -68,7 +71,7 @@ final class PackPassComputes implements AutoCloseable {
                         refusal != null ? refusal : "pipeline build failed");
             }
         }
-        return new PackPassComputes(List.copyOf(loaded), resources, packImages);
+        return new PackPassComputes(List.copyOf(loaded), resources, packImages, buffers);
     }
 
     /** The computes that loaded, in run order. */
@@ -119,7 +122,11 @@ final class PackPassComputes implements AutoCloseable {
         ComputeKernel.FrameSlot frame = compute.kernel().currentFrame();
         for (PassComputePlan.Binding binding : compute.plan().bindings()) {
             VulkanImage image = images.get(binding.binding());
-            if (image instanceof PackStorageImage pack) {
+            if (binding.kind() == PassComputePlan.Kind.STORAGE_BUFFER) {
+                // Written each dispatch: a relative buffer is a new one after a resize.
+                PackStorageBuffer buffer = buffers.buffer(binding.target());
+                compute.kernel().writeBuffer(frame, binding.binding(), buffer.getId(), buffer.getBufferSize());
+            } else if (image instanceof PackStorageImage pack) {
                 // Pack images stay in GENERAL: graphics programs and computes read and write them alike.
                 pack.transitionToGeneral(stack, commandBuffer);
                 compute.kernel().writeImage(frame, binding.binding(), pack.getImageView(),
@@ -155,15 +162,23 @@ final class PackPassComputes implements AutoCloseable {
         }
     }
 
-    /** The image each binding reads or writes this frame; throws when one is missing or not storable. */
+    /**
+     * The image each binding reads or writes this frame, null for a buffer; throws when one is
+     * missing or not storable.
+     */
     private List<VulkanImage> images(PassComputePlan.PassCompute compute, VulkanImage[] sources) {
         List<VulkanImage> images = new ArrayList<>();
         for (PassComputePlan.Binding binding : compute.bindings()) {
+            if (binding.kind() == PassComputePlan.Kind.STORAGE_BUFFER) {
+                images.add(null);
+                continue;
+            }
             VulkanImage image = switch (binding.kind()) {
                 case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.resource());
                 case TEXTURE -> resources == null ? null : resources.image(binding.resource());
                 case TARGET_IMAGE, TARGET_SAMPLER ->
                         binding.target() < sources.length ? sources[binding.target()] : null;
+                case STORAGE_BUFFER -> null;
             };
             if (image == null) throw new IllegalStateException(binding.symbol() + " has no image this frame");
             if (binding.kind() == PassComputePlan.Kind.TARGET_IMAGE
@@ -176,17 +191,18 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     private static int[] descriptorTypes(PassComputePlan.PassCompute compute) {
-        return compute.bindings().stream().mapToInt(binding -> binding.storage()
+        return compute.bindings().stream().mapToInt(binding -> binding.kind() == PassComputePlan.Kind.STORAGE_BUFFER
+                ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : binding.storage()
                 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).toArray();
     }
 
     /**
-     * Why this compute cannot run in this session: a pack texture it reads could not be loaded, a
-     * pack image it binds was not created, or a target it writes cannot be a storage image on this
-     * device. Null when it can. Loads the compute's textures.
+     * Why this compute cannot run in this session: a pack texture it reads could not be loaded, or
+     * a binding's image or buffer is missing (bindingRefusal). Null when it can. Loads the
+     * compute's textures.
      */
     private static String refusal(PassComputePlan.PassCompute compute, PackResourceOwner resources,
-                                  PackAdvancedImageOwner packImages) {
+                                  PackAdvancedImageOwner packImages, PackStorageBufferOwner buffers) {
         for (PackResourceBinding texture : compute.textures()) {
             if (resources == null || resources.image(texture) == null) {
                 return "pack texture " + texture.resourceKey() + " could not be loaded"
@@ -194,17 +210,29 @@ final class PackPassComputes implements AutoCloseable {
             }
         }
         for (PassComputePlan.Binding binding : compute.bindings()) {
-            boolean packImage = binding.kind() == PassComputePlan.Kind.PACK_IMAGE
-                    || binding.kind() == PassComputePlan.Kind.PACK_IMAGE_SAMPLER;
-            if (packImage && (packImages == null || packImages.image(binding.resource()) == null)) {
-                return "pack image " + binding.resource() + " was not created";
-            }
-            if (binding.kind() != PassComputePlan.Kind.TARGET_IMAGE) continue;
-            if (!storageSupported(PackConfig.FMT_TO_VK.getOrDefault(binding.format().toUpperCase(Locale.ROOT), 0))) {
-                return "colortex" + binding.target() + " format cannot be a storage image";
-            }
+            String refusal = bindingRefusal(binding, packImages, buffers);
+            if (refusal != null) return refusal;
         }
         return null;
+    }
+
+    /**
+     * Why a binding cannot be bound: its pack image was not created, its buffer was not allocated,
+     * or the target it writes cannot be a storage image on this device. Null when it can.
+     */
+    private static String bindingRefusal(PassComputePlan.Binding binding, PackAdvancedImageOwner packImages,
+                                         PackStorageBufferOwner buffers) {
+        return switch (binding.kind()) {
+            case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null || packImages.image(binding.resource()) == null
+                    ? "pack image " + binding.resource() + " was not created" : null;
+            case STORAGE_BUFFER -> buffers == null || buffers.buffer(binding.target()) == null
+                    ? "bufferObject." + binding.target() + " was not allocated"
+                    + (buffers == null ? "" : ": " + buffers.failure(binding.target())) : null;
+            case TARGET_IMAGE -> storageSupported(PackConfig.FMT_TO_VK.getOrDefault(
+                    binding.format().toUpperCase(Locale.ROOT), 0))
+                    ? null : "colortex" + binding.target() + " format cannot be a storage image";
+            case TARGET_SAMPLER, TEXTURE -> null;
+        };
     }
 
     static boolean storageSupported(int format) {

@@ -63,12 +63,14 @@ public final class PassComputePlan {
         /** A pack image's own storage name ({@code image.<name>}), in its format. */
         PACK_IMAGE,
         /** A pack image's sampler, reading the image it names. */
-        PACK_IMAGE_SAMPLER
+        PACK_IMAGE_SAMPLER,
+        /** A storage block: the pack's {@code bufferObject.<target>}. */
+        STORAGE_BUFFER
     }
 
     /**
-     * One descriptor: its symbol and binding, what it binds, the target (-1 for none), a storage
-     * image's format, and the pack image's name or the pack texture's resource key.
+     * One descriptor: its symbol and binding, what it binds, the target or bufferObject index (-1
+     * for none), a storage image's format, and the pack image's name or the pack texture's key.
      */
     public record Binding(String symbol, int binding, Kind kind, int target, String format, String resource) {
         /** Whether the compute writes through it, as a storage image. */
@@ -139,9 +141,18 @@ public final class PassComputePlan {
 
     /** The targets a compute writes through {@code colorimgN}, which need storage usage. */
     public Set<Integer> storageTargets() {
+        return targets(Kind.TARGET_IMAGE);
+    }
+
+    /** The bufferObject indexes a compute binds, which the session must allocate. */
+    public Set<Integer> storageBuffers() {
+        return targets(Kind.STORAGE_BUFFER);
+    }
+
+    private Set<Integer> targets(Kind kind) {
         return computes.stream().filter(PassCompute::supported)
                 .flatMap(value -> value.bindings().stream())
-                .filter(binding -> binding.kind() == Kind.TARGET_IMAGE)
+                .filter(binding -> binding.kind() == kind)
                 .map(Binding::target)
                 .collect(Collectors.toCollection(TreeSet::new));
     }
@@ -215,7 +226,7 @@ public final class PassComputePlan {
             List<ComputeValueBlock.Value> values = values(body, work);
             body = removeUnusedUniforms(PackAdvancedResourcePlan.VALUE_UNIFORM_DECLARATION.matcher(body)
                     .replaceAll(""), work);
-            if (!usage.declaredStorageBlocks().isEmpty()) work.fail("PASS_COMPUTE_STORAGE_BUFFER_UNSUPPORTED");
+            body = bindStorageBuffers(body, work);
             String source = work.failed ? null : module(body, work, values);
             return work.result(source, localSize, values, text);
         }
@@ -313,6 +324,37 @@ public final class PassComputePlan {
             return result.toString();
         }
 
+        /**
+         * Points each storage block at the pack buffer it names, as for programs
+         * (StorageBufferDeclarations.matchingBufferSpecs): Iris binds bufferObject.N at index N for
+         * every program and compute (ShaderStorageBufferHolder). A block no supported buffer serves,
+         * or one without a std430 layout or a binding to rewrite, stops the compute.
+         */
+        private String bindStorageBuffers(String body, Work work) {
+            List<GlslStorageBufferParser.Block> blocks;
+            try {
+                blocks = GlslStorageBufferParser.scan(body);
+            } catch (RuntimeException failure) {
+                work.fail("PASS_COMPUTE_STORAGE_BUFFER_PARSE_UNSUPPORTED");
+                return body;
+            }
+            Map<String, Integer> bindings = new TreeMap<>();
+            for (GlslStorageBufferParser.Block block : blocks) {
+                List<PackAdvancedResourcePlan.BufferSpec> matches = StorageBufferDeclarations.matchingBufferSpecs(
+                        new StorageBufferDeclarations.StorageBlock(block.blockName(), block.instanceName(),
+                                block.originalBinding(), block.laidOut(), 0), plan.advancedResources().buffers());
+                PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
+                if (spec == null || !spec.supported() || !block.laidOut() || block.originalBinding() < 0) {
+                    work.fail("PASS_COMPUTE_STORAGE_BUFFER_UNSUPPORTED:" + block.blockName());
+                    continue;
+                }
+                bindings.put(GlslStorageBufferParser.key(block), work.bindings.size());
+                work.bindings.add(new Binding(block.blockName(), work.bindings.size(), Kind.STORAGE_BUFFER,
+                        spec.logicalIndex(), null, null));
+            }
+            return GlslStorageBufferParser.rewrite(body, bindings);
+        }
+
         /** What the live sampler {@code name} of {@code type} reads, or null when dispatch cannot bind it. */
         private Binding samplerBinding(String name, String type, Work work) {
             PackAdvancedResourcePlan.ImageSpec pack = packImage(PackAdvancedResourcePlan.imageBySampler(
@@ -390,7 +432,7 @@ public final class PassComputePlan {
                     .replaceAll("(?m)^\\s*#version\\b[^\\r\\n]*(?:\\r?\\n|$)", "");
             return "#version 450\n" + extensions
                     + ComputeValueBlock.declaration(VALUES_BLOCK, values, work.bindings.size())
-                    + work.declarations + GlslTokenRewriter.rewriteTextureCalls(text);
+                    + work.declarations + LegacyGlslConverter.convertTextureCalls(text);
         }
 
         /** The declared local size, unspecified axes 1; null with a deviation when there is none. */

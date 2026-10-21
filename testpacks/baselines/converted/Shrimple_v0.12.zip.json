@@ -39,6 +39,7 @@
   "composite37.vsh": "cc8f24e41eb3782e 086955ecd086cfbe",
   "composite38.fsh": "44b6ca958f15b8ab 7e56be93bb5dd10e",
   "composite38.vsh": "aedfa671d18afc83 2200f1fe6d5f2dd0",
+  "composite4.csh": "db523a1eb00f15b9 212cddab922568a2",
   "composite40.fsh": "2d11e3f222c77fba e481be81c03c41bf",
   "composite40.vsh": "7c8bbe31b76b671a 95313d48ca8a6513",
   "composite5.fsh": "1d9575c3f5c4b131 8f8fe8f49e332f2b",
@@ -98,5 +99,6 @@
   "gbuffers_spidereyes.vsh": "2e260a63eb0e5d2f e949d12339b5ed6e",
   "gbuffers_weather.fsh": "864ccd88c035df15 0408555d23f50bb1",
   "gbuffers_weather.vsh": "27368976d8bf9d63 813f7304c1d643e9",
+  "prepare2.csh": "ed1327517f8d9946 4f4b18d5555ccbe5",
   "prepare3.csh": "807ab55ddd6b1455 316e69fc61c8a8e2"
 }

@@ -305,8 +305,10 @@ final class ComputePassTest {
                 uniform sampler3D lut;
                 uniform sampler2D colortex5;
                 uniform sampler2D noisetex;
+                // Vulkan GLSL reserves 'sampler'; Reverie's prepare computes name a parameter so.
+                vec4 centre(sampler2D sampler) { return texture(sampler, vec2(0.5)); }
                 void main() {
-                    vec4 value = texture(lut, vec3(0.5)) + texture(colortex5, vec2(0.5)) + texture(noisetex, vec2(0.5));
+                    vec4 value = texture(lut, vec3(0.5)) + centre(colortex5) + texture(noisetex, vec2(0.5));
                     imageStore(colorimg4, ivec2(gl_GlobalInvocationID.xy), value);
                 }
                 """;
@@ -327,6 +329,50 @@ final class ComputePassTest {
                 computes.compute("composite2_a").bindings().get(2), "composite1 wrote colortex5 before composite2");
         String error = PackCompileTest.compileComputeValues(early.source(), PassComputePlan.VALUES_BLOCK, Map.of());
         assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + early.source());
+    }
+
+    /**
+     * Iris binds bufferObject.N at index N for every program and compute (ShaderStorageBufferHolder).
+     * Alpha Piscium's computes share its global data in bufferObject.0. A block no declared buffer
+     * serves stops its compute.
+     */
+    @Test
+    void passComputesBindStorageBuffers(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 64\nbufferObject.3 = 16\n");
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(std430, binding = 3) buffer Exposure { float exposure; };
+                layout(std430, binding = 0) buffer Global { vec4 data[]; } global;
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() {
+                    global.data[0] = vec4(exposure);
+                    imageStore(colorimg2, ivec2(0), global.data[1]);
+                }
+                """);
+        Files.writeString(shaders.resolve("composite1_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(std430, binding = 5) buffer Missing { float value; };
+                void main() { value = 1.0; }
+                """);
+        PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        PassComputePlan.PassCompute compute = computes.compute("composite_a");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg2", 0, PassComputePlan.Kind.TARGET_IMAGE, 2, "rgba16f", null),
+                new PassComputePlan.Binding("Exposure", 1, PassComputePlan.Kind.STORAGE_BUFFER, 3, null, null),
+                new PassComputePlan.Binding("Global", 2, PassComputePlan.Kind.STORAGE_BUFFER, 0, null, null)),
+                compute.bindings(), compute.deviations().toString());
+        assertEquals(Set.of(0, 3), computes.storageBuffers());
+        assertEquals(List.of("PASS_COMPUTE_STORAGE_BUFFER_UNSUPPORTED:Missing"),
+                computes.compute("composite1_a").deviations());
+        assertTrue(compute.source().contains("binding = 1) buffer Exposure")
+                && compute.source().contains("binding = 2) buffer Global"), compute.source());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
     }
 
     /**

@@ -86,11 +86,15 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 .sum();
     }
 
-    /** The session's buffers, a relative one sized for a screen of this size (Iris sizes it at creation). */
-    public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight) {
+    /**
+     * The session's buffers: those a program or a pass compute ({@code computeBuffers}) binds, a
+     * relative one sized for a screen of this size (Iris sizes it at creation).
+     */
+    public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
+                                              Set<Integer> computeBuffers) {
         PackStorageBufferOwner owner = new PackStorageBufferOwner(plan, screenWidth, screenHeight);
         long maxRange = maxRange();
-        Set<Integer> used = new TreeSet<>();
+        Set<Integer> used = new TreeSet<>(computeBuffers);
         owner.plan.storageBuffers().values().forEach(values -> values.stream()
                 .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
                 .filter(value -> owner.plan.storageEligiblePrograms().contains(value.program()))
@@ -177,6 +181,11 @@ public final class PackStorageBufferOwner implements AutoCloseable {
             }
         }
         return null;
+    }
+
+    /** Why {@code bufferObject.<index>} was not allocated, or null. */
+    public String failure(int index) {
+        return failures.get(index);
     }
 
     public boolean programAvailable(String program) {
