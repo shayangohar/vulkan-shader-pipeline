@@ -38,11 +38,10 @@ final class AdvancedImageDeclarations {
             PackAdvancedResourcePlan.ImageSpec spec = parseImage(entry.getKey(), entry.getValue(), macros);
             images.put(spec.name(), spec);
             deviations.addAll(spec.deviations());
-            if (spec.supported()) {
-                deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name());
-            }
         }
         applyBudget(images, deviations);
+        images.values().stream().filter(PackAdvancedResourcePlan.ImageSpec::supported)
+                .forEach(spec -> deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name()));
         return images;
     }
 
@@ -77,7 +76,10 @@ final class AdvancedImageDeclarations {
         }
     }
 
-    /** A 1D, 2D or 3D image of fixed size, inside the per-axis limit. */
+    /**
+     * A 1D, 2D or 3D image of fixed size. Iris creates any size the driver takes; here the byte
+     * budget (applyBudget) and, at creation, the device's per-axis limit bound it.
+     */
     private static PackAdvancedResourcePlan.ImageSpec fixedImage(
             String name, String[] values, Map<String, String> defines, List<String> deviations) {
         int[] size = new int[3];
@@ -87,7 +89,7 @@ final class AdvancedImageDeclarations {
         boolean unsized = size[0] < 1 || values.length > 7 && size[1] < 1 || values.length > 8 && size[2] < 1;
         long bytes = unsized ? 0 : Math.multiplyExact(Math.multiplyExact((long) size[0], Math.max(1, size[1])),
                 Math.max(1, size[2])) * bytesPerVoxel(values[2].toLowerCase());
-        if (unsized || Math.max(size[0], Math.max(size[1], size[2])) > PackAdvancedResourcePlan.MAX_DIMENSION) {
+        if (unsized) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
             return image(name, values, size, bytes, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }

@@ -67,8 +67,9 @@ final class AdvancedImagePlanTest {
         PackProbe.Analysis unsupported = PackProbe.analyze(unsupportedPath);
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
         assertTrue(!unsupportedPlan.capabilityPossible(), "unsupported capability enabled");
+        // 1024^3 R16UI texels, 2 GiB: past the byte budget, which bounds an image in place of an axis cap.
         assertTrue(unsupportedPlan.deviations().stream().anyMatch(value ->
-                        value.startsWith("ADVANCED_IMAGE_UNSUPPORTED:too_large")),
+                        value.startsWith("ADVANCED_IMAGE_BUDGET_EXCEEDED:too_large")),
                 "oversized image deviation missing");
         assertTrue(unsupportedPlan.deviations().contains("STORAGE_BUFFER_DEFERRED:bufferObject.0"),
                 "storage-buffer deferral missing");
@@ -124,6 +125,11 @@ final class AdvancedImagePlanTest {
         PackAdvancedResourcePlan.ImageSpec screen = AdvancedImageDeclarations.parseImage("image.screen",
                 "screenSampler RGBA RGBA16F HALF_FLOAT true true SHARE 0.25", Map.of("SHARE", "0.5"));
         assertTrue(line.supported() && plane.supported() && screen.supported());
+        // No per-axis cap below the device's: Alpha Piscium's 1056x832 image, Bloop's 2048-texel line.
+        assertTrue(AdvancedImageDeclarations.parseImage("image.probe",
+                        "probeSampler RGBA RGBA16F HALF_FLOAT false false 1056 832", Map.of()).supported()
+                && AdvancedImageDeclarations.parseImage("image.blocks",
+                        "blockSampler RED_INTEGER R32UI UNSIGNED_INT false false 2048", Map.of()).supported());
         assertEquals("uimage1D", AdvancedImageDeclarations.storageImageType(line));
         assertEquals("image2D", AdvancedImageDeclarations.storageImageType(plane));
         assertEquals("", plane.sampler(), "a sampler named none is no sampler");

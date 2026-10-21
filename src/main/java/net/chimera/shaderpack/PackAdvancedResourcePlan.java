@@ -27,7 +27,6 @@ import java.util.stream.Collectors;
  * declarations and the exact compute stages that may use them.</p>
  */
 public final class PackAdvancedResourcePlan {
-    public static final int MAX_DIMENSION = 512;
     public static final long MAX_TOTAL_BYTES = 768L * 1024L * 1024L;
     public static final int MAX_BUFFER_INDEX = 12;
     public static final long MAX_STORAGE_BUFFER_BYTES = 64L * 1024L * 1024L;
