@@ -1,7 +1,9 @@
 package net.chimera.render;
 
+import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.vulkanmod.vulkan.Renderer;
+import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
@@ -14,6 +16,12 @@ import static org.lwjgl.vulkan.VK10.*;
 /**
  * Snapshots the opaque depth before translucent terrain draws, as Iris gives depthtex1 to water and
  * deferred passes, and makes the world depth readable for the passes that sample it.
+ *
+ * <p>Iris's depthtex0 is the live depth texture, so a program that runs while the world still
+ * draws reads the depth drawn so far. Vulkan forbids sampling the depth attachment being drawn
+ * into, so such a program reads a depthtex0 capture of the world drawn before its group of draws
+ * instead. The capture goes stale at the frame's start and after each terrain layer, family
+ * flush and particle call, and is retaken before the next draw that samples depthtex0.</p>
  */
 final class OpaqueDepthCapture {
     static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -22,8 +30,45 @@ final class OpaqueDepthCapture {
     /** Tracks the one explicit HDR depth transition for the current level segment. */
     boolean hdrDepthReadable;
 
+    /** The world has drawn since depthtex0 last captured it this frame. */
+    boolean drawnDepthStale = true;
+
     OpaqueDepthCapture(ChimeraMainPass pass) {
         this.pass = pass;
+    }
+
+    /** Marks a group of world draws done: the next program that samples depthtex0 captures it again. */
+    void markWorldDrawn() {
+        this.drawnDepthStale = true;
+    }
+
+    /**
+     * True when {@code pipeline}'s program samples depthtex0 while the world depth is still the
+     * attachment world programs draw into, and the world has drawn since depthtex0's capture.
+     */
+    boolean needsDrawnDepth(GraphicsPipeline pipeline) {
+        ChimeraMainPass.ProgramImages program = pass.images.programImages.get(pipeline);
+        return this.drawnDepthStale && program != null && program.manifest().readsDepth("depthtex0")
+                && drawnDepthCapturable();
+    }
+
+    /** Whether depthtex0 can be captured from the world depth the world is drawing into now. */
+    boolean drawnDepthCapturable() {
+        return pass.levelPhase && !this.hdrDepthReadable
+                && !pass.shadowPass.shadowPassActive && !PackGeometryContext.active()
+                && pass.targets.hdrFramebuffer != null
+                && pass.currentFramebuffer == pass.targets.hdrFramebuffer
+                && pass.packDepthTargets.isConfigured() && pass.packDepthTargets.plan().depthtex0();
+    }
+
+    /** Captures depthtex0 as the world drawn so far. No render pass may be open. */
+    void captureDrawnDepth(VkCommandBuffer commandBuffer) {
+        VulkanImage worldDepth = pass.targets.hdrFramebuffer.getDepthAttachment();
+        if (pass.packDepthTargets.captureDrawnScene(commandBuffer, worldDepth)) {
+            this.drawnDepthStale = false;
+        } else {
+            LOGGER.warn("[chimera] pack depth graph: depthtex0 capture of the drawn world unavailable");
+        }
     }
 
     /** Captures opaque depth at the boundary immediately before translucency. */
@@ -71,13 +116,11 @@ final class OpaqueDepthCapture {
                         commandBuffer, pass.targets.hdrFramebuffer.getDepthAttachment())) {
             LOGGER.warn("[chimera] pack depth graph: early depthtex2 capture unavailable");
         }
-        // Deferred passes read depthtex0 here, before translucents: the
-        // opaque depth. finishLevelSegment re-captures it for composite.
-        if (pass.packFrameSchedule.earlyReadsDepthtex0()
-                && pass.packDepthTargets.isConfigured()
-                && !pass.packDepthTargets.captureOpaqueScene(
-                        commandBuffer, pass.targets.hdrFramebuffer.getDepthAttachment())) {
-            LOGGER.warn("[chimera] pack depth graph: early depthtex0 capture unavailable");
+        // Deferred passes read depthtex0 here, before translucents: the opaque depth, as Iris's
+        // live depth is when translucent terrain begins. finishLevelSegment re-captures it for
+        // composite.
+        if (pass.packFrameSchedule.earlyReadsDepthtex0() && this.drawnDepthStale && drawnDepthCapturable()) {
+            captureDrawnDepth(commandBuffer);
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();

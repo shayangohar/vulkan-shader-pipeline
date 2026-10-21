@@ -299,6 +299,7 @@ public final class ChimeraMainPass implements MainPass {
         }
         this.currentFramebuffer = this.targets.hdrFramebuffer;
         this.depth.hdrDepthReadable = false;
+        this.depth.markWorldDrawn();
         this.shadowPass.shadowFrameReady = false;
         this.packPostFrameStarted = false;
         this.packEarlyPostCompleted = false;
@@ -681,6 +682,11 @@ public final class ChimeraMainPass implements MainPass {
         if (shouldLogPackRuntimeFailure(reason)) {
             LOGGER.warn("[chimera] pack runtime fallback ({})", reason, failure);
         }
+    }
+
+    /** Marks a group of world draws done, such as a particle call; depthtex0 is captured again. */
+    public void markWorldDrawn() {
+        depth.markWorldDrawn();
     }
 
     public void captureOpaqueDepthBeforeTranslucent() {

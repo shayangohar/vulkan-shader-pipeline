@@ -75,10 +75,11 @@ public final class PackDepthTargets {
     }
 
     /**
-     * Captures depthtex0 as deferred passes see it: the opaque depth at the
-     * pre-translucent seam. The level-end capture replaces it for composite.
+     * Captures depthtex0 as the world drawn so far and gives the depth back to the world pass: what
+     * the programs that run while the world still draws read, deferred passes at the
+     * pre-translucent seam among them. The level-end capture replaces it for composite.
      */
-    public boolean captureOpaqueScene(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
+    public boolean captureDrawnScene(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
         return configured && rawDepth != null && required(0)
                 && convert(commandBuffer, rawDepth, 0, true);
     }

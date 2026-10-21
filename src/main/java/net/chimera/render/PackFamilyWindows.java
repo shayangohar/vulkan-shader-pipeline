@@ -32,32 +32,41 @@ final class PackFamilyWindows {
     /**
      * Draws family batches in order inside the pack windows their lanes write, one window per run
      * of consecutive batches with the same outputs. A run whose window cannot open is discarded:
-     * its widened meshes have no host program to fall back to.
+     * its widened meshes have no host program to fall back to. Every batch of one flush reads the
+     * depthtex0 its first reader captured, the world drawn before the flush.
      */
     void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
                            Consumer<RenderType> discard) {
         int start = 0;
-        while (start < batches.size()) {
-            GeometryOutputPlan outputs = pass.laneWindowOutputs(batches.get(start).family());
-            int end = start + 1;
-            while (end < batches.size()
-                    && Objects.equals(pass.laneWindowOutputs(batches.get(end).family()), outputs)) end++;
-            List<FamilyRenderType> run = batches.subList(start, end);
-            for (FamilyRenderType batch : run) {
-                pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(batch.family(), batch.format()));
+        try {
+            while (start < batches.size()) {
+                GeometryOutputPlan outputs = pass.laneWindowOutputs(batches.get(start).family());
+                int end = start + 1;
+                while (end < batches.size()
+                        && Objects.equals(pass.laneWindowOutputs(batches.get(end).family()), outputs)) end++;
+                drawRun(batches.subList(start, end), outputs, draw, discard);
+                start = end;
             }
-            if (outputs != null && !beginPackFamilyWindow(outputs)) {
-                run.forEach(discard);
-            } else {
-                // Rendering reopens inside the window before the first batch draws.
-                if (outputs != null) pass.rebindMainTarget();
-                try {
-                    run.forEach(draw);
-                } finally {
-                    if (outputs != null) endPackFamilyWindow(outputs);
-                }
-            }
-            start = end;
+        } finally {
+            pass.depth.markWorldDrawn();
+        }
+    }
+
+    private void drawRun(List<FamilyRenderType> run, GeometryOutputPlan outputs, Consumer<RenderType> draw,
+                         Consumer<RenderType> discard) {
+        for (FamilyRenderType batch : run) {
+            pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(batch.family(), batch.format()));
+        }
+        if (outputs != null && !beginPackFamilyWindow(outputs)) {
+            run.forEach(discard);
+            return;
+        }
+        // Rendering reopens inside the window before the first batch draws.
+        if (outputs != null) pass.rebindMainTarget();
+        try {
+            run.forEach(draw);
+        } finally {
+            if (outputs != null) endPackFamilyWindow(outputs);
         }
     }
 

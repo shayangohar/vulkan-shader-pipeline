@@ -109,9 +109,10 @@ final class PackImageBindings {
 
     /**
      * A depth snapshot. depthtex1 and depthtex2 read their last capture until this frame's.
-     * depthtex0 falls back to the live world depth until it is captured, once that depth is
-     * readable; while it is still the attachment a world program draws into, the draw reads the
-     * last depthtex0 capture instead, since sampling it there would be a feedback loop.
+     * depthtex0 reads this frame's capture: while the world depth is still the attachment world
+     * programs draw into, prepareProgramImages has captured the world drawn so far, since sampling
+     * that attachment would be a feedback loop. Without one, it reads the live world depth once
+     * that is readable, and the last capture before then.
      */
     private VulkanImage depthTargetImage(String name) {
         if (!name.equals("depthtex0")) return pass.packDepthTargets.sampledImage(name);
@@ -161,15 +162,25 @@ final class PackImageBindings {
         return true;
     }
 
-    /** Called before opening attachments, including host geometry render passes. */
+    /**
+     * Called before opening attachments, including host geometry render passes: captures the
+     * depthtex0 a program reads while the world still draws, and moves its advanced images into
+     * their graphics layouts.
+     */
     public void prepareProgramImages(GraphicsPipeline pipeline) {
         ChimeraMainPass.ProgramImages program = this.programImages.get(pipeline);
-        if (program == null || pass.packAdvancedImageOwner == null
-                || !pass.packAdvancedImageOwner.needsGraphicsTransition(program.manifest())) return;
+        if (program == null) return;
+        boolean drawnDepth = pass.depth.needsDrawnDepth(pipeline);
+        boolean advanced = pass.packAdvancedImageOwner != null
+                && pass.packAdvancedImageOwner.needsGraphicsTransition(program.manifest());
+        if (!drawnDepth && !advanced) return;
         boolean resume = Renderer.getInstance().getBoundRenderPass() != null;
         if (resume) Renderer.getInstance().endRenderPass();
         try {
-            pass.packAdvancedImageOwner.prepareGraphicsImages(Renderer.getCommandBuffer(), program.manifest());
+            if (drawnDepth) pass.depth.captureDrawnDepth(Renderer.getCommandBuffer());
+            if (advanced) {
+                pass.packAdvancedImageOwner.prepareGraphicsImages(Renderer.getCommandBuffer(), program.manifest());
+            }
         } finally {
             if (resume) pass.rebindMainTarget();
         }

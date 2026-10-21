@@ -24,6 +24,12 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
 
     public ProgramImageBindingManifest { entries = List.copyOf(entries); }
 
+    /** Whether the program samples the named depth snapshot: depthtex0, depthtex1 or depthtex2. */
+    public boolean readsDepth(String name) {
+        return entries.stream().anyMatch(entry -> entry.kind() == Kind.DEPTH_TARGET
+                && entry.resourceKey().equals(name));
+    }
+
     static ProgramImageBindingManifest from(PackAdvancedResourcePlan.ProgramBindingLayout layout,
             OrdinaryDescriptorContract ordinary) {
         List<Entry> entries = new ArrayList<>();

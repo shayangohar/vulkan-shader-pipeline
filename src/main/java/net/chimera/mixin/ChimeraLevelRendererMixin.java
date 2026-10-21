@@ -106,6 +106,8 @@ public abstract class ChimeraLevelRendererMixin {
             original.call(particles, lightTexture, camera, partialTick, frustum, types);
         } finally {
             ChimeraEntityBridge.endParticles();
+            ChimeraMainPass pass = ChimeraRenderer.segmentsActive() ? ChimeraRenderer.getMainPass() : null;
+            if (pass != null) pass.markWorldDrawn();
         }
     }
 

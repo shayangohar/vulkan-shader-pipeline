@@ -133,6 +133,7 @@ final class PackSceneCoverage {
     /** The direct-HDR terrain path has no separate coverage window to close. */
     public void endPackCoverageWindow(TerrainRenderType renderType) {
         if (pass.shadowPass.shadowPassActive) return;
+        pass.depth.markWorldDrawn();
         if (pass.packTranslucentSuspended && renderType == TerrainRenderType.TRANSLUCENT) {
             pass.packTranslucentSuspended = false;
             ChimeraTerrainPipelines.suspendTranslucentOverride(false);

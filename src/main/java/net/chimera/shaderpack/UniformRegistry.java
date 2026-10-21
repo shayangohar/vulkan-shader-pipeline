@@ -431,7 +431,8 @@ public final class UniformRegistry {
             Map.entry("noisetex", 7),
             // Iris gives every gbuffers program its three depth textures (addWorldDepthSamplers),
             // on the slots post reads them from. depthtex0 is the depth drawn so far there; while
-            // the world depth is an attachment, a draw reads the last capture of each.
+            // the world depth is an attachment, a draw reads a capture of the world drawn before
+            // its flush, and depthtex1 and depthtex2 their last capture.
             Map.entry("depthtex0", 6),
             Map.entry("depthtex1", 12),
             Map.entry("depthtex2", 13)
