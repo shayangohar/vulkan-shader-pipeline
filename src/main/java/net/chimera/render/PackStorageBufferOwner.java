@@ -29,6 +29,8 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     private final Set<String> installedPrograms = new TreeSet<>();
     private final Set<String> verifiedLayouts = new TreeSet<>();
     private final long plannedBytes;
+    private int screenWidth;
+    private int screenHeight;
     private boolean initialized;
     private boolean closed;
     private final Map<Integer, String> drawnWriters = new HashMap<>();
@@ -64,7 +66,13 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     }
 
     public PackStorageBufferOwner(PackAdvancedResourcePlan plan) {
+        this(plan, 1, 1);
+    }
+
+    private PackStorageBufferOwner(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight) {
         this.plan = plan == null ? PackAdvancedResourcePlan.empty() : plan;
+        this.screenWidth = screenWidth;
+        this.screenHeight = screenHeight;
         this.plannedBytes = this.plan.storageBuffers().entrySet().stream()
                 .filter(entry -> this.plan.storageEligiblePrograms().contains(entry.getKey()))
                 .flatMap(entry -> entry.getValue().stream())
@@ -73,16 +81,14 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 .distinct()
                 .map(this.plan.buffers()::get)
                 .filter(Objects::nonNull)
-                .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
+                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight))
                 .sum();
     }
 
-    public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan) {
-        PackStorageBufferOwner owner = new PackStorageBufferOwner(plan);
-        long maxRange = DeviceManager.deviceProperties == null
-                ? Long.MAX_VALUE
-                : unsignedStorageBufferRange(
-                DeviceManager.deviceProperties.limits().maxStorageBufferRange());
+    /** The session's buffers, a relative one sized for a screen of this size (Iris sizes it at creation). */
+    public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight) {
+        PackStorageBufferOwner owner = new PackStorageBufferOwner(plan, screenWidth, screenHeight);
+        long maxRange = maxRange();
         Set<Integer> used = new TreeSet<>();
         owner.plan.storageBuffers().values().forEach(values -> values.stream()
                 .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
@@ -92,13 +98,14 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         for (Integer index : used) {
             PackAdvancedResourcePlan.BufferSpec spec = owner.plan.buffers().get(index);
             if (spec == null || !spec.supported()) continue;
+            long bytes = spec.bytes(screenWidth, screenHeight);
             // The host sizes buffers with an int.
-            if (spec.size() > Math.min(maxRange, Integer.MAX_VALUE)) {
+            if (bytes > maxRange) {
                 owner.failures.put(index, "STORAGE_BUFFER_DEVICE_RANGE_UNSUPPORTED:" + index);
                 continue;
             }
             try {
-                owner.buffers.put(index, new PackStorageBuffer((int) spec.size()));
+                owner.buffers.put(index, new PackStorageBuffer((int) bytes));
             } catch (RuntimeException failure) {
                 owner.failures.put(index, "STORAGE_BUFFER_ALLOCATION_FAILED:" + index);
             }
@@ -106,9 +113,42 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return owner;
     }
 
+    /** The largest buffer the device binds and the host can size, which sizes buffers with an int. */
+    private static long maxRange() {
+        long device = DeviceManager.deviceProperties == null ? Long.MAX_VALUE
+                : unsignedStorageBufferRange(DeviceManager.deviceProperties.limits().maxStorageBufferRange());
+        return Math.min(device, Integer.MAX_VALUE);
+    }
+
     /** Vulkan exposes this limit as an unsigned 32-bit value. */
     public static long unsignedStorageBufferRange(int rawValue) {
         return Integer.toUnsignedLong(rawValue);
+    }
+
+    /**
+     * Recreates each relative buffer for the main target's new size and zero-fills it, as Iris's
+     * ShaderStorageBufferHolder.hasResizedScreen does: contents do not survive a resize. Recorded
+     * outside a render pass. A size past the device's range keeps the old buffer and is logged.
+     */
+    public void fitRelativeBuffers(VkCommandBuffer commandBuffer, int width, int height) {
+        if (commandBuffer == null || closed || (width == screenWidth && height == screenHeight)) return;
+        screenWidth = width;
+        screenHeight = height;
+        boolean filled = false;
+        for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
+            PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
+            if (spec == null || !spec.relative()) continue;
+            long bytes = spec.bytes(width, height);
+            if (bytes > maxRange()) {
+                ChimeraMod.LOGGER.warn("[chimera] storage buffer {} needs {} bytes at {}x{}, past the device range",
+                        entry.getKey(), bytes, width, height);
+                continue;
+            }
+            entry.getValue().recreate((int) bytes);
+            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, bytes, 0);
+            filled = true;
+        }
+        if (filled) PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
     }
 
     /** Returns the session-owned buffer for an admitted logical index. */
@@ -201,7 +241,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return failures.keySet().stream()
                 .map(plan.buffers()::get)
                 .filter(Objects::nonNull)
-                .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
+                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight))
                 .sum();
     }
 
@@ -226,9 +266,8 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     public boolean initialize(VkCommandBuffer commandBuffer) {
         if (commandBuffer == null || closed || initialized || buffers.isEmpty()) return false;
         for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
-            PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
-            if (spec == null) return false;
-            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, spec.size(), 0);
+            if (!plan.buffers().containsKey(entry.getKey())) return false;
+            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, entry.getValue().getBufferSize(), 0);
         }
         PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
         initialized = true;

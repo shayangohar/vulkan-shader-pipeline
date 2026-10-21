@@ -627,7 +627,10 @@ final class PackSessionLifecycle {
         pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), shadersDir);
         pass.materials.ensureMaterialMapOwner();
         pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources());
-        pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources());
+        // A relative buffer starts at the window's size; the main pass refits it to the main target.
+        var window = Minecraft.getInstance().getWindow();
+        pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(),
+                Math.max(window.getWidth(), 1), Math.max(window.getHeight(), 1));
         pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),
                 pass.packAdvancedImageOwner, pass.packResourceOwner, shadersDir,
                 pass.packPlan.settingsPreprocessorDefines(),

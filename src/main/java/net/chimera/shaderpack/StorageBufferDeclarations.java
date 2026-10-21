@@ -4,7 +4,6 @@ import org.lwjgl.vulkan.VK10;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -19,7 +18,7 @@ final class StorageBufferDeclarations {
     private static final List<String> UNBINDABLE_PREFIXES = List.of(
             "STORAGE_BUFFER_LAYOUT_UNSUPPORTED:", "STORAGE_BUFFER_BLOCK_UNMAPPED:",
             "STORAGE_BUFFER_BLOCK_AMBIGUOUS:", "STORAGE_BUFFER_BLOCK_DUPLICATE:", "STORAGE_BUFFER_SIZE_",
-            "STORAGE_BUFFER_ALIGNMENT_", "STORAGE_BUFFER_RELATIVE_");
+            "STORAGE_BUFFER_ALIGNMENT_");
 
     private StorageBufferDeclarations() {}
 
@@ -66,11 +65,13 @@ final class StorageBufferDeclarations {
                     deviations);
         }
         String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        if (values.length == 0 || values.length > 2) {
+        // ShaderProperties: "size [name]", or "size relative scaleX scaleY" read from its first four.
+        if (values.length == 0 || values[0].isEmpty() || values.length == 3) {
             deviations.add("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
                     deviations);
         }
+        if (values.length > 3) return relativeBuffer(index, values, deviations);
         long size;
         try {
             size = Long.parseLong(values[0]);
@@ -79,17 +80,44 @@ final class StorageBufferDeclarations {
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, values.length == 2 ? values[1] : "",
                     PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }
+        checkSize(index, size, deviations);
+        return new PackAdvancedResourcePlan.BufferSpec(index, size, values.length == 2 ? values[1] : "",
+                status(deviations), deviations);
+    }
+
+    /** The long form, which has no name; with relative false it is a fixed buffer of {@code size}. */
+    private static PackAdvancedResourcePlan.BufferSpec relativeBuffer(int index, String[] values,
+                                                                      List<String> deviations) {
+        long size;
+        float scaleX;
+        float scaleY;
+        try {
+            size = Long.parseLong(values[0]);
+            scaleX = Float.parseFloat(values[2]);
+            scaleY = Float.parseFloat(values[3]);
+        } catch (NumberFormatException failure) {
+            deviations.add("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index);
+            return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
+                    deviations);
+        }
+        checkSize(index, size, deviations);
+        boolean relative = Boolean.parseBoolean(values[1]);
+        return new PackAdvancedResourcePlan.BufferSpec(index, size, "", relative,
+                relative ? scaleX : 0f, relative ? scaleY : 0f, status(deviations), deviations);
+    }
+
+    /** Chimera's limits on a declared size: positive, within one buffer's budget, and whole words. */
+    private static void checkSize(int index, long size, List<String> deviations) {
         if (size <= 0L || size > PackAdvancedResourcePlan.MAX_STORAGE_BUFFER_BYTES) {
             deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
         } else if ((size & 3L) != 0L) {
             deviations.add("STORAGE_BUFFER_ALIGNMENT_UNSUPPORTED:" + index);
         }
-        if (raw != null && raw.toLowerCase(Locale.ROOT).contains("relative")) {
-            deviations.add("STORAGE_BUFFER_RELATIVE_UNSUPPORTED:" + index);
-        }
-        return new PackAdvancedResourcePlan.BufferSpec(index, size, values.length == 2 ? values[1] : "",
-                deviations.isEmpty() ? PackAdvancedResourcePlan.Status.SUPPORTED
-                        : PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+    }
+
+    private static PackAdvancedResourcePlan.Status status(List<String> deviations) {
+        return deviations.isEmpty() ? PackAdvancedResourcePlan.Status.SUPPORTED
+                : PackAdvancedResourcePlan.Status.UNSUPPORTED;
     }
 
     static Map<String, List<PackAdvancedResourcePlan.StorageBufferBinding>> scanStorageBuffers(
@@ -276,7 +304,8 @@ final class StorageBufferDeclarations {
         boolean rejected = false;
         for (Integer index : used) {
             PackAdvancedResourcePlan.BufferSpec spec = result.get(index);
-            if (spec == null || !spec.supported()) continue;
+            // A relative buffer follows the screen; allocation checks it against the device's range.
+            if (spec == null || !spec.supported() || spec.relative()) continue;
             if (spec.size() > remaining) {
                 List<String> next = new ArrayList<>(spec.deviations());
                 next.add("STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);

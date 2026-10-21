@@ -850,4 +850,46 @@ final class StorageBufferPlanTest {
                         "LEGACY_FOG_FIELD_UNSUPPORTED:density"),
                 "unsupported gl_Fog field did not fail closed");
     }
+
+    /**
+     * Iris's ShaderProperties reads "size [name]", or "size relative scaleX scaleY" from the first
+     * four values. A relative buffer holds size bytes for each pixel of its truncated share of the
+     * screen (ShaderStorageBuffer.resizeIfRelative). Alpha Piscium declares bufferObject.1=4 true 1.0 1.0.
+     */
+    @Test
+    void relativeBuffersFollowTheScreen() throws IOException {
+        PackAdvancedResourcePlan.BufferSpec screen = StorageBufferDeclarations.parseBuffer(1, "4 true 1.0 1.0");
+        PackAdvancedResourcePlan.BufferSpec tiles = StorageBufferDeclarations.parseBuffer(5, "16384 true 0.033 0.033");
+        PackAdvancedResourcePlan.BufferSpec fixed = StorageBufferDeclarations.parseBuffer(2, "64 false 0.5 0.5 x");
+        assertTrue(screen.supported() && screen.relative() && tiles.supported() && fixed.supported()
+                && !fixed.relative(), List.of(screen, tiles, fixed).toString());
+        assertEquals(1920L * 1080L * 4L, screen.bytes(1920, 1080));
+        assertEquals(63L * 35L * 16384L, tiles.bytes(1920, 1080));
+        assertEquals(64L, fixed.bytes(1920, 1080));
+        for (String malformed : List.of("4 true 1.0", "4 true wide 1.0")) {
+            assertTrue(StorageBufferDeclarations.parseBuffer(1, malformed).deviations()
+                    .contains("STORAGE_BUFFER_PROPERTY_MALFORMED:1"), malformed);
+        }
+
+        Path root = Files.createTempDirectory("chimera-relative-buffer-");
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.1=4 true 1.0 1.0\n");
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 430 compatibility
+                out vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 430 compatibility
+                layout(std430, binding = 1) buffer ScreenData { uint values[]; } screenData;
+                uniform sampler2D gtexture;
+                in vec2 uv;
+                void main() { gl_FragData[0] = texture(gtexture, uv) * float(screenData.values[0]); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertTrue(plan.shouldAttempt("gbuffers_entities")
+                        && plan.advancedResources().storageBuffers("gbuffers_entities").stream()
+                        .allMatch(PackAdvancedResourcePlan.StorageBufferBinding::supported),
+                plan.advancedResources().deviations().toString());
+    }
 }

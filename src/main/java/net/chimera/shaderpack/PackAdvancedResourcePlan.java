@@ -180,11 +180,17 @@ public final class PackAdvancedResourcePlan {
         }
     }
 
-    /** One validated shaders.properties bufferObject.N declaration. */
+    /**
+     * One validated shaders.properties bufferObject.N declaration. A relative one (Iris's
+     * {@code size true scaleX scaleY}) holds {@code size} bytes per covered screen pixel.
+     */
     public record BufferSpec(
             int logicalIndex,
             long size,
             String requestedName,
+            boolean relative,
+            float scaleX,
+            float scaleY,
             Status status,
             List<String> deviations
     ) implements Admission {
@@ -192,6 +198,19 @@ public final class PackAdvancedResourcePlan {
             requestedName = requestedName == null ? "" : requestedName.trim();
             status = status == null ? Status.UNAVAILABLE : status;
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        }
+
+        public BufferSpec(int logicalIndex, long size, String requestedName, Status status, List<String> deviations) {
+            this(logicalIndex, size, requestedName, false, 0f, 0f, status, deviations);
+        }
+
+        /**
+         * The buffer's bytes on a screen of this size: a relative buffer's size for each pixel of
+         * its truncated share (ShaderStorageBuffer.resizeIfRelative), at least one per side.
+         */
+        public long bytes(int screenWidth, int screenHeight) {
+            if (!relative) return size;
+            return Math.max(1L, (long) (screenWidth * scaleX)) * Math.max(1L, (long) (screenHeight * scaleY)) * size;
         }
     }
 

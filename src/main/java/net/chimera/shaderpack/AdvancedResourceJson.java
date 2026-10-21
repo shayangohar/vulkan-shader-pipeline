@@ -95,6 +95,10 @@ final class AdvancedResourceJson {
             item.addProperty("index", value.logicalIndex());
             item.addProperty("size", value.size());
             item.addProperty("name", value.requestedName());
+            if (value.relative()) {
+                item.addProperty("scaleX", value.scaleX());
+                item.addProperty("scaleY", value.scaleY());
+            }
             item.addProperty("status", value.status().name());
             item.add("deviations", PlanJson.strings(value.deviations()));
             bufferArray.add(item);

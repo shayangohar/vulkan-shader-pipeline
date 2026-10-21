@@ -25,4 +25,14 @@ public final class PackStorageBuffer extends UniformBuffer {
 
     @Override
     public void checkCapacity(int size) {}
+
+    /**
+     * Replaces the device buffer with an empty one of {@code size} bytes, as VulkanMod resizes its
+     * own uniform buffers: the old one is freed once the frames that use it finish, and every
+     * descriptor attached to this object binds the new one from its next draw.
+     */
+    public void recreate(int size) {
+        freeBuffer();
+        createBuffer(size);
+    }
 }

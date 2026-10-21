@@ -290,6 +290,9 @@ public final class ChimeraMainPass implements MainPass {
         Renderer.getInstance().endRenderPass();
         if (this.packStorageBufferOwner != null) {
             this.packStorageBufferOwner.beginExecutionFrame();
+            // Iris sizes relative buffers, as relative images, from the main render target.
+            this.packStorageBufferOwner.fitRelativeBuffers(Renderer.getCommandBuffer(),
+                    this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight());
             boolean initialized = this.packStorageBufferOwner.initialize(Renderer.getCommandBuffer());
             if (initialized || !this.packStorageInitializationLogged) {
                 load.logPackStoragePath("storage-initialization");
