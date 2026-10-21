@@ -688,7 +688,9 @@ public final class EntityVertexBridge {
             if (!declaration.typeWithArray().equals(layout.types().get(name))) {
                 throw new IllegalArgumentException("entity varying is not in the shared layout: " + name);
             }
-            String qualifier = layout.qualifier(name);
+            // Each stage keeps its own interpolation, and the fragment input's decides (GLSL 4.40):
+            // Alpha Piscium writes out uint frag_worldTN and reads it flat.
+            String qualifier = declaration.qualifier() == null ? "" : declaration.qualifier();
             return "layout(location = " + layout.location(name) + ") " + direction + " "
                     + (qualifier.isEmpty() ? "" : qualifier + " ")
                     + declaration.type() + " " + declaration.declarator() + ";";
