@@ -364,20 +364,27 @@ public final class PassComputePlan {
                 return body;
             }
             Map<String, Integer> bindings = new TreeMap<>();
+            Set<String> unread = new TreeSet<>();
             for (GlslStorageBufferParser.Block block : blocks) {
-                List<PackAdvancedResourcePlan.BufferSpec> matches = StorageBufferDeclarations.matchingBufferSpecs(
-                        new StorageBufferDeclarations.StorageBlock(block.blockName(), block.instanceName(),
-                                block.originalBinding(), block.laidOut(), 0), plan.advancedResources().buffers());
-                PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
-                if (spec == null || !spec.supported() || !block.laidOut() || block.originalBinding() < 0) {
+                // GL leaves a block nothing reads inactive, bound to nothing: it is dropped.
+                if (block.accessNames().stream().noneMatch(name -> GlslTokenRewriter.identifierCount(body, name) > 1)) {
+                    unread.add(GlslStorageBufferParser.key(block));
+                    continue;
+                }
+                StorageBufferDeclarations.StorageBlock storage = new StorageBufferDeclarations.StorageBlock(
+                        block.blockName(), block.instanceName(), block.originalBinding(), block.laidOut(), 0);
+                StorageBufferDeclarations.BlockMatch match = StorageBufferDeclarations.match(work.name, storage,
+                        Set.of(), plan.advancedResources().buffers());
+                if (!match.bindable() || block.originalBinding() < 0) {
                     work.fail("PASS_COMPUTE_STORAGE_BUFFER_UNSUPPORTED:" + block.blockName());
+                    work.deviations.addAll(match.deviations());
                     continue;
                 }
                 bindings.put(GlslStorageBufferParser.key(block), work.bindings.size());
                 work.bindings.add(new Binding(block.blockName(), work.bindings.size(), Kind.STORAGE_BUFFER,
-                        spec.logicalIndex(), null, null));
+                        match.spec().logicalIndex(), null, null));
             }
-            return GlslStorageBufferParser.rewrite(body, bindings);
+            return GlslStorageBufferParser.rewrite(GlslStorageBufferParser.withoutBlocks(body, unread), bindings);
         }
 
         /**

@@ -222,11 +222,10 @@ final class StorageBufferDeclarations {
         Map<Integer, Integer> logicalBindings = new TreeMap<>();
         List<PackAdvancedResourcePlan.StorageBufferBinding> bindings = new ArrayList<>();
         for (StorageBlock block : merged.blocks().values()) {
-            List<PackAdvancedResourcePlan.BufferSpec> matches = matchingBufferSpecs(block, specs);
-            PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
-            List<String> local = blockDeviations(program, block, merged.duplicates(), matches);
-            PackAdvancedResourcePlan.Status status = spec != null && spec.supported() && local.stream().noneMatch(
-                    value -> UNBINDABLE_PREFIXES.stream().anyMatch(value::startsWith))
+            BlockMatch match = match(program, block, merged.duplicates(), specs);
+            PackAdvancedResourcePlan.BufferSpec spec = match.spec();
+            List<String> local = match.deviations();
+            PackAdvancedResourcePlan.Status status = match.bindable()
                     ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
             int logicalIndex = spec == null ? -1 : spec.logicalIndex();
             long size = spec == null ? 0L : spec.size();
@@ -245,6 +244,24 @@ final class StorageBufferDeclarations {
             }
         }
         return bindings;
+    }
+
+    /** The declaration a block names (null unless exactly one), whether it binds, and the block's deviations. */
+    record BlockMatch(PackAdvancedResourcePlan.BufferSpec spec, boolean bindable, List<String> deviations) {}
+
+    /**
+     * How a program's or pass compute's block meets the pack's bufferObject declarations: it binds
+     * when it names exactly one supported declaration and nothing in its own deviations
+     * (UNBINDABLE_PREFIXES) stops it.
+     */
+    static BlockMatch match(String program, StorageBlock block, Set<String> duplicateBlocks,
+                            Map<Integer, PackAdvancedResourcePlan.BufferSpec> specs) {
+        List<PackAdvancedResourcePlan.BufferSpec> matches = matchingBufferSpecs(block, specs);
+        PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
+        List<String> local = blockDeviations(program, block, duplicateBlocks, matches);
+        boolean bindable = spec != null && spec.supported()
+                && local.stream().noneMatch(value -> UNBINDABLE_PREFIXES.stream().anyMatch(value::startsWith));
+        return new BlockMatch(spec, bindable, local);
     }
 
     /** A block's own deviations: its layout, a duplicate declaration, and how it matched a declaration. */

@@ -346,6 +346,7 @@ final class ComputePassTest {
                 #version 430
                 layout(local_size_x = 1) in;
                 layout(std430, binding = 3) buffer Exposure { float exposure; };
+                layout(std430, binding = 1) buffer Stale { float stale; };
                 layout(std430, binding = 0) buffer Global { vec4 data[]; } global;
                 layout(rgba16f) uniform image2D colorimg2;
                 void main() {
@@ -359,7 +360,18 @@ final class ComputePassTest {
                 layout(std430, binding = 5) buffer Missing { float value; };
                 void main() { value = 1.0; }
                 """);
+        // Blocks nothing reads are inactive in GL, whatever they name; a shared one has no Vulkan layout.
+        Files.writeString(shaders.resolve("composite2_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(std430, binding = 6) buffer Unread { float unused[]; } unread;
+                layout(std430, binding = 7) buffer Anonymous { float alsoUnused; };
+                layout(shared, binding = 0) buffer Shared { float shared0; };
+                void main() { shared0 = 1.0; }
+                """);
         PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        assertEquals(List.of("PASS_COMPUTE_STORAGE_BUFFER_UNSUPPORTED:Shared",
+                "STORAGE_BUFFER_LAYOUT_UNSUPPORTED:Shared"), computes.compute("composite2_a").deviations());
         PassComputePlan.PassCompute compute = computes.compute("composite_a");
         assertEquals(List.of(
                 new PassComputePlan.Binding("colorimg2", 0, PassComputePlan.Kind.TARGET_IMAGE, 2, "rgba16f", null),
@@ -367,10 +379,11 @@ final class ComputePassTest {
                 new PassComputePlan.Binding("Global", 2, PassComputePlan.Kind.STORAGE_BUFFER, 0, null, null)),
                 compute.bindings(), compute.deviations().toString());
         assertEquals(Set.of(0, 3), computes.storageBuffers());
-        assertEquals(List.of("PASS_COMPUTE_STORAGE_BUFFER_UNSUPPORTED:Missing"),
-                computes.compute("composite1_a").deviations());
+        assertEquals(List.of("PASS_COMPUTE_STORAGE_BUFFER_UNSUPPORTED:Missing",
+                "STORAGE_BUFFER_BLOCK_UNMAPPED:composite1_a:Missing"), computes.compute("composite1_a").deviations());
         assertTrue(compute.source().contains("binding = 1) buffer Exposure")
-                && compute.source().contains("binding = 2) buffer Global"), compute.source());
+                && compute.source().contains("binding = 2) buffer Global") && !compute.source().contains("Stale"),
+                compute.source());
         String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
         assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
     }
