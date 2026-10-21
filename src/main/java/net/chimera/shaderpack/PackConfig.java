@@ -7,7 +7,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,20 +36,17 @@ public final class PackConfig {
      * aliases Iris accepts the same way (gaux2Format is colortex5Format).
      */
     private static final String TARGET_NAME = "(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])";
-    /** const int <target>Format = TOKEN; */
-    private static final Pattern COLORTEX_FMT_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+int\\s+" + TARGET_NAME + "Format\\s*=\\s*(\\w+)\\s*;\\s*(?://.*)?$");
-    private static final Pattern COLORTEX_CLEAR_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+bool\\s+" + TARGET_NAME + "Clear\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern COLORTEX_CLEAR_COLOR_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+vec4\\s+" + TARGET_NAME
-                    + "ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
-    private static final Pattern SHADOW_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+(?:int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul"
-                    + "|shadowIntervalSize|sunPathRotation|sunPathOffset|entityShadowDistanceMul|voxelDistance)"
-                    + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
+    /** A colour target directive: {@code <target>Format} (int), {@code Clear} (bool), {@code ClearColor} (vec4). */
+    private static final Pattern TARGET_DIRECTIVE = Pattern.compile(TARGET_NAME + "(Format|ClearColor|Clear)");
+    private static final Map<String, String> TARGET_DIRECTIVE_TYPES = Map.of(
+            "Format", "int", "Clear", "bool", "ClearColor", "vec4");
+    /** The shadow settings a const directive declares, with the type it must be declared as. */
+    private static final Map<String, String> SHADOW_DIRECTIVE_TYPES = Map.ofEntries(
+            Map.entry("shadowMapResolution", "int"), Map.entry("shadowDistance", "float"),
+            Map.entry("shadowMapSize", "float"), Map.entry("shadowMapFov", "float"),
+            Map.entry("shadowDistanceRenderMul", "float"), Map.entry("shadowIntervalSize", "float"),
+            Map.entry("sunPathRotation", "float"), Map.entry("sunPathOffset", "float"),
+            Map.entry("entityShadowDistanceMul", "float"), Map.entry("voxelDistance", "float"));
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
@@ -271,17 +267,11 @@ public final class PackConfig {
             PackSettingsPlan settings
     ) {
         Collected collected = new Collected();
-        for (PackProgram program : programs.stream()
-                .sorted(Comparator.comparing(PackProgram::name)).toList()) {
-            String src = program.executableFragmentSource();
-            if (src == null) {
-                src = "";
+        for (PackProgram program : IrisConstDirectives.programs(programs)) {
+            for (IrisConstDirectives.Directive directive
+                    : IrisConstDirectives.find(program.executableFragmentSource())) {
+                acceptDirective(program.name(), directive, collected);
             }
-            collectSourceFormats(program.name(), src, collected);
-            collectShadowConstants(src, collected.shadowValues);
-            collectShadowConstants(program.executableVertexSource(), collected.shadowValues);
-            collectTargetConstants(src, collected.targetSettings, collected.deviations);
-            collectTargetConstants(program.executableVertexSource(), collected.targetSettings, collected.deviations);
         }
 
         // shaders.properties overrides (OptiFine packs may declare formats here), as Iris reads
@@ -311,16 +301,36 @@ public final class PackConfig {
                 collected.targetSettings, collected.flips, collected.preFlips, collected.paddedAlphaTargets);
     }
 
-    /**
-     * The shadow target directives, read as Iris's ProgramSet.locateDirectives reads pack
-     * directives: from the fragment sources of every program but final.
-     */
+    /** The shadow target directives, from the sources Iris reads directives from, in its order. */
     private static ShadowTargetDirectives shadowTargets(List<PackProgram> programs) {
-        return ShadowTargetDirectives.parse(programs.stream()
-                .sorted(Comparator.comparing(PackProgram::name))
-                .filter(program -> !program.name().equals("final"))
+        return ShadowTargetDirectives.parse(IrisConstDirectives.programs(programs).stream()
                 .map(PackProgram::executableFragmentSource)
                 .toList());
+    }
+
+    /**
+     * One const directive: a colour target's format, clear or clear colour, or a shadow setting.
+     * A directive declared with another type than Iris reads it as is ignored, as Iris ignores it.
+     */
+    private static void acceptDirective(String program, IrisConstDirectives.Directive directive, Collected collected) {
+        Matcher target = TARGET_DIRECTIVE.matcher(directive.name());
+        if (target.matches() && directive.type().equals(TARGET_DIRECTIVE_TYPES.get(target.group(2)))) {
+            acceptTargetDirective(program, target.group(1), target.group(2), directive.value(), collected);
+        } else if (directive.type().equals(SHADOW_DIRECTIVE_TYPES.get(directive.name()))
+                && irisNumber(directive.type(), directive.value())) {
+            collected.shadowValues.put(directive.name(), directive.value());
+        }
+    }
+
+    /** Whether Iris parses {@code value} as its {@code int} (Integer.parseInt) or {@code float} (Float.parseFloat). */
+    private static boolean irisNumber(String type, String value) {
+        try {
+            if (type.equals("int")) Integer.parseInt(value);
+            else Float.parseFloat(value);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     private static final Pattern SHADOW_COLOR_NAME = Pattern.compile("\\bshadowcolor([0-7])\\b");
@@ -382,26 +392,43 @@ public final class PackConfig {
         return collected.colortexFormats.put(slot, code);
     }
 
-    /** The {@code const int colortexNFormat} declarations of one program's fragment source. */
-    private static void collectSourceFormats(String program, String src, Collected collected) {
-        Matcher fmt = COLORTEX_FMT_CONST.matcher(src);
-        while (fmt.find()) {
-            int slot = parseTargetIndex(fmt.group(1), collected.deviations);
-            if (slot < 0) {
-                continue;
+    /**
+     * A colour target directive: a format token, a clear switch Iris reads only as exactly true or
+     * false, or a clear colour.
+     */
+    private static void acceptTargetDirective(String program, String target, String setting, String value,
+                                              Collected collected) {
+        int slot = parseTargetIndex(target, collected.deviations);
+        if (slot < 0) return;
+        switch (setting) {
+            case "Format" -> acceptFormatDirective(program, slot, value, collected);
+            case "Clear" -> {
+                if (value.equals("true") || value.equals("false")) {
+                    updateTargetSettings(collected.targetSettings, slot, null, value.equals("true"), null, null);
+                }
             }
-            String token = fmt.group(2);
-            Integer code = formatCode(slot, token, collected.deviations);
-            if (code == null) {
-                collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
-                LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
-                        program, slot, token);
-                continue;
+            default -> {
+                float[] parsed = parseColor(value);
+                if (parsed != null) {
+                    updateTargetSettings(collected.targetSettings, slot, null, null, parsed, null);
+                } else {
+                    collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+                }
             }
-            Integer previous = putFormat(slot, token, code, collected);
-            if (previous != null && !previous.equals(code)) {
-                LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
-            }
+        }
+    }
+
+    private static void acceptFormatDirective(String program, int slot, String token, Collected collected) {
+        Integer code = formatCode(slot, token, collected.deviations);
+        if (code == null) {
+            collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
+            LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
+                    program, slot, token);
+            return;
+        }
+        Integer previous = putFormat(slot, token, code, collected);
+        if (previous != null && !previous.equals(code)) {
+            LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
         }
     }
 
@@ -502,39 +529,6 @@ public final class PackConfig {
     private static final List<String> SHADOW_PROPERTIES = List.of(
             "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
             "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
-
-    private static void collectShadowConstants(String source, Map<String, String> values) {
-        Matcher shadow = SHADOW_CONST.matcher(source == null ? "" : source);
-        while (shadow.find()) {
-            values.put(shadow.group(1), shadow.group(2));
-        }
-    }
-
-    private static void collectTargetConstants(
-            String source,
-            Map<Integer, TargetSettings> values,
-            List<String> deviations
-    ) {
-        String text = source == null ? "" : source;
-        Matcher clear = COLORTEX_CLEAR_CONST.matcher(text);
-        while (clear.find()) {
-            int slot = parseTargetIndex(clear.group(1), deviations);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                updateTargetSettings(values, slot, null,
-                        Boolean.parseBoolean(clear.group(2)), null, null);
-            }
-        }
-        Matcher color = COLORTEX_CLEAR_COLOR_CONST.matcher(text);
-        while (color.find()) {
-            int slot = parseTargetIndex(color.group(1), deviations);
-            float[] parsed = parseColor(color.group(2));
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && parsed != null) {
-                updateTargetSettings(values, slot, null, null, parsed, null);
-            } else {
-                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-            }
-        }
-    }
 
     /** Resolves colortexN, a legacy alias, or a bare index; -1 with a deviation when unsupported. */
     private static int parseTargetIndex(String value, List<String> deviations) {

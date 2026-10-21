@@ -33,8 +33,6 @@ public record ShadowTargetDirectives(List<ColorTarget> colors, List<DepthSamplin
     /** One shadow depth's settings: shadowtex0 then shadowtex1. */
     public record DepthSampling(boolean hardwareFiltering, boolean mipmap, boolean nearest) {}
 
-    private static final Pattern CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+(bool|int|vec4)\\s+(\\w+)\\s*=\\s*([^;]*?)\\s*;");
     private static final Pattern NUMBERED = Pattern.compile(
             "(shadowcolor|shadowColor|shadowtex|shadow)(\\d)(Format|ClearColor|Clear|MinMagNearest|Nearest|Mipmap)");
 
@@ -53,10 +51,8 @@ public record ShadowTargetDirectives(List<ColorTarget> colors, List<DepthSamplin
     public static ShadowTargetDirectives parse(List<String> sources) {
         Builder builder = new Builder();
         for (String source : sources) {
-            if (source == null) continue;
-            Matcher constant = CONST.matcher(source);
-            while (constant.find()) {
-                builder.accept(constant.group(1), constant.group(2), constant.group(3));
+            for (IrisConstDirectives.Directive directive : IrisConstDirectives.find(source)) {
+                builder.accept(directive.type(), directive.name(), directive.value());
             }
         }
         return builder.build();

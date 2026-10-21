@@ -400,9 +400,6 @@ final class ShadowPassTest {
                     uniform mat4 shadowModelViewInverse;
                     uniform mat4 shadowProjection;
                     uniform mat4 shadowProjectionInverse;
-                    const float entityShadowDistanceMul = 0.25;
-                    const float shadowDistanceRenderMul = 1.0;
-                    const float shadowDistance = 128.0;
                     varying vec2 texCoord;
                     varying vec4 color;
                     varying float mat;
@@ -419,6 +416,9 @@ final class ShadowPassTest {
         Files.writeString(shaders.resolve("shadow.fsh"), """
                     #version 120
                     /* DRAWBUFFERS:01 */
+                    const float entityShadowDistanceMul = 0.25;
+                    const float shadowDistanceRenderMul = 1.0;
+                    const float shadowDistance = 128.0;
                     uniform sampler2D tex;
                     uniform int blockEntityId;
                     varying vec2 texCoord;

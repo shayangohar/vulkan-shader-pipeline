@@ -263,6 +263,11 @@ record PackResolutionPlan(
         map.put(key, List.of(programs));
     }
 
+    /** Iris's ProgramId names, in its declaration order. */
+    static List<String> programIds() {
+        return FALLBACKS.keySet().stream().filter(name -> !isShaderKey(name)).toList();
+    }
+
     /** True for a requested name that is a shader key, never an authorable program. */
     static boolean isShaderKey(String name) {
         List<String> chain = FALLBACKS.get(name);
