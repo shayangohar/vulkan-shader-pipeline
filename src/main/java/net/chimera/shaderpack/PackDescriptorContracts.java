@@ -363,7 +363,7 @@ final class PackDescriptorContracts {
 
     private static String imageDeclaration(PackAdvancedResourcePlan.ImageSpec spec,
                                            PackAdvancedResourcePlan.GraphicsImageBinding binding, int descriptor) {
-        return "layout(" + spec.internalFormat() + ", binding = " + descriptor + ") uniform " + binding.glslType()
+        return "layout(" + spec.layoutQualifier() + ", binding = " + descriptor + ") uniform " + binding.glslType()
                 + " " + binding.symbol() + ";";
     }
 
@@ -449,10 +449,6 @@ final class PackDescriptorContracts {
     ) {
         PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
                 .get(binding.imageName());
-        if (spec != null && (spec.internalFormat().equalsIgnoreCase("r8ui")
-                || spec.internalFormat().equalsIgnoreCase("r16ui"))) {
-            return "usampler3D";
-        }
-        return "sampler3D";
+        return spec == null || spec.format() == null ? "sampler3D" : spec.typePrefix() + "sampler3D";
     }
 }

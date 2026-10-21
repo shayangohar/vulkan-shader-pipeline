@@ -415,7 +415,7 @@ public final class PackShadowCompute implements AutoCloseable {
                     throw new IllegalArgumentException("unsupported compute image: " + name);
                 }
                 PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(name);
-                String replacement = "layout(" + spec.internalFormat() + ", binding = " + binding
+                String replacement = "layout(" + spec.layoutQualifier() + ", binding = " + binding
                         + ") uniform " + imageType(spec, type) + " " + name + ";";
                 image.appendReplacement(imageResult, Matcher.quoteReplacement(replacement));
             }
@@ -547,16 +547,11 @@ public final class PackShadowCompute implements AutoCloseable {
     }
 
     private static String samplerType(PackAdvancedResourcePlan.ImageSpec spec) {
-        return isInteger(spec) ? "usampler3D" : "sampler3D";
+        return spec == null ? "sampler3D" : spec.typePrefix() + "sampler3D";
     }
 
     private static String imageType(PackAdvancedResourcePlan.ImageSpec spec, String sourceType) {
-        return isInteger(spec) ? "uimage3D" : sourceType;
-    }
-
-    private static boolean isInteger(PackAdvancedResourcePlan.ImageSpec spec) {
-        return spec != null && (spec.internalFormat().equalsIgnoreCase("r8ui")
-                || spec.internalFormat().equalsIgnoreCase("r16ui"));
+        return spec == null ? sourceType : spec.typePrefix() + "image3D";
     }
 
     private static int indexBySampler(List<String> names, String name, PackAdvancedResourcePlan plan) {

@@ -7,7 +7,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -328,22 +327,15 @@ final class AdvancedImageDeclarations {
         return usage.liveSamplers().stream().anyMatch(injectedSamplers::contains);
     }
 
+    /** Bytes per texel of an Iris internal format as stored; Iris skips an image whose format it does not know. */
     static int bytesPerVoxel(String format) {
-        return switch (format) {
-            case "r8ui" -> 1;
-            case "r16ui" -> 2;
-            case "rgba16f" -> 8;
-            default -> throw new IllegalArgumentException("unsupported advanced image format: " + format);
-        };
+        IrisColorFormats.Format known = IrisColorFormats.of(format);
+        if (known == null) throw new IllegalArgumentException("unsupported advanced image format: " + format);
+        return known.bytes();
     }
 
     static String storageImageType(PackAdvancedResourcePlan.ImageSpec spec) {
-        if (spec == null) return "image3D";
-        return switch (spec.internalFormat().toLowerCase(Locale.ROOT)) {
-            case "r8ui", "r16ui" -> "uimage3D";
-            case "rgba16f" -> "image3D";
-            default -> "image3D";
-        };
+        return spec == null || spec.format() == null ? "image3D" : spec.typePrefix() + "image3D";
     }
 
     static String token(String[] values, int index) {

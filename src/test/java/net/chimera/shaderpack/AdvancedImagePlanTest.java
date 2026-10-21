@@ -83,6 +83,30 @@ final class AdvancedImagePlanTest {
                 "budget-isolation fingerprint baseline mismatch");
     }
 
+    /**
+     * A custom image takes any InternalTextureFormat Iris knows (ShaderProperties, GlImage): Chimera
+     * knew only r8ui, r16ui and rgba16f, so Pegasus's R32UI and RGBA8 images were refused.
+     */
+    @Test
+    void imageFormatsFollowIris() {
+        PackAdvancedResourcePlan.ImageSpec integer = AdvancedImageDeclarations.parseImage("image.cimage1a",
+                "cSampler1 RED_INTEGER R32UI UNSIGNED_INT true false 64 64 64", Map.of());
+        PackAdvancedResourcePlan.ImageSpec color = AdvancedImageDeclarations.parseImage("image.light",
+                "cSampler3 RGBA RGBA8 BYTE false false 32 64 32", Map.of());
+        PackAdvancedResourcePlan.ImageSpec padded = AdvancedImageDeclarations.parseImage("image.padded",
+                "padded RGB rgb16f HALF_FLOAT false false 8 8 8", Map.of());
+        PackAdvancedResourcePlan.ImageSpec unknown = AdvancedImageDeclarations.parseImage("image.unknown",
+                "unknown RGBA NOT_A_FORMAT FLOAT false false 8 8 8", Map.of());
+        assertTrue(integer.supported() && color.supported() && padded.supported());
+        assertEquals(64L * 64L * 64L * 4L, integer.estimatedBytes());
+        assertEquals("r32ui", integer.layoutQualifier());
+        assertEquals("uimage3D", AdvancedImageDeclarations.storageImageType(integer));
+        assertEquals("rgba8", color.layoutQualifier());
+        assertEquals("image3D", AdvancedImageDeclarations.storageImageType(color));
+        assertEquals("rgba16f", padded.layoutQualifier(), "RGB16F is stored with alpha");
+        assertTrue(!unknown.supported() && unknown.deviations().contains("ADVANCED_IMAGE_UNSUPPORTED:unknown"));
+    }
+
     /** The budget fixture's plan, which rejects only its oversized image and keeps compute. */
     private static PackAdvancedResourcePlan budgetIsolationPlan(Path budgetPath) {
         assertTrue(Files.isDirectory(budgetPath), "budget fixture is missing");

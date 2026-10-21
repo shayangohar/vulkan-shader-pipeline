@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -81,6 +82,22 @@ public final class PackAdvancedResourcePlan {
             heightToken = heightToken == null ? Integer.toString(height) : heightToken;
             depthToken = depthToken == null ? Integer.toString(depth) : depthToken;
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        }
+
+        /** The internal format as Iris names it (InternalTextureFormat); null for one Iris does not know. */
+        public IrisColorFormats.Format format() {
+            return IrisColorFormats.of(internalFormat);
+        }
+
+        /** The GLSL image format qualifier of the format the texels are stored in ({@code rgba8}, {@code r32ui}). */
+        public String layoutQualifier() {
+            return IrisColorFormats.stored(format().vkFormat()).token().toLowerCase(Locale.ROOT);
+        }
+
+        /** The prefix of the image's GLSL types: {@code u} or {@code i} for an integer format, none for a float one. */
+        public String typePrefix() {
+            IrisColorFormats.Kind kind = format().kind();
+            return kind == IrisColorFormats.Kind.UINT ? "u" : kind == IrisColorFormats.Kind.SINT ? "i" : "";
         }
     }
 

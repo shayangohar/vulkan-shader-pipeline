@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.device.DeviceManager;
@@ -53,7 +54,7 @@ import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BI
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED;
-import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_REPEAT;
+import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 import static org.lwjgl.vulkan.VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST;
 import static org.lwjgl.vulkan.VK10.VK_SAMPLE_COUNT_1_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE;
@@ -96,7 +97,8 @@ final class PackStorageImage extends VulkanImage {
     }
 
     static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec) {
-        int format = format(spec.internalFormat());
+        int format = spec.format().vkFormat();
+        boolean integer = IrisColorFormats.integer(format);
         verifyFormatSupport(format, spec.name());
         int usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                 | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -127,12 +129,12 @@ final class PackStorageImage extends VulkanImage {
             LongBuffer sampler = stack.mallocLong(1);
             VkSamplerCreateInfo samplerInfo = VkSamplerCreateInfo.calloc(stack)
                     .sType$Default()
-                    .magFilter(isInteger(spec.internalFormat()) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
-                    .minFilter(isInteger(spec.internalFormat()) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
+                    .magFilter(integer ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
+                    .minFilter(integer ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
                     .mipmapMode(VK_SAMPLER_MIPMAP_MODE_NEAREST)
-                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_REPEAT)
-                    .addressModeV(VK_SAMPLER_ADDRESS_MODE_REPEAT)
-                    .addressModeW(VK_SAMPLER_ADDRESS_MODE_REPEAT)
+                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false)
                     .minLod(0.0f)
@@ -144,7 +146,7 @@ final class PackStorageImage extends VulkanImage {
             }
             return new PackStorageImage(imageId,
                     allocation.get(0), format, spec.width(), spec.height(), spec.depth(),
-                    usage, imageView, bytesPerVoxel(spec.internalFormat()), sampler.get(0));
+                    usage, imageView, spec.format().bytes(), sampler.get(0));
         }
     }
 
@@ -178,7 +180,7 @@ final class PackStorageImage extends VulkanImage {
     void clearToZero(MemoryStack stack, VkCommandBuffer commandBuffer) {
         if (commandBuffer == null) return;
         VkClearColorValue clear = VkClearColorValue.calloc(stack);
-        if (isIntegerFormat()) {
+        if (IrisColorFormats.integer(format)) {
             IntBuffer values = stack.callocInt(4);
             clear.int32(values);
         } else {
@@ -292,32 +294,5 @@ final class PackStorageImage extends VulkanImage {
         }
         vkDestroyImageView(Vulkan.getVkDevice(), view, null);
         vmaDestroyImage(Vulkan.getAllocator(), getId(), allocation);
-    }
-
-    private static int format(String value) {
-        return switch (value.toLowerCase()) {
-            case "r8ui" -> VK10.VK_FORMAT_R8_UINT;
-            case "r16ui" -> VK10.VK_FORMAT_R16_UINT;
-            case "rgba16f" -> VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
-            default -> throw new IllegalArgumentException("unsupported advanced image format: " + value);
-        };
-    }
-
-    private static int bytesPerVoxel(String value) {
-        return switch (value.toLowerCase()) {
-            case "r8ui" -> 1;
-            case "r16ui" -> 2;
-            case "rgba16f" -> 8;
-            default -> 0;
-        };
-    }
-
-    private static boolean isInteger(String value) {
-        return "r8ui".equalsIgnoreCase(value) || "r16ui".equalsIgnoreCase(value);
-    }
-
-    private boolean isIntegerFormat() {
-        return format == VK10.VK_FORMAT_R8_UINT
-                || format == VK10.VK_FORMAT_R16_UINT;
     }
 }
