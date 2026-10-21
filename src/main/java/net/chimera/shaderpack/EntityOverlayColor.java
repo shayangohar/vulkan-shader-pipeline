@@ -25,6 +25,7 @@ final class EntityOverlayColor {
 
     private static final Pattern DECLARATION =
             Pattern.compile("(?m)^[ \\t]*uniform\\s+vec4\\s+entityColor\\s*;");
+    private static final Pattern READ = Pattern.compile("\\bentityColor\\b");
     private static final Pattern MAIN =
             Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)\\s*\\{");
 
@@ -47,6 +48,18 @@ final class EntityOverlayColor {
                 + "\n    entityColor = vec4(chimeraOverlayTexel.rgb, 1.0 - chimeraOverlayTexel.a);"
                 + "\n    entityColor.rgb *= float(entityColor.a != 0.0);";
         return declared.substring(0, main.end()) + prologue + declared.substring(main.end());
+    }
+
+    /**
+     * The vertex stage beside an injected fragment. Iris deletes the uniform from every stage
+     * (EntityPatcher.patchOverlayColor), so a vertex stage that declares it only through a header
+     * it shares with the fragment loses the declaration, which would otherwise meet the fragment's
+     * global in the shared uniform block. A vertex stage that reads it keeps it.
+     */
+    static String withoutUnreadVertexDeclaration(String vertex) {
+        if (vertex == null) return null;
+        String removed = DECLARATION.matcher(vertex).replaceAll("");
+        return READ.matcher(GlslLexer.stripComments(removed)).find() ? vertex : removed;
     }
 
     /**

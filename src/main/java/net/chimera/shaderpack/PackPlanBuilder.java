@@ -325,6 +325,7 @@ public final class PackPlanBuilder {
                 fragment = alphaTestPlan.injectDrawTest(fragment, name.equals("gbuffers_entities"));
                 if (FamilyAdapterRegistry.isEntityLike(name) && !name.equals("gbuffers_damagedblock")) {
                     fragment = EntityOverlayColor.inject(fragment);
+                    vertex = EntityOverlayColor.withoutUnreadVertexDeclaration(vertex);
                 }
             } else if (isTerrainMaterialFamily(name) || (FamilyAdapterRegistry.isCloudFamily(name)
                     && !AuthoredOutput.producesNothing(vertex, fragment))) {

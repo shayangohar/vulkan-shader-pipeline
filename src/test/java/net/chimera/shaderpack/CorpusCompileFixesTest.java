@@ -429,4 +429,33 @@ final class CorpusCompileFixesTest {
                                 .replace("environment.sky", "imageLoad(img, ivec2(0))"), true, true));
         assertTrue(refused.getMessage().contains("unsupported entity vertex"), refused.getMessage());
     }
+
+    /**
+     * Escheridia's vertex and fragment stages include one header declaring entityColor. Iris deletes
+     * the uniform from every stage; a vertex copy left in the shared block met the fragment's global.
+     */
+    @Test
+    void anEntityVertexLosesTheEntityColorItDoesNotRead(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 120
+                uniform vec4 entityColor;
+                varying vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 120
+                uniform sampler2D texture;
+                uniform vec4 entityColor;
+                varying vec2 uv;
+                void main() {
+                    vec4 color = texture2D(texture, uv);
+                    gl_FragData[0] = vec4(mix(color.rgb, entityColor.rgb, entityColor.a), color.a);
+                }
+                """);
+        PackProgramPlan entities = PackProbe.analyze(root).plan().program("gbuffers_entities");
+        assertTrue(entities.executable() && !entities.deviations().contains("UNIFORM_DEFAULTED:entityColor"),
+                entities.deviations().toString());
+        assertFalse(entities.convertedVertex().contains("entityColor"), entities.convertedVertex());
+    }
 }
