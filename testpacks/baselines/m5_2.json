@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "material": {
-      "reportSha256": "e97f8ba330659a69d66c0453976a8f25fa2e7695ed7836e3891166c7b4e1d3a7",
+      "reportSha256": "00bded4301d26d8f09b2f9e4bff65be946740f0da6b7e91e1834166ade2f12c5",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -63,7 +63,6 @@
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE",
           "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
-          "FIXED_VERTEX_SUBSTITUTION",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
         ],
@@ -89,7 +88,7 @@
       }
     },
     "unsupported_vertex": {
-      "reportSha256": "4eac87e8701abca45c30c4209a55371c81968fc8ae28bb082191c8aeacca0296",
+      "reportSha256": "ae45edfdf4733bdffeee94c931c8e088584fa1047d4798453f429c0d9d115c79",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -150,7 +149,6 @@
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE",
           "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
-          "FIXED_VERTEX_SUBSTITUTION",
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
         ],

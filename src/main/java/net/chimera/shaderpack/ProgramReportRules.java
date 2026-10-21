@@ -79,7 +79,8 @@ final class ProgramReportRules {
         return new ConformanceReport.ProgramReport(
                 name, PackProbe.familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
                 PackProbe.sorted(inventory.stages), inventory.sourceHashes, samplers, uniformNames,
-                targets, supportStatus(executableName(name, inventory, postName), hasFragment, deviations),
+                targets, supportStatus(executableName(name, inventory, postName), hasFragment, planRuns(programPlan),
+                        deviations),
                 ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
     }
 
@@ -295,12 +296,21 @@ final class ProgramReportRules {
                 && (!needsVertex || inventory.stages.contains("vertex"));
     }
 
+    /**
+     * Whether the plan lets the program run: no plan judges it, the plan admits it, or it is an
+     * authored-empty cloud program, which the runtime installs as drawing nothing.
+     */
+    static boolean planRuns(PackProgramPlan plan) {
+        return plan == null || plan.executable() || plan.cloudDrawsNothing();
+    }
+
+    /** A program's status. A plan that refused the program leaves it on the fallback whatever it recorded. */
     static ConformanceReport.SupportStatus supportStatus(
-            boolean executableName, boolean hasFragment, Collection<String> deviations) {
+            boolean executableName, boolean hasFragment, boolean planExecutable, Collection<String> deviations) {
         if (!executableName) {
             return ConformanceReport.SupportStatus.UNSUPPORTED;
         }
-        if (!hasFragment || hasSevereDeviation(deviations)) {
+        if (!hasFragment || !planExecutable || hasSevereDeviation(deviations)) {
             return ConformanceReport.SupportStatus.IDENTITY_FALLBACK;
         }
         return deviations.isEmpty() ? ConformanceReport.SupportStatus.SUPPORTED
@@ -326,7 +336,7 @@ final class ProgramReportRules {
                 }
             };
             if (bridge != null) {
-                return bridge;
+                return reached(bridge, converted, plan);
             }
             if (converted && postName) {
                 return plan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
@@ -334,6 +344,17 @@ final class ProgramReportRules {
             }
         }
         return unbridgedVertex(name, hasVertex);
+    }
+
+    /**
+     * The bridge as reported. A plan its admission refused first never runs the entity,
+     * host-layout or particle bridges, so an unconverted vertex with no failed bridge recorded
+     * reports the bridge as not reached ({@code <LANE>_VERTEX_BRIDGE_NOT_REACHED}).
+     */
+    private static String reached(String bridge, boolean converted, PackProgramPlan plan) {
+        boolean attempted = converted || plan.deviations().stream().anyMatch(deviation ->
+                deviation.endsWith("_VERTEX_BRIDGE_UNSUPPORTED") || deviation.contains("_VERTEX_CONVERSION_FAILED:"));
+        return attempted ? bridge : bridge.replace("_UNSUPPORTED", "_NOT_REACHED");
     }
 
     /** The bridge a program without a plan would get, judged from its authored sources alone. */
@@ -386,9 +407,10 @@ final class ProgramReportRules {
      */
     static String vertexBridgeLabel(String name) {
         if (name.equals("shadow")) return "SHADOW";
-        if (name.equals("gbuffers_entities")) return "ENTITY";
-        if (name.equals("gbuffers_block") || name.equals("gbuffers_block_translucent")) return "BLOCK";
-        if (name.equals("gbuffers_hand")) return "HAND";
+        // Every entity-like family converts on the entity bridge (PackPlanBuilder.convertEntityVertex).
+        if (FamilyAdapterRegistry.isEntityLike(name)) {
+            return VertexBridgeDeviations.entity(name, false).replace("_VERTEX_BRIDGE", "");
+        }
         if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY";
         if (FamilyAdapterRegistry.isParticleLike(name)) return "PARTICLE";
         if (FamilyAdapterRegistry.isWeatherFamily(name)) return "WEATHER";
@@ -552,23 +574,23 @@ final class ProgramReportRules {
             "POST_TARGET_DIRECTIVE_MALFORMED", "POST_TARGET_DIRECTIVE_CONFLICT", "FINAL_MRT_UNSUPPORTED",
             "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED", "MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",
             "MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED", "SHADOW_VERTEX_BRIDGE_UNSUPPORTED",
-            "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED", "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
+            "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED",
             "ENTITY_VERTEX_BRIDGE_UNSUPPORTED", "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
             "HAND_VERTEX_BRIDGE_UNSUPPORTED", "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED",
             "WEATHER_VERTEX_BRIDGE_UNSUPPORTED", "SKY_VERTEX_BRIDGE_UNSUPPORTED",
             "CLOUD_VERTEX_BRIDGE_UNSUPPORTED", "DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED",
-            "SHADOW_COLOR_INPUT_UNSUPPORTED", "MISSING_FRAGMENT_SOURCE", "POST_CONVERTER_UNSUPPORTED");
+            "MISSING_FRAGMENT_SOURCE", "POST_CONVERTER_UNSUPPORTED");
 
-    /** Deviation families that do the same, matched by prefix. */
+    /**
+     * Deviation families that do the same, matched by prefix. The interface plan's own blocking
+     * deviations (UniformRegistry.isExecutionBlocking) are severe too.
+     */
     static final List<String> SEVERE_PREFIXES = List.of(
             "POST_TARGET_DIRECTIVE_DUPLICATE:", "POST_TARGET_INDEX_UNSUPPORTED:",
-            "POST_TARGET_FORMAT_UNSUPPORTED:", "ENTITY_SAMPLER_UNSUPPORTED:", "ENTITY_ID_UNSUPPORTED:",
-            "UNIFORM_TYPE_UNSUPPORTED:", "UNIFORM_NAME_UNSUPPORTED:", "UNIFORM_CONFLICT:",
-            "SAMPLER_NOT_MAPPED:", "SAMPLER_SLOT_CONFLICT:", "PACK_TEXTURE_MISSING:",
+            "POST_TARGET_FORMAT_UNSUPPORTED:", "PACK_TEXTURE_MISSING:",
             "PACK_RAW_TEXTURE_UNSUPPORTED:", "PACK_RAW_TEXTURE_SIZE_MISMATCH:", "PACK_TEXTURE_PATH_UNSAFE:",
-            "PACK_TEXTURE_LOAD_FAILED:",
-            "PACK_RESOURCE_SLOT_LIMIT:", "STANDARD_RESOURCE_UNAVAILABLE:", "SHADOW_SAMPLER_UNSUPPORTED:",
-            "TRANSLUCENT_SAMPLER_UNSUPPORTED:", "GBUFFER_TARGET_FEEDBACK:", "PROGRAM_", "SOURCE_INCLUDE_",
+            "PACK_TEXTURE_LOAD_FAILED:", "PACK_RESOURCE_SLOT_LIMIT:", "STANDARD_RESOURCE_UNAVAILABLE:",
+            "GBUFFER_TARGET_FEEDBACK:", "PROGRAM_", "SOURCE_INCLUDE_",
             "TRANSLATION_UNSUPPORTED:", "STORAGE_BUFFER_", "POST_VARYING_UNSUPPORTED:",
             "ALPHA_TEST_MALFORMED:", "LEGACY_FOG_FIELD_UNSUPPORTED:", "SOURCE_NORMALIZATION_FAILED:",
             "PREPROCESSOR_");
@@ -583,7 +605,10 @@ final class ProgramReportRules {
     }
 
     static boolean isSevere(String deviation) {
-        if (SEVERE_DEVIATIONS.contains(deviation) || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)) return true;
+        if (SEVERE_DEVIATIONS.contains(deviation) || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)
+                || deviation.endsWith("_VERTEX_BRIDGE_NOT_REACHED") || UniformRegistry.isExecutionBlocking(deviation)) {
+            return true;
+        }
         return BENIGN_PREFIXES.stream().noneMatch(deviation::startsWith)
                 && SEVERE_PREFIXES.stream().anyMatch(deviation::startsWith);
     }

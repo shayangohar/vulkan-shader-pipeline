@@ -324,17 +324,7 @@
     "dh_water",
     "gbuffers_hand",
     "gbuffers_terrain",
-    "gbuffers_textured",
-    "shadow",
-    "shadow_basic",
-    "shadow_block",
-    "shadow_entities",
-    "shadow_glint",
-    "shadow_leash",
-    "shadow_lightning",
-    "shadow_lines",
-    "shadow_text",
-    "shadow_text_bg"
+    "gbuffers_textured"
   ],
   "Insanity-Shader-Universal-v1.650.zip": [
     "gbuffers_clouds",

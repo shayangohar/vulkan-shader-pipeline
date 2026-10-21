@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "2cded5c0f60d9499a4551c391ab031c7d1b26bedbe6be5789059540a82004724",
+      "reportSha256": "4842fd943316b47c9aa1c2d0edf8f1035c8674379f91d86c937c7db17b8c641d",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -31,7 +31,6 @@
         "ENTITY_STATE_FIXED_TO_HOST",
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",
-        "FIXED_VERTEX_SUBSTITUTION",
         "MODERN_GLSL_TRANSLATED",
         "MODERN_TERRAIN_VERTEX_BRIDGE",
         "MODERN_WATER_VERTEX_BRIDGE",
@@ -44,7 +43,7 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "e50665bf59616cb8a5ad769e741adf95c67eb7d8c3049a0385e4b795c4725728",
+      "reportSha256": "3815c3f8a452ac4201fbfdcbc077a7e6a36efd6c1ce6f0f4c176299a38c1d960",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "d4b257c6f083b143879e04c04cd6eadbc1443615eff684a2ca527dfefbff60bb",
         "gbuffers_terrain.vsh": "244c2f59bb81a169c09d178e2b50107035cc206db26e38ef087d0095629240e1"
@@ -61,7 +60,6 @@
       "expectedDeviations": [
         "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
         "BLOCK_VERTEX_CONVERSION_FAILED:entity vertex requires a desktop GLSL version from 110 to 460, not 300 es",
-        "FIXED_VERTEX_SUBSTITUTION",
         "FRAGMENT_OUTPUT_DISCARDED:1",
         "LIVE_UNIFORM_BRIDGE",
         "MODERN_GLSL_UNSUPPORTED",

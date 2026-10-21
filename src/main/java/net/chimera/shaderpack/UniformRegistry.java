@@ -812,7 +812,8 @@ public final class UniformRegistry {
         return out.toString();
     }
 
-    private static boolean isExecutionBlocking(String deviation) {
+    /** Whether a deviation keeps the interface, and so the program, from executing. */
+    static boolean isExecutionBlocking(String deviation) {
         return deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                 || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                 || deviation.startsWith("CUSTOM_VALUE_REJECTED:")

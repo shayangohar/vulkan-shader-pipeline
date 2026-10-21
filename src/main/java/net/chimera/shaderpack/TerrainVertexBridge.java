@@ -36,7 +36,7 @@ final class TerrainVertexBridge {
             "mc_midTexCoord", "at_tangent", "tangent");
     private static final Set<String> MODERN_SYNTAX = Set.of("layout", "in", "out", "flat", "noperspective");
     private static final Set<String> EXTENDED_SHADOW_WORDS = Set.of("flat", "noperspective", "mc_midTexCoord",
-            "at_midBlock");
+            "at_midBlock", "at_tangent");
 
     /** Whether the stage still declares or names {@code attribute} anywhere outside comments. */
     private static boolean namesAttribute(String source) {
@@ -257,28 +257,43 @@ final class TerrainVertexBridge {
         if (GlslDeclarations.main(tree) == null || !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
             throw new IllegalArgumentException("modern terrain vertex main or position is missing");
         }
-        if ((!allowStorageBuffers && GlslTokenRewriter.containsIdentifier(stripped, "buffer"))
-                || GlslTokenRewriter.containsIdentifier(stripped, OTHER_STAGES::contains)
-                || declaresValueUniform(tree)) {
-            throw new IllegalArgumentException("modern terrain resource or stage is unsupported");
+        if (!allowStorageBuffers && GlslTokenRewriter.containsIdentifier(stripped, "buffer")) {
+            throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
+        }
+        String stage = GlslTokenRewriter.firstIdentifier(stripped, OTHER_STAGES::contains);
+        if (stage != null) {
+            throw new IllegalArgumentException("modern terrain vertex names another stage: " + stage);
+        }
+        String uniform = valueUniform(tree);
+        if (uniform != null) {
+            throw new IllegalArgumentException("modern terrain value uniform is unplanned: " + uniform);
         }
     }
 
     /**
-     * Whether a {@code uniform} qualifier is followed by a word that names no sampler or image:
-     * the next qualifier, the type, or an interface block's name.
+     * The first uniform block, or uniform whose type names no sampler or image, as its declared
+     * name; null when there is none. A memory or precision qualifier between {@code uniform} and
+     * the type (Reverie's {@code uniform restrict image2D image0}) leaves it opaque.
      */
-    private static boolean declaresValueUniform(GlslTree tree) {
+    private static String valueUniform(GlslTree tree) {
         for (GlslTree.External external : tree.externals()) {
-            List<GlslTree.Qualifier> qualifiers = declarationQualifiers(external);
-            for (int index = 0; index < qualifiers.size(); index++) {
-                if (!tree.text(qualifiers.get(index).keyword()).equals("uniform")) continue;
-                String next = index + 1 < qualifiers.size()
-                        ? tree.text(qualifiers.get(index + 1).keyword()) : typeName(tree, external);
-                if (!next.isEmpty() && !OPAQUE_PREFIX.matcher(next).matches()) return true;
+            boolean uniform = declarationQualifiers(external).stream()
+                    .anyMatch(qualifier -> tree.text(qualifier.keyword()).equals("uniform"));
+            String type = typeName(tree, external);
+            if (uniform && !type.isEmpty() && (external instanceof GlslTree.InterfaceBlock
+                    || !OPAQUE_PREFIX.matcher(type).matches())) {
+                return declaredName(tree, external, type);
             }
         }
-        return false;
+        return null;
+    }
+
+    /** The first variable a declaration names; {@code fallback} (a block's name) for anything else. */
+    private static String declaredName(GlslTree tree, GlslTree.External external, String fallback) {
+        if (external instanceof GlslTree.Declaration declaration && !declaration.declarators().isEmpty()) {
+            return tree.text(declaration.declarators().get(0).name());
+        }
+        return fallback;
     }
 
     /** The qualifiers of a file-scope declaration or interface block; none for anything else. */
@@ -498,8 +513,13 @@ final class TerrainVertexBridge {
                 || GlslTokenRewriter.containsIdentifier(stripped, EXTENDED_TERRAIN_WORDS::contains);
     }
 
+    /**
+     * Whether the shadow converts onto the modern shadow preamble, which reads the extended
+     * terrain format's material inputs: from GLSL 1.30, or a legacy stage that reads them (Iris's
+     * TERRAIN format carries them for every program).
+     */
     public static boolean supportsModernShadow(String source, String fragmentSource) {
-        if (!hasShadowTerrainVersion(source) || shadowVersion(source) < 130) {
+        if (!hasShadowTerrainVersion(source) || !usesExtendedShadowInputs(source)) {
             return false;
         }
         return convertModernShadowVertex(source, null, fragmentSource) != null;
@@ -723,16 +743,9 @@ final class TerrainVertexBridge {
         if (!shadowStage) return source;
         List<TerrainDeclarations.Declaration> attributes = TerrainDeclarations.shadowAttributes(source);
         for (TerrainDeclarations.Declaration attribute : attributes) {
-            String type = attribute.type();
-            boolean supported = switch (attribute.name()) {
-                case "mc_Entity" -> type.equals("float") || type.equals("vec2") || type.equals("vec3")
-                        || type.equals("vec4");
-                case "mc_midTexCoord" -> type.equals("vec2") || type.equals("vec4");
-                case "at_midBlock" -> type.equals("vec3") || type.equals("vec4")
-                        || type.equals("ivec3") || type.equals("ivec4");
-                default -> false;
-            };
-            if (!supported) {
+            // The shadow pass draws the terrain format, whose attributes Iris's TERRAIN and ENTITY formats carry.
+            Set<String> types = TERRAIN_ATTRIBUTE_TYPES.get(attribute.name());
+            if (types == null || !types.contains(attribute.type())) {
                 throw new IllegalArgumentException("unsupported shadow attribute: " + attribute.name());
             }
         }
@@ -751,7 +764,7 @@ final class TerrainVertexBridge {
             "mc_Entity", Set.of("float", "vec2", "vec3", "vec4"),
             "mc_midTexCoord", Set.of("vec2", "vec4"),
             "at_midBlock", Set.of("vec3", "vec4", "ivec3", "ivec4"),
-            "at_tangent", Set.of("vec4"));
+            "at_tangent", Set.of("vec3", "vec4"));
 
     /** Removes the small legacy attribute declarations backed by the extended terrain format. */
     static String removeTerrainAttributes(String source, boolean shadowStage) {
@@ -877,7 +890,7 @@ final class TerrainVertexBridge {
                     case "vec4" -> "vec4(chimeraMidTexCoordValue(), 0.0, 1.0)";
                     default -> "";
                 };
-                case "at_midBlock" -> modernTerrainInputExpression(type, name);
+                case "at_midBlock", "at_tangent" -> modernTerrainInputExpression(type, name);
                 default -> "";
             };
             if (!replacement.isBlank()) {

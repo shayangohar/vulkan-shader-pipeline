@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "18f5cb3b54801fd8c15c187cf1237b4cf07712c5abe4964797e9f32fd6886426",
+      "reportSha256": "3b8921df88063832e99944e5fba5d00877ca6293ed5375ec0c3ee1ce9fbd8eb2",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -61,7 +61,6 @@
         "ENTITY_VERTEX_BRIDGE",
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",
-        "FIXED_VERTEX_SUBSTITUTION",
         "HAND_STATE_FIXED_TO_HOST",
         "HAND_TRANSLUCENT_ITEM_PHASE",
         "HAND_VERTEX_BRIDGE",
@@ -81,7 +80,7 @@
       ]
     },
     "unsupported_families": {
-      "reportSha256": "a708b71315eb7bf74de0275c4d80716add4ed2f5b7115ab6a6f83c3dd242263d",
+      "reportSha256": "95f7e11a75e9b41fe25720cc3638c9d4a2626a67bbf03f9746f479a155059f23",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -108,14 +107,13 @@
         "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
         "ENTITY_ID_DEFAULTED",
         "ENTITY_SAMPLER_UNSUPPORTED:unsupportedSampler",
-        "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
-        "FIXED_VERTEX_SUBSTITUTION",
-        "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
+        "ENTITY_VERTEX_BRIDGE_NOT_REACHED",
+        "LIGHTNING_VERTEX_BRIDGE_NOT_REACHED",
         "LIVE_UNIFORM_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
-        "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
+        "TEXT_BG_VERTEX_BRIDGE_NOT_REACHED"
       ]
     }
   }

@@ -73,19 +73,26 @@ final class HostLayoutVertexBridge {
             boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
     ) {
         try {
-            String live = stripComments(
-                    EntityDeclarations.removeEntityAttributes(LegacyGlslConverter.pruneUnreachableVertexFunctions(
-                    LegacyGlslConverter.prepareSource(source, sourceFile, true))));
-            if (LegacyGlslConverter.containsIdentifier(live, "mc_midTexCoord")
-                    || LegacyGlslConverter.containsIdentifier(live, "at_tangent")
-                    || LegacyGlslConverter.containsIdentifier(live, "Tangent")) {
-                throw new IllegalArgumentException("sky format has no material mid-coordinate or tangent attribute");
-            }
-            return EntityVertexBridge.convertEntityVertexOrThrow(source, sourceFile, fragmentSource, locations,
-                    GlslVertexPreambles.skyPreamble(contract), allowStorageBuffers, uniforms, null);
+            return convertSkyVertexChecked(source, sourceFile, fragmentSource, contract, locations,
+                    allowStorageBuffers, uniforms);
         } catch (RuntimeException failure) {
             return null;
         }
+    }
+
+    /**
+     * Converts a sky vertex onto one host sky format, throwing its first concrete failure. The sky
+     * formats carry no mid-coordinates or tangents, so those attributes read GL's unbound default,
+     * as under Iris.
+     */
+    public static LegacyGlslConverter.TerrainVertexConversion convertSkyVertexChecked(
+            String source, Path sourceFile, String fragmentSource,
+            FamilyAdapterPlan.VertexContract contract, Map<String, Integer> locations,
+            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
+    ) {
+        return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), sourceFile,
+                fragmentSource, locations, GlslVertexPreambles.skyPreamble(contract), allowStorageBuffers,
+                uniforms, null);
     }
 
     /** One authored sky program runs against each real native sky mesh layout. */
@@ -116,12 +123,21 @@ final class HostLayoutVertexBridge {
             boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
     ) {
         try {
-            return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), sourceFile,
-                    fragmentSource, locations, GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE, allowStorageBuffers,
-                    uniforms, null);
+            return convertCloudVertexChecked(source, sourceFile, fragmentSource, locations, allowStorageBuffers,
+                    uniforms);
         } catch (RuntimeException failure) {
             return null;
         }
+    }
+
+    /** {@link #convertCloudVertex}, throwing its first concrete failure. */
+    public static LegacyGlslConverter.TerrainVertexConversion convertCloudVertexChecked(
+            String source, Path sourceFile, String fragmentSource, Map<String, Integer> locations,
+            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
+    ) {
+        return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), sourceFile,
+                fragmentSource, locations, GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE, allowStorageBuffers,
+                uniforms, null);
     }
 
     /**

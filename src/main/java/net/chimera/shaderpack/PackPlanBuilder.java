@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 
 /** Builds the one load-time source, interface, and translation plan. */
 public final class PackPlanBuilder {
@@ -462,9 +463,18 @@ public final class PackPlanBuilder {
             return true;
         }
 
-        /** Records a vertex conversion, or the deviation that keeps the program from executing. */
-        private void acceptVertex(LegacyGlslConverter.TerrainVertexConversion conversion,
+        /**
+         * Records a vertex conversion, or the deviation that keeps the program from executing with
+         * the failure that names why.
+         */
+        private void acceptVertex(Supplier<LegacyGlslConverter.TerrainVertexConversion> converter,
                                   String bridged, String unsupported) {
+            LegacyGlslConverter.TerrainVertexConversion conversion = null;
+            try {
+                conversion = converter.get();
+            } catch (RuntimeException failure) {
+                deviations.add(VertexBridgeDeviations.conversionFailure(unsupported, failure));
+            }
             if (conversion == null) {
                 deviations.add(unsupported);
                 executable = false;
@@ -482,13 +492,14 @@ public final class PackPlanBuilder {
             if (vertex == null) {
                 return;
             }
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms =
+                    interfacePlan.project("fragment", stage).executableUniforms();
             if (FamilyAdapterRegistry.isSkyFamily(name)) {
                 FamilyAdapterPlan.VertexContract skyContract =
                         HostLayoutVertexBridge.skyVertexContract(vertex, name.equals("gbuffers_skytextured"));
                 familyAdapter = familyAdapter.withVertexContract(skyContract);
-                acceptVertex(HostLayoutVertexBridge.convertSkyVertex(vertex, vertexFile(), fragment,
-                                skyContract, stageMatch.locations(), allowStorageBuffers,
-                                interfacePlan.project("fragment", stage).executableUniforms()),
+                acceptVertex(() -> HostLayoutVertexBridge.convertSkyVertexChecked(vertex, vertexFile(), fragment,
+                                skyContract, stageMatch.locations(), allowStorageBuffers, fragmentUniforms),
                         "SKY_VERTEX_BRIDGE", "SKY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isCloudFamily(name) && AuthoredOutput.producesNothing(vertex, fragment)) {
                 // The selected branch draws no cloud at all. There is no pipeline to build; the
@@ -498,43 +509,22 @@ public final class PackPlanBuilder {
             } else if (FamilyAdapterRegistry.isCloudFamily(name)) {
                 familyAdapter = familyAdapter.withVertexContract(
                         FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL);
-                acceptVertex(HostLayoutVertexBridge.convertCloudVertex(vertex, vertexFile(), fragment,
-                                stageMatch.locations(), allowStorageBuffers,
-                                interfacePlan.project("fragment", stage).executableUniforms()),
+                acceptVertex(() -> HostLayoutVertexBridge.convertCloudVertexChecked(vertex, vertexFile(), fragment,
+                                stageMatch.locations(), allowStorageBuffers, fragmentUniforms),
                         "CLOUD_VERTEX_BRIDGE", "CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowLaneFamily(name) && hostLayoutFailure == null) {
-                LegacyGlslConverter.TerrainVertexConversion conversion = null;
-                try {
-                    // The host-layout preparation already expanded the includes.
-                    conversion = HostLayoutVertexBridge.convertShadowLaneVertexChecked(
-                            familyAdapter.vertexContract(), vertex, fragment,
-                            interfacePlan.project("vertex", stage), allowStorageBuffers);
-                } catch (RuntimeException failure) {
-                    deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:"
-                            + VertexBridgeDeviations.safeReason(failure));
-                }
-                acceptVertex(conversion, hostLayoutLane + "_VERTEX_BRIDGE",
-                        hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
+                // The host-layout preparation already expanded the includes.
+                acceptVertex(() -> HostLayoutVertexBridge.convertShadowLaneVertexChecked(
+                                familyAdapter.vertexContract(), vertex, fragment,
+                                interfacePlan.project("vertex", stage), allowStorageBuffers),
+                        hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
-                LegacyGlslConverter.TerrainVertexConversion conversion = null;
-                try {
-                    conversion = EntityVertexBridge.convertShadowEntityVertexChecked(
-                            vertex, vertexFile(), fragment, interfacePlan.project("vertex", stage),
-                            allowStorageBuffers);
-                } catch (RuntimeException failure) {
-                    deviations.add("SHADOW_ENTITY_VERTEX_CONVERSION_FAILED:"
-                            + VertexBridgeDeviations.safeReason(failure));
-                }
-                acceptVertex(conversion, "SHADOW_ENTITY_VERTEX_BRIDGE", VertexBridgeDeviations.unsupported(name));
+                acceptVertex(() -> EntityVertexBridge.convertShadowEntityVertexChecked(
+                                vertex, vertexFile(), fragment, interfacePlan.project("vertex", stage),
+                                allowStorageBuffers),
+                        "SHADOW_ENTITY_VERTEX_BRIDGE", VertexBridgeDeviations.unsupported(name));
             } else if (isTerrainLike(name)) {
-                LegacyGlslConverter.TerrainVertexConversion conversion = null;
-                String unsupported = VertexBridgeDeviations.unsupported(name);
-                try {
-                    conversion = terrainVertexOrThrow();
-                } catch (RuntimeException failure) {
-                    deviations.add(VertexBridgeDeviations.conversionFailure(unsupported, failure));
-                }
-                acceptVertex(conversion, null, unsupported);
+                acceptVertex(this::terrainVertexOrThrow, null, VertexBridgeDeviations.unsupported(name));
             }
         }
 
@@ -673,37 +663,31 @@ public final class PackPlanBuilder {
         }
 
         private void convertHostLayout() {
-            LegacyGlslConverter.TerrainVertexConversion conversion = null;
-            try {
-                // The line and glint preparation already expanded the includes.
-                conversion = HostLayoutVertexBridge.convertHostLayoutVertexChecked(
-                        familyAdapter.vertexContract(), vertex, fragment, stageMatch.locations(),
-                        allowStorageBuffers, interfacePlan.effective(stage).executableUniforms(),
-                        vertexSamplerPlan(interfacePlan, stage, vertex));
-            } catch (IllegalArgumentException failure) {
-                deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:"
-                        + VertexBridgeDeviations.safeReason(failure));
-            }
-            acceptVertex(conversion, hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
-            if (conversion != null) {
-                acceptFragment(FragmentConverter.convertParticleFragment(fragment, fragmentFile(), entitySlots(),
-                                vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
-                        hostLayoutLane + "_FRAGMENT_BRIDGE_UNSUPPORTED");
-            }
+            // The line and glint preparation already expanded the includes.
+            acceptVertex(() -> HostLayoutVertexBridge.convertHostLayoutVertexChecked(
+                            familyAdapter.vertexContract(), vertex, fragment, stageMatch.locations(),
+                            allowStorageBuffers, interfacePlan.effective(stage).executableUniforms(),
+                            vertexSamplerPlan(interfacePlan, stage, vertex)),
+                    hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
+            convertParticleFragment(hostLayoutLane);
         }
 
         private void convertParticle() {
             String label = FamilyAdapterRegistry.isWeatherFamily(name) ? "WEATHER" : "PARTICLE";
-            LegacyGlslConverter.TerrainVertexConversion conversion = EntityVertexBridge.convertParticleVertexChecked(
-                    vertex, vertexFile(), fragment, stageMatch.locations(), allowStorageBuffers,
-                    interfacePlan.effective(stage).executableUniforms(),
-                            vertexSamplerPlan(interfacePlan, stage, vertex));
-            acceptVertex(conversion, null, label + "_VERTEX_BRIDGE_UNSUPPORTED");
-            if (conversion != null) {
-                acceptFragment(FragmentConverter.convertParticleFragment(fragment, fragmentFile(), entitySlots(),
-                                vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
-                        label + "_FRAGMENT_BRIDGE_UNSUPPORTED");
-            }
+            acceptVertex(() -> EntityVertexBridge.convertParticleVertexChecked(
+                            vertex, vertexFile(), fragment, stageMatch.locations(), allowStorageBuffers,
+                            interfacePlan.effective(stage).executableUniforms(),
+                            vertexSamplerPlan(interfacePlan, stage, vertex)),
+                    null, label + "_VERTEX_BRIDGE_UNSUPPORTED");
+            convertParticleFragment(label);
+        }
+
+        /** The particle-layout fragment stage of a program whose vertex stage converted. */
+        private void convertParticleFragment(String label) {
+            if (!executable) return;
+            acceptFragment(FragmentConverter.convertParticleFragment(fragment, fragmentFile(), entitySlots(),
+                            vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
+                    label + "_FRAGMENT_BRIDGE_UNSUPPORTED");
         }
 
         private void rewriteStorageBuffers() {
