@@ -54,7 +54,7 @@ final class SweepParityFixesTest {
                 vec3 blur(sampler2D tex, vec2 uv) { return texture2D(tex, uv).rgb; }
                 void main() { gl_FragColor = texture2D(tex, uv)
                         + vec4(blur(colortex1, uv), texture3D(volume, vec3(0.0)).r); }
-                """, PackSettingsPlan.empty(), deviations);
+                """, null, deviations);
         assertTrue(renamed.contains("uniform sampler2D colortex0;") && !renamed.contains("uniform sampler2D tex;"),
                 renamed);
         assertTrue(renamed.contains("void main() { gl_FragColor = texture2D(colortex0, uv)"), renamed);
@@ -71,7 +71,7 @@ final class SweepParityFixesTest {
                 uniform sampler2D depthtex0;
                 void main() { gl_FragColor = texture2D(texture, uv) * texture(colortex0, uv)
                         + texture2D(depthtex0, uv); }
-                """, PackSettingsPlan.empty(), second);
+                """, null, second);
         assertFalse(declared.contains("uniform sampler2D texture;"), declared);
         assertTrue(declared.contains("texture2D(colortex0, uv) * texture(colortex0, uv)"),
                 "a call keeps its function name: " + declared);

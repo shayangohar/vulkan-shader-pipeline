@@ -27,7 +27,7 @@ final class FullscreenDefaultSampler {
      * {@code source} with each sampler2D that neither Iris nor the pack serves read as colortex0. A
      * source the tree cannot parse stays as written; its conversion reports the failure.
      */
-    static String apply(String source, PackSettingsPlan settings, List<String> deviations) {
+    static String apply(String source, PackConfig.PackConfigData config, List<String> deviations) {
         if (source == null) return null;
         GlslTree tree = GlslDeclarations.parseOrNull(source);
         if (tree == null) return source;
@@ -45,7 +45,7 @@ final class FullscreenDefaultSampler {
         String result = source;
         for (String name : names) {
             boolean unused = usage.successful() && !usage.liveSamplers().contains(name);
-            if (unused || served(name, settings)) continue;
+            if (unused || served(name, config)) continue;
             // colortex0 is declared once: a second sampler that reads it loses its own declaration.
             if (declared) result = withoutDeclaration(result, name);
             result = GlslScopedReferences.replace(result, Map.of(name, "colortex0"));
@@ -75,15 +75,12 @@ final class FullscreenDefaultSampler {
         return GlslDeclarations.apply(source, edits);
     }
 
-    private static boolean served(String name, PackSettingsPlan settings) {
-        // Iris binds shadowcolor2-7 only with HIGHER_SHADOWCOLOR (ShadowRenderTargets.getRenderTargetCount).
-        int shadowColor = PackResourcePlan.shadowColorIndex(name);
-        if (shadowColor >= 0) {
-            return shadowColor < (settings.hasFeature(PackFeatureFlags.HIGHER_SHADOWCOLOR)
-                    ? ShadowTargetDirectives.MAX_COLOR_TARGETS : ShadowTargetDirectives.LEGACY_COLOR_TARGETS);
+    private static boolean served(String name, PackConfig.PackConfigData config) {
+        // shadowcolor2-7 and shadowtexNHW only where Iris binds them; unbound, they read unit 0.
+        if (PackResourcePlan.shadowColorIndex(name) >= 0 || name.matches("shadowtex[01]HW")) {
+            return ShadowTargetDirectives.bound(name, config);
         }
-        // and shadowtex0HW/1HW only with SEPARATE_HARDWARE_SAMPLERS.
-        if (name.matches("shadowtex[01]HW")) return settings.hasFeature(PackFeatureFlags.SEPARATE_HARDWARE_SAMPLERS);
+        PackSettingsPlan settings = config == null ? PackSettingsPlan.empty() : config.settings();
         if (IRIS_SERVED.contains(name) || PackResourcePlan.targetIndex(name) != null) return true;
         String lookup = PackResourcePlan.isProgramShadowAlias(name)
                 ? PackResourcePlan.programResource(name, false) : name;

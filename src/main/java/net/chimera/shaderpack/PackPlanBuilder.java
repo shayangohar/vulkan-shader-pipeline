@@ -231,8 +231,8 @@ public final class PackPlanBuilder {
                         IrisCoreProfile.coreMode(program.executableFragmentSource()), patch);
             }
             if (stage != UniformRegistry.Stage.POST) return;
-            vertex = FullscreenDefaultSampler.apply(vertex, settings(), deviations);
-            fragment = FullscreenDefaultSampler.apply(fragment, settings(), deviations);
+            vertex = FullscreenDefaultSampler.apply(vertex, config, deviations);
+            fragment = FullscreenDefaultSampler.apply(fragment, config, deviations);
         }
 
         /**

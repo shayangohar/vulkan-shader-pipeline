@@ -22,12 +22,12 @@ public final class PackFeatureFlags {
     static final String SEPARATE_HARDWARE_SAMPLERS = "SEPARATE_HARDWARE_SAMPLERS";
 
     /**
-     * The features Chimera provides as Iris does. Not provided: tessellation, the weather directive
-     * and {@code mc_chunkFade} (FADE_VARIABLE).
+     * The Iris 1.21.1 features (FeatureFlags) Chimera provides as Iris does. Not provided:
+     * TESSELLATION_SHADERS and CAN_DISABLE_WEATHER. A name Iris 1.21.1 does not know is never
+     * provided, as Iris refuses a pack that requires one.
      */
     static final Set<String> PROVIDED = Set.of("PER_BUFFER_BLENDING", "COMPUTE_SHADERS", "ENTITY_TRANSLUCENT",
-            "REVERSED_CULLING", "BLOCK_EMISSION_ATTRIBUTE", "SSBO", "TEXTURE_FILTERING", HIGHER_SHADOWCOLOR,
-            SEPARATE_HARDWARE_SAMPLERS);
+            "REVERSED_CULLING", "BLOCK_EMISSION_ATTRIBUTE", "SSBO", HIGHER_SHADOWCOLOR, SEPARATE_HARDWARE_SAMPLERS);
     /**
      * Custom images run only where Chimera can produce them, so this flag is offered per pack once
      * that is known ({@link PackEngineDefines#forCustomImages}) rather than promised up front. A pack

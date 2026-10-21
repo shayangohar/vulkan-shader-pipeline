@@ -344,8 +344,9 @@ final class InterfacePlanner {
                     Set<String> deviations) {
         Integer slot = stageSlots(stage).get(lookup);
         if (slot == null && !stage.shadowPass()) {
-            // Iris gives every program but a shadow one each shadowcolor target and the hardware
-            // shadow samplers (addShadowSamplers); PackPlanBuilder refuses those the pack lacks.
+            // Iris gives every program each shadowcolor target and the hardware shadow samplers
+            // (addShadowSamplers), shadow programs too, where a read samples the target being drawn;
+            // Chimera binds them outside the shadow pass. PackPlanBuilder refuses those the pack lacks.
             int shadow = SelectorNamespace.shadowSamplerSlot(lookup);
             slot = shadow < 0 ? null : shadow;
         }

@@ -140,6 +140,23 @@ final class ShadowTargetDirectivesTest {
                 legacy.deviations().toString());
     }
 
+    /** A pass's unbound sampler2D shadowtexNHW reads texture unit 0, colortex0, as Iris leaves it. */
+    @Test
+    void anUnfilteredHardwareSampler2DReadsUnitZero(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "iris.features.required=SEPARATE_HARDWARE_SAMPLERS\n");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D shadowtex1HW;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(shadowtex1HW, uv); }
+                """);
+        PackProgramPlan composite = PackProbe.analyze(root).plan().program("composite");
+        assertTrue(composite.executable() && composite.deviations().contains("SAMPLER_UNIT0_COLORTEX0:shadowtex1HW"),
+                composite.deviations().toString());
+    }
+
     private static Path writeHigherShadowColorPack(Path root, String properties) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), properties);
