@@ -745,6 +745,25 @@ public final class PackAdvancedResourcePlan {
     }
     public List<String> bufferDependentPrograms() { return bufferDependentPrograms; }
     public List<String> storageEligiblePrograms() { return storageEligiblePrograms; }
+
+    /** The bufferObject indexes programs bind, which the session allocates. */
+    public Set<Integer> programBuffers() {
+        return StorageBufferDeclarations.programBuffers(storageBuffers, storageEligiblePrograms);
+    }
+
+    /**
+     * What the session budget leaves for the buffers only pass computes bind, once the supported
+     * images and the fixed-size buffers programs bind are charged (applyStorageBudget). A relative
+     * buffer follows the screen, and only the device's range bounds it.
+     */
+    public long computeBufferBudget() {
+        long used = StorageBufferDeclarations.imageBytes(images);
+        for (Integer index : programBuffers()) {
+            BufferSpec spec = buffers.get(index);
+            if (spec != null && spec.supported() && !spec.relative()) used += spec.size();
+        }
+        return Math.max(0L, MAX_TOTAL_BYTES - used);
+    }
     public boolean storageBufferCapabilityPossible() {
         if (bufferDependentPrograms.isEmpty()) return true;
         boolean hasBinding = storageBuffers.values().stream().flatMap(List::stream)

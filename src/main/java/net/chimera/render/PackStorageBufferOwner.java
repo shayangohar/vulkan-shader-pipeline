@@ -67,42 +67,49 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     }
 
     public PackStorageBufferOwner(PackAdvancedResourcePlan plan) {
-        this(plan, 1, 1);
+        this(plan, 1, 1, Set.of());
     }
 
-    private PackStorageBufferOwner(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight) {
+    private PackStorageBufferOwner(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
+                                   Set<Integer> computeBuffers) {
         this.plan = plan == null ? PackAdvancedResourcePlan.empty() : plan;
         this.screenWidth = screenWidth;
         this.screenHeight = screenHeight;
-        this.plannedBytes = this.plan.storageBuffers().entrySet().stream()
-                .filter(entry -> this.plan.storageEligiblePrograms().contains(entry.getKey()))
-                .flatMap(entry -> entry.getValue().stream())
-                .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
-                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                .distinct()
+        this.plannedBytes = used(this.plan, computeBuffers).stream()
                 .map(this.plan.buffers()::get)
                 .filter(Objects::nonNull)
                 .mapToLong(spec -> spec.bytes(screenWidth, screenHeight))
                 .sum();
     }
 
+    /** The buffers a program or a pass compute binds. */
+    private static Set<Integer> used(PackAdvancedResourcePlan plan, Set<Integer> computeBuffers) {
+        Set<Integer> used = new TreeSet<>(plan.programBuffers());
+        used.addAll(computeBuffers);
+        return used;
+    }
+
     /**
      * The session's buffers: those a program or a pass compute ({@code computeBuffers}) binds, a
-     * relative one sized for a screen of this size (Iris sizes it at creation).
+     * relative one sized for a screen of this size (Iris sizes it at creation). A fixed-size buffer
+     * only computes bind takes what the plan's budget leaves (computeBufferBudget).
      */
     public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
                                               Set<Integer> computeBuffers) {
-        PackStorageBufferOwner owner = new PackStorageBufferOwner(plan, screenWidth, screenHeight);
+        PackStorageBufferOwner owner = new PackStorageBufferOwner(plan, screenWidth, screenHeight, computeBuffers);
         long maxRange = maxRange();
-        Set<Integer> used = new TreeSet<>(computeBuffers);
-        owner.plan.storageBuffers().values().forEach(values -> values.stream()
-                .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
-                .filter(value -> owner.plan.storageEligiblePrograms().contains(value.program()))
-                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                .forEach(used::add));
-        for (Integer index : used) {
+        Set<Integer> programBuffers = owner.plan.programBuffers();
+        long computeBudget = owner.plan.computeBufferBudget();
+        for (Integer index : used(owner.plan, computeBuffers)) {
             PackAdvancedResourcePlan.BufferSpec spec = owner.plan.buffers().get(index);
             if (spec == null || !spec.supported()) continue;
+            if (!programBuffers.contains(index) && !spec.relative()) {
+                if (spec.size() > computeBudget) {
+                    owner.failures.put(index, "STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
+                    continue;
+                }
+                computeBudget -= spec.size();
+            }
             long bytes = spec.bytes(screenWidth, screenHeight);
             // The host sizes buffers with an int.
             if (bytes > maxRange) {

@@ -376,6 +376,29 @@ final class ComputePassTest {
     }
 
     /**
+     * A buffer only pass computes bind is allocated from what the storage budget leaves once the
+     * images and the fixed-size buffers programs bind are charged.
+     */
+    @Test
+    void computeBufferBudget(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 64\nbufferObject.1 = 128\n");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 430
+                layout(std430, binding = 0) buffer Exposure { float exposure; };
+                uniform sampler2D colortex0;
+                layout(location = 0) out vec4 color;
+                void main() {
+                /* RENDERTARGETS: 0 */
+                    color = texture(colortex0, vec2(0.5)) * exposure;
+                }
+                """);
+        PackAdvancedResourcePlan plan = PackProbe.analyze(root).plan().advancedResources();
+        assertEquals(Set.of(0), plan.programBuffers(), plan.storageBuffers().toString());
+        assertEquals(PackAdvancedResourcePlan.MAX_TOTAL_BYTES - 64, plan.computeBufferBudget());
+    }
+
+    /**
      * Iris gives a pass's computes the depth samplers its program gets (IrisSamplers
      * addCompositeSamplers). Shrimple's deferred4 compute reads depthtex0 where no program does,
      * so the target graph keeps that snapshot, and the colour target it writes, for it.

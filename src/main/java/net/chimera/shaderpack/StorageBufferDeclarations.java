@@ -153,6 +153,7 @@ final class StorageBufferDeclarations {
                     .filter(value -> eligiblePrograms.contains(value.program()))
                     .anyMatch(value -> value.logicalIndex() == spec.logicalIndex());
             if (!used) {
+                // No program binds it; the session allocates it only for a pass compute that does.
                 deviations.add("STORAGE_BUFFER_DEFERRED:bufferObject." + spec.logicalIndex());
             }
         }
@@ -293,20 +294,9 @@ final class StorageBufferDeclarations {
             List<String> deviations
     ) {
         Map<Integer, PackAdvancedResourcePlan.BufferSpec> result = new TreeMap<>(buffers);
-        long imageBytes = images.values().stream()
-                .filter(PackAdvancedResourcePlan.ImageSpec::supported)
-                .mapToLong(PackAdvancedResourcePlan.ImageSpec::estimatedBytes)
-                .sum();
-        long remaining = Math.max(0L, PackAdvancedResourcePlan.MAX_TOTAL_BYTES - imageBytes);
-        TreeSet<Integer> used = new TreeSet<>();
-        storageBuffers.entrySet().stream()
-                .filter(entry -> eligiblePrograms.contains(entry.getKey()))
-                .flatMap(entry -> entry.getValue().stream())
-                .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
-                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                .forEach(used::add);
+        long remaining = Math.max(0L, PackAdvancedResourcePlan.MAX_TOTAL_BYTES - imageBytes(images));
         boolean rejected = false;
-        for (Integer index : used) {
+        for (Integer index : programBuffers(storageBuffers, eligiblePrograms)) {
             PackAdvancedResourcePlan.BufferSpec spec = result.get(index);
             // A relative buffer follows the screen; allocation checks it against the device's range.
             if (spec == null || !spec.supported() || spec.relative()) continue;
@@ -323,6 +313,27 @@ final class StorageBufferDeclarations {
         }
         if (rejected) deviations.add("STORAGE_BUFFER_BUDGET_EXCEEDED");
         return result;
+    }
+
+    /** The bytes the supported images take from the session budget. */
+    static long imageBytes(Map<String, PackAdvancedResourcePlan.ImageSpec> images) {
+        return images.values().stream()
+                .filter(PackAdvancedResourcePlan.ImageSpec::supported)
+                .mapToLong(PackAdvancedResourcePlan.ImageSpec::estimatedBytes)
+                .sum();
+    }
+
+    /** The bufferObject indexes storage-eligible programs bind through a supported block. */
+    static Set<Integer> programBuffers(Map<String, List<PackAdvancedResourcePlan.StorageBufferBinding>> storageBuffers,
+                                       List<String> eligiblePrograms) {
+        TreeSet<Integer> used = new TreeSet<>();
+        storageBuffers.entrySet().stream()
+                .filter(entry -> eligiblePrograms.contains(entry.getKey()))
+                .flatMap(entry -> entry.getValue().stream())
+                .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
+                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
+                .forEach(used::add);
+        return used;
     }
 
     record StorageBlock(
