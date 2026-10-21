@@ -205,6 +205,30 @@ final class AdvancedImagePlanTest {
                 advanced.deviations().toString());
     }
 
+    /**
+     * Glimmer's header declares its multiple-scattering LUT's sampler in every program, and only its
+     * compute passes read it, so no program Chimera runs gives it a slot. A program that only
+     * declares it leaves it inactive and runs, as under GL.
+     */
+    @Test
+    void anImageSamplerNoProgramReadsNeedsNoSlot(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.lut = lutTex RGBA RGBA16F HALF_FLOAT false false 32 32 32\n");
+        writeVolumeReader(shaders, "composite", "unused");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 430 compatibility
+                uniform sampler3D lutTex;
+                in vec2 uv;
+                void main() { gl_FragData[0] = vec4(uv, 0.0, 1.0); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertTrue(!plan.settings().customSamplerSlots().containsKey("lutTex")
+                && plan.shouldAttempt("composite"), plan.advancedResources().deviations().toString());
+        assertTrue(plan.program("composite").deviations().contains("SAMPLER_DECLARATION_UNUSED:lutTex"),
+                plan.program("composite").deviations().toString());
+    }
+
     private static void writeVolumeReader(Path shaders, String program, String sampler) throws Exception {
         Files.writeString(shaders.resolve(program + ".vsh"), """
                 #version 120

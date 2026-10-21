@@ -94,7 +94,8 @@ final class GraphicsImageScan {
         imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(source));
         for (String sampler : imageSamplers) {
             addReader(program, stage, sampler, usage.referencedSamplers().contains(sampler)
-                    || GlslTokenRewriter.identifierCount(source, sampler) > 1);
+                    || GlslTokenRewriter.identifierCount(source, sampler) > 1,
+                    !usage.successful() || usage.liveSamplers().contains(sampler));
         }
         if (source.contains("IRIS_FEATURE_CUSTOM_IMAGES")
                 && source.contains("OPTIFINE_ACT_ERROR")) {
@@ -122,10 +123,14 @@ final class GraphicsImageScan {
     /**
      * A sampler of a pack image, bound to its selector as the image's storage type. As for a storage
      * declaration, an unread sampler of an image Chimera does not create is inactive, not a refusal.
+     * So is one no stage reads that got no slot: Glimmer's header declares multipleScatteringLUTTex
+     * in every program, and only its compute passes read it. The planner strips that declaration
+     * (InterfacePlanner.bindSamplers).
      */
-    private void addReader(String program, String stage, String sampler, boolean referenced) {
+    private void addReader(String program, String stage, String sampler, boolean referenced, boolean live) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySampler(images, sampler);
         if (spec == null || !spec.supported() && !referenced) return;
+        if (!live && !plan.settings().customSamplerSlots().containsKey(spec.sampler())) return;
         int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         readers.computeIfAbsent(program, ignored -> new ArrayList<>())
