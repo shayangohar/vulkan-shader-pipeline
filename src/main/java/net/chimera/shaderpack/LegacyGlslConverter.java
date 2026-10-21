@@ -373,7 +373,9 @@ public final class LegacyGlslConverter {
         if (!normalized.successful()) {
             throw new IllegalArgumentException(normalized.deviations().toString());
         }
-        return normalized.source();
+        // A vertex input Iris binds no data to reads GL's generic default in every lane.
+        return vertexStage ? UnboundAttributes.substitute(normalized.source(), UnboundAttributes::irisUnbound)
+                : normalized.source();
     }
 
     static String convertVaryings(

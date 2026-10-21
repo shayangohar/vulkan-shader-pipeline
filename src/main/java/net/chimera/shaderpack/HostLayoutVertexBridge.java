@@ -148,20 +148,17 @@ final class HostLayoutVertexBridge {
 
     private static final Set<String> MATERIAL_ATTRIBUTES = Set.of("mc_midTexCoord", "at_tangent");
 
-    /** GL's unbound attribute value (0, 0, 0, 1), cut to the declared type. */
-    private static final Map<String, String> UNBOUND_VALUES = Map.of("float", "0.0", "vec2", "vec2(0.0)",
-            "vec3", "vec3(0.0)", "vec4", "vec4(0.0, 0.0, 0.0, 1.0)");
-
     /**
      * A host layout without mid-coordinates or tangents leaves those attributes unbound in
-     * Iris, so GL reads its default (0, 0, 0, 1) cut to the declared type.
+     * Iris, so GL reads its default (0, 0, 0, 1) cut to the declared type. The entity bridge maps
+     * both names onto its own inputs, so each reference becomes the value, not a constant.
      */
     static String unboundMaterialAttributes(String source) {
         GlslTree tree = GlslTree.parse(source);
         Map<String, String> defaults = new HashMap<>();
         List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
         for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
-            String unbound = UNBOUND_VALUES.get(variable.type());
+            String unbound = UnboundAttributes.defaultValue(variable.type());
             if (!MATERIAL_ATTRIBUTES.contains(variable.name()) || unbound == null || !variable.plain()
                     || !variable.qualified("attribute") && !variable.qualified("in")) {
                 continue;

@@ -74,6 +74,12 @@
   "gbuffers_block_translucent [text input variant Position,Color,UV0,UV2].vsh": "d630d48bf6f285d6 46659f80974988b3",
   "gbuffers_block_translucent.fsh": "fbfb68567e83e066 cd3a673651070f7d",
   "gbuffers_block_translucent.vsh": "d3d4893f1ad45ea6 4651ac5aeda8413d",
+  "gbuffers_entities.fsh": "8bb07b7ad34ec43b 4f0c6eefed796dca",
+  "gbuffers_entities.vsh": "ed1a3b822e9dfa6f f1597a3d50b6c217",
+  "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].fsh": "e64ee03d6ec2f73a da6c1e1906ad40c4",
+  "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].vsh": "a0dccd373d65371d 3b6065be4199d50f",
+  "gbuffers_entities_translucent.fsh": "8bb07b7ad34ec43b 4f0c6eefed796dca",
+  "gbuffers_entities_translucent.vsh": "ed1a3b822e9dfa6f f1597a3d50b6c217",
   "gbuffers_hand_water [hand input variant Position,Color,UV0,UV1,UV2,Normal].vsh": "237a4a94f120dbd7 9acb6ae32a6c9931",
   "gbuffers_hand_water [hand input variant Position,Color,UV0,UV2].fsh": "621b843f15ecd56b f35d1aeab1ed814e",
   "gbuffers_hand_water [hand input variant Position,Color,UV0,UV2].vsh": "4c24c4c1e1fbe1dc 24f4bb1006f0d84d",
@@ -106,5 +112,7 @@
   "gbuffers_spidereyes.fsh": "37465af83e93a1ab a1c30b5670fff401",
   "gbuffers_spidereyes.vsh": "50745fc912a0e1e9 d271a4837f6a1507",
   "gbuffers_weather.fsh": "4a16533ab2aaf1e1 135edd46c5fdeba9",
-  "gbuffers_weather.vsh": "63d2f005b317f2d4 c7e548a58003ce59"
+  "gbuffers_weather.vsh": "63d2f005b317f2d4 c7e548a58003ce59",
+  "text_bg.fsh": "9be1c98ebbbaabb6 831b4a64d3fa1ecb",
+  "text_bg.vsh": "e03e887cdc3db841 515ee3c1a5c97212"
 }

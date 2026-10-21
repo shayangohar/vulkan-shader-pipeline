@@ -152,12 +152,7 @@ final class EntityDeclarations {
 
     private static String unboundAttribute(String type, String name) {
         if (!name.equals("mc_Entity") && !name.equals("at_midBlock")) return "";
-        return "\nconst " + type + " " + name + " = " + switch (type) {
-            case "float" -> "0.0";
-            case "vec2" -> "vec2(0.0)";
-            case "vec3" -> "vec3(0.0)";
-            default -> "vec4(0.0, 0.0, 0.0, 1.0)";
-        } + ";";
+        return "\nconst " + type + " " + name + " = " + UnboundAttributes.defaultValue(type) + ";";
     }
 
     /**
