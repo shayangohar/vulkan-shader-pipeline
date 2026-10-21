@@ -36,7 +36,13 @@ final class EntityVertexFeatureCheck {
     /** The value types the catalog could serve; a leftover one is a custom value with no adapter. */
     private static final Pattern VALUE_TYPE = Pattern.compile("bool|int|float|vec[234]|ivec[234]|mat[234]");
     private static final Pattern SAMPLER_TYPE = Pattern.compile("[iu]?sampler\\w*|u?i?image\\w*");
-    private static final Pattern IMAGE_OR_STAGE = Pattern.compile("image\\w*|geometry|tessellation|compute");
+    /**
+     * Image types and image built-ins, and other stages' names; not identifiers that only start
+     * with "image" (Reverie's image0Sampler is a sampler).
+     */
+    private static final Pattern IMAGE_OR_STAGE = Pattern.compile(
+            "[iu]?image(?:1D|2D|3D|Cube|2DRect|1DArray|2DArray|CubeArray|Buffer|2DMS|2DMSArray)"
+                    + "|image(?:Load|Store|Size|Samples|Atomic\\w+)|geometry|tessellation|compute");
     private static final Set<String> ATTRIBUTE_DECLARATION_TYPES = Set.of("int", "float", "vec2", "vec3", "vec4");
 
     /** {@code source} has its comments stripped already. */
@@ -56,7 +62,9 @@ final class EntityVertexFeatureCheck {
             throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
         }
         rejectUnservedAttributes(tree);
-        GlslTree withoutInterfaces = GlslTree.parse(withoutScannedInterfaces(source));
+        // An admitted storage block keeps its own layout; the plan rewrites its binding.
+        String interfaces = allowStorageBuffers ? GlslStorageBufferParser.withoutBlocks(source) : source;
+        GlslTree withoutInterfaces = GlslTree.parse(withoutScannedInterfaces(interfaces));
         rejectUnservedAttributeDeclarations(withoutInterfaces);
         // Interpolation survives on scanned varyings via the shared layout. Pack-authored
         // explicit layouts would conflict with the generated locations, and interpolation

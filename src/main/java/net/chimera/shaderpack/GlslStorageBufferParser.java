@@ -46,6 +46,15 @@ final class GlslStorageBufferParser {
         return List.copyOf(result);
     }
 
+    /** The source without its file-scope {@code buffer} blocks, whose bindings the plan rewrites. */
+    static String withoutBlocks(String source) {
+        GlslTree tree = GlslTree.parse(source == null ? "" : source);
+        List<GlslTree.Edit> removals = storageBlocks(tree).stream()
+                .map(declared -> new GlslTree.Edit(declared.block().range(), ""))
+                .toList();
+        return removals.isEmpty() ? source : tree.print(removals);
+    }
+
     /** The file-scope {@code buffer} blocks, each with its layout when one precedes its memory qualifiers. */
     private static List<Declared> storageBlocks(GlslTree tree) {
         List<Declared> blocks = new ArrayList<>();

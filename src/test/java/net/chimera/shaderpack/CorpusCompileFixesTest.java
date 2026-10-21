@@ -13,6 +13,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The translation defects the widened pack corpus found, each in the pack that showed it. */
@@ -360,5 +361,25 @@ final class CorpusCompileFixesTest {
         String removed = UniformRegistry.removeUniformDeclarations(source, plan);
         assertFalse(removed.contains("layout(rgba8)") || removed.contains("atm_image"), removed);
         assertTrue(removed.contains("const bool clear = false;"), removed);
+    }
+
+    /**
+     * Glimmer's and Reverie's entities include their storage blocks, laid out std430, and Reverie
+     * declares a sampler named image0Sampler. Neither is a pack-authored vertex layout or an image.
+     */
+    @Test
+    void anEntityVertexKeepsItsStorageBlocksAndImageNamedSamplers() {
+        String vertex = """
+                #version 430
+                layout(std430, binding = 0) buffer environmentData { vec4 sky; } environment;
+                uniform sampler2D image0Sampler;
+                void main() { gl_Position = environment.sky; }
+                """;
+        EntityVertexFeatureCheck.rejectEntityVertexFeatures(vertex, true, true);
+        IllegalArgumentException refused = assertThrows(
+                IllegalArgumentException.class, () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
+                        vertex.replace("uniform sampler2D image0Sampler;", "layout(rgba8) uniform image2D img;")
+                                .replace("environment.sky", "imageLoad(img, ivec2(0))"), true, true));
+        assertTrue(refused.getMessage().contains("unsupported entity vertex"), refused.getMessage());
     }
 }
