@@ -42,8 +42,12 @@ final class GlslDeclarations {
 
         /** Whether this is the declaration's only name, without array sizes or an initializer. */
         boolean plain() {
+            return single() && declarator.initializer() == null;
+        }
+
+        /** Whether this is the declaration's only name, without array sizes. */
+        boolean single() {
             return declaration.declarators().size() == 1 && declarator.arrays().isEmpty()
-                    && declarator.initializer() == null
                     && (declaration.type() == null || declaration.type().arrays().isEmpty());
         }
     }

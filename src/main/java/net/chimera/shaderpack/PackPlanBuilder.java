@@ -225,13 +225,15 @@ public final class PackPlanBuilder {
         private void prepareIrisCoreProfile() {
             String overlay = stage == UniformRegistry.Stage.POST || isTerrainMaterialFamily(name)
                     ? IrisCoreProfile.NO_OVERLAY : "UV1";
-            if (vertex != null && !(lineLayout() && directiveProgram.equals("gbuffers_line"))) {
+            IrisCoreProfile.Patch patch = IrisCoreProfile.patchFor(name, stage,
+                    lineLayout() && directiveProgram.equals("gbuffers_line"));
+            if (vertex != null && patch != IrisCoreProfile.Patch.LINES) {
                 vertex = IrisCoreProfile.prepareIrisCoreProfile(vertex, vertexFile(), true, overlay,
-                        irisCoreMode(vertex));
+                        IrisCoreProfile.coreMode(program.executableVertexSource()), patch);
             }
             if (fragment != null) {
                 fragment = IrisCoreProfile.prepareIrisCoreProfile(fragment, fragmentFile(), false, overlay,
-                        irisCoreMode(fragment));
+                        IrisCoreProfile.coreMode(program.executableFragmentSource()), patch);
             }
             if (stage != UniformRegistry.Stage.POST) return;
             vertex = FullscreenDefaultSampler.apply(vertex, settings(), deviations);
@@ -311,17 +313,22 @@ public final class PackPlanBuilder {
          * expanded first. A world program's alphaTestRef reads its alpha-test reference; a post
          * program, built with FogMode.OFF (CompositeRenderer, FinalPassRenderer), reads fogMode 0
          * and fogShape -1, and keeps refusing alphaTestRef, which Iris leaves the last world
-         * draw's (UniformRegistry.IRIS_UNSERVED). A stage whose includes do not resolve is left
-         * for the converters to refuse.
+         * draw's (UniformRegistry.IRIS_UNSERVED). A uniform Iris never sets reads its initializer
+         * (ServedUniforms.readInitializers). A stage whose includes do not resolve is left for the
+         * converters to refuse.
          */
         private String servedStageValues(String source, Path file) {
             if (source == null) return null;
             boolean post = stage == UniformRegistry.Stage.POST;
             List<String> names = post ? List.of("fogMode", "fogShape") : List.of(PackAlphaTestPlan.IRIS_REFERENCE);
             try {
-                String expanded = IrisCoreProfile.expandIncludes(source, file);
+                ServedUniforms.Initialized initialized = ServedUniforms.readInitializers(
+                        IrisCoreProfile.expandIncludes(source, file),
+                        value -> UniformRegistry.irisSets(value, settings().runtimeSettings().customDescriptors()));
+                initialized.names().forEach(value -> deviations.add("UNIFORM_UNSET_INITIALIZER:" + value));
+                String expanded = initialized.source();
                 if (names.stream().noneMatch(served -> GlslTokenRewriter.containsIdentifier(expanded, served))) {
-                    return source;
+                    return initialized.names().isEmpty() ? source : expanded;
                 }
                 return post ? ServedUniforms.serve(ServedUniforms.serve(expanded, "fogMode", "0"), "fogShape", "-1")
                         : alphaTestPlan.serveReference(expanded);
@@ -919,17 +926,6 @@ public final class PackPlanBuilder {
                     prepared.dependencies(), deviations));
         }
         return result;
-    }
-
-    /**
-     * Iris TransformPatcher compiles a stage in core-profile mode for a core profile and for 150
-     * and above with no profile, serving the core names whether or not the stage declares them.
-     * Iris also uses that mode for any program on the line layout; there a compatibility stage
-     * only gets the core names it declares, so its own variables of those names stay its own.
-     */
-    private static boolean irisCoreMode(String source) {
-        GlslVersion version = GlslVersion.first(source);
-        return version != null && version.irisCore();
     }
 
     /** Post stages in modern syntax: GLSL 140 and later, where in/out and layouts appear. */

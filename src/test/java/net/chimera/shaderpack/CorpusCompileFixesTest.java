@@ -139,7 +139,7 @@ final class CorpusCompileFixesTest {
                 void main() { vec4 p = projectionMatrix[0]; }
                 """;
         String prepared = IrisCoreProfile.prepareIrisCoreProfile(GlslMacroExpander.expand(source), null, false,
-                "ivec2(0)", true);
+                "ivec2(0)", true, IrisCoreProfile.Patch.VANILLA);
         assertFalse(prepared.contains("gl_ProjectionMatrix"), prepared);
         assertTrue(prepared.contains("vec4 p = gbufferProjection[0];"), prepared);
     }

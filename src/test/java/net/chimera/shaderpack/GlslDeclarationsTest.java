@@ -69,7 +69,7 @@ final class GlslDeclarationsTest {
                 layout(location = 0) in highp vec3 vaPosition;
                 uniform mat4 modelViewMatrix; // host matrix
                 void main() { gl_Position = modelViewMatrix * vec4(vaPosition, 1.0); }
-                """, null, true, IrisCoreProfile.NO_OVERLAY, true);
+                """, null, true, IrisCoreProfile.NO_OVERLAY, true, IrisCoreProfile.Patch.VANILLA);
         assertEquals("""
                 #version 330 core
 

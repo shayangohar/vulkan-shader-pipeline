@@ -554,23 +554,27 @@ public final class UniformRegistry {
             "ColorModulator", "LineWidth", "ChunkOffset", "EndPortalLayers", "screenSize");
 
     /**
-     * Names Iris 1.21.1 serves that Chimera does not yet: per-draw state, values that need Iris's
-     * ID maps or fog-mode plumbing, and the matrices Iris's core-profile transformers inject. A
-     * program reading one must not run on a zero Iris would never give it. A world program's
-     * alphaTestRef becomes its alpha-test reference before planning (PackAlphaTestPlan); a post
-     * program reads whatever the last world draw left in CapturedRenderingState, which has no
-     * equivalent here.
+     * Names Iris 1.21.1 serves that Chimera does not yet: per-draw state and values that need
+     * Iris's ID maps. A program reading one must not run on a zero Iris would never give it. A
+     * world program's alphaTestRef becomes its alpha-test reference before planning
+     * (PackAlphaTestPlan); a post program reads whatever the last world draw left in
+     * CapturedRenderingState, which has no equivalent here. The core-profile matrices and
+     * chunkOffset are not here: IrisCoreProfile serves them in the stages whose Iris transformer
+     * names them, and anywhere else Iris never sets them.
      */
     private static final Set<String> IRIS_UNSERVED = Set.of(
             "alphaTestRef", "blendFunc", "gtextureSize", "currentSelectedBlockId", "currentSelectedBlockPos",
-            "constantMood",
-            "modelViewMatrix", "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse",
-            "normalMatrix", "textureMatrix", "chunkOffset");
+            "constantMood");
 
     /** Whether Iris itself gives this name a value: the catalog, the unserved list, Iris internals. */
     static boolean irisServes(String name) {
         return UNIFORM_SPECS.containsKey(name) && !HOST_ONLY.contains(name)
                 || IRIS_UNSERVED.contains(name) || name.startsWith("iris_") || name.startsWith("u_");
+    }
+
+    /** Whether Iris sets a declared uniform: a name it serves, or one of the pack's custom uniforms. */
+    static boolean irisSets(String name, Map<String, UniformDescriptor> customDescriptors) {
+        return irisServes(name) || customDescriptors != null && customDescriptors.containsKey(name);
     }
 
     /**
