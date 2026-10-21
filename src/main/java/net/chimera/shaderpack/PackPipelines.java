@@ -669,16 +669,6 @@ public final class PackPipelines {
             String fixedVertexSource,
             Map<Integer, Integer> targetFormats
     ) {
-        return buildPost(program, fixedVertexSource, targetFormats, Map.of());
-    }
-
-    /** Builds a post pipeline with the same parsed pack constants used by probing. */
-    public static PackPost buildPost(
-            PackProgram program,
-            String fixedVertexSource,
-            Map<Integer, Integer> targetFormats,
-            Map<String, String> packConstants
-    ) {
         try {
             String fragmentSource = program.executableFragmentSource();
             Path sourcePath = program.preparedFragmentSource() == null
@@ -692,7 +682,7 @@ public final class PackPipelines {
                 throw new IllegalStateException("pack interface is unsupported: " + interfacePlan.deviations());
             }
             String converted = FragmentConverter.convertPostFragment(
-                    fragmentSource, sourcePath, interfacePlan, targetPlan, packConstants);
+                    fragmentSource, sourcePath, interfacePlan, targetPlan);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }

@@ -56,12 +56,10 @@ public final class FragmentConverter {
             UniformRegistry.ProgramInterface interfacePlan,
             PostTargetPlan targetPlan,
             GeometryOutputPlan geometryOutputPlan,
-            Map<String, String> packConstants,
             PostVertexBridge.PostVaryingLayout postVaryingLayout,
             Set<String> atlasSamplers
     ) {
         public FragmentConversionRequest {
-            packConstants = packConstants == null ? Map.of() : packConstants;
             atlasSamplers = atlasSamplers == null ? Set.of() : atlasSamplers;
         }
 
@@ -69,7 +67,7 @@ public final class FragmentConverter {
         public static FragmentConversionRequest of(String source, Path sourceFile,
                 boolean geometryStage, int[] geometrySamplerSlots) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
-                    null, null, null, null, Map.of(), null, Set.of());
+                    null, null, null, null, null, Set.of());
         }
 
         /** Minimal request with the interface plan derived from the source, as the old shims did. */
@@ -84,43 +82,37 @@ public final class FragmentConverter {
         public FragmentConversionRequest withTerrainLayout(LegacyGlslConverter.TerrainVaryingLayout terrainLayout) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withInterfacePlan(UniformRegistry.ProgramInterface interfacePlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withTargetPlan(PostTargetPlan targetPlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withGeometryOutputPlan(GeometryOutputPlan geometryOutputPlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers);
-        }
-
-        public FragmentConversionRequest withPackConstants(Map<String, String> packConstants) {
-            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
-                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withPostVaryingLayout(PostVertexBridge.PostVaryingLayout postVaryingLayout) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withAtlasSamplers(Set<String> atlasSamplers) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers);
+                    postVaryingLayout, atlasSamplers);
         }
 
         /** Runs the conversion; returns null when the source is outside the executable contract. */
@@ -136,21 +128,9 @@ public final class FragmentConverter {
             UniformRegistry.ProgramInterface interfacePlan,
             PostTargetPlan targetPlan
     ) {
-        return convertPostFragment(source, sourceFile, interfacePlan, targetPlan, Map.of());
-    }
-
-    /** Converts a post fragment using the pack constants already parsed by PackConfig. */
-    public static String convertPostFragment(
-            String source,
-            Path sourceFile,
-            UniformRegistry.ProgramInterface interfacePlan,
-            PostTargetPlan targetPlan,
-            Map<String, String> packConstants
-    ) {
         return FragmentConversionRequest.of(source, sourceFile, false, null)
                 .withInterfacePlan(interfacePlan)
                 .withTargetPlan(targetPlan)
-                .withPackConstants(packConstants)
                 .convert();
     }
 
@@ -160,7 +140,6 @@ public final class FragmentConverter {
             Path sourceFile,
             UniformRegistry.ProgramInterface interfacePlan,
             PostTargetPlan targetPlan,
-            Map<String, String> packConstants,
             Map<String, Integer> varyingLocations,
             Map<String, String> varyingTypes
     ) {
@@ -169,7 +148,6 @@ public final class FragmentConverter {
         return FragmentConversionRequest.of(source, sourceFile, false, null)
                 .withInterfacePlan(interfacePlan)
                 .withTargetPlan(targetPlan)
-                .withPackConstants(packConstants)
                 .withPostVaryingLayout(layout)
                 .convert();
     }
@@ -252,9 +230,7 @@ public final class FragmentConverter {
 
         /** Drops what the host serves (metadata constants, uniforms, entity ids) and maps the varyings. */
         private void rewriteDeclarations() {
-            Map<String, String> packConstants = request.packConstants();
             src = LegacyGlslConverter.removePackMetadataConstants(src);
-            src = LegacyGlslConverter.stripUnusedConsumedConsts(src, packConstants);
             src = LegacyGlslConverter.withoutKnownLegacyExtensions(src);
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
@@ -266,7 +242,6 @@ public final class FragmentConverter {
             }
             src = LegacyGlslConverter.convertVaryings(src, geometryStage, request.terrainLayout(),
                     request.postVaryingLayout(), stage);
-            src = LegacyGlslConverter.injectPackConstants(src, packConstants);
         }
 
         /**

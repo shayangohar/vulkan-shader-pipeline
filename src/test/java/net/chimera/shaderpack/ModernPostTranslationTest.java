@@ -97,7 +97,7 @@ final class ModernPostTranslationTest {
         GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
         GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
         PostVertexBridge.PostVertexConversion conversion = PostVertexBridge.convertPostVertex(
-                vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, Map.of());
+                vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan);
         assertTrue(conversion.source() != null, "Authored post vertex rejected: " + conversion.deviations());
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(conversion.source());
         assertTrue(usage.successful() && usage.liveSamplers().contains("colortex5"),
@@ -113,7 +113,7 @@ final class ModernPostTranslationTest {
         assertTrue(GlslInterfaceScanner.match(GlslInterfaceScanner.scan(conversion.source(), true), fs)
                         .executable(), "Translated vertex no longer provides its fragment inputs");
         String convertedFragment = FragmentConverter.convertPostFragment(fragment, null, plan,
-                PostTargetPlan.parse("composite", fragment).plan(), Map.of(),
+                PostTargetPlan.parse("composite", fragment).plan(),
                 GlslInterfaceScanner.match(vs, fs).locations(),
                 Map.of("texCoord", "vec2", "upVec", "vec3", "sunVec", "vec3", "vlFactor", "float"));
         assertTrue(convertedFragment != null, "Vertex-only sampler prevented paired fragment conversion");
@@ -122,14 +122,18 @@ final class ModernPostTranslationTest {
                 "Paired fragment lost its authored color input");
         String unsupported = vertex.replace("ftransform()", "gl_ModelViewMatrixInverse * gl_Vertex");
         PostVertexBridge.PostVertexConversion rejected = PostVertexBridge.convertPostVertex(
-                unsupported, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, Map.of());
+                unsupported, vs, fs, GlslInterfaceScanner.match(vs, fs), plan);
         assertTrue(rejected.source() == null && rejected.deviations().contains(
                         "POST_VERTEX_BUILTIN_UNSUPPORTED:gl_ModelViewMatrixInverse"),
                 "Unsupported authored builtin was not rejected by name");
     }
 
+    /**
+     * A program compiles the shadow constants it declares as it wrote them, as Iris compiles its
+     * source: nothing replaces their values, and nothing declares one the program does not.
+     */
     @Test
-    void authoredPostConstants() {
+    void authoredPostConstantsStayAsWritten() {
         String declarations = """
                 const float shadowDistance = 192.0;
                 const float sunPathRotation = -25.0;
@@ -139,8 +143,7 @@ final class ModernPostTranslationTest {
                 varying vec4 settings;
                 void main() {
                     gl_Position = ftransform();
-                    settings = vec4(shadowDistance, sunPathRotation,
-                            float(shadowMapResolution), shadowDistanceRenderMul);
+                    settings = vec4(shadowDistance, sunPathRotation, float(shadowMapResolution), 1.0);
                 }
                 """;
         String fragment = """
@@ -148,9 +151,6 @@ final class ModernPostTranslationTest {
                 varying vec4 settings;
                 void main() { gl_FragColor = settings; }
                 """;
-        Map<String, String> constants = Map.of("shadowDistance", "192.0",
-                "sunPathRotation", "-25.0", "shadowMapResolution", "4096",
-                "shadowDistanceRenderMul", "0.75");
         for (String authored : new String[] {declarations, ""}) {
             String vertex = "#version 130\n" + authored + body;
             UniformRegistry.ProgramInterface plan = UniformRegistry.planProgram(fragment, vertex,
@@ -158,33 +158,13 @@ final class ModernPostTranslationTest {
             GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
             GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
             PostVertexBridge.PostVertexConversion conversion = PostVertexBridge.convertPostVertex(
-                    vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan, constants);
+                    vertex, vs, fs, GlslInterfaceScanner.match(vs, fs), plan);
             assertTrue(conversion.source() != null,
                     "Post constants prevented authored vertex conversion: " + conversion.deviations());
-            var tokens = GlslLexer.lex(conversion.source()).stream()
-                    .filter(GlslLexer.Token::significant).toList();
-            Map<String, Double> values = new TreeMap<>();
-            for (int index = 1; index + 2 < tokens.size(); index++) {
-                String name = tokens.get(index).text();
-                if (!constants.containsKey(name) || !tokens.get(index + 1).symbol("=")) continue;
-                String type = tokens.get(index - 1).text();
-                assertTrue(type.equals(name.equals("shadowMapResolution") ? "int" : "float"),
-                        "Post constant has the wrong GLSL type: " + name);
-                StringBuilder initializer = new StringBuilder();
-                int end = index + 2;
-                while (end < tokens.size() && !tokens.get(end).symbol(";")) {
-                    initializer.append(tokens.get(end++).text());
-                }
-                assertTrue(end < tokens.size(), "Post constant initializer is incomplete: " + name);
-                assertTrue(values.putIfAbsent(name, Double.parseDouble(initializer.toString())) == null,
-                        "Post vertex redeclares pack constant: " + name);
+            for (String declaration : declarations.strip().split("\n")) {
+                assertTrue(conversion.source().contains(declaration) == !authored.isEmpty(),
+                        "Post vertex changed its constants: " + declaration + "\n" + conversion.source());
             }
-            Map<String, Double> expected = new TreeMap<>();
-            constants.forEach((name, value) -> expected.put(name, Double.parseDouble(value)));
-            assertTrue(values.equals(expected),
-                    "Post vertex lost authored or injected constant values: " + values);
-            assertTrue(GlslInterfaceScanner.match(GlslInterfaceScanner.scan(conversion.source(), true), fs)
-                            .executable(), "Post constants broke the authored fragment interface");
         }
     }
 
@@ -269,9 +249,8 @@ final class ModernPostTranslationTest {
         Map<Integer, Integer> formats = new TreeMap<>(base.colortexFormats());
         formats.put(4, -1);
         PackConfig.PackConfigData unsupportedFormat = new PackConfig.PackConfigData(
-                formats, base.drawBufferCount(), base.shadowSettings(), base.shaderConstants(),
-                base.deviations(), base.settings(), base.targetSettings(), base.flips(), base.preFlips(),
-                base.paddedAlphaTargets());
+                formats, base.drawBufferCount(), base.shadowSettings(), base.deviations(), base.settings(),
+                base.targetSettings(), base.flips(), base.preFlips(), base.paddedAlphaTargets());
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                 resources.plan().programs(), unsupportedFormat, resources.plan().resources(),
                 1920, 1080, 8, 16384);

@@ -723,7 +723,7 @@ final class StorageBufferPlanTest {
         UniformRegistry.ProgramInterface deadPlan = UniformRegistry.planPreparedPost(
                 deadHelperSource, targetResult.plan());
         String deadConverted = FragmentConverter.convertPostFragment(
-                deadHelperSource, null, deadPlan, targetResult.plan(), Map.of());
+                deadHelperSource, null, deadPlan, targetResult.plan());
         assertTrue(deadConverted != null && !deadConverted.contains("unreachable")
                         && !deadConverted.contains("helperSampler")
                         && deadPlan.samplers().isEmpty()

@@ -51,11 +51,6 @@ public final class PackConfig {
                     + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul"
                     + "|shadowIntervalSize|sunPathRotation|sunPathOffset|entityShadowDistanceMul|voxelDistance)"
                     + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
-    private static final Pattern PACK_NUMERIC_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+(int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|"
-                    + "shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
-                    + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
@@ -224,7 +219,6 @@ public final class PackConfig {
             Map<Integer, Integer> colortexFormats,
             int drawBufferCount,
             ShadowSettings shadowSettings,
-            Map<String, String> shaderConstants,
             List<String> deviations,
             PackSettingsPlan settings,
             Map<Integer, TargetSettings> targetSettings,
@@ -237,10 +231,9 @@ public final class PackConfig {
                 Map<Integer, Integer> colortexFormats,
                 int drawBufferCount,
                 ShadowSettings shadowSettings,
-                Map<String, String> shaderConstants,
                 List<String> deviations
         ) {
-            this(colortexFormats, drawBufferCount, shadowSettings, shaderConstants,
+            this(colortexFormats, drawBufferCount, shadowSettings,
                     deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Set.of());
         }
 
@@ -248,7 +241,6 @@ public final class PackConfig {
             colortexFormats = Collections.unmodifiableMap(new TreeMap<>(colortexFormats));
             paddedAlphaTargets = Collections.unmodifiableSet(new TreeSet<>(paddedAlphaTargets == null
                     ? Set.of() : paddedAlphaTargets));
-            shaderConstants = Collections.unmodifiableMap(new TreeMap<>(shaderConstants));
             deviations = List.copyOf(new TreeSet<>(deviations));
             settings = settings == null ? PackSettingsPlan.empty() : settings;
             targetSettings = Collections.unmodifiableMap(new TreeMap<>(targetSettings == null
@@ -288,8 +280,6 @@ public final class PackConfig {
             collectSourceFormats(program.name(), src, collected);
             collectShadowConstants(src, collected.shadowValues);
             collectShadowConstants(program.executableVertexSource(), collected.shadowValues);
-            collectPackConstants(src, collected.shaderConstants, collected.deviations);
-            collectPackConstants(program.executableVertexSource(), collected.shaderConstants, collected.deviations);
             collectTargetConstants(src, collected.targetSettings, collected.deviations);
             collectTargetConstants(program.executableVertexSource(), collected.targetSettings, collected.deviations);
         }
@@ -316,9 +306,8 @@ public final class PackConfig {
 
         ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues, shadowTargets(programs),
                 shadowColorTargetCount(programs, settings));
-        addShadowConstants(shadowSettings, collected.shadowValues, collected.shaderConstants);
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
-                shadowSettings, collected.shaderConstants, collected.deviations, settings,
+                shadowSettings, collected.deviations, settings,
                 collected.targetSettings, collected.flips, collected.preFlips, collected.paddedAlphaTargets);
     }
 
@@ -365,7 +354,6 @@ public final class PackConfig {
         final Map<Integer, Integer> colortexFormats = new HashMap<>();
         final Set<Integer> paddedAlphaTargets = new TreeSet<>();
         final Map<String, String> shadowValues = new TreeMap<>();
-        final Map<String, String> shaderConstants = new TreeMap<>();
         final Map<Integer, TargetSettings> targetSettings = new TreeMap<>();
         final Map<String, List<Integer>> flips = new TreeMap<>();
         final Map<String, List<Integer>> preFlips = new TreeMap<>();
@@ -417,7 +405,7 @@ public final class PackConfig {
         }
     }
 
-    /** One shaders.properties entry: a target format or directive, a shadow setting, or a pack constant. */
+    /** One shaders.properties entry: a target format or directive, or a shadow setting. */
     private static void applyProperty(String key, String value, Collected collected) {
         Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
         if (colortexKey.find()) {
@@ -430,13 +418,6 @@ public final class PackConfig {
         if (SHADOW_PROPERTIES.contains(key)) {
             collected.shadowValues.put(key, value);
             LOGGER.info("[chimera] pack properties: {}={}", key, value);
-        } else if (PACK_CONSTANT_NAMES.contains(key)) {
-            if (isNumeric(value)) {
-                collected.shaderConstants.put(key, normalizeNumeric(value));
-                LOGGER.info("[chimera] pack properties: {}={}", key, value);
-            } else {
-                collected.deviations.add("PACK_CONSTANT_UNSUPPORTED:" + key);
-            }
         }
     }
 
@@ -518,27 +499,7 @@ public final class PackConfig {
         }
     }
 
-    /** The validated shadow settings the converted sources read as constants. */
-    private static void addShadowConstants(ShadowSettings shadowSettings, Map<String, String> shadowValues,
-                                           Map<String, String> shaderConstants) {
-        shaderConstants.put("shadowMapResolution", Integer.toString(shadowSettings.resolution()));
-        shaderConstants.put("shadowDistance", Float.toString(shadowSettings.distance()));
-        if (shadowValues.containsKey("shadowDistanceRenderMul")) {
-            shaderConstants.put("shadowDistanceRenderMul",
-                    Float.toString(shadowSettings.distanceRenderMultiplier()));
-        }
-        if (shadowValues.containsKey("sunPathRotation")) {
-            shaderConstants.put("sunPathRotation", Float.toString(shadowSettings.sunPathRotation()));
-        }
-        if (shadowValues.containsKey("sunPathOffset")) {
-            shaderConstants.put("sunPathOffset", Float.toString(shadowSettings.sunPathOffset()));
-        }
-    }
-
     private static final List<String> SHADOW_PROPERTIES = List.of(
-            "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
-            "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
-    private static final Set<String> PACK_CONSTANT_NAMES = Set.of(
             "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
             "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
 
@@ -546,22 +507,6 @@ public final class PackConfig {
         Matcher shadow = SHADOW_CONST.matcher(source == null ? "" : source);
         while (shadow.find()) {
             values.put(shadow.group(1), shadow.group(2));
-        }
-    }
-
-    private static void collectPackConstants(
-            String source,
-            Map<String, String> values,
-            List<String> deviations
-    ) {
-        Matcher constants = PACK_NUMERIC_CONST.matcher(source == null ? "" : source);
-        while (constants.find()) {
-            String name = constants.group(2);
-            String value = normalizeNumeric(constants.group(3));
-            String previous = values.putIfAbsent(name, value);
-            if (previous != null && !previous.equals(value)) {
-                deviations.add("PACK_CONSTANT_CONFLICT:" + name);
-            }
         }
     }
 
@@ -673,14 +618,6 @@ public final class PackConfig {
             return result;
         } catch (NumberFormatException e) {
             return null;
-        }
-    }
-
-    private static boolean isNumeric(String value) {
-        try {
-            return Float.isFinite(Float.parseFloat(value));
-        } catch (NumberFormatException e) {
-            return false;
         }
     }
 

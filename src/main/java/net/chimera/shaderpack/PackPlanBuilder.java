@@ -200,10 +200,6 @@ public final class PackPlanBuilder {
             return config == null ? PackSettingsPlan.empty() : config.settings();
         }
 
-        private Map<String, String> packConstants() {
-            return config == null ? Map.of() : config.shaderConstants();
-        }
-
         private Path vertexFile() {
             return preparedSnapshot ? null : program.vertexPath();
         }
@@ -649,7 +645,6 @@ public final class PackPlanBuilder {
                         .withTerrainLayout(vertexLayout)
                         .withInterfacePlan(interfacePlan.project("fragment", stage))
                         .withGeometryOutputPlan(geometryOutputPlan)
-                        .withPackConstants(packConstants())
                         .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(name,
                                 interfacePlan.project("fragment", stage), config == null ? null : config.settings()))
                         .convert(), "POST_CONVERTER_UNSUPPORTED");
@@ -659,7 +654,6 @@ public final class PackPlanBuilder {
                         .of(fragment, fragmentFile(), true, slots)
                         .withTerrainLayout(vertexLayout)
                         .withInterfacePlan(interfacePlan.project("fragment", stage))
-                        .withPackConstants(packConstants())
                         .convert(), "POST_CONVERTER_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isEntityLike(name)) {
                 acceptFragment(FragmentConverter.convertEntityFragment(fragment, fragmentFile(),
@@ -695,7 +689,7 @@ public final class PackPlanBuilder {
             if (pairedPostVertex) {
                 PostVertexBridge.PostVertexConversion postVertex = PostVertexBridge.convertPostVertex(
                         vertex, stageInterfaces.get("vertex"), stageInterfaces.get("fragment"), stageMatch,
-                        interfacePlan.project("vertex", UniformRegistry.Stage.POST), packConstants());
+                        interfacePlan.project("vertex", UniformRegistry.Stage.POST));
                 deviations.addAll(postVertex.deviations());
                 if (postVertex.source() == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -710,7 +704,7 @@ public final class PackPlanBuilder {
                         stageMatch.locations(), postVaryingTypes(stageInterfaces.get("fragment")));
                 convertedFragment = FragmentConverter.convertPostFragment(
                         fragment, fragmentFile(), interfacePlan.project("fragment", UniformRegistry.Stage.POST),
-                        targetPlan, packConstants(),
+                        targetPlan,
                         postLayout == null ? null : postLayout.locations(),
                         postLayout == null ? null : postLayout.types());
             }

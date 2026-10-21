@@ -439,8 +439,7 @@ final class ExternalPackEvidenceTest {
         PostTargetPlan target = PostTargetPlan.parse("final", simple130).plan();
         UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(simple130, target);
         String converted = FragmentConverter.convertPostFragment(
-                simple130, shaders.resolve("final.fsh"), plan, target,
-                Map.of("shadowDistance", "192.0"));
+                simple130, shaders.resolve("final.fsh"), plan, target);
         assertTrue(converted != null, "metadata and constant conversion failed");
         assertEquals(1, count(converted, "#version 460"),
                 "converter emitted duplicate version directives");
@@ -451,7 +450,7 @@ final class ExternalPackEvidenceTest {
         assertTrue(!converted.contains("colortex0Format") && !converted.contains("gaux0Format"),
                 "converter retained pack metadata declarations");
         assertTrue(converted.contains("const float shadowDistance = 192.0;"),
-                "converter did not inject the parsed pack constant");
+                "converter did not keep the program's own shadow constant");
         assertTrue(converted.contains("layout(location = 0) in vec2 texCoord"),
                 "fixed fullscreen varying was not accepted");
 
@@ -474,11 +473,6 @@ final class ExternalPackEvidenceTest {
         assertTrue(PostVertexBridge.postVaryingDeviations(unsupported).contains(
                         "POST_VARYING_UNSUPPORTED:upVec"),
                 "second unsupported varying deviation is missing");
-
-        PackConfig.PackConfigData defaulted = PackConfig.parse(List.of(new PackProgram(
-                "final", "const float shadowDistance = 9999.0;\n", shaders.resolve("final.fsh"))), shaders);
-        assertEquals("128.0", defaulted.shaderConstants().get("shadowDistance"),
-                "invalid shadow constant did not use the validated default");
     }
 
     private static int count(String source, String needle) {

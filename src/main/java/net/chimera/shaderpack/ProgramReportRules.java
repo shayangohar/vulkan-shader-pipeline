@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static net.chimera.shaderpack.GlslLexer.stripComments;
@@ -63,11 +62,8 @@ final class ProgramReportRules {
         deviations.addAll(interfacePlan.deviations());
         addTargetRouteDeviations(targetResult, postName, programPlan, deviations);
         if (programPlan == null && postName && hasFragment && !modern) {
-            addUnplannedPostDeviations(inventory, packConfig, fragment, relaxed, targetResult, interfacePlan,
+            addUnplannedPostDeviations(inventory, fragment, relaxed, targetResult, interfacePlan,
                     deviations);
-        }
-        if (postName) {
-            addPackConstantDeviations(fragment, packConfig, deviations);
         }
         addVertexDeviations(inventory, programPlan, fragment, postName, deviations);
         addSourceDeviations(inventory, packPlan, programPlan, source, samplers, relaxed, modern, deviations);
@@ -126,8 +122,7 @@ final class ProgramReportRules {
     }
 
     /** A post program without a plan must still convert; say why it cannot. */
-    static void addUnplannedPostDeviations(PackProbe.Inventory inventory, PackConfig.PackConfigData packConfig,
-                                                   String fragment, boolean relaxed,
+    static void addUnplannedPostDeviations(PackProbe.Inventory inventory, String fragment, boolean relaxed,
                                                    PostTargetPlan.ParseResult targetResult,
                                                    UniformRegistry.ProgramInterface interfacePlan,
                                                    Set<String> deviations) {
@@ -135,7 +130,7 @@ final class ProgramReportRules {
         Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
                 ? null : inventory.sourcePaths.get("fragment");
         String converted = FragmentConverter.convertPostFragment(
-                fragment, sourcePath, interfacePlan, targetResult.plan(), packConfig.shaderConstants());
+                fragment, sourcePath, interfacePlan, targetResult.plan());
         if (converted == null) {
             deviations.addAll(PostVertexBridge.postVaryingDeviations(fragment));
             deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -612,25 +607,6 @@ final class ProgramReportRules {
         }
         return BENIGN_PREFIXES.stream().noneMatch(deviation::startsWith)
                 && SEVERE_PREFIXES.stream().anyMatch(deviation::startsWith);
-    }
-
-    static void addPackConstantDeviations(
-            String source,
-            PackConfig.PackConfigData packConfig,
-            Collection<String> deviations
-    ) {
-        String stripped = stripComments(source);
-        for (String name : packConfig.shaderConstants().keySet()) {
-            if (!Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(stripped).find()) {
-                continue;
-            }
-            if (packConfig.shadowSettings().deviations().contains(
-                    "SHADOW_SETTING_DEFAULTED:" + name)) {
-                deviations.add("PACK_CONSTANT_DEFAULTED:" + name);
-            } else {
-                deviations.add("PACK_CONSTANT_INJECTED:" + name);
-            }
-        }
     }
 
     /**

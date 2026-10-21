@@ -153,7 +153,7 @@ public final class PackPostTargets {
                 declaredFormats == null ? Map.of() : declaredFormats, 1,
                 new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
                         PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of()),
-                Map.of(), List.of());
+                List.of());
         int maxAttachments = deviceMaxColorAttachments();
         PackTargetGraphPlan legacy = PackTargetGraphPlan.build(
                 plans, config, width, height, maxAttachments, Integer.MAX_VALUE);

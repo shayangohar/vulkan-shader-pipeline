@@ -110,8 +110,7 @@ final class PostVertexBridge {
             GlslInterfaceScanner.StageInterface vertexInterface,
             GlslInterfaceScanner.StageInterface fragmentInterface,
             GlslInterfaceScanner.ProgramMatch match,
-            UniformRegistry.ProgramInterface interfacePlan,
-            Map<String, String> packConstants
+            UniformRegistry.ProgramInterface interfacePlan
     ) {
         try {
             if (source == null || !executableInterfaces(vertexInterface, fragmentInterface, match, interfacePlan)) {
@@ -147,8 +146,6 @@ final class PostVertexBridge {
             converted = UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
             converted = LegacyGlslConverter.withoutKnownLegacyExtensions(converted);
             converted = LegacyGlslConverter.removePackMetadataConstants(converted);
-            converted = LegacyGlslConverter.stripUnusedConsumedConsts(converted, packConstants);
-            converted = LegacyGlslConverter.injectPackConstants(converted, packConstants);
             converted = LegacyGlslConverter.convertTextureCalls(converted);
             converted = bindPostSamplers(converted, interfacePlan);
             converted = GlslTokenRewriter.replaceIdentifiers(converted, fullscreenInputs());

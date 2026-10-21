@@ -99,11 +99,6 @@ public final class LegacyGlslConverter {
     private static final Pattern OPAQUE_TYPE = Pattern.compile("[iu]?sampler\\w*|u?i?image\\w*");
 
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
-    private static final Pattern CONSUMED_CONST_NAME = Pattern.compile(
-            "colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)"
-                    + "|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov"
-                    + "|shadowDistanceRenderMul|sunPathRotation|sunPathOffset");
-    private static final Pattern CONSUMED_CONST_VALUE = Pattern.compile("[A-Za-z0-9+_.(), /-]+");
     private static final Pattern METADATA_CONST_NAME = Pattern.compile(
             "(?:colortex|gaux)\\d+(?:Format|Clear|ClearColor|MipmapEnabled)");
 
@@ -138,32 +133,6 @@ public final class LegacyGlslConverter {
     private static String without(String source, List<Span> spans) {
         return GlslDeclarations.apply(source, spans.stream()
                 .map(span -> new GlslDeclarations.TextEdit(span.start(), span.end(), "")).toList());
-    }
-
-    /**
-     * Removes consumed metadata constants unless something reads them
-     * without a replacement. A referenced constant stays when no pack
-     * constant will be injected for it (BSL's shadowMapBias initializer
-     * reading shadowDistance); it goes when injection supplies the value,
-     * and dead ones always go.
-     */
-    static String stripUnusedConsumedConsts(
-            String source, Map<String, String> packConstants) {
-        if (source == null || source.isBlank()) return source;
-        GlslTree tree = GlslTree.parse(source);
-        List<Span> consumed = lineSpans(source, tree, TAIL_TO_LINE_END, variable -> {
-            GlslTree.Range value = variable.declarator().initializer();
-            return variable.declaration().declarators().size() == 1 && value != null
-                    && variable.qualifiers().stream().allMatch("const"::equals)
-                    && CONSTANT_TYPES.contains(variable.type()) && variable.declarator().arrays().isEmpty()
-                    && CONSUMED_CONST_NAME.matcher(variable.name()).matches()
-                    && CONSUMED_CONST_VALUE.matcher(tree.text(value)).matches();
-        });
-        String checkSource = without(source, consumed);
-        return without(source, consumed.stream().filter(span -> {
-            boolean injected = packConstants != null && packConstants.containsKey(span.name());
-            return !GlslTokenRewriter.containsIdentifier(checkSource, span.name()) || injected;
-        }).toList());
     }
 
     /** The source without its {@code precision lowp|mediump|highp float|int;} statements. */
@@ -491,39 +460,6 @@ public final class LegacyGlslConverter {
             }
         }
         return without(source, metadata);
-    }
-
-    static String injectPackConstants(String source, Map<String, String> packConstants) {
-        if (packConstants == null || packConstants.isEmpty()) {
-            return source;
-        }
-        String stripped = stripComments(source);
-        // A constant the source defines as a macro keeps its own value.
-        Set<String> defined = new HashSet<>();
-        for (GlslDirectives.Line line : GlslDirectives.lines(stripped)) {
-            if (line.is("define") && line.adjacent() && !line.words().isEmpty()) defined.add(line.words().get(0));
-        }
-        StringBuilder declarations = new StringBuilder();
-        for (Map.Entry<String, String> entry : new TreeMap<>(packConstants).entrySet()) {
-            if (!containsIdentifier(stripped, entry.getKey()) || defined.contains(entry.getKey())) {
-                continue;
-            }
-            String type = entry.getKey().equals("shadowMapResolution") ? "int" : "float";
-            declarations.append("const ").append(type).append(' ')
-                    .append(entry.getKey()).append(" = ").append(entry.getValue()).append(";\n");
-        }
-        if (declarations.length() == 0) {
-            return source;
-        }
-        return startsWithVersion(source)
-                ? insertAfterFirstLine(source, declarations.toString())
-                : declarations + source;
-    }
-
-    /** Whether the source's first text, after whitespace, is a {@code #version} directive. */
-    private static boolean startsWithVersion(String source) {
-        GlslDirectives.Line version = GlslDirectives.version(source);
-        return version != null && version.adjacent() && source.substring(0, version.hash()).isBlank();
     }
 
     /**

@@ -3,7 +3,6 @@ package net.chimera.shaderpack;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -144,15 +143,15 @@ final class GlslDeclarationsTest {
     }
 
     /**
-     * Consumed constants go with the blank lines their old pattern took, each span starting where
+     * Metadata constants go with the blank lines their old pattern took, each span starting where
      * the previous one ended; a format directive inside a comment stays as written.
      */
     @Test
-    void consumedConstantsChainTheirSpansAndLeaveComments() {
-        String source = "/*\nconst int colortex0Format = RGBA16;\n*/\n    const float sunPathRotation = 0.0;\n\n\n"
-                + "            const int shadowMapResolution = 2048;\n\n\nvoid main() {}\n";
+    void metadataConstantsChainTheirSpansAndLeaveComments() {
+        String source = "/*\nconst int colortex0Format = RGBA16;\n*/\n    const int colortex1Format = RGBA16F;\n\n\n"
+                + "            const bool colortex2Clear = false;\n\n\nvoid main() {}\n";
         assertEquals("/*\nconst int colortex0Format = RGBA16;\n*/\n\nvoid main() {}\n",
-                LegacyGlslConverter.stripUnusedConsumedConsts(source, Map.of()));
+                LegacyGlslConverter.removePackMetadataConstants(source));
     }
 
     /**
