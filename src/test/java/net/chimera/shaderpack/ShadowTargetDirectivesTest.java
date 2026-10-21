@@ -100,10 +100,37 @@ final class ShadowTargetDirectivesTest {
         Files.writeString(shaders.resolve("shaders.properties"), "");
         PackProbe.Analysis legacy = PackProbe.analyze(root);
         assertEquals(2, legacy.plan().program("shadow").shadowAttachmentFormats().size());
-        assertTrue(legacy.plan().program("shadow").deviations().contains("SHADOW_OUTPUT_TARGET_UNSUPPORTED:3"));
+        PackProgramPlan shadow = legacy.plan().program("shadow");
+        assertTrue(shadow.executable() && shadow.deviations().contains("SHADOW_DRAWBUFFERS_RESET:3"),
+                shadow.deviations().toString());
         assertTrue(legacy.plan().program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:shadowcolor5"));
         PackProgramPlan terrain = legacy.plan().program("gbuffers_terrain");
         assertTrue(terrain.deviations().contains("SAMPLER_NOT_MAPPED:shadowcolor2") && !terrain.executable());
+    }
+
+    /**
+     * A shadow program naming a target the pass does not have draws to {0, 1} instead, as Iris's
+     * ShadowRenderTargets.createColorFramebuffer does: its first two outputs write shadowcolor0
+     * and shadowcolor1, and the rest are discarded.
+     */
+    @Test
+    void aShadowTargetPastThePassDrawsToTheFirstTwo(@TempDir Path root) throws IOException {
+        writeHigherShadowColorPack(root, "iris.features.required=HIGHER_SHADOWCOLOR\n");
+        Files.writeString(root.resolve("shaders/shadow.fsh"), """
+                #version 120
+                /* RENDERTARGETS: 9,4,2 */
+                varying vec2 uv;
+                void main() {
+                    gl_FragData[0] = vec4(uv, 0.0, 1.0);
+                    gl_FragData[1] = vec4(1.0);
+                    gl_FragData[2] = vec4(0.5);
+                }
+                """);
+        PackProgramPlan shadow = PackProbe.analyze(root).plan().program("shadow");
+        assertTrue(shadow.executable() && shadow.deviations().contains("SHADOW_DRAWBUFFERS_RESET:9"),
+                shadow.deviations().toString());
+        assertTrue(shadow.convertedFragment().contains("chimeraShadowColor1")
+                && !shadow.convertedFragment().contains("chimeraShadowColor4"), shadow.convertedFragment());
     }
 
     /**

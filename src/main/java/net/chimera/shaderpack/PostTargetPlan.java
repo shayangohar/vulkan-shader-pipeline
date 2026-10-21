@@ -147,6 +147,21 @@ public final class PostTargetPlan {
     }
 
     /**
+     * A shadow source as Iris draws it when its target directive names a shadowcolor at or past the
+     * pass's {@code count}: ShadowRenderTargets.createColorFramebuffer then draws to {0, 1}, so
+     * output 0 writes shadowcolor0, output 1 shadowcolor1, and a later output is discarded.
+     */
+    static String withShadowTargetsWithin(String source, int count, List<String> deviations) {
+        if (source == null || !TARGET_COMMENT.matcher(source).find()) return source;
+        List<Integer> outside = parse("shadow", source).plan().targetSlots().stream()
+                .filter(target -> target < 0 || target >= count)
+                .toList();
+        if (outside.isEmpty()) return source;
+        outside.forEach(target -> deviations.add("SHADOW_DRAWBUFFERS_RESET:" + target));
+        return TARGET_COMMENT.matcher(source).replaceAll("/* DRAWBUFFERS:01 */");
+    }
+
+    /**
      * The routes the target comments declare, as Iris reads them ({@code /* DRAWBUFFERS:01 *}{@code /},
      * {@code /* RENDERTARGETS: 0,2 *}{@code /}). A malformed directive, or a directive word that no
      * directive parses from, is recorded and declares no route.

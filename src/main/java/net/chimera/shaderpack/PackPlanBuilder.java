@@ -191,6 +191,12 @@ public final class PackPlanBuilder {
                     familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan, shadowAttachments());
         }
 
+        /** The shadowcolor targets the shadow pass draws: Iris's two, or up to eight with HIGHER_SHADOWCOLOR. */
+        private int shadowTargetCount() {
+            return shadowAttachments().isEmpty() ? ShadowTargetDirectives.LEGACY_COLOR_TARGETS
+                    : shadowAttachments().size();
+        }
+
         /** The shadow pass's colour attachment formats, which every shadow-stage pipeline declares. */
         private List<Integer> shadowAttachments() {
             return stage.shadowPass() && config != null ? config.shadowSettings().colorAttachmentFormats() : List.of();
@@ -229,6 +235,9 @@ public final class PackPlanBuilder {
             if (fragment != null) {
                 fragment = IrisCoreProfile.prepareIrisCoreProfile(fragment, fragmentFile(), false, overlay,
                         IrisCoreProfile.coreMode(program.executableFragmentSource()), patch);
+            }
+            if (stage.shadowPass()) {
+                fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
             }
             if (stage != UniformRegistry.Stage.POST) return;
             vertex = FullscreenDefaultSampler.apply(vertex, config, deviations);
@@ -445,13 +454,6 @@ public final class PackPlanBuilder {
                 PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
                 for (String deviation : shadowOutputs.deviations()) {
                     deviations.add(deviation.replaceFirst("^POST_", "SHADOW_"));
-                }
-                int targets = shadowAttachments().isEmpty() ? 2 : shadowAttachments().size();
-                for (int target : shadowOutputs.targetSlots()) {
-                    if (target < 0 || target >= targets) {
-                        deviations.add("SHADOW_OUTPUT_TARGET_UNSUPPORTED:" + target);
-                        admitted = false;
-                    }
                 }
                 admitted &= shadowOutputs.executable();
             }
