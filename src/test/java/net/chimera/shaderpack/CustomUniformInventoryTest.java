@@ -125,7 +125,7 @@ final class CustomUniformInventoryTest {
         PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(false, "float", "broken", "noSuchFunction(1.0)"),
                 PackRuntimeSettings.declaration(true, "float", "reader", "broken + 1.0")),
-                Map.of(), List.of());
+                List.of());
         assertTrue(settings.rejected().contains("reader") && settings.indexOf("reader") < 0,
                 "a value reading a refused declaration was not refused: " + settings.deviations());
     }
@@ -165,8 +165,6 @@ final class CustomUniformInventoryTest {
                     + " defaultPolicy=" + entry.getValue().defaultPolicy());
         }
         System.out.println("[chimera] inventory " + label + " served=" + served
-                + " refused=" + settings.rejected().size()
-                + " halfLives(wetness,eyeBrightness)=" + settings.wetnessRiseHalfLife()
-                + "," + settings.eyeBrightnessHalfLife());
+                + " refused=" + settings.rejected().size());
     }
 }

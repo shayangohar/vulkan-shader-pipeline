@@ -18,7 +18,19 @@ import java.util.regex.Pattern;
  */
 final class IrisConstDirectives {
     /** One directive as written: its declared type, name and unparsed value. */
-    record Directive(String type, String name, String value) {}
+    record Directive(String type, String name, String value) {
+        /** Whether Iris reads the value as the number its type names (Integer.parseInt, Float.parseFloat). */
+        boolean numeric() {
+            try {
+                if (type.equals("int")) Integer.parseInt(value);
+                else if (type.equals("float")) Float.parseFloat(value);
+                else return false;
+                return true;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+    }
 
     private static final Pattern LINE = Pattern.compile(
             "(?m)^[ \\t]*const[ \\t]+(int|float|vec2|ivec3|vec4|bool)[ \\t]+(\\w+)[ \\t]*=([^;\\r\\n]*);");
@@ -51,12 +63,14 @@ final class IrisConstDirectives {
     }
 
     /**
-     * The programs whose fragment sources Iris reads directives from, in its order; a program Iris
-     * never loads is left out.
+     * The programs whose fragment sources Iris reads directives from, in its order. A program Iris
+     * never loads is left out, and so is one the pack switches off: Iris reads no source for it
+     * (ShaderPack: program.<path>.enabled and a profile's !program).
      */
-    static List<PackProgram> programs(List<PackProgram> programs) {
+    static List<PackProgram> programs(List<PackProgram> programs, PackSettingsPlan settings) {
         return programs.stream()
                 .filter(program -> ORDER.containsKey(program.name()))
+                .filter(program -> settings.enabled(program.variantFolder(), program.name()))
                 .sorted(Comparator.comparingInt(program -> ORDER.get(program.name())))
                 .toList();
     }

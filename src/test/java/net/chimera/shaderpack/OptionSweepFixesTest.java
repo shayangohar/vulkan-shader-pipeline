@@ -156,7 +156,7 @@ final class OptionSweepFixesTest {
         PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "float", "sandStorm", "0.0;"),
                 PackRuntimeSettings.declaration(true, "float", "wrong", "sinh(frameTimeCounter)")),
-                Map.of(), List.of());
+                List.of());
         assertTrue(settings.rejected().containsAll(List.of("sandStorm", "wrong")), settings.rejected().toString());
         assertTrue(!settings.customDescriptors().containsKey("sandStorm"),
                 "a value that does not parse is left unset, as Iris leaves it");

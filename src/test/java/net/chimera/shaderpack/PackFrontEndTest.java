@@ -196,7 +196,7 @@ final class PackFrontEndTest {
     void boolAndAtlasNames() {
         PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "bool", "cycle", "worldTime > 10")),
-                Map.of(), List.of());
+                List.of());
         assertTrue(settings.customDescriptors().get("cycle").accepts("bool")
                 && settings.customDescriptors().get("cycle").accepts("int"), "bool custom types");
         assertTrue(UniformRegistry.GEOMETRY_NAME_TO_SLOT.get("gtexture") == 0
@@ -305,7 +305,7 @@ final class PackFrontEndTest {
                 PackRuntimeSettings.declaration(true, "float", "dir_y", "dir.y"),
                 PackRuntimeSettings.declaration(true, "vec3", "wrong", "1.0"),
                 PackRuntimeSettings.declaration(true, "float", "cell",
-                        "gbufferModelViewInverse.3.0")), Map.of(), List.of());
+                        "gbufferModelViewInverse.3.0")), List.of());
         assertTrue(settings.rejected().equals(Set.of("wrong")),
                 "only the mistyped value is refused: " + settings.rejected() + " " + settings.deviations());
         assertTrue(settings.widthOf("view_res") == 2 && settings.widthOf("dir") == 3
@@ -381,7 +381,7 @@ final class PackFrontEndTest {
         // Bliss authors texelSize; Iris has no such builtin, so the pack's value stands.
         PackRuntimeSettings texel = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "vec2", "texelSize",
-                        "vec2(1.0 / viewWidth, 1.0 / viewHeight)")), Map.of(), List.of());
+                        "vec2(1.0 / viewWidth, 1.0 / viewHeight)")), List.of());
         assertTrue(texel.rejected().isEmpty(), "texelSize is the pack's own: " + texel.deviations());
         UniformRegistry.UniformDescriptor resolved =
                 UniformRegistry.resolve("texelSize", "vec2", texel.customDescriptors());

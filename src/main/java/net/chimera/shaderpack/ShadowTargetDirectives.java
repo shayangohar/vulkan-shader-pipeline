@@ -49,11 +49,14 @@ public record ShadowTargetDirectives(List<ColorTarget> colors, List<DepthSamplin
 
     /** The settings the const directives in {@code sources}, in order, declare. */
     public static ShadowTargetDirectives parse(List<String> sources) {
+        return read(sources.stream().flatMap(source -> IrisConstDirectives.find(source).stream()).toList());
+    }
+
+    /** The settings {@code directives}, in order, declare. */
+    static ShadowTargetDirectives read(List<IrisConstDirectives.Directive> directives) {
         Builder builder = new Builder();
-        for (String source : sources) {
-            for (IrisConstDirectives.Directive directive : IrisConstDirectives.find(source)) {
-                builder.accept(directive.type(), directive.name(), directive.value());
-            }
+        for (IrisConstDirectives.Directive directive : directives) {
+            builder.accept(directive.type(), directive.name(), directive.value());
         }
         return builder.build();
     }

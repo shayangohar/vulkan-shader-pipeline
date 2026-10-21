@@ -3,6 +3,7 @@ package net.chimera.render.shader;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.shaderpack.BiomeIds;
 import net.chimera.shaderpack.PackBlendPlan;
+import net.chimera.shaderpack.PackDirectives;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.PackRuntimeSettings;
@@ -108,6 +109,8 @@ final class PackFrameState {
     private final float[] previousCameraPositionFract = new float[3];
     private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
     private PackRuntimeSettings.Session session = runtimeSettings.newSession();
+    // The pack's smoothing half-lives (Iris PackDirectives).
+    private PackDirectives directives = PackDirectives.DEFAULTS;
 
     private ClientLevel lastLevel;
     private boolean viewInitialized;
@@ -287,6 +290,10 @@ final class PackFrameState {
     void installRuntimeSettings(PackRuntimeSettings settings) {
         this.runtimeSettings = settings == null ? PackRuntimeSettings.empty() : settings;
         this.session = this.runtimeSettings.newSession();
+    }
+
+    void installDirectives(PackDirectives directives) {
+        this.directives = directives == null ? PackDirectives.DEFAULTS : directives;
     }
 
     void installHeldItems(PackItemIdResolver items, boolean oldHandLight) {
@@ -676,17 +683,17 @@ final class PackFrameState {
             smoothingStarted = true;
         } else {
             wetnessValue = smooth(wetnessValue, rainStrength,
-                    runtimeSettings.wetnessRiseHalfLife(),
-                    runtimeSettings.wetnessFallHalfLife(), frameTime);
+                    directives.wetnessHalfLife(),
+                    directives.drynessHalfLife(), frameTime);
         }
         wetness = wetnessValue;
         if (frameTime > 0.0f) {
             eyeBrightnessBlockSmooth = smooth(eyeBrightnessBlockSmooth,
-                    eyeBrightness[0], runtimeSettings.eyeBrightnessHalfLife(),
-                    runtimeSettings.eyeBrightnessHalfLife(), frameTime);
+                    eyeBrightness[0], directives.eyeBrightnessHalfLife(),
+                    directives.eyeBrightnessHalfLife(), frameTime);
             eyeBrightnessSkySmooth = smooth(eyeBrightnessSkySmooth,
-                    eyeBrightness[1], runtimeSettings.eyeBrightnessHalfLife(),
-                    runtimeSettings.eyeBrightnessHalfLife(), frameTime);
+                    eyeBrightness[1], directives.eyeBrightnessHalfLife(),
+                    directives.eyeBrightnessHalfLife(), frameTime);
         }
         eyeBrightnessSmooth[0] = (int) eyeBrightnessBlockSmooth;
         eyeBrightnessSmooth[1] = (int) eyeBrightnessSkySmooth;

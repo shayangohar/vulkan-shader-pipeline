@@ -25,10 +25,7 @@ public final class PackResourcePlan {
     private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-9]+)");
     /** A generated noisetex binding's source: this prefix, then the image's side in texels. */
     public static final String GENERATED_NOISE = "generated-noise:";
-    private static final int DEFAULT_NOISE_RESOLUTION = 256;
-    private static final int MAX_NOISE_RESOLUTION = 4096;
-    private static final Pattern NOISE_RESOLUTION = Pattern.compile(
-            "(?m)^\\s*const\\s+int\\s+noiseTextureResolution\\s*=\\s*(\\d{1,5})\\s*;");
+    private static final int DEFAULT_NOISE_RESOLUTION = PackDirectives.DEFAULTS.noiseTextureResolution();
 
     /** Chimera's name for the host entity overlay, which entityColor is made from. */
     public static final String OVERLAY_SAMPLER = "chimeraOverlay";
@@ -418,18 +415,13 @@ public final class PackResourcePlan {
                 binding.deviations());
     }
 
-    /** The side of the generated noise: the pack's const int noiseTextureResolution, else Iris's 256. */
+    /**
+     * The side of the generated noise: the pack's noiseTextureResolution directive (PackDirectives),
+     * else Iris's 256. Iris clamps none; one that sizes no texture becomes 1.
+     */
     static int noiseResolution(PackPlan plan) {
-        int resolution = DEFAULT_NOISE_RESOLUTION;
-        for (PackProgramPlan program : plan.programs()) {
-            if (program == null) continue;
-            for (PreparedShaderSource stage : program.stages().values()) {
-                Matcher matcher = NOISE_RESOLUTION.matcher(stage == null || stage.source() == null
-                        ? "" : stage.source());
-                if (matcher.find()) resolution = Integer.parseInt(matcher.group(1));
-            }
-        }
-        return Math.max(1, Math.min(MAX_NOISE_RESOLUTION, resolution));
+        return Math.max(1, plan.config() == null ? DEFAULT_NOISE_RESOLUTION
+                : plan.config().directives().noiseTextureResolution());
     }
 
     /** The side a generated noise binding's source names. */

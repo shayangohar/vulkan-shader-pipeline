@@ -250,7 +250,7 @@ final class ModernPostTranslationTest {
         formats.put(4, -1);
         PackConfig.PackConfigData unsupportedFormat = new PackConfig.PackConfigData(
                 formats, base.drawBufferCount(), base.shadowSettings(), base.deviations(), base.settings(),
-                base.targetSettings(), base.flips(), base.preFlips(), base.paddedAlphaTargets());
+                base.targetSettings(), base.flips(), base.preFlips(), base.paddedAlphaTargets(), base.directives());
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                 resources.plan().programs(), unsupportedFormat, resources.plan().resources(),
                 1920, 1080, 8, 16384);

@@ -248,7 +248,8 @@ public final class PackConfig {
             Map<String, List<Integer>> flips,
             Map<String, List<Integer>> preFlips,
             // Targets declared in a format without alpha and stored with it (IrisColorFormats).
-            Set<Integer> paddedAlphaTargets
+            Set<Integer> paddedAlphaTargets,
+            PackDirectives directives
     ) {
         public PackConfigData(
                 Map<Integer, Integer> colortexFormats,
@@ -257,7 +258,8 @@ public final class PackConfig {
                 List<String> deviations
         ) {
             this(colortexFormats, drawBufferCount, shadowSettings,
-                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Set.of());
+                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Set.of(),
+                    PackDirectives.DEFAULTS);
         }
 
         public PackConfigData {
@@ -270,6 +272,7 @@ public final class PackConfig {
                     ? Map.of() : targetSettings));
             flips = immutableTargetLists(flips);
             preFlips = immutableTargetLists(preFlips);
+            directives = directives == null ? PackDirectives.DEFAULTS : directives;
         }
 
         private static Map<String, List<Integer>> immutableTargetLists(
@@ -294,10 +297,13 @@ public final class PackConfig {
             PackSettingsPlan settings
     ) {
         Collected collected = new Collected();
-        for (PackProgram program : IrisConstDirectives.programs(programs)) {
+        List<PackProgram> directivePrograms = IrisConstDirectives.programs(programs, settings);
+        List<IrisConstDirectives.Directive> directives = new ArrayList<>();
+        for (PackProgram program : directivePrograms) {
             for (IrisConstDirectives.Directive directive
                     : IrisConstDirectives.find(program.executableFragmentSource())) {
                 acceptDirective(program.name(), directive, collected);
+                directives.add(directive);
             }
         }
 
@@ -321,18 +327,11 @@ public final class PackConfig {
             }
         }
 
-        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues, shadowTargets(programs),
-                shadowColorTargetCount(programs, settings));
+        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues,
+                ShadowTargetDirectives.read(directives), shadowColorTargetCount(directivePrograms, settings));
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
-                shadowSettings, collected.deviations, settings,
-                collected.targetSettings, collected.flips, collected.preFlips, collected.paddedAlphaTargets);
-    }
-
-    /** The shadow target directives, from the sources Iris reads directives from, in its order. */
-    private static ShadowTargetDirectives shadowTargets(List<PackProgram> programs) {
-        return ShadowTargetDirectives.parse(IrisConstDirectives.programs(programs).stream()
-                .map(PackProgram::executableFragmentSource)
-                .toList());
+                shadowSettings, collected.deviations, settings, collected.targetSettings, collected.flips,
+                collected.preFlips, collected.paddedAlphaTargets, PackDirectives.read(directives));
     }
 
     /**
@@ -344,19 +343,8 @@ public final class PackConfig {
         if (target.matches() && directive.type().equals(TARGET_DIRECTIVE_TYPES.get(target.group(2)))) {
             acceptTargetDirective(program, target.group(1), target.group(2), directive.value(), collected);
         } else if (directive.type().equals(SHADOW_DIRECTIVE_TYPES.get(directive.name()))
-                && irisNumber(directive.type(), directive.value())) {
+                && directive.numeric()) {
             collected.shadowValues.put(directive.name(), directive.value());
-        }
-    }
-
-    /** Whether Iris parses {@code value} as its {@code int} (Integer.parseInt) or {@code float} (Float.parseFloat). */
-    private static boolean irisNumber(String type, String value) {
-        try {
-            if (type.equals("int")) Integer.parseInt(value);
-            else Float.parseFloat(value);
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
         }
     }
 

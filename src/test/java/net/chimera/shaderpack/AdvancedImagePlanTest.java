@@ -273,7 +273,7 @@ final class AdvancedImagePlanTest {
                 division.source().lastIndexOf(';')).trim();
         PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "float", "fogScaleProbe", expression)),
-                Map.of(), List.of());
+                List.of());
         assertTrue(settings.indexOf("fogScaleProbe") >= 0,
                 "Normalized fog scale expression is not evaluable");
         PackRuntimeSettings.Session session = settings.newSession();

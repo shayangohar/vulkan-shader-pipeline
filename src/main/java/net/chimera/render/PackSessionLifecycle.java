@@ -12,6 +12,7 @@ import net.chimera.shaderpack.HandLightDirectives;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackCoveragePlan;
+import net.chimera.shaderpack.PackDirectives;
 import net.chimera.shaderpack.PackEngineDefines;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackItemIdResolver;
@@ -504,6 +505,7 @@ final class PackSessionLifecycle {
             PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
             RenderedItemIds.install(PackItemIdResolver.empty());
             PackUniformProvider.installRuntimeSettings(null);
+            PackUniformProvider.installDirectives(null);
             pass.packNeedsHdrDepth = false;
             return;
         }
@@ -587,6 +589,8 @@ final class PackSessionLifecycle {
     /** Installs the plan's uniform runtime settings and logs how the pack resolved. */
     private void installRuntimeSettings() {
         PackUniformProvider.installRuntimeSettings(pass.packPlan.runtimeSettings());
+        PackUniformProvider.installDirectives(pass.packPlan.config() == null ? null
+                : pass.packPlan.config().directives());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, "
                 + "missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 pass.packPlan.selectedDimension(),
@@ -596,12 +600,9 @@ final class PackSessionLifecycle {
                 pass.packPlan.missingProgramCount(),
                 pass.packPlan.settingsFingerprint(),
                 pass.packPlan.resolutionFingerprint());
-        LOGGER.info("[chimera] uniform runtime settings: custom={}, wetnessRise={}, wetnessFall={}, "
-                + "eyeBrightnessHalfLife={}",
+        LOGGER.info("[chimera] uniform runtime settings: custom={}, directives={}",
                 pass.packPlan.runtimeSettings().customDescriptors().size(),
-                pass.packPlan.runtimeSettings().wetnessRiseHalfLife(),
-                pass.packPlan.runtimeSettings().wetnessFallHalfLife(),
-                pass.packPlan.runtimeSettings().eyeBrightnessHalfLife());
+                pass.packPlan.config() == null ? PackDirectives.DEFAULTS : pass.packPlan.config().directives());
     }
 
     /** Parses the pack's block and item id maps and installs them with its hand-light setting. */

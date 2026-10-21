@@ -2,6 +2,7 @@ package net.chimera.render.shader;
 
 import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.PackBlendPlan;
+import net.chimera.shaderpack.PackDirectives;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.PackRuntimeSettings;
@@ -279,6 +280,11 @@ public final class PackUniformProvider {
         INSTANCE.refreshBindings(true);
     }
 
+    /** The pack's scalar directives: the wetness and eye-brightness smoothing half-lives. */
+    public static void installDirectives(PackDirectives directives) {
+        INSTANCE.frameState.installDirectives(directives);
+    }
+
     /** Drops frame history when the pack session is destroyed or reloaded. */
     public static void resetSession() {
         setRenderingPhase(PackRenderingPhase.NONE);
@@ -286,6 +292,7 @@ public final class PackUniformProvider {
         INSTANCE.lastTick = Long.MIN_VALUE;
         INSTANCE.runtimeSettings = PackRuntimeSettings.empty();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
+        INSTANCE.frameState.installDirectives(PackDirectives.DEFAULTS);
         INSTANCE.frameState.resetSession();
         INSTANCE.refreshBindings(true);
     }

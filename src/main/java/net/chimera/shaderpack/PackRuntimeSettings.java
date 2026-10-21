@@ -24,13 +24,6 @@ import java.util.TreeSet;
  * rather than accommodated. Anything else is the pack's own name and is admitted as it stands.
  */
 public final class PackRuntimeSettings {
-    public static final float DEFAULT_WETNESS_RISE_HALF_LIFE = 600.0f;
-    public static final float DEFAULT_WETNESS_FALL_HALF_LIFE = 200.0f;
-    public static final float DEFAULT_EYE_BRIGHTNESS_HALF_LIFE = 10.0f;
-
-    private final float wetnessRiseHalfLife;
-    private final float wetnessFallHalfLife;
-    private final float eyeBrightnessHalfLife;
     private final List<Value> values;
     /** Each value's first storage slot; a vector holds one slot per component. */
     private final Map<String, Integer> indices;
@@ -41,17 +34,11 @@ public final class PackRuntimeSettings {
     private final List<String> deviations;
 
     private PackRuntimeSettings(
-            float wetnessRiseHalfLife,
-            float wetnessFallHalfLife,
-            float eyeBrightnessHalfLife,
             List<Value> values,
             Map<String, UniformRegistry.UniformDescriptor> rejectedDescriptors,
             Set<String> rejected,
             List<String> deviations
     ) {
-        this.wetnessRiseHalfLife = wetnessRiseHalfLife;
-        this.wetnessFallHalfLife = wetnessFallHalfLife;
-        this.eyeBrightnessHalfLife = eyeBrightnessHalfLife;
         this.values = List.copyOf(values);
         Map<String, Integer> indexMap = new TreeMap<>();
         Map<String, Integer> widthMap = new TreeMap<>();
@@ -82,35 +69,22 @@ public final class PackRuntimeSettings {
 
     public static PackRuntimeSettings empty() {
         return new PackRuntimeSettings(
-                DEFAULT_WETNESS_RISE_HALF_LIFE,
-                DEFAULT_WETNESS_FALL_HALF_LIFE,
-                DEFAULT_EYE_BRIGHTNESS_HALF_LIFE,
                 List.of(),
                 Map.of(),
                 Set.of(),
                 List.of());
     }
 
-    static PackRuntimeSettings build(
-            List<Declaration> declarations,
-            Map<String, String> defaults,
-            List<String> deviations
-    ) {
-        return build(declarations, defaults, deviations, BiomeIds.constants());
+    static PackRuntimeSettings build(List<Declaration> declarations, List<String> deviations) {
+        return build(declarations, deviations, BiomeIds.constants());
     }
 
     static PackRuntimeSettings build(
             List<Declaration> declarations,
-            Map<String, String> defaults,
             List<String> deviations,
             PackExpression.Constants constants
     ) {
         List<String> result = new ArrayList<>(deviations == null ? List.of() : deviations);
-        float wetnessRise = numeric(defaults, "wetnessHalflife",
-                DEFAULT_WETNESS_RISE_HALF_LIFE, result, "wetness");
-        float wetnessFall = DEFAULT_WETNESS_FALL_HALF_LIFE;
-        float eyeBrightness = numeric(defaults, "eyeBrightnessHalflife",
-                DEFAULT_EYE_BRIGHTNESS_HALF_LIFE, result, "eyeBrightness");
 
         Map<String, Declaration> byName = declarationsByName(declarations);
         Map<String, ParsedValue> parsed = new TreeMap<>();
@@ -143,9 +117,8 @@ public final class PackRuntimeSettings {
         }
         Set<String> refusedToShaders = new TreeSet<>(rejected);
         refusedToShaders.removeAll(dropped);
-        return new PackRuntimeSettings(wetnessRise, wetnessFall, eyeBrightness,
-                orderedValues(order, parsed, rejected), rejectedDescriptors(refusedToShaders, byName),
-                rejected, result);
+        return new PackRuntimeSettings(orderedValues(order, parsed, rejected),
+                rejectedDescriptors(refusedToShaders, byName), rejected, result);
     }
 
     /** The non-null declarations by name; a later declaration of a name replaces the earlier one. */
@@ -275,18 +248,6 @@ public final class PackRuntimeSettings {
             case "vec4" -> 4;
             default -> 0;
         };
-    }
-
-    public float wetnessRiseHalfLife() {
-        return wetnessRiseHalfLife;
-    }
-
-    public float wetnessFallHalfLife() {
-        return wetnessFallHalfLife;
-    }
-
-    public float eyeBrightnessHalfLife() {
-        return eyeBrightnessHalfLife;
     }
 
     public List<String> deviations() {
@@ -444,32 +405,6 @@ public final class PackRuntimeSettings {
 
     private record Value(String name, String type, boolean exposed, PackExpression.Program program,
                          int width) {}
-
-    private static float numeric(
-            Map<String, String> defaults,
-            String name,
-            float fallback,
-            List<String> deviations,
-            String label
-    ) {
-        String value = defaults == null ? null : defaults.get(name);
-        if (value == null || value.isBlank()) {
-            deviations.add("SMOOTHING_DEFAULTED:" + label);
-            return fallback;
-        }
-        try {
-            float parsed = Float.parseFloat(value.replace("f", "").replace("F", ""));
-            if (!Float.isFinite(parsed) || parsed < 0.0f) {
-                deviations.add("SMOOTHING_DEFAULTED:" + label);
-                return fallback;
-            }
-            deviations.add("SMOOTHING_APPLIED:" + label);
-            return parsed;
-        } catch (NumberFormatException failure) {
-            deviations.add("SMOOTHING_DEFAULTED:" + label);
-            return fallback;
-        }
-    }
 
     private static boolean resolve(
             String name,

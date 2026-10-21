@@ -153,7 +153,7 @@ record PackSettingsPlan(
         environment.disabledPrograms().forEach(program -> programEnabled.put(program, false));
         Set<String> unsupportedRequired = unsupportedFeatures(required, deviations);
         PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(
-                customValues, defaults, deviations, BiomeIds.constants());
+                customValues, deviations, BiomeIds.constants());
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
                 runtimeSettings, resourceDeclarations, Map.of(), false, macros,
@@ -320,9 +320,6 @@ record PackSettingsPlan(
 
     private String runtimeSettingsFingerprint() {
         StringBuilder value = new StringBuilder();
-        value.append(runtimeSettings.wetnessRiseHalfLife()).append('|')
-                .append(runtimeSettings.wetnessFallHalfLife()).append('|')
-                .append(runtimeSettings.eyeBrightnessHalfLife()).append('|');
         runtimeSettings.customDescriptors().keySet().stream().sorted()
                 .forEach(name -> value.append(name).append(';'));
         return ConformanceReport.sha256(value.toString().getBytes(StandardCharsets.UTF_8));

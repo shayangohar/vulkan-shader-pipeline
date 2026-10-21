@@ -7,6 +7,7 @@ import net.chimera.shaderpack.BiomeIds;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.EntityVertexBridge;
 import net.chimera.shaderpack.LegacyGlslConverter;
+import net.chimera.shaderpack.PackDirectives;
 import net.chimera.shaderpack.PackExpression;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
@@ -764,13 +765,16 @@ final class WorldStateUniformTest {
 
         PackRuntimeSettings settings = first.plan().runtimeSettings();
         verifyCustomPlan(settings);
+        PackDirectives directives = first.plan().config().directives();
+        assertEquals(300.0f, directives.wetnessHalfLife(), "pack wetness half-life");
+        assertEquals(20.0f, directives.eyeBrightnessHalfLife(), "pack eye brightness half-life");
         verifyCustomEvaluation(settings);
         verifyCustomRefusals(settings);
         verifyCustomUniformBridge(first.plan().program("composite"), settings);
         verifyBaseline(first, baselinePath);
     }
 
-    /** The fixture's custom declarations: planned, cycle and unknown reported, smoothing half-lives. */
+    /** The fixture's custom declarations: planned, and cycle and unknown reported. */
     private static void verifyCustomPlan(PackRuntimeSettings settings) {
         assertTrue(settings.customDescriptors().containsKey("m73Marker"),
                 "exposed custom uniform was not planned");
@@ -780,10 +784,6 @@ final class WorldStateUniformTest {
                 "cycle was not reported");
         assertTrue(settings.deviations().contains("CUSTOM_EXPRESSION_UNKNOWN:m73Unknown:missingM73Value"),
                 "unknown custom dependency was not reported");
-        assertEquals(300.0f, settings.wetnessRiseHalfLife(),
-                "pack wetness half-life");
-        assertEquals(20.0f, settings.eyeBrightnessHalfLife(),
-                "pack eye brightness half-life");
     }
 
     /** One evaluated frame: dependencies, derived values, and a reported non-finite result. */
