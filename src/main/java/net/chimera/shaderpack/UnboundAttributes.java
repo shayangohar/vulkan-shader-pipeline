@@ -24,9 +24,12 @@ final class UnboundAttributes {
             "iris_Entity", "mc_Entity", "mc_midTexCoord", "at_tangent", "at_midBlock",
             "vaPosition", "vaColor", "vaUV0", "vaUV1", "vaUV2", "vaNormal");
 
-    /** Names Chimera's lanes serve themselves: the per-vertex identities and the capital-T tangent. */
+    /**
+     * Names Chimera's lanes serve themselves: the per-vertex identities, which Iris's EntityPatcher
+     * rewrites whatever their storage. Iris binds no {@code Tangent}; a pack's reads GL's default.
+     */
     private static final Set<String> CHIMERA_SERVED = Set.of(
-            "entityId", "blockEntityId", "currentRenderedItemId", "Tangent");
+            "entityId", "blockEntityId", "currentRenderedItemId");
 
     private static final Map<String, String> DEFAULTS = Map.ofEntries(
             Map.entry("float", "0.0"), Map.entry("vec2", "vec2(0.0)"), Map.entry("vec3", "vec3(0.0)"),

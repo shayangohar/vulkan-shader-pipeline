@@ -6,8 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * The GLSL Chimera prepends to converted vertex stages: each family's host inputs, transform
@@ -598,11 +596,6 @@ final class GlslVertexPreambles {
     private static final Set<String> ENTITY_HOST_NAMES = Set.of("Position", "Color", "UV0", "UV1", "UV2", "Normal",
             "EntityIds", "MidTexCoord", "ChimeraPackedTangent", "ModelViewMat", "ColorModulator", "LineWidth",
             "TextureMat", "ProjMat");
-    /** Names the entity bridge reads as host inputs, which a pack may also declare as outputs. */
-    private static final Set<String> ENTITY_INPUT_ALIASES = Set.of("Tangent");
-    private static final Pattern GLOBAL_OUTPUT = Pattern.compile("(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
-            + "(?:(?:flat|smooth|noperspective|centroid)\\s+)*out\\s+(?:(?:flat|smooth|noperspective|centroid)\\s+)*"
-            + "\\w+\\s+([A-Za-z_]\\w*)");
 
     /**
      * Renames the pack's own identifiers that share an entity preamble's names. Before the legacy
@@ -613,13 +606,6 @@ final class GlslVertexPreambles {
         Map<String, String> renames = new HashMap<>();
         for (String name : ENTITY_HOST_NAMES) {
             if (GlslTokenRewriter.containsIdentifier(packSource, name)) renames.put(name, "chimera_pack_" + name);
-        }
-        // The bridge reads Tangent as the host tangent, unless the pack writes its own (Mellow's out vec4 Tangent).
-        Matcher output = GLOBAL_OUTPUT.matcher(packSource);
-        while (output.find()) {
-            if (ENTITY_INPUT_ALIASES.contains(output.group(1))) {
-                renames.put(output.group(1), "chimera_pack_" + output.group(1));
-            }
         }
         return renames.isEmpty() ? packSource : GlslTokenRewriter.replaceIdentifiers(packSource, renames);
     }

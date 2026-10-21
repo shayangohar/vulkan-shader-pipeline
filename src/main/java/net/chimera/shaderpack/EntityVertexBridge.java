@@ -490,7 +490,6 @@ public final class EntityVertexBridge {
                 Map.entry("gbufferModelViewInverse", "chimeraEntityInverseModelView()"),
                 Map.entry("mc_midTexCoord", EntityDeclarations.midTexCoordValue(stripped)),
                 Map.entry("at_tangent", "chimeraEntityTangentValue()"),
-                Map.entry("Tangent", "chimeraEntityTangentValue()"),
                 // Vulkan's index counts from the draw's first vertex, as GL's does.
                 Map.entry("gl_VertexID", "gl_VertexIndex"),
                 Map.entry("entityId", entityIdExpression(layout, "entityId")),

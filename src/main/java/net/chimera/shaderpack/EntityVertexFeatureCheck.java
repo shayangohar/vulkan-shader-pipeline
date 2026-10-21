@@ -29,8 +29,6 @@ final class EntityVertexFeatureCheck {
             "blockEntityId", Set.of("float", "int"),
             "mc_midTexCoord", Set.of("vec2", "vec4"),
             "at_tangent", Set.of("vec4"),
-            // Iris capital-T tangent names the same host input.
-            "Tangent", Set.of("vec4"),
             // Terrain inputs the entity format lacks read GL's unbound default.
             "mc_Entity", Set.of("float", "vec2", "vec3", "vec4"),
             "at_midBlock", Set.of("float", "vec2", "vec3", "vec4"));

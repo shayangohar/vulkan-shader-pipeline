@@ -84,16 +84,20 @@ final class CorpusCompileFixesTest {
                 "a built-in the authored version already has stays as written");
     }
 
-    /** Mellow writes its own Normal and Tangent, which the entity preamble also declares or serves. */
+    /**
+     * Mellow writes its own Normal, which the entity preamble also declares, and its own Tangent.
+     * Iris binds no attribute named Tangent, so the pack's name is its own and an input of that
+     * name reads GL's unbound default.
+     */
     @Test
     void packOutputsNamedLikeHostInputsAreRenamed() {
         String renamed = GlslVertexPreambles.renameHostNameCollisions(
                 "out vec3 Normal;\nflat out vec4 Tangent;\nvoid main() { Normal = vec3(0.0); Tangent = vec4(0.0); }");
         assertTrue(renamed.contains("out vec3 chimera_pack_Normal;")
-                && renamed.contains("flat out vec4 chimera_pack_Tangent;")
-                && renamed.contains("chimera_pack_Tangent = vec4(0.0)"), renamed);
-        String read = "in vec4 Tangent;\nvoid main() { vec4 t = Tangent; }";
-        assertEquals(read, GlslVertexPreambles.renameHostNameCollisions(read), "an input Tangent stays the host's");
+                && renamed.contains("flat out vec4 Tangent;") && renamed.contains("Tangent = vec4(0.0)"), renamed);
+        assertEquals("const vec4 Tangent = vec4(0.0, 0.0, 0.0, 1.0);\nvoid main() { vec4 t = Tangent; }",
+                UnboundAttributes.substitute("in vec4 Tangent;\nvoid main() { vec4 t = Tangent; }",
+                        UnboundAttributes::irisUnbound), "an input Tangent reads the unbound default");
     }
 
     /** Bloop ends its unused uniform declarations with a comment; precision qualifiers are allowed. */

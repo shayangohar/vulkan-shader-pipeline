@@ -764,7 +764,7 @@ final class TerrainVertexBridge {
             "mc_Entity", Set.of("float", "vec2", "vec3", "vec4"),
             "mc_midTexCoord", Set.of("vec2", "vec4"),
             "at_midBlock", Set.of("vec3", "vec4", "ivec3", "ivec4"),
-            "at_tangent", Set.of("vec3", "vec4"));
+            "at_tangent", Set.of("vec4"));
 
     /** Removes the small legacy attribute declarations backed by the extended terrain format. */
     static String removeTerrainAttributes(String source, boolean shadowStage) {
