@@ -144,7 +144,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "c0ef4908a23506e9e9cd1e29d1e4e4ca7e3d4d460c06090930deb2bac09bac91",
+      "reportSha256": "6e15c0e83084f7fac74d179df784a7a4487c9497300aed7af5235c97fb156fc5",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -268,7 +268,7 @@
         "composite.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
         "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
-        "shaders.properties": "b23696021d62986d10f84c36a2963a0ef8de1c6ac174cd5b105a3ffd727f98ed",
+        "shaders.properties": "3ba90aca5f4fc03da985902598f39d3197681f764ac582d7f7c0c1e26d5d30b4",
         "shadow.fsh": "4fcd462b621e86950efec2b853274d95c8a5e66d2c7d91997d0eda57267a0b84",
         "shadow.vsh": "71fb2afc0704bac960a21daea8c052ffe7c3c3f45461a91b888c3a677b58479c"
       }

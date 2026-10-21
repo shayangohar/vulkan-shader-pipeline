@@ -46,7 +46,8 @@ public final class PackConfig {
             Map.entry("shadowMapSize", "float"), Map.entry("shadowMapFov", "float"),
             Map.entry("shadowDistanceRenderMul", "float"), Map.entry("shadowIntervalSize", "float"),
             Map.entry("sunPathRotation", "float"), Map.entry("sunPathOffset", "float"),
-            Map.entry("entityShadowDistanceMul", "float"), Map.entry("voxelDistance", "float"));
+            Map.entry("entityShadowDistanceMul", "float"), Map.entry("voxelDistance", "float"),
+            Map.entry("shadowNearPlane", "float"), Map.entry("shadowFarPlane", "float"));
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
@@ -88,14 +89,21 @@ public final class PackConfig {
         return IrisColorFormats.bytes(vkFormat);
     }
 
+    /** The host shadow map's resolution and distance, without a pack. */
     public static final int DEFAULT_SHADOW_MAP_RESOLUTION = 2048;
     public static final float DEFAULT_SHADOW_DISTANCE = 128.0F;
+    /** Iris PackShadowDirectives' defaults for a pack that declares no resolution or distance. */
+    public static final int IRIS_SHADOW_MAP_RESOLUTION = 1024;
+    public static final float IRIS_SHADOW_DISTANCE = 160.0F;
+    /** Iris ShadowMatrices.NEAR and FAR: the shadow depth range when the pack sets no plane. */
+    public static final float SHADOW_NEAR_PLANE = -100.05F;
+    public static final float SHADOW_FAR_PLANE = 156.0F;
     /** Iris PackShadowDirectives default. */
     public static final float DEFAULT_SHADOW_INTERVAL_SIZE = 2.0F;
-    private static final int MIN_SHADOW_MAP_RESOLUTION = 128;
-    private static final int MAX_SHADOW_MAP_RESOLUTION = 4096;
-    private static final float MIN_SHADOW_DISTANCE = 16.0F;
-    private static final float MAX_SHADOW_DISTANCE = 2048.0F;
+    /** The shadow settings Iris reads as any finite number; Iris clamps none of them. */
+    private static final List<String> FINITE_SHADOW_SETTINGS = List.of("shadowDistanceRenderMul", "sunPathRotation",
+            "sunPathOffset", "shadowIntervalSize", "entityShadowDistanceMul", "voxelDistance", "shadowNearPlane",
+            "shadowFarPlane");
 
     /** Validated shadow settings. The raw values remain available for logs. */
     public record ShadowSettings(
@@ -157,6 +165,25 @@ public final class PackConfig {
         /** Iris voxelDistance: the half-size of the box safe-zone shadow culling always draws. */
         public float voxelDistance() {
             return finiteValue("voxelDistance", 0.0F);
+        }
+
+        /**
+         * The shadow projection's near plane (Iris shadowNearPlane, ShadowRenderer and
+         * MatrixUniforms): -1 reaches the render distance toward the sun.
+         */
+        public float nearPlane(int renderDistanceChunks) {
+            return depthPlane("shadowNearPlane", SHADOW_NEAR_PLANE, -renderDistanceChunks * 16.0F);
+        }
+
+        /** The shadow projection's far plane (Iris shadowFarPlane): -1 reaches the render distance. */
+        public float farPlane(int renderDistanceChunks) {
+            return depthPlane("shadowFarPlane", SHADOW_FAR_PLANE, renderDistanceChunks * 16.0F);
+        }
+
+        /** A declared plane, Iris's default without one; Iris compares with -1 as Mth.equal does. */
+        private float depthPlane(String name, float fallback, float renderDistancePlane) {
+            float plane = finiteValue(name, fallback);
+            return Math.abs(plane + 1.0F) < 1.0E-5F ? renderDistancePlane : plane;
         }
 
         private float finiteValue(String name, float fallback) {
@@ -628,16 +655,13 @@ public final class PackConfig {
         List<String> deviations = new ArrayList<>();
         int resolution = validShadowMapResolution(rawValues.get("shadowMapResolution"), deviations);
         float distance = validShadowDistance(rawValues.get("shadowDistance"), deviations);
-
-        validateFiniteShadowSetting(rawValues, deviations, "shadowDistanceRenderMul", 0.0F, 4.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "sunPathRotation", -360.0F, 360.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "sunPathOffset", -360.0F, 360.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "shadowIntervalSize", 0.0F, 64.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "entityShadowDistanceMul", -64.0F, 64.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "voxelDistance", 0.0F, MAX_SHADOW_DISTANCE);
-
+        for (String name : FINITE_SHADOW_SETTINGS) {
+            if (rawValues.containsKey(name) && !finite(rawValues.get(name))) {
+                deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
+            }
+        }
         for (String key : rawValues.keySet()) {
-            if (!SUPPORTED_SHADOW_SETTINGS.contains(key)) {
+            if (!isSupportedShadowSetting(key)) {
                 deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
             }
         }
@@ -645,65 +669,50 @@ public final class PackConfig {
         return new ShadowSettings(resolution, distance, rawValues, deviations, targets, colorTargetCount);
     }
 
-    /** The shadow settings validated above; any other collected key is reported unsupported. */
-    private static final Set<String> SUPPORTED_SHADOW_SETTINGS = Set.of(
-            "shadowMapResolution", "shadowDistance", "shadowDistanceRenderMul", "shadowIntervalSize",
-            "sunPathRotation", "sunPathOffset", "entityShadowDistanceMul", "voxelDistance");
+    /** Whether Chimera applies the shadow setting {@code key}; shadowMapFov's perspective map it does not. */
+    static boolean isSupportedShadowSetting(String key) {
+        return key.equals("shadowMapResolution") || key.equals("shadowDistance")
+                || FINITE_SHADOW_SETTINGS.contains(key);
+    }
 
-    /** The authored shadow map resolution when it is a whole number in range, else the default. */
+    /**
+     * The declared shadow map resolution, Iris's 1024 without one. Iris clamps none; one that is
+     * no positive whole number sizes no image, so it takes the default. The device's image limit
+     * applies when the map is created (ChimeraShadowMap).
+     */
     private static int validShadowMapResolution(String raw, List<String> deviations) {
         if (raw == null) {
-            return DEFAULT_SHADOW_MAP_RESOLUTION;
+            return IRIS_SHADOW_MAP_RESOLUTION;
         }
         try {
             double parsed = Double.parseDouble(raw);
-            if (parsed >= MIN_SHADOW_MAP_RESOLUTION && parsed <= MAX_SHADOW_MAP_RESOLUTION
-                    && parsed == Math.rint(parsed)) {
+            if (parsed >= 1.0 && parsed <= Integer.MAX_VALUE && parsed == Math.rint(parsed)) {
                 return (int) parsed;
             }
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
-        } catch (NumberFormatException e) {
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
+        } catch (NumberFormatException ignored) {
+            // A value that is no number defaults below.
         }
-        return DEFAULT_SHADOW_MAP_RESOLUTION;
+        deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
+        return IRIS_SHADOW_MAP_RESOLUTION;
     }
 
-    /** The authored shadow distance when it is finite and in range, else the default. */
+    /** The declared shadow distance (Iris's half plane length), Iris's 160 without one or when not finite. */
     private static float validShadowDistance(String raw, List<String> deviations) {
         if (raw == null) {
-            return DEFAULT_SHADOW_DISTANCE;
+            return IRIS_SHADOW_DISTANCE;
         }
-        try {
-            float parsed = Float.parseFloat(raw);
-            if (Float.isFinite(parsed)
-                    && parsed >= MIN_SHADOW_DISTANCE && parsed <= MAX_SHADOW_DISTANCE) {
-                return parsed;
-            }
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
-        } catch (NumberFormatException e) {
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
+        if (finite(raw)) {
+            return Float.parseFloat(raw);
         }
-        return DEFAULT_SHADOW_DISTANCE;
+        deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
+        return IRIS_SHADOW_DISTANCE;
     }
 
-    private static void validateFiniteShadowSetting(
-            Map<String, String> rawValues,
-            List<String> deviations,
-            String name,
-            float minimum,
-            float maximum
-    ) {
-        String raw = rawValues.get(name);
-        if (raw == null) {
-            return;
-        }
+    private static boolean finite(String raw) {
         try {
-            float value = Float.parseFloat(raw);
-            if (!Float.isFinite(value) || value < minimum || value > maximum) {
-                deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
-            }
+            return Float.isFinite(Float.parseFloat(raw));
         } catch (NumberFormatException ignored) {
-            deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
+            return false;
         }
     }
 

@@ -536,8 +536,7 @@ public final class PackProbe {
             return;
         }
         for (String key : shadowSettings.rawValues().keySet()) {
-            if (key.equals("shadowMapResolution") || key.equals("shadowDistance")
-                    || key.equals("entityShadowDistanceMul")) {
+            if (PackConfig.isSupportedShadowSetting(key)) {
                 if (shadowSettings.deviations().contains("SHADOW_SETTING_DEFAULTED:" + key)) {
                     deviations.add("SHADOW_SETTING_DEFAULTED:" + key);
                 } else {

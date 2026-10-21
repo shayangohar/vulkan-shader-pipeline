@@ -757,26 +757,6 @@ final class FixturePackTest {
         verifyFixtureBaseline(report, baselinePath, "unsupported_shadow");
     }
 
-    @Test
-    void shadowSettingValidation(@TempDir Path root) throws IOException {
-        Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"),
-                "shadowMapResolution=64\nshadowDistance=4096\nshadowMapFov=90\n");
-        PackConfig.ShadowSettings settings = PackConfig.parse(List.of(
-                new PackProgram("shadow", "#version 120\nconst int shadowMapResolution = 2048;",
-                        shaders.resolve("shadow.fsh"), null, null)), shaders).shadowSettings();
-        assertEquals(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, settings.resolution(),
-                "invalid resolution default");
-        assertEquals(PackConfig.DEFAULT_SHADOW_DISTANCE, settings.distance(),
-                "invalid distance default");
-        assertTrue(settings.deviations().contains("SHADOW_SETTING_UNSUPPORTED:shadowMapFov"),
-                "unsupported shadow setting");
-        assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
-                "invalid resolution deviation");
-        assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
-                "invalid distance deviation");
-    }
-
     /** RGB formats are stored in RGBA images; GL reads their alpha as 1, so Chimera samples them so. */
     @Test
     void paddedAlphaTargets(@TempDir Path root) throws IOException {

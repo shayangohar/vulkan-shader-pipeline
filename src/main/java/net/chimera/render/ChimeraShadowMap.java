@@ -20,6 +20,8 @@ import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkImageCopy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,11 +41,7 @@ import static org.lwjgl.vulkan.VK10.*;
  * Updated each frame from the celestial angle.
  */
 public class ChimeraShadowMap {
-    // Iris 1.10 ShadowMatrices: the light view is a pure rotation about the
-    // camera and the ortho depth range is fixed. Packs tune their shadow
-    // depth bias to these units, so a different range detaches shadows.
-    static final float SHADOW_NEAR = -100.05F;
-    static final float SHADOW_FAR = 156.0F;
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
 
     private Framebuffer shadowFramebuffer;
     private RenderPass shadowRenderPass;
@@ -88,6 +86,9 @@ public class ChimeraShadowMap {
     private boolean mapSnapshotValid;
     private long mapGeneration;
 
+    // The pack's settings: its depth range follows the render distance when a plane is -1.
+    private PackConfig.ShadowSettings settings = new PackConfig.ShadowSettings(
+            PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of());
     private int shadowMapSize = PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION;
     private float shadowDistance = PackConfig.DEFAULT_SHADOW_DISTANCE;
     private float intervalSize = PackConfig.DEFAULT_SHADOW_INTERVAL_SIZE;
@@ -107,7 +108,8 @@ public class ChimeraShadowMap {
     public void init(PackConfig.ShadowSettings settings) {
         if (this.initialized) return;
 
-        this.shadowMapSize = settings.resolution();
+        this.settings = settings;
+        this.shadowMapSize = deviceResolution(settings.resolution());
         this.shadowDistance = settings.distance();
         this.intervalSize = settings.intervalSize();
         // The celestial frame derives the light direction from the pack's sun path, so the shadow
@@ -224,7 +226,8 @@ public class ChimeraShadowMap {
      * Builds camera-relative light-space matrices from the frame's celestial shadow rotation.
      * Called each frame before the shadow pass.
      */
-    public void updateLight(Matrix4f lightRotation, double cameraX, double cameraY, double cameraZ) {
+    public void updateLight(Matrix4f lightRotation, double cameraX, double cameraY, double cameraZ,
+                            int renderDistanceChunks) {
         // DrawBuffers already subtracts the render camera from terrain
         // positions, so the light view is Iris's rotation about that origin,
         // snapped to its grid; the ortho depth range reaches toward the sun.
@@ -232,8 +235,10 @@ public class ChimeraShadowMap {
         snapToGrid(this.lightView, this.intervalSize, cameraX, cameraY, cameraZ);
 
         // Iris's halfPlaneLength is the pack's shadowDistance itself.
-        createLightProjection(this.hostLightProjection, this.shadowDistance, true);
-        createLightProjection(this.packLightProjection, this.shadowDistance, false);
+        float near = this.settings.nearPlane(renderDistanceChunks);
+        float far = this.settings.farPlane(renderDistanceChunks);
+        createLightProjection(this.hostLightProjection, this.shadowDistance, near, far, true);
+        createLightProjection(this.packLightProjection, this.shadowDistance, near, far, false);
 
         // Combined MVP
         this.lightMVP.set(this.hostLightProjection).mul(this.lightView);
@@ -284,13 +289,26 @@ public class ChimeraShadowMap {
                 (float) (cameraZ % intervalSize) - half);
     }
 
+    /**
+     * Iris ShadowMatrices.createOrthoMatrix: a square of half the pack's shadowDistance on each
+     * side, between the pack's depth planes. Packs tune their shadow depth bias to this range.
+     */
     static void createLightProjection(
-            Matrix4f destination, float halfExtent, boolean zZeroToOne) {
+            Matrix4f destination, float halfExtent, float near, float far, boolean zZeroToOne) {
         destination.identity().ortho(
                 -halfExtent, halfExtent,
                 -halfExtent, halfExtent,
-                SHADOW_NEAR, SHADOW_FAR,
+                near, far,
                 zZeroToOne);
+    }
+
+    /** The pack's resolution within the device's image limit; Iris passes it to GL unclamped. */
+    private static int deviceResolution(int resolution) {
+        int limit = ChimeraMainPass.deviceMaxImageDimension();
+        if (resolution > limit) {
+            LOGGER.warn("[chimera] shadow map resolution {} exceeds the device limit; using {}", resolution, limit);
+        }
+        return Math.min(resolution, limit);
     }
 
     /** Seeds a newly cleared all-lit depth image with a coherent receiver matrix pair. */

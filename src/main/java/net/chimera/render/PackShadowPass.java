@@ -447,7 +447,7 @@ final class PackShadowPass {
     void beginShadowFrame(double cameraX, double cameraY, double cameraZ) {
         if (this.shadowMap.isInitialized()) {
             this.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
-                    cameraX, cameraY, cameraZ);
+                    cameraX, cameraY, cameraZ, Minecraft.getInstance().options.getEffectiveRenderDistance());
             this.shadowFrameReady = prepareShadowForSampling(cameraX, cameraY, cameraZ);
             if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
                 this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
