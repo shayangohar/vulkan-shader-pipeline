@@ -363,8 +363,9 @@ final class FixturePackTest {
         ConformanceReport.ProgramReport composite = report.program("composite");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                 composite.support(), "unsupported composite support");
-        assertTrue(composite.deviations().contains("SAMPLER_NOT_MAPPED:unknownTexture"),
-                "unknown sampler deviation is missing");
+        // GL leaves a sampler nothing reads inactive; the dvec2 uniform still refuses the program.
+        assertTrue(composite.deviations().contains("SAMPLER_DECLARATION_UNUSED:unknownTexture"),
+                "unread sampler deviation is missing");
         assertTrue(composite.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"),
                 "unsupported uniform type deviation is missing");
         assertTrue(!report.shouldAttempt("composite"), "unsupported composite must not execute");
@@ -574,15 +575,18 @@ final class FixturePackTest {
 
     @Test
     void translucentInterfaceEdgeCases() {
+        // A sampler nothing reads is inactive in GL, so each probe reads the one it tests.
         UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
-                "uniform sampler2D texture; uniform sampler2D depthtex0;",
+                "uniform sampler2D texture; uniform sampler2D depthtex0;"
+                        + " void main() { gl_FragColor = texture2D(depthtex0, vec2(0.5)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!depth.executable(), "depth input was accepted");
         assertTrue(depth.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
                 "depth input deviation is missing");
 
         UniformRegistry.ProgramInterface unknownSampler = UniformRegistry.plan(
-                "uniform sampler2D noise;", UniformRegistry.Stage.TRANSLUCENT);
+                "uniform sampler2D noise; void main() { gl_FragColor = texture2D(noise, vec2(0.5)); }",
+                UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!unknownSampler.executable(), "unknown water sampler was accepted");
         assertTrue(unknownSampler.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:noise"),
                 "unknown water sampler deviation is missing");
@@ -744,7 +748,8 @@ final class FixturePackTest {
                 UniformRegistry.Stage.SHADOW);
         assertTrue(!interfacePlan.executable(), "unsupported shadow interface was accepted");
         UniformRegistry.ProgramInterface colorInput = UniformRegistry.plan(
-                "uniform sampler2D texture; uniform sampler2D shadowcolor0;",
+                "uniform sampler2D texture; uniform sampler2D shadowcolor0;"
+                        + " void main() { gl_FragColor = texture2D(shadowcolor0, vec2(0.5)); }",
                 UniformRegistry.Stage.SHADOW);
         assertTrue(colorInput.deviations().contains("SHADOW_COLOR_INPUT_UNSUPPORTED"),
                 "shadow color input deviation is missing");

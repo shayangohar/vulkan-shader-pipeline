@@ -486,4 +486,29 @@ final class CorpusCompileFixesTest {
                 entities.deviations().toString());
         assertFalse(entities.convertedVertex().contains("entityColor"), entities.convertedVertex());
     }
+
+    /**
+     * Escheridia's programs share a header declaring textures most of them never read. GL leaves
+     * such a sampler inactive, so one with no slot is dropped rather than refused.
+     */
+    @Test
+    void anUnreadSamplerWithoutASlotIsInactive(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 120
+                uniform sampler2D texture;
+                uniform sampler2D clouds;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(texture, uv); }
+                """);
+        PackProgramPlan entities = PackProbe.analyze(root).plan().program("gbuffers_entities");
+        assertTrue(entities.executable() && entities.deviations().contains("SAMPLER_DECLARATION_UNUSED:clouds"),
+                entities.deviations().toString());
+        assertFalse(entities.convertedFragment().contains("clouds"), entities.convertedFragment());
+    }
 }

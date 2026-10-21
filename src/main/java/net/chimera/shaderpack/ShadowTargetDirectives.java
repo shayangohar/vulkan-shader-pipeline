@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -65,11 +66,11 @@ public record ShadowTargetDirectives(List<ColorTarget> colors, List<DepthSamplin
         return colors.get(index);
     }
 
-    /** A refusal for each sampler that reads a shadow resource Iris leaves unbound for the pack. */
+    /** A refusal for each sampler the program reads that names a shadow resource Iris leaves unbound for the pack. */
     static List<String> unboundShadowSamplers(List<UniformRegistry.SamplerBinding> samplers,
-                                              PackConfig.PackConfigData config) {
+                                              PackConfig.PackConfigData config, Predicate<String> read) {
         return samplers.stream().map(UniformRegistry.SamplerBinding::name)
-                .filter(name -> !bound(name, config))
+                .filter(name -> !bound(name, config) && read.test(name))
                 .map(name -> "SAMPLER_NOT_MAPPED:" + name).toList();
     }
 

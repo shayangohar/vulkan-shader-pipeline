@@ -65,7 +65,7 @@
       }
     },
     "unsupported_uniform": {
-      "reportSha256": "1e14ce70cca74de81fa29791b142a1f0887614dbccb4603418ce0675521544f3",
+      "reportSha256": "183004b6a2896d85b627d3c97e5e410dafd18c306e20fb712878630d0174501c",
       "sourceHashes": {
         "composite.fsh": "398fcc335a0ed8520929824c9696fa04202a2573500a634ad1f0f7c5635e6b38",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
@@ -103,7 +103,7 @@
       "expectedDeviations": {
         "global": [],
         "composite": [
-          "SAMPLER_NOT_MAPPED:unknownTexture",
+          "SAMPLER_DECLARATION_UNUSED:unknownTexture",
           "UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"
         ],
         "final": [],

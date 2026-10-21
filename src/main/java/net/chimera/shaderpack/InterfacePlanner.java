@@ -307,7 +307,10 @@ final class InterfacePlanner {
                     ? PackResourcePlan.programResource(name, waterShadow) : name;
             Integer slot = samplerSlot(name, lookup, stage, customSamplerSlots, deviations);
             if (!mappedType(name, type, customSamplerSlots) || slot == null) {
-                deviations.add(unmappedSamplerDeviation(name, stage));
+                // A sampler nothing reads is inactive, as GL leaves it: Escheridia's composites
+                // declare clouds, normals and shadowtex0HW in a shared header and read none of them.
+                deviations.add(UniformRegistry.isSamplerUnused(stripped, name)
+                        ? "SAMPLER_DECLARATION_UNUSED:" + name : unmappedSamplerDeviation(name, stage));
                 continue;
             }
             bindings.add(new UniformRegistry.SamplerBinding(name, slot, type));

@@ -167,6 +167,27 @@ final class ShadowTargetDirectivesTest {
                 legacy.deviations().toString());
     }
 
+    /** GL leaves a sampler nothing reads inactive, so Escheridia's unread shadowtex0HW needs no binding. */
+    @Test
+    void anUnreadUnboundHardwareSamplerIsInactive(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 120
+                uniform sampler2D texture;
+                uniform sampler2DShadow shadowtex0HW;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(texture, uv); }
+                """);
+        PackProgramPlan entities = PackProbe.analyze(root).plan().program("gbuffers_entities");
+        assertTrue(entities.executable() && !entities.deviations().contains("SAMPLER_NOT_MAPPED:shadowtex0HW"),
+                entities.deviations().toString());
+    }
+
     /** A pass's unbound sampler2D shadowtexNHW reads texture unit 0, colortex0, as Iris leaves it. */
     @Test
     void anUnfilteredHardwareSampler2DReadsUnitZero(@TempDir Path root) throws IOException {

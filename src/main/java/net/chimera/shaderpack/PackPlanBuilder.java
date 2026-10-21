@@ -116,6 +116,7 @@ public final class PackPlanBuilder {
         private String vertex;
         private String hostLayoutFailure;
         private UniformRegistry.ProgramInterfacePlan interfacePlan;
+        private List<String> unboundShadowSamplers = List.of();
         private final Map<String, GlslInterfaceScanner.StageInterface> stageInterfaces = new TreeMap<>();
         private boolean pairedPostVertex;
         private GlslInterfaceScanner.ProgramMatch stageMatch;
@@ -375,6 +376,8 @@ public final class PackPlanBuilder {
                     fragment, vertex, stage, targetPlan, !program.variantFolder().isBlank(),
                     settings == null ? Map.of() : settings.runtimeSettings().customDescriptors(),
                     settings == null ? Map.of() : settings.customSamplerSlots());
+            unboundShadowSamplers = ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config,
+                    this::readsSampler);
             if (fragment != null) {
                 stageInterfaces.put("fragment", GlslInterfaceScanner.scan(fragment, false));
             }
@@ -388,6 +391,12 @@ public final class PackPlanBuilder {
                     : GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("fragment"));
         }
 
+        /** Whether either stage reads {@code sampler}; GL leaves one nothing reads inactive, bound or not. */
+        private boolean readsSampler(String sampler) {
+            return fragment != null && !UniformRegistry.isSamplerUnused(fragment, sampler)
+                    || vertex != null && !UniformRegistry.isSamplerUnused(vertex, sampler);
+        }
+
         private Map<String, Integer> varyingLocations() {
             return stage == UniformRegistry.Stage.POST && !pairedPostVertex
                     ? postVaryingLocations(stageInterfaces.get("fragment"))
@@ -398,7 +407,7 @@ public final class PackPlanBuilder {
             deviations.addAll(program.preparationDeviations());
             stages.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(interfacePlan.deviations());
-            deviations.addAll(ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config));
+            deviations.addAll(unboundShadowSamplers);
             stageInterfaces.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(stageMatch.deviations());
             deviations.addAll(terrainMaterial.deviations());
@@ -433,7 +442,7 @@ public final class PackPlanBuilder {
                     && (!needsVertex() || vertex != null)
                     && stages.values().stream().allMatch(ProgramStageSources::preparedSuccessfully)
                     && interfacePlan.executable()
-                    && ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config).isEmpty()
+                    && unboundShadowSamplers.isEmpty()
                     && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
                     && stageMatch.executable()
                     && (targetPlan == null || targetPlan.executable())
