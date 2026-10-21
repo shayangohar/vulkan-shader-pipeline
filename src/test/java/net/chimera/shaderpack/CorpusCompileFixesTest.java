@@ -350,6 +350,30 @@ final class CorpusCompileFixesTest {
         assertFalse(PassComputePlan.isPassComputeProgram("final"));
     }
 
+    /**
+     * Reverie's shadow lanes and Mellow's entities write their own Normal, a name the entity-style
+     * preambles declare. The plan renames it in both stages, so the varying keeps its pair.
+     */
+    @Test
+    void aVaryingNamedLikeAHostInputIsRenamedInBothStages(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 330 compatibility
+                out vec3 Normal;
+                void main() { Normal = gl_Normal; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 330 compatibility
+                in vec3 Normal;
+                /* RENDERTARGETS: 0 */
+                layout(location = 0) out vec4 color;
+                void main() { color = vec4(Normal, 1.0); }
+                """);
+        PackProgramPlan entities = PackProbe.analyze(root).plan().program("gbuffers_entities");
+        assertTrue(entities.executable(), entities.deviations().toString());
+        assertTrue(entities.convertedFragment().contains("chimera_pack_Normal")
+                && entities.convertedVertex().contains("chimera_pack_Normal"), entities.convertedFragment());
+    }
 
     /** Reverie leaves layout(rgba8) behind when its unread image uniform is removed whole. */
     @Test

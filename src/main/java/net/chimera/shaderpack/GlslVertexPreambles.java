@@ -603,11 +603,17 @@ final class GlslVertexPreambles {
      * declares {@code out vec3 Normal}, which the preamble's {@code Normal} would redefine.
      */
     static String renameHostNameCollisions(String packSource) {
+        Map<String, String> renames = hostNameCollisions(packSource);
+        return renames.isEmpty() ? packSource : GlslTokenRewriter.replaceIdentifiers(packSource, renames);
+    }
+
+    /** The pack's identifiers that share an entity preamble's names, each with its new name. */
+    static Map<String, String> hostNameCollisions(String packSource) {
         Map<String, String> renames = new HashMap<>();
         for (String name : ENTITY_HOST_NAMES) {
             if (GlslTokenRewriter.containsIdentifier(packSource, name)) renames.put(name, "chimera_pack_" + name);
         }
-        return renames.isEmpty() ? packSource : GlslTokenRewriter.replaceIdentifiers(packSource, renames);
+        return renames;
     }
 
     static boolean isSkyPreamble(String preamble) {

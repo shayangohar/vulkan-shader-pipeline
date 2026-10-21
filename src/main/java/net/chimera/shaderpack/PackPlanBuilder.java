@@ -166,6 +166,7 @@ public final class PackPlanBuilder {
         PackProgramPlan plan() {
             prepareIrisCoreProfile();
             prepareHostLayout();
+            renameHostNameCollisions();
             repairStageInterfaces();
             injectAlphaTest();
             planInterface();
@@ -272,6 +273,29 @@ public final class PackPlanBuilder {
             } catch (RuntimeException failure) {
                 hostLayoutFailure = VertexBridgeDeviations.safeReason(failure);
             }
+        }
+
+        /**
+         * The entity-style vertex preambles declare the host's inputs under vanilla's core names
+         * (GlslVertexPreambles.hostNameCollisions). A pack identifier of such a name is renamed in
+         * both stages before their interfaces are matched, so a varying keeps its pair: Mellow's
+         * entities and Reverie's shadow lanes write their own Normal.
+         */
+        private void renameHostNameCollisions() {
+            if (vertex == null || !usesEntityPreamble()) return;
+            Map<String, String> renames = GlslVertexPreambles.hostNameCollisions(vertex);
+            if (renames.isEmpty()) return;
+            vertex = GlslTokenRewriter.replaceIdentifiers(vertex, renames);
+            if (fragment != null) fragment = GlslTokenRewriter.replaceIdentifiers(fragment, renames);
+        }
+
+        /** The lanes whose vertex preamble declares the host's inputs under vanilla's core names. */
+        private boolean usesEntityPreamble() {
+            return FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isParticleLike(name)
+                    || FamilyAdapterRegistry.isWeatherFamily(name) || FamilyAdapterRegistry.isGlintFamily(name)
+                    || FamilyAdapterRegistry.isSkyFamily(name) || FamilyAdapterRegistry.isCloudFamily(name)
+                    || hostLayoutLane != null || FamilyAdapterRegistry.isShadowLaneFamily(name)
+                    || FamilyAdapterRegistry.isShadowEntityFamily(name);
         }
 
         /**
