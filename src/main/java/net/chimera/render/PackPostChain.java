@@ -14,6 +14,7 @@ import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.TargetStep;
 import net.vulkanmod.vulkan.Renderer;
@@ -668,13 +669,11 @@ final class PackPostChain {
     }
 
     /**
-     * Whether a pass runs only its computes: it has some, and no program or one the pack switches
-     * off (Iris builds a ComputeOnlyPass for a missing or invalid source). A program Chimera could
-     * not install is a fallback, not such a pass.
+     * Whether a pass runs only its computes: it has some, and runs alone (PassComputePlan.runsAlone),
+     * as the report shows it. A program Chimera could not install is a fallback, not such a pass.
      */
     private boolean computeOnly(String name) {
-        return computePasses().contains(name) && (pass.packPlan == null
-                || pass.packPlan.program(name) == null || pass.packPlan.isProgramDisabled(name));
+        return computePasses().contains(name) && PassComputePlan.runsAlone(pass.packPlan, name);
     }
 
     /** Builds the immutable post execution order once for the active pack. */

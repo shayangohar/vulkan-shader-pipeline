@@ -28,8 +28,9 @@ import java.util.function.Function;
 import static org.lwjgl.vulkan.VK10.*;
 
 /**
- * The session's pass computes (Iris CompositeRenderer): each dispatches right before its pass
- * draws, with {@code colorimgN} and {@code colortexN} bound to the image the pass reads. A written
+ * The session's pass computes (Iris CompositeRenderer): each dispatches at its pass's place, before
+ * the pass's program draws or alone, with {@code colorimgN} and {@code colortexN} bound to the
+ * image the pass reads. A written
  * target is in GENERAL for the dispatch and returns to the sampled layout afterwards, so the pass
  * and every later reader see what the compute stored. Pack images and their samplers bind the
  * session's images, which stay in GENERAL. Pack textures bind the session's, loaded on first use

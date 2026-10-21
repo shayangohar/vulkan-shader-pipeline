@@ -528,7 +528,9 @@ final class ProgramReportRules {
             return computeProgram(inventory, computeSpec, packPlan);
         }
         PassComputePlan.PassCompute passCompute = passComputes == null ? null : passComputes.compute(inventory.name);
-        if (passCompute != null && !inventory.stages.contains("fragment")) {
+        // <pass>_x.csh is its own row; <pass>.csh shares the pass's, which is the compute's when it runs alone.
+        if (passCompute != null && (!passCompute.name().equals(passCompute.pass())
+                || PassComputePlan.runsAlone(packPlan, passCompute.pass()))) {
             return passComputeProgram(inventory, passCompute);
         }
         return null;

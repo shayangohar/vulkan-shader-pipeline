@@ -425,6 +425,39 @@ final class ComputePassTest {
      * The schedule gives it the window its name gives a program, and the report its translation.
      */
     @Test
+    void passesRunAlone(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "program.composite2.enabled = false\n");
+        String fragment = "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n";
+        for (String pass : List.of("composite", "composite2")) {
+            Files.writeString(shaders.resolve(pass + ".fsh"), fragment);
+        }
+        // A vertex stage alone is no program (ProgramSource.isValid); Iris supplies a missing one.
+        Files.writeString(shaders.resolve("composite1.vsh"),
+                "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("composite4.vsh"),
+                "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("composite4.fsh"), fragment);
+        Files.writeString(shaders.resolve("composite4.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() { imageStore(colorimg2, ivec2(0), vec4(1.0)); }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackPlan plan = analysis.plan();
+        assertTrue(!PassComputePlan.runsAlone(plan, "composite") && !PassComputePlan.runsAlone(plan, "composite4"),
+                "a pass with a fragment stage draws");
+        assertTrue(PassComputePlan.runsAlone(plan, "composite1") && PassComputePlan.runsAlone(plan, "composite2")
+                && PassComputePlan.runsAlone(plan, "composite3"), "vertex only, switched off, missing");
+        // composite4.csh shares composite4's row, which stays the program's.
+        assertTrue(analysis.report().program("composite4").deviations().stream()
+                .noneMatch(deviation -> deviation.startsWith("PASS_COMPUTE_")),
+                analysis.report().program("composite4").deviations().toString());
+    }
+
+    @Test
     void computeOnlyPasses(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"

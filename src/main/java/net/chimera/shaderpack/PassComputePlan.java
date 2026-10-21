@@ -21,7 +21,8 @@ import java.util.stream.Stream;
 /**
  * Iris's pass computes (ProgramSet.readComputeArray, CompositeRenderer): {@code <pass>.csh}, then
  * {@code <pass>_a.csh} to {@code _z.csh} up to the first missing or disabled one, in the selected
- * folder. They run right before their prepare, deferred or composite pass draws. {@code colorimgN}
+ * folder. They run at their prepare, deferred or composite pass's place: right before its program
+ * draws, or alone where the pass has none ({@link #runsAlone}). {@code colorimgN}
  * and {@code colortexN} both bind the image that pass reads, and a dispatch covers
  * {@code workGroups}, the {@code workGroupsRender} share of the screen, or the screen over the
  * local size. A compute Chimera cannot bind keeps its reasons and does not run.
@@ -134,6 +135,16 @@ public final class PassComputePlan {
     /** The computes that run before this pass, in Iris's order. */
     public List<PassCompute> before(String pass) {
         return computes.stream().filter(value -> value.supported() && value.pass().equals(pass)).toList();
+    }
+
+    /**
+     * Whether a pass runs only its computes (Iris CompositeRenderer.ComputeOnlyPass, for a source
+     * that is missing or invalid): it has no program, the pack switches it off, or it has no
+     * fragment stage. Iris supplies a missing vertex stage (ProgramSet.readProgramSource).
+     */
+    public static boolean runsAlone(PackPlan plan, String pass) {
+        PackProgramPlan program = plan == null ? null : plan.program(pass);
+        return program == null || plan.isProgramDisabled(pass) || program.stageSource("fragment") == null;
     }
 
     /** The compute translated from {@code <name>.csh}, or null. */
