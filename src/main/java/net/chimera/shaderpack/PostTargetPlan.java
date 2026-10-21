@@ -48,7 +48,9 @@ public final class PostTargetPlan {
         for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
             List<String> qualifiers = output.qualifiers();
             int start = tree.offset(output.declaration().range().start());
+            // A gl_ name is a built-in redeclared (layout(depth_greater) out float gl_FragDepth).
             if ((qualifiers.equals(List.of("out")) || qualifiers.equals(List.of("layout", "out")))
+                    && !output.name().startsWith("gl_")
                     && OUTPUT_TYPE.matcher(output.type()).matches() && output.plain()
                     && GlslDeclarations.indentationStart(text, start) >= 0) {
                 declared.add(output);

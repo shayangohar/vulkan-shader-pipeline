@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -611,6 +612,11 @@ final class PackFrontEndTest {
                         && routed.outputLocations().equals(List.of(0, 1, 2))
                         && routed.outputType(0).equals("vec3") && routed.outputType(2).equals("vec2"),
                 "modern output locations: " + modern + " plan " + routed.outputLocations());
+        // RenderPearl redeclares gl_FragDepth with a depth layout: a built-in, not a target output.
+        String depth = "/* RENDERTARGETS: 0 */\nlayout(depth_greater) out float gl_FragDepth;\n"
+                + "layout(location = 0) out vec4 color;\nvoid main() {}\n";
+        assertEquals(List.of("color"), PostTargetPlan.modernOutputs(depth).stream()
+                .map(PostTargetPlan.ModernOutput::name).toList());
     }
 
     @Test
