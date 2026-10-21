@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -110,6 +111,47 @@ final class AdvancedImagePlanTest {
     }
 
     /**
+     * Iris's ShaderProperties reads 7, 8 or 9 values as a 1D, 2D or 3D image, and a relative image as
+     * 2D at a share of the screen (GlImage.Relative). Reverie's composites read its screen-sized images.
+     */
+    @Test
+    void imagesOfEveryIrisShape(@TempDir Path root) throws Exception {
+        PackAdvancedResourcePlan.ImageSpec line = AdvancedImageDeclarations.parseImage("image.line",
+                "lineSampler RED_INTEGER R32UI UNSIGNED_INT false false 64", Map.of());
+        PackAdvancedResourcePlan.ImageSpec plane = AdvancedImageDeclarations.parseImage("image.plane",
+                "none RGBA RGBA8 BYTE false false 32 16", Map.of());
+        PackAdvancedResourcePlan.ImageSpec screen = AdvancedImageDeclarations.parseImage("image.screen",
+                "screenSampler RGBA RGBA16F HALF_FLOAT true true SHARE 0.25", Map.of("SHARE", "0.5"));
+        assertTrue(line.supported() && plane.supported() && screen.supported());
+        assertEquals("uimage1D", AdvancedImageDeclarations.storageImageType(line));
+        assertEquals("image2D", AdvancedImageDeclarations.storageImageType(plane));
+        assertEquals("", plane.sampler(), "a sampler named none is no sampler");
+        assertArrayEquals(new int[] {64, 1, 1}, line.extent(1920, 1080));
+        assertArrayEquals(new int[] {32, 16, 1}, plane.extent(1920, 1080));
+        assertArrayEquals(new int[] {960, 270, 1}, screen.extent(1920, 1080));
+        assertEquals(2, screen.dimensions());
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.screen = screenSampler RGBA RGBA16F HALF_FLOAT true true 0.5 0.5\n");
+        writeVolumeReader(shaders, "composite", "unused");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 430 compatibility
+                layout(rgba16f) uniform restrict image2D screen;
+                uniform sampler2D screenSampler;
+                in vec2 uv;
+                void main() { gl_FragData[0] = imageLoad(screen, ivec2(0)) + texture(screenSampler, uv); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackAdvancedResourcePlan advanced = plan.advancedResources();
+        assertTrue(plan.shouldAttempt("composite"), advanced.deviations().toString());
+        String bound = PackDescriptorContracts.bindStorageImages(plan.program("composite").convertedFragment(),
+                "composite", advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
+        assertTrue(bound.matches("(?s).*layout\\(rgba16f, binding = \\d+\\) uniform image2D screen;.*")
+                && bound.matches("(?s).*layout\\(binding = \\d+\\) uniform sampler2D screenSampler;.*"), bound);
+    }
+
+    /**
      * Iris creates custom images whatever programs the pack has and runs each program on its own.
      * Chimera served them only alongside a supported shadowcomp, so Pegasus's gbuffers programs,
      * which read an image its prepare computes write, fell back.
@@ -169,15 +211,15 @@ final class AdvancedImagePlanTest {
     }
 
     /**
-     * An image Chimera does not create (Reverie's screen-sized 2D images) is inactive where a stage
-     * only declares it, as GL leaves it, and its declaration is dropped. A stage that reads it is
-     * refused with the image named, before preparation.
+     * An image Chimera does not create (one in a format Iris does not know) is inactive where a
+     * stage only declares it, as GL leaves it, and its declaration is dropped. A stage that reads it
+     * is refused with the image named, before preparation.
      */
     @Test
     void anImageChimeraDoesNotCreateIsDroppedUnlessRead(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"),
-                "image.screen = screenSampler RGBA RGBA16F HALF_FLOAT true true 1.0 1.0\n");
+                "image.screen = screenSampler RGBA NOT_A_FORMAT HALF_FLOAT true true 1.0 1.0\n");
         String fragment = """
                 #version 430 compatibility
                 layout(rgba16f) uniform restrict image2D screen;
@@ -227,6 +269,34 @@ final class AdvancedImagePlanTest {
                 && plan.shouldAttempt("composite"), plan.advancedResources().deviations().toString());
         assertTrue(plan.program("composite").deviations().contains("SAMPLER_DECLARATION_UNUSED:lutTex"),
                 plan.program("composite").deviations().toString());
+    }
+
+    /**
+     * Rethinking Voxels gives occupancyVolume and voxelCols the sampler none, which Iris reads as no
+     * sampler. Each image still binds, so each keeps its own selector slot under its own name.
+     */
+    @Test
+    void imagesWithoutASamplerKeepTheirOwnSlots(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                image.occupancy = none RED_INTEGER R32I INT true false 16 16 16
+                image.cols = none RED_INTEGER R32I INT true false 16 32 16
+                """);
+        writeVolumeReader(shaders, "composite", "unused");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 430 compatibility
+                layout(r32i) uniform iimage3D occupancy;
+                layout(r32i) uniform iimage3D cols;
+                in vec2 uv;
+                void main() {
+                    gl_FragData[0] = vec4(imageLoad(occupancy, ivec3(0)).r + imageLoad(cols, ivec3(0)).r);
+                }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        Map<String, Integer> slots = plan.settings().customSamplerSlots();
+        assertTrue(slots.containsKey("occupancy") && slots.containsKey("cols")
+                && !slots.get("occupancy").equals(slots.get("cols")) && !slots.containsKey("none"), slots.toString());
+        assertTrue(plan.shouldAttempt("composite"), plan.advancedResources().deviations().toString());
     }
 
     private static void writeVolumeReader(Path shaders, String program, String sampler) throws Exception {

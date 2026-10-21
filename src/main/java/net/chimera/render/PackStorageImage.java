@@ -42,11 +42,15 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_1D;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_3D;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_1D;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_3D;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -66,7 +70,7 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
 import static org.lwjgl.vulkan.VK10.vkDestroySampler;
 import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties;
 
-/** A pack-owned true 3D image with storage and sampled descriptor views. */
+/** A pack-owned 1D, 2D or 3D image (Iris's custom image) with storage and sampled descriptor views. */
 final class PackStorageImage extends VulkanImage {
     private final long allocation;
     private final long view;
@@ -96,7 +100,8 @@ final class PackStorageImage extends VulkanImage {
         this.initialized = false;
     }
 
-    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec) {
+    /** The image {@code spec} declares at {@code extent} (width, height, depth), of its own dimensions. */
+    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
         int format = spec.format().vkFormat();
         boolean integer = IrisColorFormats.integer(format);
         verifyFormatSupport(format, spec.name());
@@ -105,7 +110,7 @@ final class PackStorageImage extends VulkanImage {
         try (MemoryStack stack = stackPush()) {
             VkImageCreateInfo info = VkImageCreateInfo.calloc(stack)
                     .sType(VK10.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
-                    .imageType(VK_IMAGE_TYPE_3D)
+                    .imageType(imageType(spec.dimensions()))
                     .format(format)
                     .mipLevels(1)
                     .arrayLayers(1)
@@ -114,7 +119,7 @@ final class PackStorageImage extends VulkanImage {
                     .usage(usage)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
                     .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
-            info.extent().width(spec.width()).height(spec.height()).depth(spec.depth());
+            info.extent().width(extent[0]).height(extent[1]).depth(extent[2]);
             VmaAllocationCreateInfo allocationInfo = VmaAllocationCreateInfo.calloc(stack)
                     .requiredFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             LongBuffer image = stack.mallocLong(1);
@@ -125,7 +130,7 @@ final class PackStorageImage extends VulkanImage {
                 throw new IllegalStateException("advanced image allocation failed: " + result);
             }
             long imageId = image.get(0);
-            long imageView = ImageViews.create(imageId, VK_IMAGE_VIEW_TYPE_3D, format, VK_IMAGE_ASPECT_COLOR_BIT);
+            long imageView = ImageViews.create(imageId, viewType(spec.dimensions()), format, VK_IMAGE_ASPECT_COLOR_BIT);
             LongBuffer sampler = stack.mallocLong(1);
             VkSamplerCreateInfo samplerInfo = VkSamplerCreateInfo.calloc(stack)
                     .sType$Default()
@@ -145,9 +150,18 @@ final class PackStorageImage extends VulkanImage {
                 throw new IllegalStateException("advanced image sampler allocation failed");
             }
             return new PackStorageImage(imageId,
-                    allocation.get(0), format, spec.width(), spec.height(), spec.depth(),
+                    allocation.get(0), format, extent[0], extent[1], extent[2],
                     usage, imageView, spec.format().bytes(), sampler.get(0));
         }
+    }
+
+    private static int imageType(int dimensions) {
+        return dimensions == 1 ? VK_IMAGE_TYPE_1D : dimensions == 2 ? VK_IMAGE_TYPE_2D : VK_IMAGE_TYPE_3D;
+    }
+
+    private static int viewType(int dimensions) {
+        return dimensions == 1 ? VK_IMAGE_VIEW_TYPE_1D
+                : dimensions == 2 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_3D;
     }
 
     private static void verifyFormatSupport(int format, String name) {

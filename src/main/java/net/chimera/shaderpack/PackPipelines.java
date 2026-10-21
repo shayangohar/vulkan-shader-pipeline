@@ -54,7 +54,7 @@ public final class PackPipelines {
                     + "(u?i?image(?:1D|2D|3D)(?:Array)?)\\s+([A-Za-z_]\\w*)\\s*;");
     static final Pattern STORAGE_SAMPLER_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
-                    + "(u?sampler3D)\\s+([A-Za-z_]\\w*)\\s*;");
+                    + "([iu]?sampler(?:1D|2D|3D))\\s+([A-Za-z_]\\w*)\\s*;");
     static final Pattern SAMPLER_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
                     + "((?:[iu]?sampler3D|sampler2D(?:Shadow)?))\\s+"

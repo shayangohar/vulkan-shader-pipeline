@@ -536,9 +536,7 @@ public final class PackShadowCompute implements AutoCloseable {
         if (type.equals("sampler2D")) {
             return sampled2dNames.contains(declarators.trim());
         }
-        if (!(type.equals("image3D") || type.equals("uimage3D")
-                || type.equals("iimage3D") || type.equals("sampler3D")
-                || type.equals("usampler3D"))) return false;
+        if (!type.matches("[iu]?(?:image|sampler)(?:1D|2D|3D)")) return false;
         String name = declarators.trim();
         int initializer = name.indexOf('=');
         if (initializer >= 0) name = name.substring(0, initializer).trim();
@@ -547,11 +545,11 @@ public final class PackShadowCompute implements AutoCloseable {
     }
 
     private static String samplerType(PackAdvancedResourcePlan.ImageSpec spec) {
-        return spec == null ? "sampler3D" : spec.typePrefix() + "sampler3D";
+        return spec == null ? "sampler3D" : spec.typePrefix() + "sampler" + spec.dimensionSuffix();
     }
 
     private static String imageType(PackAdvancedResourcePlan.ImageSpec spec, String sourceType) {
-        return spec == null ? sourceType : spec.typePrefix() + "image3D";
+        return spec == null ? sourceType : spec.typePrefix() + "image" + spec.dimensionSuffix();
     }
 
     private static int indexBySampler(List<String> names, String name, PackAdvancedResourcePlan plan) {

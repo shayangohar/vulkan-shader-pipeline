@@ -230,7 +230,7 @@ final class PackDescriptorContracts {
         }
         List<PackDescriptorLayout.ImageSlot> images = new ArrayList<>();
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.storageImages()) {
-            images.add(new PackDescriptorLayout.ImageSlot(layout.imageBase() + images.size(), "image3D",
+            images.add(new PackDescriptorLayout.ImageSlot(layout.imageBase() + images.size(), binding.glslType(),
                     "Sampler" + binding.selectorSlot(), binding.selectorSlot(),
                     PackDescriptorLayout.ImageAccess.STORAGE));
         }
@@ -451,6 +451,7 @@ final class PackDescriptorContracts {
     ) {
         PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
                 .get(binding.imageName());
-        return spec == null || spec.format() == null ? "sampler3D" : spec.typePrefix() + "sampler3D";
+        return spec == null || spec.format() == null ? "sampler3D"
+                : spec.typePrefix() + "sampler" + spec.dimensionSuffix();
     }
 }

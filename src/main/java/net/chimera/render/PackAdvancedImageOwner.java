@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
@@ -30,15 +31,36 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     public static PackAdvancedImageOwner load(PackAdvancedResourcePlan plan) {
         PackAdvancedImageOwner owner = new PackAdvancedImageOwner(plan);
         for (PackAdvancedResourcePlan.ImageSpec spec : owner.plan.images().values()) {
-            if (!spec.supported()) continue;
-            try {
-                owner.images.put(spec.name(), PackStorageImage.create(spec));
-            } catch (RuntimeException failure) {
-                owner.failures.put(spec.name(), failure.getMessage() == null
-                        ? "advanced image allocation failed" : failure.getMessage());
-            }
+            // A relative image takes its size from the screen at the first frame (fitRelativeImages).
+            if (spec.supported() && !spec.relative()) owner.allocate(spec, spec.extent(0, 0));
         }
         return owner;
+    }
+
+    private void allocate(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
+        try {
+            images.put(spec.name(), PackStorageImage.create(spec, extent));
+        } catch (RuntimeException failure) {
+            images.remove(spec.name());
+            failures.put(spec.name(), failure.getMessage() == null
+                    ? "advanced image allocation failed" : failure.getMessage());
+        }
+    }
+
+    /**
+     * Creates each relative image at its share of the screen, and recreates it when the screen
+     * changes size, as Iris's GlImage.Relative.updateNewSize does. A replaced image is freed once
+     * the frames that used it have finished. The new one starts uninitialized, so it is cleared.
+     */
+    private void fitRelativeImages(int width, int height) {
+        for (PackAdvancedResourcePlan.ImageSpec spec : plan.images().values()) {
+            if (!spec.supported() || !spec.relative() || failures.containsKey(spec.name())) continue;
+            int[] extent = spec.extent(width, height);
+            PackStorageImage current = images.get(spec.name());
+            if (current != null && current.width == extent[0] && current.height == extent[1]) continue;
+            if (current != null) MemoryManager.getInstance().addFrameOp(current::free);
+            allocate(spec, extent);
+        }
     }
 
     /**
@@ -48,9 +70,17 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
      */
     public boolean programImagesAvailable(String program) {
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
-            if (imageForSymbol(binding.symbol()) == null) return false;
+            if (!availableForSymbol(binding.symbol())) return false;
         }
         return true;
+    }
+
+    /** Whether the image a symbol names exists, or is relative and is made at the next frame start. */
+    private boolean availableForSymbol(String symbol) {
+        PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(symbol);
+        if (spec == null) return false;
+        return images.containsKey(spec.name())
+                || spec.supported() && spec.relative() && !failures.containsKey(spec.name());
     }
 
     /** Whether every image the shadowcomp binds exists, so it can dispatch. */
@@ -98,8 +128,10 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
      * same compute stage. Later frames preserve those contents unless the
      * pack explicitly requested a clear.
      */
-    public void prepareFrame(VkCommandBuffer commandBuffer) {
-        if (commandBuffer == null || closed || images.isEmpty()) return;
+    public void prepareFrame(VkCommandBuffer commandBuffer, int screenWidth, int screenHeight) {
+        if (commandBuffer == null || closed) return;
+        fitRelativeImages(screenWidth, screenHeight);
+        if (images.isEmpty()) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             boolean hasClear = plan.images().values().stream().anyMatch(
                     spec -> {

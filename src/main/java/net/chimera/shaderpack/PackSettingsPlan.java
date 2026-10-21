@@ -356,7 +356,7 @@ record PackSettingsPlan(
         // WSR or voxel sampler. The ordering remains deterministic by the
         // property key.
         for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
-            String sampler = imageSampler(entry);
+            String sampler = imageSlotKey(entry);
             if (sampler == null) {
                 continue;
             }
@@ -399,8 +399,8 @@ record PackSettingsPlan(
         return reserved;
     }
 
-    /** The sampler an {@code image.<name>} entry names first, or null for any other or malformed entry. */
-    private static String imageSampler(Map.Entry<String, String> entry) {
+    /** The slot key of an {@code image.<name>} entry (AdvancedImageDeclarations.slotKey), or null for any other. */
+    private static String imageSlotKey(Map.Entry<String, String> entry) {
         if (!entry.getKey().startsWith("image.")) {
             return null;
         }
@@ -409,7 +409,7 @@ record PackSettingsPlan(
         if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) {
             return null;
         }
-        return values[0];
+        return AdvancedImageDeclarations.slotKey(entry.getKey().substring("image.".length()), values[0]);
     }
 
     private Map<String, Integer> defaultSamplerSlots() {
@@ -423,7 +423,7 @@ record PackSettingsPlan(
             }
         }
         for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
-            String sampler = imageSampler(entry);
+            String sampler = imageSlotKey(entry);
             if (sampler == null) continue;
             if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) continue;
             if (next < SelectorNamespace.PACK_SELECTOR_SLOTS.size()) {

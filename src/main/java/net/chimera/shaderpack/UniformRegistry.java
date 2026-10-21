@@ -868,7 +868,7 @@ public final class UniformRegistry {
     }
 
     static boolean isStorageImageType(String type) {
-        return "image3D".equals(type) || "iimage3D".equals(type) || "uimage3D".equals(type);
+        return type != null && type.matches("[iu]?image(?:1D|2D|3D)");
     }
 
     static String samplerResource(String name) {

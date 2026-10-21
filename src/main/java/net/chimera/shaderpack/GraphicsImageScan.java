@@ -110,7 +110,12 @@ final class GraphicsImageScan {
     private void addWriter(String program, String stage, String glslType, String symbol, boolean live,
                            boolean referenced) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySymbol(images, symbol);
-        if (spec == null || !spec.supported() && !referenced) return;
+        if (spec == null) {
+            // Not a pack image: Iris's colorimgN and shadowcolorimgN, which no draw here binds.
+            if (referenced) deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + symbol);
+            return;
+        }
+        if (!spec.supported() && !referenced) return;
         int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         writers.computeIfAbsent(program, ignored -> new ArrayList<>())
@@ -130,7 +135,7 @@ final class GraphicsImageScan {
     private void addReader(String program, String stage, String sampler, boolean referenced, boolean live) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySampler(images, sampler);
         if (spec == null || !spec.supported() && !referenced) return;
-        if (!live && !plan.settings().customSamplerSlots().containsKey(spec.sampler())) return;
+        if (!live && !plan.settings().customSamplerSlots().containsKey(spec.slotKey())) return;
         int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         readers.computeIfAbsent(program, ignored -> new ArrayList<>())
@@ -150,11 +155,11 @@ final class GraphicsImageScan {
         return slot;
     }
 
-    /** The selector slot of an image's sampler, or -1 with the slot limit recorded. */
+    /** The selector slot of an image, or -1 with the slot limit recorded. */
     private int selectorSlot(PackAdvancedResourcePlan.ImageSpec spec) {
-        int selectorSlot = plan.settings().customSamplerSlots().getOrDefault(spec.sampler(), -1);
+        int selectorSlot = plan.settings().customSamplerSlots().getOrDefault(spec.slotKey(), -1);
         if (selectorSlot < 0) {
-            deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + spec.sampler());
+            deviations.add("PACK_RESOURCE_SLOT_LIMIT:" + spec.slotKey());
         }
         return selectorSlot;
     }

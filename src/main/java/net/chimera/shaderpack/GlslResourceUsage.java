@@ -341,7 +341,7 @@ final class GlslResourceUsage {
     }
 
     private static boolean isImageType(String type) {
-        return type.equals("image3D") || type.equals("iimage3D") || type.equals("uimage3D");
+        return type.matches("[iu]?image(?:1D|2D|3D)");
     }
 
     private static Set<String> sorted(Set<String> values) {

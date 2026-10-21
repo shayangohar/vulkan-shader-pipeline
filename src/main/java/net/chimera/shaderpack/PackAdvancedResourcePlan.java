@@ -98,6 +98,35 @@ public final class PackAdvancedResourcePlan {
             IrisColorFormats.Kind kind = format().kind();
             return kind == IrisColorFormats.Kind.UINT ? "u" : kind == IrisColorFormats.Kind.SINT ? "i" : "";
         }
+
+        /**
+         * The image's dimensions, as Iris's ShaderProperties reads its declaration: a relative image
+         * is 2D, and a fixed one has as many as the sizes it gives.
+         */
+        public int dimensions() {
+            if (relative) return 2;
+            return depth > 0 ? 3 : height > 0 ? 2 : 1;
+        }
+
+        /** The name the image's selector slot is kept under (AdvancedImageDeclarations.slotKey). */
+        public String slotKey() {
+            return sampler.isEmpty() ? name : sampler;
+        }
+
+        /** The suffix of the image's GLSL types: {@code 1D}, {@code 2D} or {@code 3D}. */
+        public String dimensionSuffix() {
+            return dimensions() + "D";
+        }
+
+        /**
+         * The image's width, height and depth on a screen of this size: a relative image's share
+         * of it (GlImage.Relative truncates), else its declared size.
+         */
+        public int[] extent(int screenWidth, int screenHeight) {
+            if (!relative) return new int[] {width, Math.max(1, height), Math.max(1, depth)};
+            return new int[] {Math.max(1, (int) (screenWidth * Float.parseFloat(widthToken))),
+                    Math.max(1, (int) (screenHeight * Float.parseFloat(heightToken))), 1};
+        }
     }
 
     public record ComputeSpec(
@@ -306,8 +335,8 @@ public final class PackAdvancedResourcePlan {
     private static DescriptorBinding opaqueBinding(List<GlslLexer.Token> tokens, int i, int stage) {
         String word = tokens.get(i).text();
         int type = word.equals("buffer") ? 9
-                : word.matches("[ui]?image3D") ? 3
-                : word.matches("(?:[ui]?sampler3D|sampler2D(?:Shadow)?)") ? 1 : -1;
+                : word.matches("[ui]?image(?:1D|2D|3D)") ? 3
+                : word.matches("(?:[ui]?sampler(?:1D|2D|3D)|sampler2DShadow)") ? 1 : -1;
         if (type < 0 || i + 1 >= tokens.size()) return null;
         if (tokens.get(i + 1).kind() != GlslLexer.Kind.IDENTIFIER) return null;
         String symbol = tokens.get(i + 1).text();

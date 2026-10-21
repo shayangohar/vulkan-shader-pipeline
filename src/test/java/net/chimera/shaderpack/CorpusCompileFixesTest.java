@@ -426,15 +426,15 @@ final class CorpusCompileFixesTest {
         assertTrue(entities.executable(), entities.deviations().toString());
     }
 
-    /** Reverie leaves layout(rgba8) behind when its unread image uniform is removed whole. */
+    /** An unread uniform removed whole takes its layout qualifier, which would qualify the next line. */
     @Test
     void aRemovedUniformTakesItsLayout() {
-        String source = "#version 430\nlayout(rgba8) uniform image2D atm_image;\nconst bool clear = false;\n"
+        String source = "#version 430\nlayout(location = 3) uniform float wetness;\nconst bool clear = false;\n"
                 + "void main() {}\n";
         UniformRegistry.ProgramInterface plan = InterfacePlanner.planInternal(source, UniformRegistry.Stage.POST,
                 false, true);
         String removed = UniformRegistry.removeUniformDeclarations(source, plan);
-        assertFalse(removed.contains("layout(rgba8)") || removed.contains("atm_image"), removed);
+        assertFalse(removed.contains("layout(location = 3)") || removed.contains("wetness"), removed);
         assertTrue(removed.contains("const bool clear = false;"), removed);
     }
 

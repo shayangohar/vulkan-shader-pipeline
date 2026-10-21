@@ -21,6 +21,9 @@ import java.util.stream.Collectors;
  * dimensions, the compute programs that write them, and the memory budget they must fit.
  */
 final class AdvancedImageDeclarations {
+    /** The sampler name ShaderProperties reads as no sampler. */
+    private static final String NO_SAMPLER = "none";
+
     private AdvancedImageDeclarations() {}
 
     /** Parses every image.<name> property, then admits the supported images the memory budget fits. */
@@ -43,6 +46,12 @@ final class AdvancedImageDeclarations {
         return images;
     }
 
+    /**
+     * One image.<name> declaration as Iris's ShaderProperties reads it: its sampler (or none), pixel
+     * format, internal format, pixel type, clear and relative flags, then a relative image's share
+     * of the screen, or a fixed image's width, height and depth, as many as it has dimensions (7, 8
+     * or 9 values).
+     */
     static PackAdvancedResourcePlan.ImageSpec parseImage(
             String key,
             String raw,
@@ -50,52 +59,98 @@ final class AdvancedImageDeclarations {
     ) {
         String name = key.substring("image.".length());
         List<String> deviations = new ArrayList<>();
-        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        if (values.length < 9) {
+        String[] values = raw == null ? new String[0] : raw.trim().split("\s+");
+        boolean relative = values.length > 5 && Boolean.parseBoolean(values[5]);
+        if (relative ? values.length < 8 : values.length < 7 || values.length > 9) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-            return new PackAdvancedResourcePlan.ImageSpec(name, token(values, 0), token(values, 1), token(values, 2),
-                    token(values, 3), false, false, 0, 0, 0, null, null, null, 0,
-                            PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+            return image(name, values, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }
-        String sampler = values[0];
-        String pixelFormat = values[1];
-        String internalFormat = values[2].toLowerCase();
-        String pixelType = values[3];
-        boolean clear = Boolean.parseBoolean(values[4]);
-        boolean relative = Boolean.parseBoolean(values[5]);
         try {
-            int width = resolveImageDimension(name, values[6], defines, deviations);
-            int height = resolveImageDimension(name, values[7], defines, deviations);
-            int depth = resolveImageDimension(name, values[8], defines, deviations);
-            if (width < 1 || height < 1 || depth < 1) {
-                deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-                return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                        clear, relative, width, height, depth, values[6], values[7], values[8],
-                        0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
-            }
-            long bytes = Math.multiplyExact(Math.multiplyExact((long) width, height), depth)
-                    * bytesPerVoxel(internalFormat);
-            if (width < 1 || height < 1 || depth < 1 || width > PackAdvancedResourcePlan.MAX_DIMENSION
-                    || height > PackAdvancedResourcePlan.MAX_DIMENSION
-                            || depth > PackAdvancedResourcePlan.MAX_DIMENSION) {
-                deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-                return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                        clear, relative, width, height, depth, values[6], values[7], values[8],
-                        bytes, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
-            }
-            deviations.add("ADVANCED_IMAGE_DECLARED:" + name);
-            return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                    clear, relative, width, height, depth, values[6], values[7], values[8],
-                    bytes, PackAdvancedResourcePlan.Status.SUPPORTED, deviations);
+            return relative ? relativeImage(name, values, defines, deviations)
+                    : fixedImage(name, values, defines, deviations);
         } catch (RuntimeException failure) {
             if (deviations.stream().noneMatch(value -> value.startsWith(
                     "ADVANCED_IMAGE_DIMENSION_UNRESOLVED:" + name + ":"))) {
                 deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
             }
-            return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                    clear, relative, 0, 0, 0, values[6], values[7], values[8],
-                    0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+            return image(name, values, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }
+    }
+
+    /** A 1D, 2D or 3D image of fixed size, inside the per-axis limit. */
+    private static PackAdvancedResourcePlan.ImageSpec fixedImage(
+            String name, String[] values, Map<String, String> defines, List<String> deviations) {
+        int[] size = new int[3];
+        for (int axis = 0; axis < values.length - 6; axis++) {
+            size[axis] = resolveImageDimension(name, values[6 + axis], defines, deviations);
+        }
+        boolean unsized = size[0] < 1 || values.length > 7 && size[1] < 1 || values.length > 8 && size[2] < 1;
+        long bytes = unsized ? 0 : Math.multiplyExact(Math.multiplyExact((long) size[0], Math.max(1, size[1])),
+                Math.max(1, size[2])) * bytesPerVoxel(values[2].toLowerCase());
+        if (unsized || Math.max(size[0], Math.max(size[1], size[2])) > PackAdvancedResourcePlan.MAX_DIMENSION) {
+            deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
+            return image(name, values, size, bytes, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+        }
+        deviations.add("ADVANCED_IMAGE_DECLARED:" + name);
+        return image(name, values, size, bytes, PackAdvancedResourcePlan.Status.SUPPORTED, deviations);
+    }
+
+    /**
+     * A relative image: 2D at a share of the screen (GlImage.Relative), so its size is the frame's
+     * and it is created and resized with the screen. Its tokens keep the shares.
+     */
+    private static PackAdvancedResourcePlan.ImageSpec relativeImage(
+            String name, String[] values, Map<String, String> defines, List<String> deviations) {
+        float width = relativeShare(name, values[6], defines, deviations);
+        float height = relativeShare(name, values[7], defines, deviations);
+        bytesPerVoxel(values[2].toLowerCase());
+        String[] shares = values.clone();
+        shares[6] = Float.toString(width);
+        shares[7] = Float.toString(height);
+        if (!(width > 0.0F) || !(height > 0.0F)) {
+            deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
+            return image(name, shares, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+        }
+        deviations.add("ADVANCED_IMAGE_DECLARED:" + name);
+        return image(name, shares, new int[3], 0, PackAdvancedResourcePlan.Status.SUPPORTED, deviations);
+    }
+
+    /** A relative image's share of one screen axis: a number, or a macro that names one. */
+    private static float relativeShare(String image, String token, Map<String, String> defines,
+                                       List<String> deviations) {
+        String value = token.trim();
+        for (int depth = 0; depth < 8 && defines != null && defines.containsKey(value); depth++) {
+            value = defines.get(value).trim();
+        }
+        try {
+            return Float.parseFloat(value);
+        } catch (NumberFormatException failure) {
+            deviations.add("ADVANCED_IMAGE_DIMENSION_UNRESOLVED:" + image + ":" + token);
+            throw failure;
+        }
+    }
+
+    /**
+     * The name an image's selector slot is kept under: its sampler's, or for an image whose sampler
+     * is {@code none} (ShaderProperties gives it no sampler), the image's own. GLSL gives a sampler
+     * and an image uniform different names, so the two never meet.
+     */
+    static String slotKey(String image, String samplerToken) {
+        return samplerToken.equals(NO_SAMPLER) ? image : samplerToken;
+    }
+
+    /** The spec of one declaration with this size; its tokens are the declaration's own. */
+    private static PackAdvancedResourcePlan.ImageSpec image(String name, String[] values, int[] size, long bytes,
+            PackAdvancedResourcePlan.Status status, List<String> deviations) {
+        String sampler = token(values, 0).equals(NO_SAMPLER) ? "" : token(values, 0);
+        return new PackAdvancedResourcePlan.ImageSpec(name, sampler, token(values, 1), token(values, 2).toLowerCase(),
+                token(values, 3), Boolean.parseBoolean(token(values, 4)), Boolean.parseBoolean(token(values, 5)),
+                size[0], size[1], size[2], sizeToken(values, 6), sizeToken(values, 7), sizeToken(values, 8),
+                bytes, status, deviations);
+    }
+
+    private static String sizeToken(String[] values, int index) {
+        return values.length > index ? values[index] : null;
     }
 
     static int resolveImageDimension(
@@ -335,7 +390,7 @@ final class AdvancedImageDeclarations {
     }
 
     static String storageImageType(PackAdvancedResourcePlan.ImageSpec spec) {
-        return spec == null || spec.format() == null ? "image3D" : spec.typePrefix() + "image3D";
+        return spec == null || spec.format() == null ? "image3D" : spec.typePrefix() + "image" + spec.dimensionSuffix();
     }
 
     static String token(String[] values, int index) {

@@ -298,7 +298,9 @@ public final class ChimeraMainPass implements MainPass {
             this.packStorageBufferOwner.prepareForUse(Renderer.getCommandBuffer());
         }
         if (this.packAdvancedImageOwner != null) {
-            this.packAdvancedImageOwner.prepareFrame(Renderer.getCommandBuffer());
+            // Iris sizes relative images from the main render target.
+            this.packAdvancedImageOwner.prepareFrame(Renderer.getCommandBuffer(),
+                    this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight());
         }
         this.currentFramebuffer = this.targets.hdrFramebuffer;
         this.depth.hdrDepthReadable = false;
