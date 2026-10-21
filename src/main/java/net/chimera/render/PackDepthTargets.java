@@ -75,10 +75,11 @@ public final class PackDepthTargets {
     }
 
     /**
-     * Captures depthtex0 as deferred passes see it: the opaque depth at the
-     * pre-translucent seam. The level-end capture replaces it for composite.
+     * Captures depthtex0 as the world drawn so far and gives the depth back to the world pass: what
+     * the programs that run while the world still draws read, deferred passes at the
+     * pre-translucent seam among them. The level-end capture replaces it for composite.
      */
-    public boolean captureOpaqueScene(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
+    public boolean captureDrawnScene(VkCommandBuffer commandBuffer, VulkanImage rawDepth) {
         return configured && rawDepth != null && required(0)
                 && convert(commandBuffer, rawDepth, 0, true);
     }
@@ -248,17 +249,18 @@ public final class PackDepthTargets {
     }
 
     /**
-     * The image a draw samples as depthtex1 or depthtex2: this frame's capture, or before it the
-     * last one, as Iris's depth textures persist between their copies. NeoForge draws solid
-     * particles before translucent terrain, ahead of the depthtex1 capture.
+     * The image a draw samples as a depth texture: this frame's capture, or before it the last
+     * one, as Iris's depth textures persist between their copies. NeoForge draws solid particles
+     * before translucent terrain, ahead of the depthtex1 capture.
      */
     public VulkanImage sampledImage(String name) {
         int index = switch (name) {
+            case "depthtex0" -> 0;
             case "depthtex1" -> 1;
             case "depthtex2" -> 2;
             default -> -1;
         };
-        return index > 0 && defined[index] ? images[index] : null;
+        return index >= 0 && defined[index] ? images[index] : null;
     }
 
     public boolean isConfigured() { return configured; }

@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.DoubleBinaryOperator;
+import java.util.regex.Pattern;
 
 /**
  * The pack-authored expression language behind {@code shaders.properties} custom values.
@@ -27,8 +28,10 @@ import java.util.function.DoubleBinaryOperator;
  * mismatch, an unresolved symbol or a cycle is a declaration diagnostic, never a silent zero
  * handed to a running program.
  *
- * <p>{@code smooth} keeps one accumulator per call site and component, because the numeric id is
- * metadata and not identity: Complementary writes two different expressions under id 4. The first
+ * <p>{@code smooth} takes Iris's six forms, from {@code smooth(target)} to
+ * {@code smooth(id, target, up, down)}. It keeps one accumulator per call site and component,
+ * because the numeric id is metadata and not identity: Complementary writes two different
+ * expressions under id 4. The first
  * value is set outright, later frames blend with the half life in deciseconds the pack asked for,
  * and the state belongs to the pack session rather than to the settings.
  */
@@ -68,6 +71,8 @@ public final class PackExpression {
     private static final int MAX_DEPTH = 64;
     /** Iris's accessor names, by the component they pick. */
     private static final String[] ACCESSORS = {"0rxs", "1gyt", "2bzp", "3awq"};
+    /** One number token, as Iris's tokenizer reads a NumberToken: no sign, name or parentheses. */
+    private static final Pattern NUMBER_TOKEN = Pattern.compile("[0-9.][0-9.eEfF+-]*");
 
     private PackExpression() {}
 
@@ -391,10 +396,12 @@ public final class PackExpression {
                 case RANDOM -> ThreadLocalRandom.current().nextDouble();
                 case IN -> matchesAny(context);
                 case SMOOTH -> {
-                    int first = this.arguments.size() - 3;
-                    double value = lane(this.arguments.get(first), context, lane);
-                    float rise = (float) context.scalar(this.arguments.get(first + 1));
-                    float fall = (float) context.scalar(this.arguments.get(first + 2));
+                    double value = lane(this.arguments.get(0), context, lane);
+                    Node up = this.arguments.get(1);
+                    Node down = this.arguments.get(2);
+                    float rise = (float) context.scalar(up);
+                    // One fade time for both directions is evaluated once.
+                    float fall = down == up ? rise : (float) context.scalar(down);
                     yield smooth(context, this.smoothSlot + lane, value, rise, fall);
                 }
                 default -> fold(context, lane);
@@ -730,15 +737,23 @@ public final class PackExpression {
             }
             require("(");
             List<Node> arguments = new ArrayList<>();
+            boolean firstIsNumber = false;
             if (!peek(")")) {
-                do {
+                int start = this.index;
+                arguments.add(conditional());
+                firstIsNumber = arguments.get(0) instanceof Literal
+                        && NUMBER_TOKEN.matcher(this.source.substring(start, this.index).trim()).matches();
+                while (take(",")) {
                     arguments.add(conditional());
-                } while (take(","));
+                }
             }
             require(")");
             if (arguments.size() < function.minimum() || arguments.size() > function.maximum()
                     || (function == PackFunction.IF && arguments.size() % 2 == 0)) {
                 throw new Unsupported("CUSTOM_EXPRESSION_ARITY", name);
+            }
+            if (function == PackFunction.SMOOTH) {
+                arguments = smoothArguments(name, arguments, firstIsNumber);
             }
             int width = width(function, name, arguments);
             int slot = -1;
@@ -782,15 +797,28 @@ public final class PackExpression {
             };
         }
 
-        /** {@code smooth}: scalar id and half lives around a value of any width but a matrix's. */
-        private static int smoothWidth(String name, List<Node> arguments) {
-            int first = arguments.size() - 3;
-            for (int index = 0; index < arguments.size(); index++) {
-                if (index != first) {
-                    scalar(arguments.get(index), name);
-                }
+        /**
+         * Iris's six {@code smooth} overloads as {@code (target, up, down)}, resolved as its
+         * ExpressionResolver resolves them. A number-literal first argument is the OptiFine id
+         * wherever an id form takes that many arguments, because the id forms win on priority.
+         * One fade time serves both directions, and a missing one is a half life of 1. Four
+         * arguments need the literal id: Iris has no other four-argument form.
+         */
+        private static List<Node> smoothArguments(String name, List<Node> arguments, boolean firstIsNumber) {
+            List<Node> rest = firstIsNumber && arguments.size() > 1
+                    ? arguments.subList(1, arguments.size()) : arguments;
+            if (rest.size() > 3) {
+                throw new Unsupported("CUSTOM_EXPRESSION_ARITY", name);
             }
-            int width = arguments.get(first).width();
+            Node up = rest.size() > 1 ? rest.get(1) : new Literal(1.0);
+            return List.of(rest.get(0), up, rest.size() > 2 ? rest.get(2) : up);
+        }
+
+        /** {@code smooth(target, up, down)}: scalar half lives around a value of any width but a matrix's. */
+        private static int smoothWidth(String name, List<Node> arguments) {
+            scalar(arguments.get(1), name);
+            scalar(arguments.get(2), name);
+            int width = arguments.get(0).width();
             if (width == MATRIX_WIDTH) {
                 throw new Unsupported("CUSTOM_EXPRESSION_TYPE", name + " of mat4");
             }

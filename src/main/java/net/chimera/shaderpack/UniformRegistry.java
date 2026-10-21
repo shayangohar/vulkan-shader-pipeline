@@ -429,8 +429,13 @@ public final class UniformRegistry {
             // descriptor without a same-slot manifest resource and rejects
             // the pipeline.
             Map.entry("noisetex", 7),
-            // The opaque depth snapshot, on the slot post and gbuffers_water read it from.
-            Map.entry("depthtex1", 12)
+            // Iris gives every gbuffers program its three depth textures (addWorldDepthSamplers),
+            // on the slots post reads them from. depthtex0 is the depth drawn so far there; while
+            // the world depth is an attachment, a draw reads a capture of the world drawn before
+            // its flush, and depthtex1 and depthtex2 their last capture.
+            Map.entry("depthtex0", 6),
+            Map.entry("depthtex1", 12),
+            Map.entry("depthtex2", 13)
     );
     /**
      * Resource-pack material maps ride fixed extended selectors, but only in

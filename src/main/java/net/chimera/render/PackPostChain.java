@@ -524,11 +524,16 @@ final class PackPostChain {
         return colorInputs[logicalTarget];
     }
 
+    /**
+     * Whether this frame holds every depth snapshot and shadow image a post pass reads. depthtex0
+     * also counts while the world depth can still be captured: the pass's prepare captures it.
+     */
     boolean packDepthInputsAvailable(List<String> samplerNames) {
         if (samplerNames == null) return true;
         for (String sampler : samplerNames) {
             if (sampler != null && sampler.startsWith("depthtex")
-                    && pass.packDepthTargets.image(sampler) == null) {
+                    && pass.packDepthTargets.image(sampler) == null
+                    && !(sampler.equals("depthtex0") && pass.depth.drawnDepthCapturable())) {
                 return false;
             }
         }

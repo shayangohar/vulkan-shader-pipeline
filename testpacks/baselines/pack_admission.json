@@ -370,7 +370,6 @@
     "gbuffers_particles_translucent",
     "gbuffers_skytextured",
     "gbuffers_spidereyes",
-    "gbuffers_terrain",
     "gbuffers_textured",
     "gbuffers_textured_lit",
     "gbuffers_translucent",
@@ -637,7 +636,6 @@
     "composite14",
     "composite17",
     "composite18",
-    "composite19",
     "composite4",
     "composite40",
     "composite5",
@@ -733,8 +731,7 @@
   ],
   "miniature-shader-2.19.zip": [
     "clrwl_gbuffers",
-    "clrwl_shadow",
-    "gbuffers_terrain"
+    "clrwl_shadow"
   ],
   "photon_v1.3b.zip": [
     "dh_terrain",
@@ -787,29 +784,15 @@
     "text_bg"
   ],
   "superDuperVanilla.zip": [
-    "composite",
-    "deferred1",
     "dh_generic",
     "dh_terrain",
     "dh_water",
-    "gbuffers_basic",
-    "gbuffers_block",
-    "gbuffers_block_translucent",
     "gbuffers_clouds",
-    "gbuffers_entities",
-    "gbuffers_entities_translucent",
-    "gbuffers_hand",
-    "gbuffers_hand_water",
-    "gbuffers_particles",
-    "gbuffers_particles_translucent",
-    "gbuffers_terrain",
     "gbuffers_textured",
-    "gbuffers_water",
     "physics_ocean",
     "physics_ocean_shadow",
     "shadow_cutout",
     "shadow_solid",
-    "shadow_water",
-    "text_bg"
+    "shadow_water"
   ]
 }

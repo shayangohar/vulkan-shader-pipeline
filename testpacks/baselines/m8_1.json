@@ -44,7 +44,7 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "080024a929eb64704ab59f567be4da878a4c1312198b4e905590ecb24a23f71a",
+      "reportSha256": "e50665bf59616cb8a5ad769e741adf95c67eb7d8c3049a0385e4b795c4725728",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "d4b257c6f083b143879e04c04cd6eadbc1443615eff684a2ca527dfefbff60bb",
         "gbuffers_terrain.vsh": "244c2f59bb81a169c09d178e2b50107035cc206db26e38ef087d0095629240e1"
@@ -70,8 +70,10 @@
         "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain",
         "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
         "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",
+        "TERRAIN_VERTEX_CONVERSION_FAILED:legacy_vertex_requires_a_desktop_GLSL_version_from_110_to_460_not_300_es",
         "TRANSLUCENT_STATE_FIXED_TO_HOST",
-        "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED"
+        "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED",
+        "TRANSLUCENT_VERTEX_CONVERSION_FAILED:legacy_vertex_requires_a_desktop_GLSL_version_from_110_to_460_not_300_es"
       ]
     }
   },

@@ -179,7 +179,7 @@ public final class PackPlanBuilder {
                 }
                 convertFragment();
             } catch (RuntimeException e) {
-                deviations.add("TRANSLATION_UNSUPPORTED:" + safeReason(e));
+                deviations.add("TRANSLATION_UNSUPPORTED:" + VertexBridgeDeviations.safeReason(e));
                 executable = false;
             }
             rewriteStorageBuffers();
@@ -259,7 +259,7 @@ public final class PackPlanBuilder {
                     if (!perVertexIds) fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
                 }
             } catch (RuntimeException failure) {
-                hostLayoutFailure = safeReason(failure);
+                hostLayoutFailure = VertexBridgeDeviations.safeReason(failure);
             }
         }
 
@@ -423,7 +423,7 @@ public final class PackPlanBuilder {
             boolean admitted = mrtPairAdmitted();
             if (vertex == null) {
                 if (FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isShadowEntityFamily(name)) {
-                    deviations.add(vertexBridgeDeviation(name));
+                    deviations.add(VertexBridgeDeviations.unsupported(name));
                 }
                 if (FamilyAdapterRegistry.isParticleLike(name)) {
                     deviations.add("PARTICLE_VERTEX_BRIDGE_UNSUPPORTED");
@@ -510,7 +510,8 @@ public final class PackPlanBuilder {
                             familyAdapter.vertexContract(), vertex, fragment,
                             interfacePlan.project("vertex", stage), allowStorageBuffers);
                 } catch (RuntimeException failure) {
-                    deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
+                    deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:"
+                            + VertexBridgeDeviations.safeReason(failure));
                 }
                 acceptVertex(conversion, hostLayoutLane + "_VERTEX_BRIDGE",
                         hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
@@ -521,23 +522,37 @@ public final class PackPlanBuilder {
                             vertex, vertexFile(), fragment, interfacePlan.project("vertex", stage),
                             allowStorageBuffers);
                 } catch (RuntimeException failure) {
-                    deviations.add("SHADOW_ENTITY_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
+                    deviations.add("SHADOW_ENTITY_VERTEX_CONVERSION_FAILED:"
+                            + VertexBridgeDeviations.safeReason(failure));
                 }
-                acceptVertex(conversion, "SHADOW_ENTITY_VERTEX_BRIDGE", vertexBridgeDeviation(name));
+                acceptVertex(conversion, "SHADOW_ENTITY_VERTEX_BRIDGE", VertexBridgeDeviations.unsupported(name));
             } else if (isTerrainLike(name)) {
-                LegacyGlslConverter.TerrainVertexConversion conversion;
-                if (name.equals("shadow")) {
-                    conversion = TerrainVertexBridge.convertShadowVertex(vertex, vertexFile(), fragment,
-                            interfacePlan.project("vertex", stage), allowStorageBuffers);
-                } else if (terrainMaterial.modern()) {
-                    conversion = TerrainVertexBridge.convertModernTerrainVertex(vertex, null, fragment,
-                            interfacePlan.project("vertex", stage), allowStorageBuffers);
-                } else {
-                    conversion = TerrainVertexBridge.convertTerrainVertex(vertex, vertexFile(), fragment,
-                            allowStorageBuffers);
+                LegacyGlslConverter.TerrainVertexConversion conversion = null;
+                String unsupported = VertexBridgeDeviations.unsupported(name);
+                try {
+                    conversion = terrainVertexOrThrow();
+                } catch (RuntimeException failure) {
+                    deviations.add(VertexBridgeDeviations.conversionFailure(unsupported, failure));
                 }
-                acceptVertex(conversion, null, vertexBridgeDeviation(name));
+                acceptVertex(conversion, null, unsupported);
             }
+        }
+
+        /** The shadow, modern terrain or legacy terrain vertex bridge, throwing its first concrete failure. */
+        private LegacyGlslConverter.TerrainVertexConversion terrainVertexOrThrow() {
+            UniformRegistry.ProgramInterface vertexInterface = interfacePlan.project("vertex", stage);
+            if (name.equals("shadow")) {
+                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, vertexFile(), fragment,
+                        GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, vertexInterface, true, false,
+                        allowStorageBuffers);
+            }
+            if (terrainMaterial.modern()) {
+                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,
+                        GlslVertexPreambles.MODERN_TERRAIN_VERTEX_PREAMBLE, vertexInterface, false, false,
+                        allowStorageBuffers);
+            }
+            return TerrainVertexBridge.convertLegacyVertexOrThrow(vertex, vertexFile(), fragment,
+                    GlslVertexPreambles.TERRAIN_VERTEX_PREAMBLE, allowStorageBuffers);
         }
 
         private void convertEntityVertex() {
@@ -558,15 +573,15 @@ public final class PackPlanBuilder {
                         : EntityVertexBridge.convertEntityVertexChecked(vertex, vertexFile(), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers);
             } catch (IllegalArgumentException failure) {
-                deviations.add(entityBridgeDeviation(name, true));
-                deviations.add(entityConversionDeviation(name, failure));
+                deviations.add(VertexBridgeDeviations.entity(name, true));
+                deviations.add(VertexBridgeDeviations.entityConversionFailure(name, failure));
             }
             if (conversion == null) {
                 executable = false;
             } else {
                 convertedVertex = conversion.source();
                 vertexLayout = conversion.layout();
-                deviations.add(entityBridgeDeviation(name, false));
+                deviations.add(VertexBridgeDeviations.entity(name, false));
             }
         }
 
@@ -666,7 +681,8 @@ public final class PackPlanBuilder {
                         allowStorageBuffers, interfacePlan.effective(stage).executableUniforms(),
                         vertexSamplerPlan(interfacePlan, stage, vertex));
             } catch (IllegalArgumentException failure) {
-                deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:" + safeReason(failure));
+                deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:"
+                        + VertexBridgeDeviations.safeReason(failure));
             }
             acceptVertex(conversion, hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
             if (conversion != null) {
@@ -807,52 +823,6 @@ public final class PackPlanBuilder {
                 || name.equals("gbuffers_water");
     }
 
-    private static String vertexBridgeDeviation(String name) {
-        return switch (name) {
-            case "shadow" -> "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
-            case "shadow_entities", "shadow_block" -> "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_water" -> "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_particles", "gbuffers_particles_translucent"
-                    -> "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_block", "gbuffers_block_translucent", "gbuffers_damagedblock"
-                    -> "BLOCK_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_hand", "gbuffers_hand_water"
-                    -> "HAND_VERTEX_BRIDGE_UNSUPPORTED";
-            case "gbuffers_entities", "gbuffers_entities_translucent",
-                    "gbuffers_spidereyes" -> "ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
-            default -> "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
-        };
-    }
-
-    private static String entityBridgeDeviation(String name, boolean unsupported) {
-        return switch (name) {
-            case "gbuffers_block", "gbuffers_block_translucent", "gbuffers_damagedblock" -> unsupported
-                    ? "BLOCK_VERTEX_BRIDGE_UNSUPPORTED" : "BLOCK_VERTEX_BRIDGE";
-            case "gbuffers_hand", "gbuffers_hand_water" -> unsupported
-                    ? "HAND_VERTEX_BRIDGE_UNSUPPORTED" : "HAND_VERTEX_BRIDGE";
-            default -> unsupported
-                    ? "ENTITY_VERTEX_BRIDGE_UNSUPPORTED" : "ENTITY_VERTEX_BRIDGE";
-        };
-    }
-
-    /**
-     * Preserves the first concrete vertex conversion failure next to the
-     * generic bridge code so diagnostics name the actual blocker. The
-     * generic code keeps driving severity routing; this code is
-     * diagnostic-only and never matches a severe prefix.
-     */
-    private static String entityConversionDeviation(String name, IllegalArgumentException failure) {
-        String reason = failure.getMessage() == null ? "unknown" : failure.getMessage();
-        int cut = Math.min(reason.length(), 120);
-        return switch (name) {
-            case "gbuffers_block", "gbuffers_block_translucent", "gbuffers_damagedblock" ->
-                    "BLOCK_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);
-            case "gbuffers_hand", "gbuffers_hand_water" ->
-                    "HAND_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);
-            default -> "ENTITY_VERTEX_CONVERSION_FAILED:" + reason.substring(0, cut);
-        };
-    }
-
     private static Map<String, PreparedShaderSource> preparedStages(PackProgram program) {
         Map<String, PreparedShaderSource> result = new TreeMap<>(program.preparedSources());
         if (result.isEmpty()) {
@@ -957,14 +927,6 @@ public final class PackPlanBuilder {
         } catch (RuntimeException ignored) {
             return "";
         }
-    }
-
-    private static String safeReason(RuntimeException failure) {
-        String message = failure.getMessage();
-        if (message == null || message.isBlank()) {
-            return "source";
-        }
-        return message.replaceAll("[^A-Za-z0-9_.-]+", "_");
     }
 
     /** The program's samplers as its vertex stage declares them, at the fragment stage's bindings. */

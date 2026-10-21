@@ -918,6 +918,11 @@ final class FixturePackTest {
                 Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
         JsonObject baseline = root.getAsJsonObject("fixtures").getAsJsonObject(fixture);
         String label = baselinePath.getFileName() + " " + fixture;
+        if (TestPacks.printBaselines()) {
+            System.out.println("[chimera] fixture baseline " + label + " reportSha256=" + report.sha256());
+            System.out.println("[chimera] fixture baseline " + label + " expectedDeviations="
+                    + expectedDeviations(report));
+        }
         assertTrue(baseline != null, label + " is missing");
         assertEquals(baseline.get("reportSha256").getAsString(), report.sha256(), label + " report hash");
         assertEquals(baseline.get("expectedPassInventory").toString(),

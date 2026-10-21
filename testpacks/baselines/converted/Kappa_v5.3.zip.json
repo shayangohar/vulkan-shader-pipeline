@@ -87,6 +87,8 @@
   "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "7671ba497789c197 6432c19abe9f5c4d",
   "gbuffers_skybasic.fsh": "7e6e287f9664c6eb 5527388afc2811c3",
   "gbuffers_skybasic.vsh": "9b1735a794849e57 83e7bfba4aa6db50",
+  "gbuffers_terrain.fsh": "6c479db813b98613 cf3ee8b8882354d6",
+  "gbuffers_terrain.vsh": "3d24f4c949a1e2d7 4eb8679b8e71aff7",
   "prepare.fsh": "d7f54e2346481cd4 173a550bbe3f7266",
   "prepare.vsh": "b72a2a8e0816d0d9 46fc179979fe32e1",
   "prepare1.fsh": "c152e7ce434de0b0 9ec6bce00a579e04",

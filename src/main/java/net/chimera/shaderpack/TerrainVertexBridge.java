@@ -411,55 +411,66 @@ final class TerrainVertexBridge {
             boolean allowStorageBuffers
     ) {
         try {
-            String src = EntityDeclarations.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source,
-                    sourceFile, true));
-            String stripped = stripComments(src);
-            GlslVersion.requireSupported(stripped, "legacy vertex", true);
-            if (GlslDeclarations.main(GlslTree.parse(stripped)) == null
-                    || !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
-                throw new IllegalArgumentException("legacy vertex requires main and gl_Position");
-            }
-            rejectTerrainVertexFeatures(stripped, allowStorageBuffers);
-
-            Map<String, String> vertexTypes = parseTerrainVaryings(stripped);
-            Map<String, String> fragmentTypes = parseTerrainVaryings(stripComments(fragmentSource));
-            for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
-                String vertexType = vertexTypes.get(entry.getKey());
-                if (!entry.getValue().equals(vertexType)) {
-                    throw new IllegalArgumentException("legacy varying mismatch: " + entry.getKey());
-                }
-            }
-
-            Map<String, Integer> locations = new TreeMap<>();
-            int location = 0;
-            for (String name : vertexTypes.keySet().stream().sorted().toList()) {
-                locations.put(name, location++);
-            }
-            LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
-                    locations);
-
-            String converted = LegacyGlslConverter.withoutFirstVersionLine(src);
-            converted = withoutEntityAttributes(converted);
-            converted = replaceTerrainVaryings(converted, layout, "out");
-            converted = converted.replaceAll("\\bgl_Vertex\\b", "chimeraVertexValue()");
-            converted = converted.replaceAll("\\bgl_Color\\b", "chimeraColorValue()");
-            converted = converted.replaceAll("\\bgl_MultiTexCoord0\\b", "chimeraTexCoord0Value()");
-            converted = converted.replaceAll("\\bgl_MultiTexCoord1\\b", "chimeraTexCoord1Value()");
-            converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)", "chimeraFtransform()");
-            String entityType = terrainEntityType(stripped);
-            if (entityType != null) {
-                converted = converted.replaceAll("\\bmc_Entity\\b",
-                        entityType.equals("vec2") ? "chimeraMcEntityValue()" : "chimeraMcEntityValue().x");
-            }
-            if (GlslTokenRewriter.containsIdentifier(converted, "mc_Entity")) {
-                throw new IllegalArgumentException("mc_Entity is used without a supported declaration");
-            }
-            return new LegacyGlslConverter.TerrainVertexConversion(
-                    "#version 460\n" + vertexPreamble + converted,
-                    layout);
-        } catch (Exception e) {
+            return convertLegacyVertexOrThrow(source, sourceFile, fragmentSource, vertexPreamble, allowStorageBuffers);
+        } catch (RuntimeException unsupported) {
             return null;
         }
+    }
+
+    /** The legacy vertex bridge, throwing its first concrete failure where the overloads above return null. */
+    static LegacyGlslConverter.TerrainVertexConversion convertLegacyVertexOrThrow(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            String vertexPreamble,
+            boolean allowStorageBuffers
+    ) {
+        String src = EntityDeclarations.defaultUnboundIdentityAttributes(LegacyGlslConverter.prepareSource(source,
+                sourceFile, true));
+        String stripped = stripComments(src);
+        GlslVersion.requireSupported(stripped, "legacy vertex", true);
+        if (GlslDeclarations.main(GlslTree.parse(stripped)) == null
+                || !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
+            throw new IllegalArgumentException("legacy vertex requires main and gl_Position");
+        }
+        rejectTerrainVertexFeatures(stripped, allowStorageBuffers);
+
+        Map<String, String> vertexTypes = parseTerrainVaryings(stripped);
+        Map<String, String> fragmentTypes = parseTerrainVaryings(stripComments(fragmentSource));
+        for (Map.Entry<String, String> entry : fragmentTypes.entrySet()) {
+            String vertexType = vertexTypes.get(entry.getKey());
+            if (!entry.getValue().equals(vertexType)) {
+                throw new IllegalArgumentException("legacy varying mismatch: " + entry.getKey());
+            }
+        }
+
+        Map<String, Integer> locations = new TreeMap<>();
+        int location = 0;
+        for (String name : vertexTypes.keySet().stream().sorted().toList()) {
+            locations.put(name, location++);
+        }
+        LegacyGlslConverter.TerrainVaryingLayout layout = new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes,
+                locations);
+
+        String converted = LegacyGlslConverter.withoutFirstVersionLine(src);
+        converted = withoutEntityAttributes(converted);
+        converted = replaceTerrainVaryings(converted, layout, "out");
+        converted = converted.replaceAll("\\bgl_Vertex\\b", "chimeraVertexValue()");
+        converted = converted.replaceAll("\\bgl_Color\\b", "chimeraColorValue()");
+        converted = converted.replaceAll("\\bgl_MultiTexCoord0\\b", "chimeraTexCoord0Value()");
+        converted = converted.replaceAll("\\bgl_MultiTexCoord1\\b", "chimeraTexCoord1Value()");
+        converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)", "chimeraFtransform()");
+        String entityType = terrainEntityType(stripped);
+        if (entityType != null) {
+            converted = converted.replaceAll("\\bmc_Entity\\b",
+                    entityType.equals("vec2") ? "chimeraMcEntityValue()" : "chimeraMcEntityValue().x");
+        }
+        if (GlslTokenRewriter.containsIdentifier(converted, "mc_Entity")) {
+            throw new IllegalArgumentException("mc_Entity is used without a supported declaration");
+        }
+        return new LegacyGlslConverter.TerrainVertexConversion(
+                "#version 460\n" + vertexPreamble + converted,
+                layout);
     }
 
     /** Static probe helper used by PackProbe without compiling a shader. */
@@ -578,19 +589,23 @@ final class TerrainVertexBridge {
     }
 
     static void rejectTerrainVertexFeatures(String source, boolean allowStorageBuffers) {
-        if (GlslTokenRewriter.containsIdentifier(source,
-                name -> LEGACY_TERRAIN_REFUSED.contains(name) || name.startsWith("image"))) {
-            throw new IllegalArgumentException("unsupported terrain vertex feature");
+        String refused = GlslTokenRewriter.firstIdentifier(source,
+                name -> LEGACY_TERRAIN_REFUSED.contains(name) || name.startsWith("image"));
+        if (refused != null) {
+            throw new IllegalArgumentException("unsupported terrain vertex feature " + refused);
         }
         if (!allowStorageBuffers && GlslTokenRewriter.containsIdentifier(source, "buffer")) {
             throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
         }
-        if (GlslTokenRewriter.containsIdentifier(source, MODERN_SYNTAX::contains)) {
-            throw new IllegalArgumentException("modern GLSL is not supported in terrain vertex");
+        String modern = GlslTokenRewriter.firstIdentifier(source, MODERN_SYNTAX::contains);
+        if (modern != null) {
+            throw new IllegalArgumentException("modern GLSL is not supported in terrain vertex: " + modern);
         }
         List<TerrainDeclarations.Declaration> attributes = TerrainDeclarations.keyword(source, "attribute");
-        if (attributes.stream().anyMatch(attribute -> !attribute.name().equals("mc_Entity"))) {
-            throw new IllegalArgumentException("unsupported terrain attribute");
+        TerrainDeclarations.Declaration other = attributes.stream()
+                .filter(attribute -> !attribute.name().equals("mc_Entity")).findFirst().orElse(null);
+        if (other != null) {
+            throw new IllegalArgumentException("unsupported terrain attribute " + other.name());
         }
         if (namesAttribute(source)
                 && attributes.stream().noneMatch(attribute -> LEGACY_ENTITY_TYPES.contains(attribute.type()))) {
@@ -728,10 +743,14 @@ final class TerrainVertexBridge {
         return result;
     }
 
-    /** The legacy attributes the extended terrain format backs, with the types each may be declared as. */
+    /**
+     * The legacy attributes the extended terrain format backs, with the types each may be declared
+     * as. superDuperVanilla's waving terrain declares {@code attribute vec3 at_midBlock}.
+     */
     private static final Map<String, Set<String>> TERRAIN_ATTRIBUTE_TYPES = Map.of(
             "mc_Entity", Set.of("float", "vec2", "vec3", "vec4"),
             "mc_midTexCoord", Set.of("vec2", "vec4"),
+            "at_midBlock", Set.of("vec3", "vec4", "ivec3", "ivec4"),
             "at_tangent", Set.of("vec4"));
 
     /** Removes the small legacy attribute declarations backed by the extended terrain format. */
@@ -756,9 +775,14 @@ final class TerrainVertexBridge {
         return result;
     }
 
+    /**
+     * Each host input the vertex reads, as an expression of the type it is declared with, whether
+     * declared {@code in} or with the legacy {@code attribute} keyword; undeclared built-ins and
+     * inputs take their natural types.
+     */
     static Map<String, String> modernTerrainInputReplacements(String source) {
         Map<String, String> replacements = new TreeMap<>();
-        for (TerrainDeclarations.Declaration input : TerrainDeclarations.modern(source, Set.of("in"))) {
+        for (TerrainDeclarations.Declaration input : TerrainDeclarations.modern(source, Set.of("in", "attribute"))) {
             String expression = modernTerrainInputExpression(input.type(), input.name());
             if (!expression.isBlank()) {
                 replacements.put(input.name(), expression);
