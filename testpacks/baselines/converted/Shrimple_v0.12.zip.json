@@ -66,6 +66,12 @@
   "gbuffers_block_translucent.vsh": "1c7bcb8bbdae0d59 dc0a249e751de147",
   "gbuffers_clouds.fsh": "a5a14f197524d8fe 83bd0703aa9719da",
   "gbuffers_clouds.vsh": "bc65ee758e94f14a e5b0a2f87eebbf6f",
+  "gbuffers_entities.fsh": "b2535d99235552c9 38328d89f300cc0b",
+  "gbuffers_entities.vsh": "96b614309c90df66 b45281fd77fd6b51",
+  "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].fsh": "72015f4152322d27 c7bfa4a26d9732a5",
+  "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].vsh": "a08a318543acb3fd e059bcb2ae50d5c4",
+  "gbuffers_entities_translucent.fsh": "7d8fd0ea67374d38 f55d0d30465add65",
+  "gbuffers_entities_translucent.vsh": "96b614309c90df66 b45281fd77fd6b51",
   "gbuffers_line.fsh": "33cd70d4e145d61d 873a16f9cab7c191",
   "gbuffers_line.vsh": "9c39a2dc87997cee 166058a58ed4e01e",
   "gbuffers_particles.fsh": "fc5da3d719c3f94f 98e64681141d9020",
@@ -84,6 +90,8 @@
   "gbuffers_skytextured [sky input variant SKY_POSITION_UV].vsh": "da93dee658c46f48 81837bad53d27ea5",
   "gbuffers_skytextured.fsh": "b08d3cea4f591fe9 b56cea529979a0cd",
   "gbuffers_skytextured.vsh": "acd983cc5a21e285 80f64248120e2d7f",
+  "gbuffers_spidereyes.fsh": "de7c11e72ac85535 17399fcd18423aeb",
+  "gbuffers_spidereyes.vsh": "2e260a63eb0e5d2f e949d12339b5ed6e",
   "gbuffers_weather.fsh": "864ccd88c035df15 0408555d23f50bb1",
   "gbuffers_weather.vsh": "27368976d8bf9d63 813f7304c1d643e9"
 }

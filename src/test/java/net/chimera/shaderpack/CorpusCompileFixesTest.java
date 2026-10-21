@@ -488,6 +488,33 @@ final class CorpusCompileFixesTest {
     }
 
     /**
+     * Shrimple's entity fragment reads the entityId uniform and also names a parameter entityId
+     * (GetSceneEntityLightColor(const in int entityId)). Only the uniform becomes the varying.
+     */
+    @Test
+    void aParameterNamedEntityIdKeepsItsName(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 120
+                uniform sampler2D texture;
+                uniform int entityId;
+                varying vec2 uv;
+                vec4 lightColor(const in int entityId) { return vec4(float(entityId) / 255.0); }
+                void main() { gl_FragData[0] = texture2D(texture, uv) * lightColor(entityId); }
+                """);
+        PackProgramPlan entities = PackProbe.analyze(root).plan().program("gbuffers_entities");
+        String fragment = entities.convertedFragment();
+        assertTrue(entities.executable() && fragment.contains("lightColor(const in int entityId)")
+                && fragment.contains("float(entityId) / 255.0") && fragment.contains("lightColor(int(chimera"),
+                entities.deviations() + "\n" + fragment);
+    }
+
+    /**
      * Escheridia's programs share a header declaring textures most of them never read. GL leaves
      * such a sampler inactive, so one with no slot is dropped rather than refused.
      */

@@ -731,7 +731,8 @@ public final class EntityVertexBridge {
                 replacements.put(name, entityIdExpression(layout, name));
             }
         }
-        return replacements.isEmpty() ? source : GlslTokenRewriter.replaceIdentifiers(source, replacements);
+        // Only the uniform: Shrimple's GetSceneEntityLightColor(const in int entityId) names its own.
+        return replacements.isEmpty() ? source : GlslScopedReferences.replace(source, replacements);
     }
 
     /**
