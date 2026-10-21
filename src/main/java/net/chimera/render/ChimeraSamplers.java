@@ -42,7 +42,12 @@ public final class ChimeraSamplers {
      * the reference depth is at most the stored one, as OpenGL's GL_LEQUAL comparison.
      */
     public static long depthCompare() {
-        return SamplerManager.getTextureSampler(depthCompareKey());
+        return depthCompare(true);
+    }
+
+    /** {@link #depthCompare()}, or its nearest variant (Iris GlSampler.NEAREST_HW for shadowtexNNearest). */
+    public static long depthCompare(boolean linear) {
+        return SamplerManager.getTextureSampler(linear ? depthCompareKey() : nearestDepthCompareKey());
     }
 
     static SamplerKey flatKey(boolean linear, boolean clamp) {
@@ -65,6 +70,11 @@ public final class ChimeraSamplers {
 
     static SamplerKey depthCompareKey() {
         return new SamplerKey(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
+                0.0F, 0.0F, 0.0F, GL_COMPARE_R_TO_TEXTURE, GL_LEQUAL);
+    }
+
+    static SamplerKey nearestDepthCompareKey() {
+        return new SamplerKey(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
                 0.0F, 0.0F, 0.0F, GL_COMPARE_R_TO_TEXTURE, GL_LEQUAL);
     }
 }

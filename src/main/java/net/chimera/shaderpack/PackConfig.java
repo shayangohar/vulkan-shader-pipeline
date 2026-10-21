@@ -110,11 +110,28 @@ public final class PackConfig {
             int resolution,
             float distance,
             Map<String, String> rawValues,
-            List<String> deviations
+            List<String> deviations,
+            ShadowTargetDirectives targets
     ) {
         public ShadowSettings {
             rawValues = Collections.unmodifiableMap(new TreeMap<>(rawValues));
             deviations = List.copyOf(new TreeSet<>(deviations));
+            targets = targets == null ? ShadowTargetDirectives.defaults() : targets;
+        }
+
+        /** The shadowcolor targets the shadow pass renders, shadowcolor0 onward. */
+        public int colorTargetCount() {
+            return ShadowTargetDirectives.LEGACY_COLOR_TARGETS;
+        }
+
+        /** The shadow pass's colour attachment formats: each target's, in index order. */
+        public List<Integer> colorAttachmentFormats() {
+            return targets.attachmentFormats(colorTargetCount());
+        }
+
+        /** Settings with Iris's default shadow target directives. */
+        public ShadowSettings(int resolution, float distance, Map<String, String> rawValues, List<String> deviations) {
+            this(resolution, distance, rawValues, deviations, null);
         }
 
         public float distanceRenderMultiplier() {
@@ -298,11 +315,23 @@ public final class PackConfig {
             }
         }
 
-        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues);
+        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues, shadowTargets(programs));
         addShadowConstants(shadowSettings, collected.shadowValues, collected.shaderConstants);
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
                 shadowSettings, collected.shaderConstants, collected.deviations, settings,
                 collected.targetSettings, collected.flips, collected.preFlips, collected.paddedAlphaTargets);
+    }
+
+    /**
+     * The shadow target directives, read as Iris's ProgramSet.locateDirectives reads pack
+     * directives: from the fragment sources of every program but final.
+     */
+    private static ShadowTargetDirectives shadowTargets(List<PackProgram> programs) {
+        return ShadowTargetDirectives.parse(programs.stream()
+                .sorted(Comparator.comparing(PackProgram::name))
+                .filter(program -> !program.name().equals("final"))
+                .map(PackProgram::executableFragmentSource)
+                .toList());
     }
 
     /** What parsing gathers from the sources and shaders.properties before shadow validation. */
@@ -596,7 +625,7 @@ public final class PackConfig {
         return null;
     }
 
-    private static float[] parseColor(String value) {
+    static float[] parseColor(String value) {
         if (value == null) {
             return null;
         }
@@ -637,7 +666,8 @@ public final class PackConfig {
         return normalized;
     }
 
-    private static ShadowSettings validateShadowSettings(Map<String, String> rawValues) {
+    private static ShadowSettings validateShadowSettings(Map<String, String> rawValues,
+                                                         ShadowTargetDirectives targets) {
         List<String> deviations = new ArrayList<>();
         int resolution = validShadowMapResolution(rawValues.get("shadowMapResolution"), deviations);
         float distance = validShadowDistance(rawValues.get("shadowDistance"), deviations);
@@ -654,7 +684,8 @@ public final class PackConfig {
                 deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
             }
         }
-        return new ShadowSettings(resolution, distance, rawValues, deviations);
+        deviations.addAll(targets.deviations());
+        return new ShadowSettings(resolution, distance, rawValues, deviations, targets);
     }
 
     /** The shadow settings validated above; any other collected key is reported unsupported. */

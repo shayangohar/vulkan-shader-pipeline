@@ -12,6 +12,7 @@ import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.TargetStep;
@@ -538,9 +539,9 @@ final class PackPostChain {
             }
         }
         for (String sampler : samplerNames) {
-            if (("shadowcolor0".equals(sampler) || "shadowcolor1".equals(sampler))
-                    && (!pass.shadowPass.shadowFrameReady || pass.shadowPass.shadowMap.shadowColor(
-                    sampler.equals("shadowcolor1") ? 1 : 0) == null)) return false;
+            int shadowColor = PackResourcePlan.shadowColorIndex(sampler);
+            if (shadowColor >= 0 && (!pass.shadowPass.shadowFrameReady
+                    || pass.shadowPass.shadowMap.shadowColor(shadowColor) == null)) return false;
         }
         return true;
     }

@@ -12,6 +12,7 @@ import org.lwjgl.vulkan.VkRenderingInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
@@ -36,6 +37,8 @@ public final class PackGeometryContext {
     private static boolean geometryWindow;
     private static boolean clearFirstColor;
     private static boolean clearShadowAttachments;
+    /** Each shadow attachment's clear colour as the window opens; null loads it. */
+    private static List<float[]> shadowClears = List.of();
 
     private PackGeometryContext() {}
 
@@ -54,10 +57,17 @@ public final class PackGeometryContext {
         beginInternal(colorImages, depthImage, false, true);
     }
 
-    /** Opens the authored shadow MRT, clearing colors and depth once, not per terrain layer. */
-    public static void beginShadow(List<VulkanImage> colorImages, VulkanImage depthImage) {
+    /**
+     * Opens the authored shadow MRT, clearing depth and each colour with its clear colour once, not
+     * per terrain layer. A null clear colour keeps that target's contents.
+     */
+    public static void beginShadow(List<VulkanImage> colorImages, VulkanImage depthImage, List<float[]> clears) {
+        if (clears.size() != colorImages.size()) {
+            throw new IllegalArgumentException("one shadow clear per colour attachment");
+        }
         beginInternal(colorImages, depthImage, false, true);
         clearShadowAttachments = true;
+        shadowClears = new ArrayList<>(clears);
     }
 
     private static void beginInternal(List<VulkanImage> colorImages, VulkanImage depthImage,
@@ -130,22 +140,25 @@ public final class PackGeometryContext {
                 glOriented);
     }
 
-    /** The color attachments: shadow colors clear to 1, a fresh coverage window's target to 0, the rest load. */
+    /**
+     * The color attachments: a shadow window's colours clear to their own colours as it opens, a
+     * fresh coverage window's target to 0, the rest load.
+     */
     private static VkRenderingAttachmentInfo.Buffer colorAttachments(MemoryStack stack) {
         VkRenderingAttachmentInfo.Buffer colorAttachments =
                 VkRenderingAttachmentInfo.calloc(colors.size(), stack);
         for (int index = 0; index < colors.size(); index++) {
-            boolean clears = clearShadowAttachments || (!geometryWindow && index == 0 && clearFirstColor);
+            float[] clearColor = clearShadowAttachments ? shadowClears.get(index)
+                    : !geometryWindow && index == 0 && clearFirstColor ? new float[4] : null;
             VkRenderingAttachmentInfo info = colorAttachments.get(index);
             info.sType(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR)
                     .imageView(PackPostTargets.attachmentView(colors.get(index)))
                     .imageLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-                    .loadOp(clears ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)
+                    .loadOp(clearColor != null ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD)
                     .storeOp(VK_ATTACHMENT_STORE_OP_STORE);
-            if (clears) {
+            if (clearColor != null) {
                 VkClearValue clear = VkClearValue.calloc(stack);
-                float value = clearShadowAttachments ? 1.0f : 0.0f;
-                clear.color().float32(stack.floats(value, value, value, value));
+                PackPostTargets.clearColorValue(stack, clear.color(), colors.get(index).format, clearColor);
                 info.clearValue(clear);
             }
         }
@@ -189,6 +202,7 @@ public final class PackGeometryContext {
         geometryWindow = false;
         clearFirstColor = false;
         clearShadowAttachments = false;
+        shadowClears = List.of();
     }
 
     private static void trace(String message) {

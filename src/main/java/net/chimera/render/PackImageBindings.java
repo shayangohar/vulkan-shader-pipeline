@@ -97,7 +97,7 @@ final class PackImageBindings {
             case DEPTH_TARGET -> depthTargetImage(entry.resourceKey());
             case SHADOW_DEPTH -> shadowDepthImage(entry.resourceKey());
             case SHADOW_COLOR ->
-                    pass.shadowPass.shadowMap.shadowColor(entry.resourceKey().equals("shadowcolor1") ? 1 : 0);
+                    pass.shadowPass.shadowMap.shadowColor(PackResourcePlan.shadowColorIndex(entry.resourceKey()));
             case PACK_TEXTURE -> pass.packResourceOwner == null ? null
                     : pass.packResourceOwner.image(entry.resourceKey());
             case ADVANCED_IMAGE -> pass.packAdvancedImageOwner == null ? null

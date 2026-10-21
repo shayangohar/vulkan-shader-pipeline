@@ -8,7 +8,9 @@ import java.util.TreeMap;
 /**
  * Immutable load-time plan for one complete pack program. Probe and runtime
  * pipeline construction consume the same instance, so eligibility cannot
- * drift between reporting and execution.
+ * drift between reporting and execution. {@code shadowAttachmentFormats} is the shadow pass's
+ * colour attachment contract, shadowcolor0 onward, that a shadow-stage pipeline declares; it is
+ * empty for every other stage.
  */
 public record PackProgramPlan(
         PackProgram program,
@@ -26,7 +28,8 @@ public record PackProgramPlan(
         TerrainMaterialPlan terrainMaterial,
         GeometryOutputPlan geometryOutputPlan,
         PackAlphaTestPlan alphaTestPlan,
-        PackBlendPlan blendPlan
+        PackBlendPlan blendPlan,
+        List<Integer> shadowAttachmentFormats
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -45,6 +48,7 @@ public record PackProgramPlan(
                 ? PackAlphaTestPlan.forProgram(program == null ? "" : program.name(), PackSettingsPlan.empty())
                 : alphaTestPlan;
         blendPlan = blendPlan == null ? PackBlendPlan.empty() : blendPlan;
+        shadowAttachmentFormats = shadowAttachmentFormats == null ? List.of() : List.copyOf(shadowAttachmentFormats);
     }
 
     /** A plan with the default family adapter, terrain material, alpha test and blend for its program. */
@@ -62,7 +66,8 @@ public record PackProgramPlan(
             boolean executable
     ) {
         this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
-                convertedFragment, convertedVertex, vertexLayout, deviations, executable, null, null, null, null, null);
+                convertedFragment, convertedVertex, vertexLayout, deviations, executable, null, null, null, null, null,
+                null);
     }
 
     /** The authored cloud program provably draws nothing (see AuthoredOutput). */

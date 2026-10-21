@@ -16,6 +16,7 @@ import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
@@ -399,6 +400,11 @@ public final class PackPostTargets {
     }
 
     /** Pack targets render to level 0 only, through an identity view of exactly one level. */
+    /** A pack target's clear colour in its format's kind (PackTargetImages.clearValue). */
+    public static void clearColorValue(MemoryStack stack, VkClearColorValue clear, int vkFormat, float[] color) {
+        PackTargetImages.clearValue(stack, clear, vkFormat, color);
+    }
+
     public static long attachmentView(VulkanImage image) {
         return image.getLevelImageViews() != null ? image.getLevelImageView(0) : image.getImageView();
     }

@@ -397,11 +397,11 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
-            int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats()
+            int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats(plan)
                     : outputPlan != null && outputPlan.requiresDynamicAttachments()
                     ? outputPlan.outputFormatsArray() : null;
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
-                    ? new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF, PackBlendPlan.Mode.OFF}
+                    ? shadowAttachmentBlends(attachmentFormats)
                     : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
             GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, fragmentSource,
                     imageBindings, attachmentFormats, attachmentBlends, plan.blendPlan().program());
@@ -595,7 +595,7 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, fragmentSource,
-                    prepared.imageBindings(), shadowAttachmentFormats(), null, plan.blendPlan().program());
+                    prepared.imageBindings(), shadowAttachmentFormats(plan), null, plan.blendPlan().program());
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -603,9 +603,21 @@ public final class PackPipelines {
         }
     }
 
-    /** ChimeraShadowMap's colour attachments, shadowcolor0 and shadowcolor1: both VK_FORMAT_R8G8B8A8_UNORM. */
-    private static int[] shadowAttachmentFormats() {
-        return new int[] {37, 37};
+    /**
+     * ChimeraShadowMap's colour attachments in the pack's shadowcolor formats (PackProgramPlan);
+     * a plan made without pack settings gets Iris's default, two RGBA8 targets.
+     */
+    private static int[] shadowAttachmentFormats(PackProgramPlan plan) {
+        List<Integer> formats = plan.shadowAttachmentFormats();
+        if (formats.isEmpty()) return new int[] {37, 37};
+        return formats.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    /** Blending off on every shadow attachment, as the shadow pass draws its casters. */
+    private static PackBlendPlan.Mode[] shadowAttachmentBlends(int[] formats) {
+        PackBlendPlan.Mode[] blends = new PackBlendPlan.Mode[formats.length];
+        Arrays.fill(blends, PackBlendPlan.Mode.OFF);
+        return blends;
     }
 
     /**

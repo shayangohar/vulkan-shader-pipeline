@@ -194,7 +194,12 @@ public final class PackPlanBuilder {
             return new PackProgramPlan(program, stages, interfacePlan, stageInterfaces,
                     varyingLocations(), targetPlan, convertedFragment, convertedVertex,
                     vertexLayout, deviations, executable,
-                    familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan);
+                    familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan, shadowAttachments());
+        }
+
+        /** The shadow pass's colour attachment formats, which every shadow-stage pipeline declares. */
+        private List<Integer> shadowAttachments() {
+            return stage.shadowPass() && config != null ? config.shadowSettings().colorAttachmentFormats() : List.of();
         }
 
         private PackSettingsPlan settings() {

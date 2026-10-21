@@ -326,7 +326,7 @@ final class ModernPostTranslationTest {
                 plan.stageInterfaces(), plan.varyingLocations(), targetPlan, plan.convertedFragment(),
                 plan.convertedVertex(), plan.vertexLayout(), plan.deviations(), plan.executable(),
                 plan.familyAdapter(), plan.terrainMaterial(), plan.geometryOutputPlan(),
-                plan.alphaTestPlan(), plan.blendPlan());
+                plan.alphaTestPlan(), plan.blendPlan(), plan.shadowAttachmentFormats());
     }
 
     private static String readFixture(Path path) {

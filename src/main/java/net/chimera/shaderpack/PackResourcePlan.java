@@ -565,6 +565,11 @@ public final class PackResourcePlan {
         return matcher.matches() ? Integer.parseInt(matcher.group(1)) : null;
     }
 
+    /** The N of a shadowcolorN resource; -1 for any other name. */
+    public static int shadowColorIndex(String resource) {
+        return resource != null && resource.matches("shadowcolor[0-7]") ? resource.charAt(11) - '0' : -1;
+    }
+
     /**
      * {@code texture.<scope>.<sampler>} for this sampler or any alias of the
      * same target: Iris overrides colortex7 and gaux4 together.

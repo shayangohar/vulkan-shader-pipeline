@@ -136,7 +136,18 @@ final class PackTargetImages {
     static void clearImage(MemoryStack stack, VkCommandBuffer commandBuffer, VulkanImage image, float[] color) {
         if (image == null) throw new IllegalStateException("cannot clear missing target image");
         VkClearColorValue clear = VkClearColorValue.calloc(stack);
-        IrisColorFormats.Format format = IrisColorFormats.stored(image.format);
+        clearValue(stack, clear, image.format, color);
+        VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+        range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1)
+                .baseArrayLayer(0).layerCount(1);
+        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdClearColorImage(commandBuffer, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, range);
+        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    /** A clear colour in the image format's kind: floats, or the colour's integer parts. */
+    static void clearValue(MemoryStack stack, VkClearColorValue clear, int vkFormat, float[] color) {
+        IrisColorFormats.Format format = IrisColorFormats.stored(vkFormat);
         if (format != null && format.kind() == IrisColorFormats.Kind.UINT) {
             clear.uint32(stack.ints(unsigned(color[0]), unsigned(color[1]), unsigned(color[2]), unsigned(color[3])));
         } else if (format != null && format.kind() == IrisColorFormats.Kind.SINT) {
@@ -144,12 +155,6 @@ final class PackTargetImages {
         } else {
             clear.float32(stack.floats(color[0], color[1], color[2], color[3]));
         }
-        VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
-        range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1)
-                .baseArrayLayer(0).layerCount(1);
-        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        vkCmdClearColorImage(commandBuffer, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, range);
-        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
     private static int unsigned(float value) {

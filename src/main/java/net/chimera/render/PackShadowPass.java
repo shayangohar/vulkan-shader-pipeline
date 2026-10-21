@@ -169,7 +169,8 @@ final class PackShadowPass {
     private void beginShadowDraw(ShadowFrame frame) {
         boolean packShadow = frame.pack();
         if (packShadow) {
-            PackGeometryContext.beginShadow(this.shadowMap.shadowColors(), frame.depth());
+            PackGeometryContext.beginShadow(this.shadowMap.shadowColors(), frame.depth(),
+                    this.shadowMap.colorClears(false));
             // Pack receivers read the map with GL's v = ndc * 0.5 + 0.5.
             // The fixed host receiver compensates for VulkanMod's flip.
             ChimeraRasterOrientation.markGlOriented(this.shadowMap.getShadowRenderPass());
@@ -247,8 +248,7 @@ final class PackShadowPass {
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             frame.color().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             if (frame.pack()) {
-                this.shadowMap.shadowColor(1).transitionImageLayout(stack, cmd,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                this.shadowMap.publishColorTargets(stack, cmd);
             }
             frame.depth().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
@@ -493,7 +493,8 @@ final class PackShadowPass {
             VulkanImage image) {
         boolean compareRequired = entry.kind() == ProgramImageBindingManifest.Kind.SHADOW_DEPTH
                 && program.shadowSamplerSymbols().contains(entry.sourceSymbol());
-        long sampler = this.packShadowDepth.samplerFor(image, compareRequired);
+        boolean linear = !this.shadowMap.depthNearest(entry.resourceKey().equals("shadowtex1") ? 1 : 0);
+        long sampler = this.packShadowDepth.samplerFor(image, compareRequired, linear);
         if (compareRequired && this.loggedShadowSamplerPrograms.add(program.name())) {
             LOGGER.info("[chimera] pack shadow sampler: program={} symbol={} slot={} image={} "
                             + "sampler={} compareOp=LESS_OR_EQUAL",
@@ -601,9 +602,8 @@ final class PackShadowPass {
         }
         VulkanImage color = this.shadowMap.getShadowFramebuffer().getColorAttachment();
         VulkanImage depth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
-        VulkanImage color1 = this.shadowMap.shadowColor(1);
-        return color != null && color1 != null && depth != null
-                && color.getId() != 0L && color1.getId() != 0L && depth.getId() != 0L;
+        return color != null && depth != null && color.getId() != 0L && depth.getId() != 0L
+                && this.shadowMap.shadowColors().stream().allMatch(target -> target != null && target.getId() != 0L);
     }
 
     void recordShadowTransitionFallback(String detail) {

@@ -6,6 +6,8 @@ import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.ShadowTargetDirectives;
+import net.chimera.shaderpack.TargetSpec;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
@@ -19,6 +21,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkImageCopy;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -27,7 +30,8 @@ import static org.lwjgl.vulkan.VK10.*;
 /**
  * Manages the shadow map: framebuffer, light-space matrices, and rendering.
  *
- * The shadow map keeps an RGBA8 color buffer for the fixed host path and a
+ * The shadow map keeps an RGBA8 color buffer for the fixed host path, the pack's shadowcolor
+ * targets in their directive formats (Iris ShadowRenderTargets), and a
  * stored depth attachment for pack shadowtex0 sampling. Resolution and light
  * distance are selected once when the pack session is created.
  *
@@ -43,7 +47,8 @@ public class ChimeraShadowMap {
 
     private Framebuffer shadowFramebuffer;
     private RenderPass shadowRenderPass;
-    private VulkanImage shadowColor1;
+    /** The pack's shadowcolor directives; Iris's defaults until a pack session sets them. */
+    private ShadowTargetDirectives targets = ShadowTargetDirectives.defaults();
     private List<VulkanImage> shadowColors = List.of();
     private GraphicsPipeline shadowPipeline;
     private final DepthSampleView depthSampleView = new DepthSampleView();
@@ -112,11 +117,8 @@ public class ChimeraShadowMap {
         this.shadowFramebuffer = Framebuffer.builder(this.shadowMapSize, this.shadowMapSize, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
                 .build();
-        this.shadowColor1 = VulkanImage.builder(this.shadowMapSize, this.shadowMapSize)
-                .setFormat(VK_FORMAT_R8G8B8A8_UNORM)
-                .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
-                .setLinearFiltering(true).setClamp(true).createVulkanImage();
-        this.shadowColors = List.of(this.shadowFramebuffer.getColorAttachment(), this.shadowColor1);
+        this.targets = settings.targets();
+        this.shadowColors = createColorTargets(settings.colorTargetCount());
         // Receivers sample this D24S8 image; VulkanMod's view carries both aspects.
         VulkanImage depth = this.shadowFramebuffer.getDepthAttachment();
         ChimeraDepthViewOverride.registerOwned(depth, this.depthSampleView.ensure(depth));
@@ -142,6 +144,69 @@ public class ChimeraShadowMap {
         this.mapSnapshotValid = false;
         this.mapGeneration = 0L;
         this.initialized = true;
+    }
+
+    /**
+     * The pack's shadowcolor targets, each in its directive's format, filter and mip chain (Iris
+     * ShadowRenderTargets and ShadowRenderer.configureSampler). A target's mips build after each
+     * shadow pass; until the first, it samples its base level.
+     */
+    private List<VulkanImage> createColorTargets(int count) {
+        List<TargetSpec> specs = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            ShadowTargetDirectives.ColorTarget target = this.targets.color(index);
+            specs.add(new TargetSpec(index, target.format().vkFormat(), this.shadowMapSize, this.shadowMapSize,
+                    target.clear(), target.clearColor(), false, false, target.mipmap(),
+                    target.format().paddedAlpha(), List.of()));
+        }
+        PackTargetImages.verifyFormats(specs);
+        List<VulkanImage> images = new ArrayList<>();
+        for (TargetSpec spec : specs) {
+            VulkanImage image = PackTargetImages.createTargetImage(spec, false);
+            if (this.targets.color(spec.index()).nearestFiltering()) {
+                PackTargetImages.sampleWith(image, ChimeraSamplers.flat(false, true));
+            }
+            images.add(image);
+        }
+        return List.copyOf(images);
+    }
+
+    /**
+     * The clear colour of each shadowcolor target as the shadow pass opens: its own for a target
+     * that clears every frame, or for every target on the full clear after creation (Iris
+     * ClearPassCreator.createShadowClearPasses); null keeps the last frame's contents.
+     */
+    List<float[]> colorClears(boolean fullClear) {
+        List<float[]> clears = new ArrayList<>();
+        for (int index = 0; index < this.shadowColors.size(); index++) {
+            ShadowTargetDirectives.ColorTarget target = this.targets.color(index);
+            clears.add(fullClear || target.clear() ? target.clearColor() : null);
+        }
+        return clears;
+    }
+
+    /**
+     * Makes the pack's shadowcolor targets sampleable after the shadow pass, building the mip
+     * chain of each target that asks for one (Iris ShadowRenderer.generateMipmaps):
+     * linear-mipmap-linear, or nearest-mipmap-nearest for a nearest target.
+     */
+    void publishColorTargets(MemoryStack stack, VkCommandBuffer commandBuffer) {
+        for (int index = 0; index < this.shadowColors.size(); index++) {
+            VulkanImage image = this.shadowColors.get(index);
+            ShadowTargetDirectives.ColorTarget target = this.targets.color(index);
+            if (image.mipLevels > 1) {
+                PackTargetImages.buildMipChain(stack, commandBuffer, image);
+                PackTargetImages.sampleWith(image,
+                        ChimeraSamplers.mipmapped(image.mipLevels - 1, !target.nearestFiltering()));
+            } else {
+                image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
+        }
+    }
+
+    /** Whether a shadow depth, 0 for shadowtex0 and 1 for shadowtex1, samples nearest (shadowtexNNearest). */
+    boolean depthNearest(int index) {
+        return this.targets.depth(index).nearest();
     }
 
     private void createRenderPass() {
@@ -352,9 +417,11 @@ public class ChimeraShadowMap {
         if (this.shadowFramebuffer == null) return;
         VulkanImage shadowColor = this.shadowFramebuffer.getColorAttachment();
         VulkanImage shadowDepth = this.shadowFramebuffer.getDepthAttachment();
-        for (VulkanImage image : List.of(shadowColor, shadowDepth, this.opaqueDepth)) {
-            ((ChimeraVulkanImageAccessor) image).chimera$setSampler(this.shadowSampler);
-        }
+        ((ChimeraVulkanImageAccessor) shadowColor).chimera$setSampler(this.shadowSampler);
+        // Iris filters each shadow depth linearly unless shadowtexNNearest (ShadowRenderer.configureSampler).
+        ((ChimeraVulkanImageAccessor) shadowDepth).chimera$setSampler(ChimeraSamplers.flat(!depthNearest(0), true));
+        ((ChimeraVulkanImageAccessor) this.opaqueDepth).chimera$setSampler(
+                ChimeraSamplers.flat(!depthNearest(1), true));
         VTextureSelector.bindTexture(3, shadowColor); // slot 3 for shadow map
         VTextureSelector.bindTexture(5, shadowDepth); // slot 5 for pack shadowtex0
     }
@@ -373,7 +440,8 @@ public class ChimeraShadowMap {
             color.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             depth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         }
-        PackGeometryContext.beginShadow(this.shadowColors, this.shadowFramebuffer.getDepthAttachment());
+        PackGeometryContext.beginShadow(this.shadowColors, this.shadowFramebuffer.getDepthAttachment(),
+                colorClears(true));
         try {
             Renderer.getInstance().beginRendering(this.shadowRenderPass, this.shadowFramebuffer);
             Renderer.getInstance().endRenderPass(commandBuffer);
@@ -383,6 +451,9 @@ public class ChimeraShadowMap {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             color.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             depth.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            for (VulkanImage target : this.shadowColors) {
+                target.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
         }
         // The cleared map has no translucent casters: shadowtex1 is shadowtex0.
         this.opaqueDepthCurrent = false;
@@ -442,9 +513,9 @@ public class ChimeraShadowMap {
         if (this.shadowFramebuffer != null) this.shadowFramebuffer.cleanUp(true);
         if (this.shadowRenderPass != null) this.shadowRenderPass.cleanUp();
         if (this.shadowPipeline != null) this.shadowPipeline.cleanUp();
-        if (this.shadowColor1 != null) this.shadowColor1.free();
-        this.shadowColor1 = null;
+        this.shadowColors.forEach(VulkanImage::free);
         this.shadowColors = List.of();
+        this.targets = ShadowTargetDirectives.defaults();
         this.shadowFramebuffer = null;
         this.shadowRenderPass = null;
         this.shadowPipeline = null;
