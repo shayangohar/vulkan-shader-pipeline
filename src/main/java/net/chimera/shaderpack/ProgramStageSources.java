@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -15,7 +16,7 @@ final class ProgramStageSources {
 
     /** The stages of a program planned under {@code name}; post and terrain-material stages normalized. */
     static Map<String, PreparedShaderSource> prepare(PackProgram program, String name, boolean terrainMaterial) {
-        Map<String, PreparedShaderSource> prepared = preparedStages(program);
+        Map<String, PreparedShaderSource> prepared = flattenInterfaceBlocks(preparedStages(program));
         if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.POST) {
             return normalizeModernPostStages(prepared);
         }
@@ -35,6 +36,26 @@ final class ProgramStageSources {
                         relative(program.sourceRoot(), program.vertexPath()),
                         program.executableVertexSource(), List.of(), List.of()));
             }
+        }
+        return result;
+    }
+
+    /**
+     * The vertex and fragment stages with their interface blocks as plain varyings
+     * (InterfaceBlockFlattener). A program with another stage keeps its blocks: a geometry
+     * stage's arrayed input block cannot be flattened to match.
+     */
+    private static Map<String, PreparedShaderSource> flattenInterfaceBlocks(Map<String, PreparedShaderSource> stages) {
+        if (!Set.of("vertex", "fragment").containsAll(stages.keySet())) return stages;
+        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
+        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
+            PreparedShaderSource prepared = entry.getValue();
+            InterfaceBlockFlattener.Result flattened = InterfaceBlockFlattener.flatten(prepared.source());
+            if (flattened.blocks().isEmpty()) continue;
+            List<String> deviations = new ArrayList<>(prepared.deviations());
+            flattened.blocks().forEach(block -> deviations.add("INTERFACE_BLOCK_FLATTENED:" + block));
+            result.put(entry.getKey(), new PreparedShaderSource(prepared.stage(), prepared.relativePath(),
+                    flattened.source(), prepared.dependencies(), deviations));
         }
         return result;
     }
