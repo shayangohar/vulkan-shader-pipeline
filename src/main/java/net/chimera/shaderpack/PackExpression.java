@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.DoubleBinaryOperator;
 import java.util.regex.Pattern;
 
 /**
@@ -393,7 +392,7 @@ public final class PackExpression {
         public double evaluate(Context context, int lane) {
             return switch (this.function) {
                 case IF -> select(context, lane);
-                case RANDOM -> ThreadLocalRandom.current().nextDouble();
+                case RANDOM -> random(context);
                 case IN -> matchesAny(context);
                 case SMOOTH -> {
                     double value = lane(this.arguments.get(0), context, lane);
@@ -436,32 +435,29 @@ public final class PackExpression {
             if (this.function.unary() != null && this.arguments.size() == 1) {
                 return this.function.unary().applyAsDouble(first);
             }
+            double second = lane(this.arguments.get(1), context, lane);
             return switch (this.function) {
-                case ATAN -> Math.atan2(first, lane(this.arguments.get(1), context, lane));
-                case POW -> Math.pow(first, lane(this.arguments.get(1), context, lane));
-                case FMOD -> floorModulo(first, lane(this.arguments.get(1), context, lane));
-                case BETWEEN -> first >= context.scalar(this.arguments.get(1))
-                        && first <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
-                case EQUALS -> Math.abs(first - context.scalar(this.arguments.get(1)))
-                        <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
-                case MAX -> reduce(first, context, lane, Math::max);
-                case MIN -> reduce(first, context, lane, Math::min);
-                case CLAMP -> {
-                    double low = lane(this.arguments.get(1), context, lane);
-                    double high = lane(this.arguments.get(2), context, lane);
-                    yield Math.min(Math.max(first, low), high);
+                case FMOD -> floorModulo(first, second);
+                case BETWEEN -> first >= second && first <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
+                case EQUALS -> this.arguments.size() == 2 ? this.function.binary().applyAsDouble(first, second)
+                        : Math.abs(first - second) <= context.scalar(this.arguments.get(2)) ? 1.0 : 0.0;
+                case MIX -> first + (second - first) * lane(this.arguments.get(2), context, lane);
+                case CLAMP -> Math.min(Math.max(first, second), lane(this.arguments.get(2), context, lane));
+                default -> {
+                    if (this.function.binary() == null) {
+                        throw new IllegalStateException("unfolded function " + this.function);
+                    }
+                    yield this.function.binary().applyAsDouble(first, second);
                 }
-                default -> throw new IllegalStateException("unfolded function " + this.function);
             };
         }
 
-        /** {@code first} combined with one lane of each further argument in turn. */
-        private double reduce(double first, Context context, int lane, DoubleBinaryOperator combine) {
-            double result = first;
-            for (int index = 1; index < this.arguments.size(); index++) {
-                result = combine.applyAsDouble(result, lane(this.arguments.get(index), context, lane));
-            }
-            return result;
+        /** {@code random()} in [0, 1), or {@code random(min, max)} between them. */
+        private double random(Context context) {
+            double unit = ThreadLocalRandom.current().nextDouble();
+            if (this.arguments.isEmpty()) return unit;
+            double low = context.scalar(this.arguments.get(0));
+            return low + unit * (context.scalar(this.arguments.get(1)) - low);
         }
 
         @Override
@@ -749,7 +745,8 @@ public final class PackExpression {
             }
             require(")");
             if (arguments.size() < function.minimum() || arguments.size() > function.maximum()
-                    || (function == PackFunction.IF && arguments.size() % 2 == 0)) {
+                    || (function == PackFunction.IF && arguments.size() % 2 == 0)
+                    || (function == PackFunction.RANDOM && arguments.size() == 1)) {
                 throw new Unsupported("CUSTOM_EXPRESSION_ARITY", name);
             }
             if (function == PackFunction.SMOOTH) {

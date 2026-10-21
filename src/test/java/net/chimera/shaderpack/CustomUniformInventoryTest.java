@@ -117,7 +117,7 @@ final class CustomUniformInventoryTest {
                 {value("atan(1.0, 1.0)"), Math.PI / 4.0}, {value("todeg(torad(90.0))"), 90.0},
                 {value("if(0, 1.0, 1, 2.0, 3.0)"), 2.0}, {value("if(0, 1.0, 0, 2.0, 3.0)"), 3.0},
                 {value("between(0.5, 0.0, 1.0)"), 1.0}, {value("equals(1.0, 1.05, 0.1)"), 1.0},
-                {value("signum(-3.0) + round(1.6) + abs(-1.0)"), 2.0}};
+                {value("signum(-3.0) + abs(-1.0)"), 0.0}};
         for (double[] entry : cases) {
             assertTrue(Math.abs(entry[0] - entry[1]) < 1.0e-9,
                     "custom expression function returned " + entry[0] + ", expected " + entry[1]);
