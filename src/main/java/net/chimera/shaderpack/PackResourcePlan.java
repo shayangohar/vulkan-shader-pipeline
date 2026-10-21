@@ -501,6 +501,8 @@ public final class PackResourcePlan {
         if (COLOR_TARGET.matcher(sampler).matches()) return sampler;
         if (sampler.matches("depthtex[0-2]")) return sampler;
         if (sampler.matches("shadowtex[0-1]")) return sampler;
+        // A hardware shadow sampler reads its depth through a comparison sampler (Iris addShadowSamplers).
+        if (sampler.matches("shadowtex[0-1]HW")) return sampler.substring(0, "shadowtex0".length());
         if (sampler.matches("shadowcolor[0-7]")) return sampler;
         return sampler.equals("noisetex") ? "noisetex" : sampler;
     }

@@ -18,7 +18,7 @@ import java.util.TreeSet;
 final class FullscreenDefaultSampler {
     /** Names Iris binds itself in a fullscreen pass: one Chimera cannot serve is Chimera's gap, not unit 0. */
     private static final Set<String> IRIS_SERVED = Set.of("depthtex0", "depthtex1", "depthtex2", "gdepthtex",
-            "shadow", "watershadow", "shadowtex0", "shadowtex1", "shadowtex0HW", "shadowtex1HW", "shadowtex0DH",
+            "shadow", "watershadow", "shadowtex0", "shadowtex1", "shadowtex0DH",
             "shadowtex1DH", "shadowcolor", "shadowcolor0", "shadowcolor1", "noisetex", "dhDepthTex", "dhDepthTex0",
             "dhDepthTex1", "iris_centerDepthSmooth");
     private FullscreenDefaultSampler() {}
@@ -82,6 +82,8 @@ final class FullscreenDefaultSampler {
             return shadowColor < (settings.hasFeature(PackFeatureFlags.HIGHER_SHADOWCOLOR)
                     ? ShadowTargetDirectives.MAX_COLOR_TARGETS : ShadowTargetDirectives.LEGACY_COLOR_TARGETS);
         }
+        // and shadowtex0HW/1HW only with SEPARATE_HARDWARE_SAMPLERS.
+        if (name.matches("shadowtex[01]HW")) return settings.hasFeature(PackFeatureFlags.SEPARATE_HARDWARE_SAMPLERS);
         if (IRIS_SERVED.contains(name) || PackResourcePlan.targetIndex(name) != null) return true;
         String lookup = PackResourcePlan.isProgramShadowAlias(name)
                 ? PackResourcePlan.programResource(name, false) : name;

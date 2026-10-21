@@ -374,7 +374,7 @@ public final class PackPlanBuilder {
             deviations.addAll(program.preparationDeviations());
             stages.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(interfacePlan.deviations());
-            deviations.addAll(ShadowTargetDirectives.missingTargets(interfacePlan.samplers(), config));
+            deviations.addAll(ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config));
             stageInterfaces.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(stageMatch.deviations());
             deviations.addAll(terrainMaterial.deviations());
@@ -409,6 +409,7 @@ public final class PackPlanBuilder {
                     && (!needsVertex() || vertex != null)
                     && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
                     && interfacePlan.executable()
+                    && ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config).isEmpty()
                     && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
                     && stageMatch.executable()
                     && (targetPlan == null || targetPlan.executable())

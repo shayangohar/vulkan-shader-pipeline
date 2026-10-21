@@ -24,7 +24,13 @@ public final class SelectorNamespace {
     public static final int HIGH_COLORTEX_FIRST_SLOT = 27;
     /** Slots 34 through 39 carry shadowcolor2..shadowcolor7 (Iris HIGHER_SHADOWCOLOR). */
     public static final int HIGH_SHADOW_COLOR_FIRST_SLOT = HIGH_COLORTEX_FIRST_SLOT + 7;
-    public static final int LAST_RESERVED = HIGH_SHADOW_COLOR_FIRST_SLOT + 5;
+    /**
+     * Slots 40 and 41 carry shadowtex0HW and shadowtex1HW: the shadow depths again, through their
+     * comparison samplers (Iris SEPARATE_HARDWARE_SAMPLERS).
+     */
+    public static final int SHADOW_TEX0_HW_SLOT = HIGH_SHADOW_COLOR_FIRST_SLOT + 6;
+    public static final int SHADOW_TEX1_HW_SLOT = SHADOW_TEX0_HW_SLOT + 1;
+    public static final int LAST_RESERVED = SHADOW_TEX1_HW_SLOT;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
     /** Unreserved selector slots available to pack-owned sampled resources. */
     public static final List<Integer> PACK_SELECTOR_SLOTS = List.of(
@@ -51,6 +57,13 @@ public final class SelectorNamespace {
         if (index == 0) return SHADOW_COLOR0_SLOT;
         if (index == 1) return SHADOW_COLOR1_SLOT;
         return index >= 2 && index <= 7 ? HIGH_SHADOW_COLOR_FIRST_SLOT + index - 2 : -1;
+    }
+
+    /** The selector of a shadowcolorN or a hardware shadow sampler (shadowtex0HW, shadowtex1HW); -1 otherwise. */
+    public static int shadowSamplerSlot(String name) {
+        if ("shadowtex0HW".equals(name)) return SHADOW_TEX0_HW_SLOT;
+        if ("shadowtex1HW".equals(name)) return SHADOW_TEX1_HW_SLOT;
+        return shadowColorSlot(PackResourcePlan.shadowColorIndex(name));
     }
 
     public static boolean isAddressable(int slot) {

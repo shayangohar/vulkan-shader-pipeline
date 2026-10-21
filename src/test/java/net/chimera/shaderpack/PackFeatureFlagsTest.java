@@ -53,7 +53,7 @@ final class PackFeatureFlagsTest {
 
     @Test
     void requiredFeaturesChimeraCannotProvideRefuseThePack() {
-        assertEquals(Set.of("TESSELATION_SHADERS", "SEPARATE_HARDWARE_SAMPLERS", "A,B"),
+        assertEquals(Set.of("TESSELATION_SHADERS", "A,B"),
                 PackFeatureFlags.unprovided(List.of("TESSELATION_SHADERS", "SEPARATE_HARDWARE_SAMPLERS", "A,B",
                         "ssbo", "COMPUTE_SHADERS", "CUSTOM_IMAGES")),
                 "unknown names refuse too; custom images load and fall back where they are missing");

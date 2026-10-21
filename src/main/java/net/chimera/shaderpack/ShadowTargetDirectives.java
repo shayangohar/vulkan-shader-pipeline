@@ -67,14 +67,20 @@ public record ShadowTargetDirectives(List<ColorTarget> colors, List<DepthSamplin
     }
 
     /**
-     * A refusal for each sampler that reads a shadowcolor target the pack does not have: Iris binds
-     * shadowcolor2-7 only with HIGHER_SHADOWCOLOR (ShadowRenderTargets.getRenderTargetCount).
+     * A refusal for each sampler that reads a shadow resource Iris leaves unbound for the pack
+     * (IrisSamplers.addShadowSamplers): a shadowcolor target beyond its targets, shadowcolor2-7
+     * existing only with HIGHER_SHADOWCOLOR; and shadowtexNHW without SEPARATE_HARDWARE_SAMPLERS or
+     * without that depth's shadowHardwareFiltering.
      */
-    static List<String> missingTargets(List<UniformRegistry.SamplerBinding> samplers,
-                                       PackConfig.PackConfigData config) {
+    static List<String> unboundShadowSamplers(List<UniformRegistry.SamplerBinding> samplers,
+                                              PackConfig.PackConfigData config) {
         int count = config == null ? LEGACY_COLOR_TARGETS : config.shadowSettings().colorTargetCount();
+        boolean separate = config != null && config.settings() != null
+                && config.settings().hasFeature(PackFeatureFlags.SEPARATE_HARDWARE_SAMPLERS);
         return samplers.stream().map(UniformRegistry.SamplerBinding::name)
-                .filter(name -> PackResourcePlan.shadowColorIndex(name) >= count)
+                .filter(name -> PackResourcePlan.shadowColorIndex(name) >= count
+                        || name.matches("shadowtex[01]HW") && !(separate && config.shadowSettings().targets()
+                        .depth(name.charAt("shadowtex".length()) - '0').hardwareFiltering()))
                 .map(name -> "SAMPLER_NOT_MAPPED:" + name).toList();
     }
 

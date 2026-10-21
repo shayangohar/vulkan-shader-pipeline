@@ -102,7 +102,42 @@ final class ShadowTargetDirectivesTest {
         assertEquals(2, legacy.plan().program("shadow").shadowAttachmentFormats().size());
         assertTrue(legacy.plan().program("shadow").deviations().contains("SHADOW_OUTPUT_TARGET_UNSUPPORTED:3"));
         assertTrue(legacy.plan().program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:shadowcolor5"));
-        assertTrue(legacy.plan().program("gbuffers_terrain").deviations().contains("SAMPLER_NOT_MAPPED:shadowcolor2"));
+        PackProgramPlan terrain = legacy.plan().program("gbuffers_terrain");
+        assertTrue(terrain.deviations().contains("SAMPLER_NOT_MAPPED:shadowcolor2") && !terrain.executable());
+    }
+
+    /**
+     * With SEPARATE_HARDWARE_SAMPLERS, shadowtexNHW reads its depth through the comparison sampler,
+     * and only for a depth with shadowHardwareFiltering (IrisSamplers.addShadowSamplers).
+     */
+    @Test
+    void hardwareShadowSamplersNeedTheFeatureAndTheirFiltering(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "iris.features.required=SEPARATE_HARDWARE_SAMPLERS\n");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                const bool shadowHardwareFiltering0 = true;
+                uniform sampler2DShadow shadowtex0HW;
+                uniform sampler2DShadow shadowtex1HW;
+                varying vec2 uv;
+                void main() {
+                    float lit = shadow2D(shadowtex0HW, vec3(uv, 0.5)).x;
+                    gl_FragData[0] = vec4(lit + shadow2D(shadowtex1HW, vec3(uv, 0.5)).x);
+                }
+                """);
+        PackProgramPlan separate = PackProbe.analyze(root).plan().program("composite");
+        assertFalse(separate.deviations().contains("SAMPLER_NOT_MAPPED:shadowtex0HW"),
+                separate.deviations().toString());
+        assertTrue(separate.deviations().contains("SAMPLER_NOT_MAPPED:shadowtex1HW"), "no filtering for shadowtex1");
+        assertTrue(separate.interfacePlan().samplers().stream()
+                .anyMatch(sampler -> sampler.name().equals("shadowtex0HW")
+                && sampler.slot() == SelectorNamespace.SHADOW_TEX0_HW_SLOT));
+
+        Files.writeString(shaders.resolve("shaders.properties"), "");
+        PackProgramPlan legacy = PackProbe.analyze(root).plan().program("composite");
+        assertTrue(legacy.deviations().contains("SAMPLER_NOT_MAPPED:shadowtex0HW") && !legacy.executable(),
+                legacy.deviations().toString());
     }
 
     private static Path writeHigherShadowColorPack(Path root, String properties) throws IOException {
