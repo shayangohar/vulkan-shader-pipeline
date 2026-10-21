@@ -179,14 +179,35 @@ final class PackPassComputes implements AutoCloseable {
         }
         PackVulkanBarriers.beforeCompute(commandBuffer, stack);
         compute.kernel().bind(commandBuffer, stack, frame, compute.plan().values());
-        int[] groups = compute.plan().groups(width, height);
-        vkCmdDispatch(commandBuffer, groups[0], groups[1], groups[2]);
+        dispatchGroups(commandBuffer, stack, compute.plan(), width, height);
         PackVulkanBarriers.afterCompute(commandBuffer, stack);
         for (VulkanImage image : written.keySet()) {
             VulkanImage.transitionLayout(stack, commandBuffer, image, VK_IMAGE_LAYOUT_GENERAL,
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_READ_BIT);
         }
+    }
+
+    /**
+     * Dispatches the work groups the pack's indirect buffer holds, once earlier writes to it are
+     * visible, or Iris's work groups for this screen (ComputeProgram.dispatch).
+     */
+    private void dispatchGroups(VkCommandBuffer commandBuffer, MemoryStack stack, PassComputePlan.PassCompute plan,
+                                int width, int height) {
+        PassComputePlan.Indirect indirect = plan.indirect();
+        if (indirect == null) {
+            int[] groups = plan.groups(width, height);
+            vkCmdDispatch(commandBuffer, groups[0], groups[1], groups[2]);
+            return;
+        }
+        PackStorageBuffer buffer = buffers.buffer(indirect.buffer());
+        // A relative buffer's size follows the screen; the three counts must still lie inside it.
+        if (indirect.offset() + 12 > buffer.getBufferSize()) {
+            throw new IllegalStateException("indirect counts at " + indirect.offset() + " lie past bufferObject."
+                    + indirect.buffer());
+        }
+        PackVulkanBarriers.beforeIndirectDispatch(commandBuffer, stack);
+        vkCmdDispatchIndirect(commandBuffer, buffer.getId(), indirect.offset());
     }
 
     /**
@@ -225,9 +246,9 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     /**
-     * Why this compute cannot run in this session: a pack texture it reads could not be loaded, or
-     * a binding's image or buffer is missing (bindingRefusal). Null when it can. Loads the
-     * compute's textures.
+     * Why this compute cannot run in this session: a pack texture it reads could not be loaded, a
+     * binding's image or buffer is missing (bindingRefusal), or the buffer it dispatches from is.
+     * Null when it can. Loads the compute's textures.
      */
     private static String refusal(PassComputePlan.PassCompute compute, PackResourceOwner resources,
                                   PackAdvancedImageOwner packImages, PackStorageBufferOwner buffers) {
@@ -240,6 +261,10 @@ final class PackPassComputes implements AutoCloseable {
         for (PassComputePlan.Binding binding : compute.bindings()) {
             String refusal = bindingRefusal(binding, packImages, buffers);
             if (refusal != null) return refusal;
+        }
+        PassComputePlan.Indirect indirect = compute.indirect();
+        if (indirect != null && (buffers == null || buffers.buffer(indirect.buffer()) == null)) {
+            return "bufferObject." + indirect.buffer() + " for indirect dispatch was not allocated";
         }
         return null;
     }

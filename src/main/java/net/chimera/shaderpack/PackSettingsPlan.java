@@ -789,7 +789,7 @@ record PackSettingsPlan(
     /** Property key prefixes Chimera reads; "shadow" covers every shadow setting. */
     private static final List<String> SUPPORTED_PROPERTY_PREFIXES = List.of(
             "profile.", "program.", "iris.features.", "size.buffer.colortex", "flip.", "customTexture.",
-            "texture.", "alphaTest.", "shadow");
+            "texture.", "alphaTest.", "shadow", "indirect.");
     private static final Set<String> SUPPORTED_PROPERTY_NAMES = Set.of("sunPathRotation", "sunPathOffset");
     private static final Pattern SUPPORTED_TARGET_PROPERTY = Pattern.compile(
             "colortex\\d+(?:Format|Clear|ClearColor|MipmapEnabled)");

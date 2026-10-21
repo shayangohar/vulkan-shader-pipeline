@@ -376,6 +376,48 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris ShaderProperties {@code indirect.<compute> = <buffer> <offset>} dispatches the counts that
+     * buffer holds. Iris ignores a value it cannot parse and fails on a buffer the pack lacks; Vulkan
+     * reads the counts at a multiple of 4 inside the buffer.
+     */
+    @Test
+    void passComputesDispatchIndirect(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                bufferObject.2 = 32
+                indirect.composite_a = 2 16
+                indirect.composite1_a = 7 0
+                indirect.composite2_a = 2 6
+                indirect.composite3_a = 2 sixteen
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        String compute = """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() { imageStore(colorimg2, ivec2(gl_GlobalInvocationID.xy), vec4(1.0)); }
+                """;
+        for (String pass : List.of("composite", "composite1", "composite2", "composite3")) {
+            Files.writeString(shaders.resolve(pass + "_a.csh"), compute);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
+        assertEquals(new PassComputePlan.Indirect(2, 16), computes.compute("composite_a").indirect());
+        PassComputePlan.PassCompute pointed = computes.compute("composite_a");
+        assertTrue(pointed.supported(), pointed.deviations().toString());
+        assertEquals(List.of("PASS_COMPUTE_INDIRECT_BUFFER_UNAVAILABLE:7"),
+                computes.compute("composite1_a").deviations());
+        assertEquals(List.of("PASS_COMPUTE_INDIRECT_OFFSET_UNSUPPORTED:6"),
+                computes.compute("composite2_a").deviations());
+        assertTrue(computes.compute("composite3_a").supported() && computes.compute("composite3_a").indirect() == null,
+                "an unparsable pointer is ignored");
+        assertEquals(Set.of(2), computes.storageBuffers(), "the dispatch buffer is allocated");
+        assertTrue(analysis.plan().settings().deviations().stream().noneMatch(value -> value.contains("indirect.")),
+                analysis.plan().settings().deviations().toString());
+    }
+
+    /**
      * A buffer only pass computes bind is allocated from what the storage budget leaves once the
      * images and the fixed-size buffers programs bind are charged.
      */

@@ -83,12 +83,20 @@ public final class PassComputePlan {
     }
 
     /**
-     * One pass compute: its translated source (null when it cannot run), what dispatch binds, and
+     * Iris ShaderProperties {@code indirect.<compute> = <buffer> <offset>}: the compute dispatches
+     * the work groups {@code bufferObject.<buffer>} holds at that byte offset (ComputeProgram.dispatch).
+     */
+    public record Indirect(int buffer, long offset) {}
+
+    /**
+     * One pass compute: its translated source (null when it cannot run), how it dispatches (by
+     * work groups, or {@code indirect} when the pack names a buffer), what dispatch binds, and
      * the pack textures its {@link Kind#TEXTURE} bindings read.
      */
     public record PassCompute(String name, String pass, String source, int[] localSize, int[] workGroups,
-                              float[] workGroupsRender, List<Binding> bindings, List<PackResourceBinding> textures,
-                              List<ComputeValueBlock.Value> values, List<String> deviations) {
+                              float[] workGroupsRender, Indirect indirect, List<Binding> bindings,
+                              List<PackResourceBinding> textures, List<ComputeValueBlock.Value> values,
+                              List<String> deviations) {
         public boolean supported() { return source != null; }
 
         /** Iris ComputeProgram.getWorkGroups for a screen of this size. */
@@ -157,9 +165,12 @@ public final class PassComputePlan {
         return targets(Kind.TARGET_IMAGE);
     }
 
-    /** The bufferObject indexes a compute binds, which the session must allocate. */
+    /** The bufferObject indexes a compute binds or dispatches from, which the session must allocate. */
     public Set<Integer> storageBuffers() {
-        return targets(Kind.STORAGE_BUFFER);
+        Set<Integer> buffers = targets(Kind.STORAGE_BUFFER);
+        computes.stream().filter(value -> value.supported() && value.indirect() != null)
+                .forEach(value -> buffers.add(value.indirect().buffer()));
+        return buffers;
     }
 
     private Set<Integer> targets(Kind kind) {
@@ -240,6 +251,7 @@ public final class PassComputePlan {
             body = removeUnusedUniforms(PackAdvancedResourcePlan.VALUE_UNIFORM_DECLARATION.matcher(body)
                     .replaceAll(""), work);
             body = bindStorageBuffers(body, work);
+            work.indirect = indirect(name, work);
             String source = work.failed ? null : module(body, work, values);
             return work.result(source, localSize, values, text);
         }
@@ -368,6 +380,32 @@ public final class PassComputePlan {
             return GlslStorageBufferParser.rewrite(body, bindings);
         }
 
+        /**
+         * The compute's {@code indirect.<name>} pointer (Iris ShaderProperties), or null for none or
+         * one Iris cannot parse, which it ignores. A buffer the pack does not declare fails Iris's
+         * load (ShaderStorageBufferHolder.getBufferIndex), and Vulkan reads the three counts at an
+         * offset that is a multiple of 4 within the buffer: either stops the compute here.
+         */
+        private Indirect indirect(String name, Work work) {
+            String value = plan.settings().propertyValues().get("indirect." + name);
+            if (value == null) return null;
+            Indirect pointer;
+            try {
+                String[] parts = value.split(" ");
+                pointer = new Indirect(Integer.parseInt(parts[0]), Long.parseLong(parts[1]));
+            } catch (NumberFormatException | ArrayIndexOutOfBoundsException failure) {
+                return null;
+            }
+            PackAdvancedResourcePlan.BufferSpec spec = plan.advancedResources().buffers().get(pointer.buffer());
+            if (spec == null || !spec.supported()) {
+                work.fail("PASS_COMPUTE_INDIRECT_BUFFER_UNAVAILABLE:" + pointer.buffer());
+            } else if (pointer.offset() < 0 || pointer.offset() % 4 != 0
+                    || (!spec.relative() && pointer.offset() + 12 > spec.size())) {
+                work.fail("PASS_COMPUTE_INDIRECT_OFFSET_UNSUPPORTED:" + pointer.offset());
+            }
+            return pointer;
+        }
+
         /** What the live sampler {@code name} of {@code type} reads, or null when dispatch cannot bind it. */
         private Binding samplerBinding(String name, String type, Work work) {
             PackAdvancedResourcePlan.ImageSpec pack = packImage(PackAdvancedResourcePlan.imageBySampler(
@@ -478,6 +516,7 @@ public final class PassComputePlan {
         final List<Binding> bindings = new ArrayList<>();
         final List<PackResourceBinding> textures = new ArrayList<>();
         final StringBuilder declarations = new StringBuilder();
+        Indirect indirect;
         final List<String> deviations = new ArrayList<>();
         boolean failed;
 
@@ -507,7 +546,7 @@ public final class PassComputePlan {
             if (relative != null && relative.find()) {
                 render = new float[] {Float.parseFloat(relative.group(1)), Float.parseFloat(relative.group(2))};
             }
-            return new PassCompute(name, pass, failed ? null : source, localSize, workGroups, render,
+            return new PassCompute(name, pass, failed ? null : source, localSize, workGroups, render, indirect,
                     List.copyOf(bindings), List.copyOf(textures), values == null ? List.of() : values,
                     List.copyOf(deviations));
         }

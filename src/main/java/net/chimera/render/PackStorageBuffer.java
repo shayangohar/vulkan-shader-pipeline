@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.vulkanmod.vulkan.memory.MemoryTypes;
 import net.vulkanmod.vulkan.memory.UniformBuffer;
 
+import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
@@ -19,7 +20,8 @@ public final class PackStorageBuffer extends UniformBuffer {
     /** Runs from the superclass constructor, before any field of this class is set. */
     @Override
     protected void createBuffer(int size) {
-        this.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        this.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
         super.createBuffer(size);
     }
 
