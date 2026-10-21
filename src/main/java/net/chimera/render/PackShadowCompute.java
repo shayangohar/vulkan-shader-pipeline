@@ -5,7 +5,9 @@ import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.GlslTokenRewriter;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackEngineDefines;
+import net.chimera.shaderpack.ServedUniforms;
 import net.chimera.shaderpack.ShaderSourcePreprocessor;
+import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -285,7 +287,9 @@ public final class PackShadowCompute implements AutoCloseable {
     ) {
         String body = normalizeVersion(source);
         body = removeLegacyExtensions(body);
-        body = GlslTokenRewriter.splitUniformDeclarators(body);
+        // As the plan read it: a name the value block serves is one Iris sets.
+        body = ServedUniforms.computeSource(body, name -> UniformRegistry.irisServes(name)
+                || computeUniforms.stream().anyMatch(value -> value.name().equals(name)));
         body = GlslTokenRewriter.rewriteTextureCalls(body);
         body = boundTexelFetches(body, samplerNames);
         ResourceDeclarations resources = new ResourceDeclarations(plan, imageNames, samplerNames, sampled2dNames);

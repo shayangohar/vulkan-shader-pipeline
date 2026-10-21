@@ -12,18 +12,21 @@ import java.util.function.Predicate;
  * resolves to it reads the given expression. A local or parameter of the same name stays the
  * pack's own. A source without the declaration, or one that does not parse, is left as written.
  * Iris's core transformers rename such names the same way (alphaTestRef to
- * iris_currentAlphaTest); FogMode.OFF's fogMode and fogShape are constants Iris sets once.
+ * iris_currentAlphaTest); FogMode.OFF's fogMode and fogShape are constants Iris sets once. A
+ * declaration of another type is one Iris disables (ProgramUniforms "Wrong uniform type", KNOW-732):
+ * it reads its initializer, or zero. Iris sets an int uniform declared bool.
  */
-final class ServedUniforms {
+public final class ServedUniforms {
     private ServedUniforms() {}
 
-    static String serve(String source, String name, String value) {
+    static String serve(String source, String name, String type, String value) {
         if (source == null || !GlslTokenRewriter.containsIdentifier(source, name)) return source;
         GlslTree tree = GlslDeclarations.parseOrNull(source);
         GlslDeclarations.Variable uniform = tree == null ? null : GlslDeclarations.variables(tree).stream()
                 .filter(variable -> variable.name().equals(name) && variable.qualified("uniform"))
                 .findFirst().orElse(null);
         if (uniform == null) return source;
+        String served = servedValue(tree, uniform, type, value);
         List<GlslTree.Edit> edits = new ArrayList<>();
         edits.add(new GlslTree.Edit(uniform.declaration().range(), withoutDeclarator(tree, uniform)));
         List<GlslLexer.Token> tokens = tree.tokens();
@@ -31,26 +34,53 @@ final class ServedUniforms {
             if (uniform.declaration().range().contains(index) || !tokens.get(index).identifier(name)) continue;
             GlslTree.Binding binding = tree.resolve(index);
             if (binding != null && binding.node() == uniform.declarator()) {
-                edits.add(new GlslTree.Edit(new GlslTree.Range(index, index + 1), value));
+                edits.add(new GlslTree.Edit(new GlslTree.Range(index, index + 1), served));
             }
         }
         return tree.print(edits);
+    }
+
+    /** The value a declaration reads: Iris's in its type, or a disabled uniform's initializer or zero. */
+    private static String servedValue(GlslTree tree, GlslDeclarations.Variable uniform, String type, String value) {
+        String declared = uniform.type();
+        if (declared.equals(type)) return value;
+        if (declared.equals("bool") && type.equals("int")) return "bool(" + value + ")";
+        GlslTree.Range initializer = uniform.declarator().initializer();
+        return initializer != null ? "(" + tree.text(initializer) + ")" : declared + "(0)";
     }
 
     /** The uniforms a fullscreen pass reads as constants ({@link #servePostValues}). */
     static final List<String> POST_VALUES = List.of("fogMode", "fogShape", "blendFunc");
 
     /**
-     * Serves the values Iris fixes for a fullscreen pass. CompositeRenderer and FinalPassRenderer
-     * build their programs with FogMode.OFF, so fogMode is 0 and fogShape -1. Blending is off when
-     * a pass's uniforms update (Program.use runs before the pass's blend override applies), so
-     * blendFunc reads zero, unless an enabled {@code blend.<pass>} directive's glBlendFuncSeparate
-     * then notifies it to the directive's factors.
+     * Serves the values Iris fixes for a fullscreen pass: FogMode.OFF's ({@link #serveFogOff}) and
+     * blendFunc. Blending is off when a pass's uniforms update (Program.use runs before the pass's
+     * blend override applies), so blendFunc reads zero, unless an enabled {@code blend.<pass>}
+     * directive's glBlendFuncSeparate then notifies it to the directive's factors. Only
+     * CompositeRenderer applies one; final and shadowcomp passes are given none.
      */
     static String servePostValues(String source, PackBlendPlan.Mode passBlend) {
         int[] blend = passBlend == null ? new int[4] : passBlend.glFunc();
         String blendFunc = "ivec4(" + blend[0] + ", " + blend[1] + ", " + blend[2] + ", " + blend[3] + ")";
-        return serve(serve(serve(source, "fogMode", "0"), "fogShape", "-1"), "blendFunc", blendFunc);
+        return serve(serveFogOff(source), "blendFunc", "ivec4", blendFunc);
+    }
+
+    /**
+     * FogMode.OFF's constants, fogMode 0 and fogShape -1: Iris builds every fullscreen pass and
+     * compute program without fog (CompositeRenderer, FinalPassRenderer, ShadowCompositeRenderer
+     * and the setup and shadow computes).
+     */
+    static String serveFogOff(String source) {
+        return serve(serve(source, "fogMode", "int", "0"), "fogShape", "int", "-1");
+    }
+
+    /**
+     * A compute stage's source as Iris compiles it: one declaration per name, each uniform Iris
+     * never sets reading its initializer ({@link #readInitializers}), and FogMode.OFF's fog values.
+     * Every compute path (pass computes, shadowcomp and its analysis) prepares its source here.
+     */
+    public static String computeSource(String source, Predicate<String> irisSets) {
+        return serveFogOff(readInitializers(GlslTokenRewriter.splitUniformDeclarators(source), irisSets).source());
     }
 
     /** A source whose initialized unset uniforms became constants, and their names. */

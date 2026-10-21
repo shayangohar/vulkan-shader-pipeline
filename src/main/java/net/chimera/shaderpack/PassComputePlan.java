@@ -201,11 +201,8 @@ public final class PassComputePlan {
                     work.fail("PASS_COMPUTE_VERSION_UNSUPPORTED");
                 }
                 if (work.failed) return null;
-                // Iris compiles a compute stage with no core transformer: a uniform it never sets
-                // reads its initializer.
-                String text = ServedUniforms.readInitializers(GlslTokenRewriter.splitUniformDeclarators(
-                        prepared.source()), name -> UniformRegistry.irisSets(name,
-                        plan.runtimeSettings().customDescriptors())).source();
+                String text = ServedUniforms.computeSource(prepared.source(),
+                        name -> UniformRegistry.irisSets(name, plan.runtimeSettings().customDescriptors()));
                 if (!GlslResourceUsage.analyze(text).successful()) {
                     work.fail("PASS_COMPUTE_RESOURCE_USAGE_UNCLASSIFIABLE");
                 }

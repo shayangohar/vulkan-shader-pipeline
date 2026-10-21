@@ -40,7 +40,7 @@ public record PackBlendPlan(Mode program, Map<Integer, Mode> buffers, List<Strin
             0x8001, 0x8002, 0x8003, 0x8004, 0x0308};
 
     /** The OpenGL enum of a Vulkan blend factor; zero for one OpenGL has no name for. */
-    static int glFactor(int vkFactor) {
+    public static int glFactor(int vkFactor) {
         return vkFactor >= 0 && vkFactor < GL_FACTORS.length ? GL_FACTORS[vkFactor] : 0;
     }
 

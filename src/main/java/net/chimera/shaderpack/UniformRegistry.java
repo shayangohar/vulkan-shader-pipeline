@@ -564,13 +564,13 @@ public final class UniformRegistry {
     private static final Set<String> IRIS_UNSERVED = Set.of("alphaTestRef", "constantMood");
 
     /**
-     * Per-draw values a fullscreen pass cannot read. A pass's gtextureSize is the size of whatever
-     * texture the previous pass or world draw left on unit 0 when Program.use updates the
-     * uniforms, before the pass binds its own samplers; nothing names that texture. blendFunc is
-     * served into a pass as a constant (ServedUniforms.servePostValues) and refuses only where
-     * that could not run.
+     * Live values a fullscreen pass or compute dispatch cannot read. A pass's gtextureSize is the
+     * size of whatever texture the previous pass or world draw left on unit 0 when Program.use
+     * updates the uniforms, before the pass binds its own samplers; nothing names that texture.
+     * fogMode, fogShape and blendFunc are served into a pass as constants
+     * (ServedUniforms.servePostValues, serveFogOff) and refuse only where that could not run.
      */
-    private static final Set<String> POST_UNSERVED = Set.of("gtextureSize", "blendFunc");
+    private static final Set<String> POST_UNSERVED = Set.of("gtextureSize", "blendFunc", "fogMode", "fogShape");
 
     /** Whether a stage cannot read a name Iris serves elsewhere (POST_UNSERVED). */
     static boolean unservedIn(String name, Stage stage) {
@@ -584,7 +584,7 @@ public final class UniformRegistry {
     }
 
     /** Whether Iris itself gives this name a value: the catalog, the unserved list, Iris internals. */
-    static boolean irisServes(String name) {
+    public static boolean irisServes(String name) {
         return UNIFORM_SPECS.containsKey(name) && !HOST_ONLY.contains(name)
                 || IRIS_UNSERVED.contains(name) || name.startsWith("iris_") || name.startsWith("u_");
     }

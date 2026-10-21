@@ -335,8 +335,10 @@ public final class PackPlanBuilder {
                 if (names.stream().noneMatch(served -> GlslTokenRewriter.containsIdentifier(expanded, served))) {
                     return initialized.names().isEmpty() ? source : expanded;
                 }
+                // FinalPassRenderer and ShadowCompositeRenderer apply no blend directive.
+                boolean blends = !directiveProgram.equals("final") && !directiveProgram.startsWith("shadowcomp");
                 return post ? ServedUniforms.servePostValues(expanded,
-                        PackBlendPlan.forProgram(directiveProgram, settings()).program())
+                        blends ? PackBlendPlan.forProgram(directiveProgram, settings()).program() : null)
                         : alphaTestPlan.serveReference(expanded);
             } catch (IllegalArgumentException unresolved) {
                 return source;

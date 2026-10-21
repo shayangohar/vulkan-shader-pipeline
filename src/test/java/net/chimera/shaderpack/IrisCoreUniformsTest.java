@@ -37,6 +37,56 @@ final class IrisCoreUniformsTest {
         return IrisCoreProfile.servedUniforms(patch, vertexStage, coreMode);
     }
 
+    /** Sodium draws terrain, water and shadow terrain; every other world program is vanilla. */
+    @Test
+    void irisPatchesFollowTheProgramFamily() {
+        UniformRegistry.Stage geometry = UniformRegistry.Stage.GEOMETRY;
+        for (String sodium : List.of("gbuffers_terrain", "gbuffers_water", "shadow")) {
+            assertEquals(IrisCoreProfile.Patch.SODIUM, IrisCoreProfile.patchFor(sodium, geometry, false), sodium);
+        }
+        for (String vanilla : List.of("shadow_entities", "shadow_block", "shadow_lines", "gbuffers_block")) {
+            assertEquals(IrisCoreProfile.Patch.VANILLA, IrisCoreProfile.patchFor(vanilla, geometry, false), vanilla);
+        }
+        assertEquals(IrisCoreProfile.Patch.COMPOSITE,
+                IrisCoreProfile.patchFor("composite", UniformRegistry.Stage.POST, false));
+    }
+
+    /** A pack's own line program serves its declared core uniforms, initialized or not (VanillaCoreTransformer). */
+    @Test
+    void aLineVertexLosesAnInitializedCoreUniform() {
+        String line = IrisCoreProfile.prepareLineVertex("""
+                #version 330 core
+                uniform mat4 textureMatrix = mat4(1.0);
+                uniform vec3 chunkOffset;
+                in vec3 vaPosition;
+                void main() { gl_Position = textureMatrix * vec4(vaPosition + chunkOffset, 1.0); }
+                """, null, true);
+        assertFalse(line.contains("uniform mat4") || line.contains("uniform vec3"), line);
+        assertTrue(line.contains("gl_TextureMatrix[0] * vec4(gl_Vertex.xyz + vec3(0.0), 1.0)"), line);
+    }
+
+    /**
+     * A constant a pass or compute stage reads follows Iris's types: a declaration of another
+     * type is one Iris disables, reading its initializer or zero, and Iris sets an int declared
+     * bool. Every compute program is built with FogMode.OFF.
+     */
+    @Test
+    void passAndComputeConstantsFollowIrisTypes() {
+        String post = ServedUniforms.servePostValues("""
+                uniform float fogShape = 2.0;
+                uniform bool fogMode;
+                uniform ivec4 blendFunc;
+                void main() { float x = fogShape + float(fogMode) + float(blendFunc.x); }
+                """, null);
+        assertTrue(post.contains("float x = (2.0) + float(bool(0)) + float(ivec4(0, 0, 0, 0).x);"), post);
+        String compute = ServedUniforms.computeSource("""
+                #version 450
+                uniform int fogMode, fogShape;
+                void main() { int x = fogMode + fogShape; }
+                """, name -> UniformRegistry.irisSets(name, Map.of()));
+        assertTrue(compute.contains("int x = 0 + -1;"), compute);
+    }
+
     @Test
     void anUnsetUniformReadsItsInitializerAndASetOneKeepsItsDeclaration() {
         ServedUniforms.Initialized initialized = ServedUniforms.readInitializers("""

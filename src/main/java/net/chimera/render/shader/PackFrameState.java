@@ -20,6 +20,7 @@ import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.vulkan.VRenderSystem;
+import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -795,8 +796,8 @@ final class PackFrameState {
     }
 
     /** Returns true when the next draw's gtextureSize or blendFunc changed (IrisDrawState). */
-    boolean setDrawState(int width, int height, PackBlendPlan.Mode programBlend, PackBlendPlan.Mode hostBlend) {
-        return drawState.set(width, height, programBlend, hostBlend);
+    boolean setDrawState(int width, int height, PackBlendPlan.Mode programBlend, PipelineState.BlendInfo host) {
+        return drawState.set(width, height, programBlend, host);
     }
 
     /** Returns true when the per-draw entity alpha reference changed. */

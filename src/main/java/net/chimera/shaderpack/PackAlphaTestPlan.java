@@ -135,7 +135,7 @@ record PackAlphaTestPlan(
         String value = !active() ? "0.0" : perDrawReference()
                 ? "(" + perDraw + " < 0.0 ? 3.4028235e38 : " + perDraw + ")"
                 : Float.toString(reference);
-        String served = ServedUniforms.serve(source, IRIS_REFERENCE, value);
+        String served = ServedUniforms.serve(source, IRIS_REFERENCE, "float", value);
         return served != source && perDrawReference() && active() ? declarePerDrawReference(served) : served;
     }
 

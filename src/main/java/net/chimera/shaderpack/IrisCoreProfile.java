@@ -62,11 +62,9 @@ final class IrisCoreProfile {
     static Patch patchFor(String program, UniformRegistry.Stage stage, boolean packLine) {
         if (stage == UniformRegistry.Stage.POST) return Patch.COMPOSITE;
         if (packLine) return Patch.LINES;
-        boolean shadowTerrain = FamilyAdapterRegistry.isShadowFamily(program)
-                && !FamilyAdapterRegistry.isShadowEntityFamily(program)
-                && !FamilyAdapterRegistry.isShadowLaneFamily(program);
-        return program.equals("gbuffers_terrain") || program.equals("gbuffers_water") || shadowTerrain
-                ? Patch.SODIUM : Patch.VANILLA;
+        FamilyAdapterPlan.Family family = FamilyAdapterRegistry.forProgram(program).family();
+        return family == FamilyAdapterPlan.Family.TERRAIN || family == FamilyAdapterPlan.Family.WATER
+                || family == FamilyAdapterPlan.Family.SHADOW ? Patch.SODIUM : Patch.VANILLA;
     }
 
     /**
@@ -212,7 +210,9 @@ final class IrisCoreProfile {
             String type = variable.type();
             boolean matrix = CORE_MATRICES.contains(variable.name()) && (type.equals("mat3") || type.equals("mat4"));
             boolean offset = variable.name().equals("chunkOffset") && type.equals("vec3");
-            if ((input || variable.qualified("uniform") && (matrix || offset)) && variable.plain()) {
+            // A served uniform's initializer goes with it, as in withoutCoreDeclarations.
+            boolean uniform = variable.qualified("uniform") && (matrix || offset) && variable.single();
+            if (input && variable.plain() || uniform) {
                 removals.add(GlslDeclarations.remove(tree, variable.declaration()));
             }
         }

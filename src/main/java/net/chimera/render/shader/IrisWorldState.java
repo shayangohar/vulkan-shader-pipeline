@@ -17,10 +17,12 @@ import java.util.Set;
  * clock (IrisExclusiveUniforms.cloudTime). A post program reads FogMode.OFF's constant fogMode and
  * fogShape instead, served into its source at plan time (PackPlanBuilder).
  *
- * <p>The fog density is the one FogRenderer.setupFog last set up: water fog's, and -1 for any
- * other fog (Iris MixinFogRenderer). fogMode reads GL_LINEAR for a negative density and GL_EXP2
- * otherwise, and fogDensity never goes below 0. fogShape is 1 for cylindrical fog and 0 for
- * spherical, and cloudTime counts the level renderer's ticks at 0.03 a tick.</p>
+ * <p>Each FogRenderer.setupFog sets them as Iris reads them at the next program bind: the density
+ * as setup begins (Iris MixinFogRenderer: water fog's, and -1 for any other fog; 0 before any
+ * setup, CapturedRenderingState's default) and the shape the setup leaves (RenderSystem's shader
+ * fog shape). fogMode reads GL_LINEAR for a negative density and GL_EXP2 otherwise, and
+ * fogDensity never goes below 0. fogShape is 1 for cylindrical fog and 0 for spherical, and
+ * cloudTime counts the level renderer's ticks at 0.03 a tick.</p>
  */
 final class IrisWorldState implements FrameValueSource {
     static final Set<String> NAMES = Set.of("fogMode", "fogShape", "fogDensity", "cloudTime");
@@ -28,8 +30,8 @@ final class IrisWorldState implements FrameValueSource {
     private static final int GL_LINEAR = 0x2601;
     private static final int GL_EXP2 = 0x0801;
 
-    private static volatile float fogDensity = -1.0F;
-    private int fogShape;
+    private static volatile float fogDensity;
+    private static volatile int fogShape;
     private float cloudTime;
 
     /**
@@ -52,15 +54,24 @@ final class IrisWorldState implements FrameValueSource {
         fogDensity = density;
     }
 
+    /** Records the shape of the fog FogRenderer has set up. */
+    static void captureFogShape() {
+        fogShape = RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0;
+    }
+
+    /** Iris's state before any fog setup, for a fresh session. */
+    static void resetFog() {
+        fogDensity = 0.0F;
+        fogShape = 0;
+    }
+
     void capture(Minecraft minecraft, float partialTick) {
-        this.fogShape = RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0;
         int ticks = minecraft.levelRenderer == null ? 0
                 : ((ChimeraLevelRendererAccessor) minecraft.levelRenderer).chimera$ticks();
         this.cloudTime = (ticks + partialTick) * 0.03F;
     }
 
     void clear() {
-        this.fogShape = 0;
         this.cloudTime = 0.0F;
     }
 
@@ -74,7 +85,7 @@ final class IrisWorldState implements FrameValueSource {
         if (component > 0) return Double.NaN;
         return switch (name) {
             case "fogMode" -> fogDensity < 0.0F ? GL_LINEAR : GL_EXP2;
-            case "fogShape" -> this.fogShape;
+            case "fogShape" -> fogShape;
             case "fogDensity" -> Math.max(0.0F, fogDensity);
             case "cloudTime" -> this.cloudTime;
             default -> Double.NaN;

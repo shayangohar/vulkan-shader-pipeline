@@ -141,9 +141,31 @@ public final class PackUniformProvider {
         return INSTANCE.frameState.cameraViewProjection(dest);
     }
 
-    /** Records the density of the fog FogRenderer is setting up (Iris fogMode, fogDensity). */
+    /**
+     * Records the density of the fog FogRenderer is setting up (Iris fogMode, fogDensity) and
+     * serves it to the draws that follow, as Iris's dynamic fog uniforms read it at each bind.
+     */
     public static void captureFogDensity(Camera camera) {
         IrisWorldState.captureFogDensity(camera);
+        INSTANCE.rewrite(FOG_DENSITY_KEYS);
+    }
+
+    /** Records the shape of the fog FogRenderer has set up (Iris fogShape) for the draws that follow. */
+    public static void captureFogShape() {
+        IrisWorldState.captureFogShape();
+        INSTANCE.rewrite(FOG_SHAPE_KEYS);
+    }
+
+    private static final List<UniformKey> FOG_DENSITY_KEYS = List.of(
+            new UniformKey("fogMode", "int"), new UniformKey("fogDensity", "float"));
+    private static final List<UniformKey> FOG_SHAPE_KEYS = List.of(new UniformKey("fogShape", "int"));
+
+    /** Rewrites the bindings of the given names from the frame state. */
+    private void rewrite(List<UniformKey> keys) {
+        for (UniformKey key : keys) {
+            Binding binding = bindings.get(key);
+            if (binding != null) frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
     }
 
     /** Publishes the exact shadow state used by the shadow render. */
@@ -198,20 +220,16 @@ public final class PackUniformProvider {
 
     /**
      * Serves the next draw Iris's per-draw texture and blend values (IrisDrawState): the size of
-     * the texture on unit 0 and the draw's blend, the program's enabled blend directive or the
-     * host draw's blend. Only the bindings that changed are rewritten.
+     * the texture on unit 0 and the draw's blend, the blend the program reports in place of the
+     * host's (PackPipelines.blendFuncOverride) or the host draw's. Only changed bindings are rewritten.
      */
     public static void updateDrawState(Pipeline pipeline) {
-        PipelineState.BlendInfo host = PipelineState.blendInfo;
-        PackBlendPlan.Mode hostBlend = new PackBlendPlan.Mode(host.enabled, host.srcRgbFactor, host.dstRgbFactor,
-                host.srcAlphaFactor, host.dstAlphaFactor);
+        // Without a pack session no binding reads them.
+        if (INSTANCE.bindings.isEmpty()) return;
         VulkanImage unit0 = VTextureSelector.getBoundTexture(0);
         if (!INSTANCE.frameState.setDrawState(unit0 == null ? 0 : unit0.width, unit0 == null ? 0 : unit0.height,
-                IrisDrawState.programBlend(pipeline), hostBlend)) return;
-        for (UniformKey key : DRAW_STATE_KEYS) {
-            Binding binding = INSTANCE.bindings.get(key);
-            if (binding != null) INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
-        }
+                IrisDrawState.programBlend(pipeline), PipelineState.blendInfo)) return;
+        INSTANCE.rewrite(DRAW_STATE_KEYS);
     }
 
     private static final List<UniformKey> DRAW_STATE_KEYS = List.of(

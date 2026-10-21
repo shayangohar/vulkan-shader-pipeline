@@ -4,6 +4,7 @@ import net.chimera.shaderpack.PackBlendPlan;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.UniformRegistry;
+import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -22,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 final class IrisDrawUniformsTest {
     // Minecraft's translucent blend in VkBlendFactor values: SRC_ALPHA, 1 - SRC_ALPHA, ONE, 1 - SRC_ALPHA.
-    private static final PackBlendPlan.Mode TRANSLUCENT = new PackBlendPlan.Mode(true, 6, 7, 1, 7);
+    private static final PipelineState.BlendInfo TRANSLUCENT = new PipelineState.BlendInfo(true, 6, 7, 1, 7, 0);
 
     @Test
     void aDrawReadsItsTextureSizeAndItsBlendAsGlFactors() {
@@ -40,9 +41,12 @@ final class IrisDrawUniformsTest {
         assertEquals(0x0303, buffer.getInt(12));
     }
 
-    /** An enabled blend directive notifies blendFunc; an off one disables blending without notifying. */
+    /**
+     * The program reports its directive in place of the host blend where Iris does
+     * (PackPipelines.blendFuncOverride): an enabled one anywhere, an off one under Sodium only.
+     */
     @Test
-    void anEnabledDirectiveReplacesTheHostBlendAndAnOffOneDoesNot() {
+    void aReportedDirectiveReplacesTheHostBlend() {
         PackFrameState state = new PackFrameState();
         MappedBuffer buffer = new MappedBuffer(16);
         state.setDrawState(0, 0, new PackBlendPlan.Mode(true, 1, 1, 1, 0), TRANSLUCENT);
@@ -51,8 +55,11 @@ final class IrisDrawUniformsTest {
         assertEquals(0, buffer.getInt(12));
         state.setDrawState(0, 0, PackBlendPlan.Mode.OFF, TRANSLUCENT);
         state.write(UniformRegistry.descriptor("blendFunc"), "ivec4", buffer);
-        assertEquals(0x0302, buffer.getInt(0));
-        state.setDrawState(0, 0, null, PackBlendPlan.Mode.OFF);
+        assertEquals(0, buffer.getInt(0), "a Sodium program's off directive reads zero");
+        state.setDrawState(0, 0, null, TRANSLUCENT);
+        state.write(UniformRegistry.descriptor("blendFunc"), "ivec4", buffer);
+        assertEquals(0x0302, buffer.getInt(0), "no reported directive reads the host blend");
+        state.setDrawState(0, 0, null, new PipelineState.BlendInfo(false, 6, 7, 1, 7, 0));
         state.write(UniformRegistry.descriptor("blendFunc"), "ivec4", buffer);
         assertEquals(0, buffer.getInt(0), "blending off reads zero");
     }
@@ -73,7 +80,7 @@ final class IrisDrawUniformsTest {
     void aPassReadsItsBlendAsAConstantAndRefusesGtextureSize(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"),
-                "blend.composite=SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ZERO\n");
+                "blend.composite=SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ZERO\nblend.final=ONE ONE ONE ONE\n");
         String blendReader = """
                 #version 120
                 uniform sampler2D colortex0;
@@ -83,6 +90,7 @@ final class IrisDrawUniformsTest {
                 """;
         Files.writeString(shaders.resolve("composite.fsh"), blendReader);
         Files.writeString(shaders.resolve("composite1.fsh"), blendReader);
+        Files.writeString(shaders.resolve("final.fsh"), blendReader);
         Files.writeString(shaders.resolve("composite2.fsh"), blendReader
                 .replace("ivec4 blendFunc", "ivec2 gtextureSize")
                 .replace("blendFunc.x", "gtextureSize.x"));
@@ -90,6 +98,8 @@ final class IrisDrawUniformsTest {
         assertTrue(analysis.plan().program("composite").convertedFragment().contains("ivec4(770, 771, 1, 0).x"),
                 analysis.plan().program("composite").convertedFragment());
         assertTrue(analysis.plan().program("composite1").convertedFragment().contains("ivec4(0, 0, 0, 0).x"));
+        assertTrue(analysis.plan().program("final").convertedFragment().contains("ivec4(0, 0, 0, 0).x"),
+                "FinalPassRenderer applies no blend directive");
         PackProgramPlan sized = analysis.plan().program("composite2");
         assertTrue(!sized.executable() && sized.deviations().contains("UNIFORM_NAME_UNSUPPORTED:gtextureSize"),
                 sized.deviations().toString());

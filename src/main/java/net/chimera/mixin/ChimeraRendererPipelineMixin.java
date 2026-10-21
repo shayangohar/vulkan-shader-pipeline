@@ -43,10 +43,12 @@ public abstract class ChimeraRendererPipelineMixin {
         }
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference());
         PackUniformProvider.updateDrawEntityId(ChimeraEntityBridge.hostLayoutEntityId());
-        // Restored with the family's texture snapshot when the draw ends.
-        if (ChimeraEntityBridge.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
+        // Iris reads atlasSize and gtextureSize from RenderSystem's shader texture 0; a textureless
+        // draw samples its white pixel from another unit (IrisSamplers.addLevelSamplers).
         PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
         PackUniformProvider.updateDrawState(pipeline);
+        // Restored with the family's texture snapshot when the draw ends.
+        if (ChimeraEntityBridge.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
         var previous = PackUniformProvider.setRenderingPhase(ChimeraEntityBridge.renderingPhase());
         try {
             original.call(pipeline);

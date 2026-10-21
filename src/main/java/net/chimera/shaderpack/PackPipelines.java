@@ -404,7 +404,7 @@ public final class PackPipelines {
                     ? shadowAttachmentBlends(attachmentFormats)
                     : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
             GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, fragmentSource,
-                    imageBindings, attachmentFormats, attachmentBlends, plan.blendPlan().program());
+                    imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(pipelineName, e);
@@ -443,6 +443,19 @@ public final class PackPipelines {
         }
         PackUniformProvider.registerProgramBlend(pipeline, programBlend);
         return pipeline;
+    }
+
+    /**
+     * The blend a program's draws report as blendFunc in place of the host's, or null to report
+     * the host blend. SodiumShader applies a {@code blend.<program>} directive before its uniforms
+     * update, so an off directive reads zero there. ExtendedShader updates its uniforms first, and
+     * only an enabled directive's glBlendFuncSeparate notifies the uniform.
+     */
+    private static PackBlendPlan.Mode blendFuncOverride(PackProgramPlan plan, UniformRegistry.Stage stage) {
+        PackBlendPlan.Mode directive = plan.blendPlan().program();
+        if (directive == null) return null;
+        boolean sodium = IrisCoreProfile.patchFor(plan.name(), stage, false) == IrisCoreProfile.Patch.SODIUM;
+        return sodium || directive.enabled() ? directive : null;
     }
 
     /** Builds a post pipeline from the already prepared and translated plan. */
@@ -595,7 +608,8 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, fragmentSource,
-                    prepared.imageBindings(), shadowAttachmentFormats(plan), null, plan.blendPlan().program());
+                    prepared.imageBindings(), shadowAttachmentFormats(plan), null,
+                    blendFuncOverride(plan, UniformRegistry.Stage.SHADOW));
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -760,7 +774,7 @@ public final class PackPipelines {
                     ? plan.blendPlan().attachments(outputPlan.targetSlots()) : null;
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, fragment, imageBindings,
-                    attachmentFormats, attachmentBlends, plan.blendPlan().program());
+                    attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);

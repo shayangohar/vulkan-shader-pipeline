@@ -2,9 +2,9 @@ package net.chimera.render.shader;
 
 import net.chimera.shaderpack.PackBlendPlan;
 import net.vulkanmod.vulkan.shader.Pipeline;
+import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
@@ -14,10 +14,8 @@ import java.util.WeakHashMap;
  * Iris's per-draw texture and blend uniforms (CommonUniforms), set as each draw uploads its
  * uniforms. gtextureSize is the size of the texture on unit 0, the draw's albedo (ExtendedShader
  * binds RenderSystem's shader texture 0 there before it updates its uniforms). blendFunc is the
- * draw's blend as GL factors, or zero with blending off: the vanilla render type's blend when the
- * uniforms update, then the program's {@code blend.<program>} when that directive enables
- * blending (its glBlendFuncSeparate notifies the uniform). An {@code off} directive disables
- * blending without notifying, so the uniform keeps the vanilla blend.
+ * draw's blend as GL factors, or zero with blending off: the vanilla render type's blend, or the
+ * program's {@code blend.<program>} where Iris reports it (PackPipelines.blendFuncOverride).
  */
 final class IrisDrawState implements FrameValueSource {
     static final Set<String> NAMES = Set.of("gtextureSize", "blendFunc");
@@ -28,23 +26,38 @@ final class IrisDrawState implements FrameValueSource {
     private final int[] textureSize = new int[2];
     private final int[] blendFunc = new int[4];
 
-    /** Records a pack pipeline's program-level blend directive. */
+    /** Records the blend a pack pipeline's draws report in place of the host's. */
     static void registerProgramBlend(Pipeline pipeline, PackBlendPlan.Mode mode) {
         if (pipeline != null && mode != null) PROGRAM_BLENDS.put(pipeline, mode);
     }
 
-    /** A pipeline's program-level blend directive, or null without one. */
+    /** The blend a pipeline's draws report in place of the host's, or null. */
     static PackBlendPlan.Mode programBlend(Pipeline pipeline) {
         return pipeline == null ? null : PROGRAM_BLENDS.get(pipeline);
     }
 
-    /** Sets the next draw's values; true when either changed. */
-    boolean set(int width, int height, PackBlendPlan.Mode programBlend, PackBlendPlan.Mode hostBlend) {
-        int[] blend = (programBlend != null && programBlend.enabled() ? programBlend : hostBlend).glFunc();
-        boolean changed = textureSize[0] != width || textureSize[1] != height || !Arrays.equals(blendFunc, blend);
+    /** Sets the next draw's values, the program's blend or else the host's; true when either changed. */
+    boolean set(int width, int height, PackBlendPlan.Mode programBlend, PipelineState.BlendInfo host) {
+        boolean changed = textureSize[0] != width || textureSize[1] != height;
         textureSize[0] = width;
         textureSize[1] = height;
-        System.arraycopy(blend, 0, blendFunc, 0, 4);
+        if (programBlend != null) {
+            return setBlend(programBlend.enabled(), programBlend.srcColor(), programBlend.dstColor(),
+                    programBlend.srcAlpha(), programBlend.dstAlpha()) || changed;
+        }
+        return setBlend(host.enabled, host.srcRgbFactor, host.dstRgbFactor, host.srcAlphaFactor,
+                host.dstAlphaFactor) || changed;
+    }
+
+    /** Writes a blend's GL factors, or zero with blending off, in place; true when they changed. */
+    private boolean setBlend(boolean enabled, int srcColor, int dstColor, int srcAlpha, int dstAlpha) {
+        int[] factors = {srcColor, dstColor, srcAlpha, dstAlpha};
+        boolean changed = false;
+        for (int i = 0; i < 4; i++) {
+            int value = enabled ? PackBlendPlan.glFactor(factors[i]) : 0;
+            changed |= blendFunc[i] != value;
+            blendFunc[i] = value;
+        }
         return changed;
     }
 

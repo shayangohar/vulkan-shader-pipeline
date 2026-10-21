@@ -19,15 +19,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * programs read fogMode and Shrimple's read fogShape and cloudTime; Chimera refused all three.
  */
 final class IrisFogUniformsTest {
-    /** Out of water the captured density is -1: fogMode is GL_LINEAR and fogDensity 0. */
+    /** Before any fog setup Iris's captured density is 0 (CapturedRenderingState): GL_EXP2, density 0. */
     @Test
     void aWorldProgramReadsTheCapturedFog() {
+        IrisWorldState.resetFog();
         PackFrameState state = new PackFrameState();
         MappedBuffer buffer = new MappedBuffer(4);
         state.write(UniformRegistry.descriptor("fogMode"), "int", buffer);
-        assertEquals(0x2601, buffer.getInt(0), "GL_LINEAR");
+        assertEquals(0x0801, buffer.getInt(0), "GL_EXP2");
         state.write(UniformRegistry.descriptor("fogDensity"), "float", buffer);
-        assertEquals(0.0F, buffer.getFloat(0), "a negative density reads 0");
+        assertEquals(0.0F, buffer.getFloat(0));
         state.write(UniformRegistry.descriptor("fogShape"), "int", buffer);
         assertEquals(0, buffer.getInt(0), "spherical before any capture");
         state.write(UniformRegistry.descriptor("cloudTime"), "float", buffer);

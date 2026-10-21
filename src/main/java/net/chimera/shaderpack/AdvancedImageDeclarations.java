@@ -148,8 +148,9 @@ final class AdvancedImageDeclarations {
                 deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
                 return result;
             }
-            // The plan reads what PackShadowCompute translates: one declaration per name.
-            String text = GlslTokenRewriter.splitUniformDeclarators(prepared.source());
+            // The plan reads what PackShadowCompute translates (ServedUniforms.computeSource).
+            String text = ServedUniforms.computeSource(prepared.source(),
+                    name -> UniformRegistry.irisSets(name, customDescriptors));
             List<String> localDeviations = new ArrayList<>(prepared.deviations());
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
             localDeviations.addAll(usage.deviations());
