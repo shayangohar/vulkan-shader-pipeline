@@ -40,13 +40,6 @@ public record DepthGraphPlan(
         return new DepthGraphPlan(depth0, depth1, depth2, R32_SFLOAT, deviations);
     }
 
-    /** This plan with the snapshots {@code reads} names kept too. */
-    public DepthGraphPlan withReads(Set<String> reads) {
-        Set<String> all = new TreeSet<>(names());
-        all.addAll(reads);
-        return all.equals(names()) ? this : of(all);
-    }
-
     public boolean any() {
         return depthtex0 || depthtex1 || depthtex2;
     }

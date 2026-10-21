@@ -75,12 +75,33 @@ public final class PackTargetGraphPlan {
             int deviceMaxColorAttachments,
             int deviceMaxImageDimension
     ) {
+        return build(programs, config, resources, new Limits(windowWidth, windowHeight, deviceMaxColorAttachments,
+                deviceMaxImageDimension), ComputeUse.NONE);
+    }
+
+    /** The window's size and the device's attachment and image-dimension limits. */
+    public record Limits(int windowWidth, int windowHeight, int deviceMaxColorAttachments,
+                         int deviceMaxImageDimension) {}
+
+    /**
+     * What the session's pass computes bind: the colour targets they read or write and the depth
+     * snapshots they read. Iris creates a target a compute names (IrisImages.addRenderTargetImages:
+     * createIfUnsure) and gives computes the composite depth samplers (CompositeRenderer.createComputes).
+     */
+    public record ComputeUse(Set<Integer> targets, Set<String> depthReads) {
+        public static final ComputeUse NONE = new ComputeUse(Set.of(), Set.of());
+    }
+
+    /** The graph for these programs and the targets and depth snapshots the session's computes use. */
+    public static PackTargetGraphPlan build(List<PackProgramPlan> programs, PackConfig.PackConfigData config,
+                                            PackResourcePlan resources, Limits limits, ComputeUse computes) {
+        int deviceMaxColorAttachments = limits.deviceMaxColorAttachments();
         GraphInputs inputs = new GraphInputs(
                 programs == null ? List.of() : programs.stream().filter(value -> value != null).toList(),
                 config, resources == null ? PackResourcePlan.empty() : resources,
-                Math.max(1, windowWidth), Math.max(1, windowHeight), deviceMaxColorAttachments,
-                deviceMaxImageDimension <= 0 ? Integer.MAX_VALUE : deviceMaxImageDimension,
-                unavailableFormatTargets(config));
+                Math.max(1, limits.windowWidth()), Math.max(1, limits.windowHeight()), deviceMaxColorAttachments,
+                limits.deviceMaxImageDimension() <= 0 ? Integer.MAX_VALUE : limits.deviceMaxImageDimension(),
+                unavailableFormatTargets(config), computes);
         List<String> deviations = new ArrayList<>();
         Set<Integer> geometryReads = new TreeSet<>();
         Map<Integer, TargetSpec> preliminary = preliminaryTargets(inputs, usedTargets(inputs, geometryReads),
@@ -97,7 +118,7 @@ public final class PackTargetGraphPlan {
             steps.add(step);
             deviations.addAll(step.deviations());
         }
-        DepthGraphPlan depth = depthGraph(inputs.programs(), postPrograms);
+        DepthGraphPlan depth = depthGraph(inputs, postPrograms);
         deviations.addAll(depth.deviations());
         return new PackTargetGraphPlan(finalTargets(preliminary, doubleTargets, mipmappedTargets), steps, depth,
                 deviations, Math.max(1, deviceMaxColorAttachments), geometryReads);
@@ -112,7 +133,8 @@ public final class PackTargetGraphPlan {
             int windowHeight,
             int deviceMaxColorAttachments,
             int maxDimension,
-            Set<Integer> unavailableFormatTargets
+            Set<Integer> unavailableFormatTargets,
+            ComputeUse computes
     ) {
         Map<Integer, PackConfig.TargetSettings> settings() {
             return config == null ? Map.of() : config.targetSettings();
@@ -132,12 +154,13 @@ public final class PackTargetGraphPlan {
     }
 
     /**
-     * Every target an executable post or world program writes or reads, in range. The targets a
-     * world program reads are also collected into {@code geometryReads}.
+     * Every target an executable post or world program or a pass compute writes or reads, in range.
+     * The targets a world program reads are also collected into {@code geometryReads}.
      */
     private static Set<Integer> usedTargets(GraphInputs inputs, Set<Integer> geometryReads) {
         Set<Integer> used = new TreeSet<>();
         used.add(0);
+        inputs.computes().targets().stream().filter(inputs::allocatable).forEach(used::add);
         for (PackProgramPlan program : inputs.programs()) {
             if (program.targetPlan() == null || !program.executable() || !program.targetPlan().executable()) {
                 continue;
@@ -366,14 +389,14 @@ public final class PackTargetGraphPlan {
      * The depth snapshots executable programs read. A world program that reads depth needs the
      * same snapshot a post pass would: gbuffers_water reads opaque depth as depthtex1.
      */
-    private static DepthGraphPlan depthGraph(List<PackProgramPlan> programs, List<PackProgramPlan> postPrograms) {
-        Set<String> depthReads = new TreeSet<>();
+    private static DepthGraphPlan depthGraph(GraphInputs inputs, List<PackProgramPlan> postPrograms) {
+        Set<String> depthReads = new TreeSet<>(inputs.computes().depthReads());
         for (PackProgramPlan program : postPrograms) {
             if (program.executable() && program.targetPlan().executable()) {
                 depthReads.addAll(samplerNames(program));
             }
         }
-        for (PackProgramPlan program : programs) {
+        for (PackProgramPlan program : inputs.programs()) {
             if (program.geometryOutputPlan() != null && program.executable()) {
                 depthReads.addAll(geometrySamplerNames(program));
             }
@@ -502,18 +525,6 @@ public final class PackTargetGraphPlan {
     public List<TargetSpec> targets() { return targets; }
     public List<TargetStep> steps() { return steps; }
     public DepthGraphPlan depth() { return depth; }
-
-    /**
-     * This graph with the depth snapshots pass computes read as well: Iris gives a pass's computes
-     * the composite depth samplers its program gets (CompositeRenderer.createComputes).
-     */
-    public PackTargetGraphPlan withComputeDepthReads(Set<String> reads) {
-        DepthGraphPlan widened = depth.withReads(reads);
-        if (widened == depth) return this;
-        List<String> next = new ArrayList<>(deviations);
-        next.addAll(widened.deviations());
-        return new PackTargetGraphPlan(targets, steps, widened, next, maxAttachments, geometryReads);
-    }
     public List<String> deviations() { return deviations; }
     public int maxAttachments() { return maxAttachments; }
     public String snapshot() { return snapshot; }

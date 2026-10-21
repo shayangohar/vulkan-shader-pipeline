@@ -378,7 +378,7 @@ final class ComputePassTest {
     /**
      * Iris gives a pass's computes the depth samplers its program gets (IrisSamplers
      * addCompositeSamplers). Shrimple's deferred4 compute reads depthtex0 where no program does,
-     * so the depth graph must keep that snapshot for it.
+     * so the target graph keeps that snapshot, and the colour target it writes, for it.
      */
     @Test
     void passComputesReadDepth(@TempDir Path root) throws IOException {
@@ -404,12 +404,17 @@ final class ComputePassTest {
                 new PassComputePlan.Binding("depthtex0", 1, PassComputePlan.Kind.DEPTH, -1, null, "depthtex0"),
                 new PassComputePlan.Binding("depthtex1", 2, PassComputePlan.Kind.DEPTH, -1, null, "depthtex1")),
                 compute.bindings(), compute.deviations().toString());
-        PackTargetGraphPlan graph = PackTargetGraphPlan.build(plan.activePrograms(), plan.config(), 64, 64, 8, 4096);
+        PackTargetGraphPlan.Limits limits = new PackTargetGraphPlan.Limits(64, 64, 8, 4096);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(plan.activePrograms(), plan.config(), plan.resources(),
+                limits, PackTargetGraphPlan.ComputeUse.NONE);
         assertEquals(Set.of(), graph.depth().names(), "no program reads depth");
-        PackTargetGraphPlan widened = graph.withComputeDepthReads(Set.of("depthtex0", "depthtex1"));
-        assertEquals(Set.of("depthtex0", "depthtex1"), widened.depth().names());
-        assertTrue(widened.deviations().contains("DEPTH_COPY_GRAPH_APPLIED"), widened.deviations().toString());
-        assertTrue(graph.withComputeDepthReads(Set.of()) == graph, "nothing to add keeps the graph");
+        assertTrue(graph.targets().stream().noneMatch(target -> target.index() == 3), "no program uses colortex3");
+        // Iris creates a target a compute names (IrisImages.addRenderTargetImages: createIfUnsure).
+        PackTargetGraphPlan used = PackTargetGraphPlan.build(plan.activePrograms(), plan.config(), plan.resources(),
+                limits, new PackTargetGraphPlan.ComputeUse(Set.of(3), Set.of("depthtex0", "depthtex1")));
+        assertEquals(Set.of("depthtex0", "depthtex1"), used.depth().names());
+        assertTrue(used.targets().stream().anyMatch(target -> target.index() == 3), used.targets().toString());
+        assertTrue(used.deviations().contains("DEPTH_COPY_GRAPH_APPLIED"), used.deviations().toString());
         String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
         assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
     }

@@ -30,7 +30,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -582,11 +581,10 @@ final class PackPostChain {
                 return;
             }
             int maxAttachments = ChimeraMainPass.deviceMaxColorAttachments();
-            pass.packTargetGraph = PackTargetGraphPlan.build(
-                    pass.packPlan.activePrograms(), pass.packConfig, pass.packPlan.resources(), width, height,
-                    maxAttachments, ChimeraMainPass.deviceMaxImageDimension())
-                    .withComputeDepthReads(computeDepthReads().values().stream().flatMap(Set::stream)
-                            .collect(Collectors.toSet()));
+            pass.packTargetGraph = PackTargetGraphPlan.build(pass.packPlan.activePrograms(), pass.packConfig,
+                    pass.packPlan.resources(), new PackTargetGraphPlan.Limits(width, height, maxAttachments,
+                            ChimeraMainPass.deviceMaxImageDimension()),
+                    pass.packPassComputes == null ? PackTargetGraphPlan.ComputeUse.NONE : pass.packPassComputes.use());
             pass.coverage.packCoveragePlan = PackCoveragePlan.from(
                     pass.packTargetGraph, pass.packPlan, width, height);
             if (pass.coverage.packCoveragePlan.enabled() && pass.packCoverageRuntimeEnabled()) {

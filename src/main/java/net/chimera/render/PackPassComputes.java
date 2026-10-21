@@ -4,6 +4,7 @@ import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackResourceBinding;
+import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PassComputePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
@@ -93,6 +94,22 @@ final class PackPassComputes implements AutoCloseable {
                     .forEach(binding -> reads.add(binding.resource()));
         }
         return passes;
+    }
+
+    /** The colour targets and depth snapshots the loaded computes bind, which the target graph must hold. */
+    PackTargetGraphPlan.ComputeUse use() {
+        Set<Integer> targets = new TreeSet<>();
+        Set<String> depthReads = new TreeSet<>();
+        for (Loaded compute : loaded) {
+            for (PassComputePlan.Binding binding : compute.plan().bindings()) {
+                switch (binding.kind()) {
+                    case TARGET_IMAGE, TARGET_SAMPLER -> targets.add(binding.target());
+                    case DEPTH -> depthReads.add(binding.resource());
+                    default -> { }
+                }
+            }
+        }
+        return new PackTargetGraphPlan.ComputeUse(targets, depthReads);
     }
 
     /** The targets a loaded compute writes, which their images must allow as storage. */
