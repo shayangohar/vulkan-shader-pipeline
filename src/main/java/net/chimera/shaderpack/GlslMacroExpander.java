@@ -23,7 +23,6 @@ import java.util.regex.Pattern;
 final class GlslMacroExpander {
     static final int MAX_EXPANDED_CHARS = 16 * 1024 * 1024;
     private static final Pattern DEFINE_OR_UNDEF = Pattern.compile("(?m)^[ \\t]*#[ \\t]*(?:define|undef)\\b");
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_]\\w*");
     private static final GlslLexer.Kind TRIVIA = GlslLexer.Kind.TRIVIA;
 
     /** A macro: its parameters, null for an object-like one, and its replacement list. */
@@ -336,7 +335,7 @@ final class GlslMacroExpander {
             if (token.symbol("##") && !result.isEmpty() && index + 1 < tokens.size()) {
                 Tok left = result.remove(result.size() - 1);
                 Tok right = tokens.get(++index);
-                result.add(joined(left, right));
+                result.addAll(joined(left, right));
             } else {
                 result.add(token);
             }
@@ -345,11 +344,22 @@ final class GlslMacroExpander {
         return result;
     }
 
-    private static Tok joined(Tok left, Tok right) {
-        String text = left.text() + right.text();
-        GlslLexer.Kind kind = IDENTIFIER.matcher(text).matches() ? GlslLexer.Kind.IDENTIFIER
-                : !text.isEmpty() && Character.isDigit(text.charAt(0)) ? GlslLexer.Kind.NUMBER : GlslLexer.Kind.SYMBOL;
-        return new Tok(kind, text, left.spaceBefore(), union(left.hidden(), right.hidden()), false, false);
+    /**
+     * The tokens two operands of {@code ##} make. Text that is not one token is lexed again into
+     * the tokens it holds, as JCPP's paste does: Alpha Piscium pastes {@code 8 ## (x)}, and the
+     * rescan reads the name before it as a call. Two empty operands leave an empty placeholder.
+     */
+    private static List<Tok> joined(Tok left, Tok right) {
+        Set<String> hidden = union(left.hidden(), right.hidden());
+        List<Tok> result = new ArrayList<>();
+        for (GlslLexer.Token token : GlslLexer.lex(left.text() + right.text())) {
+            if (token.significant()) {
+                result.add(new Tok(token.kind(), token.text(), result.isEmpty() && left.spaceBefore(), hidden,
+                        false, false));
+            }
+        }
+        if (result.isEmpty()) result.add(new Tok(GlslLexer.Kind.SYMBOL, "", left.spaceBefore(), hidden, false, false));
+        return result;
     }
 
     private static Set<String> union(Set<String> first, Set<String> second) {

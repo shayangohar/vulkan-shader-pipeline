@@ -51,6 +51,21 @@ final class GlslMacroExpanderTest {
                 "a call with the wrong argument count stays for the compiler to report");
     }
 
+    /**
+     * Alpha Piscium pastes its colour-space converter's name onto the call's parenthesis
+     * ({@code _to_ ## b ##(x)}). That is not one token; JCPP lexes it again, and the rescan
+     * expands the pasted name as a call.
+     */
+    @Test
+    void aPasteThatIsNotOneTokenIsLexedAgain() {
+        assertEquals("\n\n\nvec3 c = srgbToWork(t);\n", GlslMacroExpander.expand("""
+                #define CONVERT(a, b, x) colors_ ## a ## _to_ ## b ##(x)
+                #define colors_1_to_8(x) srgbToWork(x)
+                #define WORK 8
+                vec3 c = CONVERT(1, 8, t);
+                """));
+    }
+
     /** BSL documents its options with "#define FEATURE ..." inside a block comment; JCPP reads that as text. */
     @Test
     void aDirectiveInsideABlockCommentIsText() {
