@@ -70,68 +70,22 @@ public final class PackConfig {
             Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
     /**
-     * Iris format token -> exact VkFormat. Keep normalized and floating-point
-     * storage distinct; target allocation checks device support when required.
+     * Iris format token -> the VkFormat that stores it exactly (IrisColorFormats). Normalized,
+     * floating-point and integer storage stay distinct; target allocation checks device support
+     * when required.
      */
-    public static final Map<String, Integer> FMT_TO_VK = Map.ofEntries(
-            Map.entry("R8", 9),          // VK_FORMAT_R8_UNORM
-            Map.entry("RG8", 16),        // VK_FORMAT_R8G8_UNORM
-            Map.entry("RGBA8", 37),      // VK_FORMAT_R8G8B8A8_UNORM
-            Map.entry("RGB10_A2", 64),   // VK_FORMAT_A2B10G10R10_UNORM_PACK32 (GL_RGB10_A2 bit order)
-            Map.entry("R16", 70),        // VK_FORMAT_R16_UNORM
-            Map.entry("R16F", 76),       // VK_FORMAT_R16_SFLOAT
-            Map.entry("RG16", 77),       // VK_FORMAT_R16G16_UNORM
-            Map.entry("RG16F", 83),      // VK_FORMAT_R16G16_SFLOAT
-            Map.entry("RGBA16", 91),     // VK_FORMAT_R16G16B16A16_UNORM (not RGBA16F)
-            Map.entry("RGBA16F", 97),    // VK_FORMAT_R16G16B16A16_SFLOAT
-            Map.entry("R32F", 100),      // VK_FORMAT_R32_SFLOAT
-            Map.entry("RG32F", 103),     // VK_FORMAT_R32G32_SFLOAT
-            Map.entry("RGBA32F", 109)    // VK_FORMAT_R32G32B32A32_SFLOAT
-    );
-    /**
-     * The rest of Iris's InternalTextureFormat list, stored in a target format every device can
-     * draw to and blend: an RGB format gains alpha, a signed normalized one becomes a float with
-     * at least its precision, and the packed and low-precision formats widen to 8 or 16 bits per
-     * channel. Integer formats stay unsupported: their programs write integer outputs.
-     */
-    private static final Map<String, Integer> APPROXIMATE_FMT_TO_VK = Map.ofEntries(
-            Map.entry("RGB8", 37),
-            Map.entry("R8_SNORM", 76),
-            Map.entry("RG8_SNORM", 83),
-            Map.entry("RGB8_SNORM", 97),
-            Map.entry("RGBA8_SNORM", 97),
-            Map.entry("RGB16", 91),
-            Map.entry("R16_SNORM", 100),
-            Map.entry("RG16_SNORM", 103),
-            Map.entry("RGB16_SNORM", 109),
-            Map.entry("RGBA16_SNORM", 109),
-            Map.entry("RGB16F", 97),
-            Map.entry("RGB32F", 109),
-            Map.entry("RGBA2", 37),
-            Map.entry("RGBA4", 37),
-            Map.entry("R3_G3_B2", 37),
-            Map.entry("RGB5_A1", 37),
-            Map.entry("RGB565", 37),
-            Map.entry("R11F_G11F_B10F", 97),
-            Map.entry("RGB9_E5", 97)
-    );
-    /** Iris's {@code RGBA}, the unsized default, which GL stores as RGBA8. */
-    private static final Map<String, String> FORMAT_ALIASES = Map.of("RGBA", "RGBA8");
-    /**
-     * The approximations whose GL format has no alpha channel. GL reads alpha as 1 from them, and
-     * Solas, for one, keeps its reflections only where that alpha is above 0.
-     */
-    private static final Set<String> PADDED_ALPHA_FORMATS = Set.of(
-            "RGB8", "RGB8_SNORM", "RGB16", "RGB16_SNORM", "RGB16F", "RGB32F", "R3_G3_B2", "RGB565",
-            "R11F_G11F_B10F", "RGB9_E5");
-    private static final Map<Integer, String> VK_TO_NAME;
-    static {
-        Map<Integer, String> reverse = new HashMap<>();
-        FMT_TO_VK.forEach((token, code) -> reverse.put(code, token));
-        VK_TO_NAME = Map.copyOf(reverse);
-    }
+    public static final Map<String, Integer> FMT_TO_VK = exactFormats();
 
     private PackConfig() {}
+
+    private static Map<String, Integer> exactFormats() {
+        Map<String, Integer> exact = new HashMap<>();
+        for (String token : IrisColorFormats.tokens()) {
+            IrisColorFormats.Format format = IrisColorFormats.of(token);
+            if (format.exact()) exact.put(token, format.vkFormat());
+        }
+        return Map.copyOf(exact);
+    }
 
     /**
      * Bytes per texel of a colour-target format in {@link #FMT_TO_VK}, or 0
@@ -139,14 +93,7 @@ public final class PackConfig {
      * sizes its own formats, so pack targets take their size from here.
      */
     public static int formatBytes(int vkFormat) {
-        return switch (vkFormat) {
-            case 9 -> 1;
-            case 16, 70, 76 -> 2;
-            case 37, 64, 77, 83, 100 -> 4;
-            case 91, 97, 103 -> 8;
-            case 109 -> 16;
-            default -> 0;
-        };
+        return IrisColorFormats.bytes(vkFormat);
     }
 
     public static final int DEFAULT_SHADOW_MAP_RESOLUTION = 2048;
@@ -267,7 +214,7 @@ public final class PackConfig {
             Map<Integer, TargetSettings> targetSettings,
             Map<String, List<Integer>> flips,
             Map<String, List<Integer>> preFlips,
-            // Targets declared in a format without alpha and stored with it (PADDED_ALPHA_FORMATS).
+            // Targets declared in a format without alpha and stored with it (IrisColorFormats).
             Set<Integer> paddedAlphaTargets
     ) {
         public PackConfigData(
@@ -372,20 +319,19 @@ public final class PackConfig {
 
     /** A colortex format token's Vulkan format, recording an approximation; null when unsupported. */
     private static Integer formatCode(int slot, String token, List<String> deviations) {
-        Integer code = FMT_TO_VK.get(FORMAT_ALIASES.getOrDefault(token, token));
-        if (code == null) {
-            code = APPROXIMATE_FMT_TO_VK.get(token);
-            if (code != null) {
-                deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
-                        + slot + "=" + token + "->" + formatName(code));
-            }
+        IrisColorFormats.Format format = IrisColorFormats.of(token);
+        if (format == null) return null;
+        if (!format.exact()) {
+            deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
+                    + slot + "=" + token + "->" + formatName(format.vkFormat()));
         }
-        return code;
+        return format.vkFormat();
     }
 
     /** Records a target's format, a later declaration replacing an earlier one; returns the previous format. */
     private static Integer putFormat(int slot, String token, int code, Collected collected) {
-        if (PADDED_ALPHA_FORMATS.contains(token)) {
+        IrisColorFormats.Format format = IrisColorFormats.of(token);
+        if (format != null && format.paddedAlpha()) {
             collected.paddedAlphaTargets.add(slot);
         } else {
             collected.paddedAlphaTargets.remove(slot);
@@ -798,7 +744,7 @@ public final class PackConfig {
 
     /** Token name for a VK code (for logs); "code N" when unknown. */
     public static String formatName(int vkCode) {
-        String name = VK_TO_NAME.get(vkCode);
-        return name != null ? name : "code " + vkCode;
+        IrisColorFormats.Format format = IrisColorFormats.stored(vkCode);
+        return format != null ? format.token() : "code " + vkCode;
     }
 }

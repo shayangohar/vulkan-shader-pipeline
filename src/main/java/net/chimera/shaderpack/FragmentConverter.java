@@ -28,7 +28,7 @@ public final class FragmentConverter {
 
     /** The sampler types a descriptor binding is written onto. */
     private static final Set<String> BINDABLE_SAMPLERS = Set.of("sampler3D", "isampler3D", "usampler3D",
-            "sampler2D", "sampler2DShadow");
+            "sampler2D", "sampler2DShadow", "isampler2D", "usampler2D");
     private static final Set<String> COVERAGE_PEER_TYPES = Set.of("float", "vec2", "vec3", "vec4");
 
     /**

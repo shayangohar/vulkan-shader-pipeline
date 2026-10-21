@@ -166,21 +166,27 @@ final class CorpusCompileFixesTest {
     }
 
     /**
-     * Every format in Iris's InternalTextureFormat list but the integer ones has a target image.
-     * superDuperVanilla's RGB16_SNORM colortex1 had none, and every program writing it fell back.
+     * Every format in Iris's InternalTextureFormat list has a target image, the integer ones too.
+     * superDuperVanilla's RGB16_SNORM colortex1 had none, and every program writing it fell back;
+     * so did every program writing Noble's RGBA32UI colortex1.
      */
     @Test
     void everyIrisColourFormatHasATarget(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Map<String, Integer> expected = Map.ofEntries(Map.entry("RGBA", 37), Map.entry("RGB16_SNORM", 109),
                 Map.entry("RGBA16_SNORM", 109), Map.entry("R16_SNORM", 100), Map.entry("RG8_SNORM", 83),
-                Map.entry("RGB32F", 109), Map.entry("RGB565", 37), Map.entry("RGB9_E5", 97));
+                Map.entry("RGB32F", 109), Map.entry("RGB565", 37), Map.entry("RGB9_E5", 97),
+                Map.entry("RGBA32UI", 107), Map.entry("R32UI", 98), Map.entry("RG16I", 82),
+                Map.entry("RGB8UI", 41), Map.entry("RGB10_A2UI", 68));
         Set<String> padded = Set.of("RGB8", "RGB8_SNORM", "RGB16", "RGB16_SNORM", "RGB16F", "RGB32F", "R3_G3_B2",
-                "RGB565", "R11F_G11F_B10F", "RGB9_E5");
+                "RGB565", "R11F_G11F_B10F", "RGB9_E5", "RGB8UI", "RGB8I", "RGB16UI", "RGB16I", "RGB32UI", "RGB32I");
         List<String> tokens = List.of("RGBA", "R8", "RG8", "RGB8", "RGBA8", "R8_SNORM", "RG8_SNORM", "RGB8_SNORM",
                 "RGBA8_SNORM", "R16", "RG16", "RGB16", "RGBA16", "R16_SNORM", "RG16_SNORM", "RGB16_SNORM",
                 "RGBA16_SNORM", "R16F", "RG16F", "RGB16F", "RGBA16F", "R32F", "RG32F", "RGB32F", "RGBA32F",
-                "RGBA2", "RGBA4", "R3_G3_B2", "RGB5_A1", "RGB565", "RGB10_A2", "R11F_G11F_B10F", "RGB9_E5");
+                "RGBA2", "RGBA4", "R3_G3_B2", "RGB5_A1", "RGB565", "RGB10_A2", "R11F_G11F_B10F", "RGB9_E5",
+                "R8I", "RG8I", "RGB8I", "RGBA8I", "R8UI", "RG8UI", "RGB8UI", "RGBA8UI", "R16I", "RG16I", "RGB16I",
+                "RGBA16I", "R16UI", "RG16UI", "RGB16UI", "RGBA16UI", "R32I", "RG32I", "RGB32I", "RGBA32I",
+                "R32UI", "RG32UI", "RGB32UI", "RGBA32UI", "RGB10_A2UI");
         for (String token : tokens) {
             Files.writeString(shaders.resolve("shaders.properties"), "colortex1Format=" + token + "\n");
             PackConfig.PackConfigData config = PackConfig.parse(List.of(), shaders);
@@ -188,10 +194,54 @@ final class CorpusCompileFixesTest {
             assertTrue(format != null && PackConfig.formatBytes(format) > 0, token + " has a target: " + format);
             if (expected.containsKey(token)) assertEquals(expected.get(token), format, token);
             assertEquals(padded.contains(token), config.paddedAlphaTargets().contains(1), token + " pads its alpha");
+            assertEquals(token.endsWith("I"), IrisColorFormats.integer(format), token + " reads as integers");
         }
+    }
+
+    /** A program writes an integer target through a uvec4 output, and a later pass reads it as usampler2D. */
+    @Test
+    void integerTargetsAreWrittenAndReadAsIntegers(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), "colortex1Format=RGBA32UI\n");
-        assertTrue(PackConfig.parse(List.of(), shaders).deviations()
-                .contains("POST_TARGET_FORMAT_UNSUPPORTED:colortex1Format=RGBA32UI"), "integer targets stay refused");
+        Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), """
+                #version 330 compatibility
+                out vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_terrain.fsh"), """
+                #version 330 compatibility
+                uniform sampler2D gtexture;
+                in vec2 uv;
+                /* RENDERTARGETS: 0,1 */
+                layout(location = 0) out vec4 color;
+                layout(location = 1) out uvec4 material;
+                void main() { color = texture(gtexture, uv); material = uvec4(7u, 0u, 0u, 1u); }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 330 compatibility
+                uniform sampler2D colortex0;
+                uniform usampler2D colortex1;
+                /* RENDERTARGETS: 0 */
+                layout(location = 0) out vec4 color;
+                void main() {
+                    uint id = texelFetch(colortex1, ivec2(gl_FragCoord.xy), 0).r;
+                    color = texelFetch(colortex0, ivec2(gl_FragCoord.xy), 0) * float(id);
+                }
+                """);
+        Files.writeString(shaders.resolve("final.fsh"), """
+                #version 120
+                uniform sampler2D colortex0;
+                void main() { gl_FragColor = texture2D(colortex0, vec2(0.5)); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        for (String program : List.of("gbuffers_terrain", "composite")) {
+            PackProgramPlan planned = plan.program(program);
+            assertTrue(planned != null && planned.executable() && planned.deviations().stream()
+                            .noneMatch(value -> value.startsWith("POST_TARGET_FORMAT_UNSUPPORTED")
+                                    || value.contains("SAMPLER_NOT_MAPPED")),
+                    program + " must plan over the integer target: "
+                            + (planned == null ? "missing" : planned.deviations()));
+        }
     }
 
     /**

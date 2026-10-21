@@ -16,7 +16,9 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  * against the catalog and the pack's own values, and binds each sampler to its selector slot.
  */
 final class InterfacePlanner {
-    private static final Set<String> PLANAR_SAMPLER_TYPES = Set.of("sampler2D", "sampler2DShadow");
+    /** Iris binds integer targets (IrisColorFormats) to isampler2D and usampler2D declarations. */
+    private static final Set<String> PLANAR_SAMPLER_TYPES = Set.of("sampler2D", "sampler2DShadow",
+            "isampler2D", "usampler2D");
     private static final Set<String> VOLUME_SAMPLER_TYPES = Set.of("sampler3D", "isampler3D", "usampler3D");
 
     private InterfacePlanner() {}

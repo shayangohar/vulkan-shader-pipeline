@@ -3,6 +3,7 @@ package net.chimera.mixin;
 import net.chimera.render.ChimeraDevice;
 import net.chimera.render.ChimeraRenderingPass;
 import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackBlendPlan;
 import net.chimera.shaderpack.SpirvOutputWrites;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
@@ -117,6 +118,8 @@ public abstract class GraphicsPipelineMrtMixin {
                         .dstAlphaBlendFactor(mode.dstAlpha())
                         .alphaBlendOp(VK_BLEND_OP_ADD);
             }
+            // GL skips blending for an integer colour buffer; Vulkan requires it off there.
+            if (IrisColorFormats.integer(this.chimera$window.colorFormats()[index])) target.blendEnable(false);
         }
         return attachments;
     }

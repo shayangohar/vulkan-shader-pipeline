@@ -7,6 +7,7 @@ import static org.lwjgl.opengl.GL11.GL_LEQUAL;
 import static org.lwjgl.opengl.GL11.GL_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
+import static org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST;
 import static org.lwjgl.opengl.GL11.GL_REPEAT;
 import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
 import static org.lwjgl.opengl.GL14.GL_COMPARE_R_TO_TEXTURE;
@@ -25,7 +26,15 @@ public final class ChimeraSamplers {
 
     /** Linear filtering clamped to the edge, reading levels 0 to {@code maxLevel}, linearly between them. */
     public static long linearMipmapped(int maxLevel) {
-        return SamplerManager.getTextureSampler(linearMipmappedKey(maxLevel));
+        return mipmapped(maxLevel, true);
+    }
+
+    /**
+     * Levels 0 to {@code maxLevel} clamped to the edge: linearly within and between levels, or the
+     * nearest texel of the nearest level (Iris's GL_NEAREST_MIPMAP_NEAREST for integer targets).
+     */
+    public static long mipmapped(int maxLevel, boolean linear) {
+        return SamplerManager.getTextureSampler(linear ? linearMipmappedKey(maxLevel) : nearestMipmappedKey(maxLevel));
     }
 
     /**
@@ -46,6 +55,12 @@ public final class ChimeraSamplers {
         if (maxLevel <= 0) return flatKey(true, true);
         return new SamplerKey(GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
                 0.0F, maxLevel, 0.0F, 0, 0);
+    }
+
+    static SamplerKey nearestMipmappedKey(int maxLevel) {
+        if (maxLevel <= 0) return flatKey(false, true);
+        return new SamplerKey(GL_NEAREST_MIPMAP_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
+                GL_CLAMP_TO_EDGE, 0.0F, maxLevel, 0.0F, 0, 0);
     }
 
     static SamplerKey depthCompareKey() {
