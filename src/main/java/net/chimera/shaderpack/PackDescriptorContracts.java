@@ -453,6 +453,6 @@ final class PackDescriptorContracts {
         PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
                 .get(binding.imageName());
         return spec == null || spec.format() == null ? "sampler3D"
-                : spec.typePrefix() + "sampler" + spec.dimensionSuffix();
+                : spec.samplerType();
     }
 }

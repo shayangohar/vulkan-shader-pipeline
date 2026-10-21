@@ -48,11 +48,30 @@ public final class PassComputePlan {
     /** The value block a pass compute reads; the pack compile check finds its offsets by this name. */
     public static final String VALUES_BLOCK = "ChimeraPassComputeValues";
 
+    /** What one descriptor binds: a colour target, the noise texture, or a pack image. */
+    public enum Kind {
+        /** {@code colorimgN}: target N as a storage image, in its format. */
+        TARGET_IMAGE,
+        /** {@code colortexN}: target N sampled. */
+        TARGET_SAMPLER,
+        /** {@code noisetex}: the pack's noise texture. */
+        NOISE,
+        /** A pack image's own storage name ({@code image.<name>}), in its format. */
+        PACK_IMAGE,
+        /** A pack image's sampler, reading the image it names. */
+        PACK_IMAGE_SAMPLER
+    }
+
     /**
-     * One descriptor: a storage image ({@code colorimgN} of target, in that format) or a sampler
-     * of a target; a sampler with target -1 reads the pack's noise texture.
+     * One descriptor: its symbol and binding, what it binds, the target (-1 for none), a storage
+     * image's format, and a pack image's name.
      */
-    public record Binding(String symbol, int binding, boolean storage, int target, String format) {}
+    public record Binding(String symbol, int binding, Kind kind, int target, String format, String image) {
+        /** Whether the compute writes through it, as a storage image. */
+        public boolean storage() {
+            return kind == Kind.TARGET_IMAGE || kind == Kind.PACK_IMAGE;
+        }
+    }
 
     /** One pass compute: its translated source (null when it cannot run) and what dispatch binds. */
     public record PassCompute(String name, String pass, String source, int[] localSize, int[] workGroups,
@@ -110,7 +129,7 @@ public final class PassComputePlan {
     public Set<Integer> storageTargets() {
         return computes.stream().filter(PassCompute::supported)
                 .flatMap(value -> value.bindings().stream())
-                .filter(Binding::storage)
+                .filter(binding -> binding.kind() == Kind.TARGET_IMAGE)
                 .map(Binding::target)
                 .collect(Collectors.toCollection(TreeSet::new));
     }
@@ -213,9 +232,10 @@ public final class PassComputePlan {
         }
 
         /**
-         * Binds each used {@code colorimgN} (1 to 15, a float image2D) in its target's format. The
-         * usage analysis tracks 3D images only; with unreachable functions blanked, any reference
-         * left besides the declaration is a use.
+         * Binds each used {@code colorimgN} (1 to 15, a float image2D) in its target's format, and
+         * each used pack image (Iris IrisImages.addCustomImages) in its own. The usage analysis
+         * tracks 3D images only; with unreachable functions blanked, any reference left besides the
+         * declaration is a use.
          */
         private String bindImages(String body, Work work) {
             Matcher image = IMAGE_DECLARATION.matcher(body);
@@ -224,45 +244,84 @@ public final class PassComputePlan {
                 String name = image.group(3);
                 image.appendReplacement(result, "");
                 if (GlslTokenRewriter.identifierCount(body, name) <= 1) continue;
+                PackAdvancedResourcePlan.ImageSpec pack = packImage(PackAdvancedResourcePlan.imageBySymbol(
+                        plan.advancedResources().images(), name));
                 Matcher color = COLOR_IMAGE.matcher(name);
                 int target = color.matches() ? Integer.parseInt(color.group(1)) : -1;
-                String format = target >= 1 && target <= PackTargetGraphPlan.MAX_TARGET
+                String format = pack != null ? pack.layoutQualifier()
+                        : target >= 1 && target <= PackTargetGraphPlan.MAX_TARGET
                         ? imageFormat(targetFormat(target)) : null;
-                if (format == null || !image.group(2).equals("image2D")) {
+                String type = pack != null ? AdvancedImageDeclarations.storageImageType(pack) : "image2D";
+                if (format == null || !image.group(2).equals(type)) {
                     work.fail("PASS_COMPUTE_IMAGE_UNSUPPORTED:" + name);
                     continue;
                 }
                 work.declare("layout(" + format + ", binding = " + work.bindings.size() + ") "
-                        + image.group(1) + "image2D " + name + ";");
-                work.bindings.add(new Binding(name, work.bindings.size(), true, target, format));
+                        + image.group(1) + type + " " + name + ";");
+                work.bindings.add(pack != null
+                        ? new Binding(name, work.bindings.size(), Kind.PACK_IMAGE, -1, format, pack.name())
+                        : new Binding(name, work.bindings.size(), Kind.TARGET_IMAGE, target, format, null));
             }
             image.appendTail(result);
             return result.toString();
         }
 
-        /** Binds each live 2D sampler of a target, or of the noise texture, that no pack texture replaces. */
+        /** A pack image this session creates, or null. */
+        private static PackAdvancedResourcePlan.ImageSpec packImage(PackAdvancedResourcePlan.ImageSpec spec) {
+            return spec != null && spec.supported() ? spec : null;
+        }
+
+        /**
+         * Binds each live 2D sampler of a target, or of the noise texture, that no pack texture
+         * replaces, and each live sampler of a pack image (Iris IrisSamplers.addCustomImages).
+         */
         private String bindSamplers(String body, GlslResourceUsage.Analysis usage, Work work) {
             Matcher sampler = SAMPLER_DECLARATION.matcher(body);
             StringBuilder result = new StringBuilder();
             while (sampler.find()) {
                 String name = sampler.group(2);
+                String type = sampler.group(1);
                 sampler.appendReplacement(result, "");
                 if (!usage.liveSamplers().contains(name)) {
                     unused(body, name, work);
                     continue;
                 }
-                Integer target = name.equals("noisetex") ? Integer.valueOf(-1) : PackResourcePlan.targetIndex(name);
-                boolean replaced = PackResourcePlan.declaresTexture(work.pass, name, sampler.group(1),
-                        plan.settings().resourceDeclarations());
-                if (target == null || replaced || !sampler.group(1).equals("sampler2D")) {
+                Binding binding = samplerBinding(name, type, work);
+                if (binding == null) {
                     work.fail("PASS_COMPUTE_SAMPLER_UNSUPPORTED:" + name);
                     continue;
                 }
-                work.declare("layout(binding = " + work.bindings.size() + ") uniform sampler2D " + name + ";");
-                work.bindings.add(new Binding(name, work.bindings.size(), false, target, null));
+                work.declare("layout(binding = " + work.bindings.size() + ") uniform " + type + " " + name + ";");
+                work.bindings.add(binding);
             }
             sampler.appendTail(result);
             return result.toString();
+        }
+
+        /** What the live sampler {@code name} of {@code type} reads, or null when dispatch cannot bind it. */
+        private Binding samplerBinding(String name, String type, Work work) {
+            PackAdvancedResourcePlan.ImageSpec pack = packImage(PackAdvancedResourcePlan.imageBySampler(
+                    plan.advancedResources().images(), name));
+            if (pack != null) {
+                if (!type.equals(pack.samplerType())) return null;
+                return new Binding(name, work.bindings.size(), Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
+            }
+            Integer target = name.equals("noisetex") ? Integer.valueOf(-1) : PackResourcePlan.targetIndex(name);
+            boolean replaced = PackResourcePlan.declaresTexture(work.pass, name, type,
+                    plan.settings().resourceDeclarations());
+            if (target == null || replaced || !type.equals(target < 0 ? "sampler2D" : targetSamplerType(target))) {
+                return null;
+            }
+            return new Binding(name, work.bindings.size(), target < 0 ? Kind.NOISE : Kind.TARGET_SAMPLER,
+                    target, null, null);
+        }
+
+        /** The sampler type a target binds to: usampler2D or isampler2D for an integer format (Iris). */
+        private String targetSamplerType(int target) {
+            IrisColorFormats.Format format = IrisColorFormats.stored(targetFormat(target));
+            IrisColorFormats.Kind kind = format == null ? IrisColorFormats.Kind.FLOAT : format.kind();
+            return kind == IrisColorFormats.Kind.UINT ? "usampler2D"
+                    : kind == IrisColorFormats.Kind.SINT ? "isampler2D" : "sampler2D";
         }
 
         /** The live value uniforms the frame serves, in the order the block lays them out. */

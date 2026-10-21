@@ -26,8 +26,9 @@ import static org.lwjgl.vulkan.VK10.*;
 /**
  * The session's pass computes (Iris CompositeRenderer): each dispatches right before its pass
  * draws, with {@code colorimgN} and {@code colortexN} bound to the image the pass reads. A written
- * image is in GENERAL for the dispatch and returns to the sampled layout afterwards, so the pass
- * and every later reader see what the compute stored.
+ * target is in GENERAL for the dispatch and returns to the sampled layout afterwards, so the pass
+ * and every later reader see what the compute stored. Pack images and their samplers bind the
+ * session's images, which stay in GENERAL.
  */
 final class PackPassComputes implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -37,18 +38,21 @@ final class PackPassComputes implements AutoCloseable {
 
     private final List<Loaded> loaded;
     private final PackResourceOwner resources;
+    private final PackAdvancedImageOwner packImages;
     private final Set<String> failed = new HashSet<>();
 
-    private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources) {
+    private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources, PackAdvancedImageOwner packImages) {
         this.loaded = loaded;
         this.resources = resources;
+        this.packImages = packImages;
     }
 
     /** Builds a pipeline for every supported compute whose targets the device can store to; logs each outcome. */
-    static PackPassComputes load(PassComputePlan plan, PackResourceOwner resources) {
+    static PackPassComputes load(PassComputePlan plan, PackResourceOwner resources,
+                                 PackAdvancedImageOwner packImages) {
         List<Loaded> loaded = new ArrayList<>();
         for (PassComputePlan.PassCompute compute : plan.computes()) {
-            String refusal = compute.supported() ? storageRefusal(compute) : String.valueOf(compute.deviations());
+            String refusal = compute.supported() ? refusal(compute, packImages) : String.valueOf(compute.deviations());
             ComputeKernel kernel = refusal != null ? null : ComputeKernel.create("chimera_" + compute.name() + ".csh",
                     compute.source(), descriptorTypes(compute), ComputeValueBlock.bufferSize(compute.values()));
             if (kernel != null) {
@@ -61,7 +65,7 @@ final class PackPassComputes implements AutoCloseable {
                         refusal != null ? refusal : "pipeline build failed");
             }
         }
-        return new PackPassComputes(List.copyOf(loaded), resources);
+        return new PackPassComputes(List.copyOf(loaded), resources, packImages);
     }
 
     /** The computes that loaded, in run order. */
@@ -73,7 +77,7 @@ final class PackPassComputes implements AutoCloseable {
     Set<Integer> storageTargets() {
         Set<Integer> targets = new TreeSet<>();
         for (Loaded compute : loaded) {
-            compute.plan().bindings().stream().filter(PassComputePlan.Binding::storage)
+            compute.plan().bindings().stream().filter(binding -> binding.kind() == PassComputePlan.Kind.TARGET_IMAGE)
                     .forEach(binding -> targets.add(binding.target()));
         }
         return targets;
@@ -98,12 +102,19 @@ final class PackPassComputes implements AutoCloseable {
         List<VulkanImage> images = images(compute.plan(), sources);
         Map<VulkanImage, Boolean> written = new IdentityHashMap<>();
         for (PassComputePlan.Binding binding : compute.plan().bindings()) {
-            if (binding.storage()) written.put(images.get(binding.binding()), Boolean.TRUE);
+            if (binding.kind() == PassComputePlan.Kind.TARGET_IMAGE) {
+                written.put(images.get(binding.binding()), Boolean.TRUE);
+            }
         }
         ComputeKernel.FrameSlot frame = compute.kernel().currentFrame();
         for (PassComputePlan.Binding binding : compute.plan().bindings()) {
             VulkanImage image = images.get(binding.binding());
-            if (binding.storage()) {
+            if (image instanceof PackStorageImage pack) {
+                // Pack images stay in GENERAL: graphics programs and computes read and write them alike.
+                pack.transitionToGeneral(stack, commandBuffer);
+                compute.kernel().writeImage(frame, binding.binding(), pack.getImageView(),
+                        binding.storage() ? 0L : pack.getSampler(), VK_IMAGE_LAYOUT_GENERAL);
+            } else if (binding.storage()) {
                 compute.kernel().writeImage(frame, binding.binding(), PackPostTargets.attachmentView(image), 0L,
                         VK_IMAGE_LAYOUT_GENERAL);
             } else {
@@ -138,10 +149,14 @@ final class PackPassComputes implements AutoCloseable {
     private List<VulkanImage> images(PassComputePlan.PassCompute compute, VulkanImage[] sources) {
         List<VulkanImage> images = new ArrayList<>();
         for (PassComputePlan.Binding binding : compute.bindings()) {
-            VulkanImage image = binding.target() < 0 ? (resources == null ? null : resources.image("noisetex"))
-                    : binding.target() < sources.length ? sources[binding.target()] : null;
+            VulkanImage image = switch (binding.kind()) {
+                case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.image());
+                case NOISE -> resources == null ? null : resources.image("noisetex");
+                case TARGET_IMAGE, TARGET_SAMPLER ->
+                        binding.target() < sources.length ? sources[binding.target()] : null;
+            };
             if (image == null) throw new IllegalStateException(binding.symbol() + " has no image this frame");
-            if (binding.storage()
+            if (binding.kind() == PassComputePlan.Kind.TARGET_IMAGE
                     && (((ChimeraVulkanImageAccessor) image).chimera$usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
                 throw new IllegalStateException(binding.symbol() + " image was not created for storage");
             }
@@ -155,10 +170,16 @@ final class PackPassComputes implements AutoCloseable {
                 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).toArray();
     }
 
-    /** Why a target this compute writes cannot be a storage image on this device, or null. */
-    private static String storageRefusal(PassComputePlan.PassCompute compute) {
+    /**
+     * Why this compute cannot run in this session: a pack image it binds was not created, or a
+     * target it writes cannot be a storage image on this device. Null when it can.
+     */
+    private static String refusal(PassComputePlan.PassCompute compute, PackAdvancedImageOwner packImages) {
         for (PassComputePlan.Binding binding : compute.bindings()) {
-            if (!binding.storage()) continue;
+            if (binding.image() != null && (packImages == null || packImages.image(binding.image()) == null)) {
+                return "pack image " + binding.image() + " was not created";
+            }
+            if (binding.kind() != PassComputePlan.Kind.TARGET_IMAGE) continue;
             if (!storageSupported(PackConfig.FMT_TO_VK.getOrDefault(binding.format().toUpperCase(Locale.ROOT), 0))) {
                 return "colortex" + binding.target() + " format cannot be a storage image";
             }

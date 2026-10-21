@@ -561,7 +561,7 @@ public final class PackShadowCompute implements AutoCloseable {
     }
 
     private static String samplerType(PackAdvancedResourcePlan.ImageSpec spec) {
-        return spec == null ? "sampler3D" : spec.typePrefix() + "sampler" + spec.dimensionSuffix();
+        return spec == null ? "sampler3D" : spec.samplerType();
     }
 
     private static String imageType(PackAdvancedResourcePlan.ImageSpec spec, String sourceType) {

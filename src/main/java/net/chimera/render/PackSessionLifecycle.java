@@ -638,7 +638,7 @@ final class PackSessionLifecycle {
                 pass.packPlan.settingsOverriddenNames());
         recordShadowComputeDisposition();
         pass.packPassComputes = PackPassComputes.load(PassComputePlan.build(pass.packPlan, shadersDir),
-                pass.packResourceOwner);
+                pass.packResourceOwner, pass.packAdvancedImageOwner);
         for (String compute : pass.packPassComputes.installedNames()) {
             if (pass.conformanceReport != null && pass.conformanceReport.program(compute) != null) {
                 pass.conformanceReport.markRuntime(compute, ConformanceReport.RuntimeDisposition.INSTALLED,

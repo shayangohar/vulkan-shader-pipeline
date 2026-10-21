@@ -106,6 +106,11 @@ public final class PackAdvancedResourcePlan {
             return depth > 0 ? 3 : height > 0 ? 2 : 1;
         }
 
+        /** The GLSL type of the image's sampler: {@code usampler2D}, {@code sampler3D} and so on. */
+        public String samplerType() {
+            return typePrefix() + "sampler" + dimensionSuffix();
+        }
+
         /** The name the image's selector slot is kept under (AdvancedImageDeclarations.slotKey). */
         public String slotKey() {
             return sampler.isEmpty() ? name : sampler;

@@ -222,8 +222,10 @@ final class ComputePassTest {
         assertEquals(List.of("PASS_COMPUTE_SAMPLER_UNSUPPORTED:lut"), deviations.get("deferred_a"));
         assertEquals(List.of("PASS_COMPUTE_WITHOUT_PROGRAM:composite"), deviations.get("composite_a"));
         PassComputePlan.PassCompute sky = computes.before("deferred1").get(0);
-        assertEquals(List.of(new PassComputePlan.Binding("colorimg4", 0, true, 4, "rgba16f"),
-                new PassComputePlan.Binding("colortex4", 1, false, 4, null)), sky.bindings());
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg4", 0, PassComputePlan.Kind.TARGET_IMAGE, 4, "rgba16f", null),
+                new PassComputePlan.Binding("colortex4", 1, PassComputePlan.Kind.TARGET_SAMPLER, 4, null, null)),
+                sky.bindings());
         assertEquals(List.of("cameraPosition", "frameCounter"),
                 sky.values().stream().map(ComputeValueBlock.Value::name).toList());
         assertEquals(Set.of(4), computes.storageTargets());
@@ -233,6 +235,45 @@ final class ComputePassTest {
         sky.values().forEach(value -> written.put(value.name(), value.offset()));
         String error = PackCompileTest.compileComputeValues(sky.source(), PassComputePlan.VALUES_BLOCK, written);
         assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + sky.source());
+    }
+
+    /**
+     * Iris gives a pass compute the pack's images and their samplers (IrisImages.addCustomImages,
+     * IrisSamplers.addCustomImages). Alpha Piscium's composite computes read usam_rgba16f and write
+     * uimg_rgba16f, a screen-relative RGBA16F image.
+     */
+    @Test
+    void passComputesBindPackImages(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.uimg_rgba16f = usam_rgba16f RGBA RGBA16F HALF_FLOAT false true 1.0 1.0\n");
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "/*\nconst int colortex8Format = RGBA32UI;\n*/\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        // colortex8 is an integer target, which Iris binds to a usampler2D as graphics programs do.
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba16f) restrict uniform image2D uimg_rgba16f;
+                uniform sampler2D usam_rgba16f;
+                uniform usampler2D colortex8;
+                void main() {
+                    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+                    vec4 material = vec4(texelFetch(colortex8, texel, 0));
+                    imageStore(uimg_rgba16f, texel, texelFetch(usam_rgba16f, texel, 0) * 0.5 + material);
+                }
+                """);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .before("composite").get(0);
+        assertEquals(List.of(
+                new PassComputePlan.Binding("uimg_rgba16f", 0, PassComputePlan.Kind.PACK_IMAGE, -1, "rgba16f",
+                        "uimg_rgba16f"),
+                new PassComputePlan.Binding("usam_rgba16f", 1, PassComputePlan.Kind.PACK_IMAGE_SAMPLER, -1, null,
+                        "uimg_rgba16f"),
+                new PassComputePlan.Binding("colortex8", 2, PassComputePlan.Kind.TARGET_SAMPLER, 8, null, null)),
+                compute.bindings(), compute.deviations().toString());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
     }
 
     @Test
