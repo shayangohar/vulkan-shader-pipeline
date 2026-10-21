@@ -83,8 +83,15 @@ final class GlslTree {
     /** Replaces the tokens of {@code range} with {@code text} when printing. */
     record Edit(Range range, String text) {}
 
-    /** The declaration a name resolves to: its declaring node and the token of the declared name. */
-    record Binding(Node node, int name) {}
+    /**
+     * The declaration a name resolves to: its declaring node, the token of the declared name, and
+     * for a declared variable the whole declaration holding it (its type and qualifiers), else null.
+     */
+    record Binding(Node node, int name, Declaration declaration) {
+        Binding(Node node, int name) {
+            this(node, name, null);
+        }
+    }
 
     private final String source;
     private final List<GlslLexer.Token> tokens;

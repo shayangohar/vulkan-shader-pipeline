@@ -80,45 +80,13 @@ final class GlslScalarReductions {
         return switch (binding.node()) {
             case GlslTree.Parameter parameter -> parameter.arrays().isEmpty()
                     && named(tree, parameter.type(), type);
-            case GlslTree.Declarator declarator -> declarator.arrays().isEmpty()
-                    && named(tree, declarationType(tree, declarator), type);
+            case GlslTree.Declarator declarator -> declarator.arrays().isEmpty() && binding.declaration() != null
+                    && named(tree, binding.declaration().type(), type);
             default -> false;
         };
     }
 
     private static boolean named(GlslTree tree, GlslTree.TypeSpec spec, String type) {
         return spec != null && spec.struct() == null && spec.arrays().isEmpty() && tree.text(spec.name()).equals(type);
-    }
-
-    /** The type of the declaration that holds {@code declarator}, at file scope or in a function. */
-    private static GlslTree.TypeSpec declarationType(GlslTree tree, GlslTree.Declarator declarator) {
-        for (GlslTree.External external : tree.externals()) {
-            GlslTree.Declaration owner = switch (external) {
-                case GlslTree.Declaration declaration -> holding(declaration, declarator);
-                case GlslTree.Function function -> function.body() == null ? null
-                        : holding(function.body(), declarator);
-                default -> null;
-            };
-            if (owner != null) return owner.type();
-        }
-        return null;
-    }
-
-    private static GlslTree.Declaration holding(GlslTree.Statement statement, GlslTree.Declarator declarator) {
-        if (!statement.range().contains(declarator.name())) return null;
-        if (statement instanceof GlslTree.Declaration declaration) {
-            return declaration.declarators().contains(declarator) ? declaration : null;
-        }
-        List<GlslTree.Statement> children = new ArrayList<>();
-        if (statement instanceof GlslTree.Block block) children.addAll(block.statements());
-        if (statement instanceof GlslTree.Control control) {
-            if (control.init() != null) children.add(control.init());
-            children.addAll(control.bodies());
-        }
-        for (GlslTree.Statement child : children) {
-            GlslTree.Declaration found = holding(child, declarator);
-            if (found != null) return found;
-        }
-        return null;
     }
 }

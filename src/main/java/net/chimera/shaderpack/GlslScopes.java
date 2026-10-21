@@ -77,7 +77,9 @@ final class GlslScopes {
     private static GlslTree.Binding declared(GlslTree tree, GlslTree.Declaration declaration, String name,
                                              int token) {
         for (GlslTree.Declarator declarator : declaration.declarators()) {
-            if (visible(tree, declarator, name, token)) return new GlslTree.Binding(declarator, declarator.name());
+            if (visible(tree, declarator, name, token)) {
+                return new GlslTree.Binding(declarator, declarator.name(), declaration);
+            }
         }
         GlslTree.Struct struct = declaration.type() == null ? null : declaration.type().struct();
         if (struct != null && named(tree, struct.name(), name, token)) {

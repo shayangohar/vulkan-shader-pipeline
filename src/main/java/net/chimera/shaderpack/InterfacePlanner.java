@@ -19,8 +19,8 @@ final class InterfacePlanner {
     /** Iris binds integer targets (IrisColorFormats) to isampler2D and usampler2D declarations. */
     private static final Set<String> PLANAR_SAMPLER_TYPES = Set.of("sampler2D", "sampler2DShadow",
             "isampler2D", "usampler2D");
-    /** 1D and 3D samplers read only the pack's own textures and images. */
-    private static final Set<String> VOLUME_SAMPLER_TYPES = Set.of("sampler3D", "isampler3D", "usampler3D",
+    /** Samplers of 1D and 3D textures, which only the pack's own textures and images serve. */
+    private static final Set<String> PACK_ONLY_SAMPLER_TYPES = Set.of("sampler3D", "isampler3D", "usampler3D",
             "sampler1D", "isampler1D", "usampler1D");
 
     private InterfacePlanner() {}
@@ -331,7 +331,7 @@ final class InterfacePlanner {
     /** 2D and shadow samplers always bind; 3D samplers bind only to the pack's own textures. */
     private static boolean mappedType(String name, String type, Map<String, Integer> customSamplerSlots) {
         return PLANAR_SAMPLER_TYPES.contains(type)
-                || VOLUME_SAMPLER_TYPES.contains(type) && hasCustomSlot(customSamplerSlots, name);
+                || PACK_ONLY_SAMPLER_TYPES.contains(type) && hasCustomSlot(customSamplerSlots, name);
     }
 
     /** The resource a bound sampler reads: post's tex reads the pack's atlas when the pack has one. */
