@@ -167,6 +167,7 @@ final class LegacyShaderNormalizer {
                     missing.add("uniform " + uniform.getValue() + " " + uniform.getKey() + ";");
                 }
             }
+            missing.addAll(GlslScalarReductions.overloads(split));
             if (fogFragCoord) {
                 // Iris CommonTransformer: an ordinary varying, zeroed first in the vertex stage.
                 missing.add("varying float " + FOG_FRAG_COORD + ";");

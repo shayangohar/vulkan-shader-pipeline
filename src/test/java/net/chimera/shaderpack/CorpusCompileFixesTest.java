@@ -93,6 +93,34 @@ final class CorpusCompileFixesTest {
                 && renderPearl.contains("= chimera_unpackFloat2x16(0u)"), renderPearl);
     }
 
+    /** Escheridia's SSAO calls any(isnan(occlusion)) on a float; GLSL's any takes only a bvecN. */
+    @Test
+    void reductionsOverAScalarGetScalarOverloads() {
+        String escheridia = LegacyShaderNormalizer.normalize("""
+                #version 430 compatibility
+                float ssao(vec3 color) {
+                    float occlusion = 0.0;
+                    for (int i = 0; i < 4; i++) {
+                        occlusion += color.r;
+                        if (any(isnan(occlusion))) occlusion = 1.0;
+                    }
+                    return all(isnan(color.r)) ? 0.0 : occlusion;
+                }
+                void main() { gl_FragData[0] = vec4(ssao(vec3(1.0))); }
+                """, false).source();
+        assertTrue(escheridia.contains("bool any(bool chimeraValue) { return chimeraValue; }")
+                && escheridia.contains("bool all(bool chimeraValue) { return chimeraValue; }"), escheridia);
+        String vectors = """
+                #version 430 compatibility
+                void main() {
+                    vec3 color = vec3(1.0);
+                    if (any(isnan(color)) || all(greaterThan(color, vec3(0.0)))) color = vec3(0.0);
+                    gl_FragData[0] = vec4(color, 1.0);
+                }
+                """;
+        assertEquals(vectors, LegacyShaderNormalizer.normalize(vectors, false).source());
+    }
+
     /**
      * Mellow writes its own Normal, which the entity preamble also declares, and its own Tangent.
      * Iris binds no attribute named Tangent, so the pack's name is its own and an input of that
