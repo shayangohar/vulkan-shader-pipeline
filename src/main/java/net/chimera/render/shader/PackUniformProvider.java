@@ -61,16 +61,22 @@ public final class PackUniformProvider {
     public Supplier<MappedBuffer> supplier(String name, String type) {
         UniformRegistry.UniformDescriptor descriptor = resolveUniform(name, type);
         if (descriptor == null) return null;
-        UniformKey key = new UniformKey(name, type);
-        Binding binding = bindings.get(key);
-        if (binding == null) {
-            binding = new Binding(descriptor, type, createBuffer(type));
-            bindings.put(key, binding);
-        }
-        frameState.write(descriptor, type, binding.buffer);
+        Binding binding = binding(descriptor, name, type);
         logCatalogOnce();
-        Binding stable = binding;
-        return () -> stable.buffer;
+        return () -> binding.buffer;
+    }
+
+    /**
+     * The shared binding of a uniform, made with its current value when first asked for. An
+     * existing one keeps what it holds: a PER_TICK value changes only when the tick does, however
+     * many pipelines are built in between (Iris's ProgramUniforms update by tick).
+     */
+    private Binding binding(UniformRegistry.UniformDescriptor descriptor, String name, String type) {
+        return bindings.computeIfAbsent(new UniformKey(name, type), key -> {
+            Binding created = new Binding(descriptor, type, createBuffer(type));
+            frameState.write(descriptor, type, created.buffer);
+            return created;
+        });
     }
 
     /**
@@ -318,9 +324,9 @@ public final class PackUniformProvider {
             duplicate.limit(offsets[index] + sizes[index]);
             MappedBuffer mapped = MappedBuffer.createFromBuffer(duplicate.slice());
             // A PER_TICK value reads what its binding holds this tick, as a compute program's
-            // ProgramUniforms refresh it.
+            // ProgramUniforms refresh it; the binding is made the first time a program asks.
             Binding held = UniformRegistry.perTick(descriptor)
-                    ? INSTANCE.bindings.get(new UniformKey(declaration.name(), declaration.glslType())) : null;
+                    ? INSTANCE.binding(descriptor, declaration.name(), declaration.glslType()) : null;
             if (held != null) {
                 MemoryUtil.memCopy(held.buffer.ptr, mapped.ptr, Math.min(sizes[index], held.buffer.buffer.capacity()));
             } else {
