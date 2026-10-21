@@ -348,4 +348,17 @@ final class CorpusCompileFixesTest {
         assertFalse(PassComputePlan.isPassComputeProgram("gbuffers_terrain"));
         assertFalse(PassComputePlan.isPassComputeProgram("final"));
     }
+
+
+    /** Reverie leaves layout(rgba8) behind when its unread image uniform is removed whole. */
+    @Test
+    void aRemovedUniformTakesItsLayout() {
+        String source = "#version 430\nlayout(rgba8) uniform image2D atm_image;\nconst bool clear = false;\n"
+                + "void main() {}\n";
+        UniformRegistry.ProgramInterface plan = InterfacePlanner.planInternal(source, UniformRegistry.Stage.POST,
+                false, true);
+        String removed = UniformRegistry.removeUniformDeclarations(source, plan);
+        assertFalse(removed.contains("layout(rgba8)") || removed.contains("atm_image"), removed);
+        assertTrue(removed.contains("const bool clear = false;"), removed);
+    }
 }

@@ -225,4 +225,18 @@ final class GlslDeclarations {
     private static boolean isLineBreak(char value) {
         return value == '\n' || value == '\r';
     }
+
+    private static final Pattern LAYOUT_BEFORE = Pattern.compile("\\blayout\\s*\\([^()]*\\)\\s*$");
+
+    /**
+     * Where a {@code layout(...)} written directly before the keyword at {@code keyword} starts,
+     * within the statement holding it, or {@code keyword} without one. {@code source} has its
+     * comments masked.
+     */
+    static int layoutStart(String source, int keyword) {
+        int statement = Math.max(Math.max(source.lastIndexOf(';', keyword - 1), source.lastIndexOf('}', keyword - 1)),
+                source.lastIndexOf('{', keyword - 1)) + 1;
+        Matcher layout = LAYOUT_BEFORE.matcher(source).region(statement, keyword);
+        return layout.find() ? layout.start() : keyword;
+    }
 }

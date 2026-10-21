@@ -812,7 +812,8 @@ public final class UniformRegistry {
                 unusedSamplers.add(deviation.substring("SAMPLER_DECLARATION_UNUSED:".length()));
             }
         }
-        Matcher matcher = UNIFORM_DECLARATION.matcher(maskComments(result));
+        String masked = maskComments(result);
+        Matcher matcher = UNIFORM_DECLARATION.matcher(masked);
         StringBuilder out = new StringBuilder();
         int last = 0;
         boolean changed = false;
@@ -825,7 +826,9 @@ public final class UniformRegistry {
                         .filter(variable -> !removed.contains(variable.name()))
                         .toList();
                 if (retained.size() != variables.size()) {
-                    out.append(result, last, matcher.start());
+                    // A declaration removed whole takes its layout qualifier (layout(rgba8) uniform image2D).
+                    out.append(result, last, retained.isEmpty()
+                            ? Math.max(last, GlslDeclarations.layoutStart(masked, matcher.start())) : matcher.start());
                     if (!retained.isEmpty()) {
                         out.append("uniform ").append(matcher.group(1)).append(' ')
                                 .append(retained.stream().map(Variable::name)
