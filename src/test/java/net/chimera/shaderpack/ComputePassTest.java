@@ -247,11 +247,14 @@ final class ComputePassTest {
         for (String prefix : List.of("", "i", "u")) {
             for (String shape : List.of("1D", "2D", "3D", "Cube", "2DRect", "1DArray",
                     "2DArray", "CubeArray", "Buffer", "2DMS", "2DMSArray")) {
-                assertTrue(PackAdvancedResourcePlan.containsAdvancedDeclarations(
-                                "uniform " + prefix + "image" + shape + " resource;"),
+                assertTrue(PackAdvancedResourcePlan.containsAdvancedDeclarations("uniform " + prefix + "image"
+                                + shape + " resource;\nvoid main() { int size = imageSize(resource).x; }\n"),
                         "real image type missed: " + prefix + "image" + shape);
             }
         }
+        // A declaration nothing reads is inactive, as GL leaves it; preparation drops it.
+        assertTrue(!PackAdvancedResourcePlan.containsAdvancedDeclarations("uniform image2D resource;\n"),
+                "an unread image declaration became an advanced resource");
         String storage = "layout(std430, binding=0) readonly buffer Data { float x; };\n";
         assertTrue(PackAdvancedResourcePlan.containsAdvancedDeclarations(storage),
                 "storage buffer declaration missed");
@@ -265,9 +268,10 @@ final class ComputePassTest {
             assertTrue(report.shouldAttempt("composite1"),
                     "MakeUp-style sampler helper must remain executable: "
                             + report.program("composite1").deviations());
-            for (String declaration : List.of("uniform image2D resource;\n", storage)) {
-                Files.writeString(fragment, "#version 430\n" + declaration
-                        + "void main() { gl_FragColor = vec4(1.0); }\n");
+            for (String declaration : List.of("layout(rgba8) uniform image2D resource;\n", storage)) {
+                Files.writeString(fragment, "#version 430\n" + declaration + "void main() { gl_FragColor = vec4(1.0);"
+                        + (declaration.contains("image2D") ? " imageStore(resource, ivec2(0), vec4(1.0));" : "")
+                        + " }\n");
                 report = PackProbe.probe(root);
                 assertTrue(report.program("composite1").deviations()
                                 .contains("ADVANCED_RESOURCE_UNSUPPORTED"),

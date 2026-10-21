@@ -723,11 +723,24 @@ public final class PackAdvancedResourcePlan {
         return GlslStorageBufferParser.hasBlock(source);
     }
 
-    /** Inventory real opaque types and storage blocks, not image-prefixed identifiers. */
+    /**
+     * Inventory real storage blocks, and images of real opaque types that the stage references, not
+     * image-prefixed identifiers. An image the stage only declares is inactive, as GL leaves it,
+     * and preparation drops its declaration (PackDescriptorContracts).
+     */
     static boolean containsAdvancedDeclarations(String source) {
-        return containsStorageBlock(source) || GlslLexer.lex(source).stream().anyMatch(token ->
-                token.kind() == GlslLexer.Kind.IDENTIFIER
-                        && IMAGE_TYPE.matcher(token.text()).matches());
+        if (containsStorageBlock(source)) return true;
+        List<GlslLexer.Token> tokens = GlslLexer.lex(source);
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() != GlslLexer.Kind.IDENTIFIER || !IMAGE_TYPE.matcher(token.text()).matches()) continue;
+            int name = GlslLexer.nextSignificant(tokens, index);
+            if (name < 0 || tokens.get(name).kind() != GlslLexer.Kind.IDENTIFIER
+                    || GlslTokenRewriter.identifierCount(source, tokens.get(name).text()) > 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public ProgramBindingLayout bindingLayout(String program) {

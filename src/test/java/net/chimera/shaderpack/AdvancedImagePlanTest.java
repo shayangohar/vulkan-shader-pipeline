@@ -162,6 +162,38 @@ final class AdvancedImagePlanTest {
         assertTrue(fragment.matches("(?s).*layout\\(rgba8, binding = \\d+\\) uniform image3D light;.*"), fragment);
     }
 
+    /**
+     * An image Chimera does not create (Reverie's screen-sized 2D images) is inactive where a stage
+     * only declares it, as GL leaves it, and its declaration is dropped. A stage that reads it is
+     * refused with the image named, before preparation.
+     */
+    @Test
+    void anImageChimeraDoesNotCreateIsDroppedUnlessRead(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.screen = screenSampler RGBA RGBA16F HALF_FLOAT true true 1.0 1.0\n");
+        String fragment = """
+                #version 430 compatibility
+                layout(rgba16f) uniform restrict image2D screen;
+                in vec2 uv;
+                void main() { gl_FragData[0] = vec4(uv, 0.0, 1.0)%s; }
+                """;
+        for (String program : List.of("composite", "composite1")) {
+            writeVolumeReader(shaders, program, "unused");
+        }
+        Files.writeString(shaders.resolve("composite.fsh"), fragment.formatted(""));
+        Files.writeString(shaders.resolve("composite1.fsh"), fragment.formatted(" + imageLoad(screen, ivec2(0))"));
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackAdvancedResourcePlan advanced = plan.advancedResources();
+        assertTrue(plan.shouldAttempt("composite"), advanced.deviations().toString());
+        String declaredOnly = PackDescriptorContracts.bindStorageImages(plan.program("composite").convertedFragment(),
+                "composite", advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
+        assertTrue(!declaredOnly.contains("image2D screen"), declaredOnly);
+        assertTrue(!plan.shouldAttempt("composite1")
+                && advanced.deviations().contains("ADVANCED_IMAGE_UNSERVED:composite1:screen"),
+                advanced.deviations().toString());
+    }
+
     private static void writeVolumeReader(Path shaders, String program, String sampler) throws Exception {
         Files.writeString(shaders.resolve(program + ".vsh"), """
                 #version 120

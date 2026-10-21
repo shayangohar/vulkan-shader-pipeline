@@ -51,7 +51,7 @@ public final class PackPipelines {
     static final Pattern STORAGE_IMAGE_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
-                    + "(u?i?image3D)\\s+([A-Za-z_]\\w*)\\s*;");
+                    + "(u?i?image(?:1D|2D|3D)(?:Array)?)\\s+([A-Za-z_]\\w*)\\s*;");
     static final Pattern STORAGE_SAMPLER_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
                     + "(u?sampler3D)\\s+([A-Za-z_]\\w*)\\s*;");

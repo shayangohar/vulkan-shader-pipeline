@@ -20,7 +20,7 @@ final class GraphicsImageScan {
     private static final Pattern GRAPHICS_IMAGE_DECLARATION = Pattern.compile(
             "(?:layout\\s*\\([^)]*\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
-                    + "\\b(u?i?image3D)\\s+([A-Za-z_]\\w*)");
+                    + "\\b(u?i?image(?:1D|2D|3D)(?:Array)?)\\s+([A-Za-z_]\\w*)");
 
     final List<String> dependent = new ArrayList<>();
     final List<String> customImageFeaturePrograms = new ArrayList<>();
@@ -84,9 +84,11 @@ final class GraphicsImageScan {
         // pack image sampler a descriptor.  Runtime eligibility
         // remains based on the live uses in usesAdvancedResource, and
         // only a live store makes a program the image's producer.
-        Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image3D") ? source : "");
+        Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image") ? source : "");
         while (image.find()) {
-            addWriter(program, stage, image.group(1), image.group(2), usage.liveImages().contains(image.group(2)));
+            String symbol = image.group(2);
+            addWriter(program, stage, image.group(1), symbol, usage.liveImages().contains(symbol),
+                    GlslTokenRewriter.identifierCount(source, symbol) > 1);
         }
         Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
         imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(source));
@@ -99,10 +101,15 @@ final class GraphicsImageScan {
         }
     }
 
-    /** A storage image declaration of a supported pack image, bound to its sampler's selector. */
-    private void addWriter(String program, String stage, String glslType, String symbol, boolean live) {
+    /**
+     * A storage image declaration of a pack image, bound to its sampler's selector. A declaration
+     * the stage never references is inactive, as GL leaves it: one of an image Chimera does not
+     * create is dropped at preparation (PackDescriptorContracts) instead of refusing the program.
+     */
+    private void addWriter(String program, String stage, String glslType, String symbol, boolean live,
+                           boolean referenced) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySymbol(images, symbol);
-        if (spec == null) return;
+        if (spec == null || !spec.supported() && !referenced) return;
         int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         writers.computeIfAbsent(program, ignored -> new ArrayList<>())

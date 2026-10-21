@@ -257,10 +257,13 @@ final class PackDescriptorContracts {
         List<PackAdvancedResourcePlan.GraphicsImageBinding> bindings = layout.storageImages();
         List<PackAdvancedResourcePlan.GraphicsImageBinding> readers = layout.advancedSamplers();
         if (bindings.isEmpty() && readers.isEmpty()) {
-            if (PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source).find()) {
-                throw new PackPipelines.PreparationFailure("resource-rewrite", "STORAGE_IMAGE_UNPLANNED");
+            Matcher declaration = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source);
+            StringBuilder result = new StringBuilder();
+            while (declaration.find()) {
+                String inactive = inactiveDeclaration(source, declaration);
+                declaration.appendReplacement(result, Matcher.quoteReplacement(inactive));
             }
-            return source;
+            return declaration.appendTail(result).toString();
         }
         Set<String> emitted = new TreeSet<>();
         String rewritten = bindImageDeclarations(source, advancedResources, layout, sourceStage, emitted);
@@ -285,6 +288,19 @@ final class PackDescriptorContracts {
         return rewritten.substring(0, insertAt) + generated + rewritten.substring(insertAt);
     }
 
+    /**
+     * A storage image declaration the plan gave no binding, blanked when nothing references it:
+     * GL leaves such a uniform inactive (Reverie's composites declare its screen-sized images and
+     * never use them). A referenced one has no image to read.
+     */
+    private static String inactiveDeclaration(String source, Matcher declaration) {
+        if (GlslTokenRewriter.identifierCount(source, declaration.group(2)) > 1) {
+            throw new PackPipelines.PreparationFailure("resource-rewrite",
+                    "STORAGE_IMAGE_UNPLANNED:" + declaration.group(2));
+        }
+        return declaration.group().replaceAll("[^\\r\\n]", "");
+    }
+
     /** Rewrites each storage image declaration to its planned binding, collecting the symbols it bound. */
     private static String bindImageDeclarations(String source, PackAdvancedResourcePlan advancedResources,
                                                 ProgramBindingLayout layout, int sourceStage, Set<String> emitted) {
@@ -298,8 +314,8 @@ final class PackDescriptorContracts {
         while (matcher.find()) {
             PackAdvancedResourcePlan.GraphicsImageBinding binding = bySymbol.get(matcher.group(2));
             if (binding == null) {
-                throw new PackPipelines.PreparationFailure("resource-rewrite",
-                        "STORAGE_IMAGE_UNPLANNED:" + matcher.group(2));
+                matcher.appendReplacement(result, Matcher.quoteReplacement(inactiveDeclaration(source, matcher)));
+                continue;
             }
             if (!visibleTo(binding, sourceStage)) {
                 throw new PackPipelines.PreparationFailure("resource-rewrite",
