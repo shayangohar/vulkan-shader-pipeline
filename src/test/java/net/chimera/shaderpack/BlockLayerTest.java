@@ -80,6 +80,15 @@ final class BlockLayerTest {
                 macros);
     }
 
+    /** superDuperVanilla keeps ids with no blocks for user additions; Iris maps nothing for them. */
+    @Test
+    void anIdWithNoBlocksIsNotInvalid() throws IOException {
+        Files.writeString(shadersDir.resolve("block.properties"), "block.10100 =\nblock.10101 = stone\n");
+        PackMaterialResolver.ParseResult result = PackMaterialResolver.parse(shadersDir, Map.of());
+        assertEquals(10101, result.resolver().resolveName("stone"));
+        assertTrue(!result.deviations().contains("BLOCK_PROPERTIES_INVALID"), result.deviations().toString());
+    }
+
     /** Bliss gates its glass line on an option; the line holds only while the macro is defined. */
     @Test
     void layerLinesFollowConditions() throws IOException {

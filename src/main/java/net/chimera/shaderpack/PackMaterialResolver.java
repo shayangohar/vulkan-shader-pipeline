@@ -347,7 +347,8 @@ public final class PackMaterialResolver {
 
     /**
      * Matches a {@code block.<id> = <names>} line and returns its id, or null when the line is
-     * malformed, the id falls outside the short range, or no names follow it.
+     * malformed or the id falls outside the short range. A line with no names maps nothing, as in
+     * Iris: superDuperVanilla keeps empty ids such as {@code block.10100 =} for user additions.
      */
     private static Integer matchMappingId(Matcher matcher) {
         if (!matcher.matches()) {
@@ -359,7 +360,7 @@ public final class PackMaterialResolver {
         } catch (NumberFormatException e) {
             return null;
         }
-        if (id < Short.MIN_VALUE || id > Short.MAX_VALUE || matcher.group(2).isBlank()) {
+        if (id < Short.MIN_VALUE || id > Short.MAX_VALUE) {
             return null;
         }
         return id;

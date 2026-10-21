@@ -173,9 +173,7 @@ public final class PackProbe {
             Path blockProperties = shadersDir.resolve("block.properties");
             if (Files.isRegularFile(blockProperties)) {
                 readMetadata(blockProperties, "block.properties", metadataHashes, globalDeviations);
-                globalDeviations.addAll(PackMaterialResolver.parse(shadersDir,
-                        PackEngineDefines.forPack(PackOptionMacros.forIdMaps(shadersDir,
-                                settingsPlan.preprocessorDefines(), settingsPlan.overriddenNames()))).deviations());
+                globalDeviations.addAll(PackMaterialResolver.parse(shadersDir, idMapMacros()).deviations());
             } else {
                 Inventory terrain = inventories.get("gbuffers_terrain");
                 if (terrain != null && terrain.stages.contains("vertex")) {
@@ -184,10 +182,16 @@ public final class PackProbe {
             }
         }
 
+        /** Iris preprocesses every id map with each option the pack's shader files declare. */
+        private Map<String, String> idMapMacros() {
+            return PackEngineDefines.forPack(PackOptionMacros.forIdMaps(shadersDir,
+                    settingsPlan.preprocessorDefines(), settingsPlan.overriddenNames()));
+        }
+
         /** Parses entity.properties, and records whether world entities draw with its ids or defaults. */
         private void readEntityIds() {
             Path entityProperties = shadersDir.resolve("entity.properties");
-            entityIds = PackEntityIdResolver.parse(shadersDir);
+            entityIds = PackEntityIdResolver.parse(shadersDir, idMapMacros());
             if (Files.isRegularFile(entityProperties)) {
                 readMetadata(entityProperties, "entity.properties", metadataHashes, globalDeviations);
                 globalDeviations.addAll(entityIds.deviations());

@@ -108,14 +108,19 @@ final class PackImageBindings {
     }
 
     /**
-     * A depth snapshot. depthtex0 falls back to the live world depth until it is captured;
-     * depthtex1 and depthtex2 read their last capture until this frame's.
+     * A depth snapshot. depthtex1 and depthtex2 read their last capture until this frame's.
+     * depthtex0 falls back to the live world depth until it is captured, once that depth is
+     * readable; while it is still the attachment a world program draws into, the draw reads the
+     * last depthtex0 capture instead, since sampling it there would be a feedback loop.
      */
     private VulkanImage depthTargetImage(String name) {
         if (!name.equals("depthtex0")) return pass.packDepthTargets.sampledImage(name);
         VulkanImage depth = pass.packDepthTargets.image(name);
-        return depth == null && pass.targets.hdrFramebuffer != null
-                ? pass.targets.hdrFramebuffer.getDepthAttachment() : depth;
+        if (depth != null) return depth;
+        if (!pass.depth.hdrDepthReadable || pass.targets.hdrFramebuffer == null) {
+            return pass.packDepthTargets.sampledImage(name);
+        }
+        return pass.targets.hdrFramebuffer.getDepthAttachment();
     }
 
     /** shadowtex1 is the opaque-only shadow depth; shadowtex0 is the full shadow depth. */

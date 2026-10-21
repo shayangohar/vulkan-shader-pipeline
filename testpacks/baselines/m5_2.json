@@ -89,7 +89,7 @@
       }
     },
     "unsupported_vertex": {
-      "reportSha256": "92b9abbd473766e634b0a3ed2068543f0de4fdf2ed9da2c7ecb701dfce0450ae",
+      "reportSha256": "4eac87e8701abca45c30c4209a55371c81968fc8ae28bb082191c8aeacca0296",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -155,12 +155,12 @@
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
         ],
         "gbuffers_terrain": [
-          "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED"
+          "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED", "TERRAIN_VERTEX_CONVERSION_FAILED:unsupported_terrain_vertex_feature_gl_Normal"
         ],
         "gbuffers_water": [
           "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",
-          "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED"
+          "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED", "TRANSLUCENT_VERTEX_CONVERSION_FAILED:unsupported_terrain_vertex_feature_gl_Normal"
         ]
       },
       "sourceHashes": {

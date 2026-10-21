@@ -88,21 +88,42 @@ public final class PackConfig {
             Map.entry("RG32F", 103),     // VK_FORMAT_R32G32_SFLOAT
             Map.entry("RGBA32F", 109)    // VK_FORMAT_R32G32B32A32_SFLOAT
     );
-    /** Common real-pack RGB formats approximated by the supported RGBA images. */
-    private static final Map<String, Integer> APPROXIMATE_FMT_TO_VK = Map.of(
-            "RGB8", 37,
-            "RGB8_SNORM", 97,
-            "RGBA8_SNORM", 97,
-            "RGB16", 91,
-            "RGB16F", 97,
-            "R11F_G11F_B10F", 97
+    /**
+     * The rest of Iris's InternalTextureFormat list, stored in a target format every device can
+     * draw to and blend: an RGB format gains alpha, a signed normalized one becomes a float with
+     * at least its precision, and the packed and low-precision formats widen to 8 or 16 bits per
+     * channel. Integer formats stay unsupported: their programs write integer outputs.
+     */
+    private static final Map<String, Integer> APPROXIMATE_FMT_TO_VK = Map.ofEntries(
+            Map.entry("RGB8", 37),
+            Map.entry("R8_SNORM", 76),
+            Map.entry("RG8_SNORM", 83),
+            Map.entry("RGB8_SNORM", 97),
+            Map.entry("RGBA8_SNORM", 97),
+            Map.entry("RGB16", 91),
+            Map.entry("R16_SNORM", 100),
+            Map.entry("RG16_SNORM", 103),
+            Map.entry("RGB16_SNORM", 109),
+            Map.entry("RGBA16_SNORM", 109),
+            Map.entry("RGB16F", 97),
+            Map.entry("RGB32F", 109),
+            Map.entry("RGBA2", 37),
+            Map.entry("RGBA4", 37),
+            Map.entry("R3_G3_B2", 37),
+            Map.entry("RGB5_A1", 37),
+            Map.entry("RGB565", 37),
+            Map.entry("R11F_G11F_B10F", 97),
+            Map.entry("RGB9_E5", 97)
     );
+    /** Iris's {@code RGBA}, the unsized default, which GL stores as RGBA8. */
+    private static final Map<String, String> FORMAT_ALIASES = Map.of("RGBA", "RGBA8");
     /**
      * The approximations whose GL format has no alpha channel. GL reads alpha as 1 from them, and
      * Solas, for one, keeps its reflections only where that alpha is above 0.
      */
     private static final Set<String> PADDED_ALPHA_FORMATS = Set.of(
-            "RGB8", "RGB8_SNORM", "RGB16", "RGB16F", "R11F_G11F_B10F");
+            "RGB8", "RGB8_SNORM", "RGB16", "RGB16_SNORM", "RGB16F", "RGB32F", "R3_G3_B2", "RGB565",
+            "R11F_G11F_B10F", "RGB9_E5");
     private static final Map<Integer, String> VK_TO_NAME;
     static {
         Map<Integer, String> reverse = new HashMap<>();
@@ -351,7 +372,7 @@ public final class PackConfig {
 
     /** A colortex format token's Vulkan format, recording an approximation; null when unsupported. */
     private static Integer formatCode(int slot, String token, List<String> deviations) {
-        Integer code = FMT_TO_VK.get(token);
+        Integer code = FMT_TO_VK.get(FORMAT_ALIASES.getOrDefault(token, token));
         if (code == null) {
             code = APPROXIMATE_FMT_TO_VK.get(token);
             if (code != null) {

@@ -365,7 +365,7 @@ final class WorldEntityAdapterTest {
     }
 
     private static void verifyEntityIdResolver(Path shaders) throws IOException {
-        PackEntityIdResolver.ParseResult parsed = PackEntityIdResolver.parse(shaders);
+        PackEntityIdResolver.ParseResult parsed = PackEntityIdResolver.parse(shaders, Map.of());
         assertTrue(parsed.present(), "entity.properties was not detected");
         assertEquals(Map.of("minecraft:cow", 2, "minecraft:zombie", 1),
                 parsed.resolver().mappings(), "entity map");
@@ -386,7 +386,7 @@ final class WorldEntityAdapterTest {
         try {
             Files.writeString(temporary.resolve("entity.properties"), "# no usable mappings\n",
                     StandardCharsets.UTF_8);
-            PackEntityIdResolver.ParseResult empty = PackEntityIdResolver.parse(temporary);
+            PackEntityIdResolver.ParseResult empty = PackEntityIdResolver.parse(temporary, Map.of());
             assertTrue(!empty.present(), "empty entity map was treated as usable");
             assertEquals(0, empty.resolver().resolveName("zombie"),
                     "empty entity map default");
@@ -394,12 +394,33 @@ final class WorldEntityAdapterTest {
             Files.writeString(temporary.resolve("entity.properties"),
                     "entity.1=zombie\nentity.2=zombie\nentity.70000=pig\nentity.bad=cat\n",
                     StandardCharsets.UTF_8);
-            PackEntityIdResolver.ParseResult malformed = PackEntityIdResolver.parse(temporary);
-            assertTrue(malformed.deviations().stream()
-                            .anyMatch(value -> value.startsWith("ENTITY_ID_UNSUPPORTED:")),
-                    "malformed entity map was accepted silently");
-            assertTrue(!malformed.resolver().mappings().containsKey("minecraft:zombie"),
-                    "conflicting entity map entry remained active");
+            PackEntityIdResolver.ParseResult malformed = PackEntityIdResolver.parse(temporary, Map.of());
+            assertTrue(malformed.deviations().containsAll(List.of(
+                            "ENTITY_ID_UNSUPPORTED:70000", "ENTITY_ID_UNSUPPORTED:entity.bad")),
+                    "an id outside 16 bits and a key without an id are reported: " + malformed.deviations());
+            assertEquals(Map.of("minecraft:zombie", 2), malformed.resolver().mappings(),
+                    "Iris's parseIdMap: a later key's mapping replaces an earlier one");
+
+            // superDuperVanilla continues its emissive list over five lines; Bliss conditions
+            // its entries on options. Iris preprocesses and loads entity.properties as it does
+            // item.properties.
+            Files.writeString(temporary.resolve("entity.properties"), """
+                    entity.10130 = minecraft:experience_orb \\
+                        minecraft:vex minecraft:allay \\
+                        glow_squid
+                    #ifdef EMISSIVE_ZOMBIES
+                    entity.7 = zombie
+                    #endif
+                    entity.8 = pig cow:sheared=true
+                    entity.8 = cow
+                    """, StandardCharsets.UTF_8);
+            Map<String, Integer> continued = PackEntityIdResolver.parse(temporary, Map.of("EMISSIVE_ZOMBIES", "1"))
+                    .resolver().mappings();
+            assertEquals(Map.of("minecraft:experience_orb", 10130, "minecraft:vex", 10130,
+                    "minecraft:allay", 10130, "minecraft:glow_squid", 10130, "minecraft:zombie", 7,
+                    "minecraft:cow", 8), continued, "continuations, conditions and a key's last value");
+            assertTrue(!PackEntityIdResolver.parse(temporary, Map.of()).resolver().mappings()
+                    .containsKey("minecraft:zombie"), "an #ifdef'd entry needs its macro");
         } finally {
             try (var paths = Files.walk(temporary)) {
                 paths.sorted(Comparator.reverseOrder()).forEach(path -> {

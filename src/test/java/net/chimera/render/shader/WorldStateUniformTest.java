@@ -344,8 +344,40 @@ final class WorldStateUniformTest {
                 "an unlisted or foreign biome must match no constant");
 
         assertRejected("sinh(frameTime)", "CUSTOM_EXPRESSION_UNKNOWN_FUNCTION");
-        assertRejected("smooth(1, 2)", "CUSTOM_EXPRESSION_ARITY");
+        assertRejected("smooth()", "CUSTOM_EXPRESSION_ARITY");
         assertRejected("frameTime +", "CUSTOM_EXPRESSION_SYNTAX");
+    }
+
+    /**
+     * Iris's six smooth overloads, resolved as its ExpressionResolver resolves them: a number-literal
+     * first argument is the id where an id form fits, one fade time serves both directions, and a
+     * missing half life is 1. superDuperVanilla's {@code smooth(eyeBrightness.y / 240, 15)} was refused.
+     */
+    @Test
+    void smoothOverloads() {
+        assertSameSmoothing("smooth(eyeBrightness.y / 240, 15)", "smooth(eyeBrightness.y / 240, 15, 15)");
+        assertSameSmoothing("smooth(eyeBrightness.y)", "smooth(eyeBrightness.y, 1, 1)");
+        assertSameSmoothing("smooth(4, eyeBrightness.y)", "smooth(eyeBrightness.y, 1, 1)");
+        assertSameSmoothing("smooth(4, eyeBrightness.y, 8)", "smooth(eyeBrightness.y, 8, 8)");
+        assertSameSmoothing("smooth(4, eyeBrightness.y, 8, 2)", "smooth(eyeBrightness.y, 8, 2)");
+        assertSameSmoothing("smooth(rainStrength * 240, 8, 2)", "smooth(4, rainStrength * 240, 8, 2)");
+        assertSameSmoothing("smooth(4 + 0, eyeBrightness.y)", "smooth(4 + 0, eyeBrightness.y, eyeBrightness.y)");
+        assertRejected("smooth(eyeBrightness.y, 1, 2, 3)", "CUSTOM_EXPRESSION_ARITY");
+        assertRejected("smooth(1, 2, 3, 4, 5)", "CUSTOM_EXPRESSION_ARITY");
+    }
+
+    /** Both expressions smooth the same inputs alike over a rise and a fall. */
+    private static void assertSameSmoothing(String source, String expected) {
+        PackExpression.Program actual = PackExpression.parse(source, BiomeIds.constants());
+        PackExpression.Program reference = PackExpression.parse(expected, BiomeIds.constants());
+        PackExpression.State actualState = actual.newState();
+        PackExpression.State referenceState = reference.newState();
+        double[] inputs = {0.0, 240.0, 240.0, 240.0, 30.0, 30.0, 120.0};
+        for (double input : inputs) {
+            PackExpression.Inputs values = (name, component) -> name.equals("rainStrength") ? input / 240.0 : input;
+            assertNear((float) reference.evaluate(values, referenceState, 0.05f),
+                    (float) actual.evaluate(values, actualState, 0.05f), 1.0e-6f, source + " smooths as " + expected);
+        }
     }
 
     /** One frame of a smoothing chain, for the values the packs write. */

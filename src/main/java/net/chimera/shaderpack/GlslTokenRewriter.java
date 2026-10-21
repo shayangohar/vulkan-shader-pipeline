@@ -632,11 +632,16 @@ public final class GlslTokenRewriter {
 
     /** True when an identifier token, outside comments and literals, is one {@code accepted} takes. */
     public static boolean containsIdentifier(String source, Predicate<String> accepted) {
-        if (source == null) return false;
+        return firstIdentifier(source, accepted) != null;
+    }
+
+    /** The first identifier token, outside comments and literals, that {@code accepted} takes, or null. */
+    public static String firstIdentifier(String source, Predicate<String> accepted) {
+        if (source == null) return null;
         for (GlslLexer.Token token : GlslLexer.lex(source)) {
-            if (token.kind() == GlslLexer.Kind.IDENTIFIER && accepted.test(token.text())) return true;
+            if (token.kind() == GlslLexer.Kind.IDENTIFIER && accepted.test(token.text())) return token.text();
         }
-        return false;
+        return null;
     }
 
     public static int identifierCount(String source, String name) {

@@ -36,7 +36,7 @@ enum PackFunction {
     EQUALS(3, 3, Shape.SCALAR, null),
     IF(3, Integer.MAX_VALUE, Shape.SELECT, null),
     IN(2, Integer.MAX_VALUE, Shape.SCALAR, null),
-    SMOOTH(3, 4, Shape.SMOOTH, null),
+    SMOOTH(1, 4, Shape.SMOOTH, null),
     VEC2(1, 4, Shape.CONSTRUCT, null),
     VEC3(1, 4, Shape.CONSTRUCT, null),
     VEC4(1, 4, Shape.CONSTRUCT, null);
@@ -49,7 +49,7 @@ enum PackFunction {
         SCALAR,
         /** {@code if}: scalar conditions, values of one width. */
         SELECT,
-        /** {@code smooth}: a component-wise value, scalar id and half lives. */
+        /** {@code smooth}: a component-wise value and two scalar half lives, after its id is dropped. */
         SMOOTH,
         /** {@code vecN}: components in order, or one scalar widened. */
         CONSTRUCT

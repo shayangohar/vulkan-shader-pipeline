@@ -165,6 +165,75 @@ final class CorpusCompileFixesTest {
                 config.deviations().toString());
     }
 
+    /**
+     * Every format in Iris's InternalTextureFormat list but the integer ones has a target image.
+     * superDuperVanilla's RGB16_SNORM colortex1 had none, and every program writing it fell back.
+     */
+    @Test
+    void everyIrisColourFormatHasATarget(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Map<String, Integer> expected = Map.ofEntries(Map.entry("RGBA", 37), Map.entry("RGB16_SNORM", 109),
+                Map.entry("RGBA16_SNORM", 109), Map.entry("R16_SNORM", 100), Map.entry("RG8_SNORM", 83),
+                Map.entry("RGB32F", 109), Map.entry("RGB565", 37), Map.entry("RGB9_E5", 97));
+        Set<String> padded = Set.of("RGB8", "RGB8_SNORM", "RGB16", "RGB16_SNORM", "RGB16F", "RGB32F", "R3_G3_B2",
+                "RGB565", "R11F_G11F_B10F", "RGB9_E5");
+        List<String> tokens = List.of("RGBA", "R8", "RG8", "RGB8", "RGBA8", "R8_SNORM", "RG8_SNORM", "RGB8_SNORM",
+                "RGBA8_SNORM", "R16", "RG16", "RGB16", "RGBA16", "R16_SNORM", "RG16_SNORM", "RGB16_SNORM",
+                "RGBA16_SNORM", "R16F", "RG16F", "RGB16F", "RGBA16F", "R32F", "RG32F", "RGB32F", "RGBA32F",
+                "RGBA2", "RGBA4", "R3_G3_B2", "RGB5_A1", "RGB565", "RGB10_A2", "R11F_G11F_B10F", "RGB9_E5");
+        for (String token : tokens) {
+            Files.writeString(shaders.resolve("shaders.properties"), "colortex1Format=" + token + "\n");
+            PackConfig.PackConfigData config = PackConfig.parse(List.of(), shaders);
+            Integer format = config.colortexFormats().get(1);
+            assertTrue(format != null && PackConfig.formatBytes(format) > 0, token + " has a target: " + format);
+            if (expected.containsKey(token)) assertEquals(expected.get(token), format, token);
+            assertEquals(padded.contains(token), config.paddedAlphaTargets().contains(1), token + " pads its alpha");
+        }
+        Files.writeString(shaders.resolve("shaders.properties"), "colortex1Format=RGBA32UI\n");
+        assertTrue(PackConfig.parse(List.of(), shaders).deviations()
+                .contains("POST_TARGET_FORMAT_UNSUPPORTED:colortex1Format=RGBA32UI"), "integer targets stay refused");
+    }
+
+    /**
+     * Iris gives every gbuffers program depthtex0, depthtex1 and depthtex2. superDuperVanilla's
+     * gbuffers_block reads depthtex0 for its end portal's depth, and was refused with
+     * ENTITY_SAMPLER_UNSUPPORTED, which turned the whole pack to vanilla.
+     */
+    @Test
+    void entityFamilyProgramsReadEveryDepthTexture(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_block.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() {
+                    uv = gl_MultiTexCoord0.xy;
+                    gl_Position = ftransform();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_block.fsh"), """
+                #version 120
+                uniform sampler2D texture;
+                uniform sampler2D depthtex0;
+                uniform sampler2D depthtex2;
+                uniform int blockEntityId;
+                varying vec2 uv;
+                void main() {
+                    float behind = texture2D(depthtex0, gl_FragCoord.xy / vec2(1920.0, 1080.0)).x;
+                    float portal = blockEntityId == 12000 ? gl_FragCoord.z - behind : 0.0;
+                    gl_FragData[0] = texture2D(texture, uv) + portal + texture2D(depthtex2, uv).x;
+                }
+                """);
+        Files.writeString(shaders.resolve("final.fsh"), """
+                #version 120
+                uniform sampler2D colortex0;
+                void main() { gl_FragColor = texture2D(colortex0, vec2(0.5)); }
+                """);
+        var plan = PackProbe.analyze(root).plan().program("gbuffers_block");
+        assertTrue(plan != null && plan.executable() && plan.deviations().stream()
+                        .noneMatch(value -> value.startsWith("ENTITY_SAMPLER_UNSUPPORTED")),
+                "gbuffers_block reads depthtex0 and depthtex2: " + (plan == null ? "missing" : plan.deviations()));
+    }
+
     /** Pegasus keeps includes in shaders/shaders/; the shaders folder at the zip's root is the pack. */
     @Test
     void aShadersFolderAtTheRootWinsOverANestedOne() {
