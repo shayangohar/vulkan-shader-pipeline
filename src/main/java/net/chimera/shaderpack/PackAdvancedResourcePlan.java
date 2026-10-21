@@ -148,13 +148,18 @@ public final class PackAdvancedResourcePlan {
         }
     }
 
-    /** One storage image used by a graphics-stage imageStore declaration. */
+    /**
+     * One storage image used by a graphics-stage imageStore declaration. {@code viewFormat} is the
+     * format qualifier the stage reads the image through when that is not the image's own (Alpha
+     * Piscium's r32i over an R32F image), else empty.
+     */
     public record GraphicsImageBinding(
             String program,
             String symbol,
             String imageName,
             String sampler,
             String glslType,
+            String viewFormat,
             int selectorSlot,
             int stageMask
     ) {
@@ -164,8 +169,14 @@ public final class PackAdvancedResourcePlan {
             imageName = imageName == null ? "" : imageName;
             sampler = sampler == null ? "" : sampler;
             glslType = glslType == null ? "image3D" : glslType;
+            viewFormat = viewFormat == null ? "" : viewFormat;
             stageMask = stageMask == 0
                     ? VK10.VK_SHADER_STAGE_ALL_GRAPHICS : stageMask;
+        }
+
+        /** The Vulkan format of the view this binding reads its image through; 0 for the image's own. */
+        public int viewVkFormat() {
+            return viewFormat.isEmpty() ? 0 : IrisColorFormats.of(viewFormat).vkFormat();
         }
     }
 
@@ -280,7 +291,7 @@ public final class PackAdvancedResourcePlan {
                 } else {
                     merged.put(key, new GraphicsImageBinding(
                             previous.program(), previous.symbol(), previous.imageName(),
-                            previous.sampler(), previous.glslType(), previous.selectorSlot(),
+                            previous.sampler(), previous.glslType(), previous.viewFormat(), previous.selectorSlot(),
                             previous.stageMask() | value.stageMask()));
                 }
             }
@@ -686,6 +697,12 @@ public final class PackAdvancedResourcePlan {
         return graphicsImageReaders.getOrDefault(program, List.of());
     }
     /** Returns the union of writer and reader bindings for pipeline setup. */
+    /** Whether some program reads {@code image} through a format other than its own, which needs a mutable image. */
+    public boolean viewedInAnotherFormat(String image) {
+        return graphicsImages.values().stream().flatMap(List::stream)
+                .anyMatch(binding -> binding.imageName().equals(image) && !binding.viewFormat().isEmpty());
+    }
+
     public List<GraphicsImageBinding> imageBindings(String program) {
         Map<String, GraphicsImageBinding> result = new TreeMap<>();
         for (GraphicsImageBinding binding : graphicsImageReaders(program)) {

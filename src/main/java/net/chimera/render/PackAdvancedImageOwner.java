@@ -39,7 +39,7 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
 
     private void allocate(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
         try {
-            images.put(spec.name(), PackStorageImage.create(spec, extent));
+            images.put(spec.name(), PackStorageImage.create(spec, extent, plan.viewedInAnotherFormat(spec.name())));
         } catch (RuntimeException failure) {
             images.remove(spec.name());
             failures.put(spec.name(), failure.getMessage() == null

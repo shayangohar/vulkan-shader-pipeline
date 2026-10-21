@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
 import net.chimera.render.PackStorageBufferDescriptor;
+import net.chimera.render.PackStorageViewDescriptor;
 import net.chimera.shaderpack.PackDescriptorLayout;
 import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.SpirvOutputWrites;
@@ -151,7 +152,10 @@ public final class HostPipelineLayout {
     static List<ImageDescriptor> images(PackDescriptorLayout layout) {
         List<ImageDescriptor> images = new ArrayList<>();
         for (PackDescriptorLayout.ImageSlot slot : layout.images()) {
-            ImageDescriptor image = new ImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
+            ImageDescriptor image = slot.viewFormat() != 0
+                    ? new PackStorageViewDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
+                    slot.viewFormat())
+                    : new ImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
                     slot.access() == PackDescriptorLayout.ImageAccess.STORAGE);
             // Pack storage images stay in the general layout, as a graphics or compute stage may also write them.
             if (slot.access() == PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL) {

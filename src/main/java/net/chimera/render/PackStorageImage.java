@@ -19,6 +19,8 @@ import org.lwjgl.vulkan.VkSamplerCreateInfo;
 
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.util.vma.Vma.vmaCreateImage;
@@ -74,6 +76,9 @@ import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties;
 final class PackStorageImage extends VulkanImage {
     private final long allocation;
     private final long view;
+    private final int ownFormat;
+    private final int viewType;
+    private final Map<Integer, Long> views = new HashMap<>();
     private final int depth;
     private long sampler;
     private boolean freed;
@@ -88,20 +93,26 @@ final class PackStorageImage extends VulkanImage {
             int depth,
             int usage,
             long view,
+            int viewType,
             int formatSize,
             long sampler
     ) {
         super(image, format, 1, width, height, formatSize, usage, view);
         this.allocation = allocation;
         this.view = view;
+        this.ownFormat = format;
+        this.viewType = viewType;
         this.depth = depth;
         this.sampler = sampler;
         setCurrentLayout(VK_IMAGE_LAYOUT_UNDEFINED);
         this.initialized = false;
     }
 
-    /** The image {@code spec} declares at {@code extent} (width, height, depth), of its own dimensions. */
-    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
+    /**
+     * The image {@code spec} declares at {@code extent} (width, height, depth), of its own dimensions.
+     * A program reading it through another format of the same size needs it {@code mutableFormat}.
+     */
+    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec, int[] extent, boolean mutableFormat) {
         int format = spec.format().vkFormat();
         boolean integer = IrisColorFormats.integer(format);
         verifyFormatSupport(format, spec.name());
@@ -110,6 +121,7 @@ final class PackStorageImage extends VulkanImage {
         try (MemoryStack stack = stackPush()) {
             VkImageCreateInfo info = VkImageCreateInfo.calloc(stack)
                     .sType(VK10.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
+                    .flags(mutableFormat ? VK10.VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0)
                     .imageType(imageType(spec.dimensions()))
                     .format(format)
                     .mipLevels(1)
@@ -151,7 +163,7 @@ final class PackStorageImage extends VulkanImage {
             }
             return new PackStorageImage(imageId,
                     allocation.get(0), format, extent[0], extent[1], extent[2],
-                    usage, imageView, spec.format().bytes(), sampler.get(0));
+                    usage, imageView, viewType(spec.dimensions()), spec.format().bytes(), sampler.get(0));
         }
     }
 
@@ -294,6 +306,13 @@ final class PackStorageImage extends VulkanImage {
     @Override
     public long getImageView() { return view; }
 
+    /** A view of the image in {@code format}, which the image was created mutable to allow; made once. */
+    long view(int format) {
+        if (format == ownFormat || format == 0) return view;
+        return views.computeIfAbsent(format,
+                value -> ImageViews.create(getId(), viewType, value, VK_IMAGE_ASPECT_COLOR_BIT));
+    }
+
     /** The image's own sampler: nearest for integer formats, linear otherwise, repeating, on one level. */
     @Override
     public long getSampler() { return sampler; }
@@ -307,6 +326,8 @@ final class PackStorageImage extends VulkanImage {
             sampler = 0L;
         }
         vkDestroyImageView(Vulkan.getVkDevice(), view, null);
+        views.values().forEach(alias -> vkDestroyImageView(Vulkan.getVkDevice(), alias, null));
+        views.clear();
         vmaDestroyImage(Vulkan.getAllocator(), getId(), allocation);
     }
 }

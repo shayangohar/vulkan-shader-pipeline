@@ -72,10 +72,16 @@ public record PackDescriptorLayout(List<UniformBlock> uniformBlocks, List<Storag
     }
 
     /** An image descriptor: its binding, GLSL type (sampler2D, image3D...), name, texture slot and access. */
-    public record ImageSlot(int binding, String type, String name, int textureSlot, ImageAccess access) {
+    /** {@code viewFormat} is the Vulkan format a storage image is read through when not its own, else 0. */
+    public record ImageSlot(int binding, String type, String name, int textureSlot, ImageAccess access,
+                            int viewFormat) {
         /** A sampled image in the shader-read layout. */
         public ImageSlot(int binding, String type, String name, int textureSlot) {
             this(binding, type, name, textureSlot, ImageAccess.SAMPLED);
+        }
+
+        public ImageSlot(int binding, String type, String name, int textureSlot, ImageAccess access) {
+            this(binding, type, name, textureSlot, access, 0);
         }
     }
 

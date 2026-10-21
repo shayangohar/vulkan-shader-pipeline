@@ -232,7 +232,7 @@ final class PackDescriptorContracts {
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.storageImages()) {
             images.add(new PackDescriptorLayout.ImageSlot(layout.imageBase() + images.size(), binding.glslType(),
                     "Sampler" + binding.selectorSlot(), binding.selectorSlot(),
-                    PackDescriptorLayout.ImageAccess.STORAGE));
+                    PackDescriptorLayout.ImageAccess.STORAGE, binding.viewVkFormat()));
         }
         int samplerIndex = 0;
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.advancedSamplers()) {
@@ -365,7 +365,8 @@ final class PackDescriptorContracts {
 
     private static String imageDeclaration(PackAdvancedResourcePlan.ImageSpec spec,
                                            PackAdvancedResourcePlan.GraphicsImageBinding binding, int descriptor) {
-        return "layout(" + spec.layoutQualifier() + ", binding = " + descriptor + ") uniform " + binding.glslType()
+        String format = binding.viewFormat().isEmpty() ? spec.layoutQualifier() : binding.viewFormat();
+        return "layout(" + format + ", binding = " + descriptor + ") uniform " + binding.glslType()
                 + " " + binding.symbol() + ";";
     }
 

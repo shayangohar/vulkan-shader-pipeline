@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -18,7 +19,7 @@ import java.util.stream.Collectors;
  */
 final class GraphicsImageScan {
     private static final Pattern GRAPHICS_IMAGE_DECLARATION = Pattern.compile(
-            "(?:layout\\s*\\([^)]*\\)\\s*)?"
+            "(?:layout\\s*\\(([^)]*)\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
                     + "\\b(u?i?image(?:1D|2D|3D)(?:Array)?)\\s+([A-Za-z_]\\w*)");
 
@@ -86,9 +87,9 @@ final class GraphicsImageScan {
         // live store makes a program the image's producer.
         Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image") ? source : "");
         while (image.find()) {
-            String symbol = image.group(2);
-            addWriter(program, stage, image.group(1), symbol, usage.liveImages().contains(symbol),
-                    GlslTokenRewriter.identifierCount(source, symbol) > 1);
+            String symbol = image.group(3);
+            addWriter(program, stage, new Declared(image.group(2), symbol, declaredFormat(image.group(1))),
+                    usage.liveImages().contains(symbol), GlslTokenRewriter.identifierCount(source, symbol) > 1);
         }
         Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
         imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(source));
@@ -103,12 +104,25 @@ final class GraphicsImageScan {
         }
     }
 
+    /** A storage image declaration: its GLSL type, its name, and its format qualifier, or none. */
+    private record Declared(String glslType, String symbol, String format) {}
+
+    /** The image format a declaration's layout qualifier names, lower case; empty without one. */
+    private static String declaredFormat(String layout) {
+        if (layout == null) return "";
+        for (String part : layout.split(",")) {
+            String token = part.trim();
+            if (!token.contains("=") && IrisColorFormats.of(token) != null) return token.toLowerCase(Locale.ROOT);
+        }
+        return "";
+    }
+
     /**
      * A storage image declaration of a pack image, bound to its sampler's selector. An image
      * Chimera does not create refuses the program only where the stage references it.
      */
-    private void addWriter(String program, String stage, String glslType, String symbol, boolean live,
-                           boolean referenced) {
+    private void addWriter(String program, String stage, Declared declared, boolean live, boolean referenced) {
+        String symbol = declared.symbol();
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySymbol(images, symbol);
         if (spec == null) {
             // Not a pack image: Iris's colorimgN and shadowcolorimgN, which no draw here binds.
@@ -116,13 +130,32 @@ final class GraphicsImageScan {
             return;
         }
         if (!spec.supported() && !referenced) return;
+        String viewFormat = spec.supported() ? viewFormat(program, spec, declared.format()) : "";
+        if (viewFormat == null) return;
         int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         writers.computeIfAbsent(program, ignored -> new ArrayList<>())
                 .add(new PackAdvancedResourcePlan.GraphicsImageBinding(program, symbol,
-                        spec.name(), spec.sampler(), glslType, selectorSlot,
+                        spec.name(), spec.sampler(), declared.glslType(), viewFormat, selectorSlot,
                         StorageBufferDeclarations.stageMask(stage)));
         if (live) producedImages.add(spec.name());
+    }
+
+    /**
+     * The format a stage reads an image through when its qualifier names another one of the same
+     * texel size, as a GL image unit reinterprets the bits (Alpha Piscium declares its R32F
+     * uimg_csr32f r32i for integer atomics); empty for the image's own format or no qualifier.
+     * Another size has no such reading: the program is refused, and null returned.
+     */
+    private String viewFormat(String program, PackAdvancedResourcePlan.ImageSpec spec, String declared) {
+        IrisColorFormats.Format format = IrisColorFormats.of(declared);
+        if (format == null || format.vkFormat() == spec.format().vkFormat()) return "";
+        if (format.bytes() == spec.format().bytes()) {
+            return IrisColorFormats.stored(format.vkFormat()).token().toLowerCase(Locale.ROOT);
+        }
+        deviations.add("ADVANCED_IMAGE_FORMAT_INCOMPATIBLE:" + spec.name() + ":" + declared);
+        deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + spec.name());
+        return null;
     }
 
     /**
@@ -140,7 +173,7 @@ final class GraphicsImageScan {
         if (selectorSlot < 0) return;
         readers.computeIfAbsent(program, ignored -> new ArrayList<>())
                 .add(new PackAdvancedResourcePlan.GraphicsImageBinding(program, spec.name(), spec.name(),
-                        spec.sampler(), AdvancedImageDeclarations.storageImageType(spec), selectorSlot,
+                        spec.sampler(), AdvancedImageDeclarations.storageImageType(spec), "", selectorSlot,
                         StorageBufferDeclarations.stageMask(stage)));
     }
 

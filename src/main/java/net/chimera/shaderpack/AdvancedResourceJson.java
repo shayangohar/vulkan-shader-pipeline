@@ -81,6 +81,7 @@ final class AdvancedResourceJson {
         value.addProperty("image", binding.imageName());
         value.addProperty("sampler", binding.sampler());
         value.addProperty("type", binding.glslType());
+        if (!binding.viewFormat().isEmpty()) value.addProperty("viewFormat", binding.viewFormat());
         value.addProperty("selectorSlot", binding.selectorSlot());
         return value;
     }

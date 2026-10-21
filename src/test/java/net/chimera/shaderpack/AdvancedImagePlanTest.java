@@ -299,6 +299,41 @@ final class AdvancedImagePlanTest {
         assertTrue(plan.shouldAttempt("composite"), plan.advancedResources().deviations().toString());
     }
 
+    /**
+     * Alpha Piscium's water declares its R32F image r32i for integer atomics, which a GL image unit
+     * reads as the same bits. The program binds a view of that format; one of another texel size
+     * has no such reading and is refused.
+     */
+    @Test
+    void anImageReadThroughAnotherFormatOfItsSizeBindsThatView(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.csr = csrSampler RED R32F FLOAT false true 1.0 1.0\n");
+        writeVolumeReader(shaders, "composite", "unused");
+        String fragment = """
+                #version 430 compatibility
+                layout(%s) uniform iimage2D csr;
+                in vec2 uv;
+                void main() { gl_FragData[0] = vec4(imageAtomicAdd(csr, ivec2(0), 1)); }
+                """;
+        Files.writeString(shaders.resolve("composite.fsh"), fragment.formatted("r32i"));
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackAdvancedResourcePlan advanced = plan.advancedResources();
+        assertTrue(plan.shouldAttempt("composite") && advanced.viewedInAnotherFormat("csr"),
+                advanced.deviations().toString());
+        String bound = PackDescriptorContracts.bindStorageImages(plan.program("composite").convertedFragment(),
+                "composite", advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
+        assertTrue(bound.matches("(?s).*layout\\(r32i, binding = \\d+\\) uniform iimage2D csr;.*"), bound);
+        assertEquals(IrisColorFormats.of("R32I").vkFormat(), advanced.bindingLayout("composite").storageImages()
+                .get(0).viewVkFormat());
+
+        Files.writeString(shaders.resolve("composite.fsh"), fragment.formatted("rgba16i"));
+        PackPlan wider = PackProbe.analyze(root).plan();
+        assertTrue(!wider.shouldAttempt("composite") && wider.advancedResources().deviations()
+                .contains("ADVANCED_IMAGE_FORMAT_INCOMPATIBLE:csr:rgba16i"),
+                wider.advancedResources().deviations().toString());
+    }
+
     private static void writeVolumeReader(Path shaders, String program, String sampler) throws Exception {
         Files.writeString(shaders.resolve(program + ".vsh"), """
                 #version 120
