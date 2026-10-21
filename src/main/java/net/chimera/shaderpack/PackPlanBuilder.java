@@ -107,6 +107,8 @@ public final class PackPlanBuilder {
         private final String hostLayoutLane;
         private final PackAlphaTestPlan alphaTestPlan;
         private final boolean allowStorageBuffers;
+        /** The geometry and tessellation stages Iris would run between this program's stages. */
+        private final List<String> geometryStages;
         private final List<String> deviations = new ArrayList<>();
 
         private FamilyAdapterPlan familyAdapter;
@@ -164,11 +166,13 @@ public final class PackPlanBuilder {
                         .anyMatch(PackAdvancedResourcePlan.BufferSpec::supported);
             }
             this.allowStorageBuffers = storageBuffers;
+            this.geometryStages = program.geometryStages();
         }
 
         PackProgramPlan plan() {
             prepareIrisCoreProfile();
             prepareHostLayout();
+            repairStageInterfaces();
             injectAlphaTest();
             planInterface();
             collectPlanningDeviations();
@@ -264,6 +268,17 @@ public final class PackPlanBuilder {
             }
         }
 
+        /**
+         * Iris repairs every adjacent stage pair before anything matches their interfaces. With a
+         * geometry or tessellation stage between them, the vertex and fragment stages are not a pair.
+         */
+        private void repairStageInterfaces() {
+            if (!geometryStages.isEmpty()) return;
+            CrossStageRepair.Result repaired = CrossStageRepair.repair(vertex, fragment);
+            vertex = repaired.vertex();
+            deviations.addAll(repaired.deviations());
+        }
+
         /** Only a program that can execute (entity families need a vertex stage) receives the host alpha test. */
         private void injectAlphaTest() {
             if (vertex == null) {
@@ -302,8 +317,7 @@ public final class PackPlanBuilder {
             boolean reconcileStages = vertex != null && (stage != UniformRegistry.Stage.POST || pairedPostVertex);
             stageMatch = !reconcileStages
                     ? new GlslInterfaceScanner.ProgramMatch(Map.of(), List.of())
-                    : GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("fragment"),
-                            pairedPostVertex);
+                    : GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("fragment"));
         }
 
         private Map<String, Integer> varyingLocations() {
@@ -331,7 +345,12 @@ public final class PackPlanBuilder {
         /** Whether the planned sources may execute, recording each contract they break. */
         private boolean admitted() {
             // Every check runs, so the report names every reason a program is refused.
-            boolean admitted = interfaceAdmitted();
+            boolean admitted = geometryStages.isEmpty();
+            if (!admitted) {
+                // A lane resolved to such a program (shadow_entities to Spring's shadow) too.
+                deviations.add("UNSUPPORTED_PACK_STAGE");
+            }
+            admitted &= interfaceAdmitted();
             admitted &= targetsAdmitted();
             admitted &= storageAdmitted();
             admitted &= vertexAdmitted();

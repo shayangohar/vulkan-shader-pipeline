@@ -136,17 +136,7 @@
     "gbuffers_water",
     "gbuffers_weather",
     "physics_ocean",
-    "prepare",
-    "shadow",
-    "shadow_basic",
-    "shadow_block",
-    "shadow_entities",
-    "shadow_glint",
-    "shadow_leash",
-    "shadow_lightning",
-    "shadow_lines",
-    "shadow_text",
-    "shadow_text_bg"
+    "prepare"
   ],
   "ComplementaryReimagined_r5.9.3.zip": [
     "clrwl_gbuffers",

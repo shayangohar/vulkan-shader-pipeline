@@ -28,27 +28,6 @@ public final class GlslInterfaceScanner {
 
     private GlslInterfaceScanner() {}
 
-    /** {@code VARYING_UNWRITTEN_ZEROED:<name>}: a read fragment input no vertex output writes, declared as zero. */
-    public static final String UNWRITTEN_ZEROED = "VARYING_UNWRITTEN_ZEROED:";
-
-    /** The zero a non-array scalar, vector or matrix input reads as; null for any other type. */
-    public static String zeroValue(Declaration declaration) {
-        if (declaration.arraySize() != 0) return null;
-        String type = declaration.type();
-        if (type.equals("float")) return "0.0";
-        if (type.equals("int")) return "0";
-        if (type.equals("uint")) return "0u";
-        if (type.equals("bool")) return "false";
-        if (type.matches("(?:[iub]?vec[234]|mat[234](?:x[234])?)")) {
-            return type + "(" + (type.startsWith("u") ? "0u" : type.startsWith("b") ? "false" : "0") + ")";
-        }
-        return null;
-    }
-
-    private static boolean zeroable(Declaration declaration) {
-        return zeroValue(declaration) != null;
-    }
-
     /**
      * One declared name. {@code arraySize} is 0 for a non-array; {@code slots} is the number of
      * locations the whole variable occupies.
@@ -119,7 +98,7 @@ public final class GlslInterfaceScanner {
         }
 
         public boolean executable() {
-            return deviations.stream().allMatch(deviation -> deviation.startsWith(UNWRITTEN_ZEROED));
+            return deviations.isEmpty();
         }
     }
 
@@ -157,17 +136,12 @@ public final class GlslInterfaceScanner {
         return new StageInterface(inputs, outputs, packedLocations(declarations.values()), deviations);
     }
 
-    public static ProgramMatch match(StageInterface vertex, StageInterface fragment) {
-        return match(vertex, fragment, false);
-    }
-
     /**
-     * Pairs each fragment input with the vertex output of its name. With {@code zeroUnwritten}, a
-     * read input the vertex never writes is not a failure: Iris adds a zeroed vertex output for it,
-     * so the converter declares it as a zero (VARYING_UNWRITTEN_ZEROED); Bliss's composite3 reads
-     * an exposure its vertex writes only under another option.
+     * Pairs each fragment input with the vertex output of its name. CrossStageRepair has already
+     * given the vertex every output Iris's repair adds, so a read input still unmatched, or matched
+     * to an output of another type, is one Iris's link refuses too.
      */
-    public static ProgramMatch match(StageInterface vertex, StageInterface fragment, boolean zeroUnwritten) {
+    public static ProgramMatch match(StageInterface vertex, StageInterface fragment) {
         List<String> deviations = new ArrayList<>();
         if (vertex == null || fragment == null) {
             return new ProgramMatch(Map.of(), List.of("PROGRAM_INTERFACE_STAGE_MISSING"));
@@ -177,8 +151,7 @@ public final class GlslInterfaceScanner {
             Declaration output = vertex.output(input.name());
             if (output == null) {
                 if (input.referenced()) {
-                    deviations.add((zeroUnwritten && zeroable(input) ? UNWRITTEN_ZEROED : "PROGRAM_VARYING_UNMATCHED:")
-                            + input.name());
+                    deviations.add("PROGRAM_VARYING_UNMATCHED:" + input.name());
                 }
                 continue;
             }

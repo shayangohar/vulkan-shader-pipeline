@@ -53,8 +53,8 @@ final class OptionSweepFixesTest {
 
     /**
      * A post program's fragment reads an input its vertex never writes (Bliss composite3 reads an
-     * exposure its vertex writes only under another option). Iris adds a zeroed output; the input
-     * reads as zero.
+     * exposure its vertex writes only under another option). Iris adds a vertex output set to zero
+     * (CompatibilityTransformer.transformGrouped); the pair then matches.
      */
     @Test
     void aPostInputNoVertexWritesReadsAsZero() {
@@ -69,15 +69,18 @@ final class OptionSweepFixesTest {
                 flat varying float exposure;
                 void main() { gl_FragData[0] = vec4(texcoord, exposure, 1.0); }
                 """;
-        var match = GlslInterfaceScanner.match(GlslInterfaceScanner.scan(vertex, true),
-                GlslInterfaceScanner.scan(fragment, false), true);
-        assertTrue(match.executable(), match.deviations().toString());
-        assertEquals(List.of("VARYING_UNWRITTEN_ZEROED:exposure"), match.deviations());
-        String converted = PostVertexBridge.convertPostVaryings(fragment,
-                new PostVertexBridge.PostVaryingLayout(match.locations(), Map.of("texcoord", "vec2")));
-        assertTrue(converted.contains("float exposure = 0.0;"), converted);
         assertTrue(!GlslInterfaceScanner.match(GlslInterfaceScanner.scan(vertex, true),
-                GlslInterfaceScanner.scan(fragment, false)).executable(), "other stages still refuse it");
+                GlslInterfaceScanner.scan(fragment, false)).executable(), "unrepaired, the pair is refused");
+        CrossStageRepair.Result repaired = CrossStageRepair.repair(vertex, fragment);
+        assertEquals(List.of("VARYING_UNWRITTEN_ZEROED:exposure"), repaired.deviations());
+        assertTrue(repaired.vertex().contains("flat varying float exposure;"), repaired.vertex());
+        assertTrue(repaired.vertex().contains("exposure = float(0);"), repaired.vertex());
+        var match = GlslInterfaceScanner.match(GlslInterfaceScanner.scan(repaired.vertex(), true),
+                GlslInterfaceScanner.scan(fragment, false));
+        assertTrue(match.executable(), match.deviations().toString());
+        String converted = PostVertexBridge.convertPostVaryings(fragment, new PostVertexBridge.PostVaryingLayout(
+                match.locations(), Map.of("texcoord", "vec2", "exposure", "float")));
+        assertTrue(converted.contains("in float exposure;"), converted);
     }
 
     /**

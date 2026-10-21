@@ -271,7 +271,7 @@ final class LegacyShaderNormalizer {
                 || !ZEROABLE_TYPE.matcher(output.type()).matches()) {
             return null;
         }
-        String zero = output.type() + "(0)";
+        String zero = CrossStageRepair.zero(output.type());
         if (output.arraySize() == 0) {
             return output.name() + " = " + zero + ";";
         }
