@@ -217,6 +217,34 @@ final class TerrainInputsTest {
                 "unexpected values keep Iris's defaults and are reported: " + malformed);
     }
 
+    /**
+     * Iris scales every block's shade brightness by the pack's ambientOcclusionLevel
+     * (BlockStateBase.getShadeBrightness, 1 - level * (1 - original)). Chimera kept full ambient
+     * occlusion, so Spring's and Alpha Piscium's level 0 and Ebin's 0.65 darkened corners anyway.
+     */
+    @Test
+    void ambientOcclusionLevel(@TempDir Path root) throws IOException {
+        assertEquals(0.2F, TerrainShadingDirectives.VANILLA.shadeBrightness(0.2F), 1.0E-6F, "no pack keeps the shade");
+        assertEquals(1.0F, new TerrainShadingDirectives(false, false, 0.0F, List.of()).shadeBrightness(0.2F));
+        assertEquals(0.48F, new TerrainShadingDirectives(false, false, 0.65F, List.of()).shadeBrightness(0.2F),
+                1.0E-6F);
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                const float ambientOcclusionLevel = 0.0;
+                void main() { gl_FragData[0] = vec4(1.0); }
+                """);
+        assertEquals(0.0F, PackProbe.analyze(root).plan().terrainShading().ambientOcclusionLevel());
+        var state = MixinBytecode.nativeClass("net/minecraft/world/level/block/state/BlockBehaviour$BlockStateBase");
+        assertTrue(state.methods.stream().anyMatch(method -> method.name.equals("getShadeBrightness")),
+                "re-audit the shade brightness hook");
+        var light = MixinBytecode.nativeClass("net/vulkanmod/render/chunk/build/light/data/LightDataAccess");
+        assertTrue(MixinBytecode.instructionsThrough(light, "compute").stream().anyMatch(instruction ->
+                        instruction instanceof MethodInsnNode call
+                                && call.name.equals("getShadeBrightness")),
+                "VulkanMod's ambient occlusion reads the block's shade brightness");
+    }
+
     @Test
     void terrainShading(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));

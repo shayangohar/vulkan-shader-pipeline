@@ -15,6 +15,7 @@
     "ChimeraLevelRendererAccessor",
     "ChimeraLocalPlayerAccessor",
     "ChimeraBiomeAmbienceMixin",
+    "ChimeraShadeBrightnessMixin",
     "ChimeraFogRendererMixin",
     "ChimeraSkyRendererMixin",
     "ChimeraMinecraftMixin",

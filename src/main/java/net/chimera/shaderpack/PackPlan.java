@@ -171,9 +171,10 @@ public record PackPlan(
         return ShadowCasterDirectives.fromProperties(settings.propertyValues());
     }
 
-    /** How terrain vertex colours carry block lighting (Iris oldLighting and separateAo, both default off). */
+    /** How terrain vertex colours carry block lighting (Iris oldLighting, separateAo, ambientOcclusionLevel). */
     public TerrainShadingDirectives terrainShading() {
-        return TerrainShadingDirectives.fromProperties(settings.propertyValues());
+        return TerrainShadingDirectives.fromProperties(settings.propertyValues(),
+                (config == null ? PackDirectives.DEFAULTS : config.directives()).ambientOcclusionLevel());
     }
 
     /** Whether heldBlockLightValue takes the brighter hand (Iris oldHandLight, default on). */
