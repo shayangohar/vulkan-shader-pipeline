@@ -372,7 +372,7 @@ final class PackFrontEndTest {
                 "a name Iris does not serve runs on zero: " + unset.deviations());
         assertTrue(UniformRegistry.resolve("vxRenderDistance", "float", Map.of()) != null,
                 "the runtime serves the same zero");
-        assertTrue(UniformRegistry.resolve("fogDensity", "float", Map.of()) == null,
+        assertTrue(UniformRegistry.resolve("alphaTestRef", "float", Map.of()) == null,
                 "an unserved Iris name gets no substitute at runtime");
     }
 

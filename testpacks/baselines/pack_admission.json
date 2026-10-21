@@ -400,32 +400,11 @@
     "text_bg"
   ],
   "RedHat_v34.3.1.zip": [
-    "composite",
     "composite1",
-    "composite2",
-    "final",
-    "gbuffers_armor_glint",
-    "gbuffers_basic",
-    "gbuffers_beaconbeam",
-    "gbuffers_block",
-    "gbuffers_block_translucent",
-    "gbuffers_clouds",
     "gbuffers_damagedblock",
-    "gbuffers_entities",
-    "gbuffers_entities_translucent",
-    "gbuffers_hand",
-    "gbuffers_hand_water",
-    "gbuffers_lightning",
-    "gbuffers_line",
-    "gbuffers_particles",
-    "gbuffers_particles_translucent",
     "gbuffers_skybasic",
-    "gbuffers_skytextured",
-    "gbuffers_spidereyes",
-    "gbuffers_terrain",
     "gbuffers_textured",
-    "gbuffers_textured_lit",
-    "text_bg"
+    "gbuffers_textured_lit"
   ],
   "RenderPearl v2.4.0.zip": [
     "composite",

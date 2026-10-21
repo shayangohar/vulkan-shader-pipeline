@@ -11,9 +11,15 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 import java.util.Set;
 
-/** The level renderer's entity drawing and global block entities, for the shadow casters. */
+/**
+ * The level renderer's entity drawing and global block entities, for the shadow casters, and its
+ * tick count, which Iris's cloudTime reads.
+ */
 @Mixin(LevelRenderer.class)
 public interface ChimeraLevelRendererAccessor {
+    @Accessor("ticks")
+    int chimera$ticks();
+
     /** Guard reads with the set's own monitor, as LevelRenderer does. */
     @Accessor("globalBlockEntities")
     Set<BlockEntity> chimera$globalBlockEntities();

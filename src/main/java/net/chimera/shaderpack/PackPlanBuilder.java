@@ -280,16 +280,12 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Gives a world program's alphaTestRef its alpha-test reference; a post program keeps
-         * refusing it, since Iris leaves it the last world draw's (UniformRegistry.IRIS_UNSERVED).
-         * Only a program that can execute (entity families need a vertex stage) receives the
-         * host alpha test.
+         * Serves the stage values Iris fixes per program (servedStageValues). Only a program that
+         * can execute (entity families need a vertex stage) receives the host alpha test.
          */
         private void injectAlphaTest() {
-            if (stage != UniformRegistry.Stage.POST) {
-                vertex = servedReference(vertex, vertexFile());
-                fragment = servedReference(fragment, fragmentFile());
-            }
+            vertex = servedStageValues(vertex, vertexFile());
+            fragment = servedStageValues(fragment, fragmentFile());
             if (vertex == null) {
                 return;
             }
@@ -311,15 +307,24 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * A stage with its includes expanded and alphaTestRef served, when it reads alphaTestRef;
-         * a stage whose includes do not resolve is left for the converters to refuse.
+         * A stage with the values Iris fixes for its program served into it, its includes
+         * expanded first. A world program's alphaTestRef reads its alpha-test reference; a post
+         * program, built with FogMode.OFF (CompositeRenderer, FinalPassRenderer), reads fogMode 0
+         * and fogShape -1, and keeps refusing alphaTestRef, which Iris leaves the last world
+         * draw's (UniformRegistry.IRIS_UNSERVED). A stage whose includes do not resolve is left
+         * for the converters to refuse.
          */
-        private String servedReference(String source, Path file) {
+        private String servedStageValues(String source, Path file) {
             if (source == null) return null;
+            boolean post = stage == UniformRegistry.Stage.POST;
+            List<String> names = post ? List.of("fogMode", "fogShape") : List.of(PackAlphaTestPlan.IRIS_REFERENCE);
             try {
                 String expanded = IrisCoreProfile.expandIncludes(source, file);
-                return GlslTokenRewriter.containsIdentifier(expanded, "alphaTestRef")
-                        ? alphaTestPlan.serveReference(expanded) : source;
+                if (names.stream().noneMatch(served -> GlslTokenRewriter.containsIdentifier(expanded, served))) {
+                    return source;
+                }
+                return post ? ServedUniforms.serve(ServedUniforms.serve(expanded, "fogMode", "0"), "fogShape", "-1")
+                        : alphaTestPlan.serveReference(expanded);
             } catch (IllegalArgumentException unresolved) {
                 return source;
             }

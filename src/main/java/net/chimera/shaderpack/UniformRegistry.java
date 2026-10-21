@@ -563,8 +563,7 @@ public final class UniformRegistry {
      */
     private static final Set<String> IRIS_UNSERVED = Set.of(
             "alphaTestRef", "blendFunc", "gtextureSize", "currentSelectedBlockId", "currentSelectedBlockPos",
-            "fogDensity", "fogMode", "fogShape",
-            "cloudTime", "constantMood",
+            "constantMood",
             "modelViewMatrix", "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse",
             "normalMatrix", "textureMatrix", "chunkOffset");
 

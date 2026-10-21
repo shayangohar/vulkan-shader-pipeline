@@ -1,6 +1,5 @@
 package net.chimera.shaderpack;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -132,46 +131,15 @@ record PackAlphaTestPlan(
      * program Iris tests with AlphaTest.ALWAYS. Iris's VERTEX_ALPHA reference is Float.MAX_VALUE.
      */
     String serveReference(String source) {
-        if (source == null || !GlslTokenRewriter.containsIdentifier(source, IRIS_REFERENCE)) return source;
-        GlslTree tree = GlslDeclarations.parseOrNull(source);
-        GlslDeclarations.Variable uniform = tree == null ? null : GlslDeclarations.variables(tree).stream()
-                .filter(variable -> variable.name().equals(IRIS_REFERENCE) && variable.qualified("uniform"))
-                .findFirst().orElse(null);
-        if (uniform == null) return source;
         String perDraw = UniformRegistry.ENTITY_ALPHA_REFERENCE;
         String value = !active() ? "0.0" : perDrawReference()
                 ? "(" + perDraw + " < 0.0 ? 3.4028235e38 : " + perDraw + ")"
                 : Float.toString(reference);
-        List<GlslTree.Edit> edits = new ArrayList<>();
-        edits.add(new GlslTree.Edit(uniform.declaration().range(), withoutDeclarator(tree, uniform)));
-        List<GlslLexer.Token> tokens = tree.tokens();
-        for (int index = 0; index < tokens.size(); index++) {
-            if (uniform.declaration().range().contains(index) || !tokens.get(index).identifier(IRIS_REFERENCE)) {
-                continue;
-            }
-            // A local or parameter of the same name stays the pack's own.
-            GlslTree.Binding binding = tree.resolve(index);
-            if (binding != null && binding.node() == uniform.declarator()) {
-                edits.add(new GlslTree.Edit(new GlslTree.Range(index, index + 1), value));
-            }
-        }
-        String served = tree.print(edits);
-        return perDrawReference() && active() ? declarePerDrawReference(served) : served;
+        String served = ServedUniforms.serve(source, IRIS_REFERENCE, value);
+        return served != source && perDrawReference() && active() ? declarePerDrawReference(served) : served;
     }
 
-    private static final String IRIS_REFERENCE = "alphaTestRef";
-
-    /** The declaration without the reference's declarator; empty when it declares only that. */
-    private static String withoutDeclarator(GlslTree tree, GlslDeclarations.Variable uniform) {
-        List<String> others = uniform.declaration().declarators().stream()
-                .filter(declarator -> declarator != uniform.declarator())
-                .map(declarator -> tree.text(declarator.range()))
-                .toList();
-        if (others.isEmpty()) return "";
-        String head = tree.text(new GlslTree.Range(uniform.declaration().range().start(),
-                uniform.declaration().type().range().end()));
-        return head + " " + String.join(", ", others) + ";";
-    }
+    static final String IRIS_REFERENCE = "alphaTestRef";
 
     /** Declares the per-draw reference uniform after the version line, unless the source already does. */
     private static String declarePerDrawReference(String source) {

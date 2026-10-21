@@ -167,7 +167,7 @@ final class FrameUniformCatalogTest {
         ConformanceReport.ProgramReport unsupported = report.program("composite1");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK, unsupported.support(),
                 "unsupported uniform fallback");
-        assertTrue(unsupported.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
+        assertTrue(unsupported.deviations().contains("UNIFORM_NAME_UNSUPPORTED:alphaTestRef"),
                 "unsupported uniform deviation");
         assertTrue(report.shouldAttempt("composite"), "supported program was rejected");
         assertTrue(!report.shouldAttempt("composite1"), "unsupported program was accepted");

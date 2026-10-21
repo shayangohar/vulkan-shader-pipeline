@@ -331,10 +331,10 @@ final class FixturePackTest {
                 "unset uniform deviation is missing");
         // An Iris name Chimera does not serve yet must not run on a zero Iris would never give.
         UniformRegistry.ProgramInterface unserved = UniformRegistry.plan(
-                "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
+                "uniform float alphaTestRef; void main() { gl_FragColor = vec4(alphaTestRef); }",
                 UniformRegistry.Stage.POST);
         assertTrue(!unserved.executable(), "unserved Iris uniform was accepted");
-        assertTrue(unserved.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
+        assertTrue(unserved.deviations().contains("UNIFORM_NAME_UNSUPPORTED:alphaTestRef"),
                 "unserved Iris uniform deviation is missing");
 
         UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
@@ -588,10 +588,10 @@ final class FixturePackTest {
                 "unknown water sampler deviation is missing");
 
         UniformRegistry.ProgramInterface unknownUniform = UniformRegistry.plan(
-                "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
+                "uniform float alphaTestRef; void main() { gl_FragColor = vec4(alphaTestRef); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!unknownUniform.executable(), "unserved Iris water uniform was accepted");
-        assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
+        assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:alphaTestRef"),
                 "unknown water uniform deviation is missing");
     }
 

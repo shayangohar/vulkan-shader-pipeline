@@ -21,7 +21,7 @@ import java.util.Set;
  * Iris reports for player stats outside survival. Distant Horizons is not supported, so the
  * {@code dh*} values are the ones Iris serves when DH is absent.
  */
-final class IrisPlayerState {
+final class IrisPlayerState implements FrameValueSource {
     /** Every scalar or vector name this snapshot answers; matrices stay with the frame state. */
     static final Set<String> NAMES = Set.of(
             "hideGUI", "isRightHanded", "firstPersonCamera", "isSpectator",
@@ -128,8 +128,13 @@ final class IrisPlayerState {
         set(this.bodyVector, null);
     }
 
+    @Override
+    public Set<String> names() {
+        return NAMES;
+    }
+
     /** The scalar, or one component of the vector, Iris serves under a name. */
-    double value(String name, int component) {
+    public double value(String name, int component) {
         int c = Math.max(component, 0);
         return switch (name) {
             case "hideGUI" -> flag(this.hideGui);
@@ -165,7 +170,8 @@ final class IrisPlayerState {
     }
 
     /** Writes a name in its declared type: integer types as ints, the rest as floats. */
-    void write(String name, String type, MappedBuffer target) {
+    @Override
+    public void write(String name, String type, MappedBuffer target) {
         int count = componentCount(type);
         boolean integral = type.startsWith("i") || type.equals("bool");
         for (int component = 0; component < count; component++) {

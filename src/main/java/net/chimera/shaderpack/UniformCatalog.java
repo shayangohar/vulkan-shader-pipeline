@@ -135,6 +135,11 @@ final class UniformCatalog {
         addLive(specs, "fogColor", List.of("vec3", "vec4"), "fogColor");
         addLive(specs, "fogStart", "float");
         addLive(specs, "fogEnd", "float");
+        // FogUniforms in a program with fog; a post program reads FogMode.OFF constants (PackPlanBuilder).
+        addLive(specs, "fogMode", "int");
+        addLive(specs, "fogShape", "int");
+        addLive(specs, "fogDensity", "float");
+        addLive(specs, "cloudTime", "float");
         addLive(specs, "screenSize", "vec2");
     }
 

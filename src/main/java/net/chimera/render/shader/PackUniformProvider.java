@@ -137,6 +137,11 @@ public final class PackUniformProvider {
         return INSTANCE.frameState.cameraViewProjection(dest);
     }
 
+    /** Records the density of the fog FogRenderer is setting up (Iris fogMode, fogDensity). */
+    public static void captureFogDensity(Camera camera) {
+        IrisWorldState.captureFogDensity(camera);
+    }
+
     /** Publishes the exact shadow state used by the shadow render. */
     public static void updateShadowState(Matrix4f modelView, Matrix4f projection) {
         INSTANCE.frameState.updateShadow(modelView, projection);
