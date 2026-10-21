@@ -60,6 +60,8 @@ public final class PassComputePlan {
         TARGET_SAMPLER,
         /** A pack texture: a declared file or raw texture, a game resource, or the generated noise. */
         TEXTURE,
+        /** {@code depthtexN}: the depth snapshot the pass's program reads under that name. */
+        DEPTH,
         /** A pack image's own storage name ({@code image.<name>}), in its format. */
         PACK_IMAGE,
         /** A pack image's sampler, reading the image it names. */
@@ -368,6 +370,10 @@ public final class PassComputePlan {
             if (resource.kind() == PackResourceKind.TARGET && target != null && resource.available()) {
                 return type.equals(targetSamplerType(target))
                         ? new Binding(name, work.bindings.size(), Kind.TARGET_SAMPLER, target, null, null) : null;
+            }
+            if (resource.kind() == PackResourceKind.DEPTH && resource.available()) {
+                return type.equals("sampler2D")
+                        ? new Binding(name, work.bindings.size(), Kind.DEPTH, -1, null, resource.resourceKey()) : null;
             }
             if (!TEXTURE_KINDS.contains(resource.kind()) || !resource.available()) return null;
             // A PNG and the noise are 2D colour images; a raw texture serves only its own sampler type.

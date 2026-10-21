@@ -20,7 +20,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Function;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -37,6 +39,9 @@ final class PackPassComputes implements AutoCloseable {
 
     /** One compute that loaded: its plan and its pipeline. */
     private record Loaded(PassComputePlan.PassCompute plan, ComputeKernel kernel) {}
+
+    /** The images a pass reads now: its colour targets, and each depthtexN as its program samples it. */
+    record ImageSources(VulkanImage[] colors, Function<String, VulkanImage> depth) {}
 
     private final List<Loaded> loaded;
     private final PackResourceOwner resources;
@@ -79,10 +84,14 @@ final class PackPassComputes implements AutoCloseable {
         return loaded.stream().map(compute -> compute.plan().name()).toList();
     }
 
-    /** The passes some loaded compute runs before. */
-    Set<String> passes() {
-        Set<String> passes = new TreeSet<>();
-        loaded.forEach(compute -> passes.add(compute.plan().pass()));
+    /** Each pass some loaded compute runs before, with the depth snapshots its computes read. */
+    Map<String, Set<String>> depthReadsByPass() {
+        Map<String, Set<String>> passes = new TreeMap<>();
+        for (Loaded compute : loaded) {
+            Set<String> reads = passes.computeIfAbsent(compute.plan().pass(), ignored -> new TreeSet<>());
+            compute.plan().bindings().stream().filter(binding -> binding.kind() == PassComputePlan.Kind.DEPTH)
+                    .forEach(binding -> reads.add(binding.resource()));
+        }
         return passes;
     }
 
@@ -97,7 +106,7 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     /** Runs the computes of this pass, in order, over the images the pass is about to read. */
-    void dispatchBefore(String pass, VkCommandBuffer commandBuffer, VulkanImage[] sources, int width, int height) {
+    void dispatchBefore(String pass, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
         for (Loaded compute : loaded) {
             if (!compute.plan().pass().equals(pass) || failed.contains(compute.plan().name())) continue;
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -110,7 +119,7 @@ final class PackPassComputes implements AutoCloseable {
         }
     }
 
-    private void dispatch(MemoryStack stack, VkCommandBuffer commandBuffer, Loaded compute, VulkanImage[] sources,
+    private void dispatch(MemoryStack stack, VkCommandBuffer commandBuffer, Loaded compute, ImageSources sources,
                           int width, int height) {
         List<VulkanImage> images = images(compute.plan(), sources);
         Map<VulkanImage, Boolean> written = new IdentityHashMap<>();
@@ -166,18 +175,19 @@ final class PackPassComputes implements AutoCloseable {
      * The image each binding reads or writes this frame, null for a buffer; throws when one is
      * missing or not storable.
      */
-    private List<VulkanImage> images(PassComputePlan.PassCompute compute, VulkanImage[] sources) {
+    private List<VulkanImage> images(PassComputePlan.PassCompute compute, ImageSources sources) {
         List<VulkanImage> images = new ArrayList<>();
         for (PassComputePlan.Binding binding : compute.bindings()) {
             if (binding.kind() == PassComputePlan.Kind.STORAGE_BUFFER) {
                 images.add(null);
                 continue;
             }
+            VulkanImage[] colors = sources.colors();
             VulkanImage image = switch (binding.kind()) {
                 case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.resource());
                 case TEXTURE -> resources == null ? null : resources.image(binding.resource());
-                case TARGET_IMAGE, TARGET_SAMPLER ->
-                        binding.target() < sources.length ? sources[binding.target()] : null;
+                case TARGET_IMAGE, TARGET_SAMPLER -> binding.target() < colors.length ? colors[binding.target()] : null;
+                case DEPTH -> sources.depth().apply(binding.resource());
                 case STORAGE_BUFFER -> null;
             };
             if (image == null) throw new IllegalStateException(binding.symbol() + " has no image this frame");
@@ -231,7 +241,7 @@ final class PackPassComputes implements AutoCloseable {
             case TARGET_IMAGE -> storageSupported(PackConfig.FMT_TO_VK.getOrDefault(
                     binding.format().toUpperCase(Locale.ROOT), 0))
                     ? null : "colortex" + binding.target() + " format cannot be a storage image";
-            case TARGET_SAMPLER, TEXTURE -> null;
+            case TARGET_SAMPLER, TEXTURE, DEPTH -> null;
         };
     }
 

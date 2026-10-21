@@ -28,7 +28,9 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -229,7 +231,7 @@ final class PackPostChain {
      * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
      */
     private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
-        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, pass.packPostTargets.sourceImages(),
+        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(),
                 hdrColor.width, hdrColor.height);
         if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
     }
@@ -242,8 +244,8 @@ final class PackPostChain {
         try {
             // Iris runs a pass's computes first, over the images the pass then reads.
             if (pass.packPassComputes != null) {
-                pass.packPassComputes.dispatchBefore(post.name(), commandBuffer,
-                        pass.packPostTargets.sourceImages(), hdrColor.width, hdrColor.height);
+                pass.packPassComputes.dispatchBefore(post.name(), commandBuffer, computeSources(),
+                        hdrColor.width, hdrColor.height);
             }
             pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
             if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
@@ -582,7 +584,9 @@ final class PackPostChain {
             int maxAttachments = ChimeraMainPass.deviceMaxColorAttachments();
             pass.packTargetGraph = PackTargetGraphPlan.build(
                     pass.packPlan.activePrograms(), pass.packConfig, pass.packPlan.resources(), width, height,
-                    maxAttachments, ChimeraMainPass.deviceMaxImageDimension());
+                    maxAttachments, ChimeraMainPass.deviceMaxImageDimension())
+                    .withComputeDepthReads(computeDepthReads().values().stream().flatMap(Set::stream)
+                            .collect(Collectors.toSet()));
             pass.coverage.packCoveragePlan = PackCoveragePlan.from(
                     pass.packTargetGraph, pass.packPlan, width, height);
             if (pass.coverage.packCoveragePlan.enabled() && pass.packCoverageRuntimeEnabled()) {
@@ -603,7 +607,7 @@ final class PackPostChain {
                         pass.coverage.packCoveragePlan.deviations());
             }
             pass.packFrameSchedule = PackFrameSchedulePlan.build(
-                    pass.packPlan.activePrograms(), pass.packTargetGraph, computePasses());
+                    pass.packPlan.activePrograms(), pass.packTargetGraph, computeDepthReads());
             pass.packNeedsHdrDepth = pass.packTargetGraph.depth().any();
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
             pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph,
@@ -650,9 +654,19 @@ final class PackPostChain {
         }
     }
 
+    /** The passes the session's loaded computes run before, with the depth snapshots they read. */
+    private Map<String, Set<String>> computeDepthReads() {
+        return pass.packPassComputes == null ? Map.of() : pass.packPassComputes.depthReadsByPass();
+    }
+
     /** The passes the session's loaded computes run before; one without a program runs only them. */
     private Set<String> computePasses() {
-        return pass.packPassComputes == null ? Set.of() : pass.packPassComputes.passes();
+        return computeDepthReads().keySet();
+    }
+
+    /** The images a pass's computes read now: the chain's colour sources, and depth as programs sample it. */
+    private PackPassComputes.ImageSources computeSources() {
+        return new PackPassComputes.ImageSources(pass.packPostTargets.sourceImages(), pass.images::depthTargetImage);
     }
 
     /**

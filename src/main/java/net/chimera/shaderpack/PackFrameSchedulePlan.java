@@ -5,7 +5,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Immutable load-time frame order for pack-visible stages.
@@ -86,15 +88,16 @@ public final class PackFrameSchedulePlan {
 
     public static PackFrameSchedulePlan build(List<PackProgramPlan> programs,
                                               PackTargetGraphPlan graph) {
-        return build(programs, graph, List.of());
+        return build(programs, graph, Map.of());
     }
 
     /**
-     * The schedule with a stage for each pass in {@code computePasses} that has no program: Iris
+     * The schedule with a stage for each pass of {@code computeDepthReads} that has no program: Iris
      * runs such a pass's computes at its place (CompositeRenderer.ComputeOnlyPass), drawing nothing.
+     * A deferred pass whose computes read depthtex0 needs it captured as a deferred program does.
      */
     public static PackFrameSchedulePlan build(List<PackProgramPlan> programs, PackTargetGraphPlan graph,
-                                              Collection<String> computePasses) {
+                                              Map<String, Set<String>> computeDepthReads) {
         List<PostStage> stages = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
         boolean earlyDepth0 = false;
@@ -115,7 +118,8 @@ public final class PackFrameSchedulePlan {
                 deviations.add("SCHEDULE_STAGE_UNAVAILABLE:" + program.name());
             }
         }
-        addComputeOnlyStages(stages, computePasses, deviations);
+        addComputeOnlyStages(stages, computeDepthReads.keySet(), deviations);
+        earlyDepth0 |= computesReadDepth0Early(stages, computeDepthReads, deviations);
 
         if (depth1) deviations.add("SCHEDULE_DEPTH_TEX1_BEFORE_TRANSLUCENT");
         if (depth2) deviations.add("SCHEDULE_DEPTH_TEX2_BEFORE_HAND");
@@ -174,6 +178,20 @@ public final class PackFrameSchedulePlan {
             deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
         }
         return window;
+    }
+
+    /** Whether a pass of the deferred window has computes that read depthtex0, recording each one. */
+    private static boolean computesReadDepth0Early(List<PostStage> stages, Map<String, Set<String>> computeDepthReads,
+                                                   List<String> deviations) {
+        boolean early = false;
+        for (PostStage stage : stages) {
+            if (stage.window() == PostWindow.EARLY
+                    && computeDepthReads.getOrDefault(stage.name(), Set.of()).contains("depthtex0")) {
+                early = true;
+                deviations.add("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:" + stage.name());
+            }
+        }
+        return early;
     }
 
     /**

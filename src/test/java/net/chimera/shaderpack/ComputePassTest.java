@@ -376,6 +376,45 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris gives a pass's computes the depth samplers its program gets (IrisSamplers
+     * addCompositeSamplers). Shrimple's deferred4 compute reads depthtex0 where no program does,
+     * so the depth graph must keep that snapshot for it.
+     */
+    @Test
+    void passComputesReadDepth(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("deferred4_a.csh"), """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba16f) uniform image2D colorimg3;
+                uniform sampler2D depthtex0;
+                uniform sampler2D depthtex1;
+                void main() {
+                    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+                    float depth = texelFetch(depthtex0, texel, 0).r - texelFetch(depthtex1, texel, 0).r;
+                    imageStore(colorimg3, texel, vec4(depth));
+                }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PassComputePlan.PassCompute compute = PassComputePlan.build(plan, shaders).compute("deferred4_a");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg3", 0, PassComputePlan.Kind.TARGET_IMAGE, 3, "rgba16f", null),
+                new PassComputePlan.Binding("depthtex0", 1, PassComputePlan.Kind.DEPTH, -1, null, "depthtex0"),
+                new PassComputePlan.Binding("depthtex1", 2, PassComputePlan.Kind.DEPTH, -1, null, "depthtex1")),
+                compute.bindings(), compute.deviations().toString());
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(plan.activePrograms(), plan.config(), 64, 64, 8, 4096);
+        assertEquals(Set.of(), graph.depth().names(), "no program reads depth");
+        PackTargetGraphPlan widened = graph.withComputeDepthReads(Set.of("depthtex0", "depthtex1"));
+        assertEquals(Set.of("depthtex0", "depthtex1"), widened.depth().names());
+        assertTrue(widened.deviations().contains("DEPTH_COPY_GRAPH_APPLIED"), widened.deviations().toString());
+        assertTrue(graph.withComputeDepthReads(Set.of()) == graph, "nothing to add keeps the graph");
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+    }
+
+    /**
      * A pass with computes and no fragment program runs its computes at its place in the chain
      * (Iris CompositeRenderer.ComputeOnlyPass): Alpha Piscium's composite2 is composite2.csh alone.
      * The schedule gives it the window its name gives a program, and the report its translation.
@@ -398,9 +437,14 @@ final class ComputePassTest {
         assertTrue(computes.compute("composite2").supported() && computes.compute("deferred3_a").supported(),
                 computes.computes().toString());
         PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(analysis.plan().activePrograms(), null,
-                Set.of("composite2", "deferred3"));
+                Map.of("composite2", Set.of("depthtex0"), "deferred3", Set.of("depthtex0")));
         assertEquals(PackFrameSchedulePlan.PostWindow.LATE, schedule.postStage("composite2").window());
         assertEquals(PackFrameSchedulePlan.PostWindow.EARLY, schedule.postStage("deferred3").window());
+        // A deferred compute reads the opaque depth, captured before the window as for a deferred program.
+        assertTrue(schedule.earlyReadsDepthtex0()
+                && schedule.deviations().contains("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:deferred3")
+                && !schedule.deviations().contains("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:composite2"),
+                schedule.deviations().toString());
         assertEquals(List.of("deferred3", "composite", "composite2"), schedule.postStages().stream()
                 .map(PackFrameSchedulePlan.PostStage::name).toList(), "pass order");
         ConformanceReport.ProgramReport report = analysis.report().program("composite2");

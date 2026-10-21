@@ -166,7 +166,6 @@
     "gbuffers_textured"
   ],
   "Noble v1.9.9.zip": [
-    "composite2",
     "deferred4",
     "dh_shadow",
     "dh_terrain",
@@ -233,9 +232,6 @@
   "Shrimple_v0.12.zip": [
     "composite13",
     "composite17",
-    "deferred11",
-    "deferred13",
-    "deferred4",
     "dh_generic",
     "dh_shadow",
     "dh_terrain",

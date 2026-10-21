@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -23,6 +24,27 @@ public record DepthGraphPlan(
 
     public static DepthGraphPlan empty() {
         return new DepthGraphPlan(false, false, false, R32_SFLOAT, List.of());
+    }
+
+    /** The snapshots {@code reads} names, with what copying them records. */
+    public static DepthGraphPlan of(Set<String> reads) {
+        boolean depth0 = reads.contains("depthtex0");
+        boolean depth1 = reads.contains("depthtex1");
+        boolean depth2 = reads.contains("depthtex2");
+        List<String> deviations = new ArrayList<>();
+        if (depth0 || depth1 || depth2) {
+            deviations.add("DEPTH_COPY_GRAPH_APPLIED");
+            deviations.add("DEPTH_COPY_FORWARD_Z_PRESERVED");
+            if (depth2) deviations.add("DEPTH2_PREHAND_AT_LEVEL_END");
+        }
+        return new DepthGraphPlan(depth0, depth1, depth2, R32_SFLOAT, deviations);
+    }
+
+    /** This plan with the snapshots {@code reads} names kept too. */
+    public DepthGraphPlan withReads(Set<String> reads) {
+        Set<String> all = new TreeSet<>(names());
+        all.addAll(reads);
+        return all.equals(names()) ? this : of(all);
     }
 
     public boolean any() {

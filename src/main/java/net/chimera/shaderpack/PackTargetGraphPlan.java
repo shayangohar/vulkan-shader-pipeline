@@ -378,16 +378,7 @@ public final class PackTargetGraphPlan {
                 depthReads.addAll(geometrySamplerNames(program));
             }
         }
-        boolean depth0 = depthReads.contains("depthtex0");
-        boolean depth1 = depthReads.contains("depthtex1");
-        boolean depth2 = depthReads.contains("depthtex2");
-        List<String> depthDeviations = new ArrayList<>();
-        if (depth0 || depth1 || depth2) {
-            depthDeviations.add("DEPTH_COPY_GRAPH_APPLIED");
-            depthDeviations.add("DEPTH_COPY_FORWARD_Z_PRESERVED");
-            if (depth2) depthDeviations.add("DEPTH2_PREHAND_AT_LEVEL_END");
-        }
-        return new DepthGraphPlan(depth0, depth1, depth2, DepthGraphPlan.R32_SFLOAT, depthDeviations);
+        return DepthGraphPlan.of(depthReads);
     }
 
     private static Set<Integer> unavailableFormatTargets(PackConfig.PackConfigData config) {
@@ -511,6 +502,18 @@ public final class PackTargetGraphPlan {
     public List<TargetSpec> targets() { return targets; }
     public List<TargetStep> steps() { return steps; }
     public DepthGraphPlan depth() { return depth; }
+
+    /**
+     * This graph with the depth snapshots pass computes read as well: Iris gives a pass's computes
+     * the composite depth samplers its program gets (CompositeRenderer.createComputes).
+     */
+    public PackTargetGraphPlan withComputeDepthReads(Set<String> reads) {
+        DepthGraphPlan widened = depth.withReads(reads);
+        if (widened == depth) return this;
+        List<String> next = new ArrayList<>(deviations);
+        next.addAll(widened.deviations());
+        return new PackTargetGraphPlan(targets, steps, widened, next, maxAttachments, geometryReads);
+    }
     public List<String> deviations() { return deviations; }
     public int maxAttachments() { return maxAttachments; }
     public String snapshot() { return snapshot; }
