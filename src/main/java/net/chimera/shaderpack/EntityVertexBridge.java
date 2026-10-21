@@ -391,7 +391,11 @@ public final class EntityVertexBridge {
                 layout);
     }
 
-    /** Every input the fragment reads must be a vertex output of the same type and interpolation. */
+    /**
+     * Every input the fragment reads must be a vertex output of the same type. Its interpolation
+     * is the fragment's: since GLSL 4.40 the stages need not agree, and an integer output needs no
+     * flat where the input has it (Alpha Piscium writes out uint frag_materialID and reads it flat).
+     */
     private static void requireMatchingFragmentVaryings(EntityVaryingDeclarations vertexVaryings,
                                                         String fragmentSource) {
         String expandedFragment = LegacyGlslConverter.expandModernVaryingLists(
@@ -401,12 +405,6 @@ public final class EntityVertexBridge {
             String vertexType = vertexVaryings.types().get(entry.getKey());
             if (!entry.getValue().equals(vertexType)) {
                 throw new IllegalArgumentException("entity varying mismatch: " + entry.getKey());
-            }
-            String vertexQualifier = vertexVaryings.qualifiers().getOrDefault(entry.getKey(), "");
-            String fragmentQualifier = fragmentVaryings.qualifiers().getOrDefault(entry.getKey(), "");
-            if (!vertexQualifier.equals(fragmentQualifier)) {
-                throw new IllegalArgumentException(
-                        "entity varying qualifier mismatch: " + entry.getKey());
             }
         }
     }

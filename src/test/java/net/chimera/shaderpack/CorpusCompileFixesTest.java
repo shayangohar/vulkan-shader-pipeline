@@ -375,6 +375,29 @@ final class CorpusCompileFixesTest {
                 && entities.convertedVertex().contains("chimera_pack_Normal"), entities.convertedFragment());
     }
 
+    /**
+     * Alpha Piscium writes out uint frag_materialID and reads it flat. Since GLSL 4.40 the
+     * fragment's interpolation decides, and an integer vertex output needs no flat.
+     */
+    @Test
+    void anEntityVaryingTakesTheFragmentsInterpolation(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 460 compatibility
+                out uint materialId;
+                void main() { materialId = 7u; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 460 compatibility
+                flat in uint materialId;
+                /* RENDERTARGETS: 0 */
+                layout(location = 0) out vec4 color;
+                void main() { color = vec4(float(materialId)); }
+                """);
+        PackProgramPlan entities = PackProbe.analyze(root).plan().program("gbuffers_entities");
+        assertTrue(entities.executable(), entities.deviations().toString());
+    }
+
     /** Reverie leaves layout(rgba8) behind when its unread image uniform is removed whole. */
     @Test
     void aRemovedUniformTakesItsLayout() {
