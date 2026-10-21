@@ -276,7 +276,7 @@ public final class PassComputePlan {
             while (value.find()) {
                 String name = value.group(2);
                 if (GlslTokenRewriter.identifierCount(body, name) <= 1) continue;
-                if (UniformRegistry.resolve(name, value.group(1),
+                if (UniformRegistry.resolveForCompute(name, value.group(1),
                         plan.runtimeSettings().customDescriptors()) == null) {
                     work.fail("PASS_COMPUTE_UNIFORM_UNSUPPORTED:" + name);
                 } else {

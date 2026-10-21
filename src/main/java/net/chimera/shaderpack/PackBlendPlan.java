@@ -23,6 +23,25 @@ public record PackBlendPlan(Mode program, Map<Integer, Mode> buffers, List<Strin
     /** One attachment's blend: disabled, or enabled with Vulkan blend factors and ADD ops. */
     public record Mode(boolean enabled, int srcColor, int dstColor, int srcAlpha, int dstAlpha) {
         public static final Mode OFF = new Mode(false, 0, 0, 0, 0);
+
+        /**
+         * Iris's blendFunc for this blend: the four factors as OpenGL enums, or zero with
+         * blending off (CommonUniforms reads GlStateManager's blend state).
+         */
+        public int[] glFunc() {
+            if (!enabled) return new int[4];
+            return new int[] {glFactor(srcColor), glFactor(dstColor), glFactor(srcAlpha), glFactor(dstAlpha)};
+        }
+    }
+
+    // VkBlendFactor values 0-14 -> OpenGL blend factor enums.
+    private static final int[] GL_FACTORS = {
+            0, 1, 0x0300, 0x0301, 0x0306, 0x0307, 0x0302, 0x0303, 0x0304, 0x0305,
+            0x8001, 0x8002, 0x8003, 0x8004, 0x0308};
+
+    /** The OpenGL enum of a Vulkan blend factor; zero for one OpenGL has no name for. */
+    static int glFactor(int vkFactor) {
+        return vkFactor >= 0 && vkFactor < GL_FACTORS.length ? GL_FACTORS[vkFactor] : 0;
     }
 
     // OpenGL factor names -> VkBlendFactor values.

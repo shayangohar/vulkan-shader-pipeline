@@ -37,6 +37,22 @@ final class ServedUniforms {
         return tree.print(edits);
     }
 
+    /** The uniforms a fullscreen pass reads as constants ({@link #servePostValues}). */
+    static final List<String> POST_VALUES = List.of("fogMode", "fogShape", "blendFunc");
+
+    /**
+     * Serves the values Iris fixes for a fullscreen pass. CompositeRenderer and FinalPassRenderer
+     * build their programs with FogMode.OFF, so fogMode is 0 and fogShape -1. Blending is off when
+     * a pass's uniforms update (Program.use runs before the pass's blend override applies), so
+     * blendFunc reads zero, unless an enabled {@code blend.<pass>} directive's glBlendFuncSeparate
+     * then notifies it to the directive's factors.
+     */
+    static String servePostValues(String source, PackBlendPlan.Mode passBlend) {
+        int[] blend = passBlend == null ? new int[4] : passBlend.glFunc();
+        String blendFunc = "ivec4(" + blend[0] + ", " + blend[1] + ", " + blend[2] + ", " + blend[3] + ")";
+        return serve(serve(serve(source, "fogMode", "0"), "fogShape", "-1"), "blendFunc", blendFunc);
+    }
+
     /** A source whose initialized unset uniforms became constants, and their names. */
     record Initialized(String source, List<String> names) {}
 

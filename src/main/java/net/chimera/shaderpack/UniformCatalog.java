@@ -140,6 +140,12 @@ final class UniformCatalog {
         addLive(specs, "fogShape", "int");
         addLive(specs, "fogDensity", "float");
         addLive(specs, "cloudTime", "float");
+        // CommonUniforms' per-draw unit-0 texture size and blend; a post program reads its
+        // blendFunc as a constant (ServedUniforms.servePostValues). IrisExclusiveUniforms' selection.
+        addLive(specs, "gtextureSize", "ivec2");
+        addLive(specs, "blendFunc", "ivec4");
+        addLive(specs, "currentSelectedBlockId", "int");
+        addLive(specs, "currentSelectedBlockPos", "vec3");
         addLive(specs, "screenSize", "vec2");
     }
 

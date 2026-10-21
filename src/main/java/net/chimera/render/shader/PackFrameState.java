@@ -2,6 +2,7 @@ package net.chimera.render.shader;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.shaderpack.BiomeIds;
+import net.chimera.shaderpack.PackBlendPlan;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.PackRuntimeSettings;
@@ -84,8 +85,11 @@ final class PackFrameState {
     private final IrisPlayerState irisPlayer = new IrisPlayerState();
     private final HeldItemState heldItems = new HeldItemState();
     private final IrisWorldState irisWorld = new IrisWorldState();
+    private final SelectedBlockState selectedBlock = new SelectedBlockState();
+    private final IrisDrawState drawState = new IrisDrawState();
     /** The value groups beside the table, each serving its own names. */
-    private final List<FrameValueSource> sources = List.of(irisPlayer, heldItems, irisWorld);
+    private final List<FrameValueSource> sources = List.of(irisPlayer, heldItems, irisWorld, selectedBlock,
+            drawState);
     /** The shadow caster rotation for the same light, as Iris builds it; its Z is sunLightVector. */
     private final Matrix4f shadowLightRotation = new Matrix4f().rotateX((float) Math.toRadians(90.0));
     private final float[] fogColor = new float[4];
@@ -303,6 +307,7 @@ final class PackFrameState {
             clearCameraState();
             irisPlayer.clear();
             irisWorld.clear();
+            selectedBlock.clear();
             heldItems.clear();
             clearWorldState();
             evaluateCustomValues();
@@ -313,6 +318,7 @@ final class PackFrameState {
         advanceCamera(position.x, position.y, position.z, viewportChanged);
         irisPlayer.capture(minecraft, frameTime);
         irisWorld.capture(minecraft, partialTick);
+        selectedBlock.capture(minecraft);
         heldItems.capture(minecraft);
 
         Entity cameraEntity = minecraft.getCameraEntity();
@@ -786,6 +792,11 @@ final class PackFrameState {
         atlasSize[0] = width;
         atlasSize[1] = height;
         return true;
+    }
+
+    /** Returns true when the next draw's gtextureSize or blendFunc changed (IrisDrawState). */
+    boolean setDrawState(int width, int height, PackBlendPlan.Mode programBlend, PackBlendPlan.Mode hostBlend) {
+        return drawState.set(width, height, programBlend, hostBlend);
     }
 
     /** Returns true when the per-draw entity alpha reference changed. */

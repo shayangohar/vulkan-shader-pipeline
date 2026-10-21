@@ -254,7 +254,7 @@ final class AdvancedImageDeclarations {
         Matcher valueUniform = PackAdvancedResourcePlan.VALUE_UNIFORM_DECLARATION.matcher(text);
         while (valueUniform.find()) {
             String name = valueUniform.group(2);
-            if (UniformRegistry.resolve(name, valueUniform.group(1), customDescriptors) != null) {
+            if (UniformRegistry.resolveForCompute(name, valueUniform.group(1), customDescriptors) != null) {
                 if (GlslTokenRewriter.identifierCount(text, name) > 1) {
                     localDeviations.add("COMPUTE_UNIFORM_LIVE:" + name);
                 } else {

@@ -311,16 +311,16 @@ public final class PackPlanBuilder {
         /**
          * A stage with the values Iris fixes for its program served into it, its includes
          * expanded first. A world program's alphaTestRef reads its alpha-test reference; a post
-         * program, built with FogMode.OFF (CompositeRenderer, FinalPassRenderer), reads fogMode 0
-         * and fogShape -1, and keeps refusing alphaTestRef, which Iris leaves the last world
-         * draw's (UniformRegistry.IRIS_UNSERVED). A uniform Iris never sets reads its initializer
+         * program reads the constants of a fullscreen pass (ServedUniforms.servePostValues) and
+         * keeps refusing alphaTestRef, which Iris leaves the last world draw's
+         * (UniformRegistry.IRIS_UNSERVED). A uniform Iris never sets reads its initializer
          * (ServedUniforms.readInitializers). A stage whose includes do not resolve is left for the
          * converters to refuse.
          */
         private String servedStageValues(String source, Path file) {
             if (source == null) return null;
             boolean post = stage == UniformRegistry.Stage.POST;
-            List<String> names = post ? List.of("fogMode", "fogShape") : List.of(PackAlphaTestPlan.IRIS_REFERENCE);
+            List<String> names = post ? ServedUniforms.POST_VALUES : List.of(PackAlphaTestPlan.IRIS_REFERENCE);
             try {
                 ServedUniforms.Initialized initialized = ServedUniforms.readInitializers(
                         IrisCoreProfile.expandIncludes(source, file),
@@ -330,7 +330,8 @@ public final class PackPlanBuilder {
                 if (names.stream().noneMatch(served -> GlslTokenRewriter.containsIdentifier(expanded, served))) {
                     return initialized.names().isEmpty() ? source : expanded;
                 }
-                return post ? ServedUniforms.serve(ServedUniforms.serve(expanded, "fogMode", "0"), "fogShape", "-1")
+                return post ? ServedUniforms.servePostValues(expanded,
+                        PackBlendPlan.forProgram(directiveProgram, settings()).program())
                         : alphaTestPlan.serveReference(expanded);
             } catch (IllegalArgumentException unresolved) {
                 return source;

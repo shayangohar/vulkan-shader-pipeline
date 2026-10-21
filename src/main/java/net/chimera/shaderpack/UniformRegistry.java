@@ -554,17 +554,34 @@ public final class UniformRegistry {
             "ColorModulator", "LineWidth", "ChunkOffset", "EndPortalLayers", "screenSize");
 
     /**
-     * Names Iris 1.21.1 serves that Chimera does not yet: per-draw state and values that need
-     * Iris's ID maps. A program reading one must not run on a zero Iris would never give it. A
-     * world program's alphaTestRef becomes its alpha-test reference before planning
-     * (PackAlphaTestPlan); a post program reads whatever the last world draw left in
-     * CapturedRenderingState, which has no equivalent here. The core-profile matrices and
-     * chunkOffset are not here: IrisCoreProfile serves them in the stages whose Iris transformer
-     * names them, and anywhere else Iris never sets them.
+     * Names Iris 1.21.1 serves that Chimera does not yet. A program reading one must not run on a
+     * zero Iris would never give it. A world program's alphaTestRef becomes its alpha-test
+     * reference before planning (PackAlphaTestPlan); a post program reads whatever the last world
+     * draw left in CapturedRenderingState, which has no equivalent here. The core-profile
+     * matrices and chunkOffset are not here: IrisCoreProfile serves them in the stages whose Iris
+     * transformer names them, and anywhere else Iris never sets them.
      */
-    private static final Set<String> IRIS_UNSERVED = Set.of(
-            "alphaTestRef", "blendFunc", "gtextureSize", "currentSelectedBlockId", "currentSelectedBlockPos",
-            "constantMood");
+    private static final Set<String> IRIS_UNSERVED = Set.of("alphaTestRef", "constantMood");
+
+    /**
+     * Per-draw values a fullscreen pass cannot read. A pass's gtextureSize is the size of whatever
+     * texture the previous pass or world draw left on unit 0 when Program.use updates the
+     * uniforms, before the pass binds its own samplers; nothing names that texture. blendFunc is
+     * served into a pass as a constant (ServedUniforms.servePostValues) and refuses only where
+     * that could not run.
+     */
+    private static final Set<String> POST_UNSERVED = Set.of("gtextureSize", "blendFunc");
+
+    /** Whether a stage cannot read a name Iris serves elsewhere (POST_UNSERVED). */
+    static boolean unservedIn(String name, Stage stage) {
+        return stage == Stage.POST && POST_UNSERVED.contains(name);
+    }
+
+    /** {@link #resolve} for a compute dispatch, which reads what any pass left on the GL state. */
+    static UniformDescriptor resolveForCompute(String name, String glslType,
+                                               Map<String, UniformDescriptor> customDescriptors) {
+        return unservedIn(name, Stage.POST) ? null : resolve(name, glslType, customDescriptors);
+    }
 
     /** Whether Iris itself gives this name a value: the catalog, the unserved list, Iris internals. */
     static boolean irisServes(String name) {

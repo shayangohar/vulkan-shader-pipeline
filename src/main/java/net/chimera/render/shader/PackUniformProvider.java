@@ -1,6 +1,7 @@
 package net.chimera.render.shader;
 
 import net.chimera.ChimeraMod;
+import net.chimera.shaderpack.PackBlendPlan;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.PackRuntimeSettings;
@@ -8,6 +9,9 @@ import net.chimera.shaderpack.UniformRegistry;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.vulkanmod.vulkan.shader.Pipeline;
+import net.vulkanmod.vulkan.shader.PipelineState;
+import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
@@ -190,6 +194,32 @@ public final class PackUniformProvider {
     public static void updateDrawAtlasSize(VulkanImage sampled) {
         int[] size = AtlasSizes.of(sampled);
         INSTANCE.writeAtlasSize(size[0], size[1]);
+    }
+
+    /**
+     * Serves the next draw Iris's per-draw texture and blend values (IrisDrawState): the size of
+     * the texture on unit 0 and the draw's blend, the program's enabled blend directive or the
+     * host draw's blend. Only the bindings that changed are rewritten.
+     */
+    public static void updateDrawState(Pipeline pipeline) {
+        PipelineState.BlendInfo host = PipelineState.blendInfo;
+        PackBlendPlan.Mode hostBlend = new PackBlendPlan.Mode(host.enabled, host.srcRgbFactor, host.dstRgbFactor,
+                host.srcAlphaFactor, host.dstAlphaFactor);
+        VulkanImage unit0 = VTextureSelector.getBoundTexture(0);
+        if (!INSTANCE.frameState.setDrawState(unit0 == null ? 0 : unit0.width, unit0 == null ? 0 : unit0.height,
+                IrisDrawState.programBlend(pipeline), hostBlend)) return;
+        for (UniformKey key : DRAW_STATE_KEYS) {
+            Binding binding = INSTANCE.bindings.get(key);
+            if (binding != null) INSTANCE.frameState.write(binding.descriptor, binding.type, binding.buffer);
+        }
+    }
+
+    private static final List<UniformKey> DRAW_STATE_KEYS = List.of(
+            new UniformKey("gtextureSize", "ivec2"), new UniformKey("blendFunc", "ivec4"));
+
+    /** Records a pack pipeline's {@code blend.<program>} directive for its draws' blendFunc. */
+    public static void registerProgramBlend(Pipeline pipeline, PackBlendPlan.Mode programBlend) {
+        IrisDrawState.registerProgramBlend(pipeline, programBlend);
     }
 
     /** Restores the block atlas size that terrain and shadow draws read. */

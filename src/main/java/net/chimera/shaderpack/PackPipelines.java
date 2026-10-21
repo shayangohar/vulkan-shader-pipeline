@@ -404,7 +404,7 @@ public final class PackPipelines {
                     ? new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF, PackBlendPlan.Mode.OFF}
                     : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
             GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, fragmentSource,
-                    imageBindings, attachmentFormats, attachmentBlends);
+                    imageBindings, attachmentFormats, attachmentBlends, plan.blendPlan().program());
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(pipelineName, e);
@@ -421,11 +421,13 @@ public final class PackPipelines {
 
     /**
      * Creates the pipeline under its attachment contract, when it has one, and registers that
-     * contract for the variants VulkanMod creates lazily.
+     * contract for the variants VulkanMod creates lazily. The program's {@code blend.<program>}
+     * directive is registered for its draws' blendFunc.
      */
     private static GraphicsPipeline createRouted(
             String name, VertexFormat format, PackDescriptorLayout layout, String vertex, String fragment,
-            ProgramImageBindingManifest imageBindings, int[] attachmentFormats, PackBlendPlan.Mode[] attachmentBlends
+            ProgramImageBindingManifest imageBindings, int[] attachmentFormats, PackBlendPlan.Mode[] attachmentBlends,
+            PackBlendPlan.Mode programBlend
     ) {
         if (attachmentFormats != null) {
             MrtPipelineContext.begin(attachmentFormats, deviceMaxColorAttachments(), attachmentBlends);
@@ -439,6 +441,7 @@ public final class PackPipelines {
         if (attachmentFormats != null) {
             MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends);
         }
+        PackUniformProvider.registerProgramBlend(pipeline, programBlend);
         return pipeline;
     }
 
@@ -592,7 +595,7 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, fragmentSource,
-                    prepared.imageBindings(), shadowAttachmentFormats(), null);
+                    prepared.imageBindings(), shadowAttachmentFormats(), null, plan.blendPlan().program());
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -745,7 +748,7 @@ public final class PackPipelines {
                     ? plan.blendPlan().attachments(outputPlan.targetSlots()) : null;
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, fragment, imageBindings,
-                    attachmentFormats, attachmentBlends);
+                    attachmentFormats, attachmentBlends, plan.blendPlan().program());
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);

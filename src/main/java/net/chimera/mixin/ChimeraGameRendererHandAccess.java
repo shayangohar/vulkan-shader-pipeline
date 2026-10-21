@@ -11,4 +11,5 @@ public interface ChimeraGameRendererHandAccess {
     @Invoker("getFov") double chimera$getFov(Camera camera, float tick, boolean changingFov);
     @Invoker("bobHurt") void chimera$bobHurt(PoseStack poses, float tick);
     @Invoker("bobView") void chimera$bobView(PoseStack poses, float tick);
+    @Invoker("shouldRenderBlockOutline") boolean chimera$shouldRenderBlockOutline();
 }

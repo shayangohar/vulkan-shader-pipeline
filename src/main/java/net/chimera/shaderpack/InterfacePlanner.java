@@ -199,14 +199,9 @@ final class InterfacePlanner {
         }
         UniformRegistry.UniformDescriptor custom = customDescriptors == null ? null : customDescriptors.get(name);
         UniformRegistry.UniformDescriptor spec = descriptorFor(name, customDescriptors);
-        if (custom != null && custom.availability() == UniformRegistry.Availability.REJECTED) {
-            // The pack wrote this declaration and Chimera could not honour it. A program that reads
-            // the name must not run with a substitute value, so it fails closed here.
-            deviations.add(unusedOr(name, unused, "CUSTOM_VALUE_REJECTED:" + name));
-            return;
-        }
-        if (!UniformRegistry.SUPPORTED_TYPES.contains(type)) {
-            deviations.add(unusedOr(name, unused, "UNIFORM_TYPE_UNSUPPORTED:" + name));
+        String refusal = refusal(name, type, custom, stage);
+        if (refusal != null) {
+            deviations.add(unusedOr(name, unused, refusal));
             return;
         }
         spec = typed(name, type, spec, unused, deviations);
@@ -225,6 +220,20 @@ final class InterfacePlanner {
             return;
         }
         addLiveBridge(name, spec, customDescriptors, deviations);
+    }
+
+    /**
+     * Why a declaration keeps its program from running, or null. A custom value the pack wrote and
+     * Chimera could not honour must not run with a substitute, so it fails closed; so do a type the
+     * uniform block cannot carry and a name this stage cannot read (UniformRegistry.unservedIn).
+     */
+    private static String refusal(String name, String type, UniformRegistry.UniformDescriptor custom,
+                                  UniformRegistry.Stage stage) {
+        if (custom != null && custom.availability() == UniformRegistry.Availability.REJECTED) {
+            return "CUSTOM_VALUE_REJECTED:" + name;
+        }
+        if (!UniformRegistry.SUPPORTED_TYPES.contains(type)) return "UNIFORM_TYPE_UNSUPPORTED:" + name;
+        return custom == null && UniformRegistry.unservedIn(name, stage) ? "UNIFORM_NAME_UNSUPPORTED:" + name : null;
     }
 
     /** Iris disables a value the program declares with another type, and it reads zero (KNOW-732). */
