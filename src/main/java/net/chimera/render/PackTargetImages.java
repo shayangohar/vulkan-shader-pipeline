@@ -54,8 +54,9 @@ import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
 /**
  * Pack target images: allocation, the device checks their formats need, clears, copies, mip
- * chains and samplers. An integer target (IrisColorFormats) is filtered, mipmapped and cleared as
- * Iris treats one: nearest filtering (Iris RenderTarget, CompositeRenderer), and integer values.
+ * chains and samplers. An integer target (IrisColorFormats) samples nearest, as Iris's do (Iris
+ * RenderTarget, CompositeRenderer); its clears and mip chains are Chimera's defined stand-ins for
+ * what GL leaves undefined or refuses.
  */
 final class PackTargetImages {
     private PackTargetImages() {}
@@ -129,7 +130,8 @@ final class PackTargetImages {
 
     /**
      * Clears a target's base level to its clear colour. An integer target takes the colour's
-     * integer parts, as GL converts a clear value for an integer buffer.
+     * integer parts. GL leaves a float clear of an integer buffer undefined (Iris ClearPass clears
+     * with a float colour); Chimera writes the integer value the colour names.
      */
     static void clearImage(MemoryStack stack, VkCommandBuffer commandBuffer, VulkanImage image, float[] color) {
         if (image == null) throw new IllegalStateException("cannot clear missing target image");
@@ -193,8 +195,10 @@ final class PackTargetImages {
     }
 
     /**
-     * glGenerateMipmap: each level is a downsample of the one above, nearest for an integer
-     * target (Iris CompositeRenderer). Every level enters in TRANSFER_DST and leaves in SHADER_READ_ONLY.
+     * glGenerateMipmap: each level is a downsample of the one above. An integer target downsamples
+     * nearest, Chimera's choice: GL refuses glGenerateMipmap on a format it cannot filter, so Iris's
+     * integer chains stay at their base level. Every level enters in TRANSFER_DST and leaves in
+     * SHADER_READ_ONLY.
      */
     static void recordMipChain(MemoryStack stack, VkCommandBuffer commandBuffer,
                                long image, int width, int height, int levels, int filter) {

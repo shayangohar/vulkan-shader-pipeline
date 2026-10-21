@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -195,6 +196,8 @@ final class CorpusCompileFixesTest {
             if (expected.containsKey(token)) assertEquals(expected.get(token), format, token);
             assertEquals(padded.contains(token), config.paddedAlphaTargets().contains(1), token + " pads its alpha");
             assertEquals(token.endsWith("I"), IrisColorFormats.integer(format), token + " reads as integers");
+            // Iris InternalTextureFormat.fromString reads a name in any case.
+            assertEquals(IrisColorFormats.of(token), IrisColorFormats.of(token.toLowerCase(Locale.ROOT)), token);
         }
     }
 

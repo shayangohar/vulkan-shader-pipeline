@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -100,7 +101,10 @@ public final class IrisColorFormats {
 
     /** The format a colortexNFormat token names; null for a token Iris does not know. */
     public static Format of(String token) {
-        return token == null ? null : FORMATS.get(ALIASES.getOrDefault(token, token));
+        if (token == null) return null;
+        // Iris InternalTextureFormat.fromString reads the name in any case.
+        String name = token.toUpperCase(Locale.ROOT);
+        return FORMATS.get(ALIASES.getOrDefault(name, name));
     }
 
     /** Every token Iris names, in declaration order. */
