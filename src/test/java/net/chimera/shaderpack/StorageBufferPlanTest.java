@@ -888,6 +888,14 @@ final class StorageBufferPlanTest {
             assertTrue(StorageBufferDeclarations.parseBuffer(1, malformed).deviations()
                     .contains("STORAGE_BUFFER_PROPERTY_MALFORMED:1"), malformed);
         }
+        // A share of zero or less, or none at all, gives Iris no buffer to create.
+        for (String empty : List.of("4 true 0 1.0", "4 true -0.5 1.0", "4 true 1.0 NaN")) {
+            assertTrue(StorageBufferDeclarations.parseBuffer(1, empty).deviations()
+                    .contains("STORAGE_BUFFER_SIZE_UNSUPPORTED:1"), empty);
+        }
+        // Any byte count binds: RenderPearl's BUFFER_16_8 declares bufferObject.0=6.
+        assertTrue(StorageBufferDeclarations.parseBuffer(0, "6").supported()
+                && StorageBufferDeclarations.parseBuffer(1, "2 true 1.0 1.0").supported());
 
         Path root = Files.createTempDirectory("chimera-relative-buffer-");
         Path shaders = Files.createDirectories(root.resolve("shaders"));

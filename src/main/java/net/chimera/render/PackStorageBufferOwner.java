@@ -17,6 +17,7 @@ import java.util.TreeSet;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
+import static org.lwjgl.vulkan.VK10.VK_WHOLE_SIZE;
 import static org.lwjgl.vulkan.VK10.vkCmdFillBuffer;
 
 /** Owns the bounded read/write storage buffers for one pack session. */
@@ -145,8 +146,11 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                 continue;
             }
             entry.getValue().recreate((int) bytes);
-            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, bytes, 0);
-            filled = true;
+            // Before the session's first fill (initialize), that fill covers the new buffer.
+            if (initialized) {
+                vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, VK_WHOLE_SIZE, 0);
+                filled = true;
+            }
         }
         if (filled) PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
     }
@@ -267,7 +271,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         if (commandBuffer == null || closed || initialized || buffers.isEmpty()) return false;
         for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
             if (!plan.buffers().containsKey(entry.getKey())) return false;
-            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, entry.getValue().getBufferSize(), 0);
+            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, VK_WHOLE_SIZE, 0);
         }
         PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
         initialized = true;

@@ -17,8 +17,7 @@ final class StorageBufferDeclarations {
     /** Deviations that keep a block from binding even when its bufferObject declaration is supported. */
     private static final List<String> UNBINDABLE_PREFIXES = List.of(
             "STORAGE_BUFFER_LAYOUT_UNSUPPORTED:", "STORAGE_BUFFER_BLOCK_UNMAPPED:",
-            "STORAGE_BUFFER_BLOCK_AMBIGUOUS:", "STORAGE_BUFFER_BLOCK_DUPLICATE:", "STORAGE_BUFFER_SIZE_",
-            "STORAGE_BUFFER_ALIGNMENT_");
+            "STORAGE_BUFFER_BLOCK_AMBIGUOUS:", "STORAGE_BUFFER_BLOCK_DUPLICATE:", "STORAGE_BUFFER_SIZE_");
 
     private StorageBufferDeclarations() {}
 
@@ -102,16 +101,21 @@ final class StorageBufferDeclarations {
         }
         checkSize(index, size, deviations);
         boolean relative = Boolean.parseBoolean(values[1]);
+        if (relative && !(scaleX > 0F && scaleY > 0F && Float.isFinite(scaleX) && Float.isFinite(scaleY))) {
+            // Iris sizes such a buffer at zero bytes or fewer, which GL refuses to create.
+            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
+        }
         return new PackAdvancedResourcePlan.BufferSpec(index, size, "", relative,
                 relative ? scaleX : 0f, relative ? scaleY : 0f, status(deviations), deviations);
     }
 
-    /** Chimera's limits on a declared size: positive, within one buffer's budget, and whole words. */
+    /**
+     * Chimera's limits on a declared size: positive and within one buffer's budget. Any byte count
+     * binds, as Iris's buffers take any size: the buffer is filled whole (VK_WHOLE_SIZE).
+     */
     private static void checkSize(int index, long size, List<String> deviations) {
         if (size <= 0L || size > PackAdvancedResourcePlan.MAX_STORAGE_BUFFER_BYTES) {
             deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
-        } else if ((size & 3L) != 0L) {
-            deviations.add("STORAGE_BUFFER_ALIGNMENT_UNSUPPORTED:" + index);
         }
     }
 
