@@ -36,45 +36,58 @@ public final class PackResourceOwner implements AutoCloseable {
             PackResourceStatus.PACK_FILE, PackResourceStatus.GAME_RESOURCE, PackResourceStatus.GENERATED);
 
     private final PackResourcePlan plan;
+    private final Path shadersDir;
     private final Map<String, LoadedTexture> textures = new HashMap<>();
     private final Map<String, String> failures = new HashMap<>();
     private boolean closed;
 
-    private PackResourceOwner(PackResourcePlan plan) {
+    private PackResourceOwner(PackResourcePlan plan, Path shadersDir) {
         this.plan = plan == null ? PackResourcePlan.empty() : plan;
+        this.shadersDir = shadersDir;
     }
 
     public static PackResourceOwner load(PackResourcePlan plan, Path shadersDir) {
-        PackResourceOwner owner = new PackResourceOwner(plan);
+        PackResourceOwner owner = new PackResourceOwner(plan, shadersDir);
         for (PackResourceBinding binding : plan.bindings().values().stream()
                 .flatMap(Collection::stream)
                 .sorted(Comparator.comparing(PackResourceBinding::resourceKey))
                 .toList()) {
-            if (!LOADED_STATUSES.contains(binding.status())) {
-                continue;
-            }
-            if (owner.textures.containsKey(binding.resourceKey())
-                    || owner.failures.containsKey(binding.resourceKey())) {
-                continue;
-            }
-            try {
-                LoadedTexture texture = switch (binding.status()) {
-                    case PACK_FILE -> loadPackFile(binding, shadersDir);
-                    case GENERATED -> PackNoiseTexture.generated(
-                            PackResourcePlan.generatedNoiseSize(binding.source()),
-                            "chimera_pack_" + binding.resourceKey());
-                    default -> loadGameResource(binding);
-                };
-                if (texture == null) {
-                    owner.failures.put(binding.resourceKey(), "resource unavailable");
-                } else {
-                    owner.textures.put(binding.resourceKey(), texture);
-                }
-            } catch (Exception failure) {
-                owner.failures.put(binding.resourceKey(), failure.getMessage());
-            }
+            owner.loadOnce(binding);
         }
         return owner;
+    }
+
+    /** Makes the binding's image unless it is not this owner's to make or a try already made or failed it. */
+    private void loadOnce(PackResourceBinding binding) {
+        String key = binding.resourceKey();
+        if (closed || !LOADED_STATUSES.contains(binding.status())
+                || textures.containsKey(key) || failures.containsKey(key)) {
+            return;
+        }
+        try {
+            LoadedTexture texture = switch (binding.status()) {
+                case PACK_FILE -> loadPackFile(binding, shadersDir);
+                case GENERATED -> PackNoiseTexture.generated(
+                        PackResourcePlan.generatedNoiseSize(binding.source()), "chimera_pack_" + key);
+                default -> loadGameResource(binding);
+            };
+            if (texture == null) {
+                failures.put(key, "resource unavailable");
+            } else {
+                textures.put(key, texture);
+            }
+        } catch (Exception failure) {
+            failures.put(key, failure.getMessage());
+        }
+    }
+
+    /**
+     * The image of a binding no program planned, such as a pass compute's texture: made on first
+     * use and owned with the rest. Null when it cannot be made; {@link #failure} says why.
+     */
+    public VulkanImage image(PackResourceBinding binding) {
+        loadOnce(binding);
+        return image(binding.resourceKey());
     }
 
     private static LoadedTexture loadPackFile(PackResourceBinding binding, Path shadersDir)

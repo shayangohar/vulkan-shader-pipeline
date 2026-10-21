@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -45,17 +46,20 @@ public final class PassComputePlan {
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+\\w+\\s+([A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*;");
     private static final Pattern EXTENSION = Pattern.compile("(?m)^[ \\t]*#extension\\s+(\\w+)[^\\r\\n]*(?:\\r?\\n|$)");
     private static final Pattern COLOR_IMAGE = Pattern.compile("colorimg([0-9]+)");
+    /** The pack textures a compute samples by resource key. */
+    private static final Set<PackResourceKind> TEXTURE_KINDS = EnumSet.of(PackResourceKind.NOISE,
+            PackResourceKind.PACK_TEXTURE, PackResourceKind.RAW_TEXTURE);
     /** The value block a pass compute reads; the pack compile check finds its offsets by this name. */
     public static final String VALUES_BLOCK = "ChimeraPassComputeValues";
 
-    /** What one descriptor binds: a colour target, the noise texture, or a pack image. */
+    /** What one descriptor binds: a colour target, a pack texture, or a pack image. */
     public enum Kind {
         /** {@code colorimgN}: target N as a storage image, in its format. */
         TARGET_IMAGE,
         /** {@code colortexN}: target N sampled. */
         TARGET_SAMPLER,
-        /** {@code noisetex}: the pack's noise texture. */
-        NOISE,
+        /** A pack texture: a declared file or raw texture, a game resource, or the generated noise. */
+        TEXTURE,
         /** A pack image's own storage name ({@code image.<name>}), in its format. */
         PACK_IMAGE,
         /** A pack image's sampler, reading the image it names. */
@@ -64,18 +68,21 @@ public final class PassComputePlan {
 
     /**
      * One descriptor: its symbol and binding, what it binds, the target (-1 for none), a storage
-     * image's format, and a pack image's name.
+     * image's format, and the pack image's name or the pack texture's resource key.
      */
-    public record Binding(String symbol, int binding, Kind kind, int target, String format, String image) {
+    public record Binding(String symbol, int binding, Kind kind, int target, String format, String resource) {
         /** Whether the compute writes through it, as a storage image. */
         public boolean storage() {
             return kind == Kind.TARGET_IMAGE || kind == Kind.PACK_IMAGE;
         }
     }
 
-    /** One pass compute: its translated source (null when it cannot run) and what dispatch binds. */
+    /**
+     * One pass compute: its translated source (null when it cannot run), what dispatch binds, and
+     * the pack textures its {@link Kind#TEXTURE} bindings read.
+     */
     public record PassCompute(String name, String pass, String source, int[] localSize, int[] workGroups,
-                              float[] workGroupsRender, List<Binding> bindings,
+                              float[] workGroupsRender, List<Binding> bindings, List<PackResourceBinding> textures,
                               List<ComputeValueBlock.Value> values, List<String> deviations) {
         public boolean supported() { return source != null; }
 
@@ -314,14 +321,17 @@ public final class PassComputePlan {
                 if (!type.equals(pack.samplerType())) return null;
                 return new Binding(name, work.bindings.size(), Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
             }
-            Integer target = name.equals("noisetex") ? Integer.valueOf(-1) : PackResourcePlan.targetIndex(name);
-            boolean replaced = PackResourcePlan.declaresTexture(work.pass, name, type,
-                    plan.settings().resourceDeclarations());
-            if (target == null || replaced || !type.equals(target < 0 ? "sampler2D" : targetSamplerType(target))) {
-                return null;
+            PackResourceBinding resource = PackResourcePlan.passComputeBinding(plan, work.pass, name, type, shadersDir);
+            Integer target = PackResourcePlan.targetIndex(name);
+            if (resource.kind() == PackResourceKind.TARGET && target != null && resource.available()) {
+                return type.equals(targetSamplerType(target))
+                        ? new Binding(name, work.bindings.size(), Kind.TARGET_SAMPLER, target, null, null) : null;
             }
-            return new Binding(name, work.bindings.size(), target < 0 ? Kind.NOISE : Kind.TARGET_SAMPLER,
-                    target, null, null);
+            if (!TEXTURE_KINDS.contains(resource.kind()) || !resource.available()) return null;
+            // A PNG and the noise are 2D colour images; a raw texture serves only its own sampler type.
+            if (resource.kind() != PackResourceKind.RAW_TEXTURE && !type.equals("sampler2D")) return null;
+            work.textures.add(resource);
+            return new Binding(name, work.bindings.size(), Kind.TEXTURE, -1, null, resource.resourceKey());
         }
 
         /** The sampler type a target binds to: usampler2D or isampler2D for an integer format (Iris). */
@@ -407,6 +417,7 @@ public final class PassComputePlan {
         final String name;
         final String pass;
         final List<Binding> bindings = new ArrayList<>();
+        final List<PackResourceBinding> textures = new ArrayList<>();
         final StringBuilder declarations = new StringBuilder();
         final List<String> deviations = new ArrayList<>();
         boolean failed;
@@ -438,7 +449,8 @@ public final class PassComputePlan {
                 render = new float[] {Float.parseFloat(relative.group(1)), Float.parseFloat(relative.group(2))};
             }
             return new PassCompute(name, pass, failed ? null : source, localSize, workGroups, render,
-                    List.copyOf(bindings), values == null ? List.of() : values, List.copyOf(deviations));
+                    List.copyOf(bindings), List.copyOf(textures), values == null ? List.of() : values,
+                    List.copyOf(deviations));
         }
     }
 }

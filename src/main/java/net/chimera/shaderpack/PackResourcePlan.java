@@ -220,12 +220,6 @@ public final class PackResourcePlan {
         return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE;
     }
 
-    /** Whether any pack declaration replaces this sampler, of this GLSL type, in this program. */
-    static boolean declaresTexture(String program, String sampler, String samplerType,
-                                   Map<String, PackResourceDeclaration> declarations) {
-        return declaration(program, sampler, samplerType, declarations) != null;
-    }
-
     private static PackResourceDeclaration declaration(String program, String sampler, String samplerType,
                                                        Map<String, PackResourceDeclaration> declarations) {
         return declarationFor(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations,
@@ -529,21 +523,48 @@ public final class PackResourcePlan {
      * composites and then blurs bloom tiles in colortex6.
      */
     private static Map<String, Set<Integer>> targetsWrittenEarlierInChain(PackPlan plan) {
-        Map<String, List<Integer>> flips = plan.config() == null ? Map.of() : plan.config().flips();
-        Map<String, Set<Integer>> writtenByChain = new TreeMap<>();
         Map<String, Set<Integer>> result = new TreeMap<>();
-        List<PackProgramPlan> programs = plan.activePrograms().stream()
-                .filter(program -> program != null && program.targetPlan() != null
-                        && postChain(program.name()) != null)
-                .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
-                .toList();
-        for (PackProgramPlan program : programs) {
-            Set<Integer> written = writtenByChain.computeIfAbsent(postChain(program.name()), key -> new TreeSet<>());
-            result.put(program.name(), Set.copyOf(written));
+        for (PackProgramPlan program : plan.activePrograms()) {
+            if (program != null && program.targetPlan() != null && postChain(program.name()) != null) {
+                result.put(program.name(), targetsWrittenBefore(plan, program.name()));
+            }
+        }
+        return result;
+    }
+
+    /** The targets the programs of {@code pass}'s chain wrote before it: its flippedAtLeastOnce snapshot. */
+    private static Set<Integer> targetsWrittenBefore(PackPlan plan, String pass) {
+        String chain = postChain(pass);
+        if (chain == null) return Set.of();
+        Map<String, List<Integer>> flips = plan.config() == null ? Map.of() : plan.config().flips();
+        Comparator<String> order = PostTargetPlan.programComparator();
+        Set<Integer> written = new TreeSet<>();
+        for (PackProgramPlan program : plan.activePrograms()) {
+            if (program == null || program.targetPlan() == null || !chain.equals(postChain(program.name()))
+                    || order.compare(program.name(), pass) >= 0) {
+                continue;
+            }
             written.addAll(program.targetPlan().targetSlots());
             written.addAll(flips.getOrDefault(program.name(), List.of()));
         }
-        return result;
+        return Set.copyOf(written);
+    }
+
+    /**
+     * What the sampler {@code name} of {@code samplerType} reads in a compute of {@code pass}:
+     * what the pass's program would read under that name. Iris CompositeRenderer.createComputes
+     * binds a pass's computes as its program, through the same stage textures, customTexture
+     * entries, noise and flippedAtLeastOnce snapshot; a compute-only pass has the snapshot its
+     * place in the chain gives it.
+     */
+    public static PackResourceBinding passComputeBinding(PackPlan plan, String pass, String name, String samplerType,
+                                                         Path shadersDir) {
+        PackSettingsPlan settings = plan.settings();
+        PackResourceBinding binding = resolve(pass, new UniformRegistry.SamplerBinding(name, 0, samplerType), false,
+                settings == null ? Map.of() : settings.resourceDeclarations(), shadersDir,
+                settings == null ? Map.of() : settings.propertyValues(), targetsWrittenBefore(plan, pass));
+        return binding.status() == PackResourceStatus.GENERATED
+                ? withNoiseResolution(binding, noiseResolution(plan)) : binding;
     }
 
     private static String postChain(String program) {

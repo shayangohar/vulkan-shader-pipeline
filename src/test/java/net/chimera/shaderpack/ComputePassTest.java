@@ -278,6 +278,58 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris binds a pass's computes as its program (CompositeRenderer.createComputes): customTexture
+     * entries, the stage's textures behind the pass's flippedAtLeastOnce snapshot, and the noise.
+     * Alpha Piscium's computes read customTexture.usam_stbnVec1. composite1 writes colortex5, so
+     * composite2's compute samples the target, not texture.composite.colortex5.
+     */
+    @Test
+    void passComputesBindPackTextures(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                customTexture.lut = lut.dat TEXTURE_3D RGBA8 2 2 2 RGBA UNSIGNED_BYTE
+                texture.composite.colortex5 = blue.png
+                """);
+        Files.write(shaders.resolve("lut.dat"), new byte[32]);
+        Files.write(shaders.resolve("blue.png"), new byte[] {1});
+        for (String pass : List.of("composite", "composite1")) {
+            String target = pass.equals("composite") ? "0" : "5";
+            Files.writeString(shaders.resolve(pass + ".fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                    + "void main() {\n/* RENDERTARGETS: " + target + " */\n"
+                    + " gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        }
+        String compute = """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba16f) uniform image2D colorimg4;
+                uniform sampler3D lut;
+                uniform sampler2D colortex5;
+                uniform sampler2D noisetex;
+                void main() {
+                    vec4 value = texture(lut, vec3(0.5)) + texture(colortex5, vec2(0.5)) + texture(noisetex, vec2(0.5));
+                    imageStore(colorimg4, ivec2(gl_GlobalInvocationID.xy), value);
+                }
+                """;
+        Files.writeString(shaders.resolve("composite_a.csh"), compute);
+        Files.writeString(shaders.resolve("composite2_a.csh"), compute);
+        PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        PassComputePlan.PassCompute early = computes.compute("composite_a");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg4", 0, PassComputePlan.Kind.TARGET_IMAGE, 4, "rgba16f", null),
+                new PassComputePlan.Binding("lut", 1, PassComputePlan.Kind.TEXTURE, -1, null, "customTexture.lut"),
+                new PassComputePlan.Binding("colortex5", 2, PassComputePlan.Kind.TEXTURE, -1, null,
+                        "texture.composite.colortex5"),
+                new PassComputePlan.Binding("noisetex", 3, PassComputePlan.Kind.TEXTURE, -1, null, "noisetex")),
+                early.bindings(), early.deviations().toString());
+        assertEquals(List.of(PackResourceKind.RAW_TEXTURE, PackResourceKind.PACK_TEXTURE, PackResourceKind.NOISE),
+                early.textures().stream().map(PackResourceBinding::kind).toList());
+        assertEquals(new PassComputePlan.Binding("colortex5", 2, PassComputePlan.Kind.TARGET_SAMPLER, 5, null, null),
+                computes.compute("composite2_a").bindings().get(2), "composite1 wrote colortex5 before composite2");
+        String error = PackCompileTest.compileComputeValues(early.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + early.source());
+    }
+
+    /**
      * A pass with computes and no fragment program runs its computes at its place in the chain
      * (Iris CompositeRenderer.ComputeOnlyPass): Alpha Piscium's composite2 is composite2.csh alone.
      * The schedule gives it the window its name gives a program, and the report its translation.

@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.PackResourceBinding;
 import net.chimera.shaderpack.PassComputePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
@@ -28,7 +29,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * draws, with {@code colorimgN} and {@code colortexN} bound to the image the pass reads. A written
  * target is in GENERAL for the dispatch and returns to the sampled layout afterwards, so the pass
  * and every later reader see what the compute stored. Pack images and their samplers bind the
- * session's images, which stay in GENERAL.
+ * session's images, which stay in GENERAL. Pack textures bind the session's, loaded on first use
+ * when no program reads them.
  */
 final class PackPassComputes implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -47,12 +49,13 @@ final class PackPassComputes implements AutoCloseable {
         this.packImages = packImages;
     }
 
-    /** Builds a pipeline for every supported compute whose targets the device can store to; logs each outcome. */
+    /** Builds a pipeline for every supported compute whose resources this session has; logs each outcome. */
     static PackPassComputes load(PassComputePlan plan, PackResourceOwner resources,
                                  PackAdvancedImageOwner packImages) {
         List<Loaded> loaded = new ArrayList<>();
         for (PassComputePlan.PassCompute compute : plan.computes()) {
-            String refusal = compute.supported() ? refusal(compute, packImages) : String.valueOf(compute.deviations());
+            String refusal = compute.supported() ? refusal(compute, resources, packImages)
+                    : String.valueOf(compute.deviations());
             ComputeKernel kernel = refusal != null ? null : ComputeKernel.create("chimera_" + compute.name() + ".csh",
                     compute.source(), descriptorTypes(compute), ComputeValueBlock.bufferSize(compute.values()));
             if (kernel != null) {
@@ -157,8 +160,8 @@ final class PackPassComputes implements AutoCloseable {
         List<VulkanImage> images = new ArrayList<>();
         for (PassComputePlan.Binding binding : compute.bindings()) {
             VulkanImage image = switch (binding.kind()) {
-                case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.image());
-                case NOISE -> resources == null ? null : resources.image("noisetex");
+                case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.resource());
+                case TEXTURE -> resources == null ? null : resources.image(binding.resource());
                 case TARGET_IMAGE, TARGET_SAMPLER ->
                         binding.target() < sources.length ? sources[binding.target()] : null;
             };
@@ -178,13 +181,23 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     /**
-     * Why this compute cannot run in this session: a pack image it binds was not created, or a
-     * target it writes cannot be a storage image on this device. Null when it can.
+     * Why this compute cannot run in this session: a pack texture it reads could not be loaded, a
+     * pack image it binds was not created, or a target it writes cannot be a storage image on this
+     * device. Null when it can. Loads the compute's textures.
      */
-    private static String refusal(PassComputePlan.PassCompute compute, PackAdvancedImageOwner packImages) {
+    private static String refusal(PassComputePlan.PassCompute compute, PackResourceOwner resources,
+                                  PackAdvancedImageOwner packImages) {
+        for (PackResourceBinding texture : compute.textures()) {
+            if (resources == null || resources.image(texture) == null) {
+                return "pack texture " + texture.resourceKey() + " could not be loaded"
+                        + (resources == null ? "" : ": " + resources.failure(texture.resourceKey()));
+            }
+        }
         for (PassComputePlan.Binding binding : compute.bindings()) {
-            if (binding.image() != null && (packImages == null || packImages.image(binding.image()) == null)) {
-                return "pack image " + binding.image() + " was not created";
+            boolean packImage = binding.kind() == PassComputePlan.Kind.PACK_IMAGE
+                    || binding.kind() == PassComputePlan.Kind.PACK_IMAGE_SAMPLER;
+            if (packImage && (packImages == null || packImages.image(binding.resource()) == null)) {
+                return "pack image " + binding.resource() + " was not created";
             }
             if (binding.kind() != PassComputePlan.Kind.TARGET_IMAGE) continue;
             if (!storageSupported(PackConfig.FMT_TO_VK.getOrDefault(binding.format().toUpperCase(Locale.ROOT), 0))) {
