@@ -3,10 +3,23 @@ package net.chimera.shaderpack;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** The canonical uniform catalog: every name Chimera serves, its types, source and default. */
 final class UniformCatalog {
     private UniformCatalog() {}
+
+    /**
+     * The names Iris 1.21.1 registers PER_TICK. ProgramUniforms.update refreshes them only when
+     * the level's game time changes; a custom uniform's inputs still update every frame
+     * (CachedUniform.update ignores the frequency).
+     */
+    static final Set<String> PER_TICK = Set.of(
+            "biome", "biome_category", "biome_precipitation", "cloudTime", "constantMood", "currentColorSpace",
+            "currentDate", "currentPlayerAir", "currentPlayerArmor", "currentPlayerHealth", "currentPlayerHunger",
+            "currentTime", "currentYearTime", "isSpectator", "lightningBoltPosition", "maxPlayerAir",
+            "maxPlayerArmor", "maxPlayerHealth", "maxPlayerHunger", "moonPhase", "playerMood", "rainStrength",
+            "rainfall", "temperature", "wetness", "worldDay", "worldTime");
 
     static Map<String, UniformRegistry.UniformDescriptor> uniformSpecs() {
         Map<String, UniformRegistry.UniformDescriptor> specs = new LinkedHashMap<>();

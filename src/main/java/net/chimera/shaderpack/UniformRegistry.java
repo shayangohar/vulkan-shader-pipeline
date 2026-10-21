@@ -472,6 +472,15 @@ public final class UniformRegistry {
         return descriptor != null && descriptor.accepts(glslType) ? descriptor : null;
     }
 
+    /**
+     * Whether a binding of this catalog value refreshes only when the game tick changes, as Iris's
+     * PER_TICK uniforms do (UniformCatalog.PER_TICK). A pack's custom value of the same name does not.
+     */
+    public static boolean perTick(UniformDescriptor descriptor) {
+        return descriptor != null && UniformCatalog.PER_TICK.contains(descriptor.name())
+                && UNIFORM_SPECS.get(descriptor.name()) == descriptor;
+    }
+
     /** Returns the complete deterministic catalog for diagnostics and tests. */
     public static List<UniformDescriptor> catalog() {
         return UNIFORM_SPECS.values().stream()
