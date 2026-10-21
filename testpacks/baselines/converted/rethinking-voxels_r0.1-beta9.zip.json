@@ -80,6 +80,8 @@
   "gbuffers_water.vsh": "4a3adcdaf7b0f3b9 9434bc0a83667781",
   "gbuffers_weather.fsh": "ff7686cfb1c37d0a d15af2220615feaf",
   "gbuffers_weather.vsh": "19d5c56ad3c3ed98 7722fb5babc0a6da",
+  "prepare3.fsh": "ee34de2cc0cde4b9 579443df0fc144c9",
+  "prepare3.vsh": "4751029611f57755 8149fd23704f70e6",
   "shadowcomp.csh": "02310668a271f604 d9f965c51ed951fb",
   "text_bg.fsh": "0d365dc404f257e0 2cf48f469c124619",
   "text_bg.vsh": "b8e40f81d49bfcee 461121e73c6c5f4c"

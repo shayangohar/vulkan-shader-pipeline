@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 
 /** Advanced images and the shadow-compute plan. */
 final class AdvancedImagePlanTest {
@@ -131,6 +132,34 @@ final class AdvancedImagePlanTest {
         assertTrue(!advanced.imagesServable("composite1") && !plan.shouldAttempt("composite1")
                         && advanced.deviations().contains("ADVANCED_IMAGE_UNSERVED:composite1:unknown"),
                 advanced.deviations().toString());
+    }
+
+    /**
+     * A storage image a program declares but never uses still needs a descriptor in Vulkan GLSL.
+     * Pegasus's gbuffers declare cimage3_colored_light and only voxelizing writes it; GL compiles
+     * the unused declaration, so Iris runs the program.
+     */
+    @Test
+    void anUnusedImageDeclarationIsBoundWithoutAUse(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.light = lightSampler RGBA RGBA8 BYTE false false 16 16 16\n");
+        writeVolumeReader(shaders, "composite", "lightSampler");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 430 compatibility
+                uniform sampler3D lightSampler;
+                layout (rgba8) uniform image3D light;
+                in vec2 uv;
+                void main() { gl_FragData[0] = texture(lightSampler, vec3(uv, 0.5)); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackAdvancedResourcePlan advanced = plan.advancedResources();
+        assertTrue(advanced.imagesServable("composite") && plan.shouldAttempt("composite"),
+                advanced.deviations().toString());
+        PackProgramPlan composite = plan.program("composite");
+        String fragment = PackDescriptorContracts.bindStorageImages(composite.convertedFragment(), "composite",
+                advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
+        assertTrue(fragment.matches("(?s).*layout\\(rgba8, binding = \\d+\\) uniform image3D light;.*"), fragment);
     }
 
     private static void writeVolumeReader(Path shaders, String program, String sampler) throws Exception {

@@ -75,20 +75,19 @@ final class GraphicsImageScan {
         deviations.addAll(usage.deviations());
         // The pattern opens with optional parts, so it is tried at every character; a stage
         // without an image3D declaration (most of them) cannot match at all.
-        Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image3D") ? source : "");
-        while (image.find()) {
-            if (usage.liveImages().contains(image.group(2))) {
-                addWriter(program, stage, image.group(1), image.group(2));
-            }
-        }
         // Vulkan GLSL needs a binding for every opaque declaration,
         // even one in an unreachable helper or one never referenced
         // (Solas declares voxelSampler in terrain but only the shadow
-        // pass writes voxel_img).  Give every declared or referenced
+        // pass writes voxel_img; Pegasus's gbuffers declare
+        // cimage3_colored_light and only voxelizing writes it).  Give
+        // every declared pack image and every declared or referenced
         // pack image sampler a descriptor.  Runtime eligibility
-        // remains based on liveSamplers() in usesAdvancedResource;
-        // this does not create a fake alias or make an unrelated
-        // sampler a dependency.
+        // remains based on the live uses in usesAdvancedResource, and
+        // only a live store makes a program the image's producer.
+        Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image3D") ? source : "");
+        while (image.find()) {
+            addWriter(program, stage, image.group(1), image.group(2), usage.liveImages().contains(image.group(2)));
+        }
         Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
         imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(source));
         for (String sampler : imageSamplers) {
@@ -100,8 +99,8 @@ final class GraphicsImageScan {
         }
     }
 
-    /** A live storage image declaration of a supported pack image, bound to its sampler's selector. */
-    private void addWriter(String program, String stage, String glslType, String symbol) {
+    /** A storage image declaration of a supported pack image, bound to its sampler's selector. */
+    private void addWriter(String program, String stage, String glslType, String symbol, boolean live) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySymbol(images, symbol);
         if (spec == null) return;
         int selectorSlot = servedSlot(program, spec);
@@ -110,7 +109,7 @@ final class GraphicsImageScan {
                 .add(new PackAdvancedResourcePlan.GraphicsImageBinding(program, symbol,
                         spec.name(), spec.sampler(), glslType, selectorSlot,
                         StorageBufferDeclarations.stageMask(stage)));
-        producedImages.add(spec.name());
+        if (live) producedImages.add(spec.name());
     }
 
     /** A sampler of a supported pack image, bound to its selector as the image's storage type. */
