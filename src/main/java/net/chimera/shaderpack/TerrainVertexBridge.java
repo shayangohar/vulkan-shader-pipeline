@@ -815,6 +815,9 @@ final class TerrainVertexBridge {
         replacements.putIfAbsent("gl_NormalMatrix", GlslVertexPreambles.normalMatrix("gbufferModelView"));
         replacements.putIfAbsent("gl_ProjectionMatrix", "(MVP * inverse(gbufferModelView))");
         replacements.putIfAbsent("gl_ModelViewProjectionMatrix", "MVP");
+        // Vulkan GLSL names the vertex index gl_VertexIndex; RenderPearl's terrain gates its
+        // per-face work on gl_VertexID & 3, as the entity, post and shadow lanes map it.
+        replacements.putIfAbsent("gl_VertexID", "gl_VertexIndex");
         for (TerrainDeclarations.Declaration attribute : TerrainDeclarations.keyword(source, "attribute")) {
             String type = attribute.type();
             String name = attribute.name();

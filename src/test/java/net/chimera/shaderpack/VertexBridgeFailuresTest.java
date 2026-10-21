@@ -126,6 +126,29 @@ final class VertexBridgeFailuresTest {
                 failure(value, fragment));
     }
 
+    /** Vulkan GLSL has gl_VertexIndex, not gl_VertexID; RenderPearl's terrain reads gl_VertexID & 3. */
+    @Test
+    void aTerrainVertexReadsGlVertexIdAsTheVertexIndex() {
+        String fragment = """
+                #version 330
+                in vec2 uv;
+                out vec4 color;
+                void main() { color = vec4(uv, 0.0, 1.0); }
+                """;
+        String vertex = """
+                #version 330
+                in vec3 vaPosition;
+                out vec2 uv;
+                void main() { uv = vec2(float(gl_VertexID & 3)); gl_Position = vec4(vaPosition, 1.0); }
+                """;
+        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(fragment, vertex,
+                        UniformRegistry.Stage.GEOMETRY, null, false, Map.of(), Map.of())
+                .project("vertex", UniformRegistry.Stage.GEOMETRY);
+        String converted = TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,
+                GlslVertexPreambles.MODERN_TERRAIN_VERTEX_PREAMBLE, interfacePlan, false, false, false).source();
+        assertTrue(converted.contains("gl_VertexIndex & 3") && !converted.contains("gl_VertexID"), converted);
+    }
+
     /** The modern terrain bridge's first failure for a pair, or an empty string when it converts. */
     private static String failure(String vertex, String fragment) {
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(fragment, vertex,
