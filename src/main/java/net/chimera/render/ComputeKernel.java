@@ -132,7 +132,9 @@ final class ComputeKernel implements AutoCloseable {
     FrameSlot frame(int index) { return frames[index]; }
 
     /** This frame slot's fence has signalled, so its set and block are free to rewrite. */
-    FrameSlot currentFrame() { return frames[Renderer.getCurrentFrame() % frames.length]; }
+    FrameSlot currentFrame() { return frames[currentFrameIndex()]; }
+
+    int currentFrameIndex() { return Renderer.getCurrentFrame() % frames.length; }
 
     /** Points one image binding of a frame slot's set at an image view (and sampler, for a sampled one). */
     void writeImage(FrameSlot frame, int binding, long view, long sampler, int layout) {

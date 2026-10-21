@@ -116,6 +116,8 @@ final class PackStorageImage extends VulkanImage {
         int format = spec.format().vkFormat();
         boolean integer = IrisColorFormats.integer(format);
         verifyFormatSupport(format, spec.name());
+        String limit = extentLimitFailure(spec, extent);
+        if (limit != null) throw new IllegalStateException(limit);
         int usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                 | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         try (MemoryStack stack = stackPush()) {
@@ -174,6 +176,27 @@ final class PackStorageImage extends VulkanImage {
     private static int viewType(int dimensions) {
         return dimensions == 1 ? VK_IMAGE_VIEW_TYPE_1D
                 : dimensions == 2 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_3D;
+    }
+
+    /**
+     * Why the device cannot create {@code spec} at {@code extent} (maxImageDimension1D/2D/3D), or
+     * null when it can. Iris leaves the limit to the driver; Vulkan has no defined result past it.
+     */
+    static String extentLimitFailure(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
+        if (DeviceManager.deviceProperties == null) return null;
+        var limits = DeviceManager.deviceProperties.limits();
+        int limit = switch (spec.dimensions()) {
+            case 1 -> limits.maxImageDimension1D();
+            case 2 -> limits.maxImageDimension2D();
+            default -> limits.maxImageDimension3D();
+        };
+        for (int axis = 0; axis < spec.dimensions(); axis++) {
+            if (Integer.compareUnsigned(extent[axis], limit) > 0) {
+                return "advanced image " + spec.name() + " at " + extent[0] + "x" + extent[1] + "x" + extent[2]
+                        + " exceeds the device's " + spec.dimensionSuffix() + " limit " + limit;
+            }
+        }
+        return null;
     }
 
     private static void verifyFormatSupport(int format, String name) {

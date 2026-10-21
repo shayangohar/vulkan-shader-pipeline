@@ -84,7 +84,8 @@ final class ComputePassTest {
     @Test
     void computeFrameSlots() throws IOException {
         var kernel = MixinBytecode.nativeClass("net/chimera/render/ComputeKernel");
-        assertTrue(calls(kernel, "currentFrame", "net/vulkanmod/vulkan/Renderer", "getCurrentFrame"),
+        assertTrue(calls(kernel, "currentFrameIndex", "net/vulkanmod/vulkan/Renderer", "getCurrentFrame")
+                        && calls(kernel, "currentFrame", "net/chimera/render/ComputeKernel", "currentFrameIndex"),
                 "the kernel's current slot follows the frame in flight");
         assertTrue(kernel.fields.stream().noneMatch(field -> field.name.equals("uniformData")
                         || field.name.equals("descriptorSet")),

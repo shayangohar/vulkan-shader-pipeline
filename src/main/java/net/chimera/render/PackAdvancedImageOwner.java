@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.vulkanmod.vulkan.memory.MemoryManager;
@@ -8,7 +9,9 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 
@@ -17,6 +20,8 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     private final PackAdvancedResourcePlan plan;
     private final Map<String, PackStorageImage> images = new TreeMap<>();
     private final Map<String, String> failures = new TreeMap<>();
+    private final Set<String> reportedLimits = new HashSet<>();
+    private int generation;
     private boolean closed;
 
     /** Pure policy used by the owner and deterministic conformance tests. */
@@ -28,11 +33,14 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         this.plan = plan == null ? PackAdvancedResourcePlan.empty() : plan;
     }
 
-    public static PackAdvancedImageOwner load(PackAdvancedResourcePlan plan) {
+    /**
+     * The session's images, a relative one at its share of a screen this size (Iris creates it at
+     * the render target's size); the first frame refits it to the main target (fitRelativeImages).
+     */
+    public static PackAdvancedImageOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight) {
         PackAdvancedImageOwner owner = new PackAdvancedImageOwner(plan);
         for (PackAdvancedResourcePlan.ImageSpec spec : owner.plan.images().values()) {
-            // A relative image takes its size from the screen at the first frame (fitRelativeImages).
-            if (spec.supported() && !spec.relative()) owner.allocate(spec, spec.extent(0, 0));
+            if (spec.supported()) owner.allocate(spec, spec.extent(screenWidth, screenHeight));
         }
         return owner;
     }
@@ -58,9 +66,21 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
             int[] extent = spec.extent(width, height);
             PackStorageImage current = images.get(spec.name());
             if (current != null && current.width == extent[0] && current.height == extent[1]) continue;
+            String limit = PackStorageImage.extentLimitFailure(spec, extent);
+            if (limit != null) {
+                // The screen outgrew the device: the image keeps its last size, as a buffer does.
+                if (reportedLimits.add(limit)) ChimeraMod.LOGGER.warn("[chimera] {}", limit);
+                continue;
+            }
             if (current != null) MemoryManager.getInstance().addFrameOp(current::free);
             allocate(spec, extent);
+            generation++;
         }
+    }
+
+    /** Counts the images replaced since load, so a compute's descriptors can follow them. */
+    int generation() {
+        return generation;
     }
 
     /**
@@ -75,12 +95,9 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return true;
     }
 
-    /** Whether the image a symbol names exists, or is relative and is made at the next frame start. */
+    /** Whether the image a symbol names exists; a relative one is made at load, at the window's size. */
     private boolean availableForSymbol(String symbol) {
-        PackAdvancedResourcePlan.ImageSpec spec = plan.imageForSymbol(symbol);
-        if (spec == null) return false;
-        return images.containsKey(spec.name())
-                || spec.supported() && spec.relative() && !failures.containsKey(spec.name());
+        return imageForSymbol(symbol) != null;
     }
 
     /** Whether every image the shadowcomp binds exists, so it can dispatch. */
@@ -188,10 +205,10 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         for (PackAdvancedResourcePlan.ComputeSpec compute : plan.computeStages().values()) {
             if (!compute.supported()) continue;
             for (String name : compute.imageNames()) {
-                if (imageForSymbol(name) == null) return false;
+                if (!availableForSymbol(name)) return false;
             }
             for (String name : compute.samplerNames()) {
-                if (imageForSymbol(name) == null) return false;
+                if (!availableForSymbol(name)) return false;
             }
         }
         return true;

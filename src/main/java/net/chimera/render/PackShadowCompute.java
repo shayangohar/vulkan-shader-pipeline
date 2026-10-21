@@ -65,6 +65,8 @@ public final class PackShadowCompute implements AutoCloseable {
     private final List<String> sampled2dNames;
     private final List<ComputeValueBlock.Value> computeUniforms;
     private ComputeKernel kernel;
+    /** The image owner's generation each frame slot's set was written at. */
+    private int[] slotGenerations = new int[0];
     private boolean failed;
     private boolean dispatchObserved;
 
@@ -211,6 +213,12 @@ public final class PackShadowCompute implements AutoCloseable {
                 PackStorageImage image = owner.imageForSymbol(name);
                 if (image != null) image.transitionToGeneral(stack, commandBuffer);
             }
+            // A relative image replaced since this slot was written: point the slot at the new one.
+            int frame = kernel.currentFrameIndex();
+            if (slotGenerations[frame] != owner.generation()) {
+                writeFrame(frame);
+                slotGenerations[frame] = owner.generation();
+            }
             kernel.bind(commandBuffer, stack, kernel.currentFrame(), computeUniforms);
             int x = groups(imageNames.get(0), spec.localSizeX(), true);
             int y = groups(imageNames.get(0), spec.localSizeY(), false);
@@ -253,24 +261,32 @@ public final class PackShadowCompute implements AutoCloseable {
 
     /** Points every frame slot's set at the shared images and samplers. False when a sampled resource has no owner. */
     private boolean writeDescriptors() {
+        slotGenerations = new int[kernel.frameCount()];
         for (int index = 0; index < kernel.frameCount(); index++) {
-            ComputeKernel.FrameSlot frame = kernel.frame(index);
-            for (int binding = 0; binding < imageNames.size(); binding++) {
-                PackStorageImage image = owner.imageForSymbol(imageNames.get(binding));
-                kernel.writeImage(frame, binding, image.getImageView(), 0L, VK_IMAGE_LAYOUT_GENERAL);
-            }
-            for (int sampler = 0; sampler < samplerNames.size(); sampler++) {
-                PackStorageImage image = owner.imageForSymbol(samplerNames.get(sampler));
-                kernel.writeImage(frame, imageNames.size() + sampler, image.getImageView(), image.getSampler(),
-                        VK_IMAGE_LAYOUT_GENERAL);
-            }
-            for (int sampler = 0; sampler < sampled2dNames.size(); sampler++) {
-                VulkanImage image = sampledResourceOwner == null
-                        ? null : sampledResourceOwner.image(sampled2dNames.get(sampler));
-                if (image == null) return false;
-                kernel.writeImage(frame, imageNames.size() + samplerNames.size() + sampler, image.getImageView(),
-                        image.getSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            }
+            if (!writeFrame(index)) return false;
+            slotGenerations[index] = owner.generation();
+        }
+        return true;
+    }
+
+    /** Points one frame slot's set at the images and samplers as they are now. */
+    private boolean writeFrame(int index) {
+        ComputeKernel.FrameSlot frame = kernel.frame(index);
+        for (int binding = 0; binding < imageNames.size(); binding++) {
+            PackStorageImage image = owner.imageForSymbol(imageNames.get(binding));
+            kernel.writeImage(frame, binding, image.getImageView(), 0L, VK_IMAGE_LAYOUT_GENERAL);
+        }
+        for (int sampler = 0; sampler < samplerNames.size(); sampler++) {
+            PackStorageImage image = owner.imageForSymbol(samplerNames.get(sampler));
+            kernel.writeImage(frame, imageNames.size() + sampler, image.getImageView(), image.getSampler(),
+                    VK_IMAGE_LAYOUT_GENERAL);
+        }
+        for (int sampler = 0; sampler < sampled2dNames.size(); sampler++) {
+            VulkanImage image = sampledResourceOwner == null
+                    ? null : sampledResourceOwner.image(sampled2dNames.get(sampler));
+            if (image == null) return false;
+            kernel.writeImage(frame, imageNames.size() + samplerNames.size() + sampler, image.getImageView(),
+                    image.getSampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
         return true;
     }
