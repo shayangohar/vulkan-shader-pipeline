@@ -59,7 +59,7 @@ final class AdvancedImageDeclarations {
     ) {
         String name = key.substring("image.".length());
         List<String> deviations = new ArrayList<>();
-        String[] values = raw == null ? new String[0] : raw.trim().split("\s+");
+        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
         boolean relative = values.length > 5 && Boolean.parseBoolean(values[5]);
         if (relative ? values.length < 8 : values.length < 7 || values.length > 9) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);

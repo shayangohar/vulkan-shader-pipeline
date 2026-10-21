@@ -118,8 +118,9 @@ final class AdvancedImagePlanTest {
     void imagesOfEveryIrisShape(@TempDir Path root) throws Exception {
         PackAdvancedResourcePlan.ImageSpec line = AdvancedImageDeclarations.parseImage("image.line",
                 "lineSampler RED_INTEGER R32UI UNSIGNED_INT false false 64", Map.of());
+        // Any whitespace separates the values: a tab as well as a space.
         PackAdvancedResourcePlan.ImageSpec plane = AdvancedImageDeclarations.parseImage("image.plane",
-                "none RGBA RGBA8 BYTE false false 32 16", Map.of());
+                "none\tRGBA RGBA8\tBYTE false false 32\t16", Map.of());
         PackAdvancedResourcePlan.ImageSpec screen = AdvancedImageDeclarations.parseImage("image.screen",
                 "screenSampler RGBA RGBA16F HALF_FLOAT true true SHARE 0.25", Map.of("SHARE", "0.5"));
         assertTrue(line.supported() && plane.supported() && screen.supported());
