@@ -684,9 +684,11 @@ record PackSettingsPlan(
             }
             Matcher custom = CUSTOM_VALUE.matcher(line);
             if (custom.matches()) {
+                // Iris preprocesses shaders.properties with the option values as macros
+                // (PropertiesPreprocessor): Reverie's betaRfact reads RAYLEIGH_DENSITY_VARIANCE's value.
                 customValues.add(PackRuntimeSettings.declaration(
                         custom.group(1).equals("uniform"), custom.group(2),
-                        custom.group(3), custom.group(4).trim()));
+                        custom.group(3), PackConditionals.expandMacros(custom.group(4), conditions.macros()).trim()));
                 return;
             }
             if (key.startsWith("image.") || key.startsWith("customImage.")) {
