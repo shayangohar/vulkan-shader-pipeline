@@ -685,10 +685,10 @@ final class StorageBufferPlanTest {
                 + "layout(std430, binding = 1) SSBO_QUALIFIER buffer reader {\n"
                 + " uint values[];\n};\n");
         List<GlslStorageBufferParser.Block> blocks = GlslStorageBufferParser.scan(source);
-        assertTrue(blocks.size() == 2 && blocks.get(0).std430()
+        assertTrue(blocks.size() == 2 && blocks.get(0).laidOut()
                         && blocks.get(0).originalBinding() == 0
                         && blocks.get(0).instanceName().equals("blockDataBuffer")
-                        && blocks.get(1).std430()
+                        && blocks.get(1).laidOut()
                         && blocks.get(1).originalBinding() == 1
                         && blocks.get(1).instanceName().isEmpty(),
                 "storage blocks are not read in source order");
@@ -849,6 +849,24 @@ final class StorageBufferPlanTest {
                         && unsupportedFog.deviations().contains(
                         "LEGACY_FOG_FIELD_UNSUPPORTED:density"),
                 "unsupported gl_Fog field did not fail closed");
+    }
+
+    /**
+     * Shrimple qualifies none of its storage blocks with a packing. GL lays such a block out alike in
+     * every program (shared), and glslang lays it out std430 for Vulkan in every stage alike, so it
+     * binds; std140 binds as spelled. Spelled-out shared or packed has no Vulkan layout.
+     */
+    @Test
+    void storageBlocksWithoutAPackingBind() {
+        List<GlslStorageBufferParser.Block> blocks = GlslStorageBufferParser.scan("""
+                #version 430
+                layout(binding = 0) readonly buffer sceneData { vec3 sunDirection; uint lightType; };
+                layout(std140, binding = 1) buffer lights { vec4 colors[4]; };
+                layout(shared, binding = 2) buffer legacy { float values[]; };
+                void main() {}
+                """);
+        assertTrue(blocks.get(0).laidOut() && blocks.get(1).laidOut() && !blocks.get(2).laidOut(),
+                blocks.toString());
     }
 
     /**

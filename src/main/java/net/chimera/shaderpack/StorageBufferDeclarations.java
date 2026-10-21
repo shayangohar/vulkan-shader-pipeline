@@ -10,7 +10,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * Reads a pack's storage buffers: the bufferObject.N declarations, the std430 blocks each program
+ * Reads a pack's storage buffers: the bufferObject.N declarations, the storage blocks each program
  * declares, which declaration each block binds, and the budget the declarations must fit.
  */
 final class StorageBufferDeclarations {
@@ -165,7 +165,7 @@ final class StorageBufferDeclarations {
             try {
                 for (StorageBlock block : scanStorageBlocks(stage.getValue().source())) {
                     blocks.add(new StorageBlock(block.blockName(), block.instanceName(),
-                            block.originalBinding(), block.std430(), stageMask));
+                            block.originalBinding(), block.laidOut(), stageMask));
                 }
             } catch (RuntimeException failure) {
                 // Keep malformed storage declarations local to this
@@ -195,7 +195,7 @@ final class StorageBufferDeclarations {
                         duplicateBlocks.add(key);
                     }
                     merged.put(key, new StorageBlock(previous.blockName(), previous.instanceName(),
-                            previous.originalBinding(), previous.std430() && block.std430(),
+                            previous.originalBinding(), previous.laidOut() && block.laidOut(),
                             previous.stageMask() | block.stageMask()));
                 }
             }
@@ -246,7 +246,7 @@ final class StorageBufferDeclarations {
     private static List<String> blockDeviations(String program, StorageBlock block, Set<String> duplicateBlocks,
                                                 List<PackAdvancedResourcePlan.BufferSpec> matches) {
         List<String> local = new ArrayList<>();
-        if (!block.std430()) {
+        if (!block.laidOut()) {
             local.add("STORAGE_BUFFER_LAYOUT_UNSUPPORTED:" + block.blockName());
         }
         if (duplicateBlocks.contains(blockKey(block))) {
@@ -325,7 +325,7 @@ final class StorageBufferDeclarations {
             String blockName,
             String instanceName,
             int originalBinding,
-            boolean std430,
+            boolean laidOut,
             int stageMask
     ) {}
 
@@ -341,7 +341,7 @@ final class StorageBufferDeclarations {
         List<StorageBlock> result = new ArrayList<>();
         for (GlslStorageBufferParser.Block block : GlslStorageBufferParser.scan(source)) {
             result.add(new StorageBlock(block.blockName(), block.instanceName(),
-                    block.originalBinding(), block.std430(), 0));
+                    block.originalBinding(), block.laidOut(), 0));
         }
         return result;
     }

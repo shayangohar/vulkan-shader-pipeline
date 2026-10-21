@@ -7,18 +7,24 @@ import java.util.Set;
 
 /**
  * The storage blocks of a prepared source, read from the parse tree, and the binding rewrite for
- * the bounded std430 bridge. Prepared sources hold no macros (KNOW-725), so a block's qualifiers
+ * the storage buffer bridge. Prepared sources hold no macros (KNOW-725), so a block's qualifiers
  * are the ones its declaration spells.
  */
 final class GlslStorageBufferParser {
     private static final Set<String> MEMORY_QUALIFIERS = Set.of(
             "readonly", "writeonly", "coherent", "volatile", "restrict");
 
+    /**
+     * One storage block. {@code laidOut} is whether Vulkan lays it out as GL does: std430, std140,
+     * or no packing qualifier, which glslang lays out std430 for Vulkan in every stage alike, as GL
+     * lays out an unqualified (shared) block alike in every program. Shrimple qualifies none of its
+     * blocks. Explicit shared or packed has no Vulkan layout.
+     */
     record Block(
             String blockName,
             String instanceName,
             int originalBinding,
-            boolean std430
+            boolean laidOut
     ) {}
 
     /** One storage block's node and the layout qualifier directly before its memory qualifiers. */
@@ -41,7 +47,7 @@ final class GlslStorageBufferParser {
             Map<String, String> arguments = GlslDeclarations.layoutArguments(tree, declared.layout());
             String binding = arguments.get("binding");
             result.add(new Block(tree.text(block.name()), instanceName, binding == null ? -1 : parseInt(binding),
-                    arguments.containsKey("std430")));
+                    !arguments.containsKey("shared") && !arguments.containsKey("packed")));
         }
         return List.copyOf(result);
     }
