@@ -141,7 +141,7 @@ final class AlphaTestContractTest {
                 "gbuffers_terrain", settings(Map.of()));
         assertTrue(dynamic.mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN,
                 "terrain default is not dynamic");
-        assertTrue(dynamic.active() && dynamic.needsHostThreshold(),
+        assertTrue(dynamic.active() && dynamic.perDrawReference(),
                 "terrain default is not active");
 
         for (String function : List.of("NEVER", "LESS", "EQUAL", "LEQUAL",
@@ -228,11 +228,11 @@ final class AlphaTestContractTest {
         assertTrue(terrain.alphaTestPlan().mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN,
                 "material terrain alpha plan is not dynamic");
         String fragment = terrain.convertedFragment();
-        assertTrue(fragment != null && fragment.contains("AlphaCutout"),
-                "converted terrain does not read the host alpha threshold");
+        assertTrue(fragment != null && fragment.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                "converted terrain does not read the per-layer alpha reference");
         assertTrue(fragment.contains("discard;"), "converted terrain has no fragment termination");
         int authored = fragment.lastIndexOf("chimeraAuthoredMain");
-        int rejection = fragment.lastIndexOf("AlphaCutout");
+        int rejection = fragment.lastIndexOf(UniformRegistry.ENTITY_ALPHA_REFERENCE);
         assertTrue(authored >= 0 && rejection > authored,
                 "alpha test was not appended after the authored main");
         compile(fragment);
@@ -296,7 +296,7 @@ final class AlphaTestContractTest {
         assertTrue(terrain.alphaTestPlan().mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN,
                 label + " terrain alpha plan is not dynamic");
         assertTrue(terrain.convertedFragment() != null
-                        && terrain.convertedFragment().contains("AlphaCutout")
+                        && terrain.convertedFragment().contains(UniformRegistry.ENTITY_ALPHA_REFERENCE)
                         && terrain.convertedFragment().contains("discard;"),
                 label + " terrain has no generated alpha rejection");
     }
@@ -365,7 +365,7 @@ final class AlphaTestContractTest {
         else System.setProperty(name, value);
     }
 
-    private static PackSettingsPlan settings(Map<String, String> properties) {
+    static PackSettingsPlan settings(Map<String, String> properties) {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), properties, Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default",
                 PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of(), null);

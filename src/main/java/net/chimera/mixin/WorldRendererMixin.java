@@ -64,6 +64,10 @@ public abstract class WorldRendererMixin {
             pass.beginPackCoverageWindow(type);
             try {
                 pass.rebindMainTarget();
+                // The shadow pass sets its own layers' references (PackShadowPass).
+                if (!ChimeraRenderer.shadowPassActive()) {
+                    PackUniformProvider.updateDrawAlphaReference(TerrainLayers.irisAlphaReference(type));
+                }
                 original.call(renderType, camX, camY, camZ, view, projection);
             } finally {
                 pass.endPackCoverageWindow(type);

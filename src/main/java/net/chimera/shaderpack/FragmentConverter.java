@@ -57,20 +57,18 @@ public final class FragmentConverter {
             GeometryOutputPlan geometryOutputPlan,
             Map<String, String> packConstants,
             PostVertexBridge.PostVaryingLayout postVaryingLayout,
-            Set<String> atlasSamplers,
-            PackAlphaTestPlan alphaTestPlan
+            Set<String> atlasSamplers
     ) {
         public FragmentConversionRequest {
             packConstants = packConstants == null ? Map.of() : packConstants;
             atlasSamplers = atlasSamplers == null ? Set.of() : atlasSamplers;
-            alphaTestPlan = alphaTestPlan == null ? PackAlphaTestPlan.disabled() : alphaTestPlan;
         }
 
         /** Minimal request; every plan defaults to empty or disabled. */
         public static FragmentConversionRequest of(String source, Path sourceFile,
                 boolean geometryStage, int[] geometrySamplerSlots) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
-                    null, null, null, null, Map.of(), null, Set.of(), PackAlphaTestPlan.disabled());
+                    null, null, null, null, Map.of(), null, Set.of());
         }
 
         /** Minimal request with the interface plan derived from the source, as the old shims did. */
@@ -85,49 +83,43 @@ public final class FragmentConverter {
         public FragmentConversionRequest withTerrainLayout(LegacyGlslConverter.TerrainVaryingLayout terrainLayout) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    packConstants, postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withInterfacePlan(UniformRegistry.ProgramInterface interfacePlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    packConstants, postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withTargetPlan(PostTargetPlan targetPlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    packConstants, postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withGeometryOutputPlan(GeometryOutputPlan geometryOutputPlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    packConstants, postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withPackConstants(Map<String, String> packConstants) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    packConstants, postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withPostVaryingLayout(PostVertexBridge.PostVaryingLayout postVaryingLayout) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    packConstants, postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withAtlasSamplers(Set<String> atlasSamplers) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
-        }
-
-        public FragmentConversionRequest withAlphaTestPlan(PackAlphaTestPlan alphaTestPlan) {
-            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
-                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    packConstants, postVaryingLayout, atlasSamplers);
         }
 
         /** Runs the conversion; returns null when the source is outside the executable contract. */
@@ -230,8 +222,7 @@ public final class FragmentConverter {
             rewriteDeclarations();
             bindSamplers();
             String outputDeclarations = rewriteOutputs();
-            String terrainHostInstance = appendAlphaRejection();
-            return assemble(outputDeclarations, uniformBlock(terrainHostInstance));
+            return assemble(outputDeclarations, uniformBlock());
         }
 
         /** Inlines includes, drops unreachable functions and settles the version line. */
@@ -378,41 +369,15 @@ public final class FragmentConverter {
                     : "\n" + discardedOutputDeclarations(shadowOutputs).stripTrailing());
         }
 
-        /**
-         * Appends the pack's alpha test to a routed terrain stage; returns the host block
-         * instance its threshold reads, or null when it reads none.
-         */
-        private String appendAlphaRejection() {
-            PackAlphaTestPlan alpha = request.alphaTestPlan();
-            GeometryOutputPlan geometryOutputPlan = request.geometryOutputPlan();
-            if (!geometryStage || !terrainContract(stage) || geometryOutputPlan == null || !alpha.active()) {
-                return null;
-            }
-            String terrainHostInstance = alpha.needsHostThreshold()
-                    ? GlslTokenRewriter.uniqueIdentifier(src, "chimeraTerrainHost") : null;
-            String rejection = alpha.rejection(geometryOutputPlan.locationZeroOutputName(), terrainHostInstance);
-            if (!rejection.isBlank()) {
-                src = GlslTokenRewriter.appendMainEpilogue(src, rejection);
-            }
-            return terrainHostInstance;
-        }
-
         /** The generated uniform block of the stage's family, empty when it reads no uniforms. */
-        private String uniformBlock(String terrainHostInstance) {
+        private String uniformBlock() {
             List<UniformRegistry.UniformDeclaration> uniforms = interfacePlan.executableUniforms();
             if (stage.shadowPass() && !uniforms.isEmpty()) {
                 src = qualifyShadowUniformReferences(src, uniforms);
                 return generatedShadowUniformBlock(uniforms, shadowUniformBinding(stage));
             }
             if (geometryStage && terrainContract(stage)) {
-                StringBuilder geometryBlocks = new StringBuilder();
-                if (terrainHostInstance != null) {
-                    geometryBlocks.append(terrainHostUniformBlock(src, terrainHostInstance));
-                }
-                if (!uniforms.isEmpty()) {
-                    geometryBlocks.append(generatedGeometryUniformBlock(uniforms));
-                }
-                return geometryBlocks.toString();
+                return uniforms.isEmpty() ? "" : generatedGeometryUniformBlock(uniforms);
             }
             if ((entityStage(stage) || stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD)
                     && !uniforms.isEmpty()) {
@@ -733,19 +698,6 @@ public final class FragmentConverter {
                     .append(uniform.name()).append(";\n");
         }
         return block.append("};\n").toString();
-    }
-
-    /** chimera_terrain.json's binding-1 fog block, with an instance reserved for generated alpha testing. */
-    static String terrainHostUniformBlock(String source, String instance) {
-        String block = GlslTokenRewriter.uniqueIdentifier(source, "ChimeraTerrainHostBlock");
-        return """
-                layout(binding = 1) uniform %s {
-                    vec4 FogColor;
-                    float FogStart;
-                    float FogEnd;
-                    float AlphaCutout;
-                } %s;
-                """.formatted(block, instance);
     }
 
     /** Generated entity fragment UBO. Vertex transform blocks are supplied by the host. */

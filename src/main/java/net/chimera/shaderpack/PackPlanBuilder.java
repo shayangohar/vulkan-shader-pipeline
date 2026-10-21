@@ -279,8 +279,17 @@ public final class PackPlanBuilder {
             deviations.addAll(repaired.deviations());
         }
 
-        /** Only a program that can execute (entity families need a vertex stage) receives the host alpha test. */
+        /**
+         * Gives a world program's alphaTestRef its alpha-test reference; a post program keeps
+         * refusing it, since Iris leaves it the last world draw's (UniformRegistry.IRIS_UNSERVED).
+         * Only a program that can execute (entity families need a vertex stage) receives the
+         * host alpha test.
+         */
         private void injectAlphaTest() {
+            if (stage != UniformRegistry.Stage.POST) {
+                vertex = servedReference(vertex, vertexFile());
+                fragment = servedReference(fragment, fragmentFile());
+            }
             if (vertex == null) {
                 return;
             }
@@ -291,13 +300,28 @@ public final class PackPlanBuilder {
                 if (FamilyAdapterRegistry.isEntityLike(name) && !name.equals("gbuffers_damagedblock")) {
                     fragment = EntityOverlayColor.inject(fragment);
                 }
-            } else if (FamilyAdapterRegistry.isShadowFamily(name) || (FamilyAdapterRegistry.isCloudFamily(name)
+            } else if (isTerrainMaterialFamily(name) || (FamilyAdapterRegistry.isCloudFamily(name)
                     && !AuthoredOutput.producesNothing(vertex, fragment))) {
-                // Iris alpha-tests shadow terrain by layer and entity casters at 0.1; the
-                // shadow pass sets the reference per draw (ChimeraMainPass.renderShadowMap).
-                // Clouds test at a fixed reference; a cloud program that draws nothing keeps
-                // its discarding main, which is how the plan proves it (AuthoredOutput).
+                // Iris alpha-tests terrain and shadow terrain by layer and entity casters at 0.1;
+                // the main and shadow passes set the reference per layer (WorldRendererMixin,
+                // PackShadowPass). Clouds test at a fixed reference; a cloud program that draws
+                // nothing keeps its discarding main, which is how the plan proves it (AuthoredOutput).
                 fragment = alphaTestPlan.injectDrawTest(fragment);
+            }
+        }
+
+        /**
+         * A stage with its includes expanded and alphaTestRef served, when it reads alphaTestRef;
+         * a stage whose includes do not resolve is left for the converters to refuse.
+         */
+        private String servedReference(String source, Path file) {
+            if (source == null) return null;
+            try {
+                String expanded = IrisCoreProfile.expandIncludes(source, file);
+                return GlslTokenRewriter.containsIdentifier(expanded, "alphaTestRef")
+                        ? alphaTestPlan.serveReference(expanded) : source;
+            } catch (IllegalArgumentException unresolved) {
+                return source;
             }
         }
 
@@ -611,7 +635,6 @@ public final class PackPlanBuilder {
                         .withPackConstants(packConstants())
                         .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(name,
                                 interfacePlan.project("fragment", stage), config == null ? null : config.settings()))
-                        .withAlphaTestPlan(vertex != null ? alphaTestPlan : PackAlphaTestPlan.disabled())
                         .convert(), "POST_CONVERTER_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowFamily(name)) {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));

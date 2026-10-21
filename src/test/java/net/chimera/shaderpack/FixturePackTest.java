@@ -179,8 +179,9 @@ final class FixturePackTest {
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
                 terrain.support(), "material terrain support");
         assertEquals(List.of("fragment", "vertex"), terrain.stages(), "material terrain stages");
+        // The alpha test reads the per-layer reference, a live uniform.
         assertEquals(List.of("ALPHA_TEST_DYNAMIC:gbuffers_terrain",
-                        "LEGACY_TERRAIN_VERTEX_BRIDGE"), terrain.deviations(),
+                        "LEGACY_TERRAIN_VERTEX_BRIDGE", "LIVE_UNIFORM_BRIDGE"), terrain.deviations(),
                 "material terrain deviations");
         assertTrue(report.shouldAttempt("gbuffers_terrain"), "material terrain was rejected");
         assertTrue(metadataHashes(report).containsKey("block.properties"),

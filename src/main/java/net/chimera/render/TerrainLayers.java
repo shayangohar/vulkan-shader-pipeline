@@ -20,6 +20,16 @@ public final class TerrainLayers {
                 ? TerrainRenderType.COMPACT_RENDER_TYPES : TerrainRenderType.SEMI_COMPACT_RENDER_TYPES).contains(type);
     }
 
+    /**
+     * The alpha-test reference Iris gives the layer's pack terrain (SodiumPrograms.getAlphaTest):
+     * 0.1 for its cutout pass, which holds cutout and cutout_mipped blocks, and none (0) for solid
+     * and translucent. This layer split holds solid blocks in cutout_mipped too, which Iris draws
+     * untested; their opaque texels pass 0.1 alike.
+     */
+    public static float irisAlphaReference(TerrainRenderType type) {
+        return type == TerrainRenderType.CUTOUT || type == TerrainRenderType.CUTOUT_MIPPED ? 0.1F : 0.0F;
+    }
+
     /** Iris's rendering phase for the layer LevelRenderer is drawing. */
     public static PackRenderingPhase phase(TerrainRenderType type) {
         return switch (type) {

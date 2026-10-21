@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -15,6 +16,10 @@ record PackAlphaTestPlan(
 ) {
     enum Mode {
         OFF,
+        /**
+         * Each terrain layer tests against the reference the main pass sets for it: Iris's 0.1
+         * for its cutout pass, none for solid and translucent (SodiumPrograms.getAlphaTest).
+         */
         DYNAMIC_TERRAIN,
         /** Each entity-family draw tests against its host pipeline's ALPHA_CUTOUT. */
         DYNAMIC_ENTITY,
@@ -112,15 +117,73 @@ record PackAlphaTestPlan(
                 : referenceTest;
         String rejection = perDrawReference()
                 ? "if (" + test + ") {\n        discard;\n    }"
-                : rejection(output, null);
+                : rejection(output);
         if (rejection.isBlank()) return fragment;
         String tested = GlslTokenRewriter.appendMainEpilogue(fragment, rejection);
-        if (!perDrawReference()) return tested;
+        return perDrawReference() ? declarePerDrawReference(tested) : tested;
+    }
+
+    /**
+     * Gives a stage's {@code alphaTestRef} the program's current alpha-test reference, as Iris
+     * does: its core transformers rename the name to iris_currentAlphaTest, and
+     * IrisInternalUniforms serves it as the same value, CapturedRenderingState's current alpha
+     * test, which ExtendedShader and SodiumShader set to the program's AlphaTest reference. The
+     * declaration goes; each reference reads the per-draw reference, the fixed one, or 0 for a
+     * program Iris tests with AlphaTest.ALWAYS. Iris's VERTEX_ALPHA reference is Float.MAX_VALUE.
+     */
+    String serveReference(String source) {
+        if (source == null || !GlslTokenRewriter.containsIdentifier(source, IRIS_REFERENCE)) return source;
+        GlslTree tree = GlslDeclarations.parseOrNull(source);
+        GlslDeclarations.Variable uniform = tree == null ? null : GlslDeclarations.variables(tree).stream()
+                .filter(variable -> variable.name().equals(IRIS_REFERENCE) && variable.qualified("uniform"))
+                .findFirst().orElse(null);
+        if (uniform == null) return source;
+        String perDraw = UniformRegistry.ENTITY_ALPHA_REFERENCE;
+        String value = !active() ? "0.0" : perDrawReference()
+                ? "(" + perDraw + " < 0.0 ? 3.4028235e38 : " + perDraw + ")"
+                : Float.toString(reference);
+        List<GlslTree.Edit> edits = new ArrayList<>();
+        edits.add(new GlslTree.Edit(uniform.declaration().range(), withoutDeclarator(tree, uniform)));
+        List<GlslLexer.Token> tokens = tree.tokens();
+        for (int index = 0; index < tokens.size(); index++) {
+            if (uniform.declaration().range().contains(index) || !tokens.get(index).identifier(IRIS_REFERENCE)) {
+                continue;
+            }
+            // A local or parameter of the same name stays the pack's own.
+            GlslTree.Binding binding = tree.resolve(index);
+            if (binding != null && binding.node() == uniform.declarator()) {
+                edits.add(new GlslTree.Edit(new GlslTree.Range(index, index + 1), value));
+            }
+        }
+        String served = tree.print(edits);
+        return perDrawReference() && active() ? declarePerDrawReference(served) : served;
+    }
+
+    private static final String IRIS_REFERENCE = "alphaTestRef";
+
+    /** The declaration without the reference's declarator; empty when it declares only that. */
+    private static String withoutDeclarator(GlslTree tree, GlslDeclarations.Variable uniform) {
+        List<String> others = uniform.declaration().declarators().stream()
+                .filter(declarator -> declarator != uniform.declarator())
+                .map(declarator -> tree.text(declarator.range()))
+                .toList();
+        if (others.isEmpty()) return "";
+        String head = tree.text(new GlslTree.Range(uniform.declaration().range().start(),
+                uniform.declaration().type().range().end()));
+        return head + " " + String.join(", ", others) + ";";
+    }
+
+    /** Declares the per-draw reference uniform after the version line, unless the source already does. */
+    private static String declarePerDrawReference(String source) {
+        String reference = UniformRegistry.ENTITY_ALPHA_REFERENCE;
+        boolean declared = GlslDeclarations.variables(GlslTree.parse(source)).stream()
+                .anyMatch(variable -> variable.name().equals(reference) && variable.qualified("uniform"));
+        if (declared) return source;
         String declaration = "uniform float " + reference + ";\n";
-        Matcher version = VERSION_LINE.matcher(tested);
+        Matcher version = VERSION_LINE.matcher(source);
         return version.find()
-                ? tested.substring(0, version.end()) + declaration + tested.substring(version.end())
-                : declaration + tested;
+                ? source.substring(0, version.end()) + declaration + source.substring(version.end())
+                : declaration + source;
     }
 
     private static String modernOutputZero(String fragment) {
@@ -178,13 +241,9 @@ record PackAlphaTestPlan(
         return deviations.isEmpty();
     }
 
-    /** Entity and shadow draws test against a reference set per draw, not a host block. */
+    /** Entity, shadow and terrain draws test against a reference set per draw (Iris iris_currentAlphaTest). */
     boolean perDrawReference() {
-        return mode == Mode.DYNAMIC_ENTITY || mode == Mode.DYNAMIC_SHADOW;
-    }
-
-    boolean needsHostThreshold() {
-        return mode == Mode.DYNAMIC_TERRAIN;
+        return mode == Mode.DYNAMIC_ENTITY || mode == Mode.DYNAMIC_SHADOW || mode == Mode.DYNAMIC_TERRAIN;
     }
 
     boolean active() {
@@ -193,20 +252,15 @@ record PackAlphaTestPlan(
 
     String appliedDeviation(String programName) {
         if (!active()) return "";
-        if (mode == Mode.DYNAMIC_TERRAIN || perDrawReference()) {
+        if (perDrawReference()) {
             return "ALPHA_TEST_DYNAMIC:" + programName;
         }
         return "ALPHA_TEST_APPLIED:" + programName + ":" + function + ":" + Float.toString(reference);
     }
 
-    String rejection(String outputName, String hostInstance) {
-        if (!active() || outputName == null || outputName.isBlank()) return "";
-        if (perDrawReference()) return "";
-        if (mode == Mode.DYNAMIC_TERRAIN) {
-            return "if (" + hostInstance + ".AlphaCutout > 0.0 && "
-                    + outputName + ".a < " + hostInstance + ".AlphaCutout) {\n"
-                    + "        discard;\n    }";
-        }
+    /** The fixed test's rejection of {@code outputName}; empty for a per-draw or inactive test. */
+    String rejection(String outputName) {
+        if (!active() || outputName == null || outputName.isBlank() || perDrawReference()) return "";
         if (function.equals("ALWAYS")) return "";
         if (function.equals("NEVER")) return "discard;";
         String operator = switch (function) {

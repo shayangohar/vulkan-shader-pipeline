@@ -39,7 +39,7 @@
       }
     },
     "unsupported_water": {
-      "reportSha256": "5d8a8e2757cc825157a847fe12dc3e0b48cf6ebedbb109f249f57b3b3710078c",
+      "reportSha256": "ba24be8df35e0c3055f2da870f6e56d37573b974ee45ea8fb690cd06f4ccdb35",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -85,6 +85,7 @@
           "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
         ],
         "gbuffers_water": [
+          "LIVE_UNIFORM_BRIDGE",
           "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",
           "TRANSLUCENT_VERTEX_BRIDGE"

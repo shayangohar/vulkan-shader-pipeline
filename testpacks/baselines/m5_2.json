@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "material": {
-      "reportSha256": "00bded4301d26d8f09b2f9e4bff65be946740f0da6b7e91e1834166ade2f12c5",
+      "reportSha256": "2211e38840299084e4aec23e6d6e38310c2f6d4387e4e9d1ed4b0495a62fa664",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -68,10 +68,12 @@
         ],
         "gbuffers_terrain": [
           "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
-          "LEGACY_TERRAIN_VERTEX_BRIDGE"
+          "LEGACY_TERRAIN_VERTEX_BRIDGE",
+          "LIVE_UNIFORM_BRIDGE"
         ],
         "gbuffers_water": [
           "ALPHA_TEST_DYNAMIC:gbuffers_water",
+          "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",
           "TRANSLUCENT_VERTEX_BRIDGE"
@@ -88,7 +90,7 @@
       }
     },
     "unsupported_vertex": {
-      "reportSha256": "ae45edfdf4733bdffeee94c931c8e088584fa1047d4798453f429c0d9d115c79",
+      "reportSha256": "ad83c8303acaa8d2f91fe591caf61188373ecd8d32ebd23a0e06f48989e60fb8",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -153,12 +155,16 @@
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
         ],
         "gbuffers_terrain": [
-          "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED", "TERRAIN_VERTEX_CONVERSION_FAILED:unsupported_terrain_vertex_feature_gl_Normal"
+          "LIVE_UNIFORM_BRIDGE",
+          "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",
+          "TERRAIN_VERTEX_CONVERSION_FAILED:unsupported_terrain_vertex_feature_gl_Normal"
         ],
         "gbuffers_water": [
+          "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:gbuffers_water->gbuffers_terrain",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",
-          "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED", "TRANSLUCENT_VERTEX_CONVERSION_FAILED:unsupported_terrain_vertex_feature_gl_Normal"
+          "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED",
+          "TRANSLUCENT_VERTEX_CONVERSION_FAILED:unsupported_terrain_vertex_feature_gl_Normal"
         ]
       },
       "sourceHashes": {

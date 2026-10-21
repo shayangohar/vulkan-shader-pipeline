@@ -556,7 +556,10 @@ public final class UniformRegistry {
     /**
      * Names Iris 1.21.1 serves that Chimera does not yet: per-draw state, values that need Iris's
      * ID maps or fog-mode plumbing, and the matrices Iris's core-profile transformers inject. A
-     * program reading one must not run on a zero Iris would never give it.
+     * program reading one must not run on a zero Iris would never give it. A world program's
+     * alphaTestRef becomes its alpha-test reference before planning (PackAlphaTestPlan); a post
+     * program reads whatever the last world draw left in CapturedRenderingState, which has no
+     * equivalent here.
      */
     private static final Set<String> IRIS_UNSERVED = Set.of(
             "alphaTestRef", "blendFunc", "gtextureSize", "currentSelectedBlockId", "currentSelectedBlockPos",
