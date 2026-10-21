@@ -168,9 +168,10 @@ final class ProgramReportRules {
                                             Set<String> deviations) {
         // Noble's composite99.csh is a pass compute, planned and run apart from composite99's draw.
         boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
-        if (inventory.stages.stream().anyMatch(stage ->
-                stage.equals("geometry") || stage.equals("tess_control")
-                        || stage.equals("tess_evaluation") || stage.equals("compute") && !passCompute)) {
+        boolean tessellation = packPlan != null && packPlan.settings() != null
+                && packPlan.settings().readsTessellation();
+        if (inventory.stages.stream().anyMatch(stage -> PackProgram.runsBetweenStages(stage, tessellation)
+                || stage.equals("compute") && !passCompute)) {
             deviations.add("UNSUPPORTED_PACK_STAGE");
         }
         if (modern) {

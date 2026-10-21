@@ -166,7 +166,7 @@ public final class PackPlanBuilder {
                         .anyMatch(PackAdvancedResourcePlan.BufferSpec::supported);
             }
             this.allowStorageBuffers = storageBuffers;
-            this.geometryStages = program.geometryStages();
+            this.geometryStages = program.geometryStages(settings().readsTessellation());
         }
 
         PackProgramPlan plan() {

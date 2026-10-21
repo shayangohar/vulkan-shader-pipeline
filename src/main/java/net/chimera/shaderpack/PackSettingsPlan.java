@@ -272,6 +272,11 @@ record PackSettingsPlan(
         return programEnabled.getOrDefault(name, true);
     }
 
+    /** Whether Iris reads the pack's tessellation stages: it lists TESSELLATION_SHADERS (ProgramSet). */
+    boolean readsTessellation() {
+        return PackFeatureFlags.active(requiredFeatures, optionalFeatures, PackFeatureFlags.TESSELLATION_SHADERS);
+    }
+
     /**
      * Iris matches a switch to the program's path exactly: {@code program.world0/composite2.enabled}
      * (Photon's form) names the dimension folder's program, and a bare {@code program.composite2}

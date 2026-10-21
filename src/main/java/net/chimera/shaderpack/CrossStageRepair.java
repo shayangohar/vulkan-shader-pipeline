@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,30 +50,33 @@ final class CrossStageRepair {
     static Result repair(String vertex, String fragment) {
         Result unchanged = new Result(vertex, List.of());
         if (vertex == null || fragment == null) return unchanged;
-        GlslTree vertexTree;
-        GlslTree fragmentTree;
-        try {
-            vertexTree = GlslTree.parse(vertex);
-            fragmentTree = GlslTree.parse(fragment);
-        } catch (GlslParser.ParseFailure failure) {
-            return unchanged;
-        }
-        GlslTree.Function main = GlslDeclarations.mainDefinition(vertexTree);
+        GlslTree vertexTree = GlslDeclarations.parseOrNull(vertex);
+        GlslTree fragmentTree = GlslDeclarations.parseOrNull(fragment);
+        GlslTree.Function main = vertexTree == null || fragmentTree == null
+                ? null : GlslDeclarations.mainDefinition(vertexTree);
         if (main == null) return unchanged;
         Map<String, Variable> outputs = variables(vertexTree, Set.of("out", "varying"));
-        Edits edits = new Edits(vertexTree, legacy(vertex));
+        Edits edits = new Edits(vertexTree, outputStorage(vertexTree, outputs.values(), vertex));
         for (Variable input : variables(fragmentTree, Set.of("in", "varying")).values()) {
-            if (input.name().startsWith("gl_") || kind(input.type()) < 0 || input.array()) continue;
-            Variable output = outputs.get(input.name());
-            if (output == null) {
-                if (referenced(fragmentTree, input)) edits.declare(fragmentTree, input);
-            } else if (output.type().equals(input.type())) {
-                if (!referenced(vertexTree, output)) edits.zeroUnassigned(output);
-            } else if (!output.array() && kind(output.type()) == kind(input.type())) {
-                edits.convert(output, input.type());
+            if (!input.name().startsWith("gl_") && kind(input.type()) >= 0 && !input.array()) {
+                repairInput(edits, vertexTree, fragmentTree, input, outputs.get(input.name()));
             }
         }
         return edits.result(main);
+    }
+
+    /** Iris's repair of one fragment input against the vertex output of its name, null when none. */
+    private static void repairInput(Edits edits, GlslTree vertexTree, GlslTree fragmentTree, Variable input,
+                                    Variable output) {
+        if (output == null) {
+            if (referenced(fragmentTree, input)) edits.declare(fragmentTree, input);
+        } else if (output.array()) {
+            return;
+        } else if (output.type().equals(input.type())) {
+            if (!referenced(vertexTree, output)) edits.zeroUnassigned(output);
+        } else if (kind(output.type()) == kind(input.type())) {
+            edits.convert(output, input.type());
+        }
     }
 
     /** The file-scope interface variables whose storage is one of {@code storages}, by name. */
@@ -120,10 +124,18 @@ final class CrossStageRepair {
         return MATRIX.matcher(type).matches() ? 2 : -1;
     }
 
-    /** Whether a stage is GLSL before 1.30, whose outputs are {@code varying}. */
-    private static boolean legacy(String source) {
+    /**
+     * The storage an added output takes: the vertex's own outputs' storage, or for a vertex that
+     * declares none, {@code varying} before GLSL 1.30 and {@code out} from it. A modern post vertex
+     * whose version line the normalizer dropped keeps its {@code out}.
+     */
+    private static String outputStorage(GlslTree tree, Collection<Variable> outputs, String source) {
+        for (Variable output : outputs) {
+            GlslTree.Qualifier storage = storage(tree, output.declaration(), Set.of("out", "varying"));
+            if (storage != null) return tree.text(storage.keyword());
+        }
         GlslVersion version = GlslVersion.first(source);
-        return version == null || version.number() < 130;
+        return version == null || version.number() < 130 ? "varying" : "out";
     }
 
     /**
@@ -148,9 +160,9 @@ final class CrossStageRepair {
         private final List<GlslTree.Edit> renames = new ArrayList<>();
         private final List<String> deviations = new ArrayList<>();
 
-        Edits(GlslTree tree, boolean legacy) {
+        Edits(GlslTree tree, String outputStorage) {
             this.tree = tree;
-            this.outputStorage = legacy ? "varying" : "out";
+            this.outputStorage = outputStorage;
         }
 
         /** An output for a fragment input no vertex output declares, zero until the vertex writes it. */

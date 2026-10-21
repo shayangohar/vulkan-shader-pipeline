@@ -64,6 +64,14 @@ public final class PackFeatureFlags {
         return missing;
     }
 
+    static final String TESSELLATION_SHADERS = "TESSELLATION_SHADERS";
+
+    /** Whether the pack lists {@code flag} as required or optional: Iris's active features (ShaderPack.hasFeature). */
+    static boolean active(Collection<String> required, Collection<String> optional, String flag) {
+        return required.stream().anyMatch(value -> canonical(value).equals(flag))
+                || optional.stream().anyMatch(value -> canonical(value).equals(flag));
+    }
+
     /** A flag as Iris names it to the player: {@code TESSELLATION_SHADERS} reads "Tessellation shaders". */
     public static String readableName(String flag) {
         String words = canonical(flag).replace('_', ' ').toLowerCase(Locale.ROOT);

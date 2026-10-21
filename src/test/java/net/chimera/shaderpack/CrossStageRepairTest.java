@@ -164,6 +164,46 @@ final class CrossStageRepairTest {
         }
     }
 
+    /**
+     * Iris reads a program's tessellation stages only when the pack lists TESSELLATION_SHADERS
+     * (ProgramSet.readProgramSource); without it the program runs vertex to fragment.
+     */
+    @Test
+    void tessellationFilesCountOnlyWithTheFeature(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 150 compatibility
+                out vec4 tint;
+                void main() { tint = gl_Color; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 150 compatibility
+                in vec4 tint;
+                void main() { gl_FragData[0] = tint; }
+                """);
+        Files.writeString(shaders.resolve("shadow.tcs"), "#version 400\nlayout(vertices = 3) out;\nvoid main() {}\n");
+        Files.writeString(shaders.resolve("shadow.tes"), "#version 400\nlayout(triangles) in;\nvoid main() {}\n");
+        assertTrue(PackProbe.analyze(root).plan().program("shadow").executable(), "without the feature");
+        Files.writeString(shaders.resolve("shaders.properties"), "iris.features.optional=TESSELATION_SHADERS\n");
+        PackProgramPlan tessellated = PackProbe.analyze(root).plan().program("shadow");
+        assertTrue(!tessellated.executable() && tessellated.deviations().contains("UNSUPPORTED_PACK_STAGE"),
+                tessellated.deviations().toString());
+    }
+
+    /** A vertex whose version line the post normalizer dropped keeps the storage of its own outputs. */
+    @Test
+    void anAddedOutputTakesTheVertexsOwnStorage() {
+        CrossStageRepair.Result repaired = CrossStageRepair.repair("""
+                out vec2 texcoord;
+                void main() { texcoord = vec2(0.5); gl_Position = vec4(0.0); }
+                """, """
+                in vec2 texcoord;
+                in float exposure;
+                void main() { gl_FragColor = vec4(texcoord, exposure, 1.0); }
+                """);
+        assertTrue(repaired.vertex().contains("out float exposure;"), repaired.vertex());
+    }
+
     /** In a pack, the repaired shadow is admitted and compiles. */
     @Test
     void bloopsShadowRunsRepaired(@TempDir Path root) throws IOException {

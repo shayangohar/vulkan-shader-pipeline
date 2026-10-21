@@ -51,19 +51,30 @@ public record PackProgram(
     }
 
     /**
-     * The geometry and tessellation stages whose files sit beside the fragment stage. Iris runs
-     * each one whose file exists (ProgramSet.readProgramSource), between the vertex and fragment
-     * stages; Chimera runs neither (TASK-648). A program another resolves to takes them along.
+     * The geometry and tessellation stages whose files sit beside the fragment stage and that Iris
+     * runs between the vertex and fragment stages; Chimera runs neither (TASK-648). A program
+     * another resolves to takes them along.
      */
-    public List<String> geometryStages() {
+    public List<String> geometryStages(boolean tessellation) {
         if (fragmentPath == null || fragmentPath.getFileName() == null) return List.of();
         String file = fragmentPath.getFileName().toString();
         int dot = file.lastIndexOf('.');
         String base = dot < 0 ? file : file.substring(0, dot);
         return GEOMETRY_STAGE_FILES.entrySet().stream()
-                .filter(stage -> Files.isRegularFile(fragmentPath.resolveSibling(base + stage.getKey())))
+                .filter(stage -> runsBetweenStages(stage.getValue(), tessellation)
+                        && Files.isRegularFile(fragmentPath.resolveSibling(base + stage.getKey())))
                 .map(Map.Entry::getValue)
                 .toList();
+    }
+
+    /**
+     * Whether Iris runs a stage of this name between the vertex and fragment stages
+     * (ProgramSet.readProgramSource): the geometry stage whenever its file exists, the
+     * tessellation stages only when the pack enables TESSELLATION_SHADERS.
+     */
+    public static boolean runsBetweenStages(String stage, boolean tessellation) {
+        return stage.equals("geometry") || tessellation && (stage.equals("tess_control")
+                || stage.equals("tess_evaluation"));
     }
 
     private static final Map<String, String> GEOMETRY_STAGE_FILES = new TreeMap<>(Map.of(
