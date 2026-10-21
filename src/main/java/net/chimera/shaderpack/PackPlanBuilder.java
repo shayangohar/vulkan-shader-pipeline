@@ -374,6 +374,7 @@ public final class PackPlanBuilder {
             deviations.addAll(program.preparationDeviations());
             stages.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(interfacePlan.deviations());
+            deviations.addAll(ShadowTargetDirectives.missingTargets(interfacePlan.samplers(), config));
             stageInterfaces.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(stageMatch.deviations());
             deviations.addAll(terrainMaterial.deviations());
@@ -426,7 +427,7 @@ public final class PackPlanBuilder {
                     || FamilyAdapterRegistry.isCloudFamily(name);
         }
 
-        /** A world draw samples its own outputs through snapshots; shadow outputs are shadowcolor0 and 1 only. */
+        /** A world draw samples its own outputs through snapshots; shadow outputs are the pack shadowcolor targets. */
         private boolean targetsAdmitted() {
             boolean admitted = true;
             if (geometryOutputPlan != null) {
@@ -454,8 +455,9 @@ public final class PackPlanBuilder {
                 for (String deviation : shadowOutputs.deviations()) {
                     deviations.add(deviation.replaceFirst("^POST_", "SHADOW_"));
                 }
+                int targets = shadowAttachments().isEmpty() ? 2 : shadowAttachments().size();
                 for (int target : shadowOutputs.targetSlots()) {
-                    if (target < 0 || target > 1) {
+                    if (target < 0 || target >= targets) {
                         deviations.add("SHADOW_OUTPUT_TARGET_UNSUPPORTED:" + target);
                         admitted = false;
                     }

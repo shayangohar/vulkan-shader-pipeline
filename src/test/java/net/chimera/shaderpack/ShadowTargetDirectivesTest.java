@@ -78,6 +78,64 @@ final class ShadowTargetDirectivesTest {
                 "SHADOW_TARGET_FORMAT_IGNORED:shadowcolor0=NOT_A_FORMAT"), directives.deviations());
     }
 
+    /**
+     * With HIGHER_SHADOWCOLOR the pass renders every shadowcolor target up to the highest a
+     * program reads or a shadow program writes; without it, two, and Iris leaves shadowcolor2-7
+     * unbound: a pass reads unit 0 (colortex0) and a world program cannot run.
+     */
+    @Test
+    void higherShadowColorAddsTheTargetsProgramsUse(@TempDir Path root) throws IOException {
+        Path shaders = writeHigherShadowColorPack(root, "iris.features.required=HIGHER_SHADOWCOLOR\n");
+        PackProbe.Analysis higher = PackProbe.analyze(root);
+        assertEquals(6, higher.plan().program("shadow").shadowAttachmentFormats().size());
+        assertTrue(higher.plan().program("shadow").executable(), higher.plan().program("shadow").deviations()
+                .toString());
+        PackProgramPlan composite = higher.plan().program("composite");
+        assertTrue(composite.executable()
+                && !composite.deviations().contains("SAMPLER_UNIT0_COLORTEX0:shadowcolor5")
+                && !composite.deviations().contains("SAMPLER_NOT_MAPPED:shadowcolor5"),
+                composite.deviations().toString());
+        assertTrue(higher.plan().program("gbuffers_terrain").executable());
+
+        Files.writeString(shaders.resolve("shaders.properties"), "");
+        PackProbe.Analysis legacy = PackProbe.analyze(root);
+        assertEquals(2, legacy.plan().program("shadow").shadowAttachmentFormats().size());
+        assertTrue(legacy.plan().program("shadow").deviations().contains("SHADOW_OUTPUT_TARGET_UNSUPPORTED:3"));
+        assertTrue(legacy.plan().program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:shadowcolor5"));
+        assertTrue(legacy.plan().program("gbuffers_terrain").deviations().contains("SAMPLER_NOT_MAPPED:shadowcolor2"));
+    }
+
+    private static Path writeHigherShadowColorPack(Path root, String properties) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), properties);
+        String vertex = """
+                #version 120
+                varying vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """;
+        Files.writeString(shaders.resolve("shadow.vsh"), vertex);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 120
+                /* DRAWBUFFERS:03 */
+                varying vec2 uv;
+                void main() { gl_FragData[0] = vec4(uv, 0.0, 1.0); gl_FragData[1] = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), vertex);
+        Files.writeString(shaders.resolve("gbuffers_terrain.fsh"), """
+                #version 120
+                uniform sampler2D shadowcolor2;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(shadowcolor2, uv); }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D shadowcolor5;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(shadowcolor5, uv); }
+                """);
+        return shaders;
+    }
+
     /** The directives come from fragment sources, as Iris's ProgramSet.locateDirectives reads them. */
     @Test
     void shadowProgramsDeclareThePacksShadowcolorFormats(@TempDir Path root) throws IOException {

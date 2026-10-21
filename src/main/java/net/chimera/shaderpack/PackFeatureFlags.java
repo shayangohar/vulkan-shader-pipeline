@@ -17,12 +17,16 @@ import java.util.TreeSet;
  * takes the path it takes without that feature instead of one Chimera cannot run.
  */
 public final class PackFeatureFlags {
+    static final String TESSELLATION_SHADERS = "TESSELLATION_SHADERS";
+    static final String HIGHER_SHADOWCOLOR = "HIGHER_SHADOWCOLOR";
+    static final String SEPARATE_HARDWARE_SAMPLERS = "SEPARATE_HARDWARE_SAMPLERS";
+
     /**
      * The features Chimera provides as Iris does. Not provided: separate hardware shadow samplers,
-     * shadowcolor2-7, tessellation, the weather directive and {@code mc_chunkFade} (FADE_VARIABLE).
+     * tessellation, the weather directive and {@code mc_chunkFade} (FADE_VARIABLE).
      */
     static final Set<String> PROVIDED = Set.of("PER_BUFFER_BLENDING", "COMPUTE_SHADERS", "ENTITY_TRANSLUCENT",
-            "REVERSED_CULLING", "BLOCK_EMISSION_ATTRIBUTE", "SSBO", "TEXTURE_FILTERING");
+            "REVERSED_CULLING", "BLOCK_EMISSION_ATTRIBUTE", "SSBO", "TEXTURE_FILTERING", HIGHER_SHADOWCOLOR);
     /**
      * Custom images run only where Chimera can produce them, so this flag is offered per pack once
      * that is known ({@link PackEngineDefines#forCustomImages}) rather than promised up front. A pack
@@ -64,7 +68,6 @@ public final class PackFeatureFlags {
         return missing;
     }
 
-    static final String TESSELLATION_SHADERS = "TESSELLATION_SHADERS";
 
     /** Whether the pack lists {@code flag} as required or optional: Iris's active features (ShaderPack.hasFeature). */
     static boolean active(Collection<String> required, Collection<String> optional, String flag) {

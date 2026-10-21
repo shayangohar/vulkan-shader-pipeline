@@ -66,6 +66,18 @@ public record ShadowTargetDirectives(List<ColorTarget> colors, List<DepthSamplin
         return colors.get(index);
     }
 
+    /**
+     * A refusal for each sampler that reads a shadowcolor target the pack does not have: Iris binds
+     * shadowcolor2-7 only with HIGHER_SHADOWCOLOR (ShadowRenderTargets.getRenderTargetCount).
+     */
+    static List<String> missingTargets(List<UniformRegistry.SamplerBinding> samplers,
+                                       PackConfig.PackConfigData config) {
+        int count = config == null ? LEGACY_COLOR_TARGETS : config.shadowSettings().colorTargetCount();
+        return samplers.stream().map(UniformRegistry.SamplerBinding::name)
+                .filter(name -> PackResourcePlan.shadowColorIndex(name) >= count)
+                .map(name -> "SAMPLER_NOT_MAPPED:" + name).toList();
+    }
+
     /** The Vulkan formats of shadowcolor0 to shadowcolor{@code count - 1}. */
     public List<Integer> attachmentFormats(int count) {
         return colors.subList(0, count).stream().map(target -> target.format().vkFormat()).toList();

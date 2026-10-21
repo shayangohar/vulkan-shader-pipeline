@@ -752,7 +752,7 @@ public final class UniformRegistry {
 
     static boolean isHostAlias(String name) {
         return name.equals("shadowtex1")
-                || name.equals("shadowcolor0") || name.equals("shadowcolor1");
+                || PackResourcePlan.shadowColorIndex(name) >= 0;
     }
 
     record Variable(String name, boolean array) {}

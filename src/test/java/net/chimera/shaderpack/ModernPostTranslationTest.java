@@ -231,12 +231,18 @@ final class ModernPostTranslationTest {
                         "chimeraShadowColor1 = vec4(0.2, 0.3, 0.4, 0.5)")
                         && converted.contains("chimeraShadowColor0 = vec4(0.6, 0.7, 0.8, 0.9)"),
                 "Authored shadow drawbuffer routing or tint expression was lost");
+        String third = FragmentConverter.FragmentConversionRequest
+                .of(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:20"), null, true, new int[0])
+                .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
+                .convert();
+        assertTrue(third != null && third.contains("layout(location = 2) out vec4 chimeraShadowColor2;"),
+                "shadowcolor2 is the shadow pass's third attachment (HIGHER_SHADOWCOLOR)");
         assertTrue(FragmentConverter.FragmentConversionRequest
-                        .of(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:20"),
+                        .of(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:80"),
                                 null, true, new int[0])
                         .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
                         .convert() == null,
-                "Unprovided shadow output target was silently dropped");
+                "A shadow output beyond Iris's eight targets was silently dropped");
     }
 
     private static void verifyOrientationFixture(Path root) {

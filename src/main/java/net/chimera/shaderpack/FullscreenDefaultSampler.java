@@ -76,6 +76,12 @@ final class FullscreenDefaultSampler {
     }
 
     private static boolean served(String name, PackSettingsPlan settings) {
+        // Iris binds shadowcolor2-7 only with HIGHER_SHADOWCOLOR (ShadowRenderTargets.getRenderTargetCount).
+        int shadowColor = PackResourcePlan.shadowColorIndex(name);
+        if (shadowColor >= 0) {
+            return shadowColor < (settings.hasFeature(PackFeatureFlags.HIGHER_SHADOWCOLOR)
+                    ? ShadowTargetDirectives.MAX_COLOR_TARGETS : ShadowTargetDirectives.LEGACY_COLOR_TARGETS);
+        }
         if (IRIS_SERVED.contains(name) || PackResourcePlan.targetIndex(name) != null) return true;
         String lookup = PackResourcePlan.isProgramShadowAlias(name)
                 ? PackResourcePlan.programResource(name, false) : name;

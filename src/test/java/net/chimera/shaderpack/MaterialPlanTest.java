@@ -69,7 +69,7 @@ final class MaterialPlanTest {
         assertTrue(!SelectorNamespace.PACK_SELECTOR_SLOTS.contains(25)
                 && !SelectorNamespace.PACK_SELECTOR_SLOTS.contains(26),
                 "material selectors entered the pack texture pool");
-        assertEquals(34, SelectorNamespace.LAST_RESERVED + 1, "selector range changed");
+        assertEquals(40, SelectorNamespace.LAST_RESERVED + 1, "selector range changed");
         boolean[] cleared = new boolean[SelectorNamespace.LAST_RESERVED + 1];
         SelectorNamespace.clearOwned(slot -> cleared[slot] = true);
         assertTrue(cleared[25] && cleared[26], "material selectors are not cleared on pack change");

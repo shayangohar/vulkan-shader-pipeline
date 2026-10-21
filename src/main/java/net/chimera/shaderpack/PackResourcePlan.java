@@ -380,7 +380,7 @@ public final class PackResourcePlan {
                     PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
                     PackResourceStatus.UNAVAILABLE, deviations);
         }
-        if (canonical.equals("shadowcolor0") || canonical.equals("shadowcolor1")) {
+        if (shadowColorIndex(canonical) >= 0) {
             deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
             return new PackResourceBinding(program, name, canonical,
                     PackResourceKind.SHADOW_COLOR, "", slot, "linear", "clamp",
@@ -501,7 +501,7 @@ public final class PackResourcePlan {
         if (COLOR_TARGET.matcher(sampler).matches()) return sampler;
         if (sampler.matches("depthtex[0-2]")) return sampler;
         if (sampler.matches("shadowtex[0-1]")) return sampler;
-        if (sampler.matches("shadowcolor[0-1]")) return sampler;
+        if (sampler.matches("shadowcolor[0-7]")) return sampler;
         return sampler.equals("noisetex") ? "noisetex" : sampler;
     }
 

@@ -274,7 +274,12 @@ record PackSettingsPlan(
 
     /** Whether Iris reads the pack's tessellation stages: it lists TESSELLATION_SHADERS (ProgramSet). */
     boolean readsTessellation() {
-        return PackFeatureFlags.active(requiredFeatures, optionalFeatures, PackFeatureFlags.TESSELLATION_SHADERS);
+        return hasFeature(PackFeatureFlags.TESSELLATION_SHADERS);
+    }
+
+    /** Iris ShaderPack.hasFeature: the pack lists the flag as required or optional. */
+    boolean hasFeature(String flag) {
+        return PackFeatureFlags.active(requiredFeatures, optionalFeatures, flag);
     }
 
     /**

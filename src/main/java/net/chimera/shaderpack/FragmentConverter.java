@@ -4,6 +4,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -345,27 +346,36 @@ public final class FragmentConverter {
         }
 
         /**
+         * Each shadowcolor target the program writes is the shadow pass attachment of its index.
          * Shadow colours keep the type the pack writes (Photon writes a vec3), as post outputs
-         * do; a colour the pack does not write is declared vec4.
+         * do; a colour below the highest written that the pack does not write is declared vec4,
+         * and its attachment's writes are masked.
          */
         private String rewriteShadowOutputs() {
             PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", src).plan();
             if (!shadowOutputs.executable() || shadowOutputs.targetSlots().stream()
-                    .anyMatch(target -> target < 0 || target > 1)) {
+                    .anyMatch(target -> target < 0 || target >= ShadowTargetDirectives.MAX_COLOR_TARGETS)) {
                 throw new IllegalArgumentException("SHADOW_OUTPUT_TARGET_UNSUPPORTED");
             }
             src = convertPostOutputs(src, shadowOutputs);
             Map<String, String> outputs = new TreeMap<>();
-            String[] types = {"vec4", "vec4"};
+            int highest = shadowOutputs.targetSlots().stream().mapToInt(Integer::intValue).max().orElse(0);
+            int count = Math.max(2, highest + 1);
+            String[] types = new String[count];
+            Arrays.fill(types, "vec4");
             for (int location : shadowOutputs.outputLocations()) {
                 int target = shadowOutputs.targetForOutput(location);
                 outputs.put("chimeraFragColor" + location, "chimeraShadowColor" + target);
                 types[target] = shadowOutputs.outputType(location);
             }
             src = GlslTokenRewriter.replaceIdentifiers(src, outputs);
-            return "layout(location = 0) out " + types[0] + " chimeraShadowColor0;\n"
-                    + "layout(location = 1) out " + types[1] + " chimeraShadowColor1;"
-                    + (shadowOutputs.discardedOutputs().isEmpty() ? ""
+            StringBuilder declarations = new StringBuilder();
+            for (int target = 0; target < count; target++) {
+                if (target > 0) declarations.append('\n');
+                declarations.append("layout(location = ").append(target).append(") out ").append(types[target])
+                        .append(" chimeraShadowColor").append(target).append(';');
+            }
+            return declarations + (shadowOutputs.discardedOutputs().isEmpty() ? ""
                     : "\n" + discardedOutputDeclarations(shadowOutputs).stripTrailing());
         }
 

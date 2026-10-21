@@ -22,7 +22,9 @@ public final class SelectorNamespace {
     public static final int SPECULAR_SLOT = 26;
     /** Slots 27 through 33 carry colortex9..colortex15, the rest of Iris's sixteen colour targets. */
     public static final int HIGH_COLORTEX_FIRST_SLOT = 27;
-    public static final int LAST_RESERVED = HIGH_COLORTEX_FIRST_SLOT + 6;
+    /** Slots 34 through 39 carry shadowcolor2..shadowcolor7 (Iris HIGHER_SHADOWCOLOR). */
+    public static final int HIGH_SHADOW_COLOR_FIRST_SLOT = HIGH_COLORTEX_FIRST_SLOT + 7;
+    public static final int LAST_RESERVED = HIGH_SHADOW_COLOR_FIRST_SLOT + 5;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
     /** Unreserved selector slots available to pack-owned sampled resources. */
     public static final List<Integer> PACK_SELECTOR_SLOTS = List.of(
@@ -42,6 +44,13 @@ public final class SelectorNamespace {
         if (target == 8) return COLORTEX8_SLOT;
         if (target >= 9 && target <= 15) return HIGH_COLORTEX_FIRST_SLOT + target - 9;
         return -1;
+    }
+
+    /** The selector shadowcolorN is sampled through; -1 outside shadowcolor0..7. */
+    public static int shadowColorSlot(int index) {
+        if (index == 0) return SHADOW_COLOR0_SLOT;
+        if (index == 1) return SHADOW_COLOR1_SLOT;
+        return index >= 2 && index <= 7 ? HIGH_SHADOW_COLOR_FIRST_SLOT + index - 2 : -1;
     }
 
     public static boolean isAddressable(int slot) {

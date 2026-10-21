@@ -95,6 +95,8 @@
   "gbuffers_skybasic.vsh": "8ce3046e23a30cee 251987dd1fe29798",
   "gbuffers_terrain.fsh": "3b9f4e95421677fc 6f62f336a6552f58",
   "gbuffers_terrain.vsh": "92025a23443ef5f5 0ff937a44ec5cd06",
+  "gbuffers_water.fsh": "bb00f73e60b65b07 00ab18b829ef90d1",
+  "gbuffers_water.vsh": "3135ef6fca6813ea dd24bd418d5f17b1",
   "shadow.fsh": "446371e1f9316ae9 518f061b6d5d8fb9",
   "shadow.vsh": "ecdb73826f3b820b 1ebad7fd2bfdbd81",
   "shadow_basic.fsh": "e6d7c58c915b4d37 dda4e421c1641e31",

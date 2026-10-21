@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -111,27 +112,25 @@ public final class PackConfig {
             float distance,
             Map<String, String> rawValues,
             List<String> deviations,
-            ShadowTargetDirectives targets
+            ShadowTargetDirectives targets,
+            int colorTargetCount
     ) {
         public ShadowSettings {
             rawValues = Collections.unmodifiableMap(new TreeMap<>(rawValues));
             deviations = List.copyOf(new TreeSet<>(deviations));
             targets = targets == null ? ShadowTargetDirectives.defaults() : targets;
-        }
-
-        /** The shadowcolor targets the shadow pass renders, shadowcolor0 onward. */
-        public int colorTargetCount() {
-            return ShadowTargetDirectives.LEGACY_COLOR_TARGETS;
+            colorTargetCount = Math.clamp(colorTargetCount, ShadowTargetDirectives.LEGACY_COLOR_TARGETS,
+                    ShadowTargetDirectives.MAX_COLOR_TARGETS);
         }
 
         /** The shadow pass's colour attachment formats: each target's, in index order. */
         public List<Integer> colorAttachmentFormats() {
-            return targets.attachmentFormats(colorTargetCount());
+            return targets.attachmentFormats(colorTargetCount);
         }
 
-        /** Settings with Iris's default shadow target directives. */
+        /** Settings with Iris's default shadow target directives and two targets. */
         public ShadowSettings(int resolution, float distance, Map<String, String> rawValues, List<String> deviations) {
-            this(resolution, distance, rawValues, deviations, null);
+            this(resolution, distance, rawValues, deviations, null, ShadowTargetDirectives.LEGACY_COLOR_TARGETS);
         }
 
         public float distanceRenderMultiplier() {
@@ -315,7 +314,8 @@ public final class PackConfig {
             }
         }
 
-        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues, shadowTargets(programs));
+        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues, shadowTargets(programs),
+                shadowColorTargetCount(programs, settings));
         addShadowConstants(shadowSettings, collected.shadowValues, collected.shaderConstants);
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
                 shadowSettings, collected.shaderConstants, collected.deviations, settings,
@@ -332,6 +332,32 @@ public final class PackConfig {
                 .filter(program -> !program.name().equals("final"))
                 .map(PackProgram::executableFragmentSource)
                 .toList());
+    }
+
+    private static final Pattern SHADOW_COLOR_NAME = Pattern.compile("\\bshadowcolor([0-7])\\b");
+
+    /**
+     * The shadowcolor targets the shadow pass renders. Iris has two (MAX_SHADOW_COLOR_BUFFERS_OF);
+     * with HIGHER_SHADOWCOLOR it has eight and creates each on first use, so the pass renders every
+     * one up to the highest a program reads or a shadow program writes.
+     */
+    private static int shadowColorTargetCount(List<PackProgram> programs, PackSettingsPlan settings) {
+        if (!settings.hasFeature(PackFeatureFlags.HIGHER_SHADOWCOLOR)) {
+            return ShadowTargetDirectives.LEGACY_COLOR_TARGETS;
+        }
+        int highest = ShadowTargetDirectives.LEGACY_COLOR_TARGETS - 1;
+        for (PackProgram program : programs) {
+            for (String source : Arrays.asList(program.executableFragmentSource(), program.executableVertexSource())) {
+                Matcher name = SHADOW_COLOR_NAME.matcher(source == null ? "" : source);
+                while (name.find()) highest = Math.max(highest, Integer.parseInt(name.group(1)));
+            }
+            if (!FamilyAdapterRegistry.isShadowFamily(program.name())) continue;
+            String fragment = program.executableFragmentSource();
+            for (int target : PostTargetPlan.parse("shadow", fragment == null ? "" : fragment).plan().targetSlots()) {
+                if (target < ShadowTargetDirectives.MAX_COLOR_TARGETS) highest = Math.max(highest, target);
+            }
+        }
+        return highest + 1;
     }
 
     /** What parsing gathers from the sources and shaders.properties before shadow validation. */
@@ -667,7 +693,7 @@ public final class PackConfig {
     }
 
     private static ShadowSettings validateShadowSettings(Map<String, String> rawValues,
-                                                         ShadowTargetDirectives targets) {
+                                                         ShadowTargetDirectives targets, int colorTargetCount) {
         List<String> deviations = new ArrayList<>();
         int resolution = validShadowMapResolution(rawValues.get("shadowMapResolution"), deviations);
         float distance = validShadowDistance(rawValues.get("shadowDistance"), deviations);
@@ -685,7 +711,7 @@ public final class PackConfig {
             }
         }
         deviations.addAll(targets.deviations());
-        return new ShadowSettings(resolution, distance, rawValues, deviations, targets);
+        return new ShadowSettings(resolution, distance, rawValues, deviations, targets, colorTargetCount);
     }
 
     /** The shadow settings validated above; any other collected key is reported unsupported. */

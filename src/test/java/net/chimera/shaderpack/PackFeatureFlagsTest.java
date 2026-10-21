@@ -64,7 +64,7 @@ final class PackFeatureFlagsTest {
     void optionalFlagsAreDefinedAsThePackSpellsThem() {
         assertEquals(Map.of("IRIS_FEATURE_ssbo", "1", "IRIS_FEATURE_ENTITY_TRANSLUCENT", "1"),
                 PackFeatureFlags.sourceDefines(List.of("ssbo", "ENTITY_TRANSLUCENT", "CUSTOM_IMAGES",
-                        "HIGHER_SHADOWCOLOR")),
+                        "TESSELLATION_SHADERS")),
                 "custom images stay with their own negotiation");
     }
 }

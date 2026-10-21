@@ -343,6 +343,12 @@ final class InterfacePlanner {
             String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots,
                     Set<String> deviations) {
         Integer slot = stageSlots(stage).get(lookup);
+        if (slot == null && !stage.shadowPass()) {
+            // Iris gives every program but a shadow one each shadowcolor target (addShadowSamplers);
+            // PackPlanBuilder refuses those beyond the pack's targets.
+            int shadowColor = SelectorNamespace.shadowColorSlot(PackResourcePlan.shadowColorIndex(lookup));
+            slot = shadowColor < 0 ? null : shadowColor;
+        }
         if (slot == null && stage == UniformRegistry.Stage.POST) {
             slot = postFallbackSlot(name, customSamplerSlots, deviations);
         } else if (slot == null && !stage.shadowPass()) {
