@@ -103,8 +103,8 @@ final class GraphicsImageScan {
     /** A live storage image declaration of a supported pack image, bound to its sampler's selector. */
     private void addWriter(String program, String stage, String glslType, String symbol) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySymbol(images, symbol);
-        if (spec == null || !spec.supported()) return;
-        int selectorSlot = selectorSlot(spec);
+        if (spec == null) return;
+        int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         writers.computeIfAbsent(program, ignored -> new ArrayList<>())
                 .add(new PackAdvancedResourcePlan.GraphicsImageBinding(program, symbol,
@@ -116,13 +116,24 @@ final class GraphicsImageScan {
     /** A sampler of a supported pack image, bound to its selector as the image's storage type. */
     private void addReader(String program, String stage, String sampler) {
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySampler(images, sampler);
-        if (spec == null || !spec.supported()) return;
-        int selectorSlot = selectorSlot(spec);
+        if (spec == null) return;
+        int selectorSlot = servedSlot(program, spec);
         if (selectorSlot < 0) return;
         readers.computeIfAbsent(program, ignored -> new ArrayList<>())
                 .add(new PackAdvancedResourcePlan.GraphicsImageBinding(program, spec.name(), spec.name(),
                         spec.sampler(), AdvancedImageDeclarations.storageImageType(spec), selectorSlot,
                         StorageBufferDeclarations.stageMask(stage)));
+    }
+
+    /**
+     * The selector slot {@code program} binds a supported image at, or -1 when the image is
+     * unsupported or has no slot; the program is then recorded as using an image Chimera cannot
+     * serve (PackAdvancedResourcePlan.imagesServable).
+     */
+    private int servedSlot(String program, PackAdvancedResourcePlan.ImageSpec spec) {
+        int slot = spec.supported() ? selectorSlot(spec) : -1;
+        if (slot < 0) deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + spec.name());
+        return slot;
     }
 
     /** The selector slot of an image's sampler, or -1 with the slot limit recorded. */

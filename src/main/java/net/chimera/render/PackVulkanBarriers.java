@@ -88,6 +88,17 @@ final class PackVulkanBarriers {
                 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     }
 
+    /** Every earlier shader write, from draws or dispatches, before every later shader access. */
+    static void afterShaderImageWrites(VkCommandBuffer commandBuffer) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            barrier(commandBuffer, stack,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        }
+    }
+
     static void afterCompute(VkCommandBuffer commandBuffer, MemoryStack stack) {
         barrier(commandBuffer, stack,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,

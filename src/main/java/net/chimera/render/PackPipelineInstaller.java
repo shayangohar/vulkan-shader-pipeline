@@ -45,7 +45,6 @@ final class PackPipelineInstaller {
     private final PackStorageBufferOwner storage;
     private final PackAdvancedImageOwner advancedImages;
     private final PackResourceOwner resources;
-    private final PackShadowCompute shadowCompute;
 
     /** An installer for the session the pass has loaded. */
     PackPipelineInstaller(ChimeraMainPass pass) {
@@ -57,7 +56,6 @@ final class PackPipelineInstaller {
         this.storage = pass.packStorageBufferOwner;
         this.advancedImages = pass.packAdvancedImageOwner;
         this.resources = pass.packResourceOwner;
-        this.shadowCompute = pass.packShadowCompute;
     }
 
     /**
@@ -131,19 +129,15 @@ final class PackPipelineInstaller {
     }
 
     /**
-     * True unless the program reads advanced images the session cannot serve: it needs the image
-     * owner, its resources, an installed shadowcomp, and either its own producer role or ready producers.
+     * True unless the program reads or writes pack images the session cannot serve: the plan binds
+     * them all and the session created them. As in Iris, it runs whether or not the programs that
+     * write its images do; it reads what the frame's clear left.
      */
     private boolean advancedImagesAllowed(String name, PackAdvancedResourcePlan advanced) {
-        boolean advancedProducer = plan != null && !advanced.graphicsImages(name).isEmpty();
         return plan == null
                 || !advanced.dependentPrograms().contains(name)
-                || (advancedImages != null
-                && advanced.capabilityPossible()
-                && advancedImages.resourcesAvailable()
-                && shadowCompute != null
-                && shadowCompute.isInstalled()
-                && (advancedProducer || advancedImages.producerCandidatesReady()));
+                || (advancedImages != null && advanced.imagesServable(name)
+                && advancedImages.programImagesAvailable(name));
     }
 
     PackAdvancedResourcePlan advancedResources() {
@@ -224,12 +218,6 @@ final class PackPipelineInstaller {
             shadow.pipeline().cleanUp();
             pipelines.shadowPipeline = null;
             return;
-        }
-        if (advancedImages != null) {
-            // The producer must be available before its terrain
-            // consumer can build. Runtime use remains gated by the
-            // committed producer set and usePackShadowRuntime().
-            advancedImages.markGraphicsProducerCandidate(name);
         }
         if (report != null) {
             report.markRuntime(name,
@@ -342,9 +330,6 @@ final class PackPipelineInstaller {
             pipelines.terrainSlots = null;
             return;
         }
-        if (advancedImages != null) {
-            advancedImages.commitGraphicsProducer("shadow");
-        }
         ChimeraTerrainPipelines.setGeometryOverride(terrain.pipeline());
         if (report != null) {
             report.markRuntime(name,
@@ -385,10 +370,6 @@ final class PackPipelineInstaller {
             pipelines.waterPipeline = null;
             pipelines.waterSlots = null;
             return;
-        }
-        if (advancedImages != null) {
-            advancedImages.markGraphicsProducerCandidate(name);
-            advancedImages.commitGraphicsProducer(name);
         }
         ChimeraTerrainPipelines.setTranslucentOverride(water.pipeline());
         if (report != null) {

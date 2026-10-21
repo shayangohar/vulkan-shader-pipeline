@@ -9,7 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -570,7 +569,7 @@ public final class PackAdvancedResourcePlan {
                 PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
                 graphics.producedImages,
                 plan.settings().runtimeSettings().customDescriptors());
-        addCapabilityDeviations(compute, images, graphics.customImageFeaturePrograms, deviations);
+        addCapabilityDeviations(images, graphics.customImageFeaturePrograms, deviations);
         List<String> bufferDependent = new ArrayList<>();
         List<String> storageEligible = new ArrayList<>();
         Map<String, OrdinaryDescriptorContract> ordinaryContracts =
@@ -594,22 +593,17 @@ public final class PackAdvancedResourcePlan {
                 graphics.customImageFeaturePrograms, deviations, ordinaryContracts, bindingBases);
     }
 
-    /** Whether shadowcomp can negotiate custom images, and the feature-guarded programs that fall back. */
-    private static void addCapabilityDeviations(Map<String, ComputeSpec> compute, Map<String, ImageSpec> images,
+    /** Whether the pack is offered custom images, and the feature-guarded programs that fall back without. */
+    private static void addCapabilityDeviations(Map<String, ImageSpec> images,
                                                 List<String> customImageFeaturePrograms, List<String> deviations) {
-        ComputeSpec shadowCompute = compute.get("shadowcomp");
-        boolean shadowComputeSupported = shadowCompute != null
-                && shadowCompute.supported()
-                && requiredImagesSupported(shadowCompute, images);
-        if (shadowComputeSupported) {
+        if (images.isEmpty()) return;
+        if (images.values().stream().anyMatch(ImageSpec::supported)) {
             deviations.add("CUSTOM_IMAGES_CAPABILITY_POSSIBLE");
-        } else if (!images.isEmpty() || !compute.isEmpty()) {
-            deviations.add("IRIS_FEATURE_CUSTOM_IMAGES_DISABLED");
+            return;
         }
-        if (!shadowComputeSupported) {
-            for (String program : customImageFeaturePrograms) {
-                deviations.add("CUSTOM_IMAGE_FEATURE_FALLBACK:" + program);
-            }
+        deviations.add("IRIS_FEATURE_CUSTOM_IMAGES_DISABLED");
+        for (String program : customImageFeaturePrograms) {
+            deviations.add("CUSTOM_IMAGE_FEATURE_FALLBACK:" + program);
         }
     }
 
@@ -674,23 +668,6 @@ public final class PackAdvancedResourcePlan {
         }
         return List.copyOf(result.values());
     }
-    /** Returns every logical image name that needs a successful graphics writer. */
-    public Set<String> requiredGraphicsImageNames() {
-        return graphicsImageNames(graphicsImages.keySet());
-    }
-    /** Returns logical image names covered by the selected producer programs. */
-    public Set<String> graphicsImageNames(Collection<String> programs) {
-        TreeSet<String> result = new TreeSet<>();
-        if (programs != null) {
-            for (String program : programs) {
-                for (GraphicsImageBinding binding : graphicsImages(program)) {
-                    result.add(binding.imageName());
-                }
-            }
-        }
-        return Set.copyOf(result);
-    }
-    public boolean requiresGraphicsProducer() { return !graphicsImages.isEmpty(); }
     public Map<Integer, BufferSpec> buffers() { return buffers; }
     public Map<String, List<StorageBufferBinding>> storageBuffers() { return storageBuffers; }
     public List<StorageBufferBinding> storageBuffers(String program) {
@@ -717,6 +694,8 @@ public final class PackAdvancedResourcePlan {
     }
 
     private static final String UNPLANNED_DECLARATION = "ADVANCED_DECLARATION_UNPLANNED:";
+    /** A program reading or writing a pack image Chimera does not create or cannot bind. */
+    static final String UNSERVED_IMAGE = "ADVANCED_IMAGE_UNSERVED:";
 
     /**
      * Whether the program declares an image or storage block that no binding here serves, as the
@@ -793,19 +772,21 @@ public final class PackAdvancedResourcePlan {
                 && requiredImagesSupported(shadowCompute, images);
     }
     /**
-     * Whether a program that uses pack images can run. The runtime serves them only once shadowcomp
-     * installs (PackPipelineInstaller.advancedImagesAllowed); without one such a program falls back.
+     * Whether a program that uses pack images can run: every image it uses is one Chimera creates
+     * and binds. Iris creates the images whatever programs exist, shadowcomp or none, and runs each
+     * program on its own (GraphicsImageScan records an image it cannot bind).
      */
-    public boolean imageProgramsServable() { return hasSupportedCompute(); }
+    public boolean imagesServable(String program) {
+        return deviations.stream().noneMatch(value -> value.startsWith(UNSERVED_IMAGE + program + ":"));
+    }
+
+    /**
+     * Whether Chimera offers the pack Iris's custom images (IRIS_FEATURE_CUSTOM_IMAGES): it creates
+     * at least one image the pack declares. A program using an image it does not create falls back
+     * on its own (imagesServable).
+     */
     public boolean capabilityPossible() {
-        ComputeSpec shadowCompute = computeStages.get("shadowcomp");
-        boolean imageCompute = images.isEmpty() && computeStages.isEmpty()
-                || shadowCompute != null && shadowCompute.supported()
-                && requiredImagesSupported(shadowCompute, images);
-        // Storage-buffer eligibility is deliberately per program. An invalid
-        // block in one family must not disable unrelated image or compute
-        // programs that have a complete advanced-image plan.
-        return imageCompute;
+        return images.values().stream().anyMatch(ImageSpec::supported);
     }
     public String snapshot() { return snapshot; }
     public String fingerprint() { return fingerprint; }

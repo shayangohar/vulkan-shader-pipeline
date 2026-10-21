@@ -111,6 +111,8 @@
   "gbuffers_skytextured.vsh": "b7023e1e790ba022 f64b1edb44d13b2d",
   "gbuffers_spidereyes.fsh": "a9642f477af81bf5 ef8a180f107ff488",
   "gbuffers_spidereyes.vsh": "29caba4b8ba29589 d271a4837f6a1507",
+  "gbuffers_water.fsh": "fd6dfa79d2e234ce f8766f703232efd5",
+  "gbuffers_water.vsh": "604f4045d0e8d397 34dd3dc3088ed378",
   "gbuffers_weather.fsh": "2d435126c9125e5d e72e03dfad3c6f43",
   "gbuffers_weather.vsh": "738843fcca163acf c7e548a58003ce59",
   "text_bg.fsh": "ec3920fa0c4d0e81 921fc7127bd8f1a6",

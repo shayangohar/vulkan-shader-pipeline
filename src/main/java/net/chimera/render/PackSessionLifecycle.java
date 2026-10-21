@@ -646,7 +646,6 @@ final class PackSessionLifecycle {
     /** Records whether shadowcomp installed natively, or why it fell back, in the conformance report. */
     private void recordShadowComputeDisposition() {
         if (pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
-            pass.packAdvancedImageOwner.markComputeInstalled();
             if (pass.conformanceReport != null
                     && pass.conformanceReport.program("shadowcomp") != null) {
                 pass.conformanceReport.markRuntime("shadowcomp",

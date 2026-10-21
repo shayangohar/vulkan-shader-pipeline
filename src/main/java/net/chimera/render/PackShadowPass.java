@@ -116,7 +116,7 @@ final class PackShadowPass {
 
             try {
                 if (packShadow) {
-                    shadowBindings = bindPackShadowImages(cmd);
+                    shadowBindings = bindPackShadowImages();
                 }
                 beginShadowDraw(frame);
                 drawShadowTerrain(frame);
@@ -150,13 +150,8 @@ final class PackShadowPass {
     private record ShadowFrame(VkCommandBuffer cmd, VulkanImage color, VulkanImage depth, boolean pack,
             Matrix4f projection, double cameraX, double cameraY, double cameraZ) {}
 
-    /** Readies the frame's advanced images and binds the pack shadow program's images for its draws. */
-    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPackShadowImages(
-            VkCommandBuffer cmd) {
-        if (pass.packAdvancedImageOwner != null
-                && pass.packAdvancedImageOwner.capabilityEnabled()) {
-            pass.packAdvancedImageOwner.prepareFrame(cmd);
-        }
+    /** Binds the pack shadow program's images for its draws. */
+    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPackShadowImages() {
         pass.prepareProgramImages(pass.pipelines.shadowPipeline);
         return pass.images.bindProgramImages(pass.pipelines.shadowPipeline, null, null,
                 DrawMaterialContext.captureLive());
@@ -252,6 +247,9 @@ final class PackShadowPass {
             }
             frame.depth().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
+        if (frame.pack() && pass.packAdvancedImageOwner != null) {
+            pass.packAdvancedImageOwner.afterImageWrites(cmd);
+        }
         dispatchShadowCompute(cmd);
         this.shadowMap.markInitialSamplingLayoutReady();
         if (frame.pack()) {
@@ -269,7 +267,7 @@ final class PackShadowPass {
     /** Runs the pack's shadowcomp over the new map when its advanced images are live. */
     private void dispatchShadowCompute(VkCommandBuffer cmd) {
         if (pass.packAdvancedImageOwner != null
-                && pass.packAdvancedImageOwner.capabilityEnabled()
+                && pass.packAdvancedImageOwner.computeImagesAvailable()
                 && pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
             if (pass.packShadowCompute.dispatch(cmd)) {
                 if (pass.packStorageBufferOwner != null) pass.packStorageBufferOwner.recordDispatch();

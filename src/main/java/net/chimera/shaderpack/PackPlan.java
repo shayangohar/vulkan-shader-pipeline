@@ -75,7 +75,7 @@ public record PackPlan(
                 && !writesUnsupportedFormat(program)
                 && !advancedResources.declaresUnplannedResource(name)
                 && (!advancedResources.dependentPrograms().contains(name)
-                || advancedResources.imageProgramsServable())
+                || advancedResources.imagesServable(name))
                 && (!advancedResources.bufferDependentPrograms().contains(name)
                 || advancedResources.storageBufferProgramSupported(name))
                 && (!advancedResources.customImageFeaturePrograms().contains(name)

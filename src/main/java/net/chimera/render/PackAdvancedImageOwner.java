@@ -8,9 +8,7 @@ import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 
 
 /** Owns advanced writable images for one pack session. */
@@ -19,9 +17,6 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     private final Map<String, PackStorageImage> images = new TreeMap<>();
     private final Map<String, String> failures = new TreeMap<>();
     private boolean closed;
-    private boolean computeInstalled;
-    private final Set<String> candidateGraphicsPrograms = new TreeSet<>();
-    private final Set<String> installedGraphicsPrograms = new TreeSet<>();
 
     /** Pure policy used by the owner and deterministic conformance tests. */
     public static boolean shouldInitializeImage(boolean clearEachFrame, boolean initialized) {
@@ -46,48 +41,30 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return owner;
     }
 
-    /** Capability remains false until the compute pipeline has been installed. */
-    public boolean capabilityEnabled() {
-        return computeInstalled && resourcesAvailable()
-                && plan.capabilityPossible()
-                && (!plan.requiresGraphicsProducer()
-                || producerCoverage(installedGraphicsPrograms));
+    /**
+     * Whether every image {@code program} binds exists. Iris runs each program on its own: a
+     * consumer runs whether or not the program that writes its images does, and reads what the
+     * frame's clear left.
+     */
+    public boolean programImagesAvailable(String program) {
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
+            if (imageForSymbol(binding.symbol()) == null) return false;
+        }
+        return true;
+    }
+
+    /** Whether every image the shadowcomp binds exists, so it can dispatch. */
+    public boolean computeImagesAvailable() {
+        return requiredImagesAvailable();
     }
 
     /**
-     * True while the planned graphics producers are compiled and their images
-     * are available. This admits dependent pipeline construction only; runtime
-     * dispatch still requires the committed producer set from capabilityEnabled.
+     * Makes every earlier shader write to the images visible to later shader reads and writes, as
+     * Iris's glMemoryBarrier before each program does. Recorded outside a render pass.
      */
-    public boolean producerCandidatesReady() {
-        return computeInstalled && resourcesAvailable() && plan.capabilityPossible()
-                && (!plan.requiresGraphicsProducer()
-                || producerCoverage(candidateGraphicsPrograms));
-    }
-
-    /** Records a compiled producer before dependent consumer pipelines build. */
-    public void markGraphicsProducerCandidate(String program) {
-        if (program != null && !program.isBlank()
-                && plan.graphicsImages().containsKey(program)
-                && requiredGraphicsImagesAvailable()) {
-            candidateGraphicsPrograms.add(program);
-        }
-    }
-
-    /** Commits a candidate only after a compatible consumer is installed. */
-    public void commitGraphicsProducer(String program) {
-        if (candidateGraphicsPrograms.contains(program)) {
-            installedGraphicsPrograms.add(program);
-        }
-    }
-
-    /** True when every image needed by the planned graphics or compute path exists. */
-    public boolean resourcesAvailable() {
-        return requiredImagesAvailable() && requiredGraphicsImagesAvailable();
-    }
-
-    public void markComputeInstalled() {
-        if (plan.hasSupportedCompute() && resourcesAvailable()) computeInstalled = true;
+    public void afterImageWrites(VkCommandBuffer commandBuffer) {
+        if (commandBuffer == null || closed || images.isEmpty()) return;
+        PackVulkanBarriers.afterShaderImageWrites(commandBuffer);
     }
 
     public boolean needsGraphicsTransition(ProgramImageBindingManifest manifest) {
@@ -111,7 +88,8 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     }
 
     /**
-     * Applies the pack clear policy at the start of each shadow frame.
+     * Applies the pack clear policy at the start of each world frame, before any program runs
+     * (Iris clears its clear images at beginLevelRendering).
      *
      * A non-clear image is persistent after its first frame, but Vulkan does
      * not initialize newly allocated image memory. Seed every new image once
@@ -187,24 +165,6 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return true;
     }
 
-    private boolean requiredGraphicsImagesAvailable() {
-        for (String program : plan.graphicsImageReaders().keySet()) {
-            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
-                if (imageForSymbol(binding.symbol()) == null) return false;
-            }
-        }
-        for (String program : plan.graphicsImages().keySet()) {
-            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
-                if (imageForSymbol(binding.symbol()) == null) return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean producerCoverage(Set<String> programs) {
-        return plan.graphicsImageNames(programs).containsAll(plan.requiredGraphicsImageNames());
-    }
-
     @Override
     public void close() {
         if (closed) return;
@@ -212,8 +172,5 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         images.values().forEach(PackStorageImage::free);
         images.clear();
         failures.clear();
-        computeInstalled = false;
-        candidateGraphicsPrograms.clear();
-        installedGraphicsPrograms.clear();
     }
 }

@@ -207,14 +207,11 @@ public final class PackProbe {
 
         private void buildPlans() {
             planPreparedSources();
-            // Some real packs intentionally hide their writable-image producers
-            // behind the Iris custom-image capability. The first plan tells us
-            // whether the pack declares a supported image set and a compute stage;
-            // only then do we negotiate that capability and rebuild every plan
-            // from the same prepared source snapshot. Packs without that contract
-            // retain their original preparation and fallback behavior.
-            if (advancedPlan.hasSupportedImages()
-                    && advancedPlan.computeStages().containsKey("shadowcomp")) {
+            // Packs hide their image code behind Iris's custom-image capability. The first plan
+            // tells whether Chimera creates any image the pack declares; only then is the
+            // capability offered and every plan rebuilt from the same prepared sources, as Iris
+            // offers it whatever programs read or write the images.
+            if (advancedPlan.capabilityPossible()) {
                 prepareWithCustomImages();
                 planPreparedSources();
             }

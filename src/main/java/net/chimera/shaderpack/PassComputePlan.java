@@ -162,8 +162,7 @@ public final class PassComputePlan {
             this.plan = plan;
             this.shadersDir = shadersDir;
             PackAdvancedResourcePlan advanced = plan.advancedResources();
-            boolean customImages = advanced.hasSupportedImages()
-                    && advanced.computeStages().containsKey("shadowcomp");
+            boolean customImages = advanced.capabilityPossible();
             this.macros = customImages ? PackEngineDefines.forCustomImages(plan.settingsPreprocessorDefines())
                     : PackEngineDefines.forPack(plan.settingsPreprocessorDefines());
             this.lockedMacros = PackEngineDefines.lockedNames(plan.settingsOverriddenNames(), customImages, false);

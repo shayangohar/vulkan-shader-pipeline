@@ -4,6 +4,7 @@ import net.chimera.render.PackAdvancedImageOwner;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -105,6 +106,45 @@ final class AdvancedImagePlanTest {
         assertEquals("image3D", AdvancedImageDeclarations.storageImageType(color));
         assertEquals("rgba16f", padded.layoutQualifier(), "RGB16F is stored with alpha");
         assertTrue(!unknown.supported() && unknown.deviations().contains("ADVANCED_IMAGE_UNSUPPORTED:unknown"));
+    }
+
+    /**
+     * Iris creates custom images whatever programs the pack has and runs each program on its own.
+     * Chimera served them only alongside a supported shadowcomp, so Pegasus's gbuffers programs,
+     * which read an image its prepare computes write, fell back.
+     */
+    @Test
+    void imagesServeEachProgramWithoutAShadowcomp(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                image.light = lightSampler RGBA RGBA8 BYTE false false 16 16 16
+                image.unknown = unknownSampler RGBA NOT_A_FORMAT BYTE false false 16 16 16
+                """);
+        writeVolumeReader(shaders, "composite", "lightSampler");
+        writeVolumeReader(shaders, "composite1", "unknownSampler");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackAdvancedResourcePlan advanced = plan.advancedResources();
+        assertTrue(advanced.computeStages().isEmpty() && advanced.capabilityPossible(),
+                advanced.deviations().toString());
+        assertTrue(advanced.imagesServable("composite") && plan.shouldAttempt("composite"),
+                plan.program("composite").deviations().toString());
+        assertTrue(!advanced.imagesServable("composite1") && !plan.shouldAttempt("composite1")
+                        && advanced.deviations().contains("ADVANCED_IMAGE_UNSERVED:composite1:unknown"),
+                advanced.deviations().toString());
+    }
+
+    private static void writeVolumeReader(Path shaders, String program, String sampler) throws Exception {
+        Files.writeString(shaders.resolve(program + ".vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve(program + ".fsh"), """
+                #version 120
+                uniform sampler3D %s;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture3D(%s, vec3(uv, 0.5)); }
+                """.formatted(sampler, sampler));
     }
 
     /** The budget fixture's plan, which rejects only its oversized image and keeps compute. */
@@ -374,12 +414,8 @@ final class AdvancedImagePlanTest {
             verifyShadowAdapter(shadow, label);
             assertTrue(!plan.computeStages().get("shadowcomp").samplerNames().isEmpty(),
                     label + " 3D sampler dependencies were not planned");
-            if (plan.graphicsImages().containsKey("shadow")) {
-                assertTrue(plan.graphicsImageNames(Set.of("shadow"))
-                                .containsAll(plan.requiredGraphicsImageNames()),
-                        label
-                                + " optional graphics producers incorrectly block image coverage");
-            }
+            assertTrue(plan.dependentPrograms().stream().allMatch(plan::imagesServable),
+                    label + " a program's images are not all created and bound: " + plan.deviations());
             assertTrue(plan.deviations().stream().noneMatch(value ->
                             value.startsWith("PACK_RESOURCE_SLOT_LIMIT:")),
                     label + " live advanced sampler was starved by a slot limit: "

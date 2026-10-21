@@ -233,6 +233,7 @@ final class PackPostChain {
                         pass.packPostTargets.sourceImages(), hdrColor.width, hdrColor.height);
             }
             pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
+            if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             pass.prepareProgramImages(post.pipeline());
             previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
                     hdrColor,
