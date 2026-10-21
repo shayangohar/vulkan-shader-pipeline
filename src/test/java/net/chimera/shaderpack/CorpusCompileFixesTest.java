@@ -465,10 +465,12 @@ final class CorpusCompileFixesTest {
     @Test
     void anEntityVertexLosesTheEntityColorItDoesNotRead(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
+        // A shared helper names it too, but main never calls the helper.
         Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
                 #version 120
                 uniform vec4 entityColor;
                 varying vec2 uv;
+                vec3 tinted(vec3 color) { return mix(color, entityColor.rgb, entityColor.a); }
                 void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
                 """);
         Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """

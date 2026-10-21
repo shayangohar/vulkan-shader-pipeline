@@ -54,12 +54,15 @@ final class EntityOverlayColor {
      * The vertex stage beside an injected fragment. Iris deletes the uniform from every stage
      * (EntityPatcher.patchOverlayColor), so a vertex stage that declares it only through a header
      * it shares with the fragment loses the declaration, which would otherwise meet the fragment's
-     * global in the shared uniform block. A vertex stage that reads it keeps it.
+     * global in the shared uniform block. Helpers main never calls go with it, as every converter
+     * prunes them. A vertex stage main reaches a read from keeps it.
      */
     static String withoutUnreadVertexDeclaration(String vertex) {
         if (vertex == null) return null;
         String removed = DECLARATION.matcher(vertex).replaceAll("");
-        return READ.matcher(GlslLexer.stripComments(removed)).find() ? vertex : removed;
+        if (!READ.matcher(GlslLexer.stripComments(removed)).find()) return removed;
+        String pruned = GlslTokenRewriter.removeUnreachableFunctions(removed, GlslResourceUsage.analyze(removed));
+        return READ.matcher(GlslLexer.stripComments(pruned)).find() ? vertex : pruned;
     }
 
     /**
