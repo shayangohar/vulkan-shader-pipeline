@@ -34,8 +34,9 @@ import java.util.zip.ZipFile;
 public final class PackSource {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final List<String> DIMENSION_FOLDERS = List.of("world0", "world-1", "world1");
+    // As in shaders.properties, a directive's name follows its '#' directly (PropertiesPreprocessor).
     private static final Pattern PROPERTY_DIRECTIVE = Pattern.compile(
-            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif|define)\\b(.*)$");
+            "^\\s*#(if|ifdef|ifndef|elif|else|endif|define)\\b(.*)$");
     private static final Pattern PROPERTY_DEFINE = Pattern.compile(
             "^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
 

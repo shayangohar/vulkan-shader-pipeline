@@ -35,6 +35,38 @@ final class PropertyKeyReportTest {
         assertEquals("SETTING_UNKNOWN", PackPropertyKeys.unread("customImage0"));
     }
 
+    /**
+     * PropertiesPreprocessor leaves a comment line empty, and an empty line ends a backslash
+     * continuation in Properties.load; a blank line is dropped first and ends nothing. A '#' with a
+     * space before the directive's name is a comment. Bliss's screen list ends at the commented-out
+     * one under it.
+     */
+    @Test
+    void aCommentEndsAContinuationAndASpacedDirectiveIsAComment(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                screen = A \\
+
+                    B \\
+                # screen = \\
+                #   C \\
+                screen.A.columns=1
+                # if 0
+                vignette=false
+                # endif
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D colortex0;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(colortex0, uv); }
+                """);
+        var values = PackProbe.analyze(root).settings().propertyValues();
+        assertEquals("A B", values.get("screen").replaceAll("\\s+", " ").trim());
+        assertEquals("1", values.get("screen.A.columns"));
+        assertEquals("false", values.get("vignette"));
+    }
+
     @Test
     void theReportNamesOnlyKeysIrisReadsAndChimeraDoesNotApply(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));

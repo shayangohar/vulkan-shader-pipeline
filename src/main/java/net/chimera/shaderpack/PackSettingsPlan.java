@@ -47,8 +47,9 @@ record PackSettingsPlan(
         ParticleDirectives particleDirectives
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
+    // A directive's name follows its '#' directly: PropertiesPreprocessor reads "# define" as a comment.
     private static final Pattern DEFINE = Pattern.compile(
-            "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
+            "^\\s*#define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
     private static final Pattern COMMENTED_DEFINE = Pattern.compile(
             "^\\s*//\\s*#\\s*define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
     private static final Pattern CONST = Pattern.compile(
@@ -61,7 +62,7 @@ record PackSettingsPlan(
     private static final Pattern CUSTOM_VALUE = Pattern.compile(
             "^\\s*(uniform|variable)\\.(float|int|bool|vec2|vec3|vec4)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
     private static final Pattern CONDITION = Pattern.compile(
-            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
+            "^\\s*#(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");
     private static final Pattern SAFE_OVERRIDE_VALUE = Pattern.compile(
             "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?[fF]?|true|false",
@@ -563,9 +564,9 @@ record PackSettingsPlan(
                 for (int index = 0; index <= physical.size(); index++) {
                     String raw = index < physical.size() ? physical.get(index) : null;
                     String line;
-                    if (raw != null && PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
-                        // The directive ends the open continuation: handle that line first,
-                        // then revisit the directive.
+                    if (raw != null && PropertyLineJoiner.endsContinuation(raw) && joiner.pending()) {
+                        // The # line ends the open continuation: handle that line first,
+                        // then revisit the # line.
                         line = joiner.finish();
                         index--;
                     } else if (raw == null) {
@@ -573,7 +574,7 @@ record PackSettingsPlan(
                     } else if (applyCondition(raw) || invalidCondition || !conditions.active()) {
                         continue;
                     } else {
-                        line = PropertyLineJoiner.isDirective(raw) ? raw : joiner.accept(raw);
+                        line = PropertyLineJoiner.endsContinuation(raw) ? raw : joiner.accept(raw);
                     }
                     if (line != null) {
                         accept(line);
@@ -744,25 +745,23 @@ record PackSettingsPlan(
         }
     }
 
-    private static final Pattern PREPROCESSOR_LINE = Pattern.compile(
-            "^#\\s*(?:define|undef|include|line|pragma|error|warning|if|ifdef|ifndef|elif|else|endif)\\b");
-
     /**
      * Joins shaders.properties' backslash continuations the way Iris's PropertiesPreprocessor
-     * and Properties loader do. Iris drops blank and plain {@code #} comment lines before
-     * preprocessing, so neither ends a continuation. Preprocessing then turns every directive
-     * line into an empty line, which does end one: Photon closes a multi-line
-     * {@code moon_phase_brightness} with {@code ") \"} right before its {@code #else}. (The id
-     * maps differ: IdMap rejoins across those lines, see {@link IdMapProperties}.) Callers
-     * evaluate conditions on physical lines, end an open continuation at each directive line,
-     * and feed only active non-directive lines to {@link #accept}.
+     * and Properties loader do. Iris drops blank lines before preprocessing, so a blank line does
+     * not end a continuation. Every {@code #} line becomes an empty line: a comment at once, a
+     * directive once JCPP has read it. An empty line ends a continuation in Properties.load: Photon
+     * closes a multi-line {@code moon_phase_brightness} with {@code ") \"} right before its
+     * {@code #else}, and Bliss's {@code screen} list ends at the commented-out one under it. (The
+     * id maps differ: IdMap rejoins across those lines, see {@link IdMapProperties}.) Callers
+     * evaluate conditions on physical lines, end an open continuation at each {@code #} line, and
+     * feed only active other lines to {@link #accept}.
      */
     static final class PropertyLineJoiner {
         private final StringBuilder pending = new StringBuilder();
 
-        /** A preprocessor directive line, which ends an open continuation. */
-        static boolean isDirective(String raw) {
-            return PREPROCESSOR_LINE.matcher(raw.strip()).find();
+        /** A {@code #} line, directive or comment, which ends an open continuation. */
+        static boolean endsContinuation(String raw) {
+            return raw.strip().startsWith("#");
         }
 
         boolean pending() {
@@ -776,7 +775,7 @@ record PackSettingsPlan(
          */
         String accept(String raw) {
             String trimmed = raw.strip();
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) return null;
+            if (trimmed.isEmpty()) return null;
             if (trimmed.endsWith("\\")) {
                 pending.append(trimmed, 0, trimmed.length() - 1).append(' ');
                 return null;
