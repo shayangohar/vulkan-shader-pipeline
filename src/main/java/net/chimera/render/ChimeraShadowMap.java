@@ -41,8 +41,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * stored depth attachment for pack shadowtex0 sampling. Resolution and light
  * distance are selected once when the pack session is created.
  *
- * Light matrices: ortho projection looking from the sun toward the player.
- * Updated each frame from the celestial angle.
+ * Light matrices: ortho projection looking from the sun toward the player, or Iris's perspective
+ * one for a pack's shadowMapFov. Updated each frame from the celestial angle.
  */
 public class ChimeraShadowMap {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -308,8 +308,15 @@ public class ChimeraShadowMap {
         // Iris's halfPlaneLength is the pack's shadowDistance itself.
         float near = this.settings.nearPlane(renderDistanceChunks);
         float far = this.settings.farPlane(renderDistanceChunks);
-        createLightProjection(this.hostLightProjection, this.shadowDistance, near, far, true);
-        createLightProjection(this.packLightProjection, this.shadowDistance, near, far, false);
+        Float fov = this.settings.fieldOfView();
+        if (fov != null) {
+            createPerspectiveProjection(this.packLightProjection, fov);
+            this.hostLightProjection.identity().translate(0.0F, 0.0F, 0.5F).scale(1.0F, 1.0F, 0.5F)
+                    .mul(this.packLightProjection);
+        } else {
+            createLightProjection(this.hostLightProjection, this.shadowDistance, near, far, true);
+            createLightProjection(this.packLightProjection, this.shadowDistance, near, far, false);
+        }
 
         // Combined MVP
         this.lightMVP.set(this.hostLightProjection).mul(this.lightView);
@@ -371,6 +378,23 @@ public class ChimeraShadowMap {
                 -halfExtent, halfExtent,
                 near, far,
                 zZeroToOne);
+    }
+
+    /** ShadowMatrices' depth planes for a perspective shadow projection. */
+    private static final float PERSPECTIVE_NEAR = -100.05F;
+    private static final float PERSPECTIVE_FAR = 156.0F;
+
+    /**
+     * Iris ShadowMatrices.createPerspectiveMatrix for a pack's shadowMapFov: a square perspective
+     * of {@code fov} degrees between ShadowMatrices' NEAR and FAR, written as Iris writes it, with
+     * 1 in the last column's w. The host's [0,1] depth form remaps this one.
+     */
+    static void createPerspectiveProjection(Matrix4f destination, float fov) {
+        float yScale = (float) (1.0F / Math.tan(Math.toRadians(fov) * 0.5F));
+        float depthScale = (PERSPECTIVE_FAR + PERSPECTIVE_NEAR) / (PERSPECTIVE_NEAR - PERSPECTIVE_FAR);
+        float depthOffset = 2.0F * PERSPECTIVE_FAR * PERSPECTIVE_NEAR / (PERSPECTIVE_NEAR - PERSPECTIVE_FAR);
+        destination.set(yScale, 0.0F, 0.0F, 0.0F, 0.0F, yScale, 0.0F, 0.0F,
+                0.0F, 0.0F, depthScale, -1.0F, 0.0F, 0.0F, depthOffset, 1.0F);
     }
 
     /** The pack's resolution within the device's image limit; Iris passes it to GL unclamped. */

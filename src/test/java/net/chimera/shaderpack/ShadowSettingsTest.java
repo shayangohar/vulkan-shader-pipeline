@@ -14,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 final class ShadowSettingsTest {
     /**
      * Iris clamps no shadow setting (PackShadowDirectives): only a resolution that sizes no image
-     * or a distance that is not finite takes Iris's default. shadowMapFov's perspective map is
-     * Chimera's gap.
+     * or a distance that is not finite takes Iris's default. shadowMapFov selects Iris's
+     * perspective shadow projection.
      */
     @Test
     void shadowSettingValidation(@TempDir Path root) throws IOException {
@@ -28,8 +28,9 @@ final class ShadowSettingsTest {
                 """);
         assertEquals(PackConfig.IRIS_SHADOW_MAP_RESOLUTION, settings.resolution(), "a resolution sizes no image");
         assertEquals(PackConfig.IRIS_SHADOW_DISTANCE, settings.distance(), "an infinite distance");
-        assertEquals(List.of("SHADOW_SETTING_DEFAULTED:shadowDistance", "SHADOW_SETTING_DEFAULTED:shadowMapResolution",
-                "SHADOW_SETTING_UNSUPPORTED:shadowMapFov"), settings.deviations());
+        assertEquals(List.of("SHADOW_SETTING_DEFAULTED:shadowDistance", "SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
+                settings.deviations());
+        assertEquals(90.0F, settings.fieldOfView());
         assertEquals(128.0F, settings.intervalSize(), "Iris takes any finite interval");
 
         PackConfig.ShadowSettings large = shadowSettings(shaders, """

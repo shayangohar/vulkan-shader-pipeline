@@ -97,7 +97,7 @@ public final class PackConfig {
     /** The shadow settings Iris reads as any finite number; Iris clamps none of them. */
     private static final List<String> FINITE_SHADOW_SETTINGS = List.of("shadowDistanceRenderMul", "sunPathRotation",
             "sunPathOffset", "shadowIntervalSize", "entityShadowDistanceMul", "voxelDistance", "shadowNearPlane",
-            "shadowFarPlane");
+            "shadowFarPlane", "shadowMapFov");
 
     /** Validated shadow settings. The raw values remain available for logs. */
     public record ShadowSettings(
@@ -172,6 +172,15 @@ public final class PackConfig {
         /** The shadow projection's far plane (Iris shadowFarPlane): -1 reaches the render distance. */
         public float farPlane(int renderDistanceChunks) {
             return depthPlane("shadowFarPlane", SHADOW_FAR_PLANE, renderDistanceChunks * 16.0F);
+        }
+
+        /**
+         * Iris shadowMapFov: the field of view, in degrees, of a perspective shadow projection
+         * (ShadowRenderer, ShadowMatrices.createPerspectiveMatrix); null for Iris's orthographic one.
+         */
+        public Float fieldOfView() {
+            float fov = finiteValue("shadowMapFov", Float.NaN);
+            return Float.isNaN(fov) ? null : fov;
         }
 
         /** A declared plane, Iris's default without one; Iris compares with -1 as Mth.equal does. */

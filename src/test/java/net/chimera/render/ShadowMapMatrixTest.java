@@ -6,6 +6,9 @@ import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Matrix and snapshot-state checks for the pack shadow contract. */
@@ -31,6 +34,27 @@ final class ShadowMapMatrixTest {
                 "host forward-Z near plane");
         assertNear(1.0f, host.transformPosition(new Vector3f(0.0f, 0.0f, -far)).z,
                 "host forward-Z far plane");
+    }
+
+    /**
+     * A pack's shadowMapFov selects Iris's perspective shadow projection, written as
+     * ShadowMatrices.createPerspectiveMatrix writes it: ShadowMatrices' NEAR (-100.05) and FAR (156)
+     * planes, and 1 in the last column's w. Iris's own fov=90 test still expects older planes.
+     */
+    @Test
+    void shadowMapFovSelectsIrisPerspective() {
+        Matrix4f projection = new Matrix4f();
+        ChimeraShadowMap.createPerspectiveProjection(projection, 90.0F);
+        assertNear(1.0F, projection.m00(), "x scale at 90 degrees");
+        assertNear(1.0F, projection.m11(), "y scale at 90 degrees");
+        assertNear((156.0F - 100.05F) / (-100.05F - 156.0F), projection.m22(), "depth scale");
+        assertNear(-1.0F, projection.m23(), "w from -z");
+        assertNear(2.0F * 156.0F * -100.05F / (-100.05F - 156.0F), projection.m32(), "depth offset");
+        assertNear(1.0F, projection.m33(), "Iris's w term");
+        var settings = new PackConfig.ShadowSettings(1024, 128.0F, Map.of("shadowMapFov", "70.0"), List.of());
+        assertTrue(settings.fieldOfView() != null && settings.fieldOfView() == 70.0F);
+        assertTrue(new PackConfig.ShadowSettings(1024, 128.0F, Map.of(), List.of()).fieldOfView() == null,
+                "orthographic without the directive");
     }
 
     /** Iris's ShadowMatrices baseline rotation, built independently of CelestialSnapshot. */
