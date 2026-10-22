@@ -179,7 +179,11 @@ public enum HostLayoutLane {
         return alphaTest.reference;
     }
 
-    /** Iris ExtendedShader binds a white texture to unit 0 for a format without texture coordinates. */
+    /**
+     * A format without texture coordinates reads white: Iris registers its white pixel under tex,
+     * texture, gtexture, gcolor and colortex0 (IrisSamplers.addLevelSamplers). Chimera binds it on
+     * unit 0, where its lanes read the albedo.
+     */
     public boolean whiteAlbedo() {
         return !format.contains(VertexFormatElement.UV0);
     }

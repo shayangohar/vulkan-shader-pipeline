@@ -242,9 +242,8 @@ public final class PackPlanBuilder {
             if (stage.shadowPass()) {
                 fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
             }
-            UnitZeroSampler.Unit unit = UnitZeroSampler.Unit.of(name);
-            vertex = UnitZeroSampler.apply(vertex, config, deviations, unit);
-            fragment = UnitZeroSampler.apply(fragment, config, deviations, unit);
+            vertex = UnitZeroSampler.apply(vertex, config, deviations, name);
+            fragment = UnitZeroSampler.apply(fragment, config, deviations, name);
         }
 
         /**

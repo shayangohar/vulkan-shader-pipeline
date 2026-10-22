@@ -55,8 +55,27 @@ final class ShadowTargetDirectivesTest {
         assertTrue(directives.depth(0).hardwareFiltering() && !directives.depth(1).hardwareFiltering());
         assertTrue(directives.depth(0).nearest() && directives.depth(1).nearest());
         assertTrue(directives.depth(1).mipmap() && !directives.depth(0).mipmap());
-        // Chimera samples the base level of a shadow depth Iris mipmaps (KNOW-779), and says so.
-        assertEquals(List.of("SHADOW_DEPTH_MIPMAP_UNSUPPORTED:shadowtex1"), directives.deviations());
+    }
+
+    /**
+     * Chimera samples the base level of a shadow depth Iris mipmaps after its shadow pass (KNOW-779)
+     * and says so; a pack without a shadow program has no such pass and no chain.
+     */
+    @Test
+    void unbuiltShadowDepthMipmapsAreReportedWhereThereIsAShadowPass(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                const bool generateShadowMipmap = true;
+                uniform sampler2D colortex0;
+                void main() { gl_FragColor = texture2D(colortex0, vec2(0.5)); }
+                """);
+        assertTrue(PackProbe.analyze(root).config().shadowSettings().deviations().stream()
+                .noneMatch(value -> value.startsWith("SHADOW_DEPTH_MIPMAP_UNSUPPORTED")));
+        Files.writeString(shaders.resolve("shadow.vsh"), "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("shadow.fsh"), "#version 120\nvoid main() { gl_FragData[0] = vec4(1.0); }\n");
+        assertTrue(PackProbe.analyze(root).config().shadowSettings().deviations().containsAll(List.of(
+                "SHADOW_DEPTH_MIPMAP_UNSUPPORTED:shadowtex0", "SHADOW_DEPTH_MIPMAP_UNSUPPORTED:shadowtex1")));
     }
 
     /** Iris reads each directive by its declared type and ignores a value it cannot read. */

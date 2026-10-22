@@ -14,7 +14,7 @@ import java.util.regex.Pattern;
  */
 final class IrisSamplerOrder {
     /** What Iris binds a sampler name to. */
-    enum Source { TARGET, CUSTOM_TEXTURE, IMAGE, LEVEL, DEPTH, NOISE, SHADOW }
+    enum Source { TARGET, CUSTOM_TEXTURE, IMAGE, LEVEL, DEPTH, NOISE, SHADOW, CENTER_DEPTH }
 
     /**
      * One renderer's registrations in order, those it makes on the builder ({@code direct}), the
@@ -47,6 +47,9 @@ final class IrisSamplerOrder {
             if (name == null) return null;
             if (SHADOW.matcher(name).matches()) return Source.SHADOW;
             if (name.equals("noisetex")) return Source.NOISE;
+            if (name.equals("iris_centerDepthSmooth")) {
+                return sources.contains(Source.CENTER_DEPTH) ? Source.CENTER_DEPTH : null;
+            }
             if (depth.matcher(name).matches()) return Source.DEPTH;
             if (sources.contains(Source.LEVEL) && LEVEL.matcher(name).matches()) return Source.LEVEL;
             if (!sources.contains(Source.TARGET)) return null;
@@ -80,13 +83,15 @@ final class IrisSamplerOrder {
 
     /**
      * A begin, prepare, deferred or composite program, and the computes of every pass
-     * (CompositeRenderer, FinalPassRenderer.createComputes): customTexture entries on the builder.
+     * (CompositeRenderer, FinalPassRenderer.createComputes): customTexture entries and the smoothed
+     * centre depth on the builder.
      */
     static final Order POST = new Order(List.of(Source.TARGET, Source.CUSTOM_TEXTURE, Source.IMAGE, Source.NOISE,
-            Source.DEPTH, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE), Pattern.compile("gdepthtex|depthtex[0-2]"), 0);
+            Source.DEPTH, Source.SHADOW, Source.CENTER_DEPTH), Set.of(Source.CUSTOM_TEXTURE, Source.CENTER_DEPTH),
+            Pattern.compile("gdepthtex|depthtex[0-2]"), 0);
     /** The final program, which registers its customTexture entries after images (FinalPassRenderer). */
     static final Order FINAL = new Order(List.of(Source.TARGET, Source.IMAGE, Source.CUSTOM_TEXTURE, Source.NOISE,
-            Source.DEPTH, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE), POST.depth(), 0);
+            Source.DEPTH, Source.SHADOW, Source.CENTER_DEPTH), POST.direct(), POST.depth(), 0);
     /**
      * A setup compute (IrisRenderingPipeline.createSetupComputes): customTexture entries and the
      * composite depth samplers on the builder, before images.

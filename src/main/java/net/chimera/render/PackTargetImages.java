@@ -209,9 +209,10 @@ final class PackTargetImages {
 
     /**
      * glGenerateMipmap: each level is a downsample of the one above. An integer target downsamples
-     * nearest, Chimera's choice: GL refuses glGenerateMipmap on a format it cannot filter, so Iris's
-     * integer chains stay at their base level. Every level enters in TRANSFER_DST and leaves in
-     * SHADER_READ_ONLY.
+     * nearest, Chimera's choice: the GL spec refuses glGenerateMipmap on a format it cannot filter,
+     * so where a driver follows it Iris's integer target is left mipmap-incomplete under
+     * NEAREST_MIPMAP_NEAREST and reads zero, and a lenient driver builds a chain. Every level
+     * enters in TRANSFER_DST and leaves in SHADER_READ_ONLY.
      */
     static void recordMipChain(MemoryStack stack, VkCommandBuffer commandBuffer,
                                long image, int width, int height, int levels, int filter) {

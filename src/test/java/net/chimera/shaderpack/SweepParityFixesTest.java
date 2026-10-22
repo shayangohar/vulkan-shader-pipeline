@@ -54,7 +54,7 @@ final class SweepParityFixesTest {
                 vec3 blur(sampler2D tex, vec2 uv) { return texture2D(tex, uv).rgb; }
                 void main() { gl_FragColor = texture2D(tex, uv)
                         + vec4(blur(colortex1, uv), texture3D(volume, vec3(0.0)).r); }
-                """, null, deviations, UnitZeroSampler.Unit.FULLSCREEN);
+                """, null, deviations, "composite");
         assertTrue(renamed.contains("uniform sampler2D colortex0;") && !renamed.contains("uniform sampler2D tex;"),
                 renamed);
         assertTrue(renamed.contains("void main() { gl_FragColor = texture2D(colortex0, uv)"), renamed);
@@ -71,7 +71,7 @@ final class SweepParityFixesTest {
                 uniform sampler2D depthtex0;
                 void main() { gl_FragColor = texture2D(texture, uv) * texture(colortex0, uv)
                         + texture2D(depthtex0, uv); }
-                """, null, second, UnitZeroSampler.Unit.FULLSCREEN);
+                """, null, second, "composite");
         assertFalse(declared.contains("uniform sampler2D texture;"), declared);
         assertTrue(declared.contains("texture2D(colortex0, uv) * texture(colortex0, uv)"),
                 "a call keeps its function name: " + declared);
@@ -106,13 +106,28 @@ final class SweepParityFixesTest {
                 uniform sampler2D gaux1;
                 uniform sampler2D depthtex1;
                 uniform sampler2D gdepthtex;
+                uniform sampler2D noisetex;
+                uniform sampler2D dhDepthTex1;
+                uniform sampler2D shadowtex0;
                 void main() { gl_FragColor = texture2D(gcolor, uv) + texture2D(gaux1, uv)
-                        + texture2D(depthtex1, uv) + texture2D(gdepthtex, uv); }
-                """, null, deviations, UnitZeroSampler.Unit.WORLD);
+                        + texture2D(depthtex1, uv) + texture2D(gdepthtex, uv) + texture2D(noisetex, uv)
+                        + texture2D(dhDepthTex1, uv) + texture2D(shadowtex0, uv); }
+                """, null, deviations, "gbuffers_particles");
         assertTrue(renamed.contains("uniform sampler2D gtexture;") && !renamed.contains("gcolor")
                 && !renamed.contains("gdepthtex"), renamed);
         assertTrue(renamed.contains("texture2D(gaux1, uv)") && renamed.contains("texture2D(depthtex1, uv)"), renamed);
         assertEquals(List.of("SAMPLER_UNIT0_ALBEDO:gcolor", "SAMPLER_UNIT0_ALBEDO:gdepthtex"), deviations);
+        // The renderer picks the unit (IrisSamplerOrder.of): begin is a fullscreen pass, dh_* a world one.
+        assertEquals(UnitZeroSampler.Unit.FULLSCREEN, UnitZeroSampler.Unit.of("begin1"));
+        assertEquals(UnitZeroSampler.Unit.WORLD, UnitZeroSampler.Unit.of("dh_terrain"));
+        // A parameter named gtexture would capture the rename, so the source stays as written.
+        List<String> captured = new ArrayList<>();
+        String kept = UnitZeroSampler.apply("""
+                uniform sampler2D gcolor;
+                vec4 shade(sampler2D gtexture, vec2 uv) { return texture2D(gcolor, uv); }
+                void main() { gl_FragColor = shade(gcolor, uv); }
+                """, null, captured, "gbuffers_particles");
+        assertTrue(kept.contains("uniform sampler2D gcolor;") && captured.isEmpty(), kept);
 
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("gbuffers_particles.vsh"), """

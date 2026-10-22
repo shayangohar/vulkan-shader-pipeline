@@ -244,11 +244,15 @@ public final class PackResourcePlan {
     private static Choice choose(String program, UniformRegistry.SamplerBinding sampler,
                                  Map<String, PackResourceDeclaration> declarations, String advancedImage,
                                  Set<Integer> deactivatedOverrides, boolean compute, List<String> deviations) {
-        PackResourceDeclaration custom = packTexture(program, sampler, declarations);
+        // A raw texture.<stage> entry is a uniform of its own: Iris renames the declaration of its
+        // type to customtexN (TextureTransformer), which every renderer registers (addCustomTextures).
+        PackResourceDeclaration raw = rawStageTexture(program, sampler, declarations);
+        if (raw != null) return new Choice(raw, null);
+        PackResourceDeclaration custom = packTexture(sampler, declarations);
         IrisSamplerOrder.Order order = IrisSamplerOrder.of(program, compute);
         IrisSamplerOrder.Source last = order.last(sampler.name(), advancedImage != null, custom != null);
-        // A name nothing registers never reaches the interceptor, so its stage texture binds nowhere
-        // and the sampler keeps unit 0 (KNOW-801).
+        // A PNG stage texture only replaces a registration made through the interceptor: on a name
+        // nothing registers it binds nowhere, and the sampler keeps unit 0 (KNOW-801).
         PackResourceDeclaration stage = last != null && order.intercepted(last)
                 ? stageDeclaration(program, sampler, order.names(sampler.name()), declarations, deactivatedOverrides,
                 deviations) : null;
@@ -273,13 +277,12 @@ public final class PackResourcePlan {
         PackResourceDeclaration declaration = null;
         for (String registered : names) {
             if (declaration == null && textureStage != null) {
-                declaration = textureDeclaration(declarations, textureStage, registered, sampler.glslType());
+                declaration = textureDeclaration(declarations, textureStage, registered);
             }
         }
-        // A 1D or 3D raw texture is its own uniform under Iris (TextureTransformer renames it by
-        // type), so a pass writing the same-named target never takes it back.
-        Integer overriddenTarget = declaration == null || !appliesTo(declaration, "sampler2D") ? null
-                : targetIndex(name);
+        // CustomTextureSamplerInterceptor drops the override of a target an earlier pass of this
+        // chain flipped (deactivatedOverrides).
+        Integer overriddenTarget = declaration == null ? null : targetIndex(name);
         if (overriddenTarget != null && deactivatedOverrides.contains(overriddenTarget)) {
             // An earlier pass of this chain wrote the target: it now samples the target.
             deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
@@ -288,17 +291,21 @@ public final class PackResourcePlan {
         return declaration;
     }
 
-    /** {@code customTexture.<sampler>}, or the atlas a post program's tex reads. */
-    private static PackResourceDeclaration packTexture(String program, UniformRegistry.SamplerBinding sampler,
+    /** {@code customTexture.<sampler>}, when it applies to the sampler's type. */
+    private static PackResourceDeclaration packTexture(UniformRegistry.SamplerBinding sampler,
                                                        Map<String, PackResourceDeclaration> declarations) {
-        String name = sampler.name();
-        if (appliesTo(declarations.get("customTexture." + name), sampler.glslType())) {
-            return declarations.get("customTexture." + name);
-        }
-        if (name.equals("tex") && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
-            return declarations.get("customTexture.textureAtlas");
-        }
-        return null;
+        PackResourceDeclaration declaration = declarations.get("customTexture." + sampler.name());
+        return appliesTo(declaration, sampler.glslType()) ? declaration : null;
+    }
+
+    /** The program stage's raw {@code texture.<stage>.<sampler>} entry for exactly this name and type. */
+    private static PackResourceDeclaration rawStageTexture(String program, UniformRegistry.SamplerBinding sampler,
+                                                           Map<String, PackResourceDeclaration> declarations) {
+        String stage = textureStage(program);
+        PackResourceDeclaration declaration = stage == null ? null
+                : declarations.get("texture." + stage + "." + sampler.name());
+        return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE
+                && appliesTo(declaration, sampler.glslType()) ? declaration : null;
     }
 
     /** A sampler the pack declares a texture for. */
@@ -630,20 +637,19 @@ public final class PackResourcePlan {
     }
 
     /**
-     * {@code texture.<scope>.<sampler>} for this sampler or any alias of the
-     * same target: Iris overrides colortex7 and gaux4 together.
+     * The PNG {@code texture.<scope>.<sampler>} entry for this sampler or any alias of the same
+     * target: Iris overrides colortex7 and gaux4 together. A raw entry renames its own uniform
+     * instead (rawStageTexture).
      */
     private static PackResourceDeclaration textureDeclaration(
-            Map<String, PackResourceDeclaration> declarations, String scope, String name,
-            String samplerType) {
+            Map<String, PackResourceDeclaration> declarations, String scope, String name) {
         String prefix = "texture." + scope + ".";
         PackResourceDeclaration exact = declarations.get(prefix + name);
-        if (exact != null && appliesTo(exact, samplerType)) return exact;
+        if (exact != null && exact.kind() != PackResourceKind.RAW_TEXTURE) return exact;
         String canonical = canonicalResource(name);
         for (PackResourceDeclaration declaration : declarations.values()) {
-            if (declaration.key().startsWith(prefix)
-                    && canonicalResource(declaration.sampler()).equals(canonical)
-                    && appliesTo(declaration, samplerType)) {
+            if (declaration.key().startsWith(prefix) && declaration.kind() != PackResourceKind.RAW_TEXTURE
+                    && canonicalResource(declaration.sampler()).equals(canonical)) {
                 return declaration;
             }
         }
@@ -652,8 +658,9 @@ public final class PackResourcePlan {
 
     /**
      * Whether a declaration replaces a sampler of this GLSL type. Iris patches a raw texture
-     * only into a sampler of its own dimensionality, so `sampler2D colortex0` stays the render
-     * target while `sampler3D colortex0` takes the declared volume; a PNG is always 2D.
+     * only into a sampler of its own type (TextureTransformer.isTypeValid), so `sampler2D colortex0`
+     * stays the render target while `sampler3D colortex0` takes the declared volume, and a
+     * rectangle texture takes only a sampler2DRect; a PNG is always 2D.
      */
     static boolean appliesTo(PackResourceDeclaration declaration, String samplerType) {
         if (declaration == null || declaration.kind() != PackResourceKind.RAW_TEXTURE) {
@@ -662,13 +669,13 @@ public final class PackResourcePlan {
         String[] parts = declaration.source().trim().split("\\s+");
         String dimension = switch (parts[1].toUpperCase(Locale.ROOT)) {
             case "TEXTURE_1D" -> "1D";
-            case "TEXTURE_2D", "TEXTURE_RECTANGLE" -> "2D";
+            case "TEXTURE_2D" -> "2D";
+            case "TEXTURE_RECTANGLE" -> "2DRect";
             case "TEXTURE_3D" -> "3D";
             default -> "";
         };
         String type = samplerType == null ? "" : samplerType.replaceFirst("^[iu]", "");
-        return !dimension.isEmpty() && (type.equals("sampler" + dimension)
-                || (dimension.equals("2D") && type.equals("sampler2DRect")));
+        return !dimension.isEmpty() && type.equals("sampler" + dimension);
     }
 
     /**

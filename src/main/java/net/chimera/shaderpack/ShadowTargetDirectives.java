@@ -221,11 +221,6 @@ public record ShadowTargetDirectives(List<ColorTarget> colors, List<DepthSamplin
             List<DepthSampling> depths = List.of(
                     new DepthSampling(hardwareFiltering[0], depthMipmaps[0], depthNearest[0]),
                     new DepthSampling(hardwareFiltering[1], depthMipmaps[1], depthNearest[1]));
-            // Iris generates these chains after the shadow pass (ShadowRenderer.generateMipmaps); Chimera
-            // samples the base level (KNOW-779).
-            for (int i = 0; i < depthMipmaps.length; i++) {
-                if (depthMipmaps[i]) deviations.add("SHADOW_DEPTH_MIPMAP_UNSUPPORTED:shadowtex" + i);
-            }
             return new ShadowTargetDirectives(colors, depths, deviations);
         }
     }

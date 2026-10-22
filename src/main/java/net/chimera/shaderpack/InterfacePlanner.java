@@ -307,7 +307,7 @@ final class InterfacePlanner {
             // Iris gives the legacy shadow names a per-program meaning; look them up by it.
             String lookup = PackResourcePlan.isProgramShadowAlias(name)
                     ? PackResourcePlan.programResource(name, waterShadow) : name;
-            Integer slot = samplerSlot(name, lookup, stage, customSamplerSlots, deviations);
+            Integer slot = samplerSlot(name, lookup, stage, customSamplerSlots);
             if (!mappedType(name, type, customSamplerSlots) || slot == null) {
                 // A sampler nothing reads is inactive, as GL leaves it: Escheridia's composites
                 // declare clouds, normals and shadowtex0HW in a shared header and read none of them.
@@ -316,7 +316,7 @@ final class InterfacePlanner {
                 continue;
             }
             bindings.add(new UniformRegistry.SamplerBinding(name, slot, type));
-            String resource = boundResource(name, lookup, stage, customSamplerSlots);
+            String resource = UniformRegistry.samplerResource(lookup);
             String previousResource = samplerResources.putIfAbsent(slot, resource);
             if (previousResource != null && !previousResource.equals(resource)) {
                 deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
@@ -332,14 +332,6 @@ final class InterfacePlanner {
     private static boolean mappedType(String name, String type, Map<String, Integer> customSamplerSlots) {
         return PLANAR_SAMPLER_TYPES.contains(type)
                 || PACK_ONLY_SAMPLER_TYPES.contains(type) && hasCustomSlot(customSamplerSlots, name);
-    }
-
-    /** The resource a bound sampler reads: post's tex reads the pack's atlas when the pack has one. */
-    private static String boundResource(
-            String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots) {
-        return stage == UniformRegistry.Stage.POST && name.equals("tex")
-                && hasCustomSlot(customSamplerSlots, UniformRegistry.PACK_ATLAS_SAMPLER)
-                ? UniformRegistry.PACK_ATLAS_SAMPLER : UniformRegistry.samplerResource(lookup);
     }
 
     private static boolean hasCustomSlot(Map<String, Integer> customSamplerSlots, String name) {
@@ -358,8 +350,7 @@ final class InterfacePlanner {
 
     /** The slot a declared sampler binds to: the stage's map, then the pack's own textures. */
     static Integer samplerSlot(
-            String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots,
-                    Set<String> deviations) {
+            String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots) {
         Integer slot = stageSlots(stage).get(lookup);
         if (slot == null && !stage.shadowPass()) {
             // Iris gives every program each shadowcolor target and the hardware shadow samplers
@@ -369,7 +360,7 @@ final class InterfacePlanner {
             slot = shadow < 0 ? null : shadow;
         }
         if (slot == null && stage == UniformRegistry.Stage.POST) {
-            slot = postFallbackSlot(name, customSamplerSlots, deviations);
+            slot = postFallbackSlot(name);
         } else if (slot == null && !stage.shadowPass()) {
             slot = UniformRegistry.gbufferColorInputSlot(name);
         }
@@ -383,17 +374,9 @@ final class InterfacePlanner {
         return slot;
     }
 
-    /** Post's fallbacks for a name its stage map lacks: an extended color target, then tex as the pack atlas. */
-    private static Integer postFallbackSlot(String name, Map<String, Integer> customSamplerSlots,
-                                            Set<String> deviations) {
-        Integer slot = UniformRegistry.extendedPostColorSlot(name);
-        if (slot == null && name.equals("tex") && customSamplerSlots != null) {
-            slot = customSamplerSlots.get(UniformRegistry.PACK_ATLAS_SAMPLER);
-            if (slot != null) {
-                deviations.add("SAMPLER_ALIAS_TO_PACK_RESOURCE:tex:textureAtlas");
-            }
-        }
-        return slot;
+    /** Post's fallback for a name its stage map lacks: an extended color target. */
+    private static Integer postFallbackSlot(String name) {
+        return UniformRegistry.extendedPostColorSlot(name);
     }
 
     static String unmappedSamplerDeviation(String name, UniformRegistry.Stage stage) {

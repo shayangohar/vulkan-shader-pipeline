@@ -145,6 +145,14 @@ final class PassComputeSamplerTest {
                 compute.bindings(), compute.deviations().toString());
         String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
         assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+
+        // Without SEPARATE_HARDWARE_SAMPLERS Iris registers no shadowtex1HW (IrisSamplers.addShadowSamplers).
+        Files.writeString(shaders.resolve("shaders.properties"), "");
+        PassComputePlan.PassCompute legacy = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("composite_a");
+        assertTrue(legacy == null || legacy.bindings().stream().noneMatch(binding -> binding.symbol()
+                .equals("shadowtex1HW") && binding.kind() == PassComputePlan.Kind.SHADOW_COMPARE),
+                String.valueOf(legacy));
     }
 
     /**

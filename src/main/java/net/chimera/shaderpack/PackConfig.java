@@ -329,8 +329,10 @@ public final class PackConfig {
                 collected.deviations.add("POST_TARGET_INTEGER_CLEAR_CHIMERA:colortex" + slot);
             }
         });
+        boolean shadowPass = directivePrograms.stream().anyMatch(program -> program.name().equals("shadow"));
         ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues,
-                ShadowTargetDirectives.read(directives), shadowColorTargetCount(directivePrograms, settings));
+                ShadowTargetDirectives.read(directives), shadowColorTargetCount(directivePrograms, settings),
+                shadowPass);
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
                 shadowSettings, collected.deviations, settings, collected.targetSettings, collected.flips,
                 collected.preFlips, collected.paddedAlphaTargets, PackDirectives.read(directives));
@@ -582,7 +584,8 @@ public final class PackConfig {
     }
 
     private static ShadowSettings validateShadowSettings(Map<String, String> rawValues,
-                                                         ShadowTargetDirectives targets, int colorTargetCount) {
+                                                         ShadowTargetDirectives targets, int colorTargetCount,
+                                                         boolean shadowPass) {
         List<String> deviations = new ArrayList<>();
         int resolution = validShadowMapResolution(rawValues.get("shadowMapResolution"), deviations);
         float distance = validShadowDistance(rawValues.get("shadowDistance"), deviations);
@@ -597,6 +600,11 @@ public final class PackConfig {
             }
         }
         deviations.addAll(targets.deviations());
+        // Iris builds these chains after its shadow pass (ShadowRenderer.generateMipmaps); Chimera
+        // samples the base level (KNOW-779).
+        for (int depth = 0; shadowPass && depth < 2; depth++) {
+            if (targets.depth(depth).mipmap()) deviations.add("SHADOW_DEPTH_MIPMAP_UNSUPPORTED:shadowtex" + depth);
+        }
         return new ShadowSettings(resolution, distance, rawValues, deviations, targets, colorTargetCount);
     }
 

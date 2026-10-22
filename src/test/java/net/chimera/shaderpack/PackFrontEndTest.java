@@ -119,6 +119,36 @@ final class PackFrontEndTest {
         PackResourceDeclaration png = new PackResourceDeclaration("texture.composite.colortex13",
                 "composite", "colortex13", "image/galaxy.png", PackResourceKind.PACK_TEXTURE);
         assertTrue(PackResourcePlan.appliesTo(png, "sampler2D"), "a PNG declaration applies as before");
+        // TextureTransformer.isTypeValid: a rectangle texture takes only a sampler2DRect.
+        PackResourceDeclaration rectangle = new PackResourceDeclaration("texture.composite.lut",
+                "composite", "lut", "lut.dat TEXTURE_RECTANGLE R8 4 4 RED UNSIGNED_BYTE", PackResourceKind.RAW_TEXTURE);
+        assertTrue(PackResourcePlan.appliesTo(rectangle, "sampler2DRect") && !PackResourcePlan.appliesTo(rectangle,
+                "sampler2D"), "a rectangle is no sampler2D");
+    }
+
+    /**
+     * A raw texture.<stage> entry is a uniform of its own: Iris renames the declaration of its type
+     * to customtexN and every renderer registers that name (addCustomTextures), so it binds a name
+     * nothing else registers. A PNG entry on such a name binds nowhere (KNOW-801).
+     */
+    @Test
+    void aRawStageTextureBindsANameNothingRegisters(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.write(shaders.resolve("lut.dat"), new byte[16]);
+        Files.write(shaders.resolve("glow.png"), new byte[8]);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                texture.composite.lut = lut.dat TEXTURE_2D R8 4 4 RED UNSIGNED_BYTE
+                texture.composite.glow = glow.png
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D lut;\n"
+                + "uniform sampler2D glow;\nvoid main() {\n/* RENDERTARGETS: 0 */\n"
+                + " gl_FragData[0] = texture2D(lut, vec2(0.5)) + texture2D(glow, vec2(0.5));\n}\n");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackResourceBinding lut = plan.resources().binding("composite", "lut");
+        assertTrue(lut != null && lut.kind() == PackResourceKind.RAW_TEXTURE, "raw lut: " + lut);
+        assertTrue(plan.program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:glow")
+                && !plan.program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:lut"),
+                plan.program("composite").deviations().toString());
     }
 
     /** Iris raw declarations: words name the dimension; Chimera uploads only an unconverted layout. */

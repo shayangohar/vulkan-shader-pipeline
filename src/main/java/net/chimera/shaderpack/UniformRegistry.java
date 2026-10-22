@@ -358,15 +358,6 @@ public final class UniformRegistry {
             Map.entry("noisetex", 7)
     );
 
-    /**
-     * A pack may expose its block atlas through a custom texture named
-     * textureAtlas.  Complementary also uses the legacy name tex in the
-     * material helper that reads that same declared resource.  The alias is
-     * resolved only when the pack has already allocated textureAtlas; it is
-     * not a host-texture fallback and does not consume a second selector slot.
-     */
-    static final String PACK_ATLAS_SAMPLER = "textureAtlas";
-
     /** Geometry stage: the host's registry slots the terrain draw path fills. */
     public static final Map<String, Integer> GEOMETRY_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),

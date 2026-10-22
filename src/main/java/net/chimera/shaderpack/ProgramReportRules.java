@@ -679,8 +679,9 @@ final class ProgramReportRules {
 
     /**
      * The pack's target deviations that concern a target the program writes, and the integer targets
-     * whose mip chain it asks for: GL refuses glGenerateMipmap on a format it cannot filter, so Iris's
-     * chain stays at its base level while Chimera downsamples it nearest (PackTargetImages).
+     * whose mip chain it asks for. The GL spec refuses glGenerateMipmap on a format it cannot filter,
+     * so Iris's chain depends on the driver (incomplete, reading zero, or built); Chimera downsamples
+     * it nearest (PackTargetImages).
      */
     static List<String> relevantTargetDeviations(
             PackConfig.PackConfigData config,
