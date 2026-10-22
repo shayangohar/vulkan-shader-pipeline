@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "86df002497d87881076c68a5d5da0fd573de28d2fb6895dfe2099abc43fe7d51",
+      "reportSha256": "ea0921864e281a8a0148f37fe3f956c2be8a1a5e7e22e0f76b1c2ffc55df6d2e",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -51,6 +51,10 @@
           "vertex"
         ],
         "shadow_text_bg": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_water": [
           "fragment",
           "vertex"
         ]
@@ -132,6 +136,11 @@
           "PROGRAM_ALIAS_RECORDED:shadow_text_bg->shadow",
           "SHADOW_TEXT_BG_STATE_FIXED_TO_HOST",
           "SHADOW_TEXT_BG_VERTEX_BRIDGE"
+        ],
+        "shadow_water": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_water->shadow",
+          "SHADOW_VERTEX_BRIDGE"
         ]
       },
       "sourceHashes": {
@@ -144,7 +153,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "6e15c0e83084f7fac74d179df784a7a4487c9497300aed7af5235c97fb156fc5",
+      "reportSha256": "3adffc6758463230d841f4c6142c2d5242b1f86cc582baaec6a33993aa2af794",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -193,6 +202,10 @@
           "vertex"
         ],
         "shadow_text_bg": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_water": [
           "fragment",
           "vertex"
         ]
@@ -262,6 +275,12 @@
           "PROGRAM_ALIAS_RECORDED:shadow_text_bg->shadow",
           "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
           "SHADOW_TEXT_BG_VERTEX_BRIDGE"
+        ],
+        "shadow_water": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_water->shadow",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_VERTEX_BRIDGE"
         ]
       },
       "sourceHashes": {

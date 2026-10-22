@@ -102,7 +102,8 @@
     "shadow_lightning",
     "shadow_lines",
     "shadow_text",
-    "shadow_text_bg"
+    "shadow_text_bg",
+    "shadow_water"
   ],
   "I Like Vanilla v1.5.0b.zip": [
     "clrwl_gbuffers",
@@ -179,7 +180,8 @@
     "shadow_lightning",
     "shadow_lines",
     "shadow_text",
-    "shadow_text_bg"
+    "shadow_text_bg",
+    "shadow_water"
   ],
   "RedHat_v34.3.1.zip": [
     "gbuffers_damagedblock",
@@ -231,6 +233,7 @@
     "shadow_lines",
     "shadow_text",
     "shadow_text_bg",
+    "shadow_water",
     "text_bg"
   ],
   "Sildurs Vibrant Shaders v2.02 Extreme.zip": [
@@ -266,7 +269,8 @@
     "shadow_lightning",
     "shadow_lines",
     "shadow_text",
-    "shadow_text_bg"
+    "shadow_text_bg",
+    "shadow_water"
   ],
   "miniature-shader-2.19.zip": [
     "clrwl_gbuffers",
@@ -279,8 +283,7 @@
     "gbuffers_terrain_solid",
     "gbuffers_textured",
     "shadow_cutout",
-    "shadow_solid",
-    "shadow_water"
+    "shadow_solid"
   ],
   "rethinking-voxels_r0.1-beta9.zip": [
     "dh_terrain",
@@ -300,7 +303,8 @@
     "shadow_lightning",
     "shadow_lines",
     "shadow_text",
-    "shadow_text_bg"
+    "shadow_text_bg",
+    "shadow_water"
   ],
   "superDuperVanilla.zip": [
     "dh_generic",
@@ -311,7 +315,6 @@
     "physics_ocean",
     "physics_ocean_shadow",
     "shadow_cutout",
-    "shadow_solid",
-    "shadow_water"
+    "shadow_solid"
   ]
 }

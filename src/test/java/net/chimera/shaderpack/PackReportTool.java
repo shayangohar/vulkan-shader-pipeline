@@ -22,7 +22,8 @@ import java.util.TreeSet;
  */
 public final class PackReportTool {
     private static final String BLOCKING =
-            ".*(UNSUPPORTED|REJECTED|MISSING|NOT_MAPPED|MALFORMED|CONFLICT|FAILED|INVALID|SOURCE_ONLY|UNUSED).*";
+            ".*(UNSUPPORTED|REJECTED|MISSING|NOT_MAPPED|MALFORMED|CONFLICT|FAILED|INVALID|SOURCE_ONLY|UNUSED"
+                    + "|MERGED_BY_HOST).*";
 
     private PackReportTool() {}
 

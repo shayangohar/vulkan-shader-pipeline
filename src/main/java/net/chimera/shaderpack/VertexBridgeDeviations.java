@@ -10,7 +10,7 @@ final class VertexBridgeDeviations {
 
     /** The generic refusal of a terrain-like or family program's vertex bridge. */
     static String unsupported(String name) {
-        return switch (name) {
+        return switch (FamilyAdapterRegistry.laneProgram(name)) {
             case "shadow" -> "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
             case "shadow_entities", "shadow_block" -> "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
             case "gbuffers_water" -> "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED";

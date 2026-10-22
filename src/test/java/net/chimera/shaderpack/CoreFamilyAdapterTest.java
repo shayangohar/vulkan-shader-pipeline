@@ -183,8 +183,9 @@ final class CoreFamilyAdapterTest {
 
     /**
      * A world program with no lane names why: Iris draws gbuffers_textured for position_tex world
-     * draws and terrain_solid for solid terrain, which Chimera routes to neither, while it draws
-     * gbuffers_textured_lit under no key of its own (ShaderKey).
+     * draws, which Chimera does not route, and terrain_solid for solid terrain, which VulkanMod draws
+     * in the cutout_mipped layer with the rest; it draws gbuffers_textured_lit under no key of its
+     * own (ShaderKey).
      */
     @Test
     void unlanedProgramsNameTheirReason(@TempDir Path root) throws IOException {
@@ -205,9 +206,33 @@ final class CoreFamilyAdapterTest {
         assertTrue(report.program("gbuffers_textured").deviations()
                 .contains("FAMILY_LANE_UNSUPPORTED:gbuffers_textured"), "textured reason");
         assertTrue(report.program("gbuffers_terrain_solid").deviations()
-                .contains("FAMILY_LANE_UNSUPPORTED:gbuffers_terrain_solid"), "terrain_solid reason");
+                .contains("TERRAIN_LAYER_MERGED_BY_HOST:gbuffers_terrain_solid"), "terrain_solid reason");
         assertTrue(report.program("gbuffers_textured_lit").deviations().contains("IRIS_FALLBACK_SOURCE_ONLY"),
                 "textured_lit reason");
+    }
+
+    /**
+     * Iris draws the shadow pass's translucent terrain with shadow_water (SodiumPrograms SHADOW_TRANS),
+     * a layer VulkanMod draws apart, so a pack's own shadow_water runs on the shadow terrain lane.
+     * shadow_cutout's layer holds solid blocks too in VulkanMod, so it stays unlaned and says so.
+     */
+    @Test
+    void shadowWaterRunsOnTheShadowLane(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String vertex = "#version 120\nvarying vec2 uv;\n"
+                + "void main() {\n gl_Position = ftransform();\n uv = gl_MultiTexCoord0.xy;\n}\n";
+        String fragment = "#version 120\nuniform sampler2D tex;\nvarying vec2 uv;\n"
+                + "void main() {\n gl_FragData[0] = texture2D(tex, uv);\n}\n";
+        for (String name : List.of("shadow", "shadow_water", "shadow_cutout")) {
+            Files.writeString(shaders.resolve(name + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(name + ".fsh"), fragment);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackProgramPlan water = analysis.plan().program("shadow_water");
+        assertTrue(water.executable() && water.convertedVertex() != null
+                && !analysis.plan().isProgramAlias("shadow_water"), water.deviations().toString());
+        assertTrue(analysis.report().program("shadow_cutout").deviations()
+                .contains("TERRAIN_LAYER_MERGED_BY_HOST:shadow_cutout"), "shadow_cutout reason");
     }
 
     private static void verifyUnsupported(Path fixture, Path baseline) throws IOException {

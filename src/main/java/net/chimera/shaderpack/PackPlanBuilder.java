@@ -623,7 +623,7 @@ public final class PackPlanBuilder {
         /** The shadow, modern terrain or legacy terrain vertex bridge, throwing its first concrete failure. */
         private LegacyGlslConverter.TerrainVertexConversion terrainVertexOrThrow() {
             UniformRegistry.ProgramInterface vertexInterface = interfacePlan.project("vertex", stage);
-            if (name.equals("shadow")) {
+            if (FamilyAdapterRegistry.laneProgram(name).equals("shadow")) {
                 return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, vertexFile(), fragment,
                         GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, vertexInterface, true, false,
                         allowStorageBuffers);
@@ -870,7 +870,7 @@ public final class PackPlanBuilder {
 
     private static boolean isTerrainLike(String name) {
         return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
-                || name.equals("shadow");
+                || FamilyAdapterRegistry.laneProgram(name).equals("shadow");
     }
 
     /** Programs whose modern sources are normalized like terrain: terrain, water and both shadow lanes. */

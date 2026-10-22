@@ -46,6 +46,8 @@ final class PackPipelineSet {
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     GraphicsPipeline shadowPipeline;
     int[] shadowSlots;
+    /** shadow_water for the shadow pass's translucent terrain (Iris SHADOW_TRANS); null draws it with shadow. */
+    GraphicsPipeline shadowWaterPipeline;
 
     /** shadow_entities on the shadow pass's entity lane; null leaves entities out of the shadow map. */
     PackPipelines.PackEntity shadowEntities;
@@ -117,6 +119,7 @@ final class PackPipelineSet {
         terrainRoute = null;
         waterRoute = null;
         if (shadowPipeline != null) shadowPipeline.cleanUp();
+        if (shadowWaterPipeline != null) shadowWaterPipeline.cleanUp();
         Stream.of(shadowEntities, shadowMovingBlock, shadowBlock, entity, translucentEntity, spiderEyes, block,
                         blockTranslucent, movingBlock, damagedBlock, translucentEntityText, blockTranslucentText)
                 .filter(Objects::nonNull).forEach(value -> value.pipeline().cleanUp());
@@ -148,6 +151,7 @@ final class PackPipelineSet {
         waterRoute = null;
         shadowPipeline = null;
         shadowSlots = null;
+        shadowWaterPipeline = null;
         shadowEntities = null;
         shadowMovingBlock = null;
         shadowBlock = null;

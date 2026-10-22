@@ -117,6 +117,8 @@
   "shadow_text.vsh": "35a84796f4968df4 1777d62a2cdd41af",
   "shadow_text_bg.fsh": "fc3349732c90c7c7 2daecbf49088b049",
   "shadow_text_bg.vsh": "36f578c2813dd7a4 d054780b3bcc21f8",
+  "shadow_water.fsh": "b7c1bf582fdb6ec3 3741b954b34d651d",
+  "shadow_water.vsh": "823d4c26395182c9 ef3b9d837855e3b4",
   "text_bg.fsh": "575b4127ab7d2143 31496bae93f6efd2",
   "text_bg.vsh": "a73664d564bf19b5 e6a923887e309c5d"
 }

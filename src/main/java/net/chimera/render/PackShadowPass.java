@@ -14,6 +14,7 @@ import net.vulkanmod.render.PipelineManager;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
+import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
@@ -116,23 +117,13 @@ final class PackShadowPass {
 
             try {
                 if (packShadow) {
-                    shadowBindings = bindPackShadowImages();
+                    shadowBindings = bindPackShadowImages(pass.pipelines.shadowPipeline);
                 }
                 beginShadowDraw(frame);
                 drawShadowTerrain(frame);
                 if (packShadow) {
                     renderShadowCasters(cameraX, cameraY, cameraZ);
-                    // shadowtex1 is the opaque, cutout and entity casters only;
-                    // the translucent layer below reaches shadowtex0 alone, and
-                    // packs tint through shadowcolor where the two differ.
-                    if (Renderer.getInstance().getBoundRenderPass() != null) {
-                        Renderer.getInstance().endRenderPass(cmd);
-                    }
-                    this.shadowMap.captureOpaqueDepth(cmd);
-                    PackUniformProvider.updateDrawAlphaReference(0.0F);
-                    WorldRenderer.getInstance().renderSectionLayer(
-                            RenderType.translucent(), cameraX, cameraY, cameraZ,
-                            this.shadowMap.getLightView(), projection);
+                    shadowBindings = drawShadowTranslucent(frame, shadowBindings);
                 }
             } finally {
                 endShadowRecording(frame, shadowBindings);
@@ -150,11 +141,35 @@ final class PackShadowPass {
     private record ShadowFrame(VkCommandBuffer cmd, VulkanImage color, VulkanImage depth, boolean pack,
             Matrix4f projection, double cameraX, double cameraY, double cameraZ) {}
 
-    /** Binds the pack shadow program's images for its draws. */
-    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPackShadowImages() {
-        pass.prepareProgramImages(pass.pipelines.shadowPipeline);
-        return pass.images.bindProgramImages(pass.pipelines.shadowPipeline, null, null,
-                DrawMaterialContext.captureLive());
+    /** Binds a pack shadow terrain program's images for its draws. */
+    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPackShadowImages(
+            GraphicsPipeline pipeline) {
+        pass.prepareProgramImages(pipeline);
+        return pass.images.bindProgramImages(pipeline, null, null, DrawMaterialContext.captureLive());
+    }
+
+    /**
+     * Draws the translucent terrain layer into the shadow map, untested (Iris SHADOW_TRANS), with
+     * shadow_water where the pack has it, whose images then replace shadow's. shadowtex1 is the
+     * opaque, cutout and entity casters only; this layer reaches shadowtex0 alone, and packs tint
+     * through shadowcolor where the two differ. Returns the bindings open afterwards.
+     */
+    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> drawShadowTranslucent(
+            ShadowFrame frame, ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindings) {
+        if (Renderer.getInstance().getBoundRenderPass() != null) {
+            Renderer.getInstance().endRenderPass(frame.cmd());
+        }
+        this.shadowMap.captureOpaqueDepth(frame.cmd());
+        ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> open = bindings;
+        GraphicsPipeline water = pass.pipelines.shadowWaterPipeline;
+        if (water != null) {
+            if (open != null) open.close();
+            open = bindPackShadowImages(water);
+        }
+        PackUniformProvider.updateDrawAlphaReference(0.0F);
+        WorldRenderer.getInstance().renderSectionLayer(RenderType.translucent(), frame.cameraX(), frame.cameraY(),
+                frame.cameraZ(), this.shadowMap.getLightView(), frame.projection());
+        return open;
     }
 
     /**
@@ -174,7 +189,8 @@ final class PackShadowPass {
         PipelineManager.setShaderGetter(rt -> {
             if (packShadow) {
                 VRenderSystem.disableBlend();
-                return pass.pipelines.shadowPipeline;
+                GraphicsPipeline water = pass.pipelines.shadowWaterPipeline;
+                return rt == TerrainRenderType.TRANSLUCENT && water != null ? water : pass.pipelines.shadowPipeline;
             }
             return this.shadowMap.getShadowPipeline();
         });

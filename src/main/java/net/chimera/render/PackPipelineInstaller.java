@@ -151,7 +151,7 @@ final class PackPipelineInstaller {
     /** Installs one admitted program's pipelines through its family's installer. */
     void installProgram(PackProgram program, PackProgramPlan programPlan, String fixedVertex) {
         String name = program.name();
-        if (name.equals("shadow")) {
+        if (name.equals("shadow") || name.equals("shadow_water")) {
             installShadow(name, programPlan);
         } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
             installShadowEntities(name, programPlan);
@@ -198,7 +198,7 @@ final class PackPipelineInstaller {
         }
     }
 
-    /** The shadow terrain program, on the pack-wide terrain format. */
+    /** The shadow terrain program, or shadow_water for its translucent layer, on the pack-wide terrain format. */
     void installShadow(String name, PackProgramPlan programPlan) {
         PackPipelines.PackShadow shadow = PackPipelines.buildShadow(programPlan,
                 terrainMaterial(),
@@ -212,12 +212,15 @@ final class PackPipelineInstaller {
             LOGGER.warn("[chimera] pack shadow: fallback=IDENTITY (build failed)");
             return;
         }
-        pipelines.shadowPipeline = shadow.pipeline();
-        pipelines.shadowSlots = shadow.samplerSlots();
         if (!attachPackStoragePipeline(name, shadow.pipeline(), shadow.imageBindings())) {
             shadow.pipeline().cleanUp();
-            pipelines.shadowPipeline = null;
             return;
+        }
+        if (name.equals("shadow_water")) {
+            pipelines.shadowWaterPipeline = shadow.pipeline();
+        } else {
+            pipelines.shadowPipeline = shadow.pipeline();
+            pipelines.shadowSlots = shadow.samplerSlots();
         }
         if (report != null) {
             report.markRuntime(name,
@@ -226,8 +229,7 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack shadow: ok (samplers={})",
-                Arrays.toString(shadow.samplerSlots()));
+        LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(shadow.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack shadow converted fragment:\n{}", shadow.convertedFragment());
         }

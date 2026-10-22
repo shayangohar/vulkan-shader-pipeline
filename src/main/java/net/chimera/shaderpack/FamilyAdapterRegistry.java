@@ -16,6 +16,9 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.TRANSLUCENT, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
             plan("shadow", FamilyAdapterPlan.Family.SHADOW,
                     UniformRegistry.Stage.SHADOW, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
+            // Iris SodiumPrograms SHADOW_TRANS: the shadow pass's translucent terrain layer.
+            plan("shadow_water", FamilyAdapterPlan.Family.SHADOW,
+                    UniformRegistry.Stage.SHADOW, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
             // Iris SHADOW_ENTITIES_CUTOUT: the shadow pass's entity casters on the entity layout (the
             // end portal and gateway too, after the entitySolid swap), and moving blocks on the
             // block layout.
@@ -128,6 +131,25 @@ public final class FamilyAdapterRegistry {
             return unsupported(name, FamilyAdapterPlan.Family.SPECIAL);
         }
         return FamilyAdapterPlan.unsupported(name);
+    }
+
+    /**
+     * The program whose lane {@code name} runs on: shadow_water (Iris's ShadowWater for the shadow
+     * pass's translucent layer) on the shadow terrain lane; every other name on its own.
+     */
+    public static String laneProgram(String name) {
+        return "shadow_water".equals(name) ? "shadow" : name;
+    }
+
+    /**
+     * Iris's per-layer terrain programs (SodiumPrograms TERRAIN, TERRAIN_CUTOUT, SHADOW,
+     * SHADOW_CUTOUT) for layers VulkanMod does not draw apart: its chunk builds put solid blocks
+     * into cutout_mipped (TerrainRenderType.COMPACT_RENDER_TYPES and SEMI_COMPACT_RENDER_TYPES), so
+     * gbuffers_terrain and shadow draw both kinds of block.
+     */
+    public static boolean isMergedLayerProgram(String name) {
+        return Set.of("gbuffers_terrain_solid", "gbuffers_terrain_cutout", "shadow_solid", "shadow_cutout")
+                .contains(name);
     }
 
     public static UniformRegistry.Stage stageFor(String name) {

@@ -210,7 +210,8 @@ final class ProgramReportRules {
 
     /** Modern terrain, water and shadow sources run through their own planned bridge. */
     static boolean modernTerrainPlan(String name, PackProgramPlan programPlan) {
-        return (name.equals("gbuffers_terrain") || name.equals("gbuffers_water") || name.equals("shadow"))
+        String lane = FamilyAdapterRegistry.laneProgram(name);
+        return (lane.equals("gbuffers_terrain") || lane.equals("gbuffers_water") || lane.equals("shadow"))
                 && programPlan != null && programPlan.terrainMaterial().modern();
     }
 
@@ -363,7 +364,7 @@ final class ProgramReportRules {
             if (FamilyAdapterRegistry.isCloudFamily(name) && AuthoredOutput.producesNothing(vertex, fragment)) {
                 return PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT;
             }
-            String bridge = switch (name) {
+            String bridge = switch (FamilyAdapterRegistry.laneProgram(name)) {
                 case "gbuffers_terrain" -> TerrainVertexBridge.supportsTerrainVertex(vertex, fragment)
                         ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
                 case "gbuffers_water" -> TerrainVertexBridge.supportsModernTerrain(vertex, fragment)
@@ -406,7 +407,7 @@ final class ProgramReportRules {
      * name theirs by the material contract.
      */
     static String vertexBridgeLabel(String name) {
-        if (name.equals("shadow")) return "SHADOW";
+        if (FamilyAdapterRegistry.laneProgram(name).equals("shadow")) return "SHADOW";
         // Every entity-like family converts on the entity bridge (PackPlanBuilder.convertEntityVertex).
         if (FamilyAdapterRegistry.isEntityLike(name)) {
             return VertexBridgeDeviations.entity(name, false).replace("_VERTEX_BRIDGE", "");
@@ -426,7 +427,7 @@ final class ProgramReportRules {
     /** A vertex stage no bridge serves: water draws on the fixed host vertex, shadow programs fail. */
     static String unbridgedVertex(String name, boolean hasVertex) {
         if (name.equals("gbuffers_water")) return "FIXED_VERTEX_SUBSTITUTION";
-        if (name.equals("shadow")) return "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
+        if (FamilyAdapterRegistry.laneProgram(name).equals("shadow")) return "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
         if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
         return hasVertex ? "FIXED_VERTEX_SUBSTITUTION" : null;
     }
@@ -630,6 +631,7 @@ final class ProgramReportRules {
     private static String laneReason(String name) {
         if (IRIS_FALLBACK_SOURCES.contains(name)) return "IRIS_FALLBACK_SOURCE_ONLY";
         if (name.matches("(?:begin|shadowcomp)\\d*")) return "PASS_PROGRAM_UNSUPPORTED:" + name;
+        if (FamilyAdapterRegistry.isMergedLayerProgram(name)) return "TERRAIN_LAYER_MERGED_BY_HOST:" + name;
         return PackResolutionPlan.isIrisProgram(name) ? "FAMILY_LANE_UNSUPPORTED:" + name
                 : "IRIS_PROGRAM_UNUSED:" + name;
     }
