@@ -77,12 +77,16 @@ public final class ServedUniforms {
     /**
      * A compute stage's source as Iris compiles it: one declaration per name, each uniform Iris
      * never sets reading its initializer ({@link #readInitializers}), each one it sets without one
-     * ({@link #withoutSetInitializers}), and FogMode.OFF's fog values. Every compute path (pass
-     * computes, shadowcomp and its analysis) prepares its source here.
+     * ({@link #withoutSetInitializers}), FogMode.OFF's fog values, and the normalization Iris's
+     * CommonTransformer gives computes (LegacyShaderNormalizer.normalizeCompute). Every compute
+     * path (pass computes, shadowcomp and its analysis) prepares its source here.
      */
     public static String computeSource(String source, Predicate<String> irisSets) {
         String initialized = readInitializers(GlslTokenRewriter.splitUniformDeclarators(source), irisSets).source();
-        return serveFogOff(withoutSetInitializers(initialized, irisSets));
+        String served = serveFogOff(withoutSetInitializers(initialized, irisSets));
+        // A source the normalizer cannot read stays as it is, for the usage analysis to refuse.
+        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalizeCompute(served);
+        return normalized.successful() ? normalized.source() : served;
     }
 
     /**

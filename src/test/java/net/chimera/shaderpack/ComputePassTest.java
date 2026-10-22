@@ -389,6 +389,37 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris runs CommonTransformer on computes too: gl_Fog reads iris_Fog, built from the fog
+     * uniforms, and GL's built-ins take scalars. Rethinking Voxels' deferred1 compute reads
+     * gl_Fog.start and gl_Fog.scale.
+     */
+    @Test
+    void passComputesReadLegacyFog(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430 compatibility
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() {
+                    float fog = (3.0 - gl_Fog.start) * gl_Fog.scale;
+                    if (any(isnan(fog))) fog = 0.0;
+                    imageStore(colorimg2, ivec2(0), vec4(fog));
+                }
+                """);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("composite_a");
+        assertTrue(compute.supported(), compute.deviations().toString());
+        assertEquals(List.of("fogEnd", "fogStart"),
+                compute.values().stream().map(ComputeValueBlock.Value::name).sorted().toList());
+        Map<String, Integer> offsets = new LinkedHashMap<>();
+        compute.values().forEach(value -> offsets.put(value.name(), value.offset()));
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, offsets);
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+    }
+
+    /**
      * colorimg0 is colortex0 as a storage image, in its format, as every other target (Iris
      * IrisImages.addRenderTargetImages). Alpha Piscium's composite36 and composite42 bind it. The session
      * moves colortex0 out of the HDR image into its storage graph image before such a compute.

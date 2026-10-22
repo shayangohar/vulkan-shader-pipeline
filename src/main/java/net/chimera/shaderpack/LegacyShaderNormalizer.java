@@ -132,6 +132,19 @@ final class LegacyShaderNormalizer {
     }
 
     static Result normalize(String source, boolean vertexStage) {
+        return normalize(source, vertexStage, false);
+    }
+
+    /**
+     * A compute stage's normalization: Iris runs CommonTransformer on computes too, so gl_Fog
+     * reads the fog uniforms and built-ins take scalar overloads; a compute has no varyings.
+     * Rethinking Voxels' deferred1 compute reads gl_Fog.start and gl_Fog.scale.
+     */
+    static Result normalizeCompute(String source) {
+        return normalize(source, false, true);
+    }
+
+    private static Result normalize(String source, boolean vertexStage, boolean compute) {
         if (source == null) {
             return new Result(null, List.of(), false);
         }
@@ -146,9 +159,9 @@ final class LegacyShaderNormalizer {
             if (unsupportedField != null) {
                 return unsupported(unsupportedField);
             }
-            boolean fogFragCoord = renameFogFragCoord(tokens);
+            boolean fogFragCoord = !compute && renameFogFragCoord(tokens);
             Set<String> privateGlobals = new TreeSet<>();
-            Set<String> varyings = renameLegacyVaryings(tokens, vertexStage, privateGlobals);
+            Set<String> varyings = compute ? Set.of() : renameLegacyVaryings(tokens, vertexStage, privateGlobals);
 
             String normalized = GlslLexer.render(tokens);
             if (!varyings.isEmpty() || !privateGlobals.isEmpty()) {
