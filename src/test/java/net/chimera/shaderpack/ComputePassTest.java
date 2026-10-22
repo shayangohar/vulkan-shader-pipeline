@@ -275,7 +275,8 @@ final class ComputePassTest {
      * colorimgN binds the target in its own format, so an integer target is an integer image:
      * Rethinking Voxels' prepare4 compute writes its RGBA16I colortex11 as iimage2D. A layout naming
      * another format of the target's texel size reads it through a view in that format, as for a
-     * pack image: Alpha Piscium's begin2_b clears its R32UI colortex9 as rgba8. Another size is refused.
+     * pack image: Alpha Piscium's begin2_b clears its R32UI colortex9 as rgba8, and a float target can
+     * be read as integers of its size. Another size is refused.
      */
     @Test
     void passComputesWriteIntegerTargets(@TempDir Path root) throws IOException {
@@ -296,7 +297,15 @@ final class ComputePassTest {
                 layout(r32i) uniform iimage2D colorimg2;
                 void main() { imageStore(colorimg2, ivec2(0), ivec4(1)); }
                 """);
+        Files.writeString(shaders.resolve("composite2_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16i) uniform iimage2D colorimg2;
+                void main() { imageStore(colorimg2, ivec2(0), ivec4(1)); }
+                """);
         PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        assertEquals(List.of(new PassComputePlan.Binding("colorimg2", 0, PassComputePlan.Kind.TARGET_IMAGE, 2,
+                "rgba16i", null)), computes.compute("composite2_a").bindings(), "RGBA16F colortex2 as rgba16i");
         PassComputePlan.PassCompute compute = computes.compute("composite_a");
         assertEquals(List.of(
                 new PassComputePlan.Binding("colorimg11", 0, PassComputePlan.Kind.TARGET_IMAGE, 11, "rgba16i", null),

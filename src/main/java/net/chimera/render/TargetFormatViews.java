@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.vulkanmod.vulkan.Vulkan;
+import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.util.IdentityHashMap;
@@ -14,32 +15,34 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
 
 /**
  * Views of target images in other formats of their texel size, for a storage binding that declares
- * one: a GL image unit reads the same bits through the format the shader names (KNOW-795), and
- * Alpha Piscium's begin2_b clears its R32UI colortex9 as rgba8. Such a target is created mutable
+ * one: NVIDIA and Mesa drivers read the same bits through the format the shader names, though GL
+ * leaves a qualifier that differs from the image unit's format undefined (KNOW-795), and Alpha
+ * Piscium's begin2_b clears its R32UI colortex9 as rgba8. Such a target is created mutable
  * (ChimeraMutableImageMixin) and owns one storage view per format until it is freed.
  */
 public final class TargetFormatViews {
+    /** Per thread: MemoryManager.createImage is shared, and only this thread's allocation is the target. */
+    private static final ThreadLocal<Boolean> PREPARING = ThreadLocal.withInitial(() -> false);
     // Render thread only: targets are created, bound and freed while the frame is recorded.
-    private static boolean preparing;
     private static final Map<VulkanImage, Map<Integer, Long>> VIEWS = new IdentityHashMap<>();
 
     private TargetFormatViews() {}
 
     /** Whether the image VulkanMod is allocating now is to be created mutable. */
     public static boolean preparing() {
-        return preparing;
+        return PREPARING.get();
     }
 
     /** The image {@code create} allocates, mutable with a storage view in each of {@code formats} but its own. */
     static VulkanImage create(Supplier<VulkanImage> create, int format, Set<Integer> formats) {
         Map<Integer, Long> views = new TreeMap<>();
         boolean mutable = formats.stream().anyMatch(view -> view != format);
-        preparing = mutable;
+        PREPARING.set(mutable);
         VulkanImage image;
         try {
             image = create.get();
         } finally {
-            preparing = false;
+            PREPARING.set(false);
         }
         if (!mutable) return image;
         for (int view : formats) {
@@ -56,10 +59,20 @@ public final class TargetFormatViews {
         return view != null ? view : PackPostTargets.attachmentView(image);
     }
 
-    /** Frees {@code image} and the views it owns. */
+    /**
+     * Frees {@code image} and the views it owns once every recorded use has finished on the GPU.
+     * MemoryManager.initFrame frees retired images before it runs frame ops, so an image with views
+     * is retired from the frame op that destroys them, after them.
+     */
     static void free(VulkanImage image) {
         Map<Integer, Long> views = VIEWS.remove(image);
-        if (views != null) views.values().forEach(view -> vkDestroyImageView(Vulkan.getVkDevice(), view, null));
-        image.free();
+        if (views == null) {
+            image.free();
+            return;
+        }
+        MemoryManager.getInstance().addFrameOp(() -> {
+            views.values().forEach(view -> vkDestroyImageView(Vulkan.getVkDevice(), view, null));
+            image.free();
+        });
     }
 }
