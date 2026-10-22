@@ -249,7 +249,8 @@ public final class PackResourcePlan {
         IrisSamplerOrder.Source last = order.last(sampler.name(), advancedImage != null, custom != null);
         // Where nothing registers the name, its stage texture still binds here, as Iris's never does (KNOW-801).
         PackResourceDeclaration stage = last == null || order.intercepted(last)
-                ? stageDeclaration(program, sampler, declarations, deactivatedOverrides, deviations) : null;
+                ? stageDeclaration(program, sampler, order.names(sampler.name()), declarations, deactivatedOverrides,
+                deviations) : null;
         if (stage != null) return new Choice(stage, null);
         if (last == IrisSamplerOrder.Source.CUSTOM_TEXTURE) return new Choice(custom, null);
         if (last == IrisSamplerOrder.Source.IMAGE) return new Choice(null, advancedImage);
@@ -257,21 +258,25 @@ public final class PackResourcePlan {
     }
 
     /**
-     * The {@code texture.<program|stage|*>} declaration of this sampler, which Iris applies through
-     * the sampler interceptor (choose); one a pass deactivated is none.
+     * The {@code texture.<program|stage|*>} declaration of this sampler, under any of the names Iris
+     * registers its texture with ({@code names}), which Iris applies through the sampler
+     * interceptor (choose); one a pass deactivated is none.
      */
     private static PackResourceDeclaration stageDeclaration(String program, UniformRegistry.SamplerBinding sampler,
+                                                            List<String> names,
                                                             Map<String, PackResourceDeclaration> declarations,
                                                             Set<Integer> deactivatedOverrides,
                                                             List<String> deviations) {
         String name = sampler.name();
-        String samplerType = sampler.glslType();
-        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name, samplerType);
         String textureStage = textureStage(program);
-        if (declaration == null && textureStage != null) {
-            declaration = textureDeclaration(declarations, textureStage, name, samplerType);
+        PackResourceDeclaration declaration = null;
+        for (String scope : textureStage == null ? List.of(program, "*") : List.of(program, textureStage, "*")) {
+            for (String registered : names) {
+                if (declaration == null) {
+                    declaration = textureDeclaration(declarations, scope, registered, sampler.glslType());
+                }
+            }
         }
-        if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
         // A 1D or 3D raw texture is its own uniform under Iris (TextureTransformer renames it by
         // type), so a pass writing the same-named target never takes it back.
         Integer overriddenTarget = declaration == null || !appliesTo(declaration, "sampler2D") ? null

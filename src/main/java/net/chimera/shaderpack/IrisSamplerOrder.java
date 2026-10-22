@@ -51,6 +51,16 @@ final class IrisSamplerOrder {
             return sources.contains(Source.TARGET) && PackResourcePlan.targetIndex(name) != null ? Source.TARGET : null;
         }
 
+        /**
+         * The names Iris registers {@code name}'s built-in texture under, in order; a stage texture
+         * of the first that has one replaces it (CustomTextureSamplerInterceptor.getOverride).
+         * Where gdepthtex is registered, it comes before depthtex0 (IrisSamplers.addCompositeSamplers).
+         */
+        List<String> names(String name) {
+            return "depthtex0".equals(name) && depth.matcher("gdepthtex").matches()
+                    ? List.of("gdepthtex", "depthtex0") : List.of(name);
+        }
+
         /** Whether this order registers a sampler of {@code source} at all. */
         boolean registers(Source source) {
             return sources.contains(source);

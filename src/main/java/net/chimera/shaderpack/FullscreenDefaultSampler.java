@@ -59,8 +59,9 @@ final class FullscreenDefaultSampler {
     /**
      * Iris registers gdepthtex together with depthtex0 (IrisSamplers.addCompositeSamplers), so in a
      * fullscreen pass or a compute both names read the one texture: a gdepthtex sampler2D reads as
-     * depthtex0, and loses its declaration where depthtex0 is declared too. A source where that
-     * cannot be done cleanly stays as written.
+     * depthtex0, and loses its declaration where depthtex0 is declared too. A stage texture of
+     * either name still replaces it (IrisSamplerOrder.Order.names). A source where that cannot be
+     * done cleanly stays as written.
      */
     static String withCompositeAliases(String source, List<String> deviations) {
         if (source == null || !source.contains("gdepthtex")) return source;
@@ -77,7 +78,9 @@ final class FullscreenDefaultSampler {
             return source;
         }
         String result = depthType != null ? withoutDeclaration(source, "gdepthtex") : source;
-        deviations.add("STANDARD_RESOURCE_ALIAS:gdepthtex:depthtex0");
+        if (GlslTokenRewriter.identifierCount(source, "gdepthtex") > 1) {
+            deviations.add("STANDARD_RESOURCE_ALIAS:gdepthtex:depthtex0");
+        }
         return GlslScopedReferences.replace(result, Map.of("gdepthtex", "depthtex0"));
     }
 
