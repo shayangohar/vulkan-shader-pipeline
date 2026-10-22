@@ -15,7 +15,7 @@
   "nether": {
     "dimension": "minecraft:the_nether",
     "folder": "nether",
-    "reportSha256": "05c93994ccb91d87ffde45e3b93f2d1e4f003214fb71597711dc5d8a16688434",
+    "reportSha256": "6ea441391dc247f362c4151250a1f15cd84e9797c923a3cabcb320bc1bd4afeb",
     "sourceHashDigest": "a13f9c7763133fe2e779de75b935ab143bbd3a5c7750e6afdf0ed7ccb83bab8c",
     "settingsFingerprint": "92c874e36d66cf2d3943d0dd61621d289eca2a068b536ab3b26358cdaf402556",
     "resolutionFingerprint": "9f8356dc62d89fd7ba366d0f980b25a0a1a0a3ab38387372808c9fcdd900467f",
@@ -26,7 +26,7 @@
   "end": {
     "dimension": "minecraft:the_end",
     "folder": "end",
-    "reportSha256": "4bf1988309ba5afebd2a58df8669d750f290dc2005ec6f2c8f5bba0359b549b5",
+    "reportSha256": "138c719fc6da58a1a68099c74b111a1126a04287d62f91cb2f66ebb565e9a221",
     "sourceHashDigest": "1a6a5bae0fc8bd1635e86e702d27e7c0a1f560291c0eee75052bc7487decbac6",
     "settingsFingerprint": "92c874e36d66cf2d3943d0dd61621d289eca2a068b536ab3b26358cdaf402556",
     "resolutionFingerprint": "bf22279fa2540a47c9ed24d523aee2d3f56cbd14ccd52a9a13eca540b544df23",

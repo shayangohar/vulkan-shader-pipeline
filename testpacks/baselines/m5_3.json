@@ -1,7 +1,7 @@
 {
   "fixtures": {
     "live_uniforms": {
-      "reportSha256": "c6d36f95654cb9465cd5cf42bff181706a29ed41c155eeb21ca71ee62b4d57be",
+      "reportSha256": "1ec97d9c24bd2ec13648c7946cc8959e73ff91b62b73e5228b9d2a38ef414b99",
       "sourceHashes": {
         "composite.fsh": "4d39ca56718762ecb0f5ee347039243cbf07009ca70befad1f507776842f3db2",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
@@ -46,14 +46,17 @@
         "final": [],
         "gbuffers_block": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_PROGRAM_INVALID:vertex",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
         ],
         "gbuffers_block_translucent": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_PROGRAM_INVALID:vertex",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"
         ],
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_PROGRAM_INVALID:vertex",
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
         ],
         "gbuffers_terrain": [],
@@ -65,7 +68,7 @@
       }
     },
     "unsupported_uniform": {
-      "reportSha256": "183004b6a2896d85b627d3c97e5e410dafd18c306e20fb712878630d0174501c",
+      "reportSha256": "83c1a87314cdeef126928bc540a8b91e6b2f0ec0db4cf291b657a299748af28a",
       "sourceHashes": {
         "composite.fsh": "398fcc335a0ed8520929824c9696fa04202a2573500a634ad1f0f7c5635e6b38",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
@@ -109,14 +112,17 @@
         "final": [],
         "gbuffers_block": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_PROGRAM_INVALID:vertex",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain"
         ],
         "gbuffers_block_translucent": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_PROGRAM_INVALID:vertex",
           "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain"
         ],
         "gbuffers_damagedblock": [
           "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_PROGRAM_INVALID:vertex",
           "PROGRAM_ALIAS_RECORDED:gbuffers_damagedblock->gbuffers_terrain"
         ],
         "gbuffers_terrain": [],

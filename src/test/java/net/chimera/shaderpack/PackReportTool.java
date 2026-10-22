@@ -16,12 +16,13 @@ import java.util.TreeSet;
  * no game: this is the plan-only view a runtime load starts from.
  *
  * <p>A reason counts as blocking when its program falls back and the reason
- * names something rejected, unsupported, missing or unmapped. Informational
+ * names something rejected, unsupported, missing, unmapped or invalid, or a
+ * program Iris reads only as a fallback source. Informational
  * deviations (translations applied, constants injected) are left out.</p>
  */
 public final class PackReportTool {
     private static final String BLOCKING =
-            ".*(UNSUPPORTED|REJECTED|MISSING|NOT_MAPPED|MALFORMED|CONFLICT|FAILED).*";
+            ".*(UNSUPPORTED|REJECTED|MISSING|NOT_MAPPED|MALFORMED|CONFLICT|FAILED|INVALID|SOURCE_ONLY).*";
 
     private PackReportTool() {}
 

@@ -181,6 +181,29 @@ final class CoreFamilyAdapterTest {
                 "entity-like report rejected: " + name);
     }
 
+    /**
+     * A world program with no lane names why: Iris draws gbuffers_textured for position_tex world
+     * draws and terrain_solid for solid terrain, which Chimera routes to neither, while it draws
+     * gbuffers_textured_lit under no key of its own (ShaderKey).
+     */
+    @Test
+    void unlanedProgramsNameTheirReason(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String fragment = "#version 120\nvoid main() {\n/* DRAWBUFFERS:0 */\n gl_FragData[0] = vec4(1.0);\n}\n";
+        for (String name : List.of("gbuffers_textured", "gbuffers_textured_lit", "gbuffers_terrain_solid")) {
+            Files.writeString(shaders.resolve(name + ".vsh"),
+                    "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+            Files.writeString(shaders.resolve(name + ".fsh"), fragment);
+        }
+        ConformanceReport report = PackProbe.analyze(root).report();
+        assertTrue(report.program("gbuffers_textured").deviations()
+                .contains("FAMILY_LANE_UNSUPPORTED:gbuffers_textured"), "textured reason");
+        assertTrue(report.program("gbuffers_terrain_solid").deviations()
+                .contains("FAMILY_LANE_UNSUPPORTED:gbuffers_terrain_solid"), "terrain_solid reason");
+        assertTrue(report.program("gbuffers_textured_lit").deviations().contains("IRIS_FALLBACK_SOURCE_ONLY"),
+                "textured_lit reason");
+    }
+
     private static void verifyUnsupported(Path fixture, Path baseline) throws IOException {
         PackProbe.Analysis analysis = PackProbe.analyze(fixture);
         assertTrue(analysis.report().shouldAttempt("final"),
@@ -196,6 +219,12 @@ final class CoreFamilyAdapterTest {
             assertTrue(!analysis.report().shouldAttempt(name),
                     "unsupported family remained eligible: " + name);
         }
+        // Iris draws entities_glowing under no key of its own, and finds a skybasic with no vertex
+        // stage invalid (ProgramSource.isValid): each row names why.
+        assertTrue(analysis.report().program("gbuffers_entities_glowing").deviations()
+                .contains("IRIS_FALLBACK_SOURCE_ONLY"), "glowing reason");
+        assertTrue(analysis.report().program("gbuffers_skybasic").deviations()
+                .contains("IRIS_PROGRAM_INVALID:vertex"), "skybasic reason");
         verifyBaseline(analysis.report(), baseline, "unsupported_families");
         if (TestPacks.printBaselines()) {
             printBaseline("unsupported_families", analysis.report());

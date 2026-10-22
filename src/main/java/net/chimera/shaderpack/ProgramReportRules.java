@@ -70,6 +70,7 @@ final class ProgramReportRules {
         if (!hasFragment) {
             deviations.add("MISSING_FRAGMENT_SOURCE");
         }
+        addUnlanedDeviation(inventory, postName || !hasFragment, deviations);
 
         return new ConformanceReport.ProgramReport(
                 name, PackProbe.familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
@@ -593,6 +594,34 @@ final class ProgramReportRules {
         boolean imagesReady = !usesImages || advanced.imagesServable(program);
         boolean storageReady = !usesStorage || advanced.storageBufferProgramSupported(program);
         return imagesReady && storageReady;
+    }
+
+    /**
+     * Programs Iris 1.21.1 reads only as other programs' fallback sources: no shader key draws them
+     * (ShaderKey, SodiumPrograms), so neither does Chimera; the programs they stand in for do.
+     */
+    static final Set<String> IRIS_FALLBACK_SOURCES = Set.of(
+            "gbuffers_textured_lit", "gbuffers_item", "gbuffers_entities_glowing");
+
+    /** Names why a world program runs in no lane (unlanedProgram); {@code skip} a post or fragmentless one. */
+    static void addUnlanedDeviation(PackProbe.Inventory inventory, boolean skip, Set<String> deviations) {
+        String unlaned = skip ? null : unlanedProgram(inventory.name, inventory);
+        if (unlaned != null) deviations.add(unlaned);
+    }
+
+    /**
+     * Why a world program with a fragment stage runs in no lane, or null when it has one: Iris
+     * draws it under no key of its own; Chimera routes none of the draws Iris gives it
+     * (gbuffers_textured's position_tex world draws, the per-layer terrain and shadow programs); or
+     * it has no vertex stage, which leaves it invalid to Iris too (ProgramSource.isValid), whose
+     * fallback program draws instead.
+     */
+    static String unlanedProgram(String name, PackProbe.Inventory inventory) {
+        if (!FamilyAdapterRegistry.isExecutableFamily(name)) {
+            return IRIS_FALLBACK_SOURCES.contains(name) ? "IRIS_FALLBACK_SOURCE_ONLY"
+                    : "FAMILY_LANE_UNSUPPORTED:" + name;
+        }
+        return executableName(name, inventory, false) ? null : "IRIS_PROGRAM_INVALID:vertex";
     }
 
     /** A host-layout lane (LINE, GLINT, LIGHTNING, ...) whose vertex could not be bridged. */
