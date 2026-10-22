@@ -52,7 +52,8 @@ final class CustomValueParityTest {
                 {value("and(1.0, 0.0) + or(1.0, 0.0) + not(0.0)"), 2.0},
                 {value("add(1.0, 2.0) * subtract(5.0, 3.0) / divide(4.0, 2.0) + remainder(5.0, 3.0)"), 5.0},
                 {value("negate(2.0) + multiply(2.0, 3.0)"), 4.0}, {value("random(2.0, 2.0)"), 2.0},
-                {value("max(1.0, 2.0, 5.0)"), 2.0}, {value("min(3.0, 2.0, 0.0)"), 2.0}};
+                {value("max(1.0, 2.0, 5.0)"), 2.0}, {value("min(3.0, 2.0, 0.0)"), 2.0},
+                {value("randomInt(3, 4) + randomInt(1)"), 3.0}, {value("toInt(-2.7) + toFloat(2)"), 0.0}};
         for (double[] entry : cases) {
             assertEquals(entry[1], entry[0], 1.0e-9);
         }

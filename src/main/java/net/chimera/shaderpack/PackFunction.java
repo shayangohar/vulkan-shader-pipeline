@@ -49,6 +49,11 @@ enum PackFunction {
     EDGE(2, 2, Shape.LANES, null, (edge, x) -> x < edge ? 0.0 : 1.0),
     /** {@code random()} in [0, 1), or {@code random(min, max)}. */
     RANDOM(0, 2, Shape.SCALAR, null),
+    /** {@code randomInt()} any int, {@code randomInt(bound)} in [0, bound), {@code randomInt(min, max)}. */
+    RANDOMINT(0, 2, Shape.LANES, null),
+    /** Iris's explicit casts (IrisFunctions.addExplicitCast): int to float, and float to int, truncating. */
+    TOFLOAT(1, 1, Shape.SCALAR, value -> value),
+    TOINT(1, 1, Shape.SCALAR, value -> (int) value),
     /**
      * Iris's three-or-more-argument {@code max} and {@code min} read the second argument again for
      * each further one, so only the first two count.

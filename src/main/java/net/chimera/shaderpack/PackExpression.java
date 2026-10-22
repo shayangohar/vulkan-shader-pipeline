@@ -393,6 +393,7 @@ public final class PackExpression {
             return switch (this.function) {
                 case IF -> select(context, lane);
                 case RANDOM -> random(context);
+                case RANDOMINT -> randomInt(context, lane);
                 case IN -> matchesAny(context);
                 case SMOOTH -> {
                     double value = lane(this.arguments.get(0), context, lane);
@@ -458,6 +459,19 @@ public final class PackExpression {
             if (this.arguments.isEmpty()) return unit;
             double low = context.scalar(this.arguments.get(0));
             return low + unit * (context.scalar(this.arguments.get(1)) - low);
+        }
+
+        /**
+         * Iris's randomInt, lane by lane (Random.nextInt): any int, one in [0, bound), or one in
+         * [min, max). Java refuses an empty range, so one gives 0.
+         */
+        private double randomInt(Context context, int lane) {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            if (this.arguments.isEmpty()) return random.nextInt();
+            int first = (int) lane(this.arguments.get(0), context, lane);
+            int low = this.arguments.size() == 1 ? 0 : first;
+            int high = this.arguments.size() == 1 ? first : (int) lane(this.arguments.get(1), context, lane);
+            return high > low ? random.nextInt(low, high) : 0;
         }
 
         @Override
