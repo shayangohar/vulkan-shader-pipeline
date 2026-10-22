@@ -23,8 +23,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.function.Function;
-import java.util.function.IntFunction;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -44,11 +42,25 @@ final class PackPassComputes implements AutoCloseable {
     private record Loaded(PassComputePlan.PassCompute plan, ComputeKernel kernel) {}
 
     /**
-     * The images a pass reads now: its colour targets, the one a compute writes as colorimgN (which
-     * may first move colortex0 out of the HDR image), and each depthtexN as its program samples it.
-     * Image bindings come before sampler bindings, so a sampler of the target reads where it moved.
+     * The images a pass reads now, as its program reads them. Image bindings come before sampler
+     * bindings, so a sampler of a target a compute writes reads where {@link #storage} moved it.
      */
-    record ImageSources(VulkanImage[] colors, IntFunction<VulkanImage> storage, Function<String, VulkanImage> depth) {}
+    interface ImageSources {
+        /** The colour targets the pass reads. */
+        VulkanImage[] colors();
+
+        /** The image a compute writes as colorimgN, which may first move colortex0 out of the HDR image. */
+        VulkanImage storage(int target);
+
+        /** depthtexN's snapshot. */
+        VulkanImage depth(String name);
+
+        /** shadowtex0, shadowtex1 or shadowcolorN. */
+        VulkanImage shadow(String resource);
+
+        /** The sampler a shadow image reads through: a comparison one for a sampler2DShadow. */
+        long shadowSampler(String resource, VulkanImage image, boolean compare);
+    }
 
     private final List<Loaded> loaded;
     private final PackResourceOwner resources;
@@ -171,7 +183,8 @@ final class PackPassComputes implements AutoCloseable {
                 if (!general) {
                     image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 }
-                compute.kernel().writeImage(frame, binding.binding(), image.getImageView(), image.getSampler(),
+                compute.kernel().writeImage(frame, binding.binding(), image.getImageView(),
+                        sampler(binding, image, sources),
                         general ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
         }
@@ -191,6 +204,15 @@ final class PackPassComputes implements AutoCloseable {
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_READ_BIT);
         }
+    }
+
+    /** The sampler a sampled binding reads through: a shadow image's as a program reads it, else the image's own. */
+    private static long sampler(PassComputePlan.Binding binding, VulkanImage image, ImageSources sources) {
+        return switch (binding.kind()) {
+            case SHADOW_DEPTH, SHADOW_COLOR -> sources.shadowSampler(binding.resource(), image, false);
+            case SHADOW_COMPARE -> sources.shadowSampler(binding.resource(), image, true);
+            default -> image.getSampler();
+        };
     }
 
     /**
@@ -215,6 +237,20 @@ final class PackPassComputes implements AutoCloseable {
         vkCmdDispatchIndirect(commandBuffer, buffer.getId(), indirect.offset());
     }
 
+    /** The image one binding reads or writes this frame, or null when it has none. */
+    private VulkanImage image(PassComputePlan.Binding binding, ImageSources sources) {
+        VulkanImage[] colors = sources.colors();
+        return switch (binding.kind()) {
+            case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.resource());
+            case TEXTURE -> resources == null ? null : resources.image(binding.resource());
+            case TARGET_IMAGE -> sources.storage(binding.target());
+            case TARGET_SAMPLER -> binding.target() < colors.length ? colors[binding.target()] : null;
+            case DEPTH -> sources.depth(binding.resource());
+            case SHADOW_DEPTH, SHADOW_COMPARE, SHADOW_COLOR -> sources.shadow(binding.resource());
+            case STORAGE_BUFFER -> null;
+        };
+    }
+
     /**
      * The image each binding reads or writes this frame, null for a buffer; throws when one is
      * missing or not storable.
@@ -226,15 +262,7 @@ final class PackPassComputes implements AutoCloseable {
                 images.add(null);
                 continue;
             }
-            VulkanImage[] colors = sources.colors();
-            VulkanImage image = switch (binding.kind()) {
-                case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.resource());
-                case TEXTURE -> resources == null ? null : resources.image(binding.resource());
-                case TARGET_IMAGE -> sources.storage().apply(binding.target());
-                case TARGET_SAMPLER -> binding.target() < colors.length ? colors[binding.target()] : null;
-                case DEPTH -> sources.depth().apply(binding.resource());
-                case STORAGE_BUFFER -> null;
-            };
+            VulkanImage image = image(binding, sources);
             if (image == null) throw new IllegalStateException(binding.symbol() + " has no image this frame");
             if (binding.kind() == PassComputePlan.Kind.TARGET_IMAGE
                     && (((ChimeraVulkanImageAccessor) image).chimera$usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
@@ -290,7 +318,7 @@ final class PackPassComputes implements AutoCloseable {
             case TARGET_IMAGE -> storageSupported(PackConfig.FMT_TO_VK.getOrDefault(
                     binding.format().toUpperCase(Locale.ROOT), 0))
                     ? null : "colortex" + binding.target() + " format cannot be a storage image";
-            case TARGET_SAMPLER, TEXTURE, DEPTH -> null;
+            case TARGET_SAMPLER, TEXTURE, DEPTH, SHADOW_DEPTH, SHADOW_COMPARE, SHADOW_COLOR -> null;
         };
     }
 

@@ -5,7 +5,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -46,9 +45,6 @@ public final class PassComputePlan {
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+\\w+\\s+([A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*;");
     private static final Pattern EXTENSION = Pattern.compile("(?m)^[ \\t]*#extension\\s+(\\w+)[^\\r\\n]*(?:\\r?\\n|$)");
     private static final Pattern COLOR_IMAGE = Pattern.compile("colorimg([0-9]+)");
-    /** The pack textures a compute samples by resource key. */
-    private static final Set<PackResourceKind> TEXTURE_KINDS = EnumSet.of(PackResourceKind.NOISE,
-            PackResourceKind.PACK_TEXTURE, PackResourceKind.RAW_TEXTURE);
     /** The value block a pass compute reads; the pack compile check finds its offsets by this name. */
     public static final String VALUES_BLOCK = "ChimeraPassComputeValues";
 
@@ -62,6 +58,12 @@ public final class PassComputePlan {
         TEXTURE,
         /** {@code depthtexN}: the depth snapshot the pass's program reads under that name. */
         DEPTH,
+        /** {@code shadowtex0} or {@code shadowtex1} (and their aliases) read as depth values. */
+        SHADOW_DEPTH,
+        /** A shadow depth read through a comparison sampler: a {@code sampler2DShadow}, as {@code shadowtex0HW}. */
+        SHADOW_COMPARE,
+        /** {@code shadowcolorN}. */
+        SHADOW_COLOR,
         /** A pack image's own storage name ({@code image.<name>}), in its format. */
         PACK_IMAGE,
         /** A pack image's sampler, reading the image it names. */
@@ -328,6 +330,8 @@ public final class PassComputePlan {
         private String bindSamplers(String body, GlslResourceUsage.Analysis usage, Work work) {
             Matcher sampler = SAMPLER_DECLARATION.matcher(body);
             StringBuilder result = new StringBuilder();
+            // Iris reads shadow as shadowtex1 where watershadow is active (IrisSamplers.addShadowSamplers).
+            boolean waterShadow = usage.liveSamplers().contains("watershadow");
             while (sampler.find()) {
                 String name = sampler.group(2);
                 String type = sampler.group(1);
@@ -336,16 +340,31 @@ public final class PassComputePlan {
                     unused(body, name, work);
                     continue;
                 }
-                Binding binding = samplerBinding(name, type, work);
+                Binding binding = samplerBinding(name, type, waterShadow, work);
                 if (binding == null) {
                     work.fail("PASS_COMPUTE_SAMPLER_UNSUPPORTED:" + name);
                     continue;
                 }
                 work.declare("layout(binding = " + work.bindings.size() + ") uniform " + type + " " + name + ";");
                 work.bindings.add(binding);
+                work.samplerTypes.put(name, type);
             }
             sampler.appendTail(result);
-            return result.toString();
+            return rewriteShadowLookups(result.toString(), work);
+        }
+
+        /**
+         * GL's legacy shadow lookups (shadow2D, shadow2DLod, texture2DShadow) as the bound sampler
+         * reads them, as programs rewrite theirs (GlslTokenRewriter.rewriteShadowCalls): Rethinking
+         * Voxels' deferred1 compute calls shadow2D on shadowtex0.
+         */
+        private static String rewriteShadowLookups(String body, Work work) {
+            try {
+                return GlslTokenRewriter.rewriteShadowCalls(body, work.samplerTypes);
+            } catch (IllegalArgumentException failure) {
+                work.fail("PASS_COMPUTE_SHADOW_LOOKUP_UNSUPPORTED");
+                return body;
+            }
         }
 
         /**
@@ -413,25 +432,40 @@ public final class PassComputePlan {
         }
 
         /** What the live sampler {@code name} of {@code type} reads, or null when dispatch cannot bind it. */
-        private Binding samplerBinding(String name, String type, Work work) {
-            PackResourceBinding resource = PackResourcePlan.passComputeBinding(plan, work.pass, name, type, shadersDir);
-            if (resource.kind() == PackResourceKind.ADVANCED_IMAGE) {
-                PackAdvancedResourcePlan.ImageSpec pack = packImage(
-                        plan.advancedResources().images().get(resource.resourceKey()));
-                return pack == null || !type.equals(pack.samplerType()) ? null
-                        : new Binding(name, work.bindings.size(), Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
-            }
+        private Binding samplerBinding(String name, String type, boolean waterShadow, Work work) {
+            PackResourceBinding resource = PackResourcePlan.passComputeBinding(plan, work.pass, name, type,
+                    waterShadow, shadersDir);
+            if (!resource.available()) return null;
+            int index = work.bindings.size();
+            String key = resource.resourceKey();
+            boolean colour = type.equals("sampler2D");
+            return switch (resource.kind()) {
+                case ADVANCED_IMAGE -> {
+                    PackAdvancedResourcePlan.ImageSpec pack = packImage(plan.advancedResources().images().get(key));
+                    yield pack == null || !type.equals(pack.samplerType()) ? null
+                            : new Binding(name, index, Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
+                }
+                case TARGET -> targetSampler(name, type, index);
+                case DEPTH -> colour ? new Binding(name, index, Kind.DEPTH, -1, null, key) : null;
+                // Iris IrisSamplers.addShadowSamplers: a sampler2DShadow compares, as shadowtex0HW does.
+                case SHADOW_DEPTH -> colour ? new Binding(name, index, Kind.SHADOW_DEPTH, -1, null, key)
+                        : type.equals("sampler2DShadow") ? new Binding(name, index, Kind.SHADOW_COMPARE, -1, null, key)
+                        : null;
+                case SHADOW_COLOR -> colour ? new Binding(name, index, Kind.SHADOW_COLOR, -1, null, key) : null;
+                case NOISE, PACK_TEXTURE, RAW_TEXTURE -> textureSampler(name, type, resource, work);
+                default -> null;
+            };
+        }
+
+        /** A target's sampler, of the type its format takes; null for another name the kind covers. */
+        private Binding targetSampler(String name, String type, int index) {
             Integer target = PackResourcePlan.targetIndex(name);
-            if (resource.kind() == PackResourceKind.TARGET && target != null && resource.available()) {
-                return type.equals(targetSamplerType(target))
-                        ? new Binding(name, work.bindings.size(), Kind.TARGET_SAMPLER, target, null, null) : null;
-            }
-            if (resource.kind() == PackResourceKind.DEPTH && resource.available()) {
-                return type.equals("sampler2D")
-                        ? new Binding(name, work.bindings.size(), Kind.DEPTH, -1, null, resource.resourceKey()) : null;
-            }
-            if (!TEXTURE_KINDS.contains(resource.kind()) || !resource.available()) return null;
-            // A PNG and the noise are 2D colour images; a raw texture serves only its own sampler type.
+            return target != null && type.equals(targetSamplerType(target))
+                    ? new Binding(name, index, Kind.TARGET_SAMPLER, target, null, null) : null;
+        }
+
+        /** A pack texture's sampler: a PNG and the noise are 2D colour images; a raw texture serves its own type. */
+        private static Binding textureSampler(String name, String type, PackResourceBinding resource, Work work) {
             if (resource.kind() != PackResourceKind.RAW_TEXTURE && !type.equals("sampler2D")) return null;
             work.textures.add(resource);
             return new Binding(name, work.bindings.size(), Kind.TEXTURE, -1, null, resource.resourceKey());
@@ -521,6 +555,7 @@ public final class PassComputePlan {
         final String pass;
         final List<Binding> bindings = new ArrayList<>();
         final List<PackResourceBinding> textures = new ArrayList<>();
+        final Map<String, String> samplerTypes = new TreeMap<>();
         final StringBuilder declarations = new StringBuilder();
         Indirect indirect;
         final List<String> deviations = new ArrayList<>();

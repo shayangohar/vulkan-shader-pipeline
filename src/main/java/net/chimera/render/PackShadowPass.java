@@ -491,14 +491,23 @@ final class PackShadowPass {
             VulkanImage image) {
         boolean compareRequired = entry.kind() == ProgramImageBindingManifest.Kind.SHADOW_DEPTH
                 && program.shadowSamplerSymbols().contains(entry.sourceSymbol());
-        boolean linear = !this.shadowMap.depthNearest(entry.resourceKey().equals("shadowtex1") ? 1 : 0);
-        long sampler = this.packShadowDepth.samplerFor(image, compareRequired, linear);
+        long sampler = shadowSamplerFor(entry.resourceKey(), image, compareRequired);
         if (compareRequired && this.loggedShadowSamplerPrograms.add(program.name())) {
             LOGGER.info("[chimera] pack shadow sampler: program={} symbol={} slot={} image={} "
                             + "sampler={} compareOp=LESS_OR_EQUAL",
                     program.name(), entry.sourceSymbol(), entry.slot(), image.getId(), sampler);
         }
         return sampler;
+    }
+
+    /**
+     * The sampler a shadow image reads through, for a program or a pass compute: a comparison one
+     * for a {@code sampler2DShadow}, filtering as the pack's shadowtexNNearest says, otherwise the
+     * image's own.
+     */
+    long shadowSamplerFor(String resource, VulkanImage image, boolean compare) {
+        boolean linear = !this.shadowMap.depthNearest(resource.equals("shadowtex1") ? 1 : 0);
+        return this.packShadowDepth.samplerFor(image, compare, linear);
     }
 
     /**

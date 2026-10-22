@@ -2,10 +2,6 @@
   "Alpha Piscium v1.10.0.zip": [
     "composite12_a",
     "composite20",
-    "composite34",
-    "composite35",
-    "composite38",
-    "composite40",
     "composite7",
     "composite8",
     "dh_shadow",
@@ -97,7 +93,6 @@
   "Glimmer-v1.5.2.zip": [
     "clrwl_gbuffers",
     "clrwl_shadow",
-    "composite4",
     "dh_terrain",
     "dh_water",
     "gbuffers_damagedblock",
@@ -198,8 +193,6 @@
     "gbuffers_textured_lit"
   ],
   "RenderPearl v2.4.0.zip": [
-    "composite",
-    "deferred1",
     "gbuffers_damagedblock",
     "gbuffers_line",
     "gbuffers_terrain_cutout",
@@ -212,7 +205,6 @@
   ],
   "Reverie v1.0.zip": [
     "composite2",
-    "composite4",
     "dh_terrain",
     "dh_water",
     "gbuffers_textured",

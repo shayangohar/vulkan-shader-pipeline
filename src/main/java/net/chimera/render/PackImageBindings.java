@@ -125,7 +125,7 @@ final class PackImageBindings {
     }
 
     /** shadowtex1 is the opaque-only shadow depth; shadowtex0 is the full shadow depth. */
-    private VulkanImage shadowDepthImage(String name) {
+    VulkanImage shadowDepthImage(String name) {
         ChimeraShadowMap shadowMap = pass.shadowPass.shadowMap;
         if (shadowMap.getShadowFramebuffer() == null) {
             return null;

@@ -665,11 +665,38 @@ final class PackPostChain {
 
     /**
      * The images a pass's computes read now: the chain's colour sources, the images they write
-     * (colortex0 moved out of the HDR image first), and depth as programs sample it.
+     * (colortex0 moved out of the HDR image first), and depth and shadow images as programs sample
+     * them (PackImageBindings, PackShadowPass.shadowSamplerFor).
      */
     private PackPassComputes.ImageSources computeSources(VkCommandBuffer commandBuffer) {
-        return new PackPassComputes.ImageSources(pass.packPostTargets.sourceImages(),
-                target -> pass.packPostTargets.storageSource(commandBuffer, target), pass.images::depthTargetImage);
+        return new PackPassComputes.ImageSources() {
+            @Override
+            public VulkanImage[] colors() {
+                return pass.packPostTargets.sourceImages();
+            }
+
+            @Override
+            public VulkanImage storage(int target) {
+                return pass.packPostTargets.storageSource(commandBuffer, target);
+            }
+
+            @Override
+            public VulkanImage depth(String name) {
+                return pass.images.depthTargetImage(name);
+            }
+
+            @Override
+            public VulkanImage shadow(String resource) {
+                int colour = PackResourcePlan.shadowColorIndex(resource);
+                return colour >= 0 ? pass.shadowPass.shadowMap.shadowColor(colour)
+                        : pass.images.shadowDepthImage(resource);
+            }
+
+            @Override
+            public long shadowSampler(String resource, VulkanImage image, boolean compare) {
+                return pass.shadowPass.shadowSamplerFor(resource, image, compare);
+            }
+        };
     }
 
     /**

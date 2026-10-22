@@ -420,6 +420,51 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris gives a compute that reads shadow samplers the shadow maps (IrisSamplers
+     * addShadowSamplers): shadowtexN as depth, a sampler2DShadow such as shadowtex1HW through a
+     * comparison, shadowcolorN, and shadow as shadowtex1 where watershadow is active. A legacy
+     * shadow2D reads the bound sampler as programs read it (Rethinking Voxels' deferred1).
+     */
+    @Test
+    void passComputesReadShadowMaps(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                uniform sampler2D shadowtex0;
+                uniform sampler2DShadow shadowtex1HW;
+                uniform sampler2D shadowcolor0;
+                uniform sampler2D shadow;
+                uniform sampler2D watershadow;
+                void main() {
+                    vec4 value = texture(shadowtex0, vec2(0.5)) + texture(shadowcolor0, vec2(0.5))
+                            + vec4(texture(shadowtex1HW, vec3(0.5))) + texture(shadow, vec2(0.5))
+                            + texture(watershadow, vec2(0.5)) + shadow2D(shadowtex1HW, vec3(0.5)).x;
+                    imageStore(colorimg2, ivec2(0), value);
+                }
+                """);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("composite_a");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg2", 0, PassComputePlan.Kind.TARGET_IMAGE, 2, "rgba16f", null),
+                new PassComputePlan.Binding("shadowtex0", 1, PassComputePlan.Kind.SHADOW_DEPTH, -1, null,
+                        "shadowtex0"),
+                new PassComputePlan.Binding("shadowtex1HW", 2, PassComputePlan.Kind.SHADOW_COMPARE, -1, null,
+                        "shadowtex1"),
+                new PassComputePlan.Binding("shadowcolor0", 3, PassComputePlan.Kind.SHADOW_COLOR, -1, null,
+                        "shadowcolor0"),
+                new PassComputePlan.Binding("shadow", 4, PassComputePlan.Kind.SHADOW_DEPTH, -1, null, "shadowtex1"),
+                new PassComputePlan.Binding("watershadow", 5, PassComputePlan.Kind.SHADOW_DEPTH, -1, null,
+                        "shadowtex0")),
+                compute.bindings(), compute.deviations().toString());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+    }
+
+    /**
      * colorimg0 is colortex0 as a storage image, in its format, as every other target (Iris
      * IrisImages.addRenderTargetImages). Alpha Piscium's composite36 and composite42 bind it. The session
      * moves colortex0 out of the HDR image into its storage graph image before such a compute.

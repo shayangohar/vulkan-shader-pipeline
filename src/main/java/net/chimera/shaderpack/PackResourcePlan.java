@@ -574,13 +574,14 @@ public final class PackResourcePlan {
      * what the pass's program would read under that name. Iris CompositeRenderer.createComputes
      * binds a pass's computes as its program, through the same stage textures, customTexture
      * entries, noise and flippedAtLeastOnce snapshot; a compute-only pass has the snapshot its
-     * place in the chain gives it.
+     * place in the chain gives it. {@code waterShadow}: the compute reads watershadow, so shadow
+     * is shadowtex1 (programResource).
      */
     public static PackResourceBinding passComputeBinding(PackPlan plan, String pass, String name, String samplerType,
-                                                         Path shadersDir) {
+                                                         boolean waterShadow, Path shadersDir) {
         PackSettingsPlan settings = plan.settings();
-        PackResourceBinding binding = resolve(pass, new UniformRegistry.SamplerBinding(name, 0, samplerType), false,
-                settings == null ? Map.of() : settings.resourceDeclarations(), shadersDir,
+        PackResourceBinding binding = resolve(pass, new UniformRegistry.SamplerBinding(name, 0, samplerType),
+                waterShadow, settings == null ? Map.of() : settings.resourceDeclarations(), shadersDir,
                 settings == null ? Map.of() : settings.propertyValues(), targetsWrittenBefore(plan, pass));
         return binding.status() == PackResourceStatus.GENERATED
                 ? withNoiseResolution(binding, noiseResolution(plan)) : binding;
