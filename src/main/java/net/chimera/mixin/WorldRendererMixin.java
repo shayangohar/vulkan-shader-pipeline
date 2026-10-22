@@ -6,6 +6,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.TerrainLayers;
+import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
 import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.chunk.WorldRenderer;
@@ -60,6 +61,7 @@ public abstract class WorldRendererMixin {
             }
             if (type == TerrainRenderType.TRANSLUCENT) {
                 pass.captureOpaqueDepthBeforeTranslucent();
+                FamilyBufferSource.endHeldWorldBatches(pass);
             }
             pass.beginPackCoverageWindow(type);
             try {

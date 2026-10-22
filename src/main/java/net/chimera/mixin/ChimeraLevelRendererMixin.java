@@ -80,7 +80,7 @@ public abstract class ChimeraLevelRendererMixin {
                     + "checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
             ordinal = 0), require = 1)
     private void chimera$drawEntityFamilies(CallbackInfo ci) {
-        chimera$drawFamilyBatches();
+        chimera$drawWorldFamilyBatches();
     }
 
     /** After the block-entity loops, VulkanMod's section block entities included. */
@@ -89,7 +89,7 @@ public abstract class ChimeraLevelRendererMixin {
                     + "checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
             ordinal = 1, shift = At.Shift.AFTER), require = 1)
     private void chimera$drawBlockEntityFamilies(CallbackInfo ci) {
-        chimera$drawFamilyBatches();
+        chimera$drawWorldFamilyBatches();
     }
 
     @Inject(method = "renderLevel", at = @At(value = "CONSTANT", args = "stringValue=translucent"), require = 1)
@@ -179,6 +179,13 @@ public abstract class ChimeraLevelRendererMixin {
     private static void chimera$drawFamilyBatches() {
         if (Minecraft.getInstance().renderBuffers().bufferSource() instanceof FamilyBufferSource families) {
             families.endFamilyBatches();
+        }
+    }
+
+    /** The entity batches drawn before translucent terrain: with separateEntityDraws, the opaque kinds. */
+    private static void chimera$drawWorldFamilyBatches() {
+        if (Minecraft.getInstance().renderBuffers().bufferSource() instanceof FamilyBufferSource families) {
+            families.endWorldFamilyBatches();
         }
     }
 }

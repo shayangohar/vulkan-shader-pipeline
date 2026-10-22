@@ -21,6 +21,8 @@ public final class FamilyRenderType extends RenderType {
     private final Family family;
     private final PackRenderingPhase phase;
     private final RenderType host;
+    /** The host type's transparency, as Iris batches it. */
+    private final IrisTransparency transparency;
     /** The FamilyBufferSource flush that last drew this type. */
     private long lastDrawn;
 
@@ -31,6 +33,12 @@ public final class FamilyRenderType extends RenderType {
         this.family = family;
         this.phase = phase;
         this.host = host;
+        this.transparency = IrisTransparency.of(host);
+    }
+
+    /** Whether a pack with separateEntityDraws draws this batch before its deferred passes. */
+    boolean drawsBeforeDeferred() {
+        return transparency.drawsBeforeDeferred();
     }
 
     public Family family() {

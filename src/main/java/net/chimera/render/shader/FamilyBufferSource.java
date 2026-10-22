@@ -8,6 +8,7 @@ import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
 import net.chimera.shaderpack.PackRenderingPhase;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 
@@ -18,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SequencedMap;
+import java.util.function.Predicate;
 
 /**
  * A buffer source that batches the pack family lanes apart from the host's. A render type that a
@@ -39,6 +41,8 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     private static final int MAX_FAMILY_TYPES = 256;
     /** About half a second: the world source flushes two or three times a frame. */
     private static final long IDLE_FLUSHES = 64;
+    /** The active pack's separateEntityDraws (ParticleDirectives), false with no pack. */
+    private static boolean separateEntityDraws;
 
     private final MultiBufferSource.BufferSource host;
     private final SequencedMap<RenderType, ByteBufferBuilder> familyBuffers;
@@ -94,13 +98,47 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
         }
     }
 
+    /** Whether the active pack draws its other entity batches after its deferred passes. */
+    public static void setSeparateEntityDraws(boolean separate) {
+        separateEntityDraws = separate;
+    }
+
+    /**
+     * The flush after the world's entities or block entities: every started family batch, or with
+     * the pack's separateEntityDraws only the opaque, opaque-decal and water-mask ones, as Iris draws
+     * those before the deferred passes. The rest wait for {@link #endHeldWorldBatches}.
+     */
+    public void endWorldFamilyBatches() {
+        endFamilyBatches(separateEntityDraws ? FamilyRenderType::drawsBeforeDeferred : type -> true);
+    }
+
+    /**
+     * With separateEntityDraws, the world's held entity batches, after the deferred passes and before
+     * translucent terrain, as Iris draws them right after the translucent boundary; on the main target.
+     */
+    public static void endHeldWorldBatches(ChimeraMainPass pass) {
+        if (!separateEntityDraws || pass == null
+                || !(Minecraft.getInstance().renderBuffers().bufferSource() instanceof FamilyBufferSource source)) {
+            return;
+        }
+        pass.rebindMainTarget();
+        source.endFamilyBatches();
+    }
+
     /** Draws every started family batch: opaque lanes first, one pack window per run of equal outputs. */
     public void endFamilyBatches() {
+        endFamilyBatches(type -> true);
+    }
+
+    private void endFamilyBatches(Predicate<FamilyRenderType> drawn) {
         if (startedBuilders.isEmpty()) return;
         List<FamilyRenderType> started = new ArrayList<>(startedBuilders.size());
         for (RenderType type : familyBuffers.keySet()) {
-            if (startedBuilders.containsKey(type)) started.add((FamilyRenderType) type);
+            if (startedBuilders.containsKey(type) && drawn.test((FamilyRenderType) type)) {
+                started.add((FamilyRenderType) type);
+            }
         }
+        if (started.isEmpty()) return;
         started.sort(Comparator.comparing(RenderType::sortOnUpload));
         flushes++;
         started.forEach(type -> type.drawnAt(flushes));
