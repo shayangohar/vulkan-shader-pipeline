@@ -233,6 +233,14 @@ final class CoreFamilyAdapterTest {
                 && !analysis.plan().isProgramAlias("shadow_water"), water.deviations().toString());
         assertTrue(analysis.report().program("shadow_cutout").deviations()
                 .contains("TERRAIN_LAYER_MERGED_BY_HOST:shadow_cutout"), "shadow_cutout reason");
+        // The registry, not a name, puts a program on the shadow terrain lane.
+        assertTrue(FamilyAdapterRegistry.isShadowTerrain("shadow")
+                        && FamilyAdapterRegistry.isShadowTerrain("shadow_water")
+                        && !FamilyAdapterRegistry.isShadowTerrain("shadow_cutout")
+                        && !FamilyAdapterRegistry.isShadowTerrain("shadow_entities")
+                        && FamilyAdapterRegistry.laneProgram("shadow_water").equals("shadow")
+                        && FamilyAdapterRegistry.laneProgram("shadow_entities").equals("shadow_entities"),
+                "shadow terrain lane");
     }
 
     private static void verifyUnsupported(Path fixture, Path baseline) throws IOException {

@@ -151,7 +151,7 @@ final class PackPipelineInstaller {
     /** Installs one admitted program's pipelines through its family's installer. */
     void installProgram(PackProgram program, PackProgramPlan programPlan, String fixedVertex) {
         String name = program.name();
-        if (name.equals("shadow") || name.equals("shadow_water")) {
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) {
             installShadow(name, programPlan);
         } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
             installShadowEntities(name, programPlan);

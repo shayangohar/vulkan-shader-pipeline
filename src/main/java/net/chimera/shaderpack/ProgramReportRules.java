@@ -407,7 +407,7 @@ final class ProgramReportRules {
      * name theirs by the material contract.
      */
     static String vertexBridgeLabel(String name) {
-        if (FamilyAdapterRegistry.laneProgram(name).equals("shadow")) return "SHADOW";
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) return "SHADOW";
         // Every entity-like family converts on the entity bridge (PackPlanBuilder.convertEntityVertex).
         if (FamilyAdapterRegistry.isEntityLike(name)) {
             return VertexBridgeDeviations.entity(name, false).replace("_VERTEX_BRIDGE", "");
@@ -427,7 +427,7 @@ final class ProgramReportRules {
     /** A vertex stage no bridge serves: water draws on the fixed host vertex, shadow programs fail. */
     static String unbridgedVertex(String name, boolean hasVertex) {
         if (name.equals("gbuffers_water")) return "FIXED_VERTEX_SUBSTITUTION";
-        if (FamilyAdapterRegistry.laneProgram(name).equals("shadow")) return "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) return "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
         if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
         return hasVertex ? "FIXED_VERTEX_SUBSTITUTION" : null;
     }

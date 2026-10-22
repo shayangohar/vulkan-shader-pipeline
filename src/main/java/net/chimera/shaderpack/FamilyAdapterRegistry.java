@@ -134,11 +134,18 @@ public final class FamilyAdapterRegistry {
     }
 
     /**
-     * The program whose lane {@code name} runs on: shadow_water (Iris's ShadowWater for the shadow
-     * pass's translucent layer) on the shadow terrain lane; every other name on its own.
+     * A shadow terrain program, the shadow family on the terrain layout: shadow, and shadow_water
+     * (Iris's ShadowWater for the shadow pass's translucent layer).
      */
+    public static boolean isShadowTerrain(String name) {
+        FamilyAdapterPlan plan = forProgram(name);
+        return plan.family() == FamilyAdapterPlan.Family.SHADOW
+                && plan.vertexContract() == FamilyAdapterPlan.VertexContract.FIXED_TERRAIN;
+    }
+
+    /** The program whose lane {@code name} runs on: a shadow terrain program on shadow's; any other on its own. */
     public static String laneProgram(String name) {
-        return "shadow_water".equals(name) ? "shadow" : name;
+        return isShadowTerrain(name) ? "shadow" : name;
     }
 
     /**
@@ -147,9 +154,11 @@ public final class FamilyAdapterRegistry {
      * into cutout_mipped (TerrainRenderType.COMPACT_RENDER_TYPES and SEMI_COMPACT_RENDER_TYPES), so
      * gbuffers_terrain and shadow draw both kinds of block.
      */
+    private static final Set<String> MERGED_LAYER_PROGRAMS = Set.of(
+            "gbuffers_terrain_solid", "gbuffers_terrain_cutout", "shadow_solid", "shadow_cutout");
+
     public static boolean isMergedLayerProgram(String name) {
-        return Set.of("gbuffers_terrain_solid", "gbuffers_terrain_cutout", "shadow_solid", "shadow_cutout")
-                .contains(name);
+        return MERGED_LAYER_PROGRAMS.contains(name);
     }
 
     public static UniformRegistry.Stage stageFor(String name) {

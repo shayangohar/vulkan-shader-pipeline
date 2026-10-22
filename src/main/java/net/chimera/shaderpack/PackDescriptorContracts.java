@@ -194,7 +194,7 @@ final class PackDescriptorContracts {
     static UniformRegistry.Stage stageForProgram(String name) {
         if (name == null) return UniformRegistry.Stage.ENTITY;
         if (PostTargetPlan.isPostProgramName(name)) return UniformRegistry.Stage.POST;
-        if (FamilyAdapterRegistry.laneProgram(name).equals("shadow")) return UniformRegistry.Stage.SHADOW;
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) return UniformRegistry.Stage.SHADOW;
         // shadow_entities and the host-layout shadow lanes share the entity-layout shadow descriptors.
         if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.SHADOW_ENTITY) {
             return UniformRegistry.Stage.SHADOW_ENTITY;
