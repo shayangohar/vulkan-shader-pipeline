@@ -69,7 +69,8 @@ final class MaterialPlanTest {
         assertTrue(!SelectorNamespace.PACK_SELECTOR_SLOTS.contains(25)
                 && !SelectorNamespace.PACK_SELECTOR_SLOTS.contains(26),
                 "material selectors entered the pack texture pool");
-        assertEquals(74, SelectorNamespace.LAST_RESERVED + 1, "selector range changed");
+        assertEquals(75, SelectorNamespace.LAST_RESERVED + 1, "selector range changed");
+        assertEquals(74, SelectorNamespace.DH_DEPTH_SLOT, "the DH depth selector closes the range");
         // The ten slots between the host's own come first, so a pack within them keeps its slots.
         assertEquals(List.of(8, 9, 10, 11, 16, 17, 18, 19, 20, 21, 42),
                 SelectorNamespace.PACK_SELECTOR_SLOTS.subList(0, 11));

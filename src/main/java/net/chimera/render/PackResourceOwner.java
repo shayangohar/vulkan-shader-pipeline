@@ -31,7 +31,7 @@ public final class PackResourceOwner implements AutoCloseable {
         void close();
     }
 
-    /** The statuses whose image this owner makes: a pack file, a game resource or the generated noise. */
+    /** The statuses whose image this owner makes: a pack file, a game resource, or a generated texture. */
     private static final Set<PackResourceStatus> LOADED_STATUSES = EnumSet.of(
             PackResourceStatus.PACK_FILE, PackResourceStatus.GAME_RESOURCE, PackResourceStatus.GENERATED);
 
@@ -67,8 +67,10 @@ public final class PackResourceOwner implements AutoCloseable {
         try {
             LoadedTexture texture = switch (binding.status()) {
                 case PACK_FILE -> loadPackFile(binding, shadersDir);
-                case GENERATED -> PackNoiseTexture.generated(
-                        PackResourcePlan.generatedNoiseSize(binding.source()), "chimera_pack_" + key);
+                case GENERATED -> PackResourcePlan.GENERATED_UNBOUND.equals(binding.source())
+                        ? PackNoiseTexture.unbound("chimera_pack_" + key)
+                        : PackNoiseTexture.generated(
+                                PackResourcePlan.generatedNoiseSize(binding.source()), "chimera_pack_" + key);
                 default -> loadGameResource(binding);
             };
             if (texture == null) {

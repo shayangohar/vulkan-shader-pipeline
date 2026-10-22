@@ -348,21 +348,12 @@ final class InterfacePlanner {
         };
     }
 
-    /** The slot a declared sampler binds to: the stage's map, then the pack's own textures. */
+    /** The slot a declared sampler binds to: the stage's map, the targets' samplers, then the pack's own textures. */
     static Integer samplerSlot(
             String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots) {
         Integer slot = stageSlots(stage).get(lookup);
-        if (slot == null && !stage.shadowPass()) {
-            // Iris gives every program each shadowcolor target and the hardware shadow samplers
-            // (addShadowSamplers), shadow programs too, where a read samples the target being drawn;
-            // Chimera binds them outside the shadow pass. PackPlanBuilder refuses those the pack lacks.
-            int shadow = SelectorNamespace.shadowSamplerSlot(lookup);
-            slot = shadow < 0 ? null : shadow;
-        }
-        if (slot == null && stage == UniformRegistry.Stage.POST) {
-            slot = postFallbackSlot(name);
-        } else if (slot == null && !stage.shadowPass()) {
-            slot = UniformRegistry.gbufferColorInputSlot(name);
+        if (slot == null) {
+            slot = targetSamplerSlot(name, lookup, stage);
         }
         if (slot == null && customSamplerSlots != null) {
             slot = customSamplerSlots.get(name);
@@ -372,6 +363,23 @@ final class InterfacePlanner {
             slot = UniformRegistry.MATERIAL_NAME_TO_SLOT.get(name);
         }
         return slot;
+    }
+
+    /**
+     * The slot of a target sampler the stage's map lacks: the DH depth textures, which every program
+     * that has the render targets has with them, and outside the shadow pass the shadow samplers and
+     * the further colour targets.
+     */
+    private static Integer targetSamplerSlot(String name, String lookup, UniformRegistry.Stage stage) {
+        if (PackResourcePlan.isDhDepth(lookup)) return SelectorNamespace.DH_DEPTH_SLOT;
+        if (stage.shadowPass()) return null;
+        // Iris gives every program each shadowcolor target and the hardware shadow samplers
+        // (addShadowSamplers), shadow programs too, where a read samples the target being drawn;
+        // Chimera binds them outside the shadow pass. PackPlanBuilder refuses those the pack lacks.
+        int shadow = SelectorNamespace.shadowSamplerSlot(lookup);
+        if (shadow >= 0) return shadow;
+        return stage == UniformRegistry.Stage.POST
+                ? postFallbackSlot(name) : UniformRegistry.gbufferColorInputSlot(name);
     }
 
     /** Post's fallback for a name its stage map lacks: an extended color target. */

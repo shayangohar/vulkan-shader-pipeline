@@ -55,7 +55,7 @@ final class IrisSamplerOrder {
             if (!sources.contains(Source.TARGET)) return null;
             // The DH depth textures come with the render targets, in every program that has them.
             Integer target = PackResourcePlan.targetIndex(name);
-            return DH_DEPTH.matcher(name).matches() || target != null && target >= firstTarget ? Source.TARGET : null;
+            return PackResourcePlan.isDhDepth(name) || target != null && target >= firstTarget ? Source.TARGET : null;
         }
 
         /**
@@ -76,8 +76,6 @@ final class IrisSamplerOrder {
 
     /** The names IrisSamplers.addShadowSamplers registers. */
     private static final Pattern SHADOW = Pattern.compile("shadow|watershadow|shadowtex[01](?:HW)?|shadowcolor[0-7]?");
-    /** The Distant Horizons depth textures addRenderTargetSamplers registers after the targets. */
-    private static final Pattern DH_DEPTH = Pattern.compile("dhDepthTex[01]?");
     /** The world's texture, lightmap, overlay and PBR maps (IrisSamplers.addLevelSamplers). */
     private static final Pattern LEVEL = Pattern.compile("tex|texture|gtexture|lightmap|iris_overlay|normals|specular");
 

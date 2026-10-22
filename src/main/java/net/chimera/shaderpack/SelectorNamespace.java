@@ -38,14 +38,19 @@ public final class SelectorNamespace {
      */
     public static final int PACK_EXTENDED_FIRST = SHADOW_TEX1_HW_SLOT + 1;
     public static final int PACK_EXTENDED_COUNT = 32;
-    public static final int LAST_RESERVED = PACK_EXTENDED_FIRST + PACK_EXTENDED_COUNT - 1;
+    /**
+     * The last slot carries dhDepthTex, dhDepthTex0 and dhDepthTex1, which come with the render targets
+     * (IrisSamplers.addRenderTargetSamplers). Without Distant Horizons all three bind texture 0.
+     */
+    public static final int DH_DEPTH_SLOT = PACK_EXTENDED_FIRST + PACK_EXTENDED_COUNT;
+    public static final int LAST_RESERVED = DH_DEPTH_SLOT;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
     /** Unreserved selector slots available to pack-owned sampled resources, in assignment order. */
     public static final List<Integer> PACK_SELECTOR_SLOTS = packSelectorSlots();
 
     private static List<Integer> packSelectorSlots() {
         List<Integer> slots = new ArrayList<>(List.of(8, 9, 10, 11, 16, 17, 18, 19, 20, 21));
-        for (int slot = PACK_EXTENDED_FIRST; slot <= LAST_RESERVED; slot++) slots.add(slot);
+        for (int slot = PACK_EXTENDED_FIRST; slot < DH_DEPTH_SLOT; slot++) slots.add(slot);
         return List.copyOf(slots);
     }
 

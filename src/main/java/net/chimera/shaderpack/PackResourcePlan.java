@@ -25,6 +25,14 @@ public final class PackResourcePlan {
     private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-9]+)");
     /** A generated noisetex binding's source: this prefix, then the image's side in texels. */
     public static final String GENERATED_NOISE = "generated-noise:";
+    /**
+     * What an unbound texture reads, (0, 0, 0, 1). Without Distant Horizons, Iris binds texture 0 under
+     * every DH depth name (DHCompat.getDepthTex and getDepthTexNoTranslucent return 0).
+     */
+    public static final String GENERATED_UNBOUND = "generated-unbound";
+    /** The resource dhDepthTex, dhDepthTex0 and dhDepthTex1 read. */
+    static final String DH_DEPTH = "dhDepthTex";
+    private static final Pattern DH_DEPTH_NAME = Pattern.compile("dhDepthTex[01]?");
     private static final int DEFAULT_NOISE_RESOLUTION = PackDirectives.DEFAULTS.noiseTextureResolution();
 
     /** Chimera's name for the host entity overlay, which entityColor is made from. */
@@ -118,9 +126,7 @@ public final class PackResourcePlan {
                             binding.kind(), binding.source(), binding.slot(), binding.filter(), binding.wrap(),
                             binding.status(), binding.deviations());
                 }
-                if (binding.status() == PackResourceStatus.GENERATED) {
-                    binding = withNoiseResolution(binding, noiseResolution);
-                }
+                binding = withNoiseResolution(binding, noiseResolution);
                 programBindings.add(binding);
                 deviations.addAll(binding.deviations());
             }
@@ -428,6 +434,11 @@ public final class PackResourcePlan {
         if (canonical.equals("noisetex")) {
             return noiseBinding(program, name, deviations);
         }
+        if (canonical.equals(DH_DEPTH)) {
+            deviations.add("DH_DEPTH_UNBOUND:" + name);
+            return new PackResourceBinding(program, name, DH_DEPTH, PackResourceKind.PACK_TEXTURE,
+                    GENERATED_UNBOUND, slot, "nearest", "clamp", PackResourceStatus.GENERATED, deviations);
+        }
         if (materialMapAtSlot(name, slot)) {
             return new PackResourceBinding(program, name, name,
                     PackResourceKind.MATERIAL_MAP, "", slot, "linear", "repeat",
@@ -450,8 +461,11 @@ public final class PackResourcePlan {
                 PackResourceStatus.GENERATED, deviations);
     }
 
-    /** The generated noise's binding at the pack's noiseTextureResolution. */
+    /** The generated noise's binding at the pack's noiseTextureResolution; any other binding as it is. */
     private static PackResourceBinding withNoiseResolution(PackResourceBinding binding, int resolution) {
+        if (binding.kind() != PackResourceKind.NOISE || binding.status() != PackResourceStatus.GENERATED) {
+            return binding;
+        }
         return new PackResourceBinding(binding.program(), binding.sampler(), binding.resourceKey(), binding.kind(),
                 GENERATED_NOISE + resolution, binding.slot(), binding.filter(), binding.wrap(), binding.status(),
                 binding.deviations());
@@ -522,6 +536,7 @@ public final class PackResourcePlan {
     public String snapshot() { return snapshot; }
     public String fingerprint() { return fingerprint; }
 
+    /** The resource a sampler name reads: the target of a legacy alias, a shared texture, or the name itself. */
     public static String canonicalResource(String sampler) {
         if (sampler == null) return "";
         if (sampler.equals("tex") || sampler.equals("gtexture")) return "texture";
@@ -532,13 +547,9 @@ public final class PackResourcePlan {
         if (sampler.matches("gaux[1-4]")) {
             return "colortex" + (3 + Integer.parseInt(sampler.substring(4)));
         }
-        if (COLOR_TARGET.matcher(sampler).matches()) return sampler;
-        if (sampler.matches("depthtex[0-2]")) return sampler;
-        if (sampler.matches("shadowtex[0-1]")) return sampler;
         // A hardware shadow sampler reads its depth through a comparison sampler (Iris addShadowSamplers).
         if (sampler.matches("shadowtex[0-1]HW")) return sampler.substring(0, "shadowtex0".length());
-        if (sampler.matches("shadowcolor[0-7]")) return sampler;
-        return sampler.equals("noisetex") ? "noisetex" : sampler;
+        return isDhDepth(sampler) ? DH_DEPTH : sampler;
     }
 
     /**
@@ -555,6 +566,11 @@ public final class PackResourcePlan {
             case "shadowcolor" -> "shadowcolor0";
             default -> canonicalResource(sampler);
         };
+    }
+
+    /** dhDepthTex, dhDepthTex0 or dhDepthTex1, the Distant Horizons depth textures. */
+    public static boolean isDhDepth(String sampler) {
+        return sampler != null && DH_DEPTH_NAME.matcher(sampler).matches();
     }
 
     /** The legacy shadow sampler names whose meaning {@link #programResource} decides. */
@@ -613,8 +629,7 @@ public final class PackResourcePlan {
         PackResourceBinding binding = resolve(pass, new UniformRegistry.SamplerBinding(name, 0, samplerType),
                 waterShadow, settings == null ? Map.of() : settings.resourceDeclarations(), shadersDir,
                 settings == null ? Map.of() : settings.propertyValues(), targetsWrittenBefore(plan, pass), true);
-        return binding.status() == PackResourceStatus.GENERATED
-                ? withNoiseResolution(binding, noiseResolution(plan)) : binding;
+        return withNoiseResolution(binding, noiseResolution(plan));
     }
 
     /** The post chain a program runs in (final in composite's), or null for a world program. */

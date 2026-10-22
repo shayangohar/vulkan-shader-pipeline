@@ -147,6 +147,41 @@ final class SweepParityFixesTest {
         assertTrue(particles.contains("SAMPLER_UNIT0_ALBEDO:gcolor"), particles.toString());
     }
 
+    /**
+     * Reverie's composite2 reads dhDepthTex1 without a DISTANT_HORIZONS guard. Iris registers the DH depth
+     * names with the render targets and, without DH, binds texture 0 under all three (DHCompat.getDepthTex).
+     */
+    @Test
+    void theDistantHorizonsDepthTexturesReadTheUnboundTexture(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D dhDepthTex0;
+                uniform sampler2D dhDepthTex1;
+                varying vec2 uv;
+                void main() { gl_FragColor = texture2D(dhDepthTex0, uv) + texture2D(dhDepthTex1, uv); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        List<PackResourceBinding> bindings = plan.resources().bindings("composite");
+        assertEquals(2, bindings.size(), bindings.toString());
+        for (PackResourceBinding binding : bindings) {
+            assertEquals(SelectorNamespace.DH_DEPTH_SLOT, binding.slot(), binding.toString());
+            assertEquals("dhDepthTex", binding.resourceKey());
+            assertEquals(PackResourcePlan.GENERATED_UNBOUND, binding.source());
+            assertEquals(PackResourceStatus.GENERATED, binding.status());
+        }
+        assertTrue(plan.shouldAttempt("composite"), plan.program("composite").deviations().toString());
+        EntityRealPackTest.compileStage(plan.program("composite").convertedFragment(), false, "dh composite");
+        assertFalse(SelectorNamespace.PACK_SELECTOR_SLOTS.contains(SelectorNamespace.DH_DEPTH_SLOT));
+        assertEquals(SelectorNamespace.DH_DEPTH_SLOT, InterfacePlanner.samplerSlot("dhDepthTex", "dhDepthTex",
+                UniformRegistry.Stage.SHADOW, Map.of()), "shadow programs have the render targets too");
+    }
+
     /** Shrimple sizes its light bins with #if arithmetic; JCPP evaluates conditions in C long arithmetic. */
     @Test
     void conditionsEvaluateAsJcppDoes() {

@@ -12,7 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Random;
 
-/** One pack-owned sampled image: a pack PNG or game texture, or the noise Iris generates. */
+/** One pack-owned sampled image: a pack PNG or game texture, or a texture Iris generates or leaves unbound. */
 public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
     private static final int MAX_ENCODED_BYTES = 8 * 1024 * 1024;
     private static final int MAX_DIMENSION = 4096;
@@ -75,6 +75,16 @@ public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
             }
         }
         return upload(pixels, name, "linear", "repeat");
+    }
+
+    /**
+     * One texel of what GL samples from an unbound texture, (0, 0, 0, 1): Iris binds texture 0 where
+     * Distant Horizons would supply its depth textures (PackResourcePlan.GENERATED_UNBOUND).
+     */
+    public static PackNoiseTexture unbound(String name) throws IOException {
+        NativeImage pixels = new NativeImage(NativeImage.Format.RGBA, 1, 1, false);
+        pixels.setPixelRGBA(0, 0, 0xFF000000);
+        return upload(pixels, name, "nearest", "clamp");
     }
 
     private static PackNoiseTexture upload(NativeImage pixels, String name, String filter, String wrap)
