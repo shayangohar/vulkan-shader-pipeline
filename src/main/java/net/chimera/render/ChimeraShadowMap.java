@@ -132,6 +132,27 @@ public class ChimeraShadowMap {
         // matrix follows the same numbers the pack reads instead of repeating the trigonometry.
         PackUniformProvider.installSunPath(settings.sunPathRotation(), settings.sunPathOffset());
 
+        try {
+            createResources(settings);
+        } catch (RuntimeException failure) {
+            // Frees whatever was made before the failure; the map stays uninitialized.
+            cleanUp();
+            throw failure;
+        }
+
+        // Register the light MVP supplier so the terrain pipeline's LightMVP
+        // UBO field is filled with our matrix during upload.
+        this.lightMVPBuffer = new MappedBuffer(64);
+        Uniforms.mat4f_uniformMap.put("LightMVP", () -> this.lightMVPBuffer);
+
+        this.needsInitialSamplingLayout = true;
+        this.mapSnapshotValid = false;
+        this.mapGeneration = 0L;
+        this.initialized = true;
+    }
+
+    /** The shadow framebuffer, colour targets, opaque depth copy, render pass, pipeline and sampler. */
+    private void createResources(PackConfig.ShadowSettings settings) {
         this.shadowFramebuffer = Framebuffer.builder(this.shadowMapSize, this.shadowMapSize, 1, true)
                 .setFormat(37) // VK_FORMAT_R8G8B8A8_UNORM
                 .build();
@@ -153,16 +174,6 @@ public class ChimeraShadowMap {
         this.shadowPipeline = ChimeraPostPipelines.createTerrainPipeline("chimera_shadow",
                 ChimeraTerrainPipelines.getTerrainVertexFormat());
         createSampler();
-
-        // Register the light MVP supplier so the terrain pipeline's LightMVP
-        // UBO field is filled with our matrix during upload.
-        this.lightMVPBuffer = new MappedBuffer(64);
-        Uniforms.mat4f_uniformMap.put("LightMVP", () -> this.lightMVPBuffer);
-
-        this.needsInitialSamplingLayout = true;
-        this.mapSnapshotValid = false;
-        this.mapGeneration = 0L;
-        this.initialized = true;
     }
 
     /**
@@ -217,7 +228,8 @@ public class ChimeraShadowMap {
     }
 
     /**
-     * Clears the compute-named shadowcolor targets as the shadow pass opens, each that clears every
+     * Clears the compute-named shadowcolor targets as the frame opens (PackShadowPass, before setup
+     * and begin, as Iris clears its shadow targets in beginLevelRendering), each that clears every
      * frame or all of them on the full clear after creation (colorClears), and leaves them sampleable.
      * Recorded outside a render pass.
      */

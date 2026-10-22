@@ -200,8 +200,7 @@ final class PackShadowPass {
         PipelineManager.setShaderGetter(rt -> {
             if (packShadow) {
                 VRenderSystem.disableBlend();
-                GraphicsPipeline water = pass.pipelines.shadowWaterPipeline;
-                return rt == TerrainRenderType.TRANSLUCENT && water != null ? water : pass.pipelines.shadowPipeline;
+                return shadowTerrainProgram(rt, pass.pipelines.shadowPipeline, pass.pipelines.shadowWaterPipeline);
             }
             return this.shadowMap.getShadowPipeline();
         });
@@ -220,6 +219,15 @@ final class PackShadowPass {
         if (packShadow) {
             PackUniformProvider.updateDrawAlphaReference(SHADOW_CUTOUT_ALPHA);
         }
+    }
+
+    /**
+     * The program a pack shadow terrain draw of {@code type} runs, as Iris's SodiumPrograms pick it:
+     * shadow_water's for the translucent layer where the pack has it (SHADOW_TRANS), shadow's
+     * otherwise.
+     */
+    static <P> P shadowTerrainProgram(TerrainRenderType type, P shadow, P water) {
+        return type == TerrainRenderType.TRANSLUCENT && water != null ? water : shadow;
     }
 
     /** Draws the opaque terrain layer, then the cutout layer unless the host merged it into opaque. */
@@ -509,7 +517,11 @@ final class PackShadowPass {
      * targets it draws when it opens (KNOW-810).
      */
     private void clearComputeColors() {
-        if (!Renderer.isRecording() || Renderer.getInstance().getBoundRenderPass() != null) return;
+        if (!Renderer.isRecording()) return;
+        if (Renderer.getInstance().getBoundRenderPass() != null) {
+            recordShadowTransitionFallback("compute shadowcolor clear inside a render pass");
+            return;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             this.shadowMap.clearComputeColors(stack, Renderer.getCommandBuffer(), false);
         }

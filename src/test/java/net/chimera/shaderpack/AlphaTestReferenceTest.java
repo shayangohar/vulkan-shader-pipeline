@@ -1,6 +1,8 @@
 package net.chimera.shaderpack;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.chimera.render.TerrainLayers;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -93,6 +95,17 @@ final class AlphaTestReferenceTest {
         assertEquals(0.0F, TerrainLayers.irisAlphaReference(TerrainRenderType.SOLID));
         assertEquals(0.0F, TerrainLayers.irisAlphaReference(TerrainRenderType.TRANSLUCENT));
         assertEquals(0.0F, TerrainLayers.irisAlphaReference(TerrainRenderType.TRIPWIRE));
+    }
+
+    /**
+     * Iris tests gbuffers_skybasic's POSITION_COLOR draws (SKY_BASIC_COLOR, the sunrise fan) at
+     * NON_ZERO_ALPHA and its POSITION draws (SKY_BASIC) not at all; other sky programs set their own.
+     */
+    @Test
+    void skyDrawsTakeTheirKeysReference() {
+        assertEquals(0.0001F, ChimeraSkyBridge.skyAlphaReference(true, DefaultVertexFormat.POSITION_COLOR));
+        assertEquals(0.0F, ChimeraSkyBridge.skyAlphaReference(true, DefaultVertexFormat.POSITION));
+        assertEquals(0.0F, ChimeraSkyBridge.skyAlphaReference(false, DefaultVertexFormat.POSITION_COLOR));
     }
 
     private static PackSettingsPlan settings(Map<String, String> properties) {

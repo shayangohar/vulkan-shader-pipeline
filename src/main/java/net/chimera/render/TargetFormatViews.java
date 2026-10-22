@@ -45,8 +45,17 @@ public final class TargetFormatViews {
             PREPARING.set(false);
         }
         if (!mutable) return image;
-        for (int view : formats) {
-            if (view != format) views.put(view, ImageViews.createStorage(image.getId(), VK_IMAGE_VIEW_TYPE_2D, view));
+        try {
+            for (int view : formats) {
+                if (view != format) {
+                    views.put(view, ImageViews.createStorage(image.getId(), VK_IMAGE_VIEW_TYPE_2D, view));
+                }
+            }
+        } catch (RuntimeException failure) {
+            // Nothing has recorded a use of the new image yet, so it and its views go now.
+            views.values().forEach(view -> vkDestroyImageView(Vulkan.getVkDevice(), view, null));
+            image.free();
+            throw failure;
         }
         VIEWS.put(image, views);
         return image;

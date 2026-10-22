@@ -22,6 +22,7 @@ import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /** Immutable defaults-only interpretation of shaders.properties and pack options. */
 record PackSettingsPlan(
@@ -803,9 +804,12 @@ record PackSettingsPlan(
      */
     private static final List<String> RESOURCE_PREFIXES = List.of(
             "customTexture.", "texture.", "bufferObject.", "indirect.");
+    /** The fullscreen and compute passes among Iris's texture stages, each covering its numbered programs. */
+    static final List<String> PASS_TEXTURE_STAGES = List.of(
+            "setup", "begin", "shadowcomp", "prepare", "deferred", "composite");
     /** The stages a {@code texture.<stage>.<sampler>} may name (Iris TextureStage.parse). */
-    static final Set<String> TEXTURE_STAGES = Set.of(
-            "setup", "begin", "shadowcomp", "prepare", "gbuffers", "deferred", "composite");
+    static final Set<String> TEXTURE_STAGES = Stream.concat(PASS_TEXTURE_STAGES.stream(), Stream.of("gbuffers"))
+            .collect(Collectors.toUnmodifiableSet());
 
     private static PackResourceDeclaration resourceDeclaration(String key, String value) {
         // Iris: a value with more than one word is a raw texture (file, type, format, size).
