@@ -21,7 +21,8 @@
     "shadow_lines",
     "shadow_text",
     "shadow_text_bg",
-    "shadow_water"
+    "shadow_water",
+    "shadowcomp1"
   ],
   "BSL_v10.1.8.zip": [
     "dh_terrain",

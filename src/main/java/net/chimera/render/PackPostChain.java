@@ -686,7 +686,7 @@ final class PackPostChain {
      * (colortex0 moved out of the HDR image first), the depth snapshots, and the shadow images as
      * programs sample them (PackImageBindings, PackShadowPass.shadowSamplerFor).
      */
-    private PackPassComputes.ImageSources computeSources(VkCommandBuffer commandBuffer) {
+    PackPassComputes.ImageSources computeSources(VkCommandBuffer commandBuffer) {
         return new PackPassComputes.ImageSources() {
             @Override
             public VulkanImage[] colors() {

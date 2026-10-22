@@ -91,6 +91,12 @@
   "prepare4.csh": "30a51cfd3418334b a3945ec8dd5955e5",
   "prepare4_a.csh": "d32e353bd9090dc7 da3e867db2273a6a",
   "shadowcomp.csh": "02310668a271f604 d9f965c51ed951fb",
+  "shadowcomp1.csh": "f08554d6d59b8aee 8bcc771d4291ae26",
+  "shadowcomp1_a.csh": "93cbdf76c64aac03 bd564a7ce99e9cb9",
+  "shadowcomp1_b.csh": "13c8f8126b8630fc 710d7b2ba18c527f",
+  "shadowcomp2.csh": "2d612877fe1e56a0 19c18ade90d0fba1",
+  "shadowcomp_a.csh": "e51044dc2fb91964 851729f88eb0ce06",
+  "shadowcomp_b.csh": "c9266eae04d259b8 e8f64a8c096cc570",
   "text_bg.fsh": "0d365dc404f257e0 2cf48f469c124619",
   "text_bg.vsh": "b8e40f81d49bfcee 461121e73c6c5f4c"
 }

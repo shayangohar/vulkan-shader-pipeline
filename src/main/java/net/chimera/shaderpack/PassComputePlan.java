@@ -29,9 +29,12 @@ import java.util.stream.Stream;
  */
 public final class PassComputePlan {
     private static final Pattern SOURCE_NAME = Pattern.compile(
-            "((?:begin|prepare|deferred|composite)(?:[1-9]\\d?)?)(?:_[a-z])?\\.csh");
+            "((?:begin|shadowcomp|prepare|deferred|composite)(?:[1-9]\\d?)?)(?:_[a-z])?\\.csh");
     /** Iris's setup computes, setup.csh and setup1..99.csh, each alone (ProgramSet: readProgramArray). */
     private static final Pattern SETUP_NAME = Pattern.compile("setup(?:[1-9]\\d?)?");
+    private static final Pattern SHADOWCOMP_NAME = Pattern.compile("shadowcomp(?:[1-9]\\d?)?");
+    /** The pack's shadowcomp.csh, which PackShadowCompute runs (AdvancedImageDeclarations.discoverCompute). */
+    private static final String NATIVE_SHADOWCOMP = "shadowcomp";
     private static final Pattern LOCAL_SIZE = Pattern.compile(
             "layout\\s*\\(([^)]*\\blocal_size_[xyz][^)]*)\\)\\s*in\\s*;");
     private static final Pattern LOCAL_SIZE_AXIS = Pattern.compile("local_size_([xyz])\\s*=\\s*(\\d+)");
@@ -173,6 +176,14 @@ public final class PassComputePlan {
         return pass != null && SETUP_NAME.matcher(pass).matches();
     }
 
+    /**
+     * Whether {@code pass} is a shadowcomp pass: Iris runs its computes after the shadow pass, over
+     * the shadow targets (ShadowCompositeRenderer), rather than in the frame's colour chain.
+     */
+    public static boolean isShadowcomp(String pass) {
+        return pass != null && SHADOWCOMP_NAME.matcher(pass).matches();
+    }
+
     /** The pass a compute source belongs to, or null for a file that is no pass compute. */
     private static String passOf(String fileName) {
         Matcher source = SOURCE_NAME.matcher(fileName);
@@ -254,7 +265,8 @@ public final class PassComputePlan {
      */
     static List<String> sourceNames(Path root, String pass, Predicate<String> enabled) {
         List<String> names = new ArrayList<>();
-        if (present(root, pass, enabled)) names.add(pass);
+        // PackShadowCompute runs shadowcomp.csh itself, first in its pass, as Iris does.
+        if (present(root, pass, enabled) && !pass.equals(NATIVE_SHADOWCOMP)) names.add(pass);
         for (char suffix = 'a'; suffix <= 'z' && !isSetup(pass); suffix++) {
             String name = pass + "_" + suffix;
             if (!present(root, name, enabled)) break;
@@ -358,7 +370,9 @@ public final class PassComputePlan {
                         plan.advancedResources().images(), name));
                 Matcher color = COLOR_IMAGE.matcher(name);
                 int target = color.matches() ? Integer.parseInt(color.group(1)) : -1;
-                StorageForm form = pack != null ? packImageForm(pack, image.group(1)) : targetImageForm(target);
+                // A shadowcomp compute binds shadowcolorimgN, not colorimgN (IrisImages.addShadowColorImages).
+                StorageForm form = pack != null ? packImageForm(pack, image.group(1))
+                        : registers(work, IrisSamplerOrder.Source.TARGET) ? targetImageForm(target) : null;
                 if (form == null || !image.group(2).equals(form.type())) {
                     work.fail("PASS_COMPUTE_IMAGE_UNSUPPORTED:" + name);
                     continue;
@@ -521,8 +535,7 @@ public final class PassComputePlan {
                     yield pack == null || !type.equals(pack.samplerType()) ? null
                             : new Binding(name, index, Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
                 }
-                case TARGET -> targetSampler(name, type, index);
-                case DEPTH -> colour ? new Binding(name, index, Kind.DEPTH, -1, null, key) : null;
+                case TARGET, DEPTH -> chainSampler(name, type, resource, index, work);
                 // Iris IrisSamplers.addShadowSamplers: a sampler2DShadow compares, as shadowtex0HW does.
                 case SHADOW_DEPTH -> colour ? new Binding(name, index, Kind.SHADOW_DEPTH, -1, null, key)
                         : type.equals("sampler2DShadow") ? new Binding(name, index, Kind.SHADOW_COMPARE, -1, null, key)
@@ -531,6 +544,23 @@ public final class PassComputePlan {
                 case NOISE, PACK_TEXTURE, RAW_TEXTURE -> textureSampler(name, type, resource, work);
                 default -> null;
             };
+        }
+
+        /**
+         * A colour target's or depth texture's sampler; a shadowcomp compute gets neither
+         * (IrisSamplerOrder.SHADOWCOMP).
+         */
+        private Binding chainSampler(String name, String type, PackResourceBinding resource, int index, Work work) {
+            if (resource.kind() == PackResourceKind.TARGET) {
+                return registers(work, IrisSamplerOrder.Source.TARGET) ? targetSampler(name, type, index) : null;
+            }
+            return type.equals("sampler2D") && registers(work, IrisSamplerOrder.Source.DEPTH)
+                    ? new Binding(name, index, Kind.DEPTH, -1, null, resource.resourceKey()) : null;
+        }
+
+        /** Whether Iris registers samplers of {@code source} for this compute's pass. */
+        private static boolean registers(Work work, IrisSamplerOrder.Source source) {
+            return IrisSamplerOrder.of(work.pass, true).registers(source);
         }
 
         /** A target's sampler, of the type its format takes; null for another name the kind covers. */

@@ -264,7 +264,10 @@ final class PackShadowPass {
         maintainPackShadowGoal();
     }
 
-    /** Runs the pack's shadowcomp over the new map when its advanced images are live. */
+    /**
+     * Runs the pack's shadowcomp over the new map when its advanced images are live, then the
+     * other computes of the shadowcomp passes.
+     */
     private void dispatchShadowCompute(VkCommandBuffer cmd) {
         if (pass.packAdvancedImageOwner != null
                 && pass.packAdvancedImageOwner.computeImagesAvailable()
@@ -272,6 +275,13 @@ final class PackShadowPass {
             if (pass.packShadowCompute.dispatch(cmd)) {
                 if (pass.packStorageBufferOwner != null) pass.packStorageBufferOwner.recordDispatch();
             } else LOGGER.warn("[chimera] shadowcomp dispatch failed; dependent advanced resources use fallback");
+        }
+        // Then the shadowcomp passes' other computes, in pass order (ShadowCompositeRenderer).
+        if (pass.packPassComputes != null) {
+            VulkanImage screen = pass.targets.hdrFramebuffer.getColorAttachment();
+            pass.packPassComputes.dispatchShadowcomp(cmd, pass.postChain.computeSources(cmd), screen.width,
+                    screen.height);
+            if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(cmd);
         }
     }
 

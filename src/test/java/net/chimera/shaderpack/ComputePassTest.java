@@ -727,6 +727,49 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris runs a shadowcomp pass's computes after the shadow pass (ShadowCompositeRenderer):
+     * shadowcomp.csh, which PackShadowCompute runs, then shadowcomp_a..z, then shadowcomp1 and its
+     * own. They bind noise, custom textures and images and the shadow maps, and no colour target,
+     * colorimg or depth texture (createComputes).
+     */
+    @Test
+    void shadowcompComputesRunAfterTheShadowPass(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        String shadow = """
+                #version 430
+                layout(local_size_x = 1) in;
+                const ivec3 workGroups = ivec3(1, 1, 1);
+                uniform sampler2D shadowcolor0;
+                layout(std430, binding = 0) buffer Counts { float total; };
+                void main() { total = texture(shadowcolor0, vec2(0.5)).r; }
+                """;
+        for (String name : List.of("shadowcomp", "shadowcomp_a", "shadowcomp1")) {
+            Files.writeString(shaders.resolve(name + ".csh"), shadow);
+        }
+        Files.writeString(shaders.resolve("shadowcomp1_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                uniform sampler2D colortex2;
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() { imageStore(colorimg2, ivec2(0), texture(colortex2, vec2(0.5))); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 16\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
+        assertEquals(List.of("shadowcomp_a", "shadowcomp1", "shadowcomp1_a"),
+                computes.computes().stream().map(PassComputePlan.PassCompute::name).toList());
+        assertTrue(computes.compute("shadowcomp_a").supported() && PassComputePlan.isShadowcomp("shadowcomp1"),
+                computes.compute("shadowcomp_a").deviations().toString());
+        PassComputePlan.PassCompute unbound = computes.compute("shadowcomp1_a");
+        assertTrue(!unbound.supported() && unbound.deviations().contains("PASS_COMPUTE_IMAGE_UNSUPPORTED:colorimg2")
+                && unbound.deviations().contains("PASS_COMPUTE_SAMPLER_UNSUPPORTED:colortex2"),
+                unbound.deviations().toString());
+        assertEquals(IrisSamplerOrder.SHADOWCOMP, IrisSamplerOrder.of("shadowcomp1", true));
+    }
+
+    /**
      * Iris runs the begin passes each frame after its clear passes and before the sky
      * (IrisRenderingPipeline.beginLevelRendering), each one's computes as a composite's: Shrimple's
      * begin1 is begin1_a.csh and begin1_b.csh alone. They run in the opening window, before prepare.

@@ -113,12 +113,12 @@ final class PackPassComputes implements AutoCloseable {
 
     /**
      * Each pass of the frame some loaded compute runs before, with the depth snapshots its computes
-     * read; setup computes run apart (dispatchSetup).
+     * read; setup and shadowcomp computes run apart (dispatchSetup, dispatchShadowcomp).
      */
     Map<String, Set<String>> depthReadsByPass() {
         Map<String, Set<String>> passes = new TreeMap<>();
         for (Loaded compute : loaded) {
-            if (PassComputePlan.isSetup(compute.plan().pass())) continue;
+            if (!framePass(compute.plan().pass())) continue;
             Set<String> reads = passes.computeIfAbsent(compute.plan().pass(), ignored -> new TreeSet<>());
             compute.plan().bindings().stream().filter(binding -> binding.kind() == PassComputePlan.Kind.DEPTH)
                     .forEach(binding -> reads.add(binding.resource()));
@@ -193,6 +193,23 @@ final class PackPassComputes implements AutoCloseable {
     /** Whether a setup compute of this round has yet to run. */
     boolean setupDue() {
         return setupDue;
+    }
+
+    /**
+     * Runs the shadowcomp computes, pass by pass, after the shadow map is drawn and the pack's own
+     * shadowcomp.csh has run, at the screen's size (ShadowCompositeRenderer.renderAll dispatches
+     * at the main render target's).
+     */
+    void dispatchShadowcomp(VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
+        for (Loaded compute : loaded) {
+            if (!PassComputePlan.isShadowcomp(compute.plan().pass())) continue;
+            run(compute, commandBuffer, sources, width, height);
+        }
+    }
+
+    /** Whether the computes of {@code pass} run in the frame's colour chain: setup and shadowcomp run apart. */
+    private static boolean framePass(String pass) {
+        return !PassComputePlan.isSetup(pass) && !PassComputePlan.isShadowcomp(pass);
     }
 
     /** Dispatches one compute unless it failed before; false when it skips this frame (frameGap). */

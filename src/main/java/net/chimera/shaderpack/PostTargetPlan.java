@@ -22,9 +22,10 @@ public final class PostTargetPlan {
     public static final int DEFAULT_FORMAT = 97;
     /**
      * The numbered pass families in the order Iris runs them: the setup computes, then its composite
-     * renderers (IrisRenderingPipeline).
+     * renderers (IrisRenderingPipeline), shadowcomp running after the shadow pass, before prepare.
      */
-    private static final List<String> PASS_FAMILIES = List.of("setup", "begin", "prepare", "deferred", "composite");
+    private static final List<String> PASS_FAMILIES =
+            List.of("setup", "begin", "shadowcomp", "prepare", "deferred", "composite");
 
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");
