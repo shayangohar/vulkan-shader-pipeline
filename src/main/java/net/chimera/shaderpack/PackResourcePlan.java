@@ -186,12 +186,23 @@ public final class PackResourcePlan {
         String name = sampler.name();
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
-        PackResourceDeclaration declaration =
-                declarationFor(program, sampler, declarations, deactivatedOverrides, deviations);
         // Pack declarations take precedence over canonical aliases. This is
         // important for a stage that deliberately replaces a logical target
         // with a sampled pack texture.
-        if (declaration != null) return declaredBinding(program, name, slot, declaration, shadersDir, deviations);
+        PackResourceDeclaration stage =
+                stageDeclaration(program, sampler, declarations, deactivatedOverrides, deviations);
+        if (stage != null) return declaredBinding(program, name, slot, stage, shadersDir, deviations);
+        // Iris binds custom images after customTexture entries, so an image's sampler takes the name
+        // (IrisSamplers.addCustomTextures, then addCustomImages); only a stage texture overrides it.
+        String advancedImage = advancedImageName(propertyValues, name);
+        if (advancedImage != null) {
+            deviations.add("ADVANCED_RESOURCE_ALIAS:" + name + ":" + advancedImage);
+            return new PackResourceBinding(program, name, advancedImage,
+                    PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
+                    PackResourceStatus.HOST_ALIAS, deviations);
+        }
+        PackResourceDeclaration custom = customDeclaration(program, sampler, declarations);
+        if (custom != null) return declaredBinding(program, name, slot, custom, shadersDir, deviations);
         if (name.equals("tex") || name.equals("gtexture") || isHostTexture(name)) {
             String hostResource = name.equals("tex") || name.equals("gtexture") ? "texture" : name;
             // The overlay is Chimera's own declaration, not a pack alias.
@@ -200,14 +211,6 @@ public final class PackResourcePlan {
             }
             return new PackResourceBinding(program, name, hostResource,
                     PackResourceKind.TARGET, "", slot, "linear", "repeat",
-                    PackResourceStatus.HOST_ALIAS, deviations);
-        }
-
-        String advancedImage = advancedImageName(propertyValues, name);
-        if (advancedImage != null) {
-            deviations.add("ADVANCED_RESOURCE_ALIAS:" + name + ":" + advancedImage);
-            return new PackResourceBinding(program, name, advancedImage,
-                    PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
         return standardBinding(program, name, programResource(name, waterShadow), slot, deviations);
@@ -230,6 +233,19 @@ public final class PackResourcePlan {
     private static PackResourceDeclaration declarationFor(String program, UniformRegistry.SamplerBinding sampler,
                                                           Map<String, PackResourceDeclaration> declarations,
                                                           Set<Integer> deactivatedOverrides, List<String> deviations) {
+        PackResourceDeclaration stage = stageDeclaration(program, sampler, declarations, deactivatedOverrides,
+                deviations);
+        return stage != null ? stage : customDeclaration(program, sampler, declarations);
+    }
+
+    /**
+     * The {@code texture.<program|stage|*>} declaration of this sampler, which Iris applies through
+     * the sampler interceptor over every other binding of the name; one a pass deactivated is none.
+     */
+    private static PackResourceDeclaration stageDeclaration(String program, UniformRegistry.SamplerBinding sampler,
+                                                            Map<String, PackResourceDeclaration> declarations,
+                                                            Set<Integer> deactivatedOverrides,
+                                                            List<String> deviations) {
         String name = sampler.name();
         String samplerType = sampler.glslType();
         PackResourceDeclaration declaration = textureDeclaration(declarations, program, name, samplerType);
@@ -247,17 +263,20 @@ public final class PackResourcePlan {
             deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
             declaration = null;
         }
-        if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
-            declaration = declarations.get("customTexture." + name);
-        }
-        if (declaration == null && name.equals("tex")
-                && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
-            declaration = declarations.get("customTexture.textureAtlas");
-        }
-        if (declaration == null && name.equals("noisetex")) {
-            declaration = declarations.get("texture.noise");
-        }
         return declaration;
+    }
+
+    /** {@code customTexture.<sampler>}, the atlas a post program's tex reads, or texture.noise for noisetex. */
+    private static PackResourceDeclaration customDeclaration(String program, UniformRegistry.SamplerBinding sampler,
+                                                             Map<String, PackResourceDeclaration> declarations) {
+        String name = sampler.name();
+        if (appliesTo(declarations.get("customTexture." + name), sampler.glslType())) {
+            return declarations.get("customTexture." + name);
+        }
+        if (name.equals("tex") && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
+            return declarations.get("customTexture.textureAtlas");
+        }
+        return name.equals("noisetex") ? declarations.get("texture.noise") : null;
     }
 
     /** A sampler the pack declares a texture for. */

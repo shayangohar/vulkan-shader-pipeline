@@ -389,6 +389,43 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris registers custom images after customTexture entries, so an image's sampler keeps its name
+     * against a customTexture of it; a texture.stage entry overrides both through the sampler
+     * interceptor (CompositeRenderer.createComputes and createProgram alike).
+     */
+    @Test
+    void imageSamplerPrecedence(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                image.imgA = samA RGBA RGBA16F HALF_FLOAT false true 1.0 1.0
+                image.imgB = samB RGBA RGBA16F HALF_FLOAT false true 1.0 1.0
+                customTexture.samA = blue.png
+                texture.composite.samB = blue.png
+                """);
+        Files.write(shaders.resolve("blue.png"), new byte[] {1});
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D samA;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(samA, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                uniform sampler2D samA;
+                uniform sampler2D samB;
+                void main() { imageStore(colorimg2, ivec2(0), texture(samA, vec2(0.5)) + texture(samB, vec2(0.5))); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PassComputePlan.PassCompute compute = PassComputePlan.build(plan, shaders).compute("composite_a");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg2", 0, PassComputePlan.Kind.TARGET_IMAGE, 2, "rgba16f", null),
+                new PassComputePlan.Binding("samA", 1, PassComputePlan.Kind.PACK_IMAGE_SAMPLER, -1, null, "imgA"),
+                new PassComputePlan.Binding("samB", 2, PassComputePlan.Kind.TEXTURE, -1, null,
+                        "texture.composite.samB")),
+                compute.bindings(), compute.deviations().toString());
+        assertEquals(PackResourceKind.ADVANCED_IMAGE, plan.resources().binding("composite", "samA").kind(),
+                "the program's samA reads the image too");
+    }
+
+    /**
      * Iris ShaderProperties {@code indirect.<compute> = <buffer> <offset>} dispatches the counts that
      * buffer holds. Iris ignores a value it cannot parse and fails on a buffer the pack lacks; Vulkan
      * reads the counts at a multiple of 4 inside the buffer.

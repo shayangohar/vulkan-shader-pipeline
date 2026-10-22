@@ -415,13 +415,13 @@ public final class PassComputePlan {
 
         /** What the live sampler {@code name} of {@code type} reads, or null when dispatch cannot bind it. */
         private Binding samplerBinding(String name, String type, Work work) {
-            PackAdvancedResourcePlan.ImageSpec pack = packImage(PackAdvancedResourcePlan.imageBySampler(
-                    plan.advancedResources().images(), name));
-            if (pack != null) {
-                if (!type.equals(pack.samplerType())) return null;
-                return new Binding(name, work.bindings.size(), Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
-            }
             PackResourceBinding resource = PackResourcePlan.passComputeBinding(plan, work.pass, name, type, shadersDir);
+            if (resource.kind() == PackResourceKind.ADVANCED_IMAGE) {
+                PackAdvancedResourcePlan.ImageSpec pack = packImage(
+                        plan.advancedResources().images().get(resource.resourceKey()));
+                return pack == null || !type.equals(pack.samplerType()) ? null
+                        : new Binding(name, work.bindings.size(), Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
+            }
             Integer target = PackResourcePlan.targetIndex(name);
             if (resource.kind() == PackResourceKind.TARGET && target != null && resource.available()) {
                 return type.equals(targetSamplerType(target))
