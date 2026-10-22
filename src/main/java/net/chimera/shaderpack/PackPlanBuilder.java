@@ -233,6 +233,7 @@ public final class PackPlanBuilder {
                 vertex = IrisCoreProfile.prepareIrisCoreProfile(vertex, vertexFile(), true, overlay,
                         IrisCoreProfile.coreMode(program.executableVertexSource()), patch);
             }
+            if (patch == IrisCoreProfile.Patch.SODIUM) vertex = IrisCoreProfile.withChunkFade(vertex);
             if (fragment != null) {
                 fragment = IrisCoreProfile.prepareIrisCoreProfile(fragment, fragmentFile(), false, overlay,
                         IrisCoreProfile.coreMode(program.executableFragmentSource()), patch);

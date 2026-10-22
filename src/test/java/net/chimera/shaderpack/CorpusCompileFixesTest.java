@@ -548,4 +548,47 @@ final class CorpusCompileFixesTest {
                 entities.deviations().toString());
         assertFalse(entities.convertedFragment().contains("clouds"), entities.convertedFragment());
     }
+
+    /**
+     * Iris declares mc_chunkFade in every Sodium terrain and shadow vertex stage (SodiumTransformer
+     * .injectVertInit), 1.0 for a section not fading in; VulkanMod fades none, so it reads 1.0.
+     */
+    @Test
+    void terrainVerticesReadChunkFade(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), """
+                #version 120
+                varying vec2 uv;
+                varying float fade;
+                void main() { uv = gl_MultiTexCoord0.xy; fade = mc_chunkFade; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_terrain.fsh"), """
+                #version 120
+                uniform sampler2D texture;
+                varying vec2 uv;
+                varying float fade;
+                void main() { gl_FragData[0] = texture2D(texture, uv) * fade; }
+                """);
+        // Block entities and block cracks draw outside Sodium, where Iris declares no mc_chunkFade, so
+        // they get their own programs rather than falling back to terrain's.
+        for (String program : List.of("gbuffers_block", "gbuffers_damagedblock")) {
+            Files.writeString(shaders.resolve(program + ".vsh"), """
+                    #version 120
+                    varying vec2 uv;
+                    void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                    """);
+            Files.writeString(shaders.resolve(program + ".fsh"), """
+                    #version 120
+                    uniform sampler2D texture;
+                    varying vec2 uv;
+                    void main() { gl_FragData[0] = texture2D(texture, uv); }
+                    """);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
+        assertTrue(terrain.executable() && terrain.convertedVertex().contains("float mc_chunkFade = 1.0;"),
+                terrain.deviations() + "\n" + terrain.convertedVertex());
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), compiled.failures().toString());
+    }
 }
