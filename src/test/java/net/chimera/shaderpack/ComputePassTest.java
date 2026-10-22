@@ -77,6 +77,39 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris dispatches a shadowcomp the pack points at a buffer from that buffer
+     * (ShadowCompositeRenderer.createComputes); PackShadowCompute dispatches work groups only.
+     */
+    @Test
+    void indirectShadowcompIsRefused(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String properties = """
+                iris.features.optional=CUSTOM_IMAGES
+                image.voxels = voxelSampler rgba rgba16f half_float false false 8 4 8
+                bufferObject.0 = 16
+                """;
+        Files.writeString(shaders.resolve("shaders.properties"), properties);
+        Files.writeString(shaders.resolve("shadowcomp.csh"), """
+                #version 430
+                layout (local_size_x = 2, local_size_y = 2, local_size_z = 2) in;
+                writeonly uniform image3D voxels;
+                void main() {
+                    imageStore(voxels, ivec3(gl_GlobalInvocationID), vec4(1.0));
+                }
+                """);
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n gl_FragColor = texture2D(colortex0, vec2(0.5));\n}\n");
+        PackAdvancedResourcePlan.ComputeSpec direct = PackProbe.analyze(root).plan().advancedResources()
+                .computeStages().get("shadowcomp");
+        assertTrue(direct != null && direct.supported(), direct == null ? "missing" : direct.deviations().toString());
+        Files.writeString(shaders.resolve("shaders.properties"), properties + "indirect.shadowcomp = 0 0\n");
+        PackAdvancedResourcePlan.ComputeSpec indirect = PackProbe.analyze(root).plan().advancedResources()
+                .computeStages().get("shadowcomp");
+        assertTrue(!indirect.supported() && indirect.deviations().contains("COMPUTE_INDIRECT_UNSUPPORTED:shadowcomp"),
+                indirect.deviations().toString());
+    }
+
+    /**
      * A compute's uniform block is written while a frame is recorded, so each frame in flight
      * owns one: a single block could be rewritten while the GPU still ran the previous frame's
      * dispatch. Shadowcomp and the pass computes both bind ComputeKernel's current frame slot.

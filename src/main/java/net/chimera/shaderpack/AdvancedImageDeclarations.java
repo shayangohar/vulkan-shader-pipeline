@@ -190,9 +190,11 @@ final class AdvancedImageDeclarations {
             Map<String, String> initialMacros,
             Set<String> lockedMacros,
             Set<String> graphicsProducedImages,
-            Map<String, UniformRegistry.UniformDescriptor> customDescriptors
+            PackSettingsPlan settings
     ) {
         if (shadersDir == null) return Map.of();
+        Map<String, UniformRegistry.UniformDescriptor> customDescriptors =
+                settings.runtimeSettings().customDescriptors();
         Map<String, PackAdvancedResourcePlan.ComputeSpec> result = new TreeMap<>();
         Path source = shadowComputeSource(shadersDir, selectedFolder);
         if (source == null) return result;
@@ -231,6 +233,11 @@ final class AdvancedImageDeclarations {
                 localDeviations.add("COMPUTE_TEXEL_FETCH_CLAMPED");
             }
             addValueUniformDeviations(text, customDescriptors, localDeviations);
+            // Iris dispatches it from the pack's buffer (ShadowCompositeRenderer.createComputes);
+            // PackShadowCompute dispatches work groups only.
+            if (PassComputePlan.indirectPointer(settings.propertyValues(), "shadowcomp") != null) {
+                localDeviations.add("COMPUTE_INDIRECT_UNSUPPORTED:shadowcomp");
+            }
             PackAdvancedResourcePlan.Status status = !hasBlockingComputeDeviation(localDeviations) && !names.isEmpty()
                     ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
             if (status == PackAdvancedResourcePlan.Status.SUPPORTED) deviations.add(

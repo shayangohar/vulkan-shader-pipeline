@@ -630,7 +630,7 @@ public final class PackAdvancedResourcePlan {
         Map<String, ComputeSpec> compute = !plan.settings().enabled(folder, "shadowcomp") ? Map.of()
                 : AdvancedImageDeclarations.discoverCompute(shadersDir, folder, images, deviations, computeMacros,
                         PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
-                        graphics.producedImages, plan.settings().runtimeSettings().customDescriptors());
+                        graphics.producedImages, plan.settings());
         addCapabilityDeviations(images, graphics.customImageFeaturePrograms, deviations);
         List<String> bufferDependent = new ArrayList<>();
         List<String> storageEligible = new ArrayList<>();

@@ -121,6 +121,21 @@ public final class PassComputePlan {
 
     public static PassComputePlan empty() { return new PassComputePlan(List.of()); }
 
+    /**
+     * The pack's {@code indirect.<compute>} pointer (Iris ShaderProperties), or null for none or one
+     * Iris cannot parse, which it ignores.
+     */
+    public static Indirect indirectPointer(Map<String, String> propertyValues, String compute) {
+        String value = propertyValues == null ? null : propertyValues.get("indirect." + compute);
+        if (value == null) return null;
+        try {
+            String[] parts = value.split(" ");
+            return new Indirect(Integer.parseInt(parts[0]), Long.parseLong(parts[1]));
+        } catch (NumberFormatException | ArrayIndexOutOfBoundsException failure) {
+            return null;
+        }
+    }
+
     public static PassComputePlan build(PackPlan plan, Path shadersDir) {
         if (plan == null || shadersDir == null) return empty();
         String folder = plan.selectedSourceFolder();
@@ -446,21 +461,13 @@ public final class PassComputePlan {
         }
 
         /**
-         * The compute's {@code indirect.<name>} pointer (Iris ShaderProperties), or null for none or
-         * one Iris cannot parse, which it ignores. A buffer the pack does not declare fails Iris's
+         * The compute's {@link #indirectPointer}, checked. A buffer the pack does not declare fails Iris's
          * load (ShaderStorageBufferHolder.getBufferIndex), and Vulkan reads the three counts at an
          * offset that is a multiple of 4 within the buffer: either stops the compute here.
          */
         private Indirect indirect(String name, Work work) {
-            String value = plan.settings().propertyValues().get("indirect." + name);
-            if (value == null) return null;
-            Indirect pointer;
-            try {
-                String[] parts = value.split(" ");
-                pointer = new Indirect(Integer.parseInt(parts[0]), Long.parseLong(parts[1]));
-            } catch (NumberFormatException | ArrayIndexOutOfBoundsException failure) {
-                return null;
-            }
+            Indirect pointer = indirectPointer(plan.settings().propertyValues(), name);
+            if (pointer == null) return null;
             PackAdvancedResourcePlan.BufferSpec spec = plan.advancedResources().buffers().get(pointer.buffer());
             if (spec == null || !spec.supported()) {
                 work.fail("PASS_COMPUTE_INDIRECT_BUFFER_UNAVAILABLE:" + pointer.buffer());
