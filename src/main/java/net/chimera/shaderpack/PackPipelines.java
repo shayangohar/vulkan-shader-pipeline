@@ -48,15 +48,22 @@ import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
  */
 public final class PackPipelines {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
+    /**
+     * An image declaration's qualifiers, a layout among them in any order (GLSL 4.20): RenderPearl
+     * writes {@code uniform layout(rg8) restrict writeonly image2D edge}.
+     */
+    static final String IMAGE_QUALIFIERS =
+            "(?:layout\\s*\\([^)]*\\)\\s*|(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*";
+    /** A sampler declaration's {@code uniform}, with a layout before or after it. */
+    static final String UNIFORM_QUALIFIERS = "(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+(?:layout\\s*\\([^)]*\\)\\s*)?";
     static final Pattern STORAGE_IMAGE_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
-                    + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
+            "(?m)^[ \\t]*" + IMAGE_QUALIFIERS
                     + "(u?i?image(?:1D|2D|3D)(?:Array)?)\\s+([A-Za-z_]\\w*)\\s*;");
     static final Pattern STORAGE_SAMPLER_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
+            "(?m)^[ \\t]*" + UNIFORM_QUALIFIERS
                     + "([iu]?sampler(?:1D|2D|3D))\\s+([A-Za-z_]\\w*)\\s*;");
     static final Pattern SAMPLER_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
+            "(?m)^[ \\t]*" + UNIFORM_QUALIFIERS
                     + "((?:[iu]?sampler3D|sampler2D(?:Shadow)?))\\s+"
                     + "([A-Za-z_]\\w*)\\s*;");
 

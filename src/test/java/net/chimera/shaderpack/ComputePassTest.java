@@ -398,10 +398,11 @@ final class ComputePassTest {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        // GLSL 4.20 takes qualifiers in any order: RenderPearl writes uniform before layout.
         Files.writeString(shaders.resolve("composite_a.csh"), """
                 #version 430
                 layout(local_size_x = 8, local_size_y = 8) in;
-                layout(rgba16f) uniform restrict image2D colorimg0;
+                uniform layout(rgba16f) restrict image2D colorimg0;
                 void main() {
                     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
                     imageStore(colorimg0, texel, imageLoad(colorimg0, texel) * 0.5);
@@ -413,6 +414,10 @@ final class ComputePassTest {
                 new PassComputePlan.Binding("colorimg0", 0, PassComputePlan.Kind.TARGET_IMAGE, 0, "rgba16f", null)),
                 compute.bindings(), compute.deviations().toString());
         assertEquals(Set.of(0), computes.storageTargets());
+        assertTrue(compute.source().contains("layout(rgba16f, binding = 0) uniform restrict image2D colorimg0;"),
+                compute.source());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
     }
 
     /**

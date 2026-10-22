@@ -38,11 +38,10 @@ public final class PassComputePlan {
     private static final Pattern WORK_GROUPS_RENDER = Pattern.compile("\\bconst\\s+vec2\\s+workGroupsRender"
             + "\\s*=\\s*vec2\\s*\\(\\s*([-+0-9.eE]+)\\s*,\\s*([-+0-9.eE]+)\\s*\\)");
     private static final Pattern IMAGE_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
-                    + "((?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*)"
-                    + "(\\w*image\\w+)\\s+([A-Za-z_]\\w*)\\s*;");
+            "(?m)^[ \\t]*(" + PackPipelines.IMAGE_QUALIFIERS + ")(\\w*image\\w+)\\s+([A-Za-z_]\\w*)\\s*;");
+    private static final Pattern LAYOUT = Pattern.compile("layout\\s*\\([^)]*\\)\\s*");
     private static final Pattern SAMPLER_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+(\\w*sampler\\w+)\\s+([A-Za-z_]\\w*)\\s*;");
+            "(?m)^[ \\t]*" + PackPipelines.UNIFORM_QUALIFIERS + "(\\w*sampler\\w+)\\s+([A-Za-z_]\\w*)\\s*;");
     private static final Pattern OTHER_UNIFORM = Pattern.compile(
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+\\w+\\s+([A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*;");
     private static final Pattern EXTENSION = Pattern.compile("(?m)^[ \\t]*#extension\\s+(\\w+)[^\\r\\n]*(?:\\r?\\n|$)");
@@ -308,7 +307,7 @@ public final class PassComputePlan {
                     continue;
                 }
                 work.declare("layout(" + format + ", binding = " + work.bindings.size() + ") "
-                        + image.group(1) + type + " " + name + ";");
+                        + LAYOUT.matcher(image.group(1)).replaceAll("") + type + " " + name + ";");
                 work.bindings.add(pack != null
                         ? new Binding(name, work.bindings.size(), Kind.PACK_IMAGE, -1, format, pack.name())
                         : new Binding(name, work.bindings.size(), Kind.TARGET_IMAGE, target, format, null));

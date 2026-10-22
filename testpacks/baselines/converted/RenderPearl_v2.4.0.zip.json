@@ -1,5 +1,8 @@
 {
+  "composite1.csh": "64b42ba6ab06c2bf 26649a4cd031a37c",
+  "composite2.csh": "39d5d4411c8e941c 312c622e9093ca4c",
   "composite2_a.csh": "d0afa613f13300c7 40c67ea0e7bc7fb6",
+  "composite3.csh": "f666039fa57986a7 8493ae8958ba87ee",
   "deferred.csh": "f701cec1b358cb06 27d53e68fec9ec5e",
   "gbuffers_armor_glint [hand glint variant].vsh": "b2184c2fe6f97957 d41f69fa329f7ff3",
   "gbuffers_armor_glint.fsh": "b19c040d5975a057 e333083154db9345",

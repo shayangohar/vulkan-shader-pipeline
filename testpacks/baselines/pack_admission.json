@@ -199,9 +199,6 @@
   ],
   "RenderPearl v2.4.0.zip": [
     "composite",
-    "composite1",
-    "composite2",
-    "composite3",
     "deferred1",
     "gbuffers_damagedblock",
     "gbuffers_line",
