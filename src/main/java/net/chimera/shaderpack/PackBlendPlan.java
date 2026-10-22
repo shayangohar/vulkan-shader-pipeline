@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -156,6 +157,31 @@ public record PackBlendPlan(Mode program, Map<Integer, Mode> buffers, List<Strin
             Mode buffer = buffers.get(targets.get(i));
             result[i] = buffer != null ? buffer : program;
         }
+        return result;
+    }
+
+    /** Stands for the host draw's own blend when attachment modes are compared. */
+    private static final Mode HOST = new Mode(true, -1, -1, -1, -1);
+
+    /**
+     * The modes a device without independentBlend can draw with, where every attachment's blend state
+     * must be identical: the one blend every attachment resolves to, on each of them, else blending
+     * off on all. A null entry, or null {@code modes}, is the host draw's blend; an integer
+     * attachment never blends, as GL skips blending for it.
+     */
+    public static Mode[] sharedAttachments(Mode[] modes, boolean[] integer) {
+        Mode shared = null;
+        for (int i = 0; i < integer.length; i++) {
+            Mode mode = integer[i] ? Mode.OFF : modes == null || modes[i] == null ? HOST : modes[i];
+            if (shared == null) {
+                shared = mode;
+            } else if (!shared.equals(mode)) {
+                shared = Mode.OFF;
+                break;
+            }
+        }
+        Mode[] result = new Mode[integer.length];
+        Arrays.fill(result, shared == HOST ? null : shared);
         return result;
     }
 

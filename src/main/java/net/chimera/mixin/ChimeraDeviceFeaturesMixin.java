@@ -68,6 +68,10 @@ public abstract class ChimeraDeviceFeaturesMixin {
         // A pack's blend directives and the buffers a program leaves unwritten differ per attachment.
         enabled.independentBlend(available.independentBlend());
         ChimeraDevice.setIndependentBlend(available.independentBlend());
+        if (!available.independentBlend()) {
+            LOGGER.warn("[chimera] no independentBlend: a pass whose attachments resolve to different "
+                    + "blends draws unblended, and every attachment takes color writes");
+        }
         return enabled;
     }
 

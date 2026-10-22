@@ -74,6 +74,27 @@ final class PassBlendDirectiveTest {
         assertTrue(Arrays.stream(none).allMatch(mode -> mode == PackBlendPlan.Mode.OFF), Arrays.toString(none));
     }
 
+    /**
+     * Without independentBlend every attachment's blend state must be identical: a blend all of them
+     * resolve to is kept on each, and differing ones (an integer attachment counts as off) fall to off.
+     */
+    @Test
+    void sharedAttachmentsWithoutIndependentBlend() {
+        PackBlendPlan.Mode add = PackBlendPlan.parse("ONE ONE ONE ONE");
+        PackBlendPlan.Mode over = PackBlendPlan.parse("SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ZERO");
+        PackBlendPlan.Mode off = PackBlendPlan.Mode.OFF;
+        boolean[] floats = {false, false, false};
+        assertTrue(Arrays.equals(new PackBlendPlan.Mode[3], PackBlendPlan.sharedAttachments(null, floats)),
+                "the host blend everywhere");
+        assertTrue(Arrays.equals(new PackBlendPlan.Mode[] {add, add, add},
+                PackBlendPlan.sharedAttachments(new PackBlendPlan.Mode[] {add, add, add}, floats)),
+                "one program blend");
+        assertTrue(Arrays.equals(new PackBlendPlan.Mode[] {off, off, off},
+                PackBlendPlan.sharedAttachments(new PackBlendPlan.Mode[] {add, over, null}, floats)), "mixed blends");
+        assertTrue(Arrays.equals(new PackBlendPlan.Mode[] {off, off, off}, PackBlendPlan.sharedAttachments(
+                new PackBlendPlan.Mode[] {add, add, add}, new boolean[] {false, true, false})), "an integer target");
+    }
+
     @Test
     void shadowProgramKeepsItsDirectives(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));

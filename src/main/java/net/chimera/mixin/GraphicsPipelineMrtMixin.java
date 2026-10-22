@@ -90,9 +90,14 @@ public abstract class GraphicsPipelineMrtMixin {
         int written = MrtPipelineContext.writtenOutputs();
         // A contract for another attachment set does not describe this window.
         if (blends != null && blends.length != attachments.capacity()) blends = null;
-        // Without independentBlend every attachment must blend and mask alike.
+        // Without independentBlend every attachment must blend and mask alike: one shared blend, or none.
         if (!ChimeraDevice.independentBlend()) {
-            blends = null;
+            int[] formats = this.chimera$window.colorFormats();
+            boolean[] integer = new boolean[attachments.capacity()];
+            for (int index = 0; index < integer.length; index++) {
+                integer[index] = IrisColorFormats.integer(formats[index]);
+            }
+            blends = PackBlendPlan.sharedAttachments(blends, integer);
             written = SpirvOutputWrites.ALL;
         }
         VkPipelineColorBlendAttachmentState host = attachments.get(0);
