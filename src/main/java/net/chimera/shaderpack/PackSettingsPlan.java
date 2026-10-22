@@ -260,18 +260,6 @@ record PackSettingsPlan(
         return stageIndependentDefaults(result);
     }
 
-    /** The defines shaders.properties makes itself, which only its own values read (image sizes). */
-    Map<String, String> propertyDefines() {
-        Map<String, String> result = new TreeMap<>();
-        defaults.forEach((name, value) -> {
-            Option option = options.get(name);
-            if (option != null && "shaders.properties".equals(option.source())) {
-                result.put(name, value);
-            }
-        });
-        return stageIndependentDefaults(result);
-    }
-
     /** Names whose values were explicitly supplied by the Chimera launcher. */
     Set<String> overriddenNames() {
         return options.entrySet().stream()

@@ -63,7 +63,7 @@ final class SettingsResolutionTest {
                     "property define default for " + dimension);
             // Iris preprocesses shaders.properties on its own: its defines reach no program source.
             assertTrue(!settings.preprocessorDefines().containsKey("QUALITY")
-                            && "2".equals(settings.propertyDefines().get("QUALITY")),
+                            && "2".equals(settings.propertyMacros().get("QUALITY")),
                     "a shaders.properties define stays in that file for " + dimension);
             assertTrue(settings.options().containsKey("BLOOM"),
                     "commented option was not inventoried for " + dimension);
