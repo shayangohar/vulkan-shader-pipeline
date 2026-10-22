@@ -218,29 +218,32 @@ final class AlphaTestContractTest {
         for (String function : List.of("NEVER", "LESS", "EQUAL", "LEQUAL",
                 "GREATER", "NOTEQUAL", "GEQUAL", "ALWAYS")) {
             PackAlphaTestPlan plan = PackAlphaTestPlan.forProgram(
-                    "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain",
-                            "GL_" + function + " 0.5")));
-            if (function.equals("ALWAYS") || function.equals("NEVER")) {
-                plan = PackAlphaTestPlan.forProgram("gbuffers_terrain",
-                        settings(Map.of("alphaTest.gbuffers_terrain", "GL_" + function)));
-            }
-            assertTrue(plan.valid() && plan.mode() == PackAlphaTestPlan.Mode.FIXED,
-                    "fixed alpha function rejected: " + function);
-            assertTrue(plan.function().equals(function), "fixed alpha function changed: " + function);
+                    "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", function + " 0.5")));
+            assertTrue(plan.mode() == PackAlphaTestPlan.Mode.FIXED && plan.function().equals(function)
+                    && plan.reference() == 0.5F, "fixed alpha function rejected: " + function);
         }
+        // Iris's names are exact; GL_ALWAYS is the one GL_ spelling it takes. A third part is ignored.
+        assertTrue(PackAlphaTestPlan.forProgram("gbuffers_terrain", settings(Map.of(
+                "alphaTest.gbuffers_terrain", "GL_ALWAYS 0"))).function().equals("ALWAYS"), "GL_ALWAYS");
+        assertTrue(PackAlphaTestPlan.forProgram("gbuffers_terrain", settings(Map.of(
+                "alphaTest.gbuffers_terrain", "GREATER 0.25 extra"))).reference() == 0.25F, "third part");
 
         PackAlphaTestPlan off = PackAlphaTestPlan.forProgram(
                 "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", "off")));
-        assertTrue(off.mode() == PackAlphaTestPlan.Mode.OFF && off.valid(), "off was not accepted");
+        assertTrue(off.mode() == PackAlphaTestPlan.Mode.OFF && off.configured(), "off was not accepted");
         PackAlphaTestPlan falseValue = PackAlphaTestPlan.forProgram(
                 "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", "false")));
-        assertTrue(falseValue.mode() == PackAlphaTestPlan.Mode.OFF && falseValue.valid(),
+        assertTrue(falseValue.mode() == PackAlphaTestPlan.Mode.OFF && falseValue.configured(),
                 "false was not accepted");
-        PackAlphaTestPlan malformed = PackAlphaTestPlan.forProgram(
-                "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", "LESS")));
-        assertTrue(!malformed.valid() && malformed.deviations().get(0)
-                        .equals("ALPHA_TEST_MALFORMED:gbuffers_terrain:LESS"),
-                "malformed alpha setting was accepted");
+        // A directive Iris rejects keeps the key's own test (ShaderProperties: logged, no override).
+        for (String rejected : List.of("LESS", "ALWAYS", "Off", "GL_GREATER 0.5", "greater 0.5", "GREATER x")) {
+            PackAlphaTestPlan kept = PackAlphaTestPlan.forProgram(
+                    "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", rejected)));
+            assertTrue(kept.mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN && !kept.configured()
+                            && kept.deviations().equals(
+                                    List.of("ALPHA_TEST_DIRECTIVE_IGNORED:gbuffers_terrain:" + rejected)),
+                    "a rejected directive replaced the key's test: " + rejected + " " + kept);
+        }
         PackAlphaTestPlan water = PackAlphaTestPlan.forProgram(
                 "gbuffers_water", settings(Map.of("alphaTest.gbuffers_water", "GREATER 0.5")));
         assertTrue(water.active(), "water alpha setting was not parsed");
@@ -317,7 +320,7 @@ final class AlphaTestContractTest {
         Path fixture = Path.of("testpacks/m5_2/material");
         try (PackSource.LoadResult loaded = PackSource.loadResult(fixture)) {
             PackSettingsPlan settings = settings(Map.of(
-                    "alphaTest.gbuffers_terrain", "GL_GREATER 0.5"));
+                    "alphaTest.gbuffers_terrain", "GREATER 0.5"));
             PackConfig.PackConfigData config = PackConfig.parse(
                     loaded.programs(), loaded.shadersDir(), settings);
             PackProgramPlan terrain = PackPlanBuilder.build(loaded.programs(), config,

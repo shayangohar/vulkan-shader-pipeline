@@ -509,7 +509,6 @@ public final class PackProbe {
             PackProgramPlan programPlan = packPlan == null ? null : packPlan.program(programName);
             boolean consumed = programPlan != null
                     && programPlan.executable()
-                    && programPlan.alphaTestPlan().valid()
                     && programPlan.alphaTestPlan().configured()
                     && (programName.equals("gbuffers_terrain")
                     || FamilyAdapterRegistry.isEntityLike(programName)

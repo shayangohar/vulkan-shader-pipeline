@@ -41,7 +41,7 @@ final class AlphaTestReferenceTest {
                 && perDraw.contains("color.a < (" + reference + " < 0.0 ? 3.4028235e38 : " + reference + ")"),
                 perDraw);
         String fixed = PackAlphaTestPlan.forProgram("gbuffers_entities",
-                settings(Map.of("alphaTest.gbuffers_entities", "GL_GREATER 0.5"))).serveReference(READER);
+                settings(Map.of("alphaTest.gbuffers_entities", "GREATER 0.5"))).serveReference(READER);
         assertTrue(fixed.contains("color.a < 0.5") && !fixed.contains("uniform float"), fixed);
         String off = PackAlphaTestPlan.forProgram("gbuffers_entities",
                 settings(Map.of("alphaTest.gbuffers_entities", "off"))).serveReference(READER);

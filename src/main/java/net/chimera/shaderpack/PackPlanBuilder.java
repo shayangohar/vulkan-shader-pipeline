@@ -465,8 +465,7 @@ public final class PackPlanBuilder {
                     && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
                     && stageMatch.executable()
                     && (targetPlan == null || targetPlan.executable())
-                    && (geometryOutputPlan == null || geometryOutputPlan.executable())
-                    && alphaTestPlan.valid();
+                    && (geometryOutputPlan == null || geometryOutputPlan.executable());
         }
 
         /** The families that draw only through their own vertex stage. */
@@ -836,8 +835,7 @@ public final class PackPlanBuilder {
                 String applied = alphaTestPlan.appliedDeviation(name);
                 if (!applied.isBlank()) deviations.add(applied);
             } else if ((vertex == null || name.equals("gbuffers_water"))
-                    && alphaTestPlan.configured()
-                    && (alphaTestPlan.active() || !alphaTestPlan.valid())) {
+                    && alphaTestPlan.configured() && alphaTestPlan.active()) {
                 deviations.add("ALPHA_TEST_PLANNED_NOT_INSTALLED:" + name);
             }
         }

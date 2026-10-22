@@ -1,7 +1,6 @@
 package net.chimera.shaderpack;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -69,7 +68,7 @@ record PackAlphaTestPlan(
             return off(false);
         }
         String value = settings == null ? null : settings.propertyValues().get("alphaTest." + sourceProgram);
-        return value == null ? irisDefault : parse(name, value);
+        return value == null ? irisDefault : parse(name, value, irisDefault);
     }
 
     /** The test Iris gives a program's shader key when the pack sets none; null when it has none. */
@@ -177,42 +176,32 @@ record PackAlphaTestPlan(
         return false;
     }
 
-    private static PackAlphaTestPlan parse(String programName, String authored) {
-        String value = authored == null ? "" : authored.trim();
-        if (value.equalsIgnoreCase("off") || value.equalsIgnoreCase("false")) {
+    /**
+     * The test {@code alphaTest.<program>} sets, as Iris's ShaderProperties reads it: exactly
+     * "off" or "false" tests nothing; otherwise a function (Iris's names, or GL_ALWAYS) and a
+     * reference, split on single spaces, where a third part is ignored. A directive Iris rejects,
+     * with too few parts, an unknown function or a reference Float.parseFloat refuses, leaves the
+     * key's own test in place and is named.
+     */
+    private static PackAlphaTestPlan parse(String programName, String authored, PackAlphaTestPlan irisDefault) {
+        String value = authored.stripLeading();
+        if (value.equals("off") || value.equals("false")) {
             return new PackAlphaTestPlan(Mode.OFF, "OFF", 0.0F, true, List.of());
         }
-        String[] parts = value.split("\\s+");
-        if (parts.length == 0 || parts[0].isBlank()) {
-            return invalid(programName, "empty");
-        }
-        String function = parts[0].toUpperCase(Locale.ROOT);
-        if (function.startsWith("GL_")) {
-            function = function.substring(3);
-        }
-        if (!FUNCTIONS.contains(function)) {
-            return invalid(programName, function);
-        }
-        if (function.equals("ALWAYS") || function.equals("NEVER")) {
-            if (parts.length > 2) return invalid(programName, value);
-            return new PackAlphaTestPlan(Mode.FIXED, function, 0.0F, true, List.of());
-        }
-        if (parts.length != 2) {
-            return invalid(programName, value);
-        }
+        String[] parts = value.split(" ");
+        String function = parts.length < 2 ? null : parts[0].equals("GL_ALWAYS") ? "ALWAYS" : parts[0];
+        if (function == null || !FUNCTIONS.contains(function)) return ignored(programName, value, irisDefault);
         try {
-            String numeric = parts[1].replaceFirst("[fF]$", "");
-            float reference = Float.parseFloat(numeric);
-            if (!Float.isFinite(reference)) throw new NumberFormatException("non-finite");
-            return new PackAlphaTestPlan(Mode.FIXED, function, reference, true, List.of());
+            return new PackAlphaTestPlan(Mode.FIXED, function, Float.parseFloat(parts[1]), true, List.of());
         } catch (NumberFormatException failure) {
-            return invalid(programName, value);
+            return ignored(programName, value, irisDefault);
         }
     }
 
-    private static PackAlphaTestPlan invalid(String programName, String value) {
-        return new PackAlphaTestPlan(Mode.OFF, "", 0.0F, true,
-                List.of("ALPHA_TEST_MALFORMED:" + programName + ":" + value));
+    /** The key's own test, with the directive Iris rejected named. */
+    private static PackAlphaTestPlan ignored(String programName, String value, PackAlphaTestPlan irisDefault) {
+        return new PackAlphaTestPlan(irisDefault.mode(), irisDefault.function(), irisDefault.reference(),
+                irisDefault.configured(), List.of("ALPHA_TEST_DIRECTIVE_IGNORED:" + programName + ":" + value));
     }
 
     private static PackAlphaTestPlan off(boolean configured) {
@@ -223,10 +212,6 @@ record PackAlphaTestPlan(
         return off(false);
     }
 
-    boolean valid() {
-        return deviations.isEmpty();
-    }
-
     /** Entity, shadow and terrain draws test against a reference set per draw (Iris iris_currentAlphaTest). */
     boolean perDrawReference() {
         return mode == Mode.DYNAMIC_ENTITY || mode == Mode.DYNAMIC_SHADOW || mode == Mode.DYNAMIC_TERRAIN
@@ -234,7 +219,7 @@ record PackAlphaTestPlan(
     }
 
     boolean active() {
-        return mode != Mode.OFF && valid();
+        return mode != Mode.OFF;
     }
 
     String appliedDeviation(String programName) {
