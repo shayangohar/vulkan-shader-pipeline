@@ -406,18 +406,19 @@ final class HostFamilyTest {
     /**
      * Iris widens the crumbling overlay's BLOCK buffers to TERRAIN, so gbuffers_damagedblock reads a
      * per-quad mid-coordinate and tangent: it plans on the entity contract and draws on EXTENDED_BLOCK,
-     * at BLOCK's locations, with its entity ids read as 0.
+     * at BLOCK's locations, with its entity ids read as 0. Iris's CRUMBLING key is fullbright
+     * (LightingModel.FULLBRIGHT), so its light reads (240, 240), not the block's.
      */
     private static void assertCrumblingWidensTheBlockLayout(PackProbe.Analysis analysis) {
         PackProgramPlan damage = analysis.plan().program("gbuffers_damagedblock");
         assertTrue(analysis.report().shouldAttempt(damage.name()) && damage.executable(),
                 "crumbling adapter not admitted: " + damage.deviations());
         assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY, damage.familyAdapter().vertexContract());
-        String extended = EntityVertexBridge.withoutEntityIds(EntityVertexBridge.layoutVertexForFormat(
+        String extended = EntityVertexBridge.crumblingInputs(EntityVertexBridge.layoutVertexForFormat(
                 damage.convertedVertex(), DefaultVertexFormat.BLOCK));
         var names = ChimeraVertexFormats.EXTENDED_BLOCK.getElementAttributeNames();
         String mid = "layout(location = " + names.indexOf("MidTexCoord") + ") in vec2 MidTexCoord;";
-        assertTrue(extended.contains("layout(location = " + names.indexOf("UV2") + ") in ivec2 UV2;")
+        assertTrue(extended.contains("const ivec2 UV2 = ivec2(240);") && !extended.contains("in ivec2 UV2;")
                         && extended.contains(mid)
                         && extended.contains("const uvec4 EntityIds = uvec4(0);")
                         && extended.contains("TextureMat * vec4(UV0"),

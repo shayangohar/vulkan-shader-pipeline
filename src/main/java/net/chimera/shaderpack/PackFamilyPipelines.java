@@ -40,13 +40,14 @@ public final class PackFamilyPipelines {
     /**
      * gbuffers_damagedblock on the crumbling overlay's BLOCK buffers widened to EXTENDED_BLOCK, as Iris
      * widens every BLOCK buffer to TERRAIN: the mid-coordinate and tangent come per quad, from the
-     * decal's own coordinates. The overlay's entity ids read 0 (EntityVertexBridge.withoutEntityIds).
+     * decal's own coordinates. The overlay draws fullbright, and its entity ids read 0
+     * (EntityVertexBridge.crumblingInputs).
      */
     public static PackPipelines.PackEntity buildDamagedBlock(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         return buildLayoutVariant(plan, DefaultVertexFormat.BLOCK, "crumbling", advancedResources, storageOwner,
-                EntityVertexBridge::withoutEntityIds);
+                EntityVertexBridge::crumblingInputs);
     }
 
     /** Builds the block-entity adapter on the same append-only host format. */

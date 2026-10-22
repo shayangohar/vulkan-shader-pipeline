@@ -870,6 +870,16 @@ public final class EntityVertexBridge {
     }
 
     /**
+     * The crumbling overlay's inputs as Iris's CRUMBLING key gives them (ShaderKey: the TERRAIN
+     * layout, LightingModel.FULLBRIGHT). The key ignores the lightmap, so VanillaTransformer reads
+     * its light as (240, 240) whatever the block's; the entity ids are those of {@link #withoutEntityIds}.
+     */
+    public static String crumblingInputs(String source) {
+        return withoutEntityIds(source).replaceFirst("layout\\(location = \\d+\\) in ivec2 UV2;",
+                "const ivec2 UV2 = ivec2(240);");
+    }
+
+    /**
      * The program's fragment for a pipeline on {@code format}: a layout without UV1 (text, a
      * held map's background, particles in the hand) has no overlay, so entityColor is zero
      * there, as under Iris.
