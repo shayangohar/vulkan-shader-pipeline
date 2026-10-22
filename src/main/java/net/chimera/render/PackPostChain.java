@@ -120,15 +120,28 @@ final class PackPostChain {
         }
     }
 
+    /** Whether a frame opens with pack work: setup computes due, or a begin or prepare pass. */
+    boolean hasOpeningWork() {
+        return pass.packPassComputes != null && pass.packPassComputes.setupDue()
+                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.BEGIN)
+                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE);
+    }
+
     /**
-     * Runs the BEGIN window, then the PREPARE window, over the freshly cleared world target, then
-     * reopens it. Iris runs the begin passes after the clear passes, before the sky.
+     * Runs the setup computes when due, then the BEGIN window, then the PREPARE window, over the
+     * freshly cleared world target, then reopens it. Iris runs the begin passes after the clear
+     * passes, before the sky.
      */
     void runOpeningWindows(VkCommandBuffer commandBuffer) {
         Renderer.getInstance().endRenderPass(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (pass.packPassComputes != null && pass.packPassComputes.setupDue() && pass.packPostFrameStarted) {
+                // Iris's setup computes, after a full clear of new targets and before the begin passes.
+                pass.packPassComputes.dispatchSetup(commandBuffer, computeSources(commandBuffer));
+                if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
+            }
             for (PackFrameSchedulePlan.PostWindow window
                     : List.of(PackFrameSchedulePlan.PostWindow.BEGIN, PackFrameSchedulePlan.PostWindow.PREPARE)) {
                 if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
@@ -620,6 +633,8 @@ final class PackPostChain {
                     pass.packPassComputes == null ? Set.of() : pass.packPassComputes.storageTargets());
             pass.packPostChainActive = pass.packTargetResourcesReady
                     && !pass.packTargetGraph.steps().isEmpty();
+            // New targets, at load or after a resize: Iris runs its setup computes again.
+            if (pass.packPassComputes != null) pass.packPassComputes.requestSetup();
             if (pass.packPostChainActive) {
                 Map<PackFrameSchedulePlan.PostWindow, List<String>> windows = new EnumMap<>(
                         PackFrameSchedulePlan.PostWindow.class);

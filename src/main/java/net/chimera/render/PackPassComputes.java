@@ -71,6 +71,9 @@ final class PackPassComputes implements AutoCloseable {
     private final Set<String> failed = new HashSet<>();
     /** Computes that have skipped a frame, each logged once. */
     private final Set<String> skipped = new HashSet<>();
+    /** The setup computes this round has run; a session's first round starts at load. */
+    private final Set<String> setupDone = new HashSet<>();
+    private boolean setupDue;
 
     private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources, PackAdvancedImageOwner packImages,
                              PackStorageBufferOwner buffers) {
@@ -78,6 +81,7 @@ final class PackPassComputes implements AutoCloseable {
         this.resources = resources;
         this.packImages = packImages;
         this.buffers = buffers;
+        requestSetup();
     }
 
     /** Builds a pipeline for every supported compute whose resources this session has; logs each outcome. */
@@ -107,10 +111,14 @@ final class PackPassComputes implements AutoCloseable {
         return loaded.stream().map(compute -> compute.plan().name()).toList();
     }
 
-    /** Each pass some loaded compute runs before, with the depth snapshots its computes read. */
+    /**
+     * Each pass of the frame some loaded compute runs before, with the depth snapshots its computes
+     * read; setup computes run apart (dispatchSetup).
+     */
     Map<String, Set<String>> depthReadsByPass() {
         Map<String, Set<String>> passes = new TreeMap<>();
         for (Loaded compute : loaded) {
+            if (PassComputePlan.isSetup(compute.plan().pass())) continue;
             Set<String> reads = passes.computeIfAbsent(compute.plan().pass(), ignored -> new TreeSet<>());
             compute.plan().bindings().stream().filter(binding -> binding.kind() == PassComputePlan.Kind.DEPTH)
                     .forEach(binding -> reads.add(binding.resource()));
@@ -152,23 +160,61 @@ final class PackPassComputes implements AutoCloseable {
      */
     void dispatchBefore(String pass, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
         for (Loaded compute : loaded) {
+            if (compute.plan().pass().equals(pass)) run(compute, commandBuffer, sources, width, height);
+        }
+    }
+
+    /**
+     * Runs the setup computes, in order, as Iris does once the pipeline is made and after each
+     * resize: {@code dispatch(1, 1)}, so a relative work-group count is of a one-pixel screen
+     * (IrisRenderingPipeline). One that skips the frame, as before a depth snapshot exists, runs on
+     * a later frame; each runs once a round.
+     */
+    void dispatchSetup(VkCommandBuffer commandBuffer, ImageSources sources) {
+        boolean all = true;
+        for (Loaded compute : loaded) {
             String name = compute.plan().name();
-            if (!compute.plan().pass().equals(pass) || failed.contains(name)) continue;
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                List<VulkanImage> images = images(compute.plan(), sources);
-                PassComputePlan.Indirect indirect = compute.plan().indirect();
-                String gap = frameGap(compute.plan(), binding -> images.get(binding) != null,
-                        indirect == null ? 0L : buffers.buffer(indirect.buffer()).getBufferSize());
-                if (gap == null) {
-                    dispatch(stack, commandBuffer, compute, images, sources, width, height);
-                } else if (skipped.add(name)) {
-                    LOGGER.warn("[chimera] pack compute {} skips a frame: {}", name, gap);
-                }
-            } catch (RuntimeException failure) {
-                failed.add(name);
-                LOGGER.warn("[chimera] pack compute {} dispatch failed; it no longer runs: {}",
-                        name, failure.getMessage(), failure);
+            if (!PassComputePlan.isSetup(compute.plan().pass()) || setupDone.contains(name)) continue;
+            if (run(compute, commandBuffer, sources, 1, 1)) {
+                setupDone.add(name);
+            } else {
+                all = false;
             }
+        }
+        setupDue = !all;
+    }
+
+    /** Starts a setup round: the targets were made again, after a resize. */
+    void requestSetup() {
+        setupDone.clear();
+        setupDue = loaded.stream().anyMatch(compute -> PassComputePlan.isSetup(compute.plan().pass()));
+    }
+
+    /** Whether a setup compute of this round has yet to run. */
+    boolean setupDue() {
+        return setupDue;
+    }
+
+    /** Dispatches one compute unless it failed before; false when it skips this frame (frameGap). */
+    private boolean run(Loaded compute, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
+        String name = compute.plan().name();
+        if (failed.contains(name)) return true;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            List<VulkanImage> images = images(compute.plan(), sources);
+            PassComputePlan.Indirect indirect = compute.plan().indirect();
+            String gap = frameGap(compute.plan(), binding -> images.get(binding) != null,
+                    indirect == null ? 0L : buffers.buffer(indirect.buffer()).getBufferSize());
+            if (gap == null) {
+                dispatch(stack, commandBuffer, compute, images, sources, width, height);
+                return true;
+            }
+            if (skipped.add(name)) LOGGER.warn("[chimera] pack compute {} skips a frame: {}", name, gap);
+            return false;
+        } catch (RuntimeException failure) {
+            failed.add(name);
+            LOGGER.warn("[chimera] pack compute {} dispatch failed; it no longer runs: {}",
+                    name, failure.getMessage(), failure);
+            return true;
         }
     }
 

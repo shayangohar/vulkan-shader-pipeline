@@ -674,7 +674,7 @@ public final class PackResourcePlan {
      */
     static String textureStage(String program) {
         if (program == null) return null;
-        for (String stage : List.of("begin", "shadowcomp", "prepare", "deferred", "composite")) {
+        for (String stage : List.of("setup", "begin", "shadowcomp", "prepare", "deferred", "composite")) {
             if (program.startsWith(stage) && program.substring(stage.length()).matches("\\d*")) {
                 return stage;
             }

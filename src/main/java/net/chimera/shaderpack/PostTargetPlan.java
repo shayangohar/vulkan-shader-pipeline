@@ -20,8 +20,11 @@ public final class PostTargetPlan {
     /** Highest logical colortex index: Iris exposes colortex0 through colortex15. */
     public static final int MAX_TARGET = 15;
     public static final int DEFAULT_FORMAT = 97;
-    /** The numbered pass families in Iris's frame order (IrisRenderingPipeline's composite renderers). */
-    private static final List<String> PASS_FAMILIES = List.of("begin", "prepare", "deferred", "composite");
+    /**
+     * The numbered pass families in the order Iris runs them: the setup computes, then its composite
+     * renderers (IrisRenderingPipeline).
+     */
+    private static final List<String> PASS_FAMILIES = List.of("setup", "begin", "prepare", "deferred", "composite");
 
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");

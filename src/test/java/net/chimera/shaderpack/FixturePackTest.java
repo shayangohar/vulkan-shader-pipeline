@@ -158,10 +158,11 @@ final class FixturePackTest {
                 "unsupported MRT deviation");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
                 numbered.support(), "numbered post pass support");
-        assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED,
-                compute.support(), "compute stage support");
-        assertTrue(compute.deviations().contains("UNSUPPORTED_PACK_STAGE"),
-                "compute stage deviation");
+        // setup.csh is a setup compute, which Iris runs once the pipeline is made (PassComputePlan.isSetup).
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
+                compute.support(), "setup compute support");
+        assertTrue(compute.deviations().contains("PASS_COMPUTE_BRIDGE:setup")
+                && !compute.deviations().contains("UNSUPPORTED_PACK_STAGE"), "setup compute deviation");
         assertTrue(report.deviations().contains("SETTING_NOT_APPLIED:customImage0"),
                 "custom image deviation");
         assertTrue(!report.deviations().contains("SETTING_NOT_APPLIED:iris.features.required"),

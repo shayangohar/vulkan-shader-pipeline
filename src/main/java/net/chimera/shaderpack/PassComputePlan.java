@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -29,6 +30,8 @@ import java.util.stream.Stream;
 public final class PassComputePlan {
     private static final Pattern SOURCE_NAME = Pattern.compile(
             "((?:begin|prepare|deferred|composite)(?:[1-9]\\d?)?)(?:_[a-z])?\\.csh");
+    /** Iris's setup computes, setup.csh and setup1..99.csh, each alone (ProgramSet: readProgramArray). */
+    private static final Pattern SETUP_NAME = Pattern.compile("setup(?:[1-9]\\d?)?");
     private static final Pattern LOCAL_SIZE = Pattern.compile(
             "layout\\s*\\(([^)]*\\blocal_size_[xyz][^)]*)\\)\\s*in\\s*;");
     private static final Pattern LOCAL_SIZE_AXIS = Pattern.compile("local_size_([xyz])\\s*=\\s*(\\d+)");
@@ -159,7 +162,23 @@ public final class PassComputePlan {
 
     /** Whether {@code <program>.csh} is a pass compute: one this plan runs before the pass, not a stage of it. */
     static boolean isPassComputeProgram(String program) {
-        return program != null && SOURCE_NAME.matcher(program + ".csh").matches();
+        return program != null && passOf(program + ".csh") != null;
+    }
+
+    /**
+     * Whether {@code pass} is a setup compute: Iris runs those once the pipeline is made and after
+     * each resize, after a full clear (IrisRenderingPipeline), rather than in a frame's passes.
+     */
+    public static boolean isSetup(String pass) {
+        return pass != null && SETUP_NAME.matcher(pass).matches();
+    }
+
+    /** The pass a compute source belongs to, or null for a file that is no pass compute. */
+    private static String passOf(String fileName) {
+        Matcher source = SOURCE_NAME.matcher(fileName);
+        if (source.matches()) return source.group(1);
+        String name = fileName.endsWith(".csh") ? fileName.substring(0, fileName.length() - ".csh".length()) : null;
+        return isSetup(name) ? name : null;
     }
 
     /** The computes that run before this pass, in Iris's order. */
@@ -219,9 +238,8 @@ public final class PassComputePlan {
     /** The passes any compute source in the folder names, in pass order. */
     private static List<String> passes(Path root) {
         try (Stream<Path> files = Files.list(root)) {
-            return files.map(file -> SOURCE_NAME.matcher(file.getFileName().toString()))
-                    .filter(Matcher::matches)
-                    .map(matcher -> matcher.group(1))
+            return files.map(file -> passOf(file.getFileName().toString()))
+                    .filter(Objects::nonNull)
                     .distinct()
                     .sorted(PostTargetPlan.programComparator())
                     .toList();
@@ -230,11 +248,14 @@ public final class PassComputePlan {
         }
     }
 
-    /** Iris reads {@code <pass>.csh}, then the suffixes from {@code _a} until one is missing or disabled. */
+    /**
+     * Iris reads {@code <pass>.csh}, then the suffixes from {@code _a} until one is missing or
+     * disabled; a setup compute has no suffixes.
+     */
     static List<String> sourceNames(Path root, String pass, Predicate<String> enabled) {
         List<String> names = new ArrayList<>();
         if (present(root, pass, enabled)) names.add(pass);
-        for (char suffix = 'a'; suffix <= 'z'; suffix++) {
+        for (char suffix = 'a'; suffix <= 'z' && !isSetup(pass); suffix++) {
             String name = pass + "_" + suffix;
             if (!present(root, name, enabled)) break;
             names.add(name);

@@ -105,5 +105,8 @@
   "gbuffers_weather.fsh": "864ccd88c035df15 0408555d23f50bb1",
   "gbuffers_weather.vsh": "27368976d8bf9d63 813f7304c1d643e9",
   "prepare2.csh": "ed1327517f8d9946 4f4b18d5555ccbe5",
-  "prepare3.csh": "807ab55ddd6b1455 316e69fc61c8a8e2"
+  "prepare3.csh": "807ab55ddd6b1455 316e69fc61c8a8e2",
+  "setup1.csh": "3f641d04ce79db89 98843e9a372d7e16",
+  "setup3.csh": "7f8cb091f34401dc 8fe44d0e4d202f4b",
+  "setup4.csh": "4c522237b288ad0e 530de7f98383d2ef"
 }

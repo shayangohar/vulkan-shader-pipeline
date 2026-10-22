@@ -693,6 +693,40 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris reads setup.csh and setup1..99.csh, each alone with no _a.._z computes, and runs them in
+     * that order once the pipeline is made and after each resize, apart from the frame's passes
+     * (IrisRenderingPipeline.createSetupComputes). They bind customTexture entries and the depth
+     * samplers on the program's builder, where no stage texture replaces them.
+     */
+    @Test
+    void setupComputesRunApart(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        for (String name : List.of("setup", "setup2", "setup10", "setup2_a")) {
+            Files.writeString(shaders.resolve(name + ".csh"), """
+                    #version 430
+                    layout(local_size_x = 1) in;
+                    const ivec3 workGroups = ivec3(4, 1, 1);
+                    layout(rgba16f) uniform image2D colorimg2;
+                    void main() { imageStore(colorimg2, ivec2(gl_GlobalInvocationID.xy), vec4(1.0)); }
+                    """);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
+        assertEquals(List.of("setup", "setup2", "setup10"),
+                computes.computes().stream().map(PassComputePlan.PassCompute::name).toList());
+        assertTrue(computes.computes().stream().allMatch(compute -> compute.supported()
+                && compute.pass().equals(compute.name()) && PassComputePlan.isSetup(compute.pass())
+                && Arrays.equals(new int[] {4, 1, 1}, compute.groups(1, 1))), computes.computes().toString());
+        assertEquals(IrisSamplerOrder.SETUP, IrisSamplerOrder.of("setup2", true));
+        assertTrue(!IrisSamplerOrder.SETUP.intercepted(IrisSamplerOrder.Source.DEPTH));
+        ConformanceReport.ProgramReport report = analysis.report().program("setup10");
+        assertTrue(report.deviations().contains("PASS_COMPUTE_BRIDGE:setup10")
+                && !report.deviations().contains("UNSUPPORTED_PACK_STAGE"), report.deviations().toString());
+    }
+
+    /**
      * Iris runs the begin passes each frame after its clear passes and before the sky
      * (IrisRenderingPipeline.beginLevelRendering), each one's computes as a composite's: Shrimple's
      * begin1 is begin1_a.csh and begin1_b.csh alone. They run in the opening window, before prepare.
