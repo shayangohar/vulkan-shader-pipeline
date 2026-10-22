@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -127,6 +128,27 @@ final class SampledResourcePlanTest {
         TargetStep composite = graph.step("composite");
         assertTrue(composite != null && composite.readTargets().contains(4),
                 "gaux1 did not schedule a colortex4 read");
+    }
+
+    /**
+     * Iris preprocesses shaders.properties as C, so a raw texture's size may be a macro the file
+     * defines: Alpha Piscium sizes customTexture.usam_restirReuseTex0 with RESTIR_REUSE_TEX_WIDTH.
+     */
+    @Test
+    void resourceValuesReadPropertyMacros(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #define REUSE_SIZE 2
+                customTexture.reuse = reuse.bin TEXTURE_2D RG8UI REUSE_SIZE REUSE_SIZE RG_INTEGER UNSIGNED_BYTE
+                """);
+        Files.write(shaders.resolve("reuse.bin"), new byte[8]);
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 130\nuniform usampler2D reuse;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = vec4(texture(reuse, vec2(0.5)));\n}\n");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertEquals("reuse.bin TEXTURE_2D RG8UI 2 2 RG_INTEGER UNSIGNED_BYTE",
+                plan.settings().resourceDeclarations().get("customTexture.reuse").source());
+        PackResourceBinding binding = plan.resources().binding("composite", "reuse");
+        assertEquals(PackResourceStatus.PACK_FILE, binding.status(), binding.deviations().toString());
     }
 
     @Test

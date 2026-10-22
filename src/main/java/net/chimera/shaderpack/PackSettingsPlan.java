@@ -623,6 +623,13 @@ record PackSettingsPlan(
             if (key.isBlank()) {
                 return;
             }
+            // Iris preprocesses shaders.properties as C (PropertiesPreprocessor), so a resource's
+            // value reads the macros defined so far: Alpha Piscium sizes its restir textures with
+            // RESTIR_REUSE_TEX_WIDTH. Switches and option lists keep their names; Chimera
+            // evaluates those itself.
+            if (RESOURCE_PREFIXES.stream().anyMatch(key::startsWith)) {
+                value = PackConditionals.expandMacros(value, conditions.macros()).trim();
+            }
             values.put(key, value);
             acceptEntry(line, key, value);
         }
@@ -785,6 +792,14 @@ record PackSettingsPlan(
             return line;
         }
     }
+
+    /**
+     * The keys whose values name pack resources, read after macro expansion as Iris reads them.
+     * image. values resolve their size tokens themselves (AdvancedImageDeclarations), keeping the
+     * option each size came from.
+     */
+    private static final List<String> RESOURCE_PREFIXES = List.of(
+            "customTexture.", "texture.", "bufferObject.", "indirect.");
 
     /** Property key prefixes Chimera reads; "shadow" covers every shadow setting. */
     private static final List<String> SUPPORTED_PROPERTY_PREFIXES = List.of(
