@@ -62,6 +62,9 @@ final class PackShadowPass {
      */
     boolean shadowPassActive;
 
+    /** The pack shadow program the open terrain draws run: shadow, or shadow_water for the translucent layer. */
+    private String shadowTerrainProgram = "shadow";
+
     /**
      * Armed at level-segment HEAD, consumed at the opaque layer's head
      * (WorldRendererMixin): guarantees exactly one shadow segment per frame.
@@ -171,6 +174,7 @@ final class PackShadowPass {
         if (water != null) {
             if (open != null) open.close();
             open = bindPackShadowImages(water);
+            this.shadowTerrainProgram = "shadow_water";
         }
         PackUniformProvider.updateDrawAlphaReference(0.0F);
         WorldRenderer.getInstance().renderSectionLayer(RenderType.translucent(), frame.cameraX(), frame.cameraY(),
@@ -192,6 +196,7 @@ final class PackShadowPass {
             ChimeraRasterOrientation.markGlOriented(this.shadowMap.getShadowRenderPass());
         }
         this.shadowPassActive = true;
+        this.shadowTerrainProgram = "shadow";
         PipelineManager.setShaderGetter(rt -> {
             if (packShadow) {
                 VRenderSystem.disableBlend();
@@ -517,9 +522,10 @@ final class PackShadowPass {
         return p;
     }
 
+    /** Records a pack shadow terrain draw against the program running it, for storage-buffer ordering. */
     public void recordShadowDraw() {
         if (this.shadowPassActive && usePackShadowRuntime() && pass.packStorageBufferOwner != null) {
-            pass.packStorageBufferOwner.recordDraw("shadow", VK_SHADER_STAGE_VERTEX_BIT);
+            pass.packStorageBufferOwner.recordDraw(this.shadowTerrainProgram, VK_SHADER_STAGE_VERTEX_BIT);
         }
     }
 

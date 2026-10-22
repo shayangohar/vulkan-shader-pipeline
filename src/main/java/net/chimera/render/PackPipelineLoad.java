@@ -133,6 +133,14 @@ final class PackPipelineLoad {
             }
             LOGGER.warn("[chimera] pack shadow: fixed host fallback (terrain consumer unavailable)");
         }
+        // shadow_water draws only inside the pack shadow pass, so without it the lane never runs.
+        if (pass.pipelines.shadowWaterPipeline != null && !pass.shadowPass.usePackShadowRuntime()
+                && pass.conformanceReport != null) {
+            String reason = pass.pipelines.shadowPipeline == null
+                    ? "SHADOW_PROGRAM_UNAVAILABLE" : "SHADOW_CONSUMER_UNAVAILABLE";
+            pass.conformanceReport.markRuntime("shadow_water",
+                    ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
+        }
         if (pass.pipelines.shadowPipeline == null
                 && pass.packPrograms.stream().noneMatch(program -> program.name().equals("shadow"))) {
             if (pass.conformanceReport != null) {
