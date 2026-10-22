@@ -212,7 +212,12 @@ final class ProgramReportRules {
      * A validated conversion is authoritative for every family, not just post and particles: the
      * lexical modern-GLSL veto must not reject a program whose converters already accepted it.
      */
+    /**
+     * Whether the plan leaves nothing unconverted: both stages converted, or a cloud program whose
+     * selected branch draws nothing, which runs no pipeline as Iris's draws no fragment.
+     */
     static boolean validatedConversion(PackProbe.Inventory inventory, PackProgramPlan programPlan) {
+        if (programPlan != null && programPlan.cloudDrawsNothing()) return true;
         return programPlan != null && programPlan.executable() && programPlan.convertedFragment() != null
                 && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null);
     }

@@ -220,6 +220,32 @@ final class SweepParityFixesTest {
         EntityRealPackTest.compileStage(composite.convertedFragment(), false, "type-array fragment");
     }
 
+    /**
+     * Mellow's and superDuperVanilla's core-profile gbuffers_clouds draw nothing at their defaults.
+     * Iris runs them and no cloud shows; Chimera skips the host cloud draw. Nothing is left to
+     * convert, so the report must not call the program unconverted modern GLSL and a fallback.
+     */
+    @Test
+    void aCloudProgramThatDrawsNothingRuns(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_clouds.vsh"), """
+                #version 330 compatibility
+                out vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_clouds.fsh"), """
+                #version 330 compatibility
+                in vec2 uv;
+                void main() { discard; }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        assertTrue(analysis.plan().program("gbuffers_clouds").cloudDrawsNothing());
+        ConformanceReport.ProgramReport clouds = analysis.report().program("gbuffers_clouds");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION, clouds.support(),
+                clouds.deviations().toString());
+        assertFalse(clouds.deviations().contains("MODERN_GLSL_UNSUPPORTED"), clouds.deviations().toString());
+    }
+
     /** Shrimple sizes its light bins with #if arithmetic; JCPP evaluates conditions in C long arithmetic. */
     @Test
     void conditionsEvaluateAsJcppDoes() {
