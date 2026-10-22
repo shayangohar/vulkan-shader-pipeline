@@ -57,6 +57,24 @@ final class IrisTransparencyTest {
     }
 
     /**
+     * A level source holds every batch, vanilla's own flushes included, until Iris's translucent
+     * boundary (FullyBufferedMultiBufferSource ignores endBatch(type)). There it draws everything, or
+     * with separateEntityDraws the opaque kinds; after the deferred passes, everything.
+     */
+    @Test
+    void levelSourcesHoldTheirBatchesToTheBoundary() {
+        for (IrisTransparency kind : IrisTransparency.values()) {
+            for (boolean separates : new boolean[] {false, true}) {
+                assertFalse(FamilyBufferSource.levelDraws(kind, false, false, separates),
+                        kind + " before the boundary");
+                assertEquals(!separates || kind.drawsBeforeDeferred(),
+                        FamilyBufferSource.levelDraws(kind, true, false, separates), kind + " at the boundary");
+                assertTrue(FamilyBufferSource.levelDraws(kind, true, true, separates), kind + " after deferred");
+            }
+        }
+    }
+
+    /**
      * A level source may hold a batch across many flushes for its deferred passes; trimming idle
      * types must never free one that holds a started batch, however long ago it was drawn.
      */

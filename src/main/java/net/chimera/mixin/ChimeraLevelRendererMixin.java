@@ -13,7 +13,6 @@ import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.ParticleDirectives;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.renderer.GameRenderer;
@@ -35,11 +34,11 @@ import java.util.function.Predicate;
  * - HEAD captures the frame the pack uniforms read and opens the family lanes' world window.
  * - The world clear opens the internal RGBA16F world target instead, cleared as the pack asks,
  *   with the fog colour FogRenderer has just set.
- * - The entity and block-entity family batches draw where vanilla finishes each of those loops;
- *   what is still held draws at the translucent terrain layer (WorldRendererMixin).
+ * - The level's family batches are held to Iris's translucent boundary, where they draw before the
+ *   centre-depth sample and the solid hand; with separateEntityDraws the late kinds wait for the
+ *   deferred passes at the translucent terrain layer (WorldRendererMixin).
  * - Particles and weather draw in their lanes' windows; particles move between NeoForge's early
  *   and late calls as the pack's particle ordering asks.
- * - The translucent phase first draws the solid hand, as Iris does.
  * - RETURN draws the translucent hand and resolves the finished HDR world into the stable
  *   output target used by the hand, the GUI and VulkanMod's post chain.
  */
@@ -76,26 +75,16 @@ public abstract class ChimeraLevelRendererMixin {
         pass.openLevelSegment(position.x, position.y, position.z, new float[] {fog[0], fog[1], fog[2]});
     }
 
-    /** After the entity loop (vanilla's first pose check), before its entity batches flush. */
-    @Inject(method = "renderLevel", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/LevelRenderer;"
-                    + "checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
-            ordinal = 0), require = 1)
-    private void chimera$drawEntityFamilies(CallbackInfo ci) {
-        chimera$drawWorldFamilyBatches();
-    }
-
-    /** After the block-entity loops, VulkanMod's section block entities included. */
-    @Inject(method = "renderLevel", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/LevelRenderer;"
-                    + "checkPoseStack(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
-            ordinal = 1, shift = At.Shift.AFTER), require = 1)
-    private void chimera$drawBlockEntityFamilies(CallbackInfo ci) {
-        chimera$drawWorldFamilyBatches();
-    }
-
+    /**
+     * Iris's translucent boundary, in Iris's order: the level's entity batches
+     * (batchedentityrendering), then beginHand's centre-depth sample, then the solid hand, whose
+     * segment copies the pre-hand depth (depthtex2) with every entity in it.
+     */
     @Inject(method = "renderLevel", at = @At(value = "CONSTANT", args = "stringValue=translucent"), require = 1)
-    private void chimera$solidHandBeforeTranslucent(CallbackInfo callback) {
+    private void chimera$translucentBoundary(CallbackInfo callback) {
+        ChimeraMainPass pass = ChimeraRenderer.segmentsActive() ? ChimeraRenderer.getMainPass() : null;
+        FamilyBufferSource.endLevelBatchesAtBoundary(pass);
+        if (pass != null) pass.sampleCenterDepthBeforeHand();
         ChimeraHandRenderer.drawSolid();
     }
 
@@ -165,29 +154,14 @@ public abstract class ChimeraLevelRendererMixin {
     @Inject(method = "renderLevel", at = @At("RETURN"))
     private void chimera$resolveWorld(CallbackInfo ci) {
         if (ChimeraRenderer.segmentsActive()) {
-            // Family batches a mod's render-stage drawing left behind, crumbling included.
-            chimera$drawFamilyBatches();
-            var crumbling = Minecraft.getInstance().renderBuffers().crumblingBufferSource();
-            if (crumbling instanceof FamilyBufferSource families) families.endFamilyBatches();
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
+            // Family batches a mod's render-stage drawing left behind, crumbling included.
+            FamilyBufferSource.endHeldLevelBatches(pass);
             if (pass != null) {
                 ChimeraHandRenderer.drawTranslucent();
                 pass.finishLevelSegment();
             }
             ChimeraEntityBridge.endWorldWindow();
-        }
-    }
-
-    private static void chimera$drawFamilyBatches() {
-        if (Minecraft.getInstance().renderBuffers().bufferSource() instanceof FamilyBufferSource families) {
-            families.endFamilyBatches();
-        }
-    }
-
-    /** The entity batches due before the deferred passes: with separateEntityDraws, the opaque kinds. */
-    private static void chimera$drawWorldFamilyBatches() {
-        if (Minecraft.getInstance().renderBuffers().bufferSource() instanceof FamilyBufferSource families) {
-            families.endWorldFamilyBatches();
         }
     }
 }

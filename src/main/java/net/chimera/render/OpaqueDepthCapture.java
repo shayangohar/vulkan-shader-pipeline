@@ -76,7 +76,6 @@ final class OpaqueDepthCapture {
         if (pass.shadowPass.shadowPassActive || !pass.levelPhase || pass.targets.hdrFramebuffer == null) {
             return;
         }
-        sampleCenterDepth();
         boolean captureOpaque = pass.packDepthTargets.isConfigured()
                 && pass.packDepthTargets.plan().depthtex1();
         boolean capturePreHand = capturesPreHandBeforeTranslucent();
@@ -111,11 +110,19 @@ final class OpaqueDepthCapture {
      * Iris samples the centre depth at beginHand, before the hand and translucent terrain: the world
      * depth here, since a pack hand draws into its own framebuffer. The layer then reopens its pass.
      */
-    private void sampleCenterDepth() {
-        if (pass.packCenterDepth == null) return;
+    /**
+     * Samples the centre depth at Iris's beginHand: after the level's entity batches, before the
+     * hand draws (IrisRenderingPipeline.beginHand, CenterDepthSampler.sampleCenterDepth).
+     */
+    void sampleCenterDepthBeforeHand() {
+        if (pass.packCenterDepth == null || pass.shadowPass.shadowPassActive || !pass.levelPhase
+                || pass.targets.hdrFramebuffer == null) {
+            return;
+        }
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         Renderer.getInstance().endRenderPass(commandBuffer);
         pass.packCenterDepth.sample(commandBuffer, pass.targets.hdrFramebuffer.getDepthAttachment());
+        pass.rebindMainTarget();
     }
 
     /**

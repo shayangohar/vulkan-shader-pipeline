@@ -20,9 +20,10 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
      */
     static final int LIGHT_BLOCK_NORMAL = ChimeraEntityVertexData.pack(0.0F, 0.0F, 1.0F, 0.0F);
     /**
-     * The voxel quad's texture coordinates as the shader reads them. Iris writes 0 at a centroid of
-     * 0, and XHFPTerrainVertex.encodeTexture biases a coordinate that equals its centroid down a
-     * step, which wraps the 15-bit word to its top: 32767/32768.
+     * The voxel quad's texture coordinates. Iris writes 0 at a centroid of 0, and
+     * XHFPTerrainVertex.encodeTexture biases a coordinate that equals its centroid down a step, which
+     * wraps the 15-bit word to its top: 32767/32768, to which Iris's shader adds its texel shrink. The
+     * largest coordinate VulkanMod's compressed vertex holds, it names the same texel.
      */
     static final float LIGHT_BLOCK_UV = 32767.0F / 32768.0F;
 

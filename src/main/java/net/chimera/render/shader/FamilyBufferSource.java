@@ -35,11 +35,12 @@ import java.util.function.Predicate;
  * draw every entity's batch as soon as the next render type starts, opening a pack window per
  * switch.</p>
  *
- * <p>The level's entity and crumbling sources stand in for Iris's batched entity source, which
- * draws everything at the translucent boundary ({@link #endLevelBatchesBeforeDeferred}), the block
- * outline and crumbling included. With the pack's separateEntityDraws they draw only the opaque,
- * opaque-decal and water-mask kinds until then, and the rest right after the deferred passes
- * ({@link #endLevelBatchesAfterDeferred}), as Iris's batchedentityrendering MixinLevelRenderer does.</p>
+ * <p>The level's entity and crumbling sources stand in for Iris's batched entity source: they hold
+ * every family batch, vanilla's own flushes included, until Iris's translucent boundary, before the
+ * hand ({@link #endLevelBatchesAtBoundary}). With the pack's separateEntityDraws only the opaque,
+ * opaque-decal and water-mask kinds draw there, and the rest right after the deferred passes
+ * ({@link #endHeldLevelBatches}), as Iris's batchedentityrendering MixinLevelRenderer does. Types
+ * no family lane takes, the host-layout lanes' among them, flush where vanilla flushes them.</p>
  *
  * <p>Each family type keeps its own buffer. Vanilla memoizes most entity render types, but it
  * builds energy swirl and breeze wind anew each frame, as some mods do with theirs; past
@@ -51,6 +52,8 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     private static final int MAX_FAMILY_TYPES = 256;
     /** About half a second: the world source flushes two or three times a frame. */
     private static final long IDLE_FLUSHES = 64;
+    /** Whether this frame's level has reached Iris's translucent boundary, before which level sources hold. */
+    private static boolean pastBoundary;
     /** Whether this frame's level has run its deferred passes, after which a level source holds nothing. */
     private static boolean pastDeferred;
 
@@ -117,51 +120,63 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
         }
     }
 
-    /** The flush after the world's entities or block entities: the batches due by now. */
-    public void endWorldFamilyBatches() {
-        endFamilyBatches(due());
-    }
-
     /** Draws every started family batch. */
     public void endFamilyBatches() {
         endFamilyBatches(type -> true);
     }
 
-    /** At the head of each level render: the level has not reached its deferred passes. */
+    /** At the head of each level render: the level has reached neither its boundary nor deferred. */
     public static void beginLevel() {
+        pastBoundary = false;
         pastDeferred = false;
     }
 
     /**
-     * At the translucent terrain layer, before its depth capture and deferred passes: the level's
-     * batches due there, where Iris draws its batched entities. The shadow pass draws its own layers.
+     * Iris's translucent boundary, before the hand and the deferred passes: the level's batches due
+     * there, everything or with separateEntityDraws the opaque kinds, as batchedentityrendering's
+     * MixinLevelRenderer draws them ahead of Iris's beginTranslucents. The shadow pass has its own.
      */
-    public static void endLevelBatchesBeforeDeferred(ChimeraMainPass pass) {
+    public static void endLevelBatchesAtBoundary(ChimeraMainPass pass) {
         if (pass == null || ChimeraRenderer.shadowPassActive()) return;
+        pastBoundary = true;
         endLevelBatches(pass, levelDue());
     }
 
-    /** Right after the deferred passes, before translucent terrain: every batch the level held for them. */
-    public static void endLevelBatchesAfterDeferred(ChimeraMainPass pass) {
-        if (pass == null || ChimeraRenderer.shadowPassActive()) return;
+    /**
+     * Every batch the level still holds: right after the deferred passes, before translucent terrain,
+     * and at the end of the level for any started later.
+     */
+    public static void endHeldLevelBatches(ChimeraMainPass pass) {
+        if (ChimeraRenderer.shadowPassActive()) return;
+        pastBoundary = true;
         pastDeferred = true;
         endLevelBatches(pass, type -> true);
     }
 
-    /** The batches this source draws now: a level source keeps the late kinds for after deferred. */
+    /** The batches this source draws now: a level source holds them for Iris's boundary. */
     private Predicate<FamilyRenderType> due() {
         return level ? levelDue() : type -> true;
     }
 
     private static Predicate<FamilyRenderType> levelDue() {
-        return !pastDeferred && ChimeraRenderer.packSeparatesEntityDraws()
-                ? FamilyRenderType::drawsBeforeDeferred : type -> true;
+        boolean separates = ChimeraRenderer.packSeparatesEntityDraws();
+        return type -> levelDraws(type.transparency(), pastBoundary, pastDeferred, separates);
+    }
+
+    /**
+     * Whether a level source draws a batch of this kind now. Iris buffers the level's batches whole
+     * (FullyBufferedMultiBufferSource ignores vanilla's endBatch(type)) until its translucent
+     * boundary; with separateEntityDraws only the opaque kinds draw there, the rest after deferred.
+     */
+    static boolean levelDraws(IrisTransparency kind, boolean pastBoundary, boolean pastDeferred,
+                              boolean separates) {
+        if (!pastBoundary) return false;
+        return pastDeferred || !separates || kind.drawsBeforeDeferred();
     }
 
     /**
      * Draws both level sources' started batches as one, in Iris's order, on the main target: Iris
-     * buffers crumbling with the entities, so its decals land between their translucent kinds and
-     * the outline.
+     * buffers crumbling with the entities, so its decals land between their translucent kinds.
      */
     private static void endLevelBatches(ChimeraMainPass pass, Predicate<FamilyRenderType> drawn) {
         RenderBuffers buffers = Minecraft.getInstance().renderBuffers();
@@ -176,7 +191,7 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
             started.addAll(own);
         }
         if (started.isEmpty()) return;
-        pass.rebindMainTarget();
+        if (pass != null) pass.rebindMainTarget();
         draw(started, type -> owners.get(type).drawStarted(type), type -> owners.get(type).discard(type));
         new LinkedHashSet<>(owners.values()).forEach(FamilyBufferSource::trim);
     }
@@ -209,8 +224,9 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     }
 
     /**
-     * Draws started batches in Iris's order (TransparencyType, each kind in first-use order), one
-     * pack window per run of equal outputs.
+     * Draws started batches by Iris's TransparencyType, one pack window per run of equal outputs.
+     * Within a kind they keep the order their types were first buffered; Iris orders a kind by this
+     * frame's uses (GraphTranslucencyRenderOrderManager).
      */
     private static void draw(List<FamilyRenderType> started, Consumer<RenderType> draw,
                              Consumer<RenderType> discard) {

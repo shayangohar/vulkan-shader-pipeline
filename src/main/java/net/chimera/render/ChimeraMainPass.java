@@ -701,6 +701,11 @@ public final class ChimeraMainPass implements MainPass {
         depth.captureOpaqueDepthBeforeTranslucent();
     }
 
+    /** Iris's beginHand centre-depth sample, before the hand draws. */
+    public void sampleCenterDepthBeforeHand() {
+        depth.sampleCenterDepthBeforeHand();
+    }
+
     // ------------------------------------------------------------------
     // Main-target interop
     // ------------------------------------------------------------------
