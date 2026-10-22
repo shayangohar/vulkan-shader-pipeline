@@ -18,8 +18,10 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkClearDepthStencilValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkImageCopy;
+import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -433,6 +435,16 @@ public class ChimeraShadowMap {
         this.opaqueDepthCurrent = true;
     }
 
+    /** Clears a sampled depth image to the far plane and leaves it shader-readable. */
+    private static void clearToFarDepth(MemoryStack stack, VkCommandBuffer commandBuffer, VulkanImage image) {
+        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkClearDepthStencilValue far = VkClearDepthStencilValue.calloc(stack).depth(1.0F).stencil(0);
+        VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack).aspectMask(image.aspect)
+                .baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+        vkCmdClearDepthStencilImage(commandBuffer, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, far, range);
+        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
     private static void copyDepth(MemoryStack stack, VkCommandBuffer commandBuffer,
             VulkanImage source, VulkanImage destination) {
         source.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -453,6 +465,15 @@ public class ChimeraShadowMap {
     public VulkanImage opaqueDepth() {
         if (this.shadowFramebuffer == null) return null;
         return this.opaqueDepthCurrent ? this.opaqueDepth : this.shadowFramebuffer.getDepthAttachment();
+    }
+
+    /**
+     * shadowtex1 for a shadow program: always the copy, never the depth attachment the pass draws
+     * into. As Iris copies it before the translucent layer (ShadowRenderer copyPreTranslucentDepth),
+     * casters read last frame's copy and the translucent layer this frame's.
+     */
+    public VulkanImage opaqueDepthCopy() {
+        return this.shadowFramebuffer == null ? null : this.opaqueDepth;
     }
 
     /** Publishes the previous map's matrices expressed relative to this frame's camera. */
@@ -543,6 +564,8 @@ public class ChimeraShadowMap {
                 target.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
             clearComputeColors(stack, commandBuffer, true);
+            // Before its first copy the opaque copy reads as a cleared map: Chimera's defined start.
+            clearToFarDepth(stack, commandBuffer, this.opaqueDepth);
         }
         // The cleared map has no translucent casters: shadowtex1 is shadowtex0.
         this.opaqueDepthCurrent = false;

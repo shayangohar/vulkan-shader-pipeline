@@ -75,20 +75,7 @@
     "clrwl_shadow",
     "dh_terrain",
     "dh_water",
-    "gbuffers_textured_lit",
-    "shadow",
-    "shadow_basic",
-    "shadow_block",
-    "shadow_entities",
-    "shadow_glint",
-    "shadow_leash",
-    "shadow_lightning",
-    "shadow_lines",
-    "shadow_tex",
-    "shadow_tex_color",
-    "shadow_text",
-    "shadow_text_bg",
-    "shadow_water"
+    "gbuffers_textured_lit"
   ],
   "I Like Vanilla v1.5.0b.zip": [
     "clrwl_gbuffers",
@@ -135,20 +122,7 @@
     "dh_terrain",
     "dh_water",
     "gbuffers_textured_lit",
-    "physics_ocean",
-    "shadow",
-    "shadow_basic",
-    "shadow_block",
-    "shadow_entities",
-    "shadow_glint",
-    "shadow_leash",
-    "shadow_lightning",
-    "shadow_lines",
-    "shadow_tex",
-    "shadow_tex_color",
-    "shadow_text",
-    "shadow_text_bg",
-    "shadow_water"
+    "physics_ocean"
   ],
   "RedHat_v34.3.1.zip": [
     "gbuffers_textured_lit"
@@ -159,15 +133,13 @@
     "gbuffers_terrain_solid",
     "gbuffers_textured_lit",
     "shadow_cutout",
-    "shadow_solid",
-    "shadow_water"
+    "shadow_solid"
   ],
   "Reverie v1.0.zip": [
     "composite2",
     "dh_terrain",
     "dh_water",
-    "gbuffers_textured_lit",
-    "shadow_water"
+    "gbuffers_textured_lit"
   ],
   "Shrimple_v0.12.zip": [
     "dh_generic",

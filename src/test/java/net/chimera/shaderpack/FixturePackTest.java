@@ -739,8 +739,8 @@ final class FixturePackTest {
         assertTrue(shadow != null, "unsupported shadow program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                 shadow.support(), "unsupported shadow support");
-        assertTrue(shadow.deviations().contains("SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"),
-                "unsupported shadow sampler deviation is missing");
+        assertTrue(shadow.deviations().contains("SHADOW_SAMPLER_UNSUPPORTED:volume"),
+                "unsupported shadow sampler deviation is missing: " + shadow.deviations());
         assertTrue(!report.shouldAttempt("shadow"),
                 "unsupported shadow must not execute");
         assertTrue(report.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
@@ -758,6 +758,13 @@ final class FixturePackTest {
                 UniformRegistry.Stage.SHADOW);
         assertTrue(colorInput.deviations().contains("SHADOW_COLOR_INPUT_UNSUPPORTED"),
                 "shadow color input deviation is missing");
+        // shadowtex1 is the opaque copy, never the attachment the pass draws (Glimmer's shadow reads it).
+        UniformRegistry.ProgramInterface opaque = UniformRegistry.plan(
+                "uniform sampler2D shadowtex1; void main() { gl_FragColor = texture2D(shadowtex1, vec2(0.5)); }",
+                UniformRegistry.Stage.SHADOW);
+        assertTrue(opaque.executable() && opaque.samplers().stream().anyMatch(sampler ->
+                        sampler.name().equals("shadowtex1") && sampler.slot() == SelectorNamespace.SHADOW_TEX1_SLOT),
+                opaque.deviations().toString());
         assertTrue(!colorInput.executable(), "shadow color input was accepted");
         assertTrue(TerrainVertexBridge.convertShadowVertex(
                 Files.readString(pack.resolve("shaders/shadow.vsh"), StandardCharsets.UTF_8),

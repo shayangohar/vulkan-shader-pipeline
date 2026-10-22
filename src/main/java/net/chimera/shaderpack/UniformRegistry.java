@@ -377,14 +377,18 @@ public final class UniformRegistry {
             Map.entry("depthtex2", 13)
     );
 
-    /** Shadow writes must not sample the resource they are currently filling. */
+    /**
+     * Shadow writes must not sample the resource they are filling. shadowtex1 is the opaque copy,
+     * last frame's while casters draw and this frame's for the translucent layer, as Iris copies it.
+     */
     public static final Map<String, Integer> SHADOW_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("tex", 0),
             // Iris core-profile name for the albedo atlas.
             Map.entry("gtexture", 0),
             Map.entry("lightmap", 2),
-            Map.entry("noisetex", 7)
+            Map.entry("noisetex", 7),
+            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT)
     );
 
     /**
@@ -421,35 +425,27 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5),
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", SelectorNamespace.SHADOW_COLOR0_SLOT),
-            // Noise stays on the canonical fixed selector 7, matching the
-            // post, geometry, and shadow tables and the resource plan. A
-            // custom pack-selector allocation here leaves the ordinary
-            // descriptor without a same-slot manifest resource and rejects
-            // the pipeline.
+            // Noise stays on selector 7, as in every table and the resource plan: a pack selector here
+            // leaves the descriptor without a same-slot manifest resource.
             Map.entry("noisetex", 7),
-            // Iris gives every gbuffers program its three depth textures (addWorldDepthSamplers),
-            // on the slots post reads them from. depthtex0 is the depth drawn so far there; while
-            // the world depth is an attachment, a draw reads a capture of the world drawn before
-            // its flush, and depthtex1 and depthtex2 their last capture.
+            // The three depth textures as in GEOMETRY_NAME_TO_SLOT; depthtex0 is captured per flush.
             Map.entry("depthtex0", 6),
             Map.entry("depthtex1", 12),
             Map.entry("depthtex2", 13)
     );
-    /**
-     * Resource-pack material maps ride fixed extended selectors, but only in
-     * stages whose draws bind a real albedo image. Sky and cloud reuse the
-     * geometry slot table without material draws, and post/shadow never
-     * serve material names, so the overlay is keyed on stage, not on table.
-     */
+    /** Resource-pack material maps on fixed extended selectors, in MATERIAL_STAGES; keyed on stage, not table. */
     public static final Map<String, Integer> MATERIAL_NAME_TO_SLOT = Map.of(
             "normals", SelectorNamespace.NORMALS_SLOT,
             "specular", SelectorNamespace.SPECULAR_SLOT
     );
 
-    /** Stages whose draws carry an albedo image that material maps can follow. */
+    /**
+     * Every gbuffers and shadow stage: addLevelSamplers registers normals and specular in each, which
+     * follow the draw's albedo; a texture without maps, such as clouds.png, reads the flat ones.
+     */
     public static final Set<Stage> MATERIAL_STAGES = Set.of(
-            Stage.GEOMETRY, Stage.TRANSLUCENT, Stage.ENTITY,
-            Stage.BLOCK, Stage.HAND, Stage.PARTICLE
+            Stage.GEOMETRY, Stage.TRANSLUCENT, Stage.ENTITY, Stage.BLOCK, Stage.HAND, Stage.PARTICLE,
+            Stage.SKY, Stage.CLOUD, Stage.SHADOW, Stage.SHADOW_ENTITY
     );
 
     static final Set<String> SUPPORTED_TYPES = Set.of(

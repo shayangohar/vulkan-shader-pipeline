@@ -124,14 +124,17 @@ final class PackImageBindings {
         return pass.targets.hdrFramebuffer.getDepthAttachment();
     }
 
-    /** shadowtex1 is the opaque-only shadow depth; shadowtex0 is the full shadow depth. */
+    /**
+     * shadowtex1 is the opaque-only shadow depth; shadowtex0 is the full shadow depth. A shadow program
+     * reads shadowtex1 from its copy, never from the attachment the pass draws into.
+     */
     VulkanImage shadowDepthImage(String name) {
         ChimeraShadowMap shadowMap = pass.shadowPass.shadowMap;
         if (shadowMap.getShadowFramebuffer() == null) {
             return null;
         }
-        return name.equals("shadowtex1") ? shadowMap.opaqueDepth()
-                : shadowMap.getShadowFramebuffer().getDepthAttachment();
+        if (!name.equals("shadowtex1")) return shadowMap.getShadowFramebuffer().getDepthAttachment();
+        return pass.shadowPass.shadowPassActive ? shadowMap.opaqueDepthCopy() : shadowMap.opaqueDepth();
     }
 
     public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindProgramImages(

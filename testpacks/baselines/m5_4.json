@@ -175,7 +175,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "0a06c9f3a7f94d8281828a8ea181667cf03ea9878bb22732a76f8278a9707992",
+      "reportSha256": "d57236e35bacebd0f680b9261c510e54c87060fd50686fc2de0b58a7fdbd8549",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -249,79 +249,79 @@
         "final": [],
         "shadow": [
           "LIVE_UNIFORM_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_SAMPLER_UNSUPPORTED:volume",
           "SHADOW_VERTEX_BRIDGE"
         ],
         "shadow_basic": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_basic->shadow",
           "SHADOW_BASIC_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+          "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_block": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_block->shadow",
           "SHADOW_ENTITY_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+          "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_entities": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_entities->shadow",
           "SHADOW_ENTITY_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+          "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_glint": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_glint->shadow",
           "SHADOW_GLINT_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+          "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_leash": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_leash->shadow",
           "SHADOW_LEASH_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+          "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_lightning": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_lightning->shadow",
           "SHADOW_LIGHTNING_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+          "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_lines": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_lines->shadow",
           "SHADOW_LINES_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+          "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_tex": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_tex->shadow",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_SAMPLER_UNSUPPORTED:volume",
           "SHADOW_TEX_VERTEX_BRIDGE"
         ],
         "shadow_tex_color": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_tex_color->shadow",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_SAMPLER_UNSUPPORTED:volume",
           "SHADOW_TEX_COLOR_VERTEX_BRIDGE"
         ],
         "shadow_text": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_text->shadow",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_SAMPLER_UNSUPPORTED:volume",
           "SHADOW_TEXT_VERTEX_BRIDGE"
         ],
         "shadow_text_bg": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_text_bg->shadow",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_SAMPLER_UNSUPPORTED:volume",
           "SHADOW_TEXT_BG_VERTEX_BRIDGE"
         ],
         "shadow_water": [
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_water->shadow",
-          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_SAMPLER_UNSUPPORTED:volume",
           "SHADOW_VERTEX_BRIDGE"
         ]
       },
@@ -330,7 +330,7 @@
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
         "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
         "shaders.properties": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "shadow.fsh": "4fcd462b621e86950efec2b853274d95c8a5e66d2c7d91997d0eda57267a0b84",
+        "shadow.fsh": "e2db89199bd5a164682de810e513b354faa448b9266f946b68c471f28b8a1ad1",
         "shadow.vsh": "71fb2afc0704bac960a21daea8c052ffe7c3c3f45461a91b888c3a677b58479c"
       }
     }

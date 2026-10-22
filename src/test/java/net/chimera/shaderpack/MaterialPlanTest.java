@@ -81,10 +81,12 @@ final class MaterialPlanTest {
 
     @Test
     void stageGating() {
+        // Iris registers normals and specular in every gbuffers and shadow program (addLevelSamplers).
         for (UniformRegistry.Stage stage : List.of(
                 UniformRegistry.Stage.GEOMETRY, UniformRegistry.Stage.TRANSLUCENT,
                 UniformRegistry.Stage.ENTITY, UniformRegistry.Stage.BLOCK,
-                UniformRegistry.Stage.HAND, UniformRegistry.Stage.PARTICLE)) {
+                UniformRegistry.Stage.HAND, UniformRegistry.Stage.PARTICLE, UniformRegistry.Stage.SKY,
+                UniformRegistry.Stage.CLOUD, UniformRegistry.Stage.SHADOW, UniformRegistry.Stage.SHADOW_ENTITY)) {
             UniformRegistry.ProgramInterface plan = UniformRegistry.plan(MATERIAL_SNIPPET, stage);
             assertEquals(25, slotOf(plan, "normals"), "normals slot in " + stage);
             assertEquals(26, slotOf(plan, "specular"), "specular slot in " + stage);
@@ -92,9 +94,7 @@ final class MaterialPlanTest {
                             value.contains("normals") || value.contains("specular")),
                     "material stage rejected material names in " + stage + ": " + plan.deviations());
         }
-        for (UniformRegistry.Stage stage : List.of(
-                UniformRegistry.Stage.POST, UniformRegistry.Stage.SHADOW,
-                UniformRegistry.Stage.SKY, UniformRegistry.Stage.CLOUD)) {
+        for (UniformRegistry.Stage stage : List.of(UniformRegistry.Stage.POST)) {
             UniformRegistry.ProgramInterface plan = UniformRegistry.plan(MATERIAL_SNIPPET, stage);
             assertTrue(plan.samplers().stream().noneMatch(value ->
                             value.name().equals("normals") || value.name().equals("specular")),
