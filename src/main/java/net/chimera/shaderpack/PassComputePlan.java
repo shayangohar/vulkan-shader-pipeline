@@ -326,7 +326,8 @@ public final class PassComputePlan {
                     work.fail("PASS_COMPUTE_VERSION_UNSUPPORTED");
                 }
                 if (work.failed) return null;
-                ServedUniforms.Compute served = ServedUniforms.computeSource(prepared.source(),
+                String aliased = FullscreenDefaultSampler.withCompositeAliases(prepared.source(), work.deviations);
+                ServedUniforms.Compute served = ServedUniforms.computeSource(aliased,
                         name -> UniformRegistry.irisSets(name, plan.runtimeSettings().customDescriptors()));
                 served.deviations().forEach(value -> work.fail("PASS_COMPUTE_NORMALIZATION:" + value));
                 String text = served.source();

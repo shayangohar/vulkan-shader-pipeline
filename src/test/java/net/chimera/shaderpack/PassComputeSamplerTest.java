@@ -227,6 +227,37 @@ final class PassComputeSamplerTest {
     }
 
     /**
+     * Iris registers gdepthtex with depthtex0 for a composite program and its computes
+     * (IrisSamplers.addCompositeSamplers): RedHat's composite1 reads gdepthtex.
+     */
+    @Test
+    void gdepthtexReadsDepthtex0InPostPassesAndComputes(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D gdepthtex;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(gdepthtex, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                uniform sampler2D gdepthtex;
+                uniform sampler2D depthtex0;
+                void main() {
+                    imageStore(colorimg2, ivec2(0), texture(gdepthtex, vec2(0.5)) + texture(depthtex0, vec2(0.5)));
+                }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        ConformanceReport.ProgramReport composite = analysis.report().program("composite");
+        assertTrue(analysis.plan().shouldAttempt("composite")
+                && composite.deviations().contains("STANDARD_RESOURCE_ALIAS:gdepthtex:depthtex0"),
+                composite.deviations().toString());
+        PassComputePlan.PassCompute compute = PassComputePlan.build(analysis.plan(), shaders).compute("composite_a");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg2", 0, PassComputePlan.Kind.TARGET_IMAGE, 2, "rgba16f", null),
+                new PassComputePlan.Binding("depthtex0", 1, PassComputePlan.Kind.DEPTH, -1, null, "depthtex0")),
+                compute.bindings(), compute.deviations().toString());
+    }
+
+    /**
      * A stage texture replaces only what a registration through the sampler interceptor binds. A
      * composite registers its customTexture entries on its own builder, so samC reads the entry; a
      * world program registers them through the interceptor, so samC reads texture.gbuffers.samC; and

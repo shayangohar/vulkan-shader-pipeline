@@ -29,6 +29,7 @@ final class FullscreenDefaultSampler {
      */
     static String apply(String source, PackConfig.PackConfigData config, List<String> deviations) {
         if (source == null) return null;
+        source = withCompositeAliases(source, deviations);
         GlslTree tree = GlslDeclarations.parseOrNull(source);
         if (tree == null) return source;
         String colortex0 = null;
@@ -53,6 +54,31 @@ final class FullscreenDefaultSampler {
             declared = true;
         }
         return result;
+    }
+
+    /**
+     * Iris registers gdepthtex together with depthtex0 (IrisSamplers.addCompositeSamplers), so in a
+     * fullscreen pass or a compute both names read the one texture: a gdepthtex sampler2D reads as
+     * depthtex0, and loses its declaration where depthtex0 is declared too. A source where that
+     * cannot be done cleanly stays as written.
+     */
+    static String withCompositeAliases(String source, List<String> deviations) {
+        if (source == null || !source.contains("gdepthtex")) return source;
+        GlslTree tree = GlslDeclarations.parseOrNull(source);
+        if (tree == null) return source;
+        GlslDeclarations.Variable alias = null;
+        String depthType = null;
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            if (!variable.qualified("uniform")) continue;
+            if (variable.name().equals("gdepthtex")) alias = variable;
+            if (variable.name().equals("depthtex0")) depthType = variable.type();
+        }
+        if (alias == null || !lineSampler2D(tree, alias) || depthType != null && !depthType.equals("sampler2D")) {
+            return source;
+        }
+        String result = depthType != null ? withoutDeclaration(source, "gdepthtex") : source;
+        deviations.add("STANDARD_RESOURCE_ALIAS:gdepthtex:depthtex0");
+        return GlslScopedReferences.replace(result, Map.of("gdepthtex", "depthtex0"));
     }
 
     /** {@code uniform sampler2D name;} alone at the start of its line, after any indentation. */
