@@ -47,7 +47,8 @@ final class AdvancedImagePlanTest {
                 "supported plan is not deterministic");
         assertTrue(supportedPlan.images().size() == 2, "image declaration count");
         assertTrue(supportedPlan.hasSupportedImages(), "supported images rejected");
-        assertTrue(supportedPlan.hasSupportedCompute(), "shadow compute rejected");
+        PassComputePlan.PassCompute shadowcomp = supported.passComputes().compute("shadowcomp");
+        assertTrue(shadowcomp != null && shadowcomp.supported(), "shadow compute rejected");
         assertTrue(supportedPlan.capabilityPossible(), "capability was not planned");
         assertTrue(PackAdvancedImageOwner.shouldInitializeImage(false, false),
                 "persistent images must be seeded on first use");
@@ -55,8 +56,7 @@ final class AdvancedImagePlanTest {
                 "persistent images must not be cleared every frame");
         assertTrue(PackAdvancedImageOwner.shouldInitializeImage(true, true),
                 "per-frame clear policy was lost");
-        assertEquals(2, supportedPlan.computeStages().get("shadowcomp").localSizeX(),
-                "workgroup X");
+        assertEquals(2, shadowcomp.localSize()[0], "workgroup X");
         assertTrue(supportedPlan.graphicsImages().containsKey("shadow"),
                 "graphics image producer was not discovered");
         assertTrue(supportedPlan.graphicsImages("shadow").stream()
@@ -174,8 +174,7 @@ final class AdvancedImagePlanTest {
         writeVolumeReader(shaders, "composite1", "unknownSampler");
         PackPlan plan = PackProbe.analyze(root).plan();
         PackAdvancedResourcePlan advanced = plan.advancedResources();
-        assertTrue(advanced.computeStages().isEmpty() && advanced.capabilityPossible(),
-                advanced.deviations().toString());
+        assertTrue(advanced.capabilityPossible(), advanced.deviations().toString());
         assertTrue(advanced.imagesServable("composite") && plan.shouldAttempt("composite"),
                 plan.program("composite").deviations().toString());
         assertTrue(!advanced.imagesServable("composite1") && !plan.shouldAttempt("composite1")
@@ -386,7 +385,8 @@ final class AdvancedImagePlanTest {
                 "budget fixture rejected the valid image");
         assertTrue(large != null && !large.supported(),
                 "budget fixture admitted the oversized image");
-        assertTrue(budgetPlan.hasSupportedCompute() && budgetPlan.capabilityPossible(),
+        PassComputePlan.PassCompute shadowcomp = budget.passComputes().compute("shadowcomp");
+        assertTrue(shadowcomp != null && shadowcomp.supported() && budgetPlan.capabilityPossible(),
                 "budget fixture disabled compute because of an unrelated image");
         assertTrue(budgetPlan.deviations().contains("ADVANCED_IMAGE_BUDGET_EXCEEDED:large_image"),
                 "per-resource budget deviation missing");
@@ -613,10 +613,9 @@ final class AdvancedImagePlanTest {
             verifyAdvancedPostDescriptorPartition(packPlan, plan, label);
             verifyPostDescriptorStageOwnership(packPlan, plan, label);
             verifyDepthDependentPostSchedule(analysis, label);
+            PassComputePlan.PassCompute shadowcomp = analysis.passComputes().compute("shadowcomp");
             System.out.println("[chimera] M8.6 " + label + " imagePlan=" + plan.images().keySet()
-                    + " compute=" + plan.computeStages().values().stream()
-                    .map(value -> value.program() + ":" + value.status() + ":" + value.deviations())
-                    .toList()
+                    + " shadowcomp=" + (shadowcomp == null ? "none" : shadowcomp.deviations())
                     + " dependent=" + plan.dependentPrograms()
                     + " graphics=" + plan.graphicsImages()
                     + " deviations=" + plan.deviations());
@@ -633,14 +632,14 @@ final class AdvancedImagePlanTest {
             }
             assertTrue(plan.capabilityPossible(),
                     label + " advanced path is not eligible under explicit settings");
-            assertTrue(plan.computeStages().get("shadowcomp") != null
-                            && plan.computeStages().get("shadowcomp").supported(),
+            assertTrue(shadowcomp != null && shadowcomp.supported(),
                     label + " shadowcomp is not supported under explicit settings");
             PackProgramPlan shadow = packPlan.program("shadow");
             assertTrue(shadow != null && shadow.executable() && packPlan.shouldAttempt("shadow"),
                     label + " shadow producer is not executable with advanced resources");
             verifyShadowAdapter(shadow, label);
-            assertTrue(!plan.computeStages().get("shadowcomp").samplerNames().isEmpty(),
+            assertTrue(shadowcomp.bindings().stream().anyMatch(binding
+                            -> binding.kind() == PassComputePlan.Kind.PACK_IMAGE_SAMPLER),
                     label + " 3D sampler dependencies were not planned");
             assertTrue(plan.dependentPrograms().stream().allMatch(plan::imagesServable),
                     label + " a program's images are not all created and bound: " + plan.deviations());

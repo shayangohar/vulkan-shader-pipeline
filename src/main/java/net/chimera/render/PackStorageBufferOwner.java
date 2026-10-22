@@ -37,15 +37,11 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     private final Map<Integer, String> drawnWriters = new HashMap<>();
     private final Set<Integer> synchronizedWrites = new TreeSet<>();
     private final Set<String> reportedReaders = new TreeSet<>();
-    private int dispatchCount;
 
     public void beginExecutionFrame() {
         drawnWriters.clear();
         synchronizedWrites.clear();
-        dispatchCount = 0;
     }
-
-    public void recordDispatch() { dispatchCount++; }
 
     /** Called only after a native draw command was recorded, never on descriptor upload. */
     public void recordDraw(String program, int stage) {
@@ -60,8 +56,8 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                     && drawnWriters.containsKey(index) && synchronizedWrites.contains(index)
                     && reportedReaders.add(program + ":" + index)) {
                 ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},"
-                        + "writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
-                        drawnWriters.get(index), program, binding.size(), dispatchCount);
+                        + "writerDrawn=true,barrierRecorded=true,readerDrawn=true",
+                        drawnWriters.get(index), program, binding.size());
             }
         }
     }

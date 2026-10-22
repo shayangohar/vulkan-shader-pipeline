@@ -33,8 +33,6 @@ public final class PassComputePlan {
     /** Iris's setup computes, setup.csh and setup1..99.csh, each alone (ProgramSet: readProgramArray). */
     private static final Pattern SETUP_NAME = Pattern.compile("setup(?:[1-9]\\d?)?");
     private static final Pattern SHADOWCOMP_NAME = Pattern.compile("shadowcomp(?:[1-9]\\d?)?");
-    /** The pack's shadowcomp.csh, which PackShadowCompute runs when it can (nativeShadowcomp). */
-    private static final String NATIVE_SHADOWCOMP = "shadowcomp";
     private static final Pattern LOCAL_SIZE = Pattern.compile(
             "layout\\s*\\(([^)]*\\blocal_size_[xyz][^)]*)\\)\\s*in\\s*;");
     private static final Pattern LOCAL_SIZE_AXIS = Pattern.compile("local_size_([xyz])\\s*=\\s*(\\d+)");
@@ -156,9 +154,9 @@ public final class PassComputePlan {
         String folder = plan.selectedSourceFolder();
         Path root = folder == null || folder.isBlank() ? shadersDir : shadersDir.resolve(folder).normalize();
         if (!root.startsWith(shadersDir.normalize()) || !Files.isDirectory(root)) return empty();
-        // shadowcomp.csh is the native path's when it runs it, and this plan's otherwise (KNOW-808).
-        Predicate<String> enabled = name -> plan.settings().enabled(folder, name)
-                && !(name.equals(NATIVE_SHADOWCOMP) && nativeShadowcomp(plan));
+        // Every compute of every pass, shadowcomp.csh included: Iris builds and dispatches them all one
+        // way (ShadowCompositeRenderer.createComputes, CompositeRenderer.createComputes).
+        Predicate<String> enabled = name -> plan.settings().enabled(folder, name);
         Translator translator = new Translator(plan, shadersDir);
         List<PassCompute> result = new ArrayList<>();
         for (String pass : passes(root)) {
@@ -280,17 +278,6 @@ public final class PassComputePlan {
             names.add(name);
         }
         return names;
-    }
-
-    /**
-     * Whether PackShadowCompute runs the pack's shadowcomp.csh: the plan supports it and the pack has
-     * an image it can write (PackShadowCompute.load). Iris runs it whatever it writes; this plan
-     * takes it otherwise, first in its pass, as Ebin's empty shadowcomp at default options.
-     */
-    public static boolean nativeShadowcomp(PackPlan plan) {
-        PackAdvancedResourcePlan advanced = plan.advancedResources();
-        PackAdvancedResourcePlan.ComputeSpec spec = advanced.computeStages().get(NATIVE_SHADOWCOMP);
-        return spec != null && spec.supported() && advanced.capabilityPossible();
     }
 
     private static boolean present(Path root, String name, Predicate<String> enabled) {

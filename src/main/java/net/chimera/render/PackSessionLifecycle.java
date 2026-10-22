@@ -207,8 +207,6 @@ final class PackSessionLifecycle {
         pass.coverage.packCoverageState.endFrame();
         pass.coverage.packCoveragePlan = PackCoveragePlan.disabled();
         pass.pipelines.destroy();
-        if (pass.packShadowCompute != null) pass.packShadowCompute.close();
-        pass.packShadowCompute = null;
         if (pass.packPassComputes != null) pass.packPassComputes.close();
         pass.packPassComputes = null;
         if (pass.packStorageBufferOwner != null) {
@@ -637,11 +635,6 @@ final class PackSessionLifecycle {
                 passComputes.imageFormats());
         pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height,
                 passComputes.storageBuffers());
-        pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),
-                pass.packAdvancedImageOwner, pass.packResourceOwner, shadersDir,
-                pass.packPlan.settingsPreprocessorDefines(),
-                pass.packPlan.settingsOverriddenNames());
-        recordShadowComputeDisposition();
         pass.packPassComputes = PackPassComputes.load(passComputes, pass.packResourceOwner,
                 pass.packAdvancedImageOwner, pass.packStorageBufferOwner);
         for (String compute : pass.packPassComputes.installedNames()) {
@@ -652,38 +645,16 @@ final class PackSessionLifecycle {
         }
     }
 
-    /** Records whether shadowcomp installed natively, or why it fell back, in the conformance report. */
-    private void recordShadowComputeDisposition() {
-        if (pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
-            if (pass.conformanceReport != null
-                    && pass.conformanceReport.program("shadowcomp") != null) {
-                pass.conformanceReport.markRuntime("shadowcomp",
-                        ConformanceReport.RuntimeDisposition.INSTALLED,
-                        "COMPUTE_NATIVE_INSTALLED");
-            }
-        } else if (pass.conformanceReport != null
-                && pass.conformanceReport.program("shadowcomp") != null
-                && pass.conformanceReport.program("shadowcomp").runtime()
-                == ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED) {
-            pass.conformanceReport.markRuntime("shadowcomp",
-                    ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                    pass.packPlan.advancedResources().capabilityPossible()
-                            ? "COMPUTE_PIPELINE_BUILD_FAILED"
-                            : "COMPUTE_CAPABILITY_UNAVAILABLE");
-        }
-    }
-
     /** Logs the session's resource, advanced image, storage buffer and compute plans. */
     private void logResourcePlans() {
         LOGGER.info("[chimera] pack resources: fingerprint={}, declarations={}, deviations={}",
                 pass.packPlan.resources().fingerprint(),
                 pass.packPlan.resources().declarations().size(),
                 pass.packPlan.resources().deviations().size());
-        LOGGER.info("[chimera] advanced resources: fingerprint={}, images={}, compute={}, capabilityPossible={}, "
+        LOGGER.info("[chimera] advanced resources: fingerprint={}, images={}, capabilityPossible={}, "
                 + "planned={}, allocated={}, initialized={}, failed={}",
                 pass.packPlan.advancedResources().fingerprint(),
                 pass.packPlan.advancedResources().images().size(),
-                pass.packPlan.advancedResources().computeStages().size(),
                 pass.packPlan.advancedResources().capabilityPossible(),
                 pass.packAdvancedImageOwner.plannedImageCount(),
                 pass.packAdvancedImageOwner.allocatedImageCount(),
@@ -705,12 +676,6 @@ final class PackSessionLifecycle {
                                 .map(PackAdvancedResourcePlan.GraphicsImageBinding::symbol)
                                 .toList())
                         .toList());
-        LOGGER.info("[chimera] advanced compute plan: {}",
-                pass.packPlan.advancedResources().computeStages().values().stream()
-                        .map(value -> value.program() + ":" + value.status() + ":" + value.deviations())
-                        .toList());
-        LOGGER.info("[chimera] advanced compute: shadowcompInstalled={}",
-                pass.packShadowCompute != null && pass.packShadowCompute.isInstalled());
     }
 
     /** Logs the pack's programs and constants, or that it has no programs. */

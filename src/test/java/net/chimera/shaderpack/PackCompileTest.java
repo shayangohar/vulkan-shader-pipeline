@@ -5,7 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.chimera.render.PackShadowCompute;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -81,12 +80,6 @@ final class PackCompileTest {
                 continue;
             }
             if (compiler.compiles(program)) compiled++;
-        }
-        String computeError = compileShadowCompute(pack, shadersDir, analysis.plan(), snapshot);
-        if (computeError != null) {
-            failures.add("shadowcomp: " + computeError);
-        } else if (hasShadowCompute(analysis.plan())) {
-            compiled++;
         }
         List<String> passComputes = new ArrayList<>();
         compiled += compilePassComputes(pack, shadersDir, analysis.plan(), failures, passComputes, snapshot);
@@ -250,48 +243,6 @@ final class PackCompileTest {
 
         private static String variantKey(PackProgramPlan program, String label, String extension) {
             return program.name() + " [" + label + "]" + extension;
-        }
-    }
-
-    private static boolean hasShadowCompute(PackPlan plan) {
-        PackAdvancedResourcePlan advanced = plan.advancedResources();
-        if (advanced == null || !advanced.capabilityPossible()) return false;
-        PackAdvancedResourcePlan.ComputeSpec spec = advanced.computeStages().get("shadowcomp");
-        return spec != null && spec.supported();
-    }
-
-    /**
-     * Translates the plan's supported shadowcomp exactly as the runtime does
-     * ({@link net.chimera.render.PackShadowCompute#translatedModule}), compiles it, and checks
-     * its uniform block against the offsets dispatch writes. Returns the first error, or null
-     * when it passes or the plan schedules no shadowcomp. Solas fell to vanilla in game on a
-     * translation failure no offline check ran.
-     */
-    static String compileShadowCompute(Path pack, PackPlan plan) {
-        if (!hasShadowCompute(plan)) return null;
-        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            return compileShadowCompute(pack, loaded.shadersDir(), plan);
-        }
-    }
-
-    static String compileShadowCompute(Path pack, Path shadersDir, PackPlan plan) {
-        return compileShadowCompute(pack, shadersDir, plan, null);
-    }
-
-    static String compileShadowCompute(Path pack, Path shadersDir, PackPlan plan, ConvertedOutputSnapshot snapshot) {
-        if (!hasShadowCompute(plan)) return null;
-        try {
-            var module = PackShadowCompute.translatedModule(
-                    plan.advancedResources(), shadersDir,
-                    plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
-            Map<String, Integer> written = new LinkedHashMap<>();
-            for (var uniform : module.uniforms()) written.put(uniform.name(), uniform.offset());
-            String error = compileComputeValues(module.source(), "ChimeraShadowComputeValues", written,
-                    snapshot, "shadowcomp.csh");
-            if (error != null) error += " [" + dump(pack, "shadowcomp.csh", module.source()) + "]";
-            return error;
-        } catch (IOException | RuntimeException failure) {
-            return "translation failed: " + failure.getMessage();
         }
     }
 

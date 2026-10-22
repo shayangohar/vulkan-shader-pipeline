@@ -38,27 +38,6 @@ final class AdvancedResourceJson {
         return imageArray;
     }
 
-    static JsonArray computeStages(Map<String, PackAdvancedResourcePlan.ComputeSpec> computeStages) {
-        JsonArray computeArray = new JsonArray();
-        computeStages.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(Map.Entry::getValue)
-                .forEach(value -> {
-            JsonObject item = new JsonObject();
-            item.addProperty("program", value.program());
-            item.addProperty("source", value.relativeSource());
-            item.addProperty("localSizeX", value.localSizeX());
-            item.addProperty("localSizeY", value.localSizeY());
-            item.addProperty("localSizeZ", value.localSizeZ());
-            item.add("images", PlanJson.strings(value.imageNames()));
-            item.add("samplers", PlanJson.strings(value.samplerNames()));
-            item.addProperty("status", value.status().name());
-            item.add("deviations", PlanJson.strings(value.deviations()));
-            computeArray.add(item);
-        });
-        return computeArray;
-    }
-
     /** One entry per program, in name order, with its bindings as the writer renders each. */
     static <T> JsonArray programBindings(Map<String, List<T>> bindings, Function<T, JsonObject> writer) {
         JsonArray programArray = new JsonArray();

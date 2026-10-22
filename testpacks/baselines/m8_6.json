@@ -4,17 +4,17 @@
     "fixture": "advanced_images",
     "images": ["lightimg0", "voxel_img"],
     "compute": "shadowcomp",
-    "fingerprint": "cbd60a78b39f42c5a2600165b159779154af75e16f58fc5edfbdb3016ee6e08e"
+    "fingerprint": "43ddfd9f332a6d32af897fb51328f575ad767a2887e1cc2a3b107eb6c8a52f53"
   },
   "unsupported": {
     "fixture": "unsupported_advanced",
     "requires": ["ADVANCED_IMAGE_BUDGET_EXCEEDED:too_large", "STORAGE_BUFFER_DEFERRED:bufferObject.0"],
-    "fingerprint": "e3c7bc6c4a9a682366614576e93aaa0cfaffe57c3dd07669c97cde8d65f385c9"
+    "fingerprint": "d999ad6f626cd1f41d662d1e67f52e6bbf97acd03601f6b65579997bf5da0497"
   },
   "budgetIsolation": {
     "fixture": "budget_isolation",
     "validImage": "small_image",
     "rejectedImage": "large_image",
-    "fingerprint": "c55ddc46e20f411487cbc7a18601809e2649e82222b68bad72e4164cc71110de"
+    "fingerprint": "4c6967cb96fd839924cc9e80e689f8e331258fb2f063a908a4a04d4a89613952"
   }
 }

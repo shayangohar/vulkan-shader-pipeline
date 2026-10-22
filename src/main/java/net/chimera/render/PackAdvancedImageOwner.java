@@ -115,11 +115,6 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return imageForSymbol(symbol) != null;
     }
 
-    /** Whether every image the shadowcomp binds exists, so it can dispatch. */
-    public boolean computeImagesAvailable() {
-        return requiredImagesAvailable();
-    }
-
     /**
      * Makes every earlier shader write to the images visible to later shader reads and writes, as
      * Iris's glMemoryBarrier before each program does. Recorded outside a render pass.
@@ -214,19 +209,6 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
 
     public boolean available(String name) {
         return images.containsKey(name) && failures.get(name) == null;
-    }
-
-    private boolean requiredImagesAvailable() {
-        for (PackAdvancedResourcePlan.ComputeSpec compute : plan.computeStages().values()) {
-            if (!compute.supported()) continue;
-            for (String name : compute.imageNames()) {
-                if (!availableForSymbol(name)) return false;
-            }
-            for (String name : compute.samplerNames()) {
-                if (!availableForSymbol(name)) return false;
-            }
-        }
-        return true;
     }
 
     @Override

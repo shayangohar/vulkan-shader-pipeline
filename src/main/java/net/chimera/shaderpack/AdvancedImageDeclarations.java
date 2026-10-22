@@ -1,9 +1,5 @@
 package net.chimera.shaderpack;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -183,157 +179,6 @@ final class AdvancedImageDeclarations {
         return 0;
     }
 
-    static Map<String, PackAdvancedResourcePlan.ComputeSpec> discoverCompute(
-            Path shadersDir,
-            String selectedFolder,
-            Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-            List<String> deviations,
-            Map<String, String> initialMacros,
-            Set<String> lockedMacros,
-            Set<String> graphicsProducedImages,
-            PackSettingsPlan settings
-    ) {
-        if (shadersDir == null) return Map.of();
-        Map<String, UniformRegistry.UniformDescriptor> customDescriptors =
-                settings.runtimeSettings().customDescriptors();
-        Map<String, PackAdvancedResourcePlan.ComputeSpec> result = new TreeMap<>();
-        Path source = shadowComputeSource(shadersDir, selectedFolder);
-        if (source == null) return result;
-        try {
-            String raw = Files.readString(source, StandardCharsets.UTF_8);
-            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
-                    shadersDir, source, raw,
-                    initialMacros, lockedMacros);
-            if (!prepared.successful()) {
-                deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-                return result;
-            }
-            // The plan reads what PackShadowCompute translates (ServedUniforms.computeSource).
-            ServedUniforms.Compute served = ServedUniforms.computeSource(prepared.source(),
-                    name -> UniformRegistry.irisSets(name, customDescriptors));
-            String text = served.source();
-            List<String> localDeviations = new ArrayList<>(prepared.deviations());
-            localDeviations.addAll(served.deviations());
-            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
-            localDeviations.addAll(usage.deviations());
-            if (!usage.successful()) {
-                localDeviations.add("COMPUTE_RESOURCE_USAGE_UNCLASSIFIABLE");
-            }
-            WorkgroupSize size = workgroupSize(text, localDeviations);
-            // Compute stages exist from GLSL 430; any profile converts to Chimera's 450 module.
-            GlslVersion version = GlslVersion.first(text);
-            if (version == null || !version.supported() || version.number() < 430) {
-                localDeviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-            }
-            TreeSet<String> names = new TreeSet<>();
-            names.addAll(usage.liveImages());
-            TreeSet<String> samplers = usage.liveSamplers().stream()
-                    .filter(sampler -> PackAdvancedResourcePlan.imageBySampler(images, sampler) != null)
-                    .collect(Collectors.toCollection(TreeSet::new));
-            addImageDependencyDeviations(names, images, localDeviations);
-            addSamplerDependencyDeviations(samplers, names, images, graphicsProducedImages, localDeviations);
-            if (text.matches("(?s).*\\btexelFetch\\s*\\(.*")) {
-                localDeviations.add("COMPUTE_TEXEL_FETCH_CLAMPED");
-            }
-            addValueUniformDeviations(text, customDescriptors, localDeviations);
-            // Iris dispatches it from the pack's buffer (ShadowCompositeRenderer.createComputes);
-            // PackShadowCompute dispatches work groups only.
-            if (PassComputePlan.indirectPointer(settings.propertyValues(), "shadowcomp") != null) {
-                localDeviations.add("COMPUTE_INDIRECT_UNSUPPORTED:shadowcomp");
-            }
-            PackAdvancedResourcePlan.Status status = !hasBlockingComputeDeviation(localDeviations) && !names.isEmpty()
-                    ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
-            if (status == PackAdvancedResourcePlan.Status.SUPPORTED) deviations.add(
-                    "COMPUTE_STAGE_SUPPORTED:shadowcomp");
-            else deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-            String relative = shadersDir.normalize().relativize(source).toString().replace('\\', '/');
-            result.put("shadowcomp", new PackAdvancedResourcePlan.ComputeSpec("shadowcomp", relative,
-                    size.x(), size.y(), size.z(),
-                    new ArrayList<>(names), new ArrayList<>(samplers), status, localDeviations));
-        } catch (IOException | RuntimeException failure) {
-            deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-        }
-        return result;
-    }
-
-    /** The selected folder's shadowcomp.csh; null when it is missing or resolves outside the shaders. */
-    private static Path shadowComputeSource(Path shadersDir, String selectedFolder) {
-        Path root = selectedFolder == null || selectedFolder.isBlank()
-                ? shadersDir : shadersDir.resolve(selectedFolder);
-        Path source = root.resolve("shadowcomp.csh").normalize();
-        if (!source.startsWith(shadersDir.normalize()) || !Files.isRegularFile(source)) return null;
-        return source;
-    }
-
-    private record WorkgroupSize(int x, int y, int z) {}
-
-    /** The declared local workgroup size, or zero with a deviation when the stage declares none. */
-    private static WorkgroupSize workgroupSize(String text, List<String> localDeviations) {
-        Matcher size = PackAdvancedResourcePlan.LOCAL_SIZE.matcher(text);
-        if (!size.find()) {
-            localDeviations.add("COMPUTE_WORKGROUP_UNSUPPORTED:shadowcomp");
-            return new WorkgroupSize(0, 0, 0);
-        }
-        return new WorkgroupSize(Integer.parseInt(size.group(1)), Integer.parseInt(size.group(2)),
-                Integer.parseInt(size.group(3)));
-    }
-
-    /** Each image the compute stage writes needs a supported declaration, by image or sampler name. */
-    private static void addImageDependencyDeviations(Set<String> names,
-                                                     Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-                                                     List<String> localDeviations) {
-        for (String name : names) {
-            PackAdvancedResourcePlan.ImageSpec dependency = PackAdvancedResourcePlan.imageBySymbol(images, name);
-            boolean declared = dependency != null && dependency.supported();
-            if (!declared) {
-                localDeviations.add("COMPUTE_IMAGE_UNAVAILABLE:" + name);
-            }
-        }
-    }
-
-    /** Each image the compute stage samples needs a supported declaration and something that fills it. */
-    private static void addSamplerDependencyDeviations(Set<String> samplers, Set<String> names,
-                                                       Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-                                                       Set<String> graphicsProducedImages,
-                                                       List<String> localDeviations) {
-        for (String name : samplers) {
-            PackAdvancedResourcePlan.ImageSpec dependency = PackAdvancedResourcePlan.imageBySampler(images, name);
-            if (dependency == null || !dependency.supported()) {
-                localDeviations.add("COMPUTE_SAMPLER_UNAVAILABLE:" + name);
-            } else if (dependency.clear()
-                    && !names.contains(dependency.name())
-                    && !names.contains(name)
-                    && (graphicsProducedImages == null
-                    || !graphicsProducedImages.contains(dependency.name()))) {
-                // A clear-only image is not a producer. BSL uses its
-                // voxel image as compute input, but Chimera does not yet
-                // have the shadow-geometry voxel writer that populates it.
-                // Do not expose undefined image contents to dependent
-                // graphics programs.
-                localDeviations.add("COMPUTE_INPUT_UNAVAILABLE:" + name);
-            }
-        }
-    }
-
-    /** Each value uniform the compute stage declares: live or unused when resolvable, else unsupported if read. */
-    private static void addValueUniformDeviations(String text,
-                                                  Map<String, UniformRegistry.UniformDescriptor> customDescriptors,
-                                                  List<String> localDeviations) {
-        Matcher valueUniform = PackAdvancedResourcePlan.VALUE_UNIFORM_DECLARATION.matcher(text);
-        while (valueUniform.find()) {
-            String name = valueUniform.group(2);
-            if (UniformRegistry.resolveForCompute(name, valueUniform.group(1), customDescriptors) != null) {
-                if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                    localDeviations.add("COMPUTE_UNIFORM_LIVE:" + name);
-                } else {
-                    localDeviations.add("COMPUTE_UNIFORM_UNUSED:" + name);
-                }
-            } else if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                localDeviations.add("COMPUTE_UNIFORM_UNSUPPORTED:" + name);
-            }
-        }
-    }
-
     static void applyBudget(Map<String, PackAdvancedResourcePlan.ImageSpec> images, List<String> deviations) {
         List<Map.Entry<String, PackAdvancedResourcePlan.ImageSpec>> candidates = images.entrySet().stream()
                 .filter(entry -> entry.getValue().supported())
@@ -360,16 +205,6 @@ final class AdvancedImageDeclarations {
             }
         }
         if (rejected) deviations.add("ADVANCED_IMAGE_BUDGET_EXCEEDED");
-    }
-
-    static boolean hasBlockingComputeDeviation(List<String> deviations) {
-        return deviations.stream().anyMatch(value ->
-                value == null
-                        || (!ShaderSourcePreprocessor.isWarning(value)
-                        && !value.startsWith("COMPUTE_UNIFORM_DEFAULTED:")
-                        && !value.startsWith("COMPUTE_UNIFORM_LIVE:")
-                        && !value.startsWith("COMPUTE_UNIFORM_UNUSED:")
-                        && !value.equals("COMPUTE_TEXEL_FETCH_CLAMPED")));
     }
 
     /**

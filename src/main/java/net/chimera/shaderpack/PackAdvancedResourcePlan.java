@@ -23,18 +23,15 @@ import java.util.stream.Collectors;
  * Immutable load-time plan for the first advanced-resource contract.
  *
  * <p>This is deliberately separate from {@link PackResourcePlan}. That plan
- * owns sampled two-dimensional textures. This plan describes writable image
- * declarations and the exact compute stages that may use them.</p>
+ * owns sampled two-dimensional textures. This plan describes writable image and
+ * buffer declarations and the programs that use them; the pass computes that use
+ * them are {@link PassComputePlan}'s.</p>
  */
 public final class PackAdvancedResourcePlan {
     public static final long MAX_TOTAL_BYTES = 768L * 1024L * 1024L;
     public static final int MAX_BUFFER_INDEX = 12;
     public static final long MAX_STORAGE_BUFFER_BYTES = 64L * 1024L * 1024L;
 
-    static final Pattern LOCAL_SIZE = Pattern.compile(
-            "layout\\s*\\(\\s*local_size_x\\s*=\\s*(\\d+)\\s*,\\s*"
-                    + "local_size_y\\s*=\\s*(\\d+)\\s*,\\s*"
-                    + "local_size_z\\s*=\\s*(\\d+)\\s*\\)", Pattern.MULTILINE);
     static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
                     + "(bool|int|uint|float|double|vec[234]|ivec[234]|uvec[234]|bvec[234]"
@@ -129,26 +126,6 @@ public final class PackAdvancedResourcePlan {
             if (!relative) return new int[] {width, Math.max(1, height), Math.max(1, depth)};
             return new int[] {Math.max(1, (int) (screenWidth * Float.parseFloat(widthToken))),
                     Math.max(1, (int) (screenHeight * Float.parseFloat(heightToken))), 1};
-        }
-    }
-
-    public record ComputeSpec(
-            String program,
-            String relativeSource,
-            int localSizeX,
-            int localSizeY,
-            int localSizeZ,
-            List<String> imageNames,
-            List<String> samplerNames,
-            Status status,
-            List<String> deviations
-    ) implements Admission {
-        public ComputeSpec {
-            program = program == null ? "" : program;
-            relativeSource = relativeSource == null ? "" : relativeSource.replace('\\', '/');
-            imageNames = imageNames == null ? List.of() : imageNames.stream().distinct().sorted().toList();
-            samplerNames = samplerNames == null ? List.of() : samplerNames.stream().distinct().sorted().toList();
-            deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
         }
     }
 
@@ -476,7 +453,6 @@ public final class PackAdvancedResourcePlan {
     private final Map<String, ProgramBindingLayout> bindingLayouts;
 
     private final Map<String, ImageSpec> images;
-    private final Map<String, ComputeSpec> computeStages;
     private final Map<String, List<GraphicsImageBinding>> graphicsImages;
     private final Map<String, List<GraphicsImageBinding>> graphicsImageReaders;
     private final Map<Integer, BufferSpec> buffers;
@@ -492,7 +468,6 @@ public final class PackAdvancedResourcePlan {
 
     private PackAdvancedResourcePlan(
             Map<String, ImageSpec> images,
-            Map<String, ComputeSpec> computeStages,
             Map<String, List<GraphicsImageBinding>> graphicsImages,
             Map<String, List<GraphicsImageBinding>> graphicsImageReaders,
             Map<Integer, BufferSpec> buffers,
@@ -507,7 +482,6 @@ public final class PackAdvancedResourcePlan {
     ) {
         this.ordinaryContracts = Map.copyOf(ordinaryContracts);
         this.images = Map.copyOf(new TreeMap<>(images == null ? Map.of() : images));
-        this.computeStages = Map.copyOf(new TreeMap<>(computeStages == null ? Map.of() : computeStages));
         Map<String, List<GraphicsImageBinding>> graphicsCopy = new TreeMap<>();
         if (graphicsImages != null) {
             graphicsImages.forEach((program, bindings) -> graphicsCopy.put(program,
@@ -555,7 +529,7 @@ public final class PackAdvancedResourcePlan {
     }
 
     public static PackAdvancedResourcePlan empty() {
-        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
+        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), Map.of());
     }
 
@@ -566,7 +540,7 @@ public final class PackAdvancedResourcePlan {
      */
     public static PackAdvancedResourcePlan catalog(PackSettingsPlan settings) {
         Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(settings, new ArrayList<>());
-        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), Map.of(), buffers, Map.of(),
+        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), buffers, Map.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), Map.of());
     }
 
@@ -616,21 +590,7 @@ public final class PackAdvancedResourcePlan {
         List<String> deviations = new ArrayList<>();
         Map<String, ImageSpec> images = AdvancedImageDeclarations.parseImages(plan.settings(), deviations);
         Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(plan.settings(), deviations);
-
-        boolean customImages = images.values().stream().anyMatch(ImageSpec::supported);
-        Map<String, String> computeMacros = PackEngineDefines.forCompute(
-                plan.settings().preprocessorDefines(), customImages);
-        // Iris exposes this macro when the runtime supports custom images.
-        // The bounded Chimera bridge supports the admitted image subset, so
-        // compute preparation must see the same feature or guarded sampler
-        // declarations will be removed while their uses remain active.
         GraphicsImageScan graphics = GraphicsImageScan.scan(plan, images, deviations);
-        // A shadowcomp the pack switches off is no source to Iris (ShaderPack's source provider).
-        String folder = plan.resolution().selectedSourceFolder();
-        Map<String, ComputeSpec> compute = !plan.settings().enabled(folder, "shadowcomp") ? Map.of()
-                : AdvancedImageDeclarations.discoverCompute(shadersDir, folder, images, deviations, computeMacros,
-                        PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
-                        graphics.producedImages, plan.settings());
         addCapabilityDeviations(images, graphics.customImageFeaturePrograms, deviations);
         List<String> bufferDependent = new ArrayList<>();
         List<String> storageEligible = new ArrayList<>();
@@ -650,7 +610,7 @@ public final class PackAdvancedResourcePlan {
                     plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
         }
         addUnplannedDeclarations(plan, graphics.dependent, bufferDependent, deviations);
-        return new PackAdvancedResourcePlan(images, compute, graphics.writers, graphics.readers, buffers,
+        return new PackAdvancedResourcePlan(images, graphics.writers, graphics.readers, buffers,
                 storageBuffers, graphics.dependent, bufferDependent, storageEligible,
                 graphics.customImageFeaturePrograms, deviations, ordinaryContracts, bindingBases);
     }
@@ -708,7 +668,6 @@ public final class PackAdvancedResourcePlan {
         return imageBySymbol(images, symbol);
     }
 
-    public Map<String, ComputeSpec> computeStages() { return computeStages; }
     public Map<String, List<GraphicsImageBinding>> graphicsImages() { return graphicsImages; }
     public List<GraphicsImageBinding> graphicsImages(String program) {
         return graphicsImages.getOrDefault(program, List.of());
@@ -870,11 +829,6 @@ public final class PackAdvancedResourcePlan {
     public List<String> deviations() { return deviations; }
     public boolean hasSupportedImages() { return !images.isEmpty()
             && images.values().stream().allMatch(ImageSpec::supported); }
-    public boolean hasSupportedCompute() {
-        ComputeSpec shadowCompute = computeStages.get("shadowcomp");
-        return shadowCompute != null && shadowCompute.supported()
-                && requiredImagesSupported(shadowCompute, images);
-    }
     /**
      * Whether a program that uses pack images can run: every image it uses is one Chimera creates
      * and binds. Iris creates the images whatever programs exist, shadowcomp or none, and runs each
@@ -905,7 +859,6 @@ public final class PackAdvancedResourcePlan {
     private String snapshotJson() {
         JsonObject root = new JsonObject();
         root.add("images", AdvancedResourceJson.images(images));
-        root.add("computeStages", AdvancedResourceJson.computeStages(computeStages));
         root.add("graphicsImages",
                 AdvancedResourceJson.programBindings(graphicsImages, AdvancedResourceJson::graphicsBinding));
         if (!graphicsImageReaders.isEmpty()) {
@@ -922,18 +875,5 @@ public final class PackAdvancedResourcePlan {
         root.add("deviations", PlanJson.strings(deviations));
         root.addProperty("capabilityPossible", capabilityPossible());
         return root.toString();
-    }
-
-    private static boolean requiredImagesSupported(ComputeSpec compute, Map<String, ImageSpec> images) {
-        if (compute == null || !compute.supported() || compute.imageNames().isEmpty()) return false;
-        for (String name : compute.imageNames()) {
-            ImageSpec image = imageBySymbol(images, name);
-            if (image == null || !image.supported()) return false;
-        }
-        for (String name : compute.samplerNames()) {
-            ImageSpec image = imageBySampler(images, name);
-            if (image == null || !image.supported()) return false;
-        }
-        return true;
     }
 }

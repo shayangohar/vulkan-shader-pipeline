@@ -1,6 +1,5 @@
 package net.chimera.shaderpack;
 
-import net.chimera.render.PackShadowCompute;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.tree.ClassNode;
@@ -60,28 +59,25 @@ final class ComputePassTest {
                 }
                 """);
         PackPlan plan = PackProbe.analyze(root).plan();
-        PackAdvancedResourcePlan.ComputeSpec compute = plan.advancedResources().computeStages().get("shadowcomp");
+        PassComputePlan.PassCompute compute = PassComputePlan.build(plan, shaders).compute("shadowcomp");
         assertTrue(compute != null && compute.supported(), "the list-declared shadowcomp is supported: "
                 + (compute == null ? "missing" : compute.deviations()));
-        assertEquals(List.of("floodfill_img", "floodfill_img_copy"), compute.imageNames(),
-                "the plan records every image of a declaration list");
-        assertEquals(List.of("floodfillSampler", "floodfillSamplerCopy"), compute.samplerNames(),
-                "the plan records every sampler of a declaration list");
-        String translated = PackShadowCompute.translatedModule(plan.advancedResources(),
-                shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames()).source();
-        assertTrue(translated.contains("layout(rgba16f, binding = 1) uniform image3D floodfill_img_copy;")
-                        && translated.contains("layout(binding = 3) uniform sampler3D floodfillSamplerCopy;"),
-                "each listed resource takes its own binding: " + translated);
-        String error = PackCompileTest.compileShadowCompute(root, plan);
+        List<String> symbols = compute.bindings().stream().map(PassComputePlan.Binding::symbol).toList();
+        assertTrue(symbols.containsAll(List.of("floodfill_img", "floodfill_img_copy", "floodfillSampler",
+                "floodfillSamplerCopy")) && symbols.size() == Set.copyOf(symbols).size(),
+                "each listed resource takes its own binding: " + compute.bindings());
+        Map<String, Integer> written = new LinkedHashMap<>();
+        for (var value : compute.values()) written.put(value.name(), value.offset());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, written);
         assertTrue(error == null, "the translated shadowcomp compiles: " + error);
     }
 
     /**
-     * Iris dispatches a shadowcomp the pack points at a buffer from that buffer
-     * (ShadowCompositeRenderer.createComputes); PackShadowCompute dispatches work groups only.
+     * shadowcomp.csh is a pass compute like every other (ShadowCompositeRenderer.createComputes): one
+     * that writes a pack image runs here, and one the pack points at a buffer dispatches from it.
      */
     @Test
-    void indirectShadowcompIsRefused(@TempDir Path root) throws IOException {
+    void shadowcompIsAPassCompute(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         String properties = """
                 iris.features.optional=CUSTOM_IMAGES
@@ -99,22 +95,21 @@ final class ComputePassTest {
                 """);
         Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
                 + "void main() {\n gl_FragColor = texture2D(colortex0, vec2(0.5));\n}\n");
-        PackPlan directPlan = PackProbe.analyze(root).plan();
-        PackAdvancedResourcePlan.ComputeSpec direct = directPlan.advancedResources().computeStages().get("shadowcomp");
-        assertTrue(direct != null && direct.supported(), direct == null ? "missing" : direct.deviations().toString());
-        assertTrue(PassComputePlan.build(directPlan, shaders).compute("shadowcomp") == null,
-                "PackShadowCompute runs a shadowcomp that writes a pack image");
+        PassComputePlan.PassCompute direct = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("shadowcomp");
+        assertTrue(direct != null && direct.supported() && direct.indirect() == null,
+                direct == null ? "missing" : direct.deviations().toString());
         Files.writeString(shaders.resolve("shaders.properties"), properties + "indirect.shadowcomp = 0 0\n");
-        PackAdvancedResourcePlan.ComputeSpec indirect = PackProbe.analyze(root).plan().advancedResources()
-                .computeStages().get("shadowcomp");
-        assertTrue(!indirect.supported() && indirect.deviations().contains("COMPUTE_INDIRECT_UNSUPPORTED:shadowcomp"),
-                indirect.deviations().toString());
+        PassComputePlan.PassCompute indirect = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("shadowcomp");
+        assertTrue(indirect != null && indirect.supported() && indirect.indirect() != null,
+                indirect == null ? "missing" : indirect.deviations().toString());
     }
 
     /**
      * A compute's uniform block is written while a frame is recorded, so each frame in flight
      * owns one: a single block could be rewritten while the GPU still ran the previous frame's
-     * dispatch. Shadowcomp and the pass computes both bind ComputeKernel's current frame slot.
+     * dispatch. The pass computes, shadowcomp.csh included, bind ComputeKernel's current frame slot.
      */
     @Test
     void computeFrameSlots() throws IOException {
@@ -125,11 +120,9 @@ final class ComputePassTest {
         assertTrue(kernel.fields.stream().noneMatch(field -> field.name.equals("uniformData")
                         || field.name.equals("descriptorSet")),
                 "the kernel keeps no uniform block or descriptor set shared across frames in flight");
-        for (String owner : List.of("PackShadowCompute", "PackPassComputes")) {
-            var compute = MixinBytecode.nativeClass("net/chimera/render/" + owner);
-            assertTrue(calls(compute, "dispatch", "net/chimera/render/ComputeKernel", "currentFrame"),
-                    owner + " must bind the current frame slot's uniform block");
-        }
+        var compute = MixinBytecode.nativeClass("net/chimera/render/PackPassComputes");
+        assertTrue(calls(compute, "dispatch", "net/chimera/render/ComputeKernel", "currentFrame"),
+                "PackPassComputes must bind the current frame slot's uniform block");
     }
 
     private static boolean calls(ClassNode type, String method, String owner, String name) {
@@ -184,13 +177,14 @@ final class ComputePassTest {
                     gl_FragColor = texture2D(colortex0, vec2(0.5));
                 }
                 """);
-        PackPlan plan = PackProbe.analyze(root).plan();
-        var module = PackShadowCompute.translatedModule(plan.advancedResources(),
-                shaders, plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
-        assertEquals(List.of("cameraPosition", "frameCounter", "frameTimeCounter", "previousCameraPosition",
-                        "wetness"), module.uniforms().stream().map(uniform -> uniform.name()).toList(),
-                "every live value joins the uniform block");
-        String error = PackCompileTest.compileShadowCompute(root, plan);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("shadowcomp");
+        assertTrue(compute.values().stream().map(ComputeValueBlock.Value::name).toList().containsAll(List.of(
+                        "cameraPosition", "frameCounter", "frameTimeCounter", "previousCameraPosition", "wetness")),
+                "every live value joins the uniform block: " + compute.values());
+        Map<String, Integer> written = new LinkedHashMap<>();
+        for (var value : compute.values()) written.put(value.name(), value.offset());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, written);
         assertTrue(error == null, "the compiled block reads each value where dispatch writes it: " + error);
         // The block as Chimera declared it before, with implicit offsets, against the offsets
         // dispatch wrote then: frameCounter after the vec3's padding word, at 16.
@@ -663,7 +657,7 @@ final class ComputePassTest {
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         PackPlan plan = PackProbe.analyze(root).plan();
         assertTrue(plan.isProgramDisabled("shadowcomp"));
-        assertTrue(plan.advancedResources().computeStages().isEmpty()
+        assertTrue(PassComputePlan.build(plan, shaders).compute("shadowcomp") == null
                 && plan.advancedResources().deviations().stream().noneMatch(value -> value.contains("shadowcomp")),
                 plan.advancedResources().deviations().toString());
     }
@@ -792,8 +786,7 @@ final class ComputePassTest {
      * Iris runs a shadowcomp pass's computes after the shadow pass (ShadowCompositeRenderer):
      * shadowcomp.csh, then shadowcomp_a..z, then shadowcomp1 and its own. They bind noise, custom
      * textures and images and the shadow maps, and no colour target, colorimg or depth texture
-     * (createComputes). This shadowcomp.csh writes no pack image, so PackShadowCompute does not
-     * run it and this plan does; one PackShadowCompute runs is its own (indirectShadowcompIsRefused).
+     * (createComputes).
      */
     @Test
     void shadowcompComputesRunAfterTheShadowPass(@TempDir Path root) throws IOException {

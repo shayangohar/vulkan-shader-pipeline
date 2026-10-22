@@ -177,8 +177,6 @@ public final class ChimeraMainPass implements MainPass {
     boolean packStorageInitializationLogged;
     /** Suppresses the secondary frame-not-started flood until the next pack session. */
     boolean packTargetFrameNotStartedLogged;
-    /** Optional bounded shadow compute pipeline for the active pack session. */
-    PackShadowCompute packShadowCompute;
     /** The pack's computes that run before their deferred, composite or prepare pass. */
     PackPassComputes packPassComputes;
     /** Static pack inventory plus the actual compile/install disposition. */

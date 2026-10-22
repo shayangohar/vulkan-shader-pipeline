@@ -80,13 +80,6 @@ final class ProgramReportRules {
                 ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
     }
 
-    /** The plan's compute stage for a program that ships compute source; null for a graphics program. */
-    static PackAdvancedResourcePlan.ComputeSpec nativeComputeSpec(PackProbe.Inventory inventory, PackPlan packPlan) {
-        PackAdvancedResourcePlan.ComputeSpec computeSpec = packPlan == null
-                ? null : packPlan.advancedResources().computeStages().get(inventory.name);
-        return computeSpec != null && inventory.stages.contains("compute") ? computeSpec : null;
-    }
-
     /**
      * The sources a program's report reads, joined by stage name: a variant's prepared sources when
      * it has them, else the authored ones.
@@ -501,36 +494,10 @@ final class ProgramReportRules {
                 || FamilyAdapterRegistry.isHostLayoutFamily(name);
     }
 
-    /** Builds a truthful report for a native compute stage without applying graphics rules. */
-    static ConformanceReport.ProgramReport computeProgram(
-            PackProbe.Inventory inventory,
-            PackAdvancedResourcePlan.ComputeSpec computeSpec,
-            PackPlan packPlan
-    ) {
-        TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
-        deviations.addAll(computeSpec.deviations());
-        boolean capability = packPlan != null
-                && packPlan.advancedResources().capabilityPossible();
-        boolean executable = computeSpec.supported() && capability;
-        if (executable) {
-            deviations.add("COMPUTE_NATIVE_BRIDGE");
-        } else if (!computeSpec.supported()) {
-            deviations.add("COMPUTE_STAGE_UNSUPPORTED:" + computeSpec.program());
-        } else {
-            deviations.add("COMPUTE_CAPABILITY_UNAVAILABLE:" + computeSpec.program());
-        }
-        return computeReport(inventory, executable, deviations);
-    }
-
-    /** The report of a program that is only a compute: a native compute stage or a pass compute; else null. */
+    /** The report of a program that is only a compute: a pass compute; else null. */
     private static ConformanceReport.ProgramReport computeOnlyProgram(PackProbe.Inventory inventory, PackPlan packPlan,
                                                                       PassComputePlan passComputes) {
         PassComputePlan.PassCompute passCompute = passComputes == null ? null : passComputes.compute(inventory.name);
-        // shadowcomp.csh is the pass compute plan's when the native path does not run it.
-        PackAdvancedResourcePlan.ComputeSpec computeSpec = nativeComputeSpec(inventory, packPlan);
-        if (computeSpec != null && passCompute == null) {
-            return computeProgram(inventory, computeSpec, packPlan);
-        }
         // <pass>_x.csh is its own row; <pass>.csh shares the pass's, which is the compute's when it runs alone.
         if (passCompute != null && (!passCompute.name().equals(passCompute.pass())
                 || PassComputePlan.runsAlone(packPlan, passCompute.pass()))) {
