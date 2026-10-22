@@ -117,28 +117,17 @@ public final class PackSource {
             selectDimension(this.selectedDimension);
         }
 
-        /** The prepared programs of one source folder; null for a folder the pack does not have. */
+        /**
+         * The prepared programs of one source folder; null for a folder the pack does not have. Every
+         * folder starts from the same macros: Iris predefines no dimension macro (StandardMacros), so a
+         * pack's world0 files define OVERWORLD themselves, and code that tests it first reads it undefined.
+         */
         private List<PackProgram> variant(String folder) {
             List<PackProgram> raw = rawVariants.get(folder);
             if (raw == null) return null;
+            Map<String, String> macros = preparedMacros == null ? Map.of() : preparedMacros;
             return variants.computeIfAbsent(folder, key -> preparePrograms(
-                    raw, shadersDir, key, variantMacros(key, preparedMacros), preparedLocked));
-        }
-
-        private static Map<String, String> variantMacros(
-                String folder, Map<String, String> initialMacros) {
-            Map<String, String> result = new TreeMap<>();
-            if (initialMacros != null) {
-                result.putAll(initialMacros);
-            }
-            if (folder.equals("world0")) {
-                result.put("OVERWORLD", "1");
-            } else if (folder.equals("world-1")) {
-                result.put("NETHER", "1");
-            } else if (folder.equals("world1")) {
-                result.put("END", "1");
-            }
-            return Map.copyOf(result);
+                    raw, shadersDir, key, macros, preparedLocked));
         }
 
         public Path shadersDir() {
