@@ -26,6 +26,8 @@ public final class PackTargetGraphPlan {
     private final int maxAttachments;
     /** Targets a world (gbuffers) program samples; the world draws before any post step. */
     private final Set<Integer> geometryReads;
+    /** Targets read outside the post steps' order: the world's reads and every target a pass compute binds. */
+    private final Set<Integer> unorderedReads;
     private final String snapshot;
     private final String fingerprint;
 
@@ -35,11 +37,15 @@ public final class PackTargetGraphPlan {
             DepthGraphPlan depth,
             List<String> deviations,
             int maxAttachments,
-            Set<Integer> geometryReads
+            Set<Integer> geometryReads,
+            Set<Integer> computeTargets
     ) {
         this.targets = targets.stream().sorted(Comparator.comparingInt(TargetSpec::index)).toList();
         this.steps = steps.stream().toList();
         this.geometryReads = Set.copyOf(geometryReads);
+        Set<Integer> unordered = new TreeSet<>(geometryReads);
+        unordered.addAll(computeTargets);
+        this.unorderedReads = Set.copyOf(unordered);
         this.depth = depth == null ? DepthGraphPlan.empty() : depth;
         this.deviations = deviations == null ? List.of()
                 : deviations.stream().filter(value -> value != null && !value.isBlank())
@@ -121,7 +127,7 @@ public final class PackTargetGraphPlan {
         DepthGraphPlan depth = depthGraph(inputs, postPrograms);
         deviations.addAll(depth.deviations());
         return new PackTargetGraphPlan(finalTargets(preliminary, doubleTargets, mipmappedTargets), steps, depth,
-                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads);
+                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads, inputs.computes().targets());
     }
 
     /** What every phase of the graph build reads. */
@@ -538,10 +544,12 @@ public final class PackTargetGraphPlan {
      * Returns true when a persistent target must be seeded before the first
      * successful producer can run. This covers feedback passes that read a
      * clear=false target before they write it, while leaving unrelated
-     * uninitialized targets unavailable.
+     * uninitialized targets unavailable. A target a pass compute binds is
+     * seeded too: its images are read and written in no order the steps show,
+     * and Iris clears every target on its first frame (ClearPassCreator: fullClear).
      */
     public boolean requiresInitialSeed(int target) {
-        return requiresInitialSeed(target(target), steps, geometryReads);
+        return requiresInitialSeed(target(target), steps, unorderedReads);
     }
 
     /** Targets a world program samples. */
@@ -556,15 +564,15 @@ public final class PackTargetGraphPlan {
 
     /**
      * A persistent target needs a defined first frame when a post program reads
-     * it before any writes it, or when a world program reads it at all: the
+     * it before any writes it, or when one of {@code unorderedReads} names it: the
      * world draws before every post step (MakeUp's terrain reads last frame's
      * fog from gaux4).
      */
-    public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps, Set<Integer> geometryReads) {
+    public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps, Set<Integer> unorderedReads) {
         if (spec == null || !spec.persistent()) {
             return false;
         }
-        return geometryReads.contains(spec.index()) || hasReadBeforeWrite(spec.index(), steps, Set.of());
+        return unorderedReads.contains(spec.index()) || hasReadBeforeWrite(spec.index(), steps, Set.of());
     }
 
     /**

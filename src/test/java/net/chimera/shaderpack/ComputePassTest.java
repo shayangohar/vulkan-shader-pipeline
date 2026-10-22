@@ -738,6 +738,25 @@ final class ComputePassTest {
     }
 
     /**
+     * Iris clears every target on its first frame (ClearPassCreator: fullClear), so a clear=false
+     * target only a compute binds starts defined: the graph seeds it, as it does one the world reads.
+     */
+    @Test
+    void passComputeTargetsAreSeeded(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "const bool colortex3Clear = false;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackTargetGraphPlan.Limits limits = new PackTargetGraphPlan.Limits(64, 64, 8, 4096);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(plan.activePrograms(), plan.config(), plan.resources(),
+                limits, new PackTargetGraphPlan.ComputeUse(Set.of(3), Set.of()));
+        assertTrue(graph.target(3) != null && graph.target(3).persistent(), graph.targets().toString());
+        assertTrue(graph.requiresInitialSeed(3), "a compute's clear=false target is seeded");
+        assertTrue(!graph.geometryReads().contains(3), "no world program reads colortex3");
+    }
+
+    /**
      * A pass with computes and no fragment program runs its computes at its place in the chain
      * (Iris CompositeRenderer.ComputeOnlyPass): Alpha Piscium's composite2 is composite2.csh alone.
      * The schedule gives it the window its name gives a program, and the report its translation.
