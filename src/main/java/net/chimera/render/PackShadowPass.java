@@ -112,8 +112,6 @@ final class PackShadowPass {
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
                 shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 shadowDepth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-                // The shadow pass clears the targets it draws; those only computes name clear here.
-                if (packShadow) this.shadowMap.clearComputeColors(stack, cmd, false);
             }
 
             try {
@@ -252,7 +250,8 @@ final class PackShadowPass {
         if (frame.pack() && pass.packAdvancedImageOwner != null) {
             pass.packAdvancedImageOwner.afterImageWrites(cmd);
         }
-        dispatchShadowCompute(cmd);
+        // Iris runs shadowcomp only inside its ShadowRenderer, over the pack's own map.
+        if (frame.pack()) dispatchShadowCompute(cmd);
         this.shadowMap.markInitialSamplingLayoutReady();
         if (frame.pack()) {
             this.shadowMap.commitRenderedMap(frame.cameraX(), frame.cameraY(), frame.cameraZ());
@@ -471,8 +470,21 @@ final class PackShadowPass {
 
         // Terrain shaders sample the shadow map from their first draw.
         if (this.shadowFrameReady) {
+            clearComputeColors();
             this.shadowMap.bindShadowTexture();
             maintainPackShadowGoal();
+        }
+    }
+
+    /**
+     * Clears the shadowcolor targets only computes name as the frame opens, before setup and begin
+     * run, as Iris clears its shadow targets in beginLevelRendering. The shadow pass clears the
+     * targets it draws when it opens (KNOW-810).
+     */
+    private void clearComputeColors() {
+        if (!Renderer.isRecording() || Renderer.getInstance().getBoundRenderPass() != null) return;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            this.shadowMap.clearComputeColors(stack, Renderer.getCommandBuffer(), false);
         }
     }
 

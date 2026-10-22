@@ -174,7 +174,14 @@ public class ChimeraShadowMap {
         List<TargetSpec> specs = new ArrayList<>();
         for (int index = 0; index < count; index++) specs.add(colorSpec(index));
         PackTargetImages.verifyFormats(specs);
-        return specs.stream().map(this::createColorTarget).toList();
+        List<VulkanImage> images = new ArrayList<>();
+        try {
+            specs.forEach(spec -> images.add(createColorTarget(spec)));
+        } catch (RuntimeException failure) {
+            images.forEach(TargetFormatViews::free);
+            throw failure;
+        }
+        return List.copyOf(images);
     }
 
     /** The compute-named shadowcolor targets from index {@code drawn} on, which the shadow pass does not draw. */
@@ -183,7 +190,12 @@ public class ChimeraShadowMap {
                 .map(this::colorSpec).toList();
         PackTargetImages.verifyFormats(specs);
         Map<Integer, VulkanImage> images = new TreeMap<>();
-        specs.forEach(spec -> images.put(spec.index(), createColorTarget(spec)));
+        try {
+            specs.forEach(spec -> images.put(spec.index(), createColorTarget(spec)));
+        } catch (RuntimeException failure) {
+            images.values().forEach(TargetFormatViews::free);
+            throw failure;
+        }
         return images;
     }
 
