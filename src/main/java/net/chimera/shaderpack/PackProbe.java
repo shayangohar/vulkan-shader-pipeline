@@ -32,8 +32,6 @@ public final class PackProbe {
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY = Pattern.compile(
             "^\\s*([A-Za-z0-9_.-]+)\\s*=\\s*([^\\s#]+)");
-    private static final Pattern COLORTEX_FORMAT = Pattern.compile(
-            "colortex\\d+Format");
     private static final Pattern SHADOW_SETTING = Pattern.compile(
             "shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul");
 
@@ -90,7 +88,6 @@ public final class PackProbe {
         private final List<String> settings = new ArrayList<>();
         private final List<String> passInventory = new ArrayList<>();
         private final Set<String> shadowPropertySettings = new TreeSet<>();
-        private final Set<String> alphaTestPropertySettings = new TreeSet<>();
         private final Map<String, Inventory> inventories = new TreeMap<>();
         private boolean passListPresent;
         private PackSettingsPlan settingsPlan;
@@ -128,7 +125,7 @@ public final class PackProbe {
             buildPlans();
             PackPlan packPlan = new PackPlan(packConfig, initialPlan.programs(), entityIds.resolver(),
                     settingsPlan, resolution, resourcePlan, advancedPlan);
-            addPackDeviations(packPlan);
+            addPackDeviations();
             ConformanceReport report = conformanceReport();
             inventoryAliases(packPlan);
             PassComputePlan passComputes = PassComputePlan.build(packPlan, shadersDir);
@@ -156,8 +153,7 @@ public final class PackProbe {
             Path properties = shadersDir.resolve("shaders.properties");
             if (Files.isRegularFile(properties)) {
                 readMetadata(properties, "shaders.properties", metadataHashes, globalDeviations);
-                readProperties(properties, settings, globalDeviations, shadowPropertySettings,
-                        alphaTestPropertySettings);
+                readProperties(properties, settings, globalDeviations, shadowPropertySettings);
             }
         }
 
@@ -261,20 +257,22 @@ public final class PackProbe {
             addInventories(loaded.programs(), inventories, shadersDir);
         }
 
-        /** The pack-wide deviations of the config and settings, and how the shadow and alpha settings apply. */
-        private void addPackDeviations(PackPlan packPlan) {
+        /**
+         * The pack-wide deviations of the config and settings, how the shadow settings apply, and
+         * each property Iris reads that Chimera does not apply (PackPropertyKeys).
+         */
+        private void addPackDeviations() {
             globalDeviations.addAll(packConfig.deviations());
             // Keep standard sampler aliases program-scoped. Adding every binding
             // deviation to the pack-wide list changes old fixture support status
             // even when the alias is already part of that family's contract.
             globalDeviations.addAll(settingsPlan.resourceDeviations());
             settingsPlan.deviations().stream()
-                    .filter(value -> value.startsWith("CUSTOM_IMAGE_UNSUPPORTED:")
-                            || value.startsWith("STORAGE_RESOURCE_UNSUPPORTED:"))
+                    .filter(value -> value.startsWith("SETTING_UNSUPPORTED:"))
+                    .map(value -> "SETTING_NOT_APPLIED:" + value.substring("SETTING_UNSUPPORTED:".length()))
                     .forEach(globalDeviations::add);
             applyShadowPropertyReporting(inventories, shadowPropertySettings,
                     packConfig.shadowSettings(), globalDeviations);
-            applyAlphaTestPropertyReporting(packPlan, alphaTestPropertySettings, globalDeviations);
         }
 
         private void inventoryAliases(PackPlan packPlan) {
@@ -461,12 +459,16 @@ public final class PackProbe {
         }
     }
 
+    /**
+     * Lists the keys shaders.properties names and the shadow settings among them. Which keys
+     * Chimera does not apply is PackSettingsPlan's to say (PackPropertyKeys), read through the
+     * pack's conditionals.
+     */
     private static void readProperties(
             Path properties,
             List<String> settings,
             List<String> deviations,
-            Set<String> shadowPropertySettings,
-            Set<String> alphaTestPropertySettings
+            Set<String> shadowPropertySettings
     ) {
         try {
             for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
@@ -476,48 +478,10 @@ public final class PackProbe {
                 }
                 String key = matcher.group(1);
                 settings.add(key);
-                boolean colortexFormat = COLORTEX_FORMAT.matcher(key).matches();
-                boolean shadowSetting = SHADOW_SETTING.matcher(key).matches();
-                boolean customValue = key.matches(
-                        "(?:uniform|variable)\\.(?:float|int|bool|vec2|vec3|vec4)\\.[A-Za-z_]\\w*");
-                boolean alphaTest = key.equals("alphaTest.gbuffers_terrain")
-                        || key.equals("alphaTest.gbuffers_water");
-                boolean featureFlags = key.startsWith("iris.features.");
-                if (featureFlags) {
-                    continue;
-                }
-                if (shadowSetting) {
-                    shadowPropertySettings.add(key);
-                } else if (alphaTest) {
-                    alphaTestPropertySettings.add(key);
-                } else if (!colortexFormat && !customValue && !alphaTest) {
-                    deviations.add("SETTING_NOT_APPLIED:" + key);
-                }
+                if (SHADOW_SETTING.matcher(key).matches()) shadowPropertySettings.add(key);
             }
         } catch (IOException e) {
             deviations.add("SHADERS_PROPERTIES_READ_FAILED");
-        }
-    }
-
-    private static void applyAlphaTestPropertyReporting(
-            PackPlan packPlan,
-            Set<String> alphaTestPropertySettings,
-            List<String> deviations
-    ) {
-        for (String key : alphaTestPropertySettings) {
-            String programName = key.substring("alphaTest.".length());
-            PackProgramPlan programPlan = packPlan == null ? null : packPlan.program(programName);
-            boolean consumed = programPlan != null
-                    && programPlan.executable()
-                    && programPlan.alphaTestPlan().configured()
-                    && (programName.equals("gbuffers_terrain")
-                    || FamilyAdapterRegistry.isEntityLike(programName)
-                    || FamilyAdapterRegistry.isCloudFamily(programName)
-                    ? programPlan.convertedVertex() != null
-                    : false);
-            if (!consumed) {
-                deviations.add("SETTING_NOT_APPLIED:" + key);
-            }
         }
     }
 

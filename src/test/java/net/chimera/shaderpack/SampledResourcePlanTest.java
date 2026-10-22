@@ -39,10 +39,9 @@ final class SampledResourcePlanTest {
 
         PackProbe.Analysis unsupported = PackProbe.analyze(unsupportedPath);
         verifyUnsupported(unsupported);
-        assertTrue(unsupported.report().deviations().stream().anyMatch(value ->
-                        value.startsWith("CUSTOM_IMAGE_UNSUPPORTED:")
-                                || value.startsWith("STORAGE_RESOURCE_UNSUPPORTED:")),
-                "unsupported storage declarations were not named");
+        List<String> imageDeviations = unsupported.plan().advancedResources().deviations();
+        assertTrue(imageDeviations.contains("ADVANCED_IMAGE_UNSUPPORTED:albedo"),
+                "the malformed image declaration was not named: " + imageDeviations);
 
         verifyBaseline(root.resolve("baselines/m7_5.json"), supported, unsupported);
     }

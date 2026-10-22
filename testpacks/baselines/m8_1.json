@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "4842fd943316b47c9aa1c2d0edf8f1035c8674379f91d86c937c7db17b8c641d",
+      "reportSha256": "682d64c3a69e3f5efdfcde8b10c7f3d7ea4d9c764ae78a8dee21599f0404989d",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",

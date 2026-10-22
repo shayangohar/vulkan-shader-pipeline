@@ -163,13 +163,11 @@ final class FixturePackTest {
                 compute.support(), "setup compute support");
         assertTrue(compute.deviations().contains("PASS_COMPUTE_BRIDGE:setup")
                 && !compute.deviations().contains("UNSUPPORTED_PACK_STAGE"), "setup compute deviation");
-        assertTrue(report.deviations().contains("SETTING_NOT_APPLIED:customImage0"),
-                "custom image deviation");
-        assertTrue(!report.deviations().contains("SETTING_NOT_APPLIED:iris.features.required"),
-                "feature flags are applied: the required COMPUTE_SHADERS is one Chimera provides");
+        // customImage0 is no key Iris reads (images are image.<name>), so both ignore it; the
+        // required COMPUTE_SHADERS is a feature Chimera provides.
         assertTrue(!report.shouldAttempt("gbuffers_terrain"), "MRT terrain must not execute");
         assertTrue(report.shouldAttempt("composite1"), "numbered post pass must execute");
-        assertEquals(List.of("SETTING_NOT_APPLIED:customImage0"), report.deviations(), "unsupported deviations");
+        assertEquals(List.of(), report.deviations(), "unsupported deviations");
         assertStable(report, "unsupported");
     }
 

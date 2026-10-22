@@ -1,0 +1,55 @@
+package net.chimera.shaderpack;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+/**
+ * shaders.properties keys as the report names them: a key Iris 1.21.1's ShaderProperties reads
+ * and Chimera does not apply is SETTING_NOT_APPLIED; one Chimera applies, or one Iris does not
+ * read either, is not reported. Keys inside a branch the pack's conditionals skip are not read.
+ */
+final class PropertyKeyReportTest {
+    @Test
+    void keysAreClassifiedAgainstIris() {
+        for (String applied : List.of("clouds", "blend.composite", "screen.MAIN", "screen", "sliders",
+                "profile.HIGH", "vignette", "shadowTranslucent", "particles.ordering", "image.voxels",
+                "size.buffer.colortex1", "colortex3Format", "uniform.float.x", "shadow.culling")) {
+            assertNull(PackPropertyKeys.unread(applied), applied);
+        }
+        for (String irisOnly : List.of("rain.depth", "backFace.solid", "shadow.enabled", "scale.composite",
+                "separateEntityDraws", "weather")) {
+            assertEquals("SETTING_UNSUPPORTED", PackPropertyKeys.unread(irisOnly), irisOnly);
+        }
+        assertEquals("SETTING_UNKNOWN", PackPropertyKeys.unread("customImage0"));
+    }
+
+    @Test
+    void theReportNamesOnlyKeysIrisReadsAndChimeraDoesNotApply(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                rain.depth=true
+                vignette=false
+                blend.composite=off
+                customImage0=x.png
+                #if 0
+                beacon.beam.depth=true
+                #endif
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D colortex0;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(colortex0, uv); }
+                """);
+        List<String> settings = PackProbe.analyze(root).report().deviations().stream()
+                .filter(deviation -> deviation.startsWith("SETTING_")).toList();
+        assertEquals(List.of("SETTING_NOT_APPLIED:rain.depth"), settings);
+    }
+}

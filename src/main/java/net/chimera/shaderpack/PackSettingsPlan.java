@@ -702,15 +702,17 @@ record PackSettingsPlan(
             if (unread != null) deviations.add(unread + ":" + key);
         }
 
-        /** Why a key no other reading took is recorded, or null for a property Chimera reads elsewhere. */
+        /**
+         * Why a key no other reading took is recorded, or null for a property Chimera reads
+         * elsewhere (PackPropertyKeys). image.* is AdvancedImageDeclarations', which names an image
+         * it cannot serve.
+         */
         private static String unreadKey(String key) {
-            if (key.startsWith("image.") || key.startsWith("customImage.")) return "CUSTOM_IMAGE_UNSUPPORTED";
             // Bounded bufferObject.N declarations are admitted. The source plan remains responsible
             // for proving that a matching std430 block and supported schedule exist.
             if (key.startsWith("bufferObject.")) return "STORAGE_BUFFER_DECLARED";
-            if (key.startsWith("ssbo.") || key.startsWith("storage.")) return "STORAGE_RESOURCE_UNSUPPORTED";
             if (key.startsWith("texture.")) return "TEXTURE_STAGE_UNKNOWN";
-            return isSupportedProperty(key) ? null : "SETTING_UNSUPPORTED";
+            return PackPropertyKeys.unread(key);
         }
 
         /**
@@ -804,20 +806,6 @@ record PackSettingsPlan(
     /** The stages a {@code texture.<stage>.<sampler>} may name (Iris TextureStage.parse). */
     static final Set<String> TEXTURE_STAGES = Set.of(
             "setup", "begin", "shadowcomp", "prepare", "gbuffers", "deferred", "composite");
-
-    /** Property key prefixes Chimera reads; "shadow" covers every shadow setting. */
-    private static final List<String> SUPPORTED_PROPERTY_PREFIXES = List.of(
-            "profile.", "program.", "iris.features.", "size.buffer.colortex", "flip.", "customTexture.",
-            "texture.", "alphaTest.", "shadow", "indirect.");
-    private static final Set<String> SUPPORTED_PROPERTY_NAMES = Set.of("sunPathRotation", "sunPathOffset");
-    private static final Pattern SUPPORTED_TARGET_PROPERTY = Pattern.compile(
-            "colortex\\d+(?:Format|Clear|ClearColor|MipmapEnabled)");
-
-    private static boolean isSupportedProperty(String key) {
-        return SUPPORTED_PROPERTY_PREFIXES.stream().anyMatch(key::startsWith)
-                || SUPPORTED_PROPERTY_NAMES.contains(key)
-                || SUPPORTED_TARGET_PROPERTY.matcher(key).matches();
-    }
 
     private static PackResourceDeclaration resourceDeclaration(String key, String value) {
         // Iris: a value with more than one word is a raw texture (file, type, format, size).
