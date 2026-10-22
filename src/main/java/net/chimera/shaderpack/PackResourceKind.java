@@ -18,5 +18,7 @@ public enum PackResourceKind {
     ADVANCED_IMAGE,
     /** Resource-pack normal/specular map resolved at draw time from the bound albedo. */
     MATERIAL_MAP,
+    /** The 1x1 smoothed centre depth fullscreen passes read as iris_centerDepthSmooth. */
+    CENTER_DEPTH,
     UNSERVED
 }

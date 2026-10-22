@@ -172,6 +172,8 @@ public final class ChimeraMainPass implements MainPass {
     PackResourceOwner packResourceOwner;
     /** All pack-owned writable images, retained for the pack session. */
     PackAdvancedImageOwner packAdvancedImageOwner;
+    /** Iris's smoothed centre depth, when a fullscreen pass reads it. */
+    PackCenterDepth packCenterDepth;
     /** Owns exact-size pack storage buffers for the active session. */
     PackStorageBufferOwner packStorageBufferOwner;
     boolean packStorageInitializationLogged;
@@ -314,6 +316,7 @@ public final class ChimeraMainPass implements MainPass {
         if (this.packDepthTargets.isConfigured()) {
             this.packDepthTargets.beginFrame(Renderer.getCommandBuffer());
         }
+        if (this.packCenterDepth != null) this.packCenterDepth.beginFrame(Renderer.getCommandBuffer());
         if (this.packPostTargets.isConfigured()) {
             postChain.beginPostFrame(Renderer.getCommandBuffer());
         }

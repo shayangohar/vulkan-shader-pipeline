@@ -434,6 +434,10 @@ public final class PackResourcePlan {
         if (canonical.equals("noisetex")) {
             return noiseBinding(program, name, deviations);
         }
+        if (canonical.equals(CenterDepthSmooth.SAMPLER)) {
+            return new PackResourceBinding(program, name, canonical, PackResourceKind.CENTER_DEPTH, "", slot,
+                    "nearest", "clamp", PackResourceStatus.HOST_ALIAS, deviations);
+        }
         if (canonical.equals(DH_DEPTH)) {
             deviations.add("DH_DEPTH_UNBOUND:" + name);
             return new PackResourceBinding(program, name, DH_DEPTH, PackResourceKind.PACK_TEXTURE,

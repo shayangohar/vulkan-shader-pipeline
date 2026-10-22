@@ -76,6 +76,7 @@ final class OpaqueDepthCapture {
         if (pass.shadowPass.shadowPassActive || !pass.levelPhase || pass.targets.hdrFramebuffer == null) {
             return;
         }
+        sampleCenterDepth();
         boolean captureOpaque = pass.packDepthTargets.isConfigured()
                 && pass.packDepthTargets.plan().depthtex1();
         boolean capturePreHand = capturesPreHandBeforeTranslucent();
@@ -104,6 +105,17 @@ final class OpaqueDepthCapture {
             VK10.vkCmdSetScissor(commandBuffer, 0, pass.targets.hdrFramebuffer.scissor(stack));
         }
         this.hdrDepthReadable = false;
+    }
+
+    /**
+     * Iris samples the centre depth at beginHand, before the hand and translucent terrain: the world
+     * depth here, since a pack hand draws into its own framebuffer. The layer then reopens its pass.
+     */
+    private void sampleCenterDepth() {
+        if (pass.packCenterDepth == null) return;
+        VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
+        Renderer.getInstance().endRenderPass(commandBuffer);
+        pass.packCenterDepth.sample(commandBuffer, pass.targets.hdrFramebuffer.getDepthAttachment());
     }
 
     /**

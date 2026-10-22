@@ -223,7 +223,8 @@ public final class PackPlanBuilder {
         /**
          * Iris core-profile names (vaPosition, modelViewMatrix) become the compatibility built-ins
          * every converter serves. A pack's own gbuffers_line vertex keeps Iris's unbound UVs
-         * (prepareLineVertex). An unknown sampler2D reads unit 0: colortex0 in a fullscreen pass, the
+         * (prepareLineVertex). A fullscreen pass reads centerDepthSmooth from Iris's smoothed texture
+         * (CenterDepthSmooth). An unknown sampler2D reads unit 0: colortex0 in a fullscreen pass, the
          * albedo texture in a world program (UnitZeroSampler).
          */
         private void prepareIrisCoreProfile() {
@@ -242,8 +243,8 @@ public final class PackPlanBuilder {
             if (stage.shadowPass()) {
                 fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
             }
-            vertex = UnitZeroSampler.apply(vertex, config, deviations, name);
-            fragment = UnitZeroSampler.apply(fragment, config, deviations, name);
+            vertex = UnitZeroSampler.apply(CenterDepthSmooth.apply(vertex, name), config, deviations, name);
+            fragment = UnitZeroSampler.apply(CenterDepthSmooth.apply(fragment, name), config, deviations, name);
         }
 
         /**

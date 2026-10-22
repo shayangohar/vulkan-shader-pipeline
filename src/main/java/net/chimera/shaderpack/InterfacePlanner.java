@@ -367,11 +367,14 @@ final class InterfacePlanner {
 
     /**
      * The slot of a target sampler the stage's map lacks: the DH depth textures, which every program
-     * that has the render targets has with them, and outside the shadow pass the shadow samplers and
-     * the further colour targets.
+     * that has the render targets has with them; a fullscreen pass's smoothed centre depth; and
+     * outside the shadow pass the shadow samplers and the further colour targets.
      */
     private static Integer targetSamplerSlot(String name, String lookup, UniformRegistry.Stage stage) {
         if (PackResourcePlan.isDhDepth(lookup)) return SelectorNamespace.DH_DEPTH_SLOT;
+        if (stage == UniformRegistry.Stage.POST && CenterDepthSmooth.SAMPLER.equals(lookup)) {
+            return SelectorNamespace.CENTER_DEPTH_SLOT;
+        }
         if (stage.shadowPass()) return null;
         // Iris gives every program each shadowcolor target and the hardware shadow samplers
         // (addShadowSamplers), shadow programs too, where a read samples the target being drawn;

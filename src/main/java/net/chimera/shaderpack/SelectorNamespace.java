@@ -43,7 +43,9 @@ public final class SelectorNamespace {
      * (IrisSamplers.addRenderTargetSamplers). Without Distant Horizons all three bind texture 0.
      */
     public static final int DH_DEPTH_SLOT = PACK_EXTENDED_FIRST + PACK_EXTENDED_COUNT;
-    public static final int LAST_RESERVED = DH_DEPTH_SLOT;
+    /** The slot after it carries iris_centerDepthSmooth, which fullscreen passes read (CenterDepthSmooth). */
+    public static final int CENTER_DEPTH_SLOT = DH_DEPTH_SLOT + 1;
+    public static final int LAST_RESERVED = CENTER_DEPTH_SLOT;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
     /** Unreserved selector slots available to pack-owned sampled resources, in assignment order. */
     public static final List<Integer> PACK_SELECTOR_SLOTS = packSelectorSlots();

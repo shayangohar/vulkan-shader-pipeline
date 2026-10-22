@@ -224,6 +224,8 @@ final class PackSessionLifecycle {
         pass.packResourceOwner = null;
         if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.close();
         pass.packAdvancedImageOwner = null;
+        if (pass.packCenterDepth != null) pass.packCenterDepth.close();
+        pass.packCenterDepth = null;
         pass.pipelines.clear();
         pass.postChain.packPostExecution.clear();
         pass.postChain.packPostBoundaryLogged.clear();
@@ -623,7 +625,10 @@ final class PackSessionLifecycle {
         RenderedItemIds.install(items.resolver());
     }
 
-    /** Loads the session's pack textures, material maps, advanced images, storage buffers and shadowcomp. */
+    /**
+     * Loads the session's pack textures, material maps, advanced images, smoothed centre depth,
+     * storage buffers and shadowcomp.
+     */
     private void loadResourceOwners(Path shadersDir) {
         pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), shadersDir);
         pass.materials.ensureMaterialMapOwner();
@@ -633,6 +638,7 @@ final class PackSessionLifecycle {
         int height = Math.max(window.getHeight(), 1);
         pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources(), width, height,
                 passComputes.imageFormats());
+        pass.packCenterDepth = PackCenterDepth.create(pass.packPlan);
         pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height,
                 passComputes.storageBuffers());
         pass.packPassComputes = PackPassComputes.load(passComputes, pass.packResourceOwner,

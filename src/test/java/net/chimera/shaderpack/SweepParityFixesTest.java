@@ -274,6 +274,43 @@ final class SweepParityFixesTest {
         assertTrue(core.contains("in vec4 packColor;") && core.contains("gl_Vertex.xyz"), core);
     }
 
+    /**
+     * RedHat's composite and Spring's composite6, composite7 and final read centerDepthSmooth. Iris
+     * rewrites a fullscreen pass's uniform declaration into its smoothed texture and each reference
+     * into the texture's centre (CompositeDepthTransformer); a world program keeps an unset uniform.
+     */
+    @Test
+    void fullscreenPassesReadTheSmoothedCentreDepth(@TempDir Path root) throws IOException {
+        String composite = """
+                #version 120
+                uniform float viewWidth, centerDepthSmooth;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = vec4(centerDepthSmooth, viewWidth, uv); }
+                """;
+        String rewritten = CenterDepthSmooth.apply(composite, "composite");
+        assertTrue(rewritten.contains("uniform sampler2D iris_centerDepthSmooth; uniform float viewWidth;")
+                && rewritten.contains("vec4(texture(iris_centerDepthSmooth, vec2(0.5)).r, viewWidth, uv)"), rewritten);
+        assertEquals(composite, CenterDepthSmooth.apply(composite, "gbuffers_terrain"), "a world program");
+        assertEquals("void main() { float centerDepthSmooth = 1.0; }",
+                CenterDepthSmooth.apply("void main() { float centerDepthSmooth = 1.0; }", "final"),
+                "Iris makes the texture available only where the uniform is declared");
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), composite);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertTrue(plan.shouldAttempt("composite"), plan.program("composite").deviations().toString());
+        PackResourceBinding centre = plan.resources().bindings("composite").stream()
+                .filter(binding -> binding.sampler().equals(CenterDepthSmooth.SAMPLER)).findFirst().orElseThrow();
+        assertEquals(SelectorNamespace.CENTER_DEPTH_SLOT, centre.slot());
+        assertEquals(PackResourceKind.CENTER_DEPTH, centre.kind());
+        EntityRealPackTest.compileStage(plan.program("composite").convertedFragment(), false, "centre depth");
+    }
+
     /** Shrimple sizes its light bins with #if arithmetic; JCPP evaluates conditions in C long arithmetic. */
     @Test
     void conditionsEvaluateAsJcppDoes() {
