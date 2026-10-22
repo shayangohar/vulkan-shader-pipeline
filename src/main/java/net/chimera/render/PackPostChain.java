@@ -665,8 +665,8 @@ final class PackPostChain {
 
     /**
      * The images a pass's computes read now: the chain's colour sources, the images they write
-     * (colortex0 moved out of the HDR image first), and depth and shadow images as programs sample
-     * them (PackImageBindings, PackShadowPass.shadowSamplerFor).
+     * (colortex0 moved out of the HDR image first), the depth snapshots, and the shadow images as
+     * programs sample them (PackImageBindings, PackShadowPass.shadowSamplerFor).
      */
     private PackPassComputes.ImageSources computeSources(VkCommandBuffer commandBuffer) {
         return new PackPassComputes.ImageSources() {
@@ -682,7 +682,10 @@ final class PackPostChain {
 
             @Override
             public VulkanImage depth(String name) {
-                return pass.images.depthTargetImage(name);
+                // A snapshot, this frame's or the last: the live world depth is depth-stencil, and
+                // only a program's draw binds a depth-only view of it (PackDepthTargets).
+                VulkanImage current = pass.packDepthTargets.image(name);
+                return current != null ? current : pass.packDepthTargets.sampledImage(name);
             }
 
             @Override

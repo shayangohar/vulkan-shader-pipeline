@@ -187,7 +187,7 @@ final class PackPassComputes implements AutoCloseable {
                 if (!general) {
                     image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 }
-                compute.kernel().writeImage(frame, binding.binding(), image.getImageView(),
+                compute.kernel().writeImage(frame, binding.binding(), sampledView(image),
                         sampler(binding, image, sources),
                         general ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
@@ -208,6 +208,16 @@ final class PackPassComputes implements AutoCloseable {
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_READ_BIT);
         }
+    }
+
+    /**
+     * The view a sampled binding reads: the depth-only one a depth-stencil image registers (the
+     * shadow map's depth and opaque depth are D24S8, and a sampled descriptor takes one aspect,
+     * as programs read them through ChimeraImageDescriptorMixin), else the image's own.
+     */
+    private static long sampledView(VulkanImage image) {
+        long depth = ChimeraDepthViewOverride.viewFor(image);
+        return depth != 0L ? depth : image.getImageView();
     }
 
     /** The sampler a sampled binding reads through: a shadow image's as a program reads it, else the image's own. */

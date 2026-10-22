@@ -114,7 +114,7 @@ final class PackImageBindings {
      * that attachment would be a feedback loop. Without one, it reads the live world depth once
      * that is readable, and the last capture before then.
      */
-    VulkanImage depthTargetImage(String name) {
+    private VulkanImage depthTargetImage(String name) {
         if (!name.equals("depthtex0")) return pass.packDepthTargets.sampledImage(name);
         VulkanImage depth = pass.packDepthTargets.image(name);
         if (depth != null) return depth;
