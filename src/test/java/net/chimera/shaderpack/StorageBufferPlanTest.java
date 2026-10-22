@@ -843,11 +843,17 @@ final class StorageBufferPlanTest {
                         && fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogEnd"))
                         && fogPlan.executable(),
                 "normalized fog values did not enter the live interface");
-        LegacyShaderNormalizer.Result unsupportedFog = LegacyShaderNormalizer.normalize(
+        // Iris's iris_FogParameters holds the fog colour, density, start, end and scale.
+        LegacyShaderNormalizer.Result density = LegacyShaderNormalizer.normalize(
                 "void main() { gl_FragColor = vec4(gl_Fog.density); }", false);
+        assertTrue(density.successful() && density.source().contains("vec4(fogDensity)")
+                        && density.source().contains("uniform float fogDensity;"),
+                "gl_Fog.density is fogDensity: " + density);
+        LegacyShaderNormalizer.Result unsupportedFog = LegacyShaderNormalizer.normalize(
+                "void main() { gl_FragColor = vec4(gl_Fog.index); }", false);
         assertTrue(!unsupportedFog.successful()
                         && unsupportedFog.deviations().contains(
-                        "LEGACY_FOG_FIELD_UNSUPPORTED:density"),
+                        "LEGACY_FOG_FIELD_UNSUPPORTED:index"),
                 "unsupported gl_Fog field did not fail closed");
     }
 

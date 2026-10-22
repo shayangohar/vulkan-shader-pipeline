@@ -240,6 +240,12 @@ final class LegacyShaderNormalizer {
                 required.put("fogEnd", "float");
                 yield "fogEnd";
             }
+            // Iris's iris_FogDensity, which is fogDensity: both clamp the fog density at 0
+            // (IrisInternalUniforms, FogUniforms).
+            case "density" -> {
+                required.put("fogDensity", "float");
+                yield "fogDensity";
+            }
             case "scale" -> {
                 required.put("fogStart", "float");
                 required.put("fogEnd", "float");
