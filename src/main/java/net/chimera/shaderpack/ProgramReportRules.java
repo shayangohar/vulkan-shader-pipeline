@@ -610,18 +610,27 @@ final class ProgramReportRules {
     }
 
     /**
-     * Why a world program with a fragment stage runs in no lane, or null when it has one: Iris
-     * draws it under no key of its own; Chimera routes none of the draws Iris gives it
-     * (gbuffers_textured's position_tex world draws, the per-layer terrain and shadow programs); or
-     * it has no vertex stage, which leaves it invalid to Iris too (ProgramSource.isValid), whose
-     * fallback program draws instead.
+     * Why a world program with a fragment stage runs in no lane, or null when it has one
+     * (laneReason); or, in a lane that needs an authored vertex stage, that it has none, where
+     * Iris draws it with a default one (ProgramSet.readProgramSource).
      */
     static String unlanedProgram(String name, PackProbe.Inventory inventory) {
-        if (!FamilyAdapterRegistry.isExecutableFamily(name)) {
-            return IRIS_FALLBACK_SOURCES.contains(name) ? "IRIS_FALLBACK_SOURCE_ONLY"
-                    : "FAMILY_LANE_UNSUPPORTED:" + name;
-        }
-        return executableName(name, inventory, false) ? null : "IRIS_PROGRAM_INVALID:vertex";
+        if (!FamilyAdapterRegistry.isExecutableFamily(name)) return laneReason(name);
+        return executableName(name, inventory, false) ? null : "IRIS_DEFAULT_VERTEX_UNSUPPORTED";
+    }
+
+    /**
+     * Why Chimera runs a world program in no lane: Iris draws it under no key of its own; it is a
+     * begin or shadowcomp program, which Iris's composite renderers run and Chimera does not; Iris
+     * draws it and Chimera routes none of those draws to it (gbuffers_textured's position_tex
+     * world draws, the per-layer terrain and shadow programs, dh_*); or Iris never runs a program
+     * of that name at all (setup.fsh, names that are no ProgramId).
+     */
+    private static String laneReason(String name) {
+        if (IRIS_FALLBACK_SOURCES.contains(name)) return "IRIS_FALLBACK_SOURCE_ONLY";
+        if (name.matches("(?:begin|shadowcomp)\\d*")) return "PASS_PROGRAM_UNSUPPORTED:" + name;
+        return PackResolutionPlan.isIrisProgram(name) ? "FAMILY_LANE_UNSUPPORTED:" + name
+                : "IRIS_PROGRAM_UNUSED:" + name;
     }
 
     /** A host-layout lane (LINE, GLINT, LIGHTNING, ...) whose vertex could not be bridged. */

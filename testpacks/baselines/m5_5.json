@@ -39,7 +39,7 @@
       }
     },
     "unsupported_water": {
-      "reportSha256": "690b419f3cd8a626c2203d5e41a50a96d512e27271e8b440922cf7e85c6edec8",
+      "reportSha256": "79f6ca35248ac557ef0a6e7a79b0ed01f98975ac38c2a86710376aa955454d9d",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -75,15 +75,15 @@
         "final": [],
         "gbuffers_entities": [
           "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
-          "IRIS_PROGRAM_INVALID:vertex"
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED"
         ],
         "gbuffers_entities_translucent": [
           "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
-          "IRIS_PROGRAM_INVALID:vertex",
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
         ],
         "gbuffers_lightning": [
-          "IRIS_PROGRAM_INVALID:vertex",
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED",
           "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
         ],
@@ -94,7 +94,7 @@
           "TRANSLUCENT_VERTEX_BRIDGE"
         ],
         "text_bg": [
-          "IRIS_PROGRAM_INVALID:vertex",
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
           "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
         ]

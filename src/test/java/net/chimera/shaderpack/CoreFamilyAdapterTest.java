@@ -190,12 +190,18 @@ final class CoreFamilyAdapterTest {
     void unlanedProgramsNameTheirReason(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         String fragment = "#version 120\nvoid main() {\n/* DRAWBUFFERS:0 */\n gl_FragData[0] = vec4(1.0);\n}\n";
-        for (String name : List.of("gbuffers_textured", "gbuffers_textured_lit", "gbuffers_terrain_solid")) {
+        for (String name : List.of("gbuffers_textured", "gbuffers_textured_lit", "gbuffers_terrain_solid",
+                "begin1", "setup", "gbuffers_translucent")) {
             Files.writeString(shaders.resolve(name + ".vsh"),
                     "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
             Files.writeString(shaders.resolve(name + ".fsh"), fragment);
         }
         ConformanceReport report = PackProbe.analyze(root).report();
+        // Iris's begin renderer runs begin1; it runs no setup program and reads no gbuffers_translucent.
+        assertTrue(report.program("begin1").deviations().contains("PASS_PROGRAM_UNSUPPORTED:begin1")
+                && report.program("setup").deviations().contains("IRIS_PROGRAM_UNUSED:setup")
+                && report.program("gbuffers_translucent").deviations()
+                .contains("IRIS_PROGRAM_UNUSED:gbuffers_translucent"), "pass and unread reasons");
         assertTrue(report.program("gbuffers_textured").deviations()
                 .contains("FAMILY_LANE_UNSUPPORTED:gbuffers_textured"), "textured reason");
         assertTrue(report.program("gbuffers_terrain_solid").deviations()
@@ -219,12 +225,12 @@ final class CoreFamilyAdapterTest {
             assertTrue(!analysis.report().shouldAttempt(name),
                     "unsupported family remained eligible: " + name);
         }
-        // Iris draws entities_glowing under no key of its own, and finds a skybasic with no vertex
-        // stage invalid (ProgramSource.isValid): each row names why.
+        // Iris draws entities_glowing under no key of its own, and a skybasic with no vertex stage on
+        // its default one (ProgramSet.readProgramSource), which the sky lane lacks: each row names why.
         assertTrue(analysis.report().program("gbuffers_entities_glowing").deviations()
                 .contains("IRIS_FALLBACK_SOURCE_ONLY"), "glowing reason");
         assertTrue(analysis.report().program("gbuffers_skybasic").deviations()
-                .contains("IRIS_PROGRAM_INVALID:vertex"), "skybasic reason");
+                .contains("IRIS_DEFAULT_VERTEX_UNSUPPORTED"), "skybasic reason");
         verifyBaseline(analysis.report(), baseline, "unsupported_families");
         if (TestPacks.printBaselines()) {
             printBaseline("unsupported_families", analysis.report());

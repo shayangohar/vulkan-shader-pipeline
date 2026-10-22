@@ -181,6 +181,11 @@ record PackResolutionPlan(
         return ConformanceReport.sha256(snapshotJson().getBytes(StandardCharsets.UTF_8));
     }
 
+    /** Whether Iris reads {@code name} as a gbuffers, shadow, dh or final program (ProgramId). */
+    static boolean isIrisProgram(String name) {
+        return FALLBACKS.containsKey(name);
+    }
+
     static Map<String, List<String>> fallbackTable() {
         Map<String, List<String>> result = new LinkedHashMap<>();
         addChain(result, "shadow");
