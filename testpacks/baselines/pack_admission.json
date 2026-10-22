@@ -38,7 +38,6 @@
     "gbuffers_textured_lit"
   ],
   "Bloop-1.8.0-Alpha-3.zip": [
-    "composite6",
     "dh_generic",
     "dh_shadow",
     "dh_terrain",
@@ -78,9 +77,6 @@
     "gbuffers_textured"
   ],
   "Escheridia_V4.1.zip": [
-    "composite5",
-    "composite7",
-    "deferred4",
     "gbuffers_damagedblock",
     "gbuffers_textured",
     "gbuffers_textured_lit",

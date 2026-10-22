@@ -25,7 +25,9 @@ public final class ShaderSourcePreprocessor {
     private static final int MAX_EXPANDED_FILES = 256;
     private static final int MAX_EMITTED_LINES = 200_000;
     private static final int MAX_EXPANDED_CHARS = 4 * 1024 * 1024;
-    private static final Pattern DIRECTIVE = Pattern.compile("^\\s*#(\\w+)(?:\\s+(.*?))?\\s*$");
+    // A directive name ends at the first non-word character, as JCPP tokenizes it: Escheridia closes
+    // its include guard with "#endif//CLOUDS_GLSL".
+    private static final Pattern DIRECTIVE = Pattern.compile("^\\s*#\\s*(\\w+)(.*?)\\s*$");
     private static final Pattern INCLUDE = Pattern.compile("^[<\"]([^>\"]+)[>\"]$");
     private static final Pattern DEFINE = Pattern.compile("^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
     // A macro is function-like only when "(" follows its name directly, as in C: Noble's
@@ -70,10 +72,10 @@ public final class ShaderSourcePreprocessor {
         Context context = new Context(shadersRoot, initialMacros, lockedMacros);
         try {
             context.process(source, sourceFile, 0);
-            try {
-                context.conditionState.finish();
-            } catch (RuntimeException failure) {
-                throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
+            // Iris's preprocessor (JCPP) ends the source with a conditional still open and keeps what
+            // it emitted: Bloop's TAA program never closes its #ifdef TAA.
+            if (context.conditionState.open()) {
+                context.deviations.add("PREPROCESSOR_UNMATCHED_CONDITIONAL:unterminated");
             }
             String expanded;
             try {
@@ -220,9 +222,7 @@ public final class ShaderSourcePreprocessor {
             String argument = stripDirectiveComment(
                     matcher.group(2) == null ? "" : matcher.group(2)).trim();
             switch (directive) {
-                case "if" -> pushCondition(argument);
-                case "ifdef" -> pushCondition("defined(" + argument + ")");
-                case "ifndef" -> pushCondition("!defined(" + argument + ")");
+                case "if", "ifdef", "ifndef" -> applyCondition(directive, argument);
                 case "elif" -> switchCondition(argument);
                 case "else" -> switchElse();
                 case "endif" -> popCondition();
@@ -368,10 +368,6 @@ public final class ShaderSourcePreprocessor {
 
         private static String normalize(String value) {
             return value.trim().replaceAll("\\s+", " ");
-        }
-
-        private void pushCondition(String expression) {
-            applyCondition("if", expression);
         }
 
         private void switchCondition(String expression) {

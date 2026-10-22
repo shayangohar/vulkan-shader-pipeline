@@ -137,6 +137,11 @@ final class PackConditionals {
             return branches.pop();
         }
 
+        /** Whether a conditional is still open. */
+        boolean open() {
+            return !branches.isEmpty();
+        }
+
         void finish() {
             if (!branches.isEmpty()) {
                 throw new IllegalArgumentException("unterminated conditional");

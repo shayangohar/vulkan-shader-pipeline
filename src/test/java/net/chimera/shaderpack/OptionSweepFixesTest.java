@@ -147,6 +147,29 @@ final class OptionSweepFixesTest {
     }
 
     /**
+     * Iris's preprocessor (JCPP) ends a directive name at the first non-word character, tests one
+     * name after #ifdef, and keeps a source whose conditional is never closed. Escheridia writes
+     * "#endif//CLOUDS_GLSL"; Bloop's TAA program never closes its #ifdef TAA.
+     */
+    @Test
+    void directivesReadAsJcppReadsThem(@TempDir Path dir) {
+        String source = """
+                #version 400 compatibility
+                #ifndef GUARD
+                #define GUARD
+                #endif//GUARD
+                #ifdef GUARD > 1
+                void main() { gl_FragColor = vec4(1.0); }
+                #ifdef TAA
+                """;
+        var result = ShaderSourcePreprocessor.prepare(dir, dir.resolve("composite.fsh"), source,
+                PackEngineDefines.forPack(Map.of()), Set.of());
+        assertTrue(result.successful(), result.deviations().toString());
+        assertEquals(List.of("PREPROCESSOR_UNMATCHED_CONDITIONAL:unterminated"), result.deviations());
+        assertTrue(result.source().contains("gl_FragColor"), result.source());
+    }
+
+    /**
      * Bliss SAND_STORMS off writes {@code uniform.float.sandStorm = 0.0;}. Iris cannot parse the
      * semicolon, logs it and declares nothing, so programs run reading it as zero; a value Chimera
      * cannot compile for want of a feature (an unknown function) still fails closed.
