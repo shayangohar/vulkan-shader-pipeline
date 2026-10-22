@@ -58,7 +58,7 @@
   "gbuffers_hand_water [hand input variant Position,UV0,Color].vsh": "6aef265d46ad569e abded579dc9fb96a",
   "gbuffers_hand_water.fsh": "fdd9d1a003b54617 fdc5970c71f6cc7b",
   "gbuffers_hand_water.vsh": "a7ac24f9d21c3524 88d8dbdf10936ae2",
-  "gbuffers_lightning.fsh": "0d365dc404f257e0 2cf48f469c124619",
+  "gbuffers_lightning.fsh": "d74ad83193395667 ef51d64e2d308d9a",
   "gbuffers_lightning.vsh": "28782369314e3dfd 3255256ed15fb880",
   "gbuffers_line.fsh": "4f430ea77c0933a7 386fc58f416b4d32",
   "gbuffers_line.vsh": "3f6ae81c238ee5fe 87f0a65ec85a9df5",
@@ -97,6 +97,6 @@
   "shadowcomp2.csh": "2d612877fe1e56a0 19c18ade90d0fba1",
   "shadowcomp_a.csh": "e51044dc2fb91964 851729f88eb0ce06",
   "shadowcomp_b.csh": "c9266eae04d259b8 e8f64a8c096cc570",
-  "text_bg.fsh": "0d365dc404f257e0 2cf48f469c124619",
+  "text_bg.fsh": "d74ad83193395667 ef51d64e2d308d9a",
   "text_bg.vsh": "b8e40f81d49bfcee 461121e73c6c5f4c"
 }

@@ -48,10 +48,10 @@ final class FrameUniformCatalogTest {
         assertEquals(UniformRegistry.Availability.LIVE,
                 UniformRegistry.descriptor("eyeBrightnessSmooth").availability(),
                 "eye smoothing status");
-        // CommonUniforms serves these as -1 to every program outside the entity layout.
+        // CommonUniforms' values outside the entity layout: the constant -1, and entityId after an entity, 0.
         for (String id : List.of("blockEntityId", "currentRenderedItemId", "entityId")) {
             assertEquals(UniformRegistry.Availability.LIVE, UniformRegistry.descriptor(id).availability(), id);
-            assertEquals(-1.0, new IrisPlayerState().value(id, 0), id);
+            assertEquals(id.equals("entityId") ? 0.0 : -1.0, new IrisPlayerState().value(id, 0), id);
         }
         assertTrue(UniformRegistry.descriptor("cameraPosition", "float") == null,
                 "typed catalog accepted a conflicting declaration");

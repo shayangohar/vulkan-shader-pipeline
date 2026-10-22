@@ -320,10 +320,10 @@ final class IrisCoreProfile {
         if (types.containsKey("blockEntityId")) {
             replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
         }
-        // CapturedRenderingState's item is 0 by the time a host-layout batch draws.
+        // CommonUniforms registers currentRenderedItemId as the constant -1, not CapturedRenderingState's item.
         if (types.containsKey("currentRenderedItemId")) {
             replacements.put("currentRenderedItemId",
-                    "float".equals(types.get("currentRenderedItemId")) ? "(0.0)" : "(0)");
+                    "float".equals(types.get("currentRenderedItemId")) ? "(-1.0)" : "(-1)");
         }
         String folded = GlslTokenRewriter.replaceIdentifiers(src, replacements);
         return types.containsKey("entityId") ? insertAfterHeader(folded, "uniform int " + entityId + ";\n") : folded;

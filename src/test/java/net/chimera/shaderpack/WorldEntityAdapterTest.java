@@ -345,9 +345,9 @@ final class WorldEntityAdapterTest {
                 "currentRenderedItemId must read EntityIds.z: " + converted.source());
 
         String hostLayout = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
-        assertTrue(hostLayout.contains("max((0) - 10000, 0)")
+        assertTrue(hostLayout.contains("max((-1) - 10000, 0)")
                         && !hostLayout.contains("uniform int currentRenderedItemId"),
-                "a host layout reads the item as 0: " + hostLayout);
+                "a host layout reads CommonUniforms' constant item -1: " + hostLayout);
         // Iris's fallback entityId uniform: per draw, the bolt's id while a lightning bolt draws.
         String lane = IrisCoreProfile.prepareHostLayoutIdentity("#version 120\nuniform int entityId;\n"
                 + "uniform float blockEntityId;\nvoid main() { int id = entityId; float b = blockEntityId; }\n");
