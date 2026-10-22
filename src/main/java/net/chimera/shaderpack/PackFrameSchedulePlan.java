@@ -169,15 +169,16 @@ public final class PackFrameSchedulePlan {
         // sky light its deferred1/2 and composites read.
         boolean requiresLateDepth = !prepare && !deferred
                 && (samplers.contains("depthtex0") || samplers.contains("depthtex2"));
-        PostWindow window = target.isFinal()
-                ? PostWindow.FINAL
-                : prepare ? PostWindow.PREPARE
-                : deferred && !requiresLateDepth
-                ? PostWindow.EARLY : PostWindow.LATE;
         if (requiresLateDepth && !target.isFinal()) {
             deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
         }
-        return window;
+        return target.isFinal() ? PostWindow.FINAL : passWindow(program.name());
+    }
+
+    /** The window a prepare, deferred or composite pass runs in, by its name. */
+    private static PostWindow passWindow(String pass) {
+        return pass.startsWith("prepare") ? PostWindow.PREPARE
+                : pass.startsWith("deferred") ? PostWindow.EARLY : PostWindow.LATE;
     }
 
     /** Whether a pass of the deferred window has computes that read depthtex0, recording each one. */
@@ -202,9 +203,7 @@ public final class PackFrameSchedulePlan {
                                              List<String> deviations) {
         for (String pass : computePasses) {
             if (stages.stream().anyMatch(stage -> stage.name().equals(pass))) continue;
-            PostWindow window = pass.startsWith("prepare") ? PostWindow.PREPARE
-                    : pass.startsWith("deferred") ? PostWindow.EARLY : PostWindow.LATE;
-            stages.add(new PostStage(pass, window, true, List.of(), List.of()));
+            stages.add(new PostStage(pass, passWindow(pass), true, List.of(), List.of()));
             deviations.add("SCHEDULE_COMPUTE_ONLY_PASS:" + pass);
         }
         stages.sort(Comparator.comparing(PostStage::name, PostTargetPlan.programComparator()));

@@ -39,20 +39,24 @@ public final class PackProbe {
 
     private PackProbe() {}
 
-    /** Static analysis result shared by reporting and runtime pipeline loading. */
+    /**
+     * Static analysis result shared by reporting and runtime pipeline loading, with the pass
+     * computes the report shows and the session runs.
+     */
     public record Analysis(
             ConformanceReport report,
             PackPlan plan,
             PackConfig.PackConfigData config,
             PackSettingsPlan settings,
-            PackResolutionPlan resolution
+            PackResolutionPlan resolution,
+            PassComputePlan passComputes
     ) {
         public Analysis(
                 ConformanceReport report,
                 PackPlan plan,
                 PackConfig.PackConfigData config
         ) {
-            this(report, plan, config, PackSettingsPlan.empty(), PackResolutionPlan.empty());
+            this(report, plan, config, PackSettingsPlan.empty(), PackResolutionPlan.empty(), PassComputePlan.empty());
         }
     }
 
@@ -116,7 +120,7 @@ public final class PackProbe {
             if (!Files.isDirectory(shadersDir)) {
                 globalDeviations.add("NO_SHADERS_DIRECTORY");
                 return new Analysis(conformanceReport(), new PackPlan(null, List.of()), null,
-                        settingsPlan, PackResolutionPlan.empty());
+                        settingsPlan, PackResolutionPlan.empty(), PassComputePlan.empty());
             }
             inventorySources();
             readBlockProperties();
@@ -132,7 +136,7 @@ public final class PackProbe {
                 report.addProgram(ProgramReportRules.toProgram(inventory, packConfig,
                         packPlan.program(inventory.name), resourcePlan, packPlan, passComputes));
             }
-            return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
+            return new Analysis(report, packPlan, packConfig, settingsPlan, resolution, passComputes);
         }
 
         private ConformanceReport conformanceReport() {

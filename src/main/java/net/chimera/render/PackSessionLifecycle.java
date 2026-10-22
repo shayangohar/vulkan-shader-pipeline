@@ -55,6 +55,8 @@ import static org.lwjgl.vulkan.VK10.*;
 final class PackSessionLifecycle {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private final ChimeraMainPass pass;
+    /** The loaded pack's pass computes, as its analysis translated them. */
+    private PassComputePlan passComputes = PassComputePlan.empty();
 
     /** Original pack path used to select another dimension variant in place. */
     Path packPath;
@@ -560,6 +562,7 @@ final class PackSessionLifecycle {
                 options.undeclared(), options.disabledPrograms(),
                 options.pack().problems().isEmpty() ? "" : " " + options.pack().problems());
         pass.conformanceReport = analysis.report();
+        this.passComputes = analysis.passComputes();
         pass.packPrograms = analysis.plan() == null ? result.programs()
                 : analysis.plan().programs().stream().map(PackProgramPlan::program).toList();
         pass.packConfig = analysis.config() != null
@@ -631,7 +634,6 @@ final class PackSessionLifecycle {
         int width = Math.max(window.getWidth(), 1);
         int height = Math.max(window.getHeight(), 1);
         pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources(), width, height);
-        PassComputePlan passComputes = PassComputePlan.build(pass.packPlan, shadersDir);
         pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height,
                 passComputes.storageBuffers());
         pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),

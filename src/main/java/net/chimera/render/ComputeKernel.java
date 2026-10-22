@@ -151,12 +151,17 @@ final class ComputeKernel implements AutoCloseable {
 
     /** Points one storage-buffer binding of a frame slot's set at a whole buffer. */
     void writeBuffer(FrameSlot frame, int binding, long buffer, long range) {
+        writeBuffer(frame, binding, descriptorTypes[binding], buffer, range);
+    }
+
+    /** Points one buffer binding of a frame slot's set, of this descriptor type, at a buffer from offset 0. */
+    private static void writeBuffer(FrameSlot frame, int binding, int type, long buffer, long range) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
                     .buffer(buffer).offset(0L).range(range);
             VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
             write.get(0).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
-                    .dstArrayElement(0).descriptorCount(1).descriptorType(descriptorTypes[binding])
+                    .dstArrayElement(0).descriptorCount(1).descriptorType(type)
                     .pBufferInfo(info);
             vkUpdateDescriptorSets(Vulkan.getVkDevice(), write, null);
         }
@@ -224,13 +229,8 @@ final class ComputeKernel implements AutoCloseable {
             FrameSlot frame = frames[index];
             frame.descriptorSet = sets.get(index);
             if (uniformBufferSize <= 0) continue;
-            VkDescriptorBufferInfo.Buffer buffer = VkDescriptorBufferInfo.calloc(1, stack)
-                    .buffer(frame.uniformBuffer).offset(0L).range(uniformBufferSize);
-            VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
-            write.get(0).sType$Default().dstSet(frame.descriptorSet).dstBinding(descriptorTypes.length)
-                    .dstArrayElement(0).descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                    .pBufferInfo(buffer);
-            vkUpdateDescriptorSets(Vulkan.getVkDevice(), write, null);
+            writeBuffer(frame, descriptorTypes.length, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, frame.uniformBuffer,
+                    uniformBufferSize);
         }
         return true;
     }
