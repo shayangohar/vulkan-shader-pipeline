@@ -32,7 +32,7 @@ final class IrisPlayerState implements FrameValueSource {
             "playerMood", "constantMood", "pi", "lastFrameTime", "currentColorSpace",
             "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime",
-            "dhNearPlane", "dhFarPlane", "dhRenderDistance",
+            "dhNearPlane", "dhFarPlane", "dhRenderDistance", "blockEntityId", "currentRenderedItemId", "entityId",
             "is_burning", "is_hurt", "is_invisible", "is_on_ground", "is_sneaking", "is_sprinting", "is_alive");
 
 
@@ -165,6 +165,10 @@ final class IrisPlayerState implements FrameValueSource {
             case "currentYearTime" -> c < 2 ? this.yearTime[c] : Double.NaN;
             case "dhNearPlane", "dhFarPlane" -> DH_ABSENT_PLANE;
             case "dhRenderDistance" -> this.renderDistance;
+            // CommonUniforms serves blockEntityId and currentRenderedItemId as -1, and entityId as the
+            // entity being drawn, -1 outside one (CapturedRenderingState); entity-layout programs read
+            // all three per vertex instead (EntityDeclarations), as Iris's EntityPatcher does.
+            case "blockEntityId", "currentRenderedItemId", "entityId" -> -1;
             default -> playerStat(name);
         };
     }

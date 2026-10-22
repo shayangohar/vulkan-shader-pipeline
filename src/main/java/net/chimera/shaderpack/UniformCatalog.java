@@ -100,9 +100,6 @@ final class UniformCatalog {
         addDefault(specs, "centerDepthSmooth", "float");
         addDefault(specs, "entityColor", "vec4");
         addLive(specs, "lightningBoltPosition", "vec4");
-        addDefault(specs, "blockEntityId", "int");
-        addDefault(specs, "currentRenderedItemId", "int");
-        addDefault(specs, "entityId", "int");
         // IdMapUniforms: each hand's item.properties id, its light and that light's colour.
         addLive(specs, "heldBlockLightValue", "int");
         addLive(specs, "heldBlockLightValue2", "int");
@@ -176,7 +173,8 @@ final class UniformCatalog {
                 "maxPlayerAir", "playerMood", "constantMood", "pi", "lastFrameTime", "dhNearPlane", "dhFarPlane")) {
             addLive(specs, value, "float");
         }
-        for (String value : List.of("currentColorSpace", "dhRenderDistance")) {
+        for (String value : List.of("currentColorSpace", "dhRenderDistance", "blockEntityId", "currentRenderedItemId",
+                "entityId")) {
             addLive(specs, value, "int");
         }
         addLive(specs, "playerBodyVector", "vec3");
