@@ -38,7 +38,7 @@ public final class PassComputePlan {
             + "\\s*=\\s*vec2\\s*\\(\\s*([-+0-9.eE]+)\\s*,\\s*([-+0-9.eE]+)\\s*\\)");
     private static final Pattern IMAGE_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(" + PackPipelines.IMAGE_QUALIFIERS + ")(\\w*image\\w+)\\s+([A-Za-z_]\\w*)\\s*;");
-    private static final Pattern LAYOUT = Pattern.compile("layout\\s*\\([^)]*\\)\\s*");
+    private static final Pattern LAYOUT = Pattern.compile("layout\\s*\\(([^)]*)\\)\\s*");
     private static final Pattern SAMPLER_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*" + PackPipelines.UNIFORM_QUALIFIERS + "(\\w*sampler\\w+)\\s+([A-Za-z_]\\w*)\\s*;");
     private static final Pattern OTHER_UNIFORM = Pattern.compile(
@@ -82,6 +82,9 @@ public final class PassComputePlan {
             return kind == Kind.TARGET_IMAGE || kind == Kind.PACK_IMAGE;
         }
     }
+
+    /** The format and GLSL type a compute binds a storage image in. */
+    private record StorageForm(String format, String type) {}
 
     /**
      * Iris ShaderProperties {@code indirect.<compute> = <buffer> <offset>}: the compute dispatches
@@ -164,6 +167,19 @@ public final class PassComputePlan {
     /** The targets a compute writes through {@code colorimgN}, which need storage usage. */
     public Set<Integer> storageTargets() {
         return targets(Kind.TARGET_IMAGE);
+    }
+
+    /**
+     * The formats a compute binds each pack image in, as Vulkan formats. The session creates an
+     * image with a view for each one other than its own (PackAdvancedImageOwner.load).
+     */
+    public Map<String, Set<Integer>> imageFormats() {
+        Map<String, Set<Integer>> formats = new TreeMap<>();
+        computes.stream().filter(PassCompute::supported).flatMap(value -> value.bindings().stream())
+                .filter(binding -> binding.kind() == Kind.PACK_IMAGE)
+                .forEach(binding -> formats.computeIfAbsent(binding.resource(), ignored -> new TreeSet<>())
+                        .add(IrisColorFormats.of(binding.format()).vkFormat()));
+        return formats;
     }
 
     /** The bufferObject indexes a compute binds or dispatches from, which the session must allocate. */
@@ -300,25 +316,44 @@ public final class PassComputePlan {
                         plan.advancedResources().images(), name));
                 Matcher color = COLOR_IMAGE.matcher(name);
                 int target = color.matches() ? Integer.parseInt(color.group(1)) : -1;
-                String format = pack != null ? pack.layoutQualifier()
-                        : target >= 0 && target <= PackTargetGraphPlan.MAX_TARGET
-                        ? imageFormat(targetFormat(target)) : null;
-                String type = pack != null ? AdvancedImageDeclarations.storageImageType(pack) : "image2D";
-                if (format == null || !image.group(2).equals(type)) {
+                StorageForm form = pack != null ? packImageForm(pack, image.group(1)) : targetImageForm(target);
+                if (form == null || !image.group(2).equals(form.type())) {
                     work.fail("PASS_COMPUTE_IMAGE_UNSUPPORTED:" + name);
                     continue;
                 }
-                work.declare("layout(" + format + ", binding = " + work.bindings.size() + ") "
-                        + LAYOUT.matcher(image.group(1)).replaceAll("") + type + " " + name + ";");
+                work.declare("layout(" + form.format() + ", binding = " + work.bindings.size() + ") "
+                        + LAYOUT.matcher(image.group(1)).replaceAll("") + form.type() + " " + name + ";");
                 work.bindings.add(pack != null
-                        ? new Binding(name, work.bindings.size(), Kind.PACK_IMAGE, -1, format, pack.name())
-                        : new Binding(name, work.bindings.size(), Kind.TARGET_IMAGE, target, format, null));
+                        ? new Binding(name, work.bindings.size(), Kind.PACK_IMAGE, -1, form.format(), pack.name())
+                        : new Binding(name, work.bindings.size(), Kind.TARGET_IMAGE, target, form.format(), null));
             }
             image.appendTail(result);
             return result.toString();
         }
 
         /** A pack image this session creates, or null. */
+        /**
+         * A pack image in its own format, or in the same-size one its layout names as a GL image
+         * unit reinterprets it (AdvancedImageDeclarations.viewFormat): Alpha Piscium reads its R32F
+         * uimg_r32f as layout(r32i) iimage2D. Null for a format of another size.
+         */
+        private static StorageForm packImageForm(PackAdvancedResourcePlan.ImageSpec pack, String qualifiers) {
+            StringBuilder layouts = new StringBuilder();
+            Matcher layout = LAYOUT.matcher(qualifiers);
+            while (layout.find()) layouts.append(layout.group(1)).append(',');
+            String view = AdvancedImageDeclarations.viewFormat(pack,
+                    AdvancedImageDeclarations.declaredFormat(layouts.toString()));
+            if (view == null) return null;
+            return new StorageForm(view.isEmpty() ? pack.layoutQualifier() : view,
+                    AdvancedImageDeclarations.storageImageType(pack, view));
+        }
+
+        /** colorimgN: the target's format as a float image2D; null for a target out of range. */
+        private StorageForm targetImageForm(int target) {
+            return target >= 0 && target <= PackTargetGraphPlan.MAX_TARGET
+                    ? new StorageForm(imageFormat(targetFormat(target)), "image2D") : null;
+        }
+
         private static PackAdvancedResourcePlan.ImageSpec packImage(PackAdvancedResourcePlan.ImageSpec spec) {
             return spec != null && spec.supported() ? spec : null;
         }

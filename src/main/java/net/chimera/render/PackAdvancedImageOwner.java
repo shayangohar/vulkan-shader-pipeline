@@ -13,11 +13,14 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 
 /** Owns advanced writable images for one pack session. */
 public final class PackAdvancedImageOwner implements AutoCloseable {
     private final PackAdvancedResourcePlan plan;
+    /** The formats pass computes bind each image in (PassComputePlan.imageFormats). */
+    private final Map<String, Set<Integer>> computeFormats;
     private final Map<String, PackStorageImage> images = new TreeMap<>();
     private final Map<String, String> failures = new TreeMap<>();
     private final Set<String> reportedLimits = new HashSet<>();
@@ -29,25 +32,37 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return clearEachFrame || !initialized;
     }
 
-    private PackAdvancedImageOwner(PackAdvancedResourcePlan plan) {
+    private PackAdvancedImageOwner(PackAdvancedResourcePlan plan, Map<String, Set<Integer>> computeFormats) {
         this.plan = plan == null ? PackAdvancedResourcePlan.empty() : plan;
+        this.computeFormats = computeFormats;
     }
 
     /**
      * The session's images, a relative one at its share of a screen this size (Iris creates it at
      * the render target's size); the first frame refits it to the main target (fitRelativeImages).
+     * Each has a view in every other format programs and pass computes ({@code computeFormats})
+     * read it in.
      */
-    public static PackAdvancedImageOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight) {
-        PackAdvancedImageOwner owner = new PackAdvancedImageOwner(plan);
+    public static PackAdvancedImageOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
+                                              Map<String, Set<Integer>> computeFormats) {
+        PackAdvancedImageOwner owner = new PackAdvancedImageOwner(plan, computeFormats);
         for (PackAdvancedResourcePlan.ImageSpec spec : owner.plan.images().values()) {
             if (spec.supported()) owner.allocate(spec, spec.extent(screenWidth, screenHeight));
         }
         return owner;
     }
 
+    /** The other formats an image is read in, by programs and pass computes. */
+    private Set<Integer> viewFormats(PackAdvancedResourcePlan.ImageSpec spec) {
+        Set<Integer> formats = new TreeSet<>(plan.viewFormats(spec.name()));
+        formats.addAll(computeFormats.getOrDefault(spec.name(), Set.of()));
+        formats.remove(spec.format().vkFormat());
+        return formats;
+    }
+
     private void allocate(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
         try {
-            images.put(spec.name(), PackStorageImage.create(spec, extent, plan.viewFormats(spec.name())));
+            images.put(spec.name(), PackStorageImage.create(spec, extent, viewFormats(spec)));
         } catch (RuntimeException failure) {
             images.remove(spec.name());
             failures.put(spec.name(), failure.getMessage() == null

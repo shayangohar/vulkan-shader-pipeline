@@ -239,6 +239,41 @@ final class ComputePassTest {
     }
 
     /**
+     * A GL image unit reinterprets an image declared in another format of its texel size: Alpha
+     * Piscium reads its R32F uimg_r32f as layout(r32i) iimage2D for integer atomics. The compute
+     * binds a view in that format, which the session creates; another size is refused.
+     */
+    @Test
+    void passComputesReadPackImagesThroughViews(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.uimg_r32f = usam_r32f RED R32F FLOAT false true 1.0 1.0\n");
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(r32i) uniform iimage2D uimg_r32f;
+                void main() { imageAtomicMax(uimg_r32f, ivec2(0), 1); }
+                """);
+        Files.writeString(shaders.resolve("composite1_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rg32i) uniform iimage2D uimg_r32f;
+                void main() { imageStore(uimg_r32f, ivec2(0), ivec4(1)); }
+                """);
+        PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        PassComputePlan.PassCompute compute = computes.compute("composite_a");
+        assertEquals(List.of(new PassComputePlan.Binding("uimg_r32f", 0, PassComputePlan.Kind.PACK_IMAGE, -1, "r32i",
+                "uimg_r32f")), compute.bindings(), compute.deviations().toString());
+        assertEquals(Map.of("uimg_r32f", Set.of(IrisColorFormats.of("r32i").vkFormat())), computes.imageFormats());
+        assertEquals(List.of("PASS_COMPUTE_IMAGE_UNSUPPORTED:uimg_r32f"),
+                computes.compute("composite1_a").deviations());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+    }
+
+    /**
      * Iris gives a pass compute the pack's images and their samplers (IrisImages.addCustomImages,
      * IrisSamplers.addCustomImages). Alpha Piscium's composite computes read usam_rgba16f and write
      * uimg_rgba16f, a screen-relative RGBA16F image.

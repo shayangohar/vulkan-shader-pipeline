@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.shaderpack.ComputeValueBlock;
+import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackResourceBinding;
 import net.chimera.shaderpack.PackTargetGraphPlan;
@@ -172,8 +173,11 @@ final class PackPassComputes implements AutoCloseable {
                 compute.kernel().writeBuffer(frame, binding.binding(), buffer.getId(), buffer.getBufferSize());
             } else if (image instanceof PackStorageImage pack) {
                 // Pack images stay in GENERAL: graphics programs and computes read and write them alike.
+                // A storage binding reads the image through the view in its declared format.
                 pack.transitionToGeneral(stack, commandBuffer);
-                compute.kernel().writeImage(frame, binding.binding(), pack.getImageView(),
+                long view = binding.storage()
+                        ? pack.view(IrisColorFormats.of(binding.format()).vkFormat()) : pack.getImageView();
+                compute.kernel().writeImage(frame, binding.binding(), view,
                         binding.storage() ? 0L : pack.getSampler(), VK_IMAGE_LAYOUT_GENERAL);
             } else if (binding.storage()) {
                 compute.kernel().writeImage(frame, binding.binding(), PackPostTargets.attachmentView(image), 0L,

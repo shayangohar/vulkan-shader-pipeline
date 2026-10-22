@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -393,6 +394,38 @@ final class AdvancedImageDeclarations {
 
     static String storageImageType(PackAdvancedResourcePlan.ImageSpec spec) {
         return spec == null || spec.format() == null ? "image3D" : spec.typePrefix() + "image" + spec.dimensionSuffix();
+    }
+
+    /** The GLSL type of an image read through {@code viewFormat}; its own type for an empty one. */
+    static String storageImageType(PackAdvancedResourcePlan.ImageSpec spec, String viewFormat) {
+        IrisColorFormats.Format view = viewFormat.isEmpty() ? null : IrisColorFormats.of(viewFormat);
+        if (view == null) return storageImageType(spec);
+        IrisColorFormats.Kind kind = view.kind();
+        String prefix = kind == IrisColorFormats.Kind.UINT ? "u" : kind == IrisColorFormats.Kind.SINT ? "i" : "";
+        return prefix + "image" + spec.dimensionSuffix();
+    }
+
+    /** The format a {@code layout(...)} list names, lower case; empty when it names none. */
+    static String declaredFormat(String layout) {
+        if (layout == null) return "";
+        for (String part : layout.split(",")) {
+            String token = part.trim();
+            if (!token.contains("=") && IrisColorFormats.of(token) != null) return token.toLowerCase(Locale.ROOT);
+        }
+        return "";
+    }
+
+    /**
+     * The format a declaration reads an image through when its qualifier names another one of the
+     * same texel size, as a GL image unit reinterprets the bits (Alpha Piscium declares its R32F
+     * uimg_csr32f r32i for integer atomics); empty for the image's own format or no qualifier, and
+     * null for a format of another size, which nothing reads the image as.
+     */
+    static String viewFormat(PackAdvancedResourcePlan.ImageSpec spec, String declared) {
+        IrisColorFormats.Format format = IrisColorFormats.of(declared);
+        if (format == null || format.vkFormat() == spec.format().vkFormat()) return "";
+        return format.bytes() == spec.format().bytes()
+                ? IrisColorFormats.stored(format.vkFormat()).token().toLowerCase(Locale.ROOT) : null;
     }
 
     static String token(String[] values, int index) {

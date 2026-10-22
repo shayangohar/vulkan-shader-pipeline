@@ -2,7 +2,6 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -88,7 +87,8 @@ final class GraphicsImageScan {
         Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image") ? source : "");
         while (image.find()) {
             String symbol = image.group(3);
-            addWriter(program, stage, new Declared(image.group(2), symbol, declaredFormat(image.group(1))),
+            String format = AdvancedImageDeclarations.declaredFormat(image.group(1));
+            addWriter(program, stage, new Declared(image.group(2), symbol, format),
                     usage.liveImages().contains(symbol), GlslTokenRewriter.identifierCount(source, symbol) > 1);
         }
         Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
@@ -106,16 +106,6 @@ final class GraphicsImageScan {
 
     /** A storage image declaration: its GLSL type, its name, and its format qualifier, or none. */
     private record Declared(String glslType, String symbol, String format) {}
-
-    /** The image format a declaration's layout qualifier names, lower case; empty without one. */
-    private static String declaredFormat(String layout) {
-        if (layout == null) return "";
-        for (String part : layout.split(",")) {
-            String token = part.trim();
-            if (!token.contains("=") && IrisColorFormats.of(token) != null) return token.toLowerCase(Locale.ROOT);
-        }
-        return "";
-    }
 
     /**
      * A storage image declaration of a pack image, bound to its sampler's selector. An image
@@ -157,20 +147,16 @@ final class GraphicsImageScan {
     }
 
     /**
-     * The format a stage reads an image through when its qualifier names another one of the same
-     * texel size, as a GL image unit reinterprets the bits (Alpha Piscium declares its R32F
-     * uimg_csr32f r32i for integer atomics); empty for the image's own format or no qualifier.
-     * Another size has no such reading: the program is refused, and null returned.
+     * The format a stage reads an image through (AdvancedImageDeclarations.viewFormat). Another
+     * size has no such reading: the program is refused, and null returned.
      */
     private String viewFormat(String program, PackAdvancedResourcePlan.ImageSpec spec, String declared) {
-        IrisColorFormats.Format format = IrisColorFormats.of(declared);
-        if (format == null || format.vkFormat() == spec.format().vkFormat()) return "";
-        if (format.bytes() == spec.format().bytes()) {
-            return IrisColorFormats.stored(format.vkFormat()).token().toLowerCase(Locale.ROOT);
+        String view = AdvancedImageDeclarations.viewFormat(spec, declared);
+        if (view == null) {
+            deviations.add("ADVANCED_IMAGE_FORMAT_INCOMPATIBLE:" + spec.name() + ":" + declared);
+            deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + spec.name());
         }
-        deviations.add("ADVANCED_IMAGE_FORMAT_INCOMPATIBLE:" + spec.name() + ":" + declared);
-        deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + spec.name());
-        return null;
+        return view;
     }
 
     /**

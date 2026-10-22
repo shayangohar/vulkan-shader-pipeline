@@ -633,7 +633,8 @@ final class PackSessionLifecycle {
         var window = Minecraft.getInstance().getWindow();
         int width = Math.max(window.getWidth(), 1);
         int height = Math.max(window.getHeight(), 1);
-        pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources(), width, height);
+        pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources(), width, height,
+                passComputes.imageFormats());
         pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height,
                 passComputes.storageBuffers());
         pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),
