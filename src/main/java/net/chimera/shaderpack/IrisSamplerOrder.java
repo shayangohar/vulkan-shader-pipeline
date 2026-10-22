@@ -17,10 +17,11 @@ final class IrisSamplerOrder {
     enum Source { TARGET, CUSTOM_TEXTURE, IMAGE, LEVEL, DEPTH, NOISE, SHADOW }
 
     /**
-     * One renderer's registrations in order, those it makes on the builder ({@code direct}), and
-     * the depth sampler names it registers.
+     * One renderer's registrations in order, those it makes on the builder ({@code direct}), the
+     * depth sampler names it registers, and the first colour target it registers: world programs
+     * register colortex4 and up only (IrisSamplers.addRenderTargetSamplers, startIndex 4).
      */
-    record Order(List<Source> sources, Set<Source> direct, Pattern depth) {
+    record Order(List<Source> sources, Set<Source> direct, Pattern depth, int firstTarget) {
         /** Whether a stage texture replaces what {@code source} binds. */
         boolean intercepted(Source source) {
             return !direct.contains(source);
@@ -48,7 +49,10 @@ final class IrisSamplerOrder {
             if (name.equals("noisetex")) return Source.NOISE;
             if (depth.matcher(name).matches()) return Source.DEPTH;
             if (sources.contains(Source.LEVEL) && LEVEL.matcher(name).matches()) return Source.LEVEL;
-            return sources.contains(Source.TARGET) && PackResourcePlan.targetIndex(name) != null ? Source.TARGET : null;
+            if (!sources.contains(Source.TARGET)) return null;
+            // The DH depth textures come with the render targets, in every program that has them.
+            Integer target = PackResourcePlan.targetIndex(name);
+            return DH_DEPTH.matcher(name).matches() || target != null && target >= firstTarget ? Source.TARGET : null;
         }
 
         /**
@@ -69,6 +73,8 @@ final class IrisSamplerOrder {
 
     /** The names IrisSamplers.addShadowSamplers registers. */
     private static final Pattern SHADOW = Pattern.compile("shadow|watershadow|shadowtex[01](?:HW)?|shadowcolor[0-7]?");
+    /** The Distant Horizons depth textures addRenderTargetSamplers registers after the targets. */
+    private static final Pattern DH_DEPTH = Pattern.compile("dhDepthTex[01]?");
     /** The world's texture, lightmap, overlay and PBR maps (IrisSamplers.addLevelSamplers). */
     private static final Pattern LEVEL = Pattern.compile("tex|texture|gtexture|lightmap|iris_overlay|normals|specular");
 
@@ -77,22 +83,22 @@ final class IrisSamplerOrder {
      * (CompositeRenderer, FinalPassRenderer.createComputes): customTexture entries on the builder.
      */
     static final Order POST = new Order(List.of(Source.TARGET, Source.CUSTOM_TEXTURE, Source.IMAGE, Source.NOISE,
-            Source.DEPTH, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE), Pattern.compile("gdepthtex|depthtex[0-2]"));
+            Source.DEPTH, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE), Pattern.compile("gdepthtex|depthtex[0-2]"), 0);
     /** The final program, which registers its customTexture entries after images (FinalPassRenderer). */
     static final Order FINAL = new Order(List.of(Source.TARGET, Source.IMAGE, Source.CUSTOM_TEXTURE, Source.NOISE,
-            Source.DEPTH, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE), POST.depth());
+            Source.DEPTH, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE), POST.depth(), 0);
     /**
      * A setup compute (IrisRenderingPipeline.createSetupComputes): customTexture entries and the
      * composite depth samplers on the builder, before images.
      */
     static final Order SETUP = new Order(List.of(Source.TARGET, Source.CUSTOM_TEXTURE, Source.DEPTH, Source.IMAGE,
-            Source.NOISE, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE, Source.DEPTH), POST.depth());
+            Source.NOISE, Source.SHADOW), Set.of(Source.CUSTOM_TEXTURE, Source.DEPTH), POST.depth(), 0);
     /**
      * A gbuffers or shadow program (IrisRenderingPipeline.addGbufferOrShadowSamplers): customTexture
      * entries through the interceptor, the level samplers on the builder, images after noise and depth.
      */
     static final Order WORLD = new Order(List.of(Source.TARGET, Source.CUSTOM_TEXTURE, Source.LEVEL, Source.DEPTH,
-            Source.NOISE, Source.IMAGE, Source.SHADOW), Set.of(Source.LEVEL), Pattern.compile("depthtex[0-2]"));
+            Source.NOISE, Source.IMAGE, Source.SHADOW), Set.of(Source.LEVEL), Pattern.compile("depthtex[0-2]"), 4);
 
     /**
      * A shadowcomp compute (ShadowCompositeRenderer.createComputes): noise, customTexture entries and
@@ -100,7 +106,7 @@ final class IrisSamplerOrder {
      * target and no depth texture.
      */
     static final Order SHADOWCOMP = new Order(List.of(Source.NOISE, Source.CUSTOM_TEXTURE, Source.SHADOW,
-            Source.IMAGE), Set.of(Source.IMAGE), Pattern.compile("(?!)"));
+            Source.IMAGE), Set.of(Source.IMAGE), Pattern.compile("(?!)"), 0);
 
     private IrisSamplerOrder() {}
 

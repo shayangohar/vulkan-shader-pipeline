@@ -151,6 +151,30 @@ final class SampledResourcePlanTest {
         assertEquals(PackResourceStatus.PACK_FILE, binding.status(), binding.deviations().toString());
     }
 
+    /**
+     * Iris applies a texture.<stage> entry only by replacing a registration (KNOW-801): a name nothing
+     * registers keeps unit 0, which is colortex0 in a fullscreen pass. World programs register
+     * colortex4 and up and the DH depth textures (IrisSamplers.addRenderTargetSamplers).
+     */
+    @Test
+    void stageTexturesOnlyReplaceRegisteredNames(@TempDir Path root) throws IOException {
+        assertEquals(IrisSamplerOrder.Source.TARGET, IrisSamplerOrder.POST.last("colortex1", false, false));
+        assertEquals(null, IrisSamplerOrder.WORLD.last("colortex1", false, false), "colortex1 in gbuffers");
+        assertEquals(null, IrisSamplerOrder.WORLD.last("gcolor", false, false), "gcolor in gbuffers");
+        assertEquals(IrisSamplerOrder.Source.TARGET, IrisSamplerOrder.WORLD.last("gaux1", false, false));
+        assertEquals(IrisSamplerOrder.Source.TARGET, IrisSamplerOrder.WORLD.last("dhDepthTex1", false, false));
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "texture.composite.marker = marker.png\n");
+        Files.write(shaders.resolve("marker.png"), new byte[8]);
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "uniform sampler2D marker;\nuniform sampler2D shadowtex0DH;\nvoid main() {\n/* RENDERTARGETS: 0 */\n"
+                + " gl_FragData[0] = texture2D(colortex0, vec2(0.5)) + texture2D(marker, vec2(0.5))"
+                + " + texture2D(shadowtex0DH, vec2(0.5));\n}\n");
+        PackProgramPlan composite = PackProbe.analyze(root).plan().program("composite");
+        assertTrue(composite.deviations().containsAll(List.of("SAMPLER_UNIT0_COLORTEX0:marker",
+                "SAMPLER_UNIT0_COLORTEX0:shadowtex0DH")), composite.deviations().toString());
+    }
+
     @Test
     void aliases() {
         assertEquals("colortex0", PackResourcePlan.canonicalResource("gcolor"),

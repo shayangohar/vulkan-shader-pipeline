@@ -247,8 +247,9 @@ public final class PackResourcePlan {
         PackResourceDeclaration custom = packTexture(program, sampler, declarations);
         IrisSamplerOrder.Order order = IrisSamplerOrder.of(program, compute);
         IrisSamplerOrder.Source last = order.last(sampler.name(), advancedImage != null, custom != null);
-        // Where nothing registers the name, its stage texture still binds here, as Iris's never does (KNOW-801).
-        PackResourceDeclaration stage = last == null || order.intercepted(last)
+        // A name nothing registers never reaches the interceptor, so its stage texture binds nowhere
+        // and the sampler keeps unit 0 (KNOW-801).
+        PackResourceDeclaration stage = last != null && order.intercepted(last)
                 ? stageDeclaration(program, sampler, order.names(sampler.name()), declarations, deactivatedOverrides,
                 deviations) : null;
         if (stage != null) return new Choice(stage, null);

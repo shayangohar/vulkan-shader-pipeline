@@ -16,11 +16,13 @@ import java.util.TreeSet;
  * unmapped.
  */
 final class FullscreenDefaultSampler {
-    /** Names Iris binds itself in a fullscreen pass: one Chimera cannot serve is Chimera's gap, not unit 0. */
+    /**
+     * Names Iris binds itself in a fullscreen pass: one Chimera cannot serve is Chimera's gap, not unit 0.
+     * shadowtex0DH and shadowtex1DH are only probed (IrisSamplers.hasShadowSamplers), never registered.
+     */
     private static final Set<String> IRIS_SERVED = Set.of("depthtex0", "depthtex1", "depthtex2", "gdepthtex",
-            "shadow", "watershadow", "shadowtex0", "shadowtex1", "shadowtex0DH",
-            "shadowtex1DH", "shadowcolor", "shadowcolor0", "shadowcolor1", "noisetex", "dhDepthTex", "dhDepthTex0",
-            "dhDepthTex1", "iris_centerDepthSmooth");
+            "shadow", "watershadow", "shadowtex0", "shadowtex1", "shadowcolor", "shadowcolor0", "shadowcolor1",
+            "noisetex", "dhDepthTex", "dhDepthTex0", "dhDepthTex1", "iris_centerDepthSmooth");
     private FullscreenDefaultSampler() {}
 
     /**
@@ -113,9 +115,15 @@ final class FullscreenDefaultSampler {
         if (IRIS_SERVED.contains(name) || PackResourcePlan.targetIndex(name) != null) return true;
         String lookup = PackResourcePlan.isProgramShadowAlias(name)
                 ? PackResourcePlan.programResource(name, false) : name;
-        return InterfacePlanner.samplerSlot(name, lookup, UniformRegistry.Stage.POST,
-                settings.customSamplerSlots(), new TreeSet<>()) != null
-                || settings.resourceDeclarations().values().stream().anyMatch(value -> name.equals(value.sampler()))
-                || PackResourcePlan.advancedImageName(settings.propertyValues(), name) != null;
+        // A customTexture entry or an image registers its name. A texture.<stage> entry only replaces a
+        // registration, so alone it leaves the sampler on unit 0, slot or no slot (KNOW-801).
+        List<PackResourceDeclaration> declared = settings.resourceDeclarations().values().stream()
+                .filter(value -> name.equals(value.sampler())).toList();
+        if (declared.stream().anyMatch(value -> value.key().startsWith("customTexture."))
+                || PackResourcePlan.advancedImageName(settings.propertyValues(), name) != null) {
+            return true;
+        }
+        return declared.isEmpty() && InterfacePlanner.samplerSlot(name, lookup, UniformRegistry.Stage.POST,
+                settings.customSamplerSlots(), new TreeSet<>()) != null;
     }
 }

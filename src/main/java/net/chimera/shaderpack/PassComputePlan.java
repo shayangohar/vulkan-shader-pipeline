@@ -608,10 +608,11 @@ public final class PassComputePlan {
                             : new Binding(name, index, Kind.PACK_IMAGE_SAMPLER, -1, null, pack.name());
                 }
                 case TARGET, DEPTH -> chainSampler(name, type, resource, index, work);
-                // Iris IrisSamplers.addShadowSamplers: a sampler2DShadow compares, as shadowtex0HW does.
+                // Iris IrisSamplers.addShadowSamplers: a sampler2DShadow compares, as shadowtex0HW does;
+                // shadowtexNHW only where Iris registers it (SEPARATE_HARDWARE_SAMPLERS, hardware filtering).
                 case SHADOW_DEPTH -> colour ? new Binding(name, index, Kind.SHADOW_DEPTH, -1, null, key)
-                        : type.equals("sampler2DShadow") ? new Binding(name, index, Kind.SHADOW_COMPARE, -1, null, key)
-                        : null;
+                        : type.equals("sampler2DShadow") && ShadowTargetDirectives.bound(name, plan.config())
+                        ? new Binding(name, index, Kind.SHADOW_COMPARE, -1, null, key) : null;
                 case SHADOW_COLOR -> colour && irisShadowColor(PackResourcePlan.shadowColorIndex(key))
                         ? new Binding(name, index, Kind.SHADOW_COLOR, -1, null, key) : null;
                 case NOISE, PACK_TEXTURE, RAW_TEXTURE -> textureSampler(name, type, resource, work);

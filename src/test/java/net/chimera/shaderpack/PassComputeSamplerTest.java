@@ -103,11 +103,15 @@ final class PassComputeSamplerTest {
      * addShadowSamplers): shadowtexN as depth, a sampler2DShadow such as shadowtex1HW through a
      * comparison, shadowcolorN, and shadow as shadowtex1 where watershadow is active. A legacy
      * shadow2D reads the bound sampler as programs read it (Rethinking Voxels' deferred1).
+     * shadowtex1HW is registered with SEPARATE_HARDWARE_SAMPLERS and shadowtex1's filtering only.
      */
     @Test
     void passComputesReadShadowMaps(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "iris.features.required=SEPARATE_HARDWARE_SAMPLERS\n");
         Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "const bool shadowHardwareFiltering1 = true;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         Files.writeString(shaders.resolve("composite_a.csh"), """
                 #version 430
@@ -285,7 +289,8 @@ final class PassComputeSamplerTest {
     /**
      * Iris reads texture.<stage>.<sampler> for its seven texture stages only (TextureStage.parse)
      * and ignores any other scope with a warning: a program name, shadow (Rethinking Voxels' texture.shadow
-     * entries; shadow programs read the gbuffers stage), or *.
+     * entries; shadow programs read the gbuffers stage), or *. A known stage replaces noisetex, which
+     * the composite registers through the sampler interceptor.
      */
     @Test
     void stageTexturesNameAnIrisStage(@TempDir Path root) throws IOException {
@@ -293,18 +298,18 @@ final class PassComputeSamplerTest {
         Files.writeString(shaders.resolve("shaders.properties"), """
                 texture.composite1.samA = red.png
                 texture.*.samA = red.png
-                texture.composite.samB = red.png
+                texture.composite.noisetex = red.png
                 """);
         Files.write(shaders.resolve("red.png"), new byte[] {1});
         Files.writeString(shaders.resolve("composite1.fsh"), "#version 120\nuniform sampler2D samA;\n"
-                + "uniform sampler2D samB;\nvoid main() {\n/* RENDERTARGETS: 0 */\n"
-                + " gl_FragData[0] = texture2D(samA, vec2(0.5)) + texture2D(samB, vec2(0.5));\n}\n");
+                + "uniform sampler2D noisetex;\nvoid main() {\n/* RENDERTARGETS: 0 */\n"
+                + " gl_FragData[0] = texture2D(samA, vec2(0.5)) + texture2D(noisetex, vec2(0.5));\n}\n");
         PackPlan plan = PackProbe.analyze(root).plan();
         // With no texture of its own, samA is a sampler Iris does not serve: it reads colortex0.
         assertTrue(plan.resources().binding("composite1", "samA") == null
                 && plan.program("composite1").deviations().contains("SAMPLER_UNIT0_COLORTEX0:samA"),
                 plan.resources().bindings("composite1").toString());
-        assertEquals("red.png", plan.resources().binding("composite1", "samB").source());
+        assertEquals("red.png", plan.resources().binding("composite1", "noisetex").source());
         assertTrue(plan.settings().deviations().containsAll(List.of("TEXTURE_STAGE_UNKNOWN:texture.composite1.samA",
                 "TEXTURE_STAGE_UNKNOWN:texture.*.samA")), plan.settings().deviations().toString());
     }
