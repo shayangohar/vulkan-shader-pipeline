@@ -95,11 +95,17 @@ final class PackConditionals {
             return true;
         }
 
-        /** The expression an if, ifdef or ifndef directive tests. */
+        /**
+         * The expression an if, ifdef or ifndef directive tests. #ifdef and #ifndef name one
+         * identifier, and a C preprocessor such as Iris's JCPP skips the rest of the line: Bloop
+         * and others write {@code #ifdef IRIS_TAG_SUPPORT > 1}.
+         */
         private static String condition(String directive, String argument) {
-            if (directive.equalsIgnoreCase("ifdef")) return "defined(" + argument + ")";
-            if (directive.equalsIgnoreCase("ifndef")) return "!defined(" + argument + ")";
-            return argument;
+            boolean ifdef = directive.equalsIgnoreCase("ifdef");
+            if (!ifdef && !directive.equalsIgnoreCase("ifndef")) return argument;
+            Matcher name = IDENTIFIER.matcher(argument);
+            String tested = name.lookingAt() ? name.group() : argument;
+            return (ifdef ? "" : "!") + "defined(" + tested + ")";
         }
 
         private void elseIf(String argument) {

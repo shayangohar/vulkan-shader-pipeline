@@ -47,6 +47,9 @@ public final class PackMaterialResolver {
     private static final Pattern PATH = Pattern.compile("[a-z0-9_./-]+");
     private static final Pattern CONDITION = Pattern.compile(
             "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
+    private static final Pattern DEFINE = Pattern.compile(
+            "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
+    private static final Pattern UNDEFINE = Pattern.compile("^\\s*#\\s*undef\\s+([A-Za-z_]\\w*)\\s*$");
 
     /**
      * One block entry: its id applies to a state whose value for each predicate equals the
@@ -158,38 +161,7 @@ public final class PackMaterialResolver {
         try {
             byte[] bytes = Files.readAllBytes(file);
             sourceHash = ConformanceReport.textSha256(bytes);
-            PackConditionals.State conditions = new PackConditionals.State(macros);
-            PackSettingsPlan.PropertyLineJoiner joiner = new PackSettingsPlan.PropertyLineJoiner();
-            boolean failed = false;
-            for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-                if (PackSettingsPlan.PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
-                    // A directive line ends the open continuation.
-                    parseLine(joiner.finish(), collected);
-                }
-                Matcher directive = CONDITION.matcher(raw);
-                if (directive.matches()) {
-                    try {
-                        conditions.apply(directive.group(1), directive.group(2).trim());
-                    } catch (RuntimeException failure) {
-                        collected.deviations().add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
-                        collected.clear();
-                        failed = true;
-                        break;
-                    }
-                    continue;
-                }
-                if (!conditions.active()) {
-                    continue;
-                }
-                String line = joiner.accept(raw);
-                if (line != null) {
-                    parseLine(line, collected);
-                }
-            }
-            String last = failed ? null : joiner.finish();
-            if (last != null) {
-                parseLine(last, collected);
-            }
+            readLines(Files.readAllLines(file, StandardCharsets.UTF_8), macros, collected);
         } catch (IOException e) {
             collected.deviations().add("BLOCK_PROPERTIES_READ_FAILED");
             sourceHash = null;
@@ -197,6 +169,63 @@ public final class PackMaterialResolver {
         Map<String, Layer> layers = layers(collected.layerLines(), collected.deviations());
         return new ParseResult(new PackMaterialResolver(collected, layers), true, sourceHash,
                 List.copyOf(collected.deviations()));
+    }
+
+    /**
+     * The file's lines as Iris's preprocessor (JCPP) hands them to IdMap: inactive branches drop,
+     * and each line reads the file's own #define macros made before it. Photon, Bloop and
+     * superDuperVanilla name their tags through such macros ({@code #define tags_leaves %leaves}).
+     */
+    private static void readLines(List<String> lines, Map<String, String> macros, Collected collected) {
+        PackConditionals.State conditions = new PackConditionals.State(macros);
+        PackSettingsPlan.PropertyLineJoiner joiner = new PackSettingsPlan.PropertyLineJoiner();
+        for (String raw : lines) {
+            if (PackSettingsPlan.PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
+                // A directive line ends the open continuation.
+                parseExpanded(joiner.finish(), conditions, collected);
+            }
+            Matcher directive = CONDITION.matcher(raw);
+            if (directive.matches()) {
+                try {
+                    conditions.apply(directive.group(1), directive.group(2).trim());
+                } catch (RuntimeException failure) {
+                    collected.deviations().add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
+                    collected.clear();
+                    return;
+                }
+                continue;
+            }
+            if (!conditions.active() || defineMacro(raw, conditions)) {
+                continue;
+            }
+            String line = joiner.accept(raw);
+            if (line != null) {
+                parseExpanded(line, conditions, collected);
+            }
+        }
+        String last = joiner.finish();
+        if (last != null) {
+            parseExpanded(last, conditions, collected);
+        }
+    }
+
+    /** Applies a #define or #undef line to the macros later lines read; false for any other line. */
+    private static boolean defineMacro(String raw, PackConditionals.State conditions) {
+        Matcher define = DEFINE.matcher(raw);
+        if (define.matches()) {
+            conditions.define(define.group(1), define.group(2));
+            return true;
+        }
+        Matcher undefine = UNDEFINE.matcher(raw);
+        if (undefine.matches()) {
+            conditions.undefine(undefine.group(1));
+            return true;
+        }
+        return false;
+    }
+
+    private static void parseExpanded(String line, PackConditionals.State conditions, Collected collected) {
+        parseLine(PackConditionals.expandMacros(line, conditions.macros()), collected);
     }
 
     public static PackMaterialResolver empty() {

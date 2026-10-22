@@ -90,6 +90,33 @@ final class BlockPropertiesResolverTest {
         assertEquals("2", PackEngineDefines.standard().get("IRIS_TAG_SUPPORT"), "Iris's StandardMacros promise tags");
     }
 
+    /**
+     * Iris preprocesses block.properties (IdMap, through JCPP): #ifdef names one identifier, and the
+     * file's own #define macros expand in the lines after them. Photon, Bloop and superDuperVanilla
+     * name their tags through such macros.
+     */
+    @Test
+    void definesExpandAndIfdefNamesOneIdentifier(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #ifdef IRIS_TAG_SUPPORT > 1
+                #define tags_leaves %leaves
+                #define stone_blocks stone granite
+                #endif
+                block.5 = stone_blocks
+                block.6 = tags_leaves oak_leaves
+                #undef stone_blocks
+                block.7 = stone_blocks
+                """);
+        PackMaterialResolver.ParseResult result = PackMaterialResolver.parse(root);
+        PackMaterialResolver resolver = result.resolver();
+        assertTrue(result.deviations().isEmpty(), result.deviations().toString());
+        assertEquals(5, resolver.resolveName("minecraft:granite"), "a macro expands to its block list");
+        assertEquals(6, resolver.resolveName("minecraft:oak_leaves"), "the line after a tag macro");
+        assertEquals(6, resolver.resolveTags(key -> key.location().getPath().equals("leaves"),
+                Map.<String, String>of()::get), "a tag named through a macro");
+        assertEquals(7, resolver.resolveName("minecraft:stone_blocks"), "#undef ends the macro");
+    }
+
     private static PackMaterialResolver.ParseResult parse(Path root) throws IOException {
         Files.writeString(root.resolve("block.properties"), PROPERTIES);
         return PackMaterialResolver.parse(root);
