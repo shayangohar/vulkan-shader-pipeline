@@ -333,7 +333,7 @@ final class WaterProgramTest {
                 "toggle defines: " + settings.preprocessorDefines());
         ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(null, null, source,
                 PackEngineDefines.forPack(settings.preprocessorDefines()),
-                PackEngineDefines.lockedNames(settings.overriddenNames(), false, false));
+                PackEngineDefines.lockedNames(settings.overriddenNames(), false));
         assertTrue(prepared.source() != null && !prepared.source().contains("sourceOn")
                         && prepared.source().contains("sourceOff"),
                 "toggle options did not follow Iris true/false: " + prepared.source());

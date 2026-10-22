@@ -877,6 +877,12 @@ record PackSettingsPlan(
         return STAGE_CONTEXT_MACROS.contains(name) || STAGE_CONTEXT_MACRO_FAMILIES.matcher(name).matches();
     }
 
+    /**
+     * The dimension a world folder's programs name for themselves (world0 defines OVERWORLD). Like the
+     * stage macros, its define holds for those files only. Chimera applies option defaults to every
+     * program and to shaders.properties, so it must not become a pack-wide default. Iris edits an option's
+     * line in place and injects no defaults, so it needs no such rule (OptionAnnotatedSource).
+     */
     private static boolean isDimensionContextMacro(String name) {
         return name.equals("OVERWORLD") || name.equals("NETHER") || name.equals("END");
     }

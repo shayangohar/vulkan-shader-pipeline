@@ -590,7 +590,7 @@ final class AdvancedImagePlanTest {
         ShaderSourcePreprocessor.Result enabled = ShaderSourcePreprocessor.prepare(
                 Path.of("."), null, predicate,
                 PackEngineDefines.forCustomImages(Map.of("COLORED_LIGHTING", "128")),
-                PackEngineDefines.lockedNames(Set.of("COLORED_LIGHTING"), true, false));
+                PackEngineDefines.lockedNames(Set.of("COLORED_LIGHTING"), true));
         assertTrue(enabled.successful(), "engine define preparation failed");
         assertTrue(!enabled.source().contains("Text")
                         && !enabled.source().contains("beginTextM")

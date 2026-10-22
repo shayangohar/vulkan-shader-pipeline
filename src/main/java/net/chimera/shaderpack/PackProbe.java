@@ -106,9 +106,8 @@ public final class PackProbe {
         Analysis analyze() {
             loaded.prepare(
                     PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false, false));
-            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
-                    loaded.selectedVariantFolder());
+                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false));
+            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             readPackFiles();
             if (!Files.isDirectory(shadersDir)) {
@@ -243,9 +242,8 @@ public final class PackProbe {
         private void prepareWithCustomImages() {
             loaded.prepare(
                     PackEngineDefines.forCustomImages(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true, false));
-            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
-                    loaded.selectedVariantFolder());
+                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true));
+            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             inventories.values().forEach(inventory -> {
                 inventory.preparedSources.clear();
@@ -387,12 +385,11 @@ public final class PackProbe {
                 : name;
     }
 
-    private static PackSettingsPlan resolveLiveSamplerSlots(
-            PackSettingsPlan settings,
-            List<PackProgram> programs,
-            Path shadersDir,
-            String selectedFolder
-    ) {
+    /**
+     * The selector slots of the custom samplers the graphics programs read. Compute sources bind their
+     * own (PassComputePlan), so they reserve none here.
+     */
+    private static PackSettingsPlan resolveLiveSamplerSlots(PackSettingsPlan settings, List<PackProgram> programs) {
         if (settings == null) return PackSettingsPlan.empty();
         Set<String> live = new TreeSet<>();
         if (programs != null) {
@@ -412,10 +409,6 @@ public final class PackProbe {
                 }
             }
         }
-        boolean customImages = settings.propertyValues().keySet().stream()
-                .anyMatch(name -> name.startsWith("image."));
-        live.addAll(PackAdvancedResourcePlan.liveComputeResourceNames(
-                shadersDir, selectedFolder, settings, customImages));
         return settings.withSamplerSlots(settings.customSamplerSlots(live));
     }
 

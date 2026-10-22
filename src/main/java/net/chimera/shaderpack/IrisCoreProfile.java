@@ -339,7 +339,7 @@ final class IrisCoreProfile {
         ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
                 sourceFile.getParent(), sourceFile, source,
                 PackEngineDefines.forPack(Map.of()),
-                PackEngineDefines.lockedNames(Set.of(), false, false));
+                PackEngineDefines.lockedNames(Set.of(), false));
         if (!prepared.successful()) {
             throw new IllegalArgumentException(prepared.deviations().toString());
         }

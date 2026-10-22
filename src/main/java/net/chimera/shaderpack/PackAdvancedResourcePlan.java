@@ -3,9 +3,7 @@ package net.chimera.shaderpack;
 import com.google.gson.JsonObject;
 import org.lwjgl.vulkan.VK10;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -543,46 +541,6 @@ public final class PackAdvancedResourcePlan {
         Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(settings, new ArrayList<>());
         return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), buffers, Map.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), Map.of());
-    }
-
-    /**
-     * Returns live sampler and image symbols from the selected compute wrapper.
-     * Compute sources are not ordinary PackProgram entries, so this inventory
-     * is performed before selector allocation and uses the same preprocessor
-     * boundary as the final compute plan.
-     */
-    static Set<String> liveComputeResourceNames(
-            Path shadersDir,
-            String selectedFolder,
-            PackSettingsPlan settings,
-            boolean customImages
-    ) {
-        if (shadersDir == null || settings != null && !settings.enabled(selectedFolder, "shadowcomp")) return Set.of();
-        Path root = selectedFolder == null || selectedFolder.isBlank()
-                ? shadersDir : shadersDir.resolve(selectedFolder);
-        Path source = root.resolve("shadowcomp.csh").normalize();
-        if (!source.startsWith(shadersDir.normalize()) || !Files.isRegularFile(source)) {
-            return Set.of();
-        }
-        try {
-            String raw = Files.readString(source, StandardCharsets.UTF_8);
-            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
-                    shadersDir, source, raw,
-                    PackEngineDefines.forCompute(
-                            settings == null ? Map.of() : settings.preprocessorDefines(), customImages),
-                    PackEngineDefines.lockedNames(
-                            settings == null ? Set.of() : settings.overriddenNames(),
-                            customImages, true));
-            if (!prepared.successful()) return Set.of();
-            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(prepared.source());
-            if (!usage.successful()) return Set.of();
-            TreeSet<String> names = new TreeSet<>();
-            names.addAll(usage.liveSamplers());
-            names.addAll(usage.liveImages());
-            return Set.copyOf(names);
-        } catch (IOException | RuntimeException failure) {
-            return Set.of();
-        }
     }
 
     /** Builds only from the existing immutable pack plan and pack properties. */

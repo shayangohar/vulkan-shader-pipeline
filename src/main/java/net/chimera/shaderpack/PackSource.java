@@ -81,7 +81,7 @@ public final class PackSource {
             this.programs = List.of();
             this.deviations = this.baseDeviations;
             this.preparedMacros = new TreeMap<>(PackEngineDefines.forPack(Map.of()));
-            this.preparedLocked = new TreeSet<>(PackEngineDefines.lockedNames(Set.of(), false, false));
+            this.preparedLocked = new TreeSet<>(PackEngineDefines.lockedNames(Set.of(), false));
             selectDimension(initialDimension);
         }
 

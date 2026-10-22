@@ -18,8 +18,6 @@ import java.util.TreeSet;
 public final class PackEngineDefines {
     public static final String IS_IRIS = "IS_IRIS";
     public static final String CUSTOM_IMAGES = "IRIS_FEATURE_CUSTOM_IMAGES";
-    public static final String COMPUTE_SHADER = "COMPUTE_SHADER";
-    public static final String SHADOWCOMP = "SHADOWCOMP";
 
     /**
      * Iris's fixed standard environment (StandardMacros) as Iris 1.8.14 defines it
@@ -67,25 +65,14 @@ public final class PackEngineDefines {
     }
 
     public static Map<String, String> forPack(Map<String, String> packDefines) {
-        return with(packDefines, false, false);
+        return with(packDefines, false);
     }
 
     public static Map<String, String> forCustomImages(Map<String, String> packDefines) {
-        return with(packDefines, true, false);
+        return with(packDefines, true);
     }
 
-    public static Map<String, String> forCompute(
-            Map<String, String> packDefines,
-            boolean customImages
-    ) {
-        return with(packDefines, customImages, true);
-    }
-
-    public static Set<String> lockedNames(
-            Collection<String> packNames,
-            boolean customImages,
-            boolean compute
-    ) {
+    public static Set<String> lockedNames(Collection<String> packNames, boolean customImages) {
         TreeSet<String> result = new TreeSet<>();
         if (packNames != null) {
             packNames.stream()
@@ -97,18 +84,10 @@ public final class PackEngineDefines {
         if (customImages) {
             result.add(CUSTOM_IMAGES);
         }
-        if (compute) {
-            result.add(COMPUTE_SHADER);
-            result.add(SHADOWCOMP);
-        }
         return Collections.unmodifiableSet(result);
     }
 
-    private static Map<String, String> with(
-            Map<String, String> packDefines,
-            boolean customImages,
-            boolean compute
-    ) {
+    private static Map<String, String> with(Map<String, String> packDefines, boolean customImages) {
         TreeMap<String, String> result = new TreeMap<>();
         if (packDefines != null) {
             packDefines.forEach((name, value) -> {
@@ -124,13 +103,6 @@ public final class PackEngineDefines {
             result.put(CUSTOM_IMAGES, "1");
         } else {
             result.remove(CUSTOM_IMAGES);
-        }
-        if (compute) {
-            result.put(COMPUTE_SHADER, "1");
-            result.put(SHADOWCOMP, "1");
-        } else {
-            result.remove(COMPUTE_SHADER);
-            result.remove(SHADOWCOMP);
         }
         return Collections.unmodifiableMap(result);
     }

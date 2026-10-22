@@ -333,7 +333,7 @@ public final class LegacyGlslConverter {
             ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
                     root, sourceFile, source,
                     PackEngineDefines.forPack(Map.of()),
-                    PackEngineDefines.lockedNames(Set.of(), false, false));
+                    PackEngineDefines.lockedNames(Set.of(), false));
             if (!prepared.successful()) {
                 throw new IllegalArgumentException(prepared.deviations().toString());
             }
