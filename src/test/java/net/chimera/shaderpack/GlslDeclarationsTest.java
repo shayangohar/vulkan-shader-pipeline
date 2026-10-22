@@ -129,7 +129,11 @@ final class GlslDeclarationsTest {
                         "#version 330\nuniform float a;\n\n  out vec4 color;\n\nvoid main() { color = vec4(a); }\n"));
     }
 
-    /** Mipmap directives are const bool declarations; a later false removes an earlier true, in source order. */
+    /**
+     * Mipmap directives are Iris's line-based const directives (ConstDirectiveParser): one inside a
+     * block comment counts, as Photon declares them, and one behind // does not. A later false
+     * removes an earlier true, in source order.
+     */
     @Test
     void mipmapDirectivesAreConstDeclarations() {
         PostTargetPlan plan = PostTargetPlan.parse("composite1", """
@@ -137,9 +141,13 @@ final class GlslDeclarationsTest {
                 const bool colortex3MipmapEnabled = true; // bloom
                 const bool gaux1MipmapEnabled = true;
                 const bool colortex3MipmapEnabled = false;
+                /*
+                const bool colortex5MipmapEnabled = true;
+                */
+                // const bool colortex6MipmapEnabled = true;
                 void main() { gl_FragColor = vec4(0.0); }
                 """).plan();
-        assertEquals(List.of(4), plan.mipmappedTargets());
+        assertEquals(List.of(4, 5), plan.mipmappedTargets());
     }
 
     /**

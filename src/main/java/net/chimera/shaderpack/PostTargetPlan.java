@@ -222,22 +222,15 @@ public final class PostTargetPlan {
      */
     private static List<Integer> parseMipmappedTargets(String source) {
         Set<Integer> targets = new TreeSet<>();
-        GlslTree tree = GlslDeclarations.parseOrNull(source);
-        if (tree == null) return List.of();
-        for (GlslDeclarations.Variable directive : GlslDeclarations.variables(tree)) {
+        // ConstDirectiveParser reads lines, so a directive inside a block comment counts (Photon's
+        // d4_deferred_shading declares its mipmapped targets that way).
+        for (IrisConstDirectives.Directive directive : IrisConstDirectives.find(source)) {
             Matcher name = MIPMAP_DIRECTIVE_NAME.matcher(directive.name());
-            GlslTree.Range value = directive.declarator().initializer();
-            if (!name.matches() || !directive.qualifiers().equals(List.of("const"))
-                    || !directive.type().equals("bool") || value == null
-                    || directive.declaration().declarators().size() != 1) {
-                continue;
-            }
-            Integer target = PackResourcePlan.targetIndex(name.group(1));
-            String flag = tree.text(value).trim();
-            if (target == null || target < 0 || target > MAX_TARGET || !flag.matches("true|false")) continue;
-            if (Boolean.parseBoolean(flag)) {
+            Integer target = name.matches() ? PackResourcePlan.targetIndex(name.group(1)) : null;
+            if (!directive.type().equals("bool") || target == null || target < 0 || target > MAX_TARGET) continue;
+            if (directive.value().equals("true")) {
                 targets.add(target);
-            } else {
+            } else if (directive.value().equals("false")) {
                 targets.remove(target);
             }
         }
