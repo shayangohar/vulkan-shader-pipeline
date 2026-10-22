@@ -32,7 +32,7 @@ final class PackPassComputesTest {
         PassComputePlan.PassCompute compute = compute(new PassComputePlan.Indirect(2, 20L));
         assertEquals("indirect counts at 20 lie past bufferObject.2",
                 PackPassComputes.frameGap(compute, binding -> true, 31L));
-        assertNull(PackPassComputes.frameGap(compute, binding -> true, 20L + PackPassComputes.INDIRECT_COUNTS_BYTES));
+        assertNull(PackPassComputes.frameGap(compute, binding -> true, 20L + PassComputePlan.INDIRECT_COUNTS_BYTES));
     }
 
     private static PassComputePlan.PassCompute compute(PassComputePlan.Indirect indirect) {

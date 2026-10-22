@@ -92,6 +92,9 @@ public final class PassComputePlan {
      */
     public record Indirect(int buffer, long offset) {}
 
+    /** The three uint work-group counts an indirect dispatch reads (VkDispatchIndirectCommand). */
+    public static final long INDIRECT_COUNTS_BYTES = 12L;
+
     /**
      * One pass compute: its translated source (null when it cannot run), how it dispatches (by
      * work groups, or {@code indirect} when the pack names a buffer), what dispatch binds, and
@@ -476,7 +479,7 @@ public final class PassComputePlan {
             if (spec == null || !spec.supported()) {
                 work.fail("PASS_COMPUTE_INDIRECT_BUFFER_UNAVAILABLE:" + pointer.buffer());
             } else if (pointer.offset() < 0 || pointer.offset() % 4 != 0
-                    || (!spec.relative() && pointer.offset() + 12 > spec.size())) {
+                    || (!spec.relative() && pointer.offset() + INDIRECT_COUNTS_BYTES > spec.size())) {
                 work.fail("PASS_COMPUTE_INDIRECT_OFFSET_UNSUPPORTED:" + pointer.offset());
             }
             return pointer;

@@ -684,8 +684,7 @@ final class PackPostChain {
             public VulkanImage depth(String name) {
                 // A snapshot, this frame's or the last: the live world depth is depth-stencil, and
                 // only a program's draw binds a depth-only view of it (PackDepthTargets).
-                VulkanImage current = pass.packDepthTargets.image(name);
-                return current != null ? current : pass.packDepthTargets.sampledImage(name);
+                return pass.packDepthTargets.sampledImage(name);
             }
 
             @Override

@@ -227,6 +227,37 @@ final class PassComputeSamplerTest {
     }
 
     /**
+     * A stage texture replaces only what a registration through the sampler interceptor binds. A
+     * composite registers its customTexture entries on its own builder, so samC reads the entry; a
+     * world program registers them through the interceptor, so samC reads texture.gbuffers.samC; and
+     * a world program's normals, registered on the builder, never reads texture.gbuffers.normals.
+     */
+    @Test
+    void stageTexturesReplaceOnlyInterceptedRegistrations(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                customTexture.samC = blue.png
+                texture.composite.samC = red.png
+                texture.gbuffers.samC = red.png
+                texture.gbuffers.normals = red.png
+                """);
+        Files.write(shaders.resolve("blue.png"), new byte[] {1});
+        Files.write(shaders.resolve("red.png"), new byte[] {1});
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D samC;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(samC, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), "#version 120\nvarying vec2 uv;\n"
+                + "void main() {\n gl_Position = ftransform();\n uv = gl_MultiTexCoord0.xy;\n}\n");
+        Files.writeString(shaders.resolve("gbuffers_terrain.fsh"), "#version 120\nuniform sampler2D samC;\n"
+                + "uniform sampler2D normals;\nvarying vec2 uv;\nvoid main() {\n/* DRAWBUFFERS:0 */\n"
+                + " gl_FragData[0] = texture2D(samC, uv) + texture2D(normals, uv);\n}\n");
+        PackResourcePlan resources = PackProbe.analyze(root).plan().resources();
+        assertEquals("blue.png", resources.binding("composite", "samC").source());
+        assertEquals("red.png", resources.binding("gbuffers_terrain", "samC").source());
+        assertTrue(!"red.png".equals(resources.binding("gbuffers_terrain", "normals").source()),
+                resources.binding("gbuffers_terrain", "normals").toString());
+    }
+
+    /**
      * Iris gives a pass's computes the depth samplers its program gets (IrisSamplers
      * addCompositeSamplers). Shrimple's deferred4 compute reads depthtex0 where no program does,
      * so the target graph keeps that snapshot, and the colour target it writes, for it.

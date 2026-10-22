@@ -39,8 +39,6 @@ import static org.lwjgl.vulkan.VK10.*;
  */
 final class PackPassComputes implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
-    /** The three uint work-group counts an indirect dispatch reads (VkDispatchIndirectCommand). */
-    static final long INDIRECT_COUNTS_BYTES = 12L;
 
     /** One compute that loaded: its plan and its pipeline. */
     private record Loaded(PassComputePlan.PassCompute plan, ComputeKernel kernel) {}
@@ -148,8 +146,9 @@ final class PackPassComputes implements AutoCloseable {
 
     /**
      * Runs the computes of this pass, in order, over the images the pass is about to read. One that
-     * cannot dispatch this frame (frameGap) skips the frame, before it records anything; one that
-     * fails to record runs no more.
+     * cannot dispatch this frame (frameGap) skips the frame before it binds anything; looking up its
+     * images may already have moved colortex0 out of the HDR image (storageSource), which leaves the
+     * chain's contents as they were. One that fails to record runs no more.
      */
     void dispatchBefore(String pass, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
         for (Loaded compute : loaded) {
@@ -186,7 +185,7 @@ final class PackPassComputes implements AutoCloseable {
             }
         }
         PassComputePlan.Indirect indirect = compute.indirect();
-        if (indirect != null && indirect.offset() + INDIRECT_COUNTS_BYTES > indirectBufferSize) {
+        if (indirect != null && indirect.offset() + PassComputePlan.INDIRECT_COUNTS_BYTES > indirectBufferSize) {
             return "indirect counts at " + indirect.offset() + " lie past bufferObject." + indirect.buffer();
         }
         return null;
