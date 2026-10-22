@@ -22,6 +22,8 @@
   "gbuffers_block_translucent [text input variant Position,Color,UV0,UV2].vsh": "9d1e278a267ed2a8 0b288d8c8589b78a",
   "gbuffers_block_translucent.fsh": "38511e72bc6b27b6 942fcb4d229797c6",
   "gbuffers_block_translucent.vsh": "40d8cf075a0294dc a46da614d87fd5eb",
+  "gbuffers_clouds.fsh": "464af00b50b62270 99206ffd1686e1f0",
+  "gbuffers_clouds.vsh": "ef6400e68afb399c 7bb2ab016796360c",
   "gbuffers_damagedblock.fsh": "613d815962c7e857 bf29946ba679c6f6",
   "gbuffers_damagedblock.vsh": "6fc8848a41b7f709 852e01b2f9b84f5b",
   "gbuffers_entities.fsh": "c5356d33e318a1aa ff9911e207053d75",

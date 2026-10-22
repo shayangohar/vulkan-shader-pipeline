@@ -610,7 +610,8 @@ public final class PackPlanBuilder {
                         HostLayoutVertexBridge.skyVertexContract(vertex, name.equals("gbuffers_skytextured"));
                 familyAdapter = familyAdapter.withVertexContract(skyContract);
                 acceptVertex(() -> HostLayoutVertexBridge.convertSkyVertexChecked(vertex, vertexFile(), fragment,
-                                skyContract, stageMatch.locations(), allowStorageBuffers, fragmentUniforms),
+                                skyContract, stageMatch.locations(), allowStorageBuffers, fragmentUniforms,
+                                vertexSamplerPlan(interfacePlan, stage, vertex)),
                         "SKY_VERTEX_BRIDGE", "SKY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isCloudFamily(name) && AuthoredOutput.producesNothing(vertex, fragment)) {
                 // The selected branch draws no cloud at all. There is no pipeline to build; the
@@ -621,7 +622,8 @@ public final class PackPlanBuilder {
                 familyAdapter = familyAdapter.withVertexContract(
                         FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL);
                 acceptVertex(() -> HostLayoutVertexBridge.convertCloudVertexChecked(vertex, vertexFile(), fragment,
-                                stageMatch.locations(), allowStorageBuffers, fragmentUniforms),
+                                stageMatch.locations(), allowStorageBuffers, fragmentUniforms,
+                                vertexSamplerPlan(interfacePlan, stage, vertex)),
                         "CLOUD_VERTEX_BRIDGE", "CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowLaneFamily(name) && hostLayoutFailure == null) {
                 // The host-layout preparation already expanded the includes.

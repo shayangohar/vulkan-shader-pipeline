@@ -2,7 +2,9 @@ package net.chimera.shaderpack;
 
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -80,6 +82,40 @@ final class SkyCloudAdapterTest {
             assertTrue(converted.contains(expected), "cloud vertex lost " + expected + ": " + converted);
         }
         assertTrue(PackCompileTest.compile(converted, true) == null, "cloud vertex fails compilation");
+    }
+
+    /**
+     * Iris gives both stages of a program one sampler set: Ebin's clouds run gbuffers_textured, whose
+     * vertex stage reads colortex4. Sky and cloud vertex stages bind such a sampler where the fragment
+     * stage's layout puts it.
+     */
+    @Test
+    void skyAndCloudVertexStagesReadTheProgramsSamplers(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String vertex = """
+                #version 120
+                uniform sampler2D colortex4;
+                varying vec4 color;
+                void main() { color = gl_Color * texture2D(colortex4, vec2(0.5)); gl_Position = ftransform(); }
+                """;
+        String fragment = """
+                #version 120
+                varying vec4 color;
+                void main() { gl_FragData[0] = color; }
+                """;
+        for (String program : List.of("gbuffers_clouds", "gbuffers_skybasic")) {
+            Files.writeString(shaders.resolve(program + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(program + ".fsh"), fragment);
+        }
+        PackPlan plan = PackProbe.analyze(root).plan();
+        for (String name : List.of("gbuffers_clouds", "gbuffers_skybasic")) {
+            PackProgramPlan program = plan.program(name);
+            assertTrue(program.executable(), name + ": " + program.deviations());
+            assertTrue(program.convertedVertex()
+                            .matches("(?s).*layout\\(binding = \\d+\\) uniform sampler2D colortex4;.*"),
+                    name + " vertex: " + program.convertedVertex());
+            assertTrue(PackCompileTest.compile(program.convertedVertex(), true) == null, name + " vertex compiles");
+        }
     }
 
     private static void assertProgram(PackPlan plan, String name, UniformRegistry.Stage stage,

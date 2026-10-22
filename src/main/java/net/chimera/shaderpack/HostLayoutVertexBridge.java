@@ -75,7 +75,7 @@ final class HostLayoutVertexBridge {
     ) {
         try {
             return convertSkyVertexChecked(source, sourceFile, fragmentSource, contract, locations,
-                    allowStorageBuffers, uniforms);
+                    allowStorageBuffers, uniforms, null);
         } catch (RuntimeException failure) {
             return null;
         }
@@ -84,16 +84,18 @@ final class HostLayoutVertexBridge {
     /**
      * Converts a sky vertex onto one host sky format, throwing its first concrete failure. The sky
      * formats carry no mid-coordinates or tangents, so those attributes read GL's unbound default,
-     * as under Iris.
+     * as under Iris. {@code samplers} binds the vertex stage's samplers where the fragment stage has
+     * them, as Iris gives both stages one sampler set; null without a plan.
      */
     public static LegacyGlslConverter.TerrainVertexConversion convertSkyVertexChecked(
             String source, Path sourceFile, String fragmentSource,
             FamilyAdapterPlan.VertexContract contract, Map<String, Integer> locations,
-            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
+            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms,
+            EntityVertexBridge.VertexSamplerPlan samplers
     ) {
         return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), sourceFile,
                 fragmentSource, locations, GlslVertexPreambles.skyPreamble(contract), allowStorageBuffers,
-                uniforms, null);
+                uniforms, samplers);
     }
 
     /** One authored sky program runs against each real native sky mesh layout. */
@@ -125,20 +127,24 @@ final class HostLayoutVertexBridge {
     ) {
         try {
             return convertCloudVertexChecked(source, sourceFile, fragmentSource, locations, allowStorageBuffers,
-                    uniforms);
+                    uniforms, null);
         } catch (RuntimeException failure) {
             return null;
         }
     }
 
-    /** {@link #convertCloudVertex}, throwing its first concrete failure. */
+    /**
+     * {@link #convertCloudVertex}, throwing its first concrete failure; {@code samplers} binds the
+     * vertex stage's samplers as {@link #convertSkyVertexChecked} does.
+     */
     public static LegacyGlslConverter.TerrainVertexConversion convertCloudVertexChecked(
             String source, Path sourceFile, String fragmentSource, Map<String, Integer> locations,
-            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms
+            boolean allowStorageBuffers, List<UniformRegistry.UniformDeclaration> uniforms,
+            EntityVertexBridge.VertexSamplerPlan samplers
     ) {
         return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), sourceFile,
                 fragmentSource, locations, GlslVertexPreambles.CLOUD_VERTEX_PREAMBLE, allowStorageBuffers,
-                uniforms, null);
+                uniforms, samplers);
     }
 
     /**
