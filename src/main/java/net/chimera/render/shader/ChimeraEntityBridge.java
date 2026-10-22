@@ -70,6 +70,10 @@ public final class ChimeraEntityBridge {
         LEASH,
         /** Text and name-tag backgrounds (Iris TEXT_BG), drawn with gbuffers_entities_translucent. */
         TEXT_BG,
+        /** World position_tex draws, the world border among them (Iris TEXTURED), drawn with gbuffers_textured. */
+        TEXTURED,
+        /** World position_tex_color draws (Iris TEXTURED_COLOR), with gbuffers_textured's chain. */
+        TEXTURED_COLOR,
         /**
          * The shadow pass's entity-format casters (Iris SHADOW_ENTITIES_CUTOUT), and on the block
          * layout its moving blocks.
@@ -84,7 +88,9 @@ public final class ChimeraEntityBridge {
         SHADOW_GLINT,
         SHADOW_TEXT,
         SHADOW_TEXT_BG,
-        SHADOW_BASIC
+        SHADOW_BASIC,
+        SHADOW_TEX,
+        SHADOW_TEX_COLOR
     }
 
     /**
@@ -600,11 +606,14 @@ public final class ChimeraEntityBridge {
         return pass == HostLayoutLane.Pass.WORLD ? worldHostLane(shader, format) : null;
     }
 
-    /** The pass a host draw belongs to now, or null outside every lane window. */
+    /**
+     * The pass a host draw belongs to now, or null outside every lane window. The sky has no lane:
+     * Iris draws its host shaders with the sky keys, which ChimeraSkyBridge serves.
+     */
     private static HostLayoutLane.Pass currentPass() {
         if (shadowCasterPass) return HostLayoutLane.Pass.SHADOW;
         if (ChimeraHandRenderer.active()) return HostLayoutLane.Pass.HAND;
-        if (!worldWindow) return null;
+        if (!worldWindow || ChimeraSkyBridge.inSkyWindow()) return null;
         return weatherWindow ? HostLayoutLane.Pass.WEATHER : HostLayoutLane.Pass.WORLD;
     }
 

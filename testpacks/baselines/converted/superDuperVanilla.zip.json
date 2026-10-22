@@ -84,6 +84,8 @@
   "gbuffers_spidereyes.vsh": "a8aee86bc6b1db2d 4eadb9b5f8e20c9c",
   "gbuffers_terrain.fsh": "234c62ae34a3623e da42fa6dc3ff50d6",
   "gbuffers_terrain.vsh": "37367da2142261f5 0f53e9ce629cff76",
+  "gbuffers_textured.fsh": "2047b1da5dd7fc0a bcea7a5c60530439",
+  "gbuffers_textured.vsh": "836f97d08f13847e 0dd3b715f0dc3165",
   "gbuffers_water.fsh": "85b8d524733ca86c 0cdb0252292be911",
   "gbuffers_water.vsh": "9387d63f95a455f9 9a03b0744ff1bb50",
   "gbuffers_weather.fsh": "cc7280e92b444982 6c82b535e82bbdbb",
@@ -105,6 +107,10 @@
   "shadow_lightning.vsh": "d6ee64b020372a4f d92bdb8a86d58535",
   "shadow_lines.fsh": "77d53fc6058ef8c5 34506e66c75edf7e",
   "shadow_lines.vsh": "1a001a935b788332 b13c2384da8e55da",
+  "shadow_tex.fsh": "9f13a21504d2c3fe 6d05dd10152f1618",
+  "shadow_tex.vsh": "6ba00f959d7e2f79 d5e0303cb2216f0c",
+  "shadow_tex_color.fsh": "9f13a21504d2c3fe 6d05dd10152f1618",
+  "shadow_tex_color.vsh": "5460b251acd68c89 a684a523bb05b8f1",
   "shadow_text.fsh": "94aa1a64bbd8cdcf 996bcee8394f0891",
   "shadow_text.vsh": "f9a1589bf1cce86c 9f2f5ee042243e5c",
   "shadow_text_bg.fsh": "94aa1a64bbd8cdcf 996bcee8394f0891",
@@ -112,5 +118,7 @@
   "shadow_water.fsh": "6895a31c8c2670dc dd77a92aad7e85a3",
   "shadow_water.vsh": "df41e2efb2b423bc 5586934de22e294c",
   "text_bg.fsh": "2fc3c36e05d47d5b 9c8888218973e2a0",
-  "text_bg.vsh": "d733c2e5b9d741bb 1a614bd418f9c9c8"
+  "text_bg.vsh": "d733c2e5b9d741bb 1a614bd418f9c9c8",
+  "textured_color.fsh": "2047b1da5dd7fc0a bcea7a5c60530439",
+  "textured_color.vsh": "0647b6500c81de00 ef887a7fd79c6634"
 }

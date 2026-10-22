@@ -585,7 +585,8 @@ final class HostFamilyTest {
         }
         for (String program : List.of("gbuffers_line", "gbuffers_armor_glint", "gbuffers_lightning",
                 "gbuffers_beaconbeam", "gbuffers_basic", "shadow_lines", "shadow_leash", "shadow_lightning",
-                "shadow_glint", "shadow_text", "shadow_text_bg", "shadow_basic", "text_bg")) {
+                "shadow_glint", "shadow_text", "shadow_text_bg", "shadow_basic", "text_bg", "gbuffers_textured",
+                "textured_color", "shadow_tex", "shadow_tex_color")) {
             assertTrue(servedPrograms.contains(program), program + " has no host-layout lane");
         }
         assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size(),
@@ -611,6 +612,13 @@ final class HostFamilyTest {
         for (var lane : List.of(HostLayoutLane.LIGHTNING, HostLayoutLane.BEACON_BEAM, HostLayoutLane.LEASH)) {
             assertEquals(0.0F, lane.alphaReference(), "Iris LIGHTNING, BEACON and LEASH use AlphaTests.OFF");
         }
+        // Iris TEXTURED tests NON_ZERO_ALPHA and TEXTURED_COLOR ONE_TENTH_ALPHA (ShaderKey), with
+        // their texture on unit 0; the sun and moon stay with the sky keys.
+        assertTrue(HostLayoutLane.TEXTURED.alphaReference() < HostLayoutLane.TEXTURED_COLOR.alphaReference()
+                && HostLayoutLane.TEXTURED_COLOR.alphaReference() == HostLayoutLane.TEXT_BG.alphaReference()
+                && !HostLayoutLane.TEXTURED.whiteAlbedo() && !HostLayoutLane.TEXTURED_COLOR.whiteAlbedo());
+        assertTrue(HostLayoutLane.forDraw("position_tex", DefaultVertexFormat.POSITION_TEX,
+                HostLayoutLane.Pass.SHADOW) == HostLayoutLane.SHADOW_TEX, "Iris SHADOW_TEX in the shadow pass");
     }
 
     /**

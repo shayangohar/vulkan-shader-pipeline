@@ -37,6 +37,12 @@ record PackAlphaTestPlan(
         FIXED
     }
 
+    /** Families whose ShaderKey's test reference the lane passes per draw, besides the entity-like ones. */
+    private static final Set<FamilyAdapterPlan.Family> LANE_REFERENCE_FAMILIES = Set.of(
+            FamilyAdapterPlan.Family.PARTICLE, FamilyAdapterPlan.Family.PARTICLE_TRANSLUCENT,
+            FamilyAdapterPlan.Family.WEATHER, FamilyAdapterPlan.Family.GLINT, FamilyAdapterPlan.Family.TEXT_BG,
+            FamilyAdapterPlan.Family.TEXTURED, FamilyAdapterPlan.Family.TEXTURED_COLOR);
+
     /** Iris's world programs whose ShaderKeys test nothing; a pack's alphaTest.<program> still applies. */
     private static final Set<String> UNTESTED_KEY_PROGRAMS = Set.of(
             "gbuffers_skytextured", "gbuffers_beaconbeam", "gbuffers_line", "gbuffers_lightning", "gbuffers_basic");
@@ -83,11 +89,9 @@ record PackAlphaTestPlan(
         // Iris tests entity programs against the render type's own threshold
         // (iris_currentAlphaTest); packs rely on it to drop the transparent texels of
         // layered skins and cutout models. Iris TEXT_BG tests ONE_TENTH_ALPHA, the
-        // lane's per-draw reference.
+        // lane's per-draw reference; TEXTURED tests NON_ZERO_ALPHA and TEXTURED_COLOR ONE_TENTH_ALPHA.
         if (FamilyAdapterRegistry.isEntityLike(name)
-                || FamilyAdapterRegistry.isParticleLike(name) || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isGlintFamily(name)
-                || FamilyAdapterRegistry.forProgram(name).family() == FamilyAdapterPlan.Family.TEXT_BG) {
+                || LANE_REFERENCE_FAMILIES.contains(FamilyAdapterRegistry.forProgram(name).family())) {
             return new PackAlphaTestPlan(Mode.DYNAMIC_ENTITY, "DYNAMIC", 0.0F, false, List.of());
         }
         if (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")) {

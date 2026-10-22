@@ -180,6 +180,8 @@ public final class PackFamilyPipelines {
             case HOST_LEASH, HOST_TEXT_BACKGROUND -> DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
             case HOST_TEXT -> DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
             case HOST_WATER_MASK -> DefaultVertexFormat.POSITION;
+            case HOST_POSITION_TEX -> DefaultVertexFormat.POSITION_TEX;
+            case HOST_POSITION_TEX_COLOR -> DefaultVertexFormat.POSITION_TEX_COLOR;
             default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
         };
     }

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "292fe35cd30ba31d9cc06c4239ac07159fe96cca1130f94eaa2b828dab7f65bd",
+      "reportSha256": "4ff071a9faeeadda1be7b72dfb3cf33653d670912c5dbbcdc28045a55b4f6aeb",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -43,6 +43,14 @@
           "vertex"
         ],
         "shadow_lines": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_tex": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_tex_color": [
           "fragment",
           "vertex"
         ],
@@ -123,6 +131,20 @@
           "SHADOW_LINES_STATE_FIXED_TO_HOST",
           "SHADOW_LINES_VERTEX_BRIDGE"
         ],
+        "shadow_tex": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_tex->shadow",
+          "SHADOW_TEX_STATE_FIXED_TO_HOST",
+          "SHADOW_TEX_VERTEX_BRIDGE"
+        ],
+        "shadow_tex_color": [
+          "FAMILY_ADAPTER_INSTALLED",
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_tex_color->shadow",
+          "SHADOW_TEX_COLOR_STATE_FIXED_TO_HOST",
+          "SHADOW_TEX_COLOR_VERTEX_BRIDGE"
+        ],
         "shadow_text": [
           "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
@@ -153,7 +175,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "f9882a3734de845973ba592ae0b39a7928fd1fb08f66fce8d5baf94948222c88",
+      "reportSha256": "0a06c9f3a7f94d8281828a8ea181667cf03ea9878bb22732a76f8278a9707992",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -194,6 +216,14 @@
           "vertex"
         ],
         "shadow_lines": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_tex": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_tex_color": [
           "fragment",
           "vertex"
         ],
@@ -263,6 +293,18 @@
           "PROGRAM_ALIAS_RECORDED:shadow_lines->shadow",
           "SHADOW_LINES_VERTEX_BRIDGE",
           "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"
+        ],
+        "shadow_tex": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_tex->shadow",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_TEX_VERTEX_BRIDGE"
+        ],
+        "shadow_tex_color": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_tex_color->shadow",
+          "SHADOW_SAMPLER_UNSUPPORTED:shadowtex1",
+          "SHADOW_TEX_COLOR_VERTEX_BRIDGE"
         ],
         "shadow_text": [
           "LIVE_UNIFORM_BRIDGE",

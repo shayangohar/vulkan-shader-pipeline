@@ -202,6 +202,10 @@ record PackResolutionPlan(
         addKeyChain(result, "shadow_glint", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text_bg", "shadow_entities", "shadow");
+        addKeyChain(result, "shadow_tex", "shadow");
+        addKeyChain(result, "shadow_tex_color", "shadow");
+        // Iris TEXTURED_COLOR: ProgramId.Textured on the host position_tex_color draws.
+        addKeyChain(result, "textured_color", "gbuffers_textured", "gbuffers_basic");
         // Iris TEXT_BG: ProgramId.EntitiesTrans on the host text-background quads.
         addKeyChain(result, "text_bg", "gbuffers_entities_translucent", "gbuffers_entities",
                 "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");

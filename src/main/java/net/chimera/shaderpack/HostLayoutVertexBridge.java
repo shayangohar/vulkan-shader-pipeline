@@ -20,8 +20,9 @@ final class HostLayoutVertexBridge {
     /**
      * Converts the shadow program for a shadow-pass key Iris draws on the host's own layout
      * (IrisPipelines.assignToShadow: SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_TEXT,
-     * SHADOW_TEXT_BG and SHADOW_BASIC, and GLINT's SHADOW_ENTITIES_CUTOUT). It is the
-     * shadow_entities bridge on that layout's inputs: the legacy matrix built-ins name the draw's
+     * SHADOW_TEXT_BG, SHADOW_BASIC, SHADOW_TEX and SHADOW_TEX_COLOR, and GLINT's
+     * SHADOW_ENTITIES_CUTOUT). It is the shadow_entities bridge on that layout's inputs: the
+     * legacy matrix built-ins name the draw's
      * host blocks, which the pass loads with the light view and projection, and an input the
      * layout lacks reads Iris's value for it. The host-layout preparation has already expanded
      * the includes. Reports the first concrete failure.
@@ -156,6 +157,8 @@ final class HostLayoutVertexBridge {
             case HOST_LIGHTNING -> GlslVertexPreambles.LIGHTNING_VERTEX_PREAMBLE;
             case HOST_BEACON -> GlslVertexPreambles.BEACON_VERTEX_PREAMBLE;
             case HOST_LEASH, HOST_TEXT_BACKGROUND -> GlslVertexPreambles.LEASH_VERTEX_PREAMBLE;
+            case HOST_POSITION_TEX -> GlslVertexPreambles.TEXTURED_VERTEX_PREAMBLE;
+            case HOST_POSITION_TEX_COLOR -> GlslVertexPreambles.TEXTURED_COLOR_VERTEX_PREAMBLE;
             default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
         };
         return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), null, fragmentSource,

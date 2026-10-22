@@ -42,6 +42,10 @@ public record FamilyAdapterPlan(
         SHADOW_TEXT_BG,
         /** shadow_basic: the boat water mask in the shadow pass (Iris SHADOW_BASIC, ProgramId.Shadow). */
         SHADOW_BASIC,
+        /** shadow_tex: position_tex draws in the shadow pass (Iris SHADOW_TEX, ProgramId.Shadow). */
+        SHADOW_TEX,
+        /** shadow_tex_color: position_tex_color draws in the shadow pass (Iris SHADOW_TEX_COLOR, ProgramId.Shadow). */
+        SHADOW_TEX_COLOR,
         ENTITY,
         ENTITY_TRANSLUCENT,
         SPIDER_EYES,
@@ -74,6 +78,16 @@ public record FamilyAdapterPlan(
          * gbuffers_entities_translucent on the host POSITION_COLOR_LIGHTMAP quads.
          */
         TEXT_BG,
+        /**
+         * gbuffers_textured: world draws with Minecraft's position_tex shader, the world border
+         * among them (Iris ShaderKey.TEXTURED, ProgramId.Textured).
+         */
+        TEXTURED,
+        /**
+         * textured_color: world draws with position_tex_color (Iris ShaderKey.TEXTURED_COLOR), drawn
+         * with gbuffers_textured's chain.
+         */
+        TEXTURED_COLOR,
         SPECIAL,
         POST,
         UNKNOWN
@@ -100,6 +114,10 @@ public record FamilyAdapterPlan(
         HOST_TEXT_BACKGROUND,
         /** DefaultVertexFormat.POSITION boat water mask. */
         HOST_WATER_MASK,
+        /** DefaultVertexFormat.POSITION_TEX world draws (the world border). */
+        HOST_POSITION_TEX,
+        /** DefaultVertexFormat.POSITION_TEX_COLOR world draws. */
+        HOST_POSITION_TEX_COLOR,
         HOST_BLOCK,
         SKY_POSITION,
         SKY_POSITION_COLOR,
@@ -118,7 +136,8 @@ public record FamilyAdapterPlan(
         public boolean hostLayout() {
             return switch (this) {
                 case HOST_LINE, HOST_GLINT, HOST_LIGHTNING, HOST_BEACON, HOST_LEASH,
-                     HOST_TEXT, HOST_TEXT_BACKGROUND, HOST_WATER_MASK -> true;
+                     HOST_TEXT, HOST_TEXT_BACKGROUND, HOST_WATER_MASK,
+                     HOST_POSITION_TEX, HOST_POSITION_TEX_COLOR -> true;
                 default -> false;
             };
         }

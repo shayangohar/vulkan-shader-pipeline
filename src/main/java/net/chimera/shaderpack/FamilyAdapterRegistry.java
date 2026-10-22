@@ -44,6 +44,10 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_TEXT_BACKGROUND),
             plan("shadow_basic", FamilyAdapterPlan.Family.SHADOW_BASIC,
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_WATER_MASK),
+            plan("shadow_tex", FamilyAdapterPlan.Family.SHADOW_TEX,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_POSITION_TEX),
+            plan("shadow_tex_color", FamilyAdapterPlan.Family.SHADOW_TEX_COLOR,
+                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_POSITION_TEX_COLOR),
             plan("gbuffers_entities", FamilyAdapterPlan.Family.ENTITY,
                     UniformRegistry.Stage.ENTITY, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             plan("gbuffers_entities_translucent",
@@ -98,7 +102,13 @@ public final class FamilyAdapterRegistry {
             // Iris TEXT_BG (TEXT_BACKGROUND, TEXT_BACKGROUND_SEE_THROUGH): a shader key that runs
             // gbuffers_entities_translucent's chain on the host POSITION_COLOR_LIGHTMAP quads.
             plan("text_bg", FamilyAdapterPlan.Family.TEXT_BG,
-                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_TEXT_BACKGROUND)
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_TEXT_BACKGROUND),
+            // Iris TEXTURED and TEXTURED_COLOR (MixinGameRenderer): world draws with position_tex, the
+            // world border among them, and position_tex_color, outside the sky phases.
+            plan("gbuffers_textured", FamilyAdapterPlan.Family.TEXTURED,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_POSITION_TEX),
+            plan("textured_color", FamilyAdapterPlan.Family.TEXTURED_COLOR,
+                    UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_POSITION_TEX_COLOR)
     ).collect(Collectors.toUnmodifiableMap(FamilyAdapterPlan::programName, plan -> plan));
 
     private FamilyAdapterRegistry() {}

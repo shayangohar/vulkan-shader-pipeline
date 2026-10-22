@@ -108,6 +108,8 @@
   "gbuffers_skytextured.vsh": "b7bc9befd60788de 80f64248120e2d7f",
   "gbuffers_spidereyes.fsh": "ea1cec8e8e5002e9 f55d0d30465add65",
   "gbuffers_spidereyes.vsh": "2c991fb07b5fe332 b45281fd77fd6b51",
+  "gbuffers_textured.fsh": "0093797f3c3e7ba1 11532426ef546242",
+  "gbuffers_textured.vsh": "cfc23a00d818b43c 6a00b998ca78adcc",
   "gbuffers_weather.fsh": "20cba58150fbe47c c92726b940e8ab36",
   "gbuffers_weather.vsh": "4526012435527fde a0f85eb5aad13395",
   "prepare2.csh": "fe6cf4110505d8ec 4f4b18d5555ccbe5",
@@ -116,5 +118,7 @@
   "setup3.csh": "8e63295fda31238b 8fe44d0e4d202f4b",
   "setup4.csh": "dbcb1a23a0d1fdcb 530de7f98383d2ef",
   "text_bg.fsh": "4ff6ab7c26649e52 7a6b2bdac3594854",
-  "text_bg.vsh": "0272c592a311807c 9cd7d748bb379d5a"
+  "text_bg.vsh": "0272c592a311807c 9cd7d748bb379d5a",
+  "textured_color.fsh": "0093797f3c3e7ba1 11532426ef546242",
+  "textured_color.vsh": "907d01ac7e4a3183 d4fb5a237f8e86a8"
 }

@@ -111,10 +111,14 @@
   "gbuffers_skytextured.vsh": "2b7e315eaf3739b1 f64b1edb44d13b2d",
   "gbuffers_spidereyes.fsh": "6a911b2d84f776eb c979d69e89a3bac7",
   "gbuffers_spidereyes.vsh": "29caba4b8ba29589 d271a4837f6a1507",
+  "gbuffers_textured.fsh": "c89fda04279f367a 9b02196ac474872e",
+  "gbuffers_textured.vsh": "17e145670428c284 d05bfadc3d5e6c86",
   "gbuffers_water.fsh": "86e1d87925b5dea3 02acdc58e2036a3b",
   "gbuffers_water.vsh": "604f4045d0e8d397 34dd3dc3088ed378",
   "gbuffers_weather.fsh": "26d77fe135a8fb5a 9b02196ac474872e",
   "gbuffers_weather.vsh": "738843fcca163acf c7e548a58003ce59",
   "text_bg.fsh": "8187558c70a55d6f 40779cd654325c1b",
-  "text_bg.vsh": "e03e887cdc3db841 515ee3c1a5c97212"
+  "text_bg.vsh": "e03e887cdc3db841 515ee3c1a5c97212",
+  "textured_color.fsh": "c89fda04279f367a 9b02196ac474872e",
+  "textured_color.vsh": "d08b9423464aa258 479d0d43e4e9ebf1"
 }

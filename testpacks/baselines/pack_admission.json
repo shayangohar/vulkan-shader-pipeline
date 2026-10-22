@@ -7,7 +7,6 @@
     "gbuffers_damagedblock",
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "shadow",
     "shadow_basic",
@@ -18,6 +17,8 @@
     "shadow_leash",
     "shadow_lightning",
     "shadow_lines",
+    "shadow_tex",
+    "shadow_tex_color",
     "shadow_text",
     "shadow_text_bg",
     "shadow_water"
@@ -26,15 +27,13 @@
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",
-    "gbuffers_entities_glowing",
-    "gbuffers_textured"
+    "gbuffers_entities_glowing"
   ],
   "Bliss_v2.1.2_(Chocapic13_Shaders_edit).zip": [
     "dh_shadow",
     "gbuffers_clouds",
     "gbuffers_damagedblock",
     "gbuffers_entities_glowing",
-    "gbuffers_textured",
     "gbuffers_textured_lit"
   ],
   "Bloop-1.8.0-Alpha-3.zip": [
@@ -45,7 +44,6 @@
     "gbuffers_entities_glowing",
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
-    "gbuffers_textured",
     "gbuffers_water",
     "physics_ocean"
   ],
@@ -57,8 +55,7 @@
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",
-    "gbuffers_entities_glowing",
-    "gbuffers_textured"
+    "gbuffers_entities_glowing"
   ],
   "ComplementaryUnbound_r5.9.3.zip": [
     "clrwl_gbuffers",
@@ -68,17 +65,14 @@
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",
-    "gbuffers_entities_glowing",
-    "gbuffers_textured"
+    "gbuffers_entities_glowing"
   ],
   "Ebin-Resurrected-v1.5.6.zip": [
     "gbuffers_clouds",
-    "gbuffers_damagedblock",
-    "gbuffers_textured"
+    "gbuffers_damagedblock"
   ],
   "Escheridia_V4.1.zip": [
     "gbuffers_damagedblock",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "gbuffers_water"
   ],
@@ -97,6 +91,8 @@
     "shadow_leash",
     "shadow_lightning",
     "shadow_lines",
+    "shadow_tex",
+    "shadow_tex_color",
     "shadow_text",
     "shadow_text_bg",
     "shadow_water"
@@ -106,18 +102,15 @@
     "clrwl_gbuffers_translucent",
     "clrwl_shadow",
     "dh_terrain",
-    "dh_water",
-    "gbuffers_textured"
+    "dh_water"
   ],
   "Insanity-Shader-Universal-v1.650.zip": [
     "gbuffers_clouds",
-    "gbuffers_entities_glowing",
-    "gbuffers_textured"
+    "gbuffers_entities_glowing"
   ],
   "Kappa_v5.3.zip": [
     "gbuffers_clouds",
     "gbuffers_damagedblock",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "gbuffers_translucent",
     "shadowcomp"
@@ -125,8 +118,7 @@
   "MakeUp-UltraFast-9.5g.zip": [
     "dh_terrain",
     "dh_water",
-    "gbuffers_entities_glowing",
-    "gbuffers_textured"
+    "gbuffers_entities_glowing"
   ],
   "Mellow v3.4.1a.zip": [
     "clrwl_gbuffers",
@@ -136,15 +128,13 @@
     "gbuffers_clouds",
     "gbuffers_damagedblock",
     "gbuffers_terrain",
-    "gbuffers_terrain_solid",
-    "gbuffers_textured"
+    "gbuffers_terrain_solid"
   ],
   "Noble v1.9.9.zip": [
     "deferred4",
     "dh_shadow",
     "dh_terrain",
     "dh_water",
-    "gbuffers_textured",
     "gbuffers_textured_lit"
   ],
   "Pegasus (v 0.5).zip": [
@@ -155,7 +145,6 @@
     "dh_terrain",
     "dh_water",
     "gbuffers_damagedblock",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "gbuffers_water",
     "physics_ocean",
@@ -167,13 +156,14 @@
     "shadow_leash",
     "shadow_lightning",
     "shadow_lines",
+    "shadow_tex",
+    "shadow_tex_color",
     "shadow_text",
     "shadow_text_bg",
     "shadow_water"
   ],
   "RedHat_v34.3.1.zip": [
     "gbuffers_damagedblock",
-    "gbuffers_textured",
     "gbuffers_textured_lit"
   ],
   "RenderPearl v2.4.0.zip": [
@@ -181,7 +171,6 @@
     "gbuffers_line",
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "shadow_cutout",
     "shadow_solid",
@@ -191,7 +180,6 @@
     "composite2",
     "dh_terrain",
     "dh_water",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "gbuffers_water",
     "shadow_water"
@@ -205,7 +193,6 @@
     "gbuffers_hand",
     "gbuffers_hand_water",
     "gbuffers_terrain",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "gbuffers_water",
     "physics_ocean",
@@ -218,6 +205,8 @@
     "shadow_leash",
     "shadow_lightning",
     "shadow_lines",
+    "shadow_tex",
+    "shadow_tex_color",
     "shadow_text",
     "shadow_text_bg",
     "shadow_water"
@@ -225,16 +214,14 @@
   "Sildurs Vibrant Shaders v2.02 Extreme.zip": [
     "dh_terrain",
     "dh_water",
-    "gbuffers_damagedblock",
-    "gbuffers_textured"
+    "gbuffers_damagedblock"
   ],
   "Solas Shader V3.7b.zip": [
     "clrwl_gbuffers",
     "clrwl_gbuffers_translucent",
     "clrwl_shadow",
     "dh_terrain",
-    "dh_water",
-    "gbuffers_textured"
+    "dh_water"
   ],
   "Spring v2 260618.zip": [
     "dh_shadow",
@@ -244,7 +231,6 @@
     "gbuffers_damagedblock",
     "gbuffers_hand",
     "gbuffers_terrain",
-    "gbuffers_textured",
     "gbuffers_textured_lit",
     "shadow",
     "shadow_basic",
@@ -254,6 +240,8 @@
     "shadow_leash",
     "shadow_lightning",
     "shadow_lines",
+    "shadow_tex",
+    "shadow_tex_color",
     "shadow_text",
     "shadow_text_bg",
     "shadow_water"
@@ -267,7 +255,6 @@
     "dh_water",
     "gbuffers_clouds",
     "gbuffers_terrain_solid",
-    "gbuffers_textured",
     "shadow_cutout",
     "shadow_solid"
   ],
@@ -276,7 +263,6 @@
     "dh_water",
     "gbuffers_clouds",
     "gbuffers_entities_glowing",
-    "gbuffers_textured",
     "prepare",
     "prepare1",
     "prepare2",
@@ -288,6 +274,8 @@
     "shadow_leash",
     "shadow_lightning",
     "shadow_lines",
+    "shadow_tex",
+    "shadow_tex_color",
     "shadow_text",
     "shadow_text_bg",
     "shadow_water"
@@ -297,7 +285,6 @@
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",
-    "gbuffers_textured",
     "physics_ocean",
     "physics_ocean_shadow",
     "shadow_cutout",

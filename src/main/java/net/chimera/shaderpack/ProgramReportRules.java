@@ -591,8 +591,8 @@ final class ProgramReportRules {
     /**
      * Why Chimera runs a world program in no lane: Iris draws it under no key of its own; it is a
      * begin or shadowcomp program, which Iris's composite renderers run and Chimera does not; Iris
-     * draws it and Chimera routes none of those draws to it (gbuffers_textured's position_tex
-     * world draws, the per-layer terrain and shadow programs, dh_*); or Iris never runs a program
+     * draws it and Chimera routes none of those draws to it (the per-layer terrain and shadow
+     * programs, dh_*); or Iris never runs a program
      * of that name at all (setup.fsh, names that are no ProgramId).
      */
     private static String laneReason(String name) {

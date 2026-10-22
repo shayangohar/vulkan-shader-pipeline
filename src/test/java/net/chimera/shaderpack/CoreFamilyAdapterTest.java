@@ -182,17 +182,17 @@ final class CoreFamilyAdapterTest {
     }
 
     /**
-     * A world program with no lane names why: Iris draws gbuffers_textured for position_tex world
-     * draws, which Chimera does not route, and terrain_solid for solid terrain, which VulkanMod draws
-     * in the cutout_mipped layer with the rest; it draws gbuffers_textured_lit under no key of its
-     * own (ShaderKey).
+     * A world program with no lane names why: Iris draws terrain_solid for solid terrain, which
+     * VulkanMod draws in the cutout_mipped layer with the rest, and gbuffers_textured_lit under no
+     * key of its own (ShaderKey). gbuffers_textured has its lanes: Iris draws position_tex and
+     * position_tex_color world draws with it (MixinGameRenderer, TEXTURED and TEXTURED_COLOR).
      */
     @Test
     void unlanedProgramsNameTheirReason(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         String fragment = "#version 120\nvoid main() {\n/* DRAWBUFFERS:0 */\n gl_FragData[0] = vec4(1.0);\n}\n";
         for (String name : List.of("gbuffers_textured", "gbuffers_textured_lit", "gbuffers_terrain_solid",
-                "begin1", "setup", "gbuffers_translucent")) {
+                "begin1", "setup", "gbuffers_translucent", "shadow")) {
             Files.writeString(shaders.resolve(name + ".vsh"),
                     "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
             Files.writeString(shaders.resolve(name + ".fsh"), fragment);
@@ -203,8 +203,13 @@ final class CoreFamilyAdapterTest {
                 && report.program("setup").deviations().contains("IRIS_PROGRAM_UNUSED:setup")
                 && report.program("gbuffers_translucent").deviations()
                 .contains("IRIS_PROGRAM_UNUSED:gbuffers_translucent"), "pass and unread reasons");
-        assertTrue(report.program("gbuffers_textured").deviations()
-                .contains("FAMILY_LANE_UNSUPPORTED:gbuffers_textured"), "textured reason");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        for (String lane : List.of("gbuffers_textured", "textured_color", "shadow_tex", "shadow_tex_color")) {
+            assertTrue(report.shouldAttempt(lane) && plan.program(lane) != null && plan.program(lane).executable(),
+                    lane + ": " + report.program(lane).deviations());
+        }
+        String textured = plan.program("gbuffers_textured").convertedFragment();
+        assertTrue(textured.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE), "TEXTURED tests the lane's reference");
         assertTrue(report.program("gbuffers_terrain_solid").deviations()
                 .contains("TERRAIN_LAYER_MERGED_BY_HOST:gbuffers_terrain_solid"), "terrain_solid reason");
         assertTrue(report.program("gbuffers_textured_lit").deviations().contains("IRIS_FALLBACK_SOURCE_ONLY"),

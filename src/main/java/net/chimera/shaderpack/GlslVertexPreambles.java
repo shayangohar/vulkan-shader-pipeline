@@ -456,6 +456,25 @@ final class GlslVertexPreambles {
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /**
+     * DefaultVertexFormat.POSITION_TEX world draws (Iris TEXTURED and SHADOW_TEX) on the glint's
+     * layout. Iris's VanillaTransformer reads the colour as the host colour modulator, the light as
+     * 240 and the normal as +Z for a format without them.
+     */
+    static final String TEXTURED_VERTEX_PREAMBLE = "// DefaultVertexFormat.POSITION_TEX\n" + GLINT_VERTEX_PREAMBLE;
+
+    /** DefaultVertexFormat.POSITION_TEX_COLOR world draws (Iris TEXTURED_COLOR and SHADOW_TEX_COLOR). */
+    static final String TEXTURED_COLOR_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
+            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
      * DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP glyph quads in the shadow pass. Iris draws
      * them on its GLYPH layout, whose normal, entity ids, mid-coordinate and tangent it computes
      * per quad; the host mesh has none of them, so they read +Z (VanillaTransformer's normal for
@@ -516,6 +535,8 @@ final class GlslVertexPreambles {
             case HOST_GLINT -> SHADOW_GLINT_VERTEX_PREAMBLE;
             case HOST_TEXT -> TEXT_VERTEX_PREAMBLE;
             case HOST_WATER_MASK -> WATER_MASK_VERTEX_PREAMBLE;
+            case HOST_POSITION_TEX -> TEXTURED_VERTEX_PREAMBLE;
+            case HOST_POSITION_TEX_COLOR -> TEXTURED_COLOR_VERTEX_PREAMBLE;
             default -> throw new IllegalArgumentException("no shadow lane on contract: " + contract);
         };
         String normal = contract == FamilyAdapterPlan.VertexContract.HOST_LINE ? "vec3(0.0, 0.0, 1.0)" : "Normal";
@@ -589,6 +610,7 @@ final class GlslVertexPreambles {
         return preamble == PARTICLE_VERTEX_PREAMBLE || preamble == LINE_VERTEX_PREAMBLE
                 || preamble == GLINT_VERTEX_PREAMBLE || preamble == LIGHTNING_VERTEX_PREAMBLE
                 || preamble == BEACON_VERTEX_PREAMBLE || preamble == LEASH_VERTEX_PREAMBLE
+                || preamble == TEXTURED_VERTEX_PREAMBLE || preamble == TEXTURED_COLOR_VERTEX_PREAMBLE
                 || preamble == CLOUD_VERTEX_PREAMBLE || isSkyPreamble(preamble);
     }
 

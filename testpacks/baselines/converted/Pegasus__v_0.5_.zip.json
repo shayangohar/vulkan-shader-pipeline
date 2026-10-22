@@ -70,11 +70,15 @@
   "gbuffers_spidereyes.vsh": "c842ba62d69678f9 1e1fdddd52e822c0",
   "gbuffers_terrain.fsh": "61a0cc11f6e7370b 87050eb44edfea65",
   "gbuffers_terrain.vsh": "b22405ad4e8af021 69c29c2993001969",
+  "gbuffers_textured.fsh": "2ed87fea3e59231e f8d292828239703e",
+  "gbuffers_textured.vsh": "a037ecf4641f364d 963fa7ec5f8ec36f",
   "gbuffers_weather.fsh": "dfaf93a66b223c49 c42929d7654168f9",
   "gbuffers_weather.vsh": "d59861fa61919a9d e848181f4d23cc69",
   "prepare.csh": "5adc9791ee0dd6e3 551fc17523300bb3",
   "prepare_a.csh": "2d5f53cdf7bc4201 2867acfc06d1a434",
   "prepare_b.csh": "6aa14c373dfb6b17 a0387c2fa6dfa199",
   "text_bg.fsh": "4e493245c3049eb2 dd31ef6bb6f67649",
-  "text_bg.vsh": "d2a6e76dffdc9d26 b4f48ebf0645b916"
+  "text_bg.vsh": "d2a6e76dffdc9d26 b4f48ebf0645b916",
+  "textured_color.fsh": "2ed87fea3e59231e f8d292828239703e",
+  "textured_color.vsh": "9725deb61074fe3c 988392737d71c47d"
 }

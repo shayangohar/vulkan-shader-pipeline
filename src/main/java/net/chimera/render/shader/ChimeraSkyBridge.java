@@ -88,6 +88,14 @@ public final class ChimeraSkyBridge {
         skyWindow = false;
     }
 
+    /**
+     * True inside LevelRenderer.renderSky, where Iris draws position_tex and position_tex_color with
+     * its sky keys rather than TEXTURED (MixinGameRenderer checks isSky first).
+     */
+    public static boolean inSkyWindow() {
+        return skyWindow;
+    }
+
     /** The pack program that draws a host mesh of {@code shader} on {@code format}, or null. */
     public static PackPipelines.PackSky programFor(String shader, VertexFormat format) {
         if (!enabled || shader == null) return null;

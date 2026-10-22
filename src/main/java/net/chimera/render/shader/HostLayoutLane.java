@@ -47,6 +47,15 @@ public enum HostLayoutLane {
     TEXT_BG(ChimeraEntityBridge.Family.TEXT_BG, "text_bg", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.ONE_TENTH, Shaders.TEXT_BACKGROUND),
     /*
+     * Iris TEXTURED and TEXTURED_COLOR: world draws with position_tex and position_tex_color outside
+     * the sky phases, where Iris picks the sky keys instead (ChimeraEntityBridge.currentPass). The
+     * world border is vanilla's one such draw; it reports WORLD_BORDER, the phase Iris sets around it.
+     */
+    TEXTURED(ChimeraEntityBridge.Family.TEXTURED, "gbuffers_textured", DefaultVertexFormat.POSITION_TEX,
+            PackRenderingPhase.WORLD_BORDER, Pass.WORLD, AlphaTest.NON_ZERO, "position_tex"),
+    TEXTURED_COLOR(ChimeraEntityBridge.Family.TEXTURED_COLOR, "textured_color", DefaultVertexFormat.POSITION_TEX_COLOR,
+            PackRenderingPhase.WORLD_BORDER, Pass.WORLD, AlphaTest.ONE_TENTH, "position_tex_color"),
+    /*
      * The shadow pass. Shadow lanes report ENTITIES, the phase Iris ShadowRenderer holds for
      * entities; Iris reports BLOCK_ENTITIES for a block entity's own draws (sign text here), which
      * only the family lanes follow (ChimeraEntityBridge.writePhase). Iris cancels beacon beams,
@@ -75,7 +84,13 @@ public enum HostLayoutLane {
             AlphaTest.NON_ZERO, Shaders.TEXT_BACKGROUND),
     /** Iris SHADOW_BASIC: the boat water mask, depth only like its host shader. */
     SHADOW_BASIC(ChimeraEntityBridge.Family.SHADOW_BASIC, "shadow_basic", DefaultVertexFormat.POSITION,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, "rendertype_water_mask");
+            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF, "rendertype_water_mask"),
+    /** Iris SHADOW_TEX and SHADOW_TEX_COLOR: position_tex and position_tex_color draws in the shadow pass. */
+    SHADOW_TEX(ChimeraEntityBridge.Family.SHADOW_TEX, "shadow_tex", DefaultVertexFormat.POSITION_TEX,
+            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO, "position_tex"),
+    SHADOW_TEX_COLOR(ChimeraEntityBridge.Family.SHADOW_TEX_COLOR, "shadow_tex_color",
+            DefaultVertexFormat.POSITION_TEX_COLOR, PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.ONE_TENTH,
+            "position_tex_color");
 
     /** The 1.21.1 shaders several lanes share. */
     private static final class Shaders {
