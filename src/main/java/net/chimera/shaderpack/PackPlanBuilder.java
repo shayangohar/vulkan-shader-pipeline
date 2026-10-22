@@ -328,12 +328,15 @@ public final class PackPlanBuilder {
                     fragment = EntityOverlayColor.inject(fragment);
                     vertex = EntityOverlayColor.withoutUnreadVertexDeclaration(vertex);
                 }
-            } else if (isTerrainMaterialFamily(name) || (FamilyAdapterRegistry.isCloudFamily(name)
-                    && !AuthoredOutput.producesNothing(vertex, fragment))) {
-                // Iris alpha-tests terrain and shadow terrain by layer and entity casters at 0.1;
-                // the main and shadow passes set the reference per layer (WorldRendererMixin,
-                // PackShadowPass). Clouds test at a fixed reference; a cloud program that draws
-                // nothing keeps its discarding main, which is how the plan proves it (AuthoredOutput).
+            } else if (!FamilyAdapterRegistry.isCloudFamily(name)
+                    || !AuthoredOutput.producesNothing(vertex, fragment)) {
+                // Any other program tests as its plan says (Iris ShaderCreator: the pack's
+                // alphaTest.<program>, else its key's), and an untested one is left alone. Terrain
+                // and shadow terrain test by layer and entity casters at 0.1, set per layer by the
+                // main and shadow passes (WorldRendererMixin, PackShadowPass); the sky by format
+                // (ChimeraSkyBridge); text backgrounds by their lane (TEXT_BG); clouds at a fixed
+                // reference. A cloud program that draws nothing keeps its discarding main, which is
+                // how the plan proves it (AuthoredOutput).
                 fragment = alphaTestPlan.injectDrawTest(fragment);
             }
         }

@@ -22,7 +22,7 @@
   "gbuffers_armor_glint.vsh": "828df396fe03a429 9e02fa638c444c2b",
   "gbuffers_basic.fsh": "2b8d75eb4ac3ec5e 28d4eff86f881c31",
   "gbuffers_basic.vsh": "998ad741f8fada05 1640a7aed2a06f5d",
-  "gbuffers_beaconbeam.fsh": "102eea8a32d75591 953958560f22984b",
+  "gbuffers_beaconbeam.fsh": "e09e56aace5ae886 8863431c516f8a1d",
   "gbuffers_beaconbeam.vsh": "2b52292d93f2a1d7 178fa5d05a98e37c",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].fsh": "5961fcc1864384e9 34a3625e725eb93b",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "6ef62bfbff730698 e72f065087bbcd81",
@@ -70,13 +70,13 @@
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "a38bec3cb9f30d9c 9b3191c9bcb9c79c",
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "6cf6feda46aab98a efdf23a7c620ed6c",
   "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "fcd9fe7d90cc4522 0a63bcbcb559fb3f",
-  "gbuffers_skybasic.fsh": "079dade349cc4122 3b124680d2ea60b4",
+  "gbuffers_skybasic.fsh": "49abf398c99af438 423f7f8bb23189d4",
   "gbuffers_skybasic.vsh": "a38bec3cb9f30d9c 9b3191c9bcb9c79c",
   "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "3eac75ae6efdb44c db87af38d5631989",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "f9495c818dabd43c 722a4b1864cbe4b1",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "1ad1a2b8350d6256 2974edd39424dcec",
   "gbuffers_skytextured [sky input variant SKY_POSITION_UV].vsh": "c91beb94d465da03 05af368386948124",
-  "gbuffers_skytextured.fsh": "031b24e72ce1d425 62733d38b50b4c54",
+  "gbuffers_skytextured.fsh": "f19fdea114552ae9 766f90a1916a4a30",
   "gbuffers_skytextured.vsh": "1ad1a2b8350d6256 2974edd39424dcec",
   "gbuffers_spidereyes.fsh": "f8063074f18f3fba 19b602bea6a0290c",
   "gbuffers_spidereyes.vsh": "81dbef08b75b645f 347c3cf94721ae17",
@@ -97,6 +97,6 @@
   "shadowcomp2.csh": "2d612877fe1e56a0 19c18ade90d0fba1",
   "shadowcomp_a.csh": "e51044dc2fb91964 851729f88eb0ce06",
   "shadowcomp_b.csh": "c9266eae04d259b8 e8f64a8c096cc570",
-  "text_bg.fsh": "d74ad83193395667 ef51d64e2d308d9a",
-  "text_bg.vsh": "b8e40f81d49bfcee 461121e73c6c5f4c"
+  "text_bg.fsh": "a54335c6e71d8bc2 79caa09186e7bcb8",
+  "text_bg.vsh": "5ca61e0d84d7d4a4 3ec55d9332855704"
 }

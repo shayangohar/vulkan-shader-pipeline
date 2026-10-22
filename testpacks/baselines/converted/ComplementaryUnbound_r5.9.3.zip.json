@@ -22,7 +22,7 @@
   "gbuffers_armor_glint.vsh": "fd38c71b6e8a730e dc39796471fee0ac",
   "gbuffers_basic.fsh": "bc8f50fffa6ff421 aeb75a136221336c",
   "gbuffers_basic.vsh": "4080ffd76cce7e22 6e44354bedc41030",
-  "gbuffers_beaconbeam.fsh": "353f9576325fdc0e 8bd3e4d65cb0686e",
+  "gbuffers_beaconbeam.fsh": "47e70da5a264d6d5 f579b1a1bd99d486",
   "gbuffers_beaconbeam.vsh": "15dde90e0d13a876 c70d471327440024",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].fsh": "0f9a1691e00384ce d1b1afb4407138e6",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "e0c0fc8be29bb5f2 6b625113bd0089ba",
@@ -70,13 +70,13 @@
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "a96cc11f978d27ef 281d536dc3013e29",
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "d1f9f0fa8985ca8a 0372498f1018ff66",
   "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "b217261448ac84b6 f7bb49bce14a1793",
-  "gbuffers_skybasic.fsh": "7dcd50cb7f6f38fa d14f04f7f0079cb6",
+  "gbuffers_skybasic.fsh": "37cb0519a62059b9 e4cd9e3c3d39184a",
   "gbuffers_skybasic.vsh": "a96cc11f978d27ef 281d536dc3013e29",
   "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "4cf11af9b0edd825 55b72b33e3c7f84f",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "1e096167eb649e32 09d934edce1de324",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "46d47942282ec9b7 f0558189f79ef5c3",
   "gbuffers_skytextured [sky input variant SKY_POSITION_UV].vsh": "0723271a973b45d4 e980d333947854bf",
-  "gbuffers_skytextured.fsh": "11e2da0cc814f9ba 2428014d89f5e14d",
+  "gbuffers_skytextured.fsh": "dfe7992a6db6f9d6 f296f04044c0ba74",
   "gbuffers_skytextured.vsh": "46d47942282ec9b7 f0558189f79ef5c3",
   "gbuffers_spidereyes.fsh": "a5560ea9aa7246bb 45306b2eed75c746",
   "gbuffers_spidereyes.vsh": "d64c9875671fa77e 7580ef5ceeb045ef",
@@ -109,6 +109,6 @@
   "shadow_text_bg.vsh": "180374f0c45059e8 b3da5a211503902e",
   "shadow_water.fsh": "06468979f2f0b135 f7dce87e69be3d58",
   "shadow_water.vsh": "ca73c4447dafb32d 8fa3c4dedf2376aa",
-  "text_bg.fsh": "0b07bd0b7ac6fa4a 5caa93b2624524ec",
-  "text_bg.vsh": "0bf21afb2cd7675c 40e03d46b11f6e0a"
+  "text_bg.fsh": "0c5a959fcff1e139 578021224a32114b",
+  "text_bg.vsh": "9c8f16368a1957ff ac018967ee2c0de8"
 }

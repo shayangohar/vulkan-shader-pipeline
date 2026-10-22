@@ -325,7 +325,8 @@ final class IrisCoreProfile {
             replacements.put("currentRenderedItemId",
                     "float".equals(types.get("currentRenderedItemId")) ? "(-1.0)" : "(-1)");
         }
-        String folded = GlslTokenRewriter.replaceIdentifiers(src, replacements);
+        // Iris leaves the uniforms named; a parameter or local of the same name keeps its own.
+        String folded = GlslScopedReferences.replace(src, replacements);
         return types.containsKey("entityId") ? insertAfterHeader(folded, "uniform int " + entityId + ";\n") : folded;
     }
 

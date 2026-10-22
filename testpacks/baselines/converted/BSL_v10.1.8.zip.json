@@ -58,12 +58,12 @@
   "gbuffers_particles.vsh": "af6e41a3e2c5ca6c cd43e1ed10ca6bb5",
   "gbuffers_particles_translucent.fsh": "319c131b86737d58 553d18af9d54e3a3",
   "gbuffers_particles_translucent.vsh": "af6e41a3e2c5ca6c cd43e1ed10ca6bb5",
-  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "967e30758d0eb0a2 43ff7d9980965176",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "4b8b1738c49ac6ac 6deba8cc82279913",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "0dc384049130f938 8a6eb4129d633735",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "1ee8124d219ffdad b1cbd3894f3641b7",
-  "gbuffers_skybasic.fsh": "ded9d425da133134 09db461143b7cb1b",
-  "gbuffers_skybasic.vsh": "967e30758d0eb0a2 43ff7d9980965176",
+  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "cff9b75c971cf3be 2c4a1c4e74285450",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "54e1a91b31fd1473 3dbb23b285c42767",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "71579c36024fed04 5bf2fbb1e0be96fb",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "e8beab0827018336 acdc549a098697c6",
+  "gbuffers_skybasic.fsh": "9bf7fe04f311f4f9 2a75468c46a9c0f2",
+  "gbuffers_skybasic.vsh": "cff9b75c971cf3be 2c4a1c4e74285450",
   "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "66f0c4ffc0f64504 446de29130cf79ac",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "6d36777f2da5f635 f0717e9238dd7df6",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "0b673e5ae733d5fc cb6659421a912f92",
@@ -101,6 +101,6 @@
   "shadow_text_bg.vsh": "ff60a50c133dbd18 1a85cf153e328afd",
   "shadow_water.fsh": "61a5f4bd533e972e ec45180d22268c9f",
   "shadow_water.vsh": "a4fa3ad837335680 bd47030b04f095b3",
-  "text_bg.fsh": "d9ffb897fd53525a a4c655f3c7a7b098",
-  "text_bg.vsh": "011596387b1c241f b7f36fce16db9c69"
+  "text_bg.fsh": "d66c92308a2eb62b 4c974e542c08f7e4",
+  "text_bg.vsh": "d62718cd6a9d1d09 b3e6fd1ce536d3b5"
 }

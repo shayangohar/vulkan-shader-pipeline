@@ -6,8 +6,10 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.lwjgl.util.shaderc.Shaderc;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
@@ -119,6 +121,51 @@ final class AlphaTestContractTest {
                         "alphaTest.gbuffers_clouds", "GREATER 0.005"))).injectDrawTest(legacy)
                         .contains("gl_FragData[0].a > 0.005"),
                 "alphaTest.gbuffers_clouds does not replace the cloud test");
+    }
+
+    /**
+     * Iris tests a program with its pack alphaTest, else its ShaderKey's (ShaderCreator): the sky's
+     * colour draws NON_ZERO_ALPHA and its others nothing, per draw; skytextured, beacon beams,
+     * lines, lightning and gbuffers_basic nothing, unless the pack's alphaTest says otherwise.
+     */
+    @Test
+    void untestedKeysHonourTheirAlphaTest() {
+        String legacy = "#version 120\nvarying vec4 color;\nvoid main() {\n    gl_FragData[0] = color;\n}\n";
+        PackAlphaTestPlan sky = PackAlphaTestPlan.forProgram("gbuffers_skybasic", settings(Map.of()));
+        assertTrue(sky.mode() == PackAlphaTestPlan.Mode.DYNAMIC_SKY
+                && sky.injectDrawTest(legacy).contains(UniformRegistry.ENTITY_ALPHA_REFERENCE), "sky per draw");
+        for (String program : List.of("gbuffers_skytextured", "gbuffers_beaconbeam", "gbuffers_line",
+                "gbuffers_lightning", "gbuffers_basic")) {
+            assertTrue(PackAlphaTestPlan.forProgram(program, settings(Map.of())).injectDrawTest(legacy).equals(legacy),
+                    program + " tests by default");
+            assertTrue(PackAlphaTestPlan.forProgram(program, settings(Map.of("alphaTest." + program, "GREATER 0.5")))
+                    .injectDrawTest(legacy).contains("gl_FragData[0].a > 0.5"), program + " ignores its alphaTest");
+        }
+    }
+
+    /**
+     * Iris draws text backgrounds with TEXT_BG, which tests ONE_TENTH_ALPHA per draw unless the
+     * pack's alphaTest replaces it. The plan injects every program's test as its mode says, not
+     * by a list of families, which left text_bg untested.
+     */
+    @Test
+    void textBackgroundsTestPerDraw(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 120
+                varying vec4 color;
+                void main() { color = gl_Color; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 120
+                varying vec4 color;
+                void main() { gl_FragData[0] = color; }
+                """);
+        PackProgramPlan textBackground = PackProbe.analyze(root).plan().program("text_bg");
+        assertTrue(textBackground != null && textBackground.convertedFragment() != null
+                        && textBackground.convertedFragment().contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                "text_bg is not tested per draw: "
+                        + (textBackground == null ? "no plan" : textBackground.convertedFragment()));
     }
 
     private static void compileFragment(String source) {

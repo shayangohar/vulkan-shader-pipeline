@@ -509,11 +509,19 @@ final class CorpusCompileFixesTest {
                 vec4 lightColor(const in int entityId) { return vec4(float(entityId) / 255.0); }
                 void main() { gl_FragData[0] = texture2D(texture, uv) * lightColor(entityId); }
                 """);
-        PackProgramPlan entities = PackProbe.analyze(root).plan().program("gbuffers_entities");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackProgramPlan entities = plan.program("gbuffers_entities");
         String fragment = entities.convertedFragment();
         assertTrue(entities.executable() && fragment.contains("lightColor(const in int entityId)")
                 && fragment.contains("float(entityId) / 255.0") && fragment.contains("lightColor(int(chimera"),
                 entities.deviations() + "\n" + fragment);
+        // text_bg draws the same source on a host layout, where entityId is the per-draw id.
+        PackProgramPlan textBackground = plan.program("text_bg");
+        String hostFragment = textBackground.convertedFragment();
+        assertTrue(textBackground.executable() && hostFragment.contains("lightColor(const in int entityId)")
+                        && hostFragment.contains("float(entityId) / 255.0")
+                        && hostFragment.contains("lightColor((" + UniformRegistry.HOST_ENTITY_ID + "))"),
+                textBackground.deviations() + "\n" + hostFragment);
     }
 
     /**

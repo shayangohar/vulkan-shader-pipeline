@@ -52,12 +52,12 @@
   "gbuffers_particles.vsh": "3a0cc9d129ab4873 42e3f0c6d5e47e5d",
   "gbuffers_particles_translucent.fsh": "68e83f91ca772e50 086de78536d5fa0a",
   "gbuffers_particles_translucent.vsh": "3a0cc9d129ab4873 42e3f0c6d5e47e5d",
-  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "8eb19be0ebc4ac88 5d9b1a3bb243b89a",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "8758b726ec20ca6e 440d5eb5edfd6615",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "8a874cd3a4ecb44e 1c6ee911d65fa3bc",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "f7d7ce0545447bbc 1bdd606c672c78e9",
-  "gbuffers_skybasic.fsh": "cedc9ae4d452dc3f 87458470e2be8c29",
-  "gbuffers_skybasic.vsh": "8758b726ec20ca6e 440d5eb5edfd6615",
+  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "819af4f0e6f08c2b a12a9844bb78ea46",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "c2238131039225b9 9538ddf1265b93a5",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "de2cccad7ca4609e a526e90ed9915a84",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "aa029ec33df88251 24003292c4cfced4",
+  "gbuffers_skybasic.fsh": "d2e3b7284d1b2506 24d149fe560b7d4d",
+  "gbuffers_skybasic.vsh": "c2238131039225b9 9538ddf1265b93a5",
   "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "4a32760d387830c7 4c59786ae4f2184d",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "2a2654837d70fdcf 67f90896b743c200",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "fb73add2b3567d44 d8ed3423661529d2",
@@ -97,6 +97,6 @@
   "shadow_text_bg.vsh": "6784b391ef195ba0 9a42a1d7702ad38c",
   "shadow_water.fsh": "ef26ca38aa8cdc5f fdd737afce30251e",
   "shadow_water.vsh": "e73b5f43ac43ba6d 52b8585864df9f40",
-  "text_bg.fsh": "9e9097328008eab6 ab376e231090011a",
-  "text_bg.vsh": "9d3a61ce385ae69f bb083ca70eed5f7a"
+  "text_bg.fsh": "2260d578bd895c27 9105920c11c8ad3e",
+  "text_bg.vsh": "b3218efb7b249d64 1832ec03e7e8112c"
 }

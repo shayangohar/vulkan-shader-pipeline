@@ -52,12 +52,12 @@
   "gbuffers_particles.vsh": "699226fd22ea3994 6a10a98bce08c5ad",
   "gbuffers_particles_translucent.fsh": "0187307404fcea04 55085079ceead910",
   "gbuffers_particles_translucent.vsh": "699226fd22ea3994 6a10a98bce08c5ad",
-  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "c63fbb9b670c8000 34c68b6f12921984",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "c2f02e84e5104396 c69530bb5f91c97e",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "8d9e429ae3a3db37 362251612fd22fc1",
-  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "0f1ea8ccf5ca7c18 aa0a9d8ae51c5da6",
-  "gbuffers_skybasic.fsh": "e3fdd31cc239d536 33b47b3e0a862d94",
-  "gbuffers_skybasic.vsh": "c2f02e84e5104396 c69530bb5f91c97e",
+  "gbuffers_skybasic [sky input variant SKY_POSITION].vsh": "6fcafea6e75845ef dbb3442bf3939fe1",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "e21271972a4a58b1 98878818c6811a73",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "21adb87736543e37 0f4465d5949b0c86",
+  "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "ccd0dd7114fcc175 188c4e0c284b93b3",
+  "gbuffers_skybasic.fsh": "a66272040312f55a 1bd5b42b1ffeab48",
+  "gbuffers_skybasic.vsh": "e21271972a4a58b1 98878818c6811a73",
   "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "77f450bf2778a470 7fa28eb9a745a546",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "3c4f0a8a75e22f88 082256ba80908d41",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "5d9abad7012cee99 dbf074cf9bcdc1be",
@@ -95,6 +95,6 @@
   "shadow_text_bg.vsh": "e549b03953992561 777d32e24734bf66",
   "shadow_water.fsh": "623dcbcc77b8d5c7 10e5390dff24b575",
   "shadow_water.vsh": "5a618ec8e76d85e2 5af09f46feba8042",
-  "text_bg.fsh": "7e1e4a97bf7640fd c414b540401a2994",
-  "text_bg.vsh": "f4be524a3be3a858 a530ea0506cbaa15"
+  "text_bg.fsh": "1af4a59e1d7eb04e b22c4c5755917aa4",
+  "text_bg.vsh": "f437421f23173e72 ade2674eaabbdfc1"
 }

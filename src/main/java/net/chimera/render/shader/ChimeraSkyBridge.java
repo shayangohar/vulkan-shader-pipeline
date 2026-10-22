@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.CloudStatus;
@@ -102,8 +103,15 @@ public final class ChimeraSkyBridge {
         return family == null ? null : family.forFormat(format);
     }
 
+    /**
+     * Opens a sky or cloud draw. A gbuffers_skybasic draw on POSITION_COLOR tests Iris's
+     * SKY_BASIC_COLOR NON_ZERO_ALPHA and one on POSITION nothing (SKY_BASIC); a program the pack
+     * gives an alphaTest reads its own reference instead (PackAlphaTestPlan).
+     */
     public static void beginDraw(PackPipelines.PackSky program) {
         active = program;
+        boolean colourSky = skyBasic != null && program == skyBasic.forFormat(DefaultVertexFormat.POSITION_COLOR);
+        PackUniformProvider.updateDrawAlphaReference(colourSky ? HostAlphaTest.NON_ZERO_ALPHA : 0.0F);
     }
 
     public static void endDraw() {

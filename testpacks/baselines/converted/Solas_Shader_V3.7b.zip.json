@@ -22,7 +22,7 @@
   "gbuffers_armor_glint.vsh": "c7b41e86bf071e55 6c8156cbb174ef6e",
   "gbuffers_basic.fsh": "8a8be8e2511b8b41 9f8c3545d783dae3",
   "gbuffers_basic.vsh": "3f1ce70224e62405 4daff35838ba04e5",
-  "gbuffers_beaconbeam.fsh": "e59f1bb127d3d2d0 e4569a43a1773f9b",
+  "gbuffers_beaconbeam.fsh": "0ba14eae8f69129c bf612b16b0044e41",
   "gbuffers_beaconbeam.vsh": "8ef88da57cc2b2af f68e7f34dfe76d59",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "3826530348bc37d0 87b5c1ea81802930",
   "gbuffers_block.fsh": "d1f4542f24d7271f 6c4f2767768b6f01",
@@ -64,13 +64,13 @@
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "674f88df9121b669 bdd6e0d387652cdb",
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "5505042962fe9e2b 7e29e54d3822969f",
   "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "ad03b36e4154ae60 400f19b57f57beea",
-  "gbuffers_skybasic.fsh": "aa9641894af14b07 6159207d89df2743",
+  "gbuffers_skybasic.fsh": "4d854537ec364c60 9502fe8235bd0555",
   "gbuffers_skybasic.vsh": "674f88df9121b669 bdd6e0d387652cdb",
   "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "a7913e920a847eff 03b62a66d3027150",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "1b5c58abb3c5d6a2 39dff291802313fe",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR_UV].vsh": "bbb123fce6cc968c f9250d044a0e4963",
   "gbuffers_skytextured [sky input variant SKY_POSITION_UV].vsh": "2bd8dbc763012f09 7d053cee46021dc7",
-  "gbuffers_skytextured.fsh": "2732861ba3c4dfdf baeea0cf78d55aa9",
+  "gbuffers_skytextured.fsh": "2265ed2fc9b98887 c455dad02e9365fb",
   "gbuffers_skytextured.vsh": "bbb123fce6cc968c f9250d044a0e4963",
   "gbuffers_spidereyes.fsh": "be2857eccc42a7a5 08e2c69d6df7eecb",
   "gbuffers_spidereyes.vsh": "e188c2f1e42509f5 6059f654872d41f9",
@@ -104,6 +104,6 @@
   "shadow_water.fsh": "9c350ec9507c72e3 f595eb0a7858f9f7",
   "shadow_water.vsh": "437cd5a2d66e82ca a295b345be5c5405",
   "shadowcomp.csh": "d78c517c1beb4be5 214811135f37759b",
-  "text_bg.fsh": "3f31b49e02f0a91e eb442f6fb7fdfb93",
-  "text_bg.vsh": "6879a6c0cc6c6569 816872017f345a6d"
+  "text_bg.fsh": "3f1743835e74b74b 1c167d01dae45996",
+  "text_bg.vsh": "a1a6524cf7a18030 4283a94f6438182d"
 }

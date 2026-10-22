@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -29,8 +30,17 @@ record PackAlphaTestPlan(
          * Entity casters test at 0.1 (Iris SHADOW_ENTITIES_CUTOUT).
          */
         DYNAMIC_SHADOW,
+        /**
+         * Each sky draw tests against its host format's Iris ShaderKey (SKY_BASIC_COLOR:
+         * NON_ZERO_ALPHA; SKY_BASIC none), which the sky lane sets per draw (ChimeraSkyBridge).
+         */
+        DYNAMIC_SKY,
         FIXED
     }
+
+    /** Iris's world programs whose ShaderKeys test nothing; a pack's alphaTest.<program> still applies. */
+    private static final Set<String> UNTESTED_KEY_PROGRAMS = Set.of(
+            "gbuffers_skytextured", "gbuffers_beaconbeam", "gbuffers_line", "gbuffers_lightning", "gbuffers_basic");
 
     /** The vertex colour's alpha, forwarded to a fragment whose draw test reads it. */
     static final String VERTEX_ALPHA_VARYING = "chimeraVertexAlpha";
@@ -86,7 +96,10 @@ record PackAlphaTestPlan(
         if (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")) {
             return new PackAlphaTestPlan(Mode.DYNAMIC_TERRAIN, "DYNAMIC", 0.0F, false, List.of());
         }
-        return null;
+        if (name.equals("gbuffers_skybasic")) {
+            return new PackAlphaTestPlan(Mode.DYNAMIC_SKY, "DYNAMIC", 0.0F, false, List.of());
+        }
+        return UNTESTED_KEY_PROGRAMS.contains(name) ? off(false) : null;
     }
 
     String injectDrawTest(String fragment) {
@@ -211,7 +224,8 @@ record PackAlphaTestPlan(
 
     /** Entity, shadow and terrain draws test against a reference set per draw (Iris iris_currentAlphaTest). */
     boolean perDrawReference() {
-        return mode == Mode.DYNAMIC_ENTITY || mode == Mode.DYNAMIC_SHADOW || mode == Mode.DYNAMIC_TERRAIN;
+        return mode == Mode.DYNAMIC_ENTITY || mode == Mode.DYNAMIC_SHADOW || mode == Mode.DYNAMIC_TERRAIN
+                || mode == Mode.DYNAMIC_SKY;
     }
 
     boolean active() {
