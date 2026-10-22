@@ -309,6 +309,45 @@ final class ComputePassTest {
     }
 
     /**
+     * A compute binds shadowcolorimgN, the shadow colour target in its format
+     * (IrisImages.addShadowColorImages), and shadowcolorN, up to Iris's eight targets with
+     * HIGHER_SHADOWCOLOR: Alpha Piscium's shadowcomp1 writes shadowcolorimg6, which no program draws,
+     * and its composite7 compute samples shadowcolor6. Without the feature Iris has two.
+     */
+    @Test
+    void passComputesBindShadowColorTargets(@TempDir Path root) throws IOException {
+        String composite = "#version 120\nuniform sampler2D colortex0;\n"
+                + "/*\nconst int shadowcolor6Format = RGB10_A2;\n*/\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n";
+        String shadowcomp = """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgb10_a2) uniform image2D shadowcolorimg6;
+                uniform sampler2D shadowcolor6;
+                void main() { imageStore(shadowcolorimg6, ivec2(0), texelFetch(shadowcolor6, ivec2(0), 0)); }
+                """;
+        Path higher = Files.createDirectories(root.resolve("higher/shaders"));
+        Files.writeString(higher.resolve("shaders.properties"), "iris.features.required = HIGHER_SHADOWCOLOR\n");
+        Files.writeString(higher.resolve("composite.fsh"), composite);
+        Files.writeString(higher.resolve("shadowcomp1.csh"), shadowcomp);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(higher.getParent()).plan(),
+                higher).compute("shadowcomp1");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("shadowcolorimg6", 0, PassComputePlan.Kind.SHADOW_COLOR_IMAGE, 6,
+                        "rgb10_a2", "shadowcolor6"),
+                new PassComputePlan.Binding("shadowcolor6", 1, PassComputePlan.Kind.SHADOW_COLOR, -1, null,
+                        "shadowcolor6")), compute.bindings(), compute.deviations().toString());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+        Path legacy = Files.createDirectories(root.resolve("legacy/shaders"));
+        Files.writeString(legacy.resolve("composite.fsh"), composite);
+        Files.writeString(legacy.resolve("shadowcomp1.csh"), shadowcomp);
+        assertEquals(List.of("PASS_COMPUTE_IMAGE_UNSUPPORTED:shadowcolorimg6",
+                "PASS_COMPUTE_SAMPLER_UNSUPPORTED:shadowcolor6"), PassComputePlan.build(
+                PackProbe.analyze(legacy.getParent()).plan(), legacy).compute("shadowcomp1").deviations());
+    }
+
+    /**
      * A GL image unit reinterprets an image declared in another format of its texel size: Alpha
      * Piscium reads its R32F uimg_r32f as layout(r32i) iimage2D for integer atomics. The compute
      * binds a view in that format, which the session creates; another size is refused.

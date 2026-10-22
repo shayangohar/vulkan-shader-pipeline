@@ -112,6 +112,8 @@ final class PackShadowPass {
                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
                 shadowColor.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 shadowDepth.transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+                // The shadow pass clears the targets it draws; those only computes name clear here.
+                if (packShadow) this.shadowMap.clearComputeColors(stack, cmd, false);
             }
 
             try {

@@ -5,6 +5,7 @@ import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackResourceBinding;
+import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PassComputePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
@@ -127,6 +128,25 @@ final class PackPassComputes implements AutoCloseable {
                     .forEach(binding -> reads.add(binding.resource()));
         }
         return passes;
+    }
+
+    /**
+     * The shadow colour targets the loaded computes bind, each with the Vulkan formats they write
+     * it in (none for one they only sample): the shadow map creates any the shadow pass does not
+     * draw, as Iris creates one a compute names (ShadowRenderTargets.getOrCreate).
+     */
+    Map<Integer, Set<Integer>> shadowTargets() {
+        Map<Integer, Set<Integer>> targets = new TreeMap<>();
+        for (Loaded compute : loaded) {
+            for (PassComputePlan.Binding binding : compute.plan().bindings()) {
+                int index = PackResourcePlan.shadowColorIndex(binding.resource());
+                if (index < 0 || binding.kind() != PassComputePlan.Kind.SHADOW_COLOR
+                        && binding.kind() != PassComputePlan.Kind.SHADOW_COLOR_IMAGE) continue;
+                Set<Integer> formats = targets.computeIfAbsent(index, ignored -> new TreeSet<>());
+                if (binding.storage()) formats.add(IrisColorFormats.of(binding.format()).vkFormat());
+            }
+        }
+        return targets;
     }
 
     /** The colour targets and depth snapshots the loaded computes bind, which the target graph must hold. */
@@ -268,9 +288,7 @@ final class PackPassComputes implements AutoCloseable {
                           ImageSources sources, int width, int height) {
         Map<VulkanImage, Boolean> written = new IdentityHashMap<>();
         for (PassComputePlan.Binding binding : compute.plan().bindings()) {
-            if (binding.kind() == PassComputePlan.Kind.TARGET_IMAGE) {
-                written.put(images.get(binding.binding()), Boolean.TRUE);
-            }
+            if (writesTarget(binding)) written.put(images.get(binding.binding()), Boolean.TRUE);
         }
         ComputeKernel.FrameSlot frame = compute.kernel().currentFrame();
         for (PassComputePlan.Binding binding : compute.plan().bindings()) {
@@ -319,6 +337,12 @@ final class PackPassComputes implements AutoCloseable {
         }
     }
 
+    /** Whether a binding writes a colour or shadow colour target, which goes GENERAL for the dispatch. */
+    private static boolean writesTarget(PassComputePlan.Binding binding) {
+        return binding.kind() == PassComputePlan.Kind.TARGET_IMAGE
+                || binding.kind() == PassComputePlan.Kind.SHADOW_COLOR_IMAGE;
+    }
+
     /**
      * The view a sampled binding reads: the depth-only one a depth-stencil image registers (the
      * shadow map's depth and opaque depth are D24S8, and a sampled descriptor takes one aspect,
@@ -361,6 +385,7 @@ final class PackPassComputes implements AutoCloseable {
             case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.resource());
             case TEXTURE -> resources == null ? null : resources.image(binding.resource());
             case TARGET_IMAGE -> sources.storage(binding.target());
+            case SHADOW_COLOR_IMAGE -> sources.shadow(binding.resource());
             case TARGET_SAMPLER -> binding.target() < colors.length ? colors[binding.target()] : null;
             case DEPTH -> sources.depth(binding.resource());
             case SHADOW_DEPTH, SHADOW_COMPARE, SHADOW_COLOR -> sources.shadow(binding.resource());
@@ -380,7 +405,7 @@ final class PackPassComputes implements AutoCloseable {
                 continue;
             }
             VulkanImage image = image(binding, sources);
-            if (image != null && binding.kind() == PassComputePlan.Kind.TARGET_IMAGE
+            if (image != null && writesTarget(binding)
                     && (((ChimeraVulkanImageAccessor) image).chimera$usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
                 throw new IllegalStateException(binding.symbol() + " image was not created for storage");
             }
@@ -431,9 +456,9 @@ final class PackPassComputes implements AutoCloseable {
             case STORAGE_BUFFER -> buffers == null || buffers.buffer(binding.target()) == null
                     ? "bufferObject." + binding.target() + " was not allocated"
                     + (buffers == null ? "" : ": " + buffers.failure(binding.target())) : null;
-            case TARGET_IMAGE -> storageSupported(PackConfig.FMT_TO_VK.getOrDefault(
+            case TARGET_IMAGE, SHADOW_COLOR_IMAGE -> storageSupported(PackConfig.FMT_TO_VK.getOrDefault(
                     binding.format().toUpperCase(Locale.ROOT), 0))
-                    ? null : "colortex" + binding.target() + " format cannot be a storage image";
+                    ? null : binding.symbol() + " format " + binding.format() + " cannot be a storage image";
             case TARGET_SAMPLER, TEXTURE, DEPTH, SHADOW_DEPTH, SHADOW_COMPARE, SHADOW_COLOR -> null;
         };
     }

@@ -51,6 +51,7 @@ public final class PassComputePlan {
             "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+\\w+\\s+([A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*;");
     private static final Pattern EXTENSION = Pattern.compile("(?m)^[ \\t]*#extension\\s+(\\w+)[^\\r\\n]*(?:\\r?\\n|$)");
     private static final Pattern COLOR_IMAGE = Pattern.compile("colorimg([0-9]+)");
+    private static final Pattern SHADOW_COLOR_IMAGE = Pattern.compile("shadowcolorimg([0-7])");
     /** The value block a pass compute reads; the pack compile check finds its offsets by this name. */
     public static final String VALUES_BLOCK = "ChimeraPassComputeValues";
 
@@ -70,6 +71,8 @@ public final class PassComputePlan {
         SHADOW_COMPARE,
         /** {@code shadowcolorN}. */
         SHADOW_COLOR,
+        /** {@code shadowcolorimgN}: shadow colour target N as a storage image, in its format. */
+        SHADOW_COLOR_IMAGE,
         /** A pack image's own storage name ({@code image.<name>}), in its format. */
         PACK_IMAGE,
         /** A pack image's sampler, reading the image it names. */
@@ -85,12 +88,15 @@ public final class PassComputePlan {
     public record Binding(String symbol, int binding, Kind kind, int target, String format, String resource) {
         /** Whether the compute writes through it, as a storage image. */
         public boolean storage() {
-            return kind == Kind.TARGET_IMAGE || kind == Kind.PACK_IMAGE;
+            return kind == Kind.TARGET_IMAGE || kind == Kind.SHADOW_COLOR_IMAGE || kind == Kind.PACK_IMAGE;
         }
     }
 
     /** The format and GLSL type a compute binds a storage image in. */
     private record StorageForm(String format, String type) {}
+
+    /** What a storage image declaration binds: its form, kind, target index and resource. */
+    private record ImageUse(StorageForm form, Kind kind, int target, String resource) {}
 
     /**
      * Iris ShaderProperties {@code indirect.<compute> = <buffer> <offset>}: the compute dispatches
@@ -367,10 +373,9 @@ public final class PassComputePlan {
         }
 
         /**
-         * Binds each used {@code colorimgN} in its target's format and kind (targetImageForm), and
-         * each used pack image (Iris IrisImages.addCustomImages) in its own. The usage analysis
-         * tracks 3D images only; with unreachable functions blanked, any reference left besides the
-         * declaration is a use.
+         * Binds each used storage image as Iris registers it for the compute (imageUse). The usage
+         * analysis tracks 3D images only; with unreachable functions blanked, any reference left
+         * besides the declaration is a use.
          */
         private String bindImages(String body, Work work) {
             Matcher image = IMAGE_DECLARATION.matcher(body);
@@ -379,26 +384,41 @@ public final class PassComputePlan {
                 String name = image.group(3);
                 image.appendReplacement(result, "");
                 if (GlslTokenRewriter.identifierCount(body, name) <= 1) continue;
-                PackAdvancedResourcePlan.ImageSpec pack = packImage(PackAdvancedResourcePlan.imageBySymbol(
-                        plan.advancedResources().images(), name));
-                Matcher color = COLOR_IMAGE.matcher(name);
-                int target = color.matches() ? Integer.parseInt(color.group(1)) : -1;
-                // A shadowcomp compute binds shadowcolorimgN, not colorimgN (IrisImages.addShadowColorImages).
-                StorageForm form = pack != null ? packImageForm(pack, image.group(1))
-                        : registers(work, IrisSamplerOrder.Source.TARGET) ? targetImageForm(target, image.group(1))
-                        : null;
+                ImageUse use = imageUse(name, image.group(1), work);
+                StorageForm form = use == null ? null : use.form();
                 if (form == null || !image.group(2).equals(form.type())) {
                     work.fail("PASS_COMPUTE_IMAGE_UNSUPPORTED:" + name);
                     continue;
                 }
                 work.declare("layout(" + form.format() + ", binding = " + work.bindings.size() + ") "
                         + LAYOUT.matcher(image.group(1)).replaceAll("") + form.type() + " " + name + ";");
-                work.bindings.add(pack != null
-                        ? new Binding(name, work.bindings.size(), Kind.PACK_IMAGE, -1, form.format(), pack.name())
-                        : new Binding(name, work.bindings.size(), Kind.TARGET_IMAGE, target, form.format(), null));
+                work.bindings.add(new Binding(name, work.bindings.size(), use.kind(), use.target(), form.format(),
+                        use.resource()));
             }
             image.appendTail(result);
             return result.toString();
+        }
+
+        /**
+         * What a storage image declaration names: a pack image (IrisImages.addCustomImages),
+         * {@code colorimgN} where the compute registers targets (addRenderTargetImages; a shadowcomp
+         * compute does not), or {@code shadowcolorimgN} (addShadowColorImages: every compute that
+         * declares one). Null for a name Iris binds nothing to.
+         */
+        private ImageUse imageUse(String name, String qualifiers, Work work) {
+            PackAdvancedResourcePlan.ImageSpec pack = packImage(PackAdvancedResourcePlan.imageBySymbol(
+                    plan.advancedResources().images(), name));
+            if (pack != null) return new ImageUse(packImageForm(pack, qualifiers), Kind.PACK_IMAGE, -1, pack.name());
+            Matcher color = COLOR_IMAGE.matcher(name);
+            if (color.matches() && registers(work, IrisSamplerOrder.Source.TARGET)) {
+                int target = Integer.parseInt(color.group(1));
+                return new ImageUse(targetImageForm(target, qualifiers), Kind.TARGET_IMAGE, target, null);
+            }
+            Matcher shadow = SHADOW_COLOR_IMAGE.matcher(name);
+            if (!shadow.matches()) return null;
+            int target = Integer.parseInt(shadow.group(1));
+            return new ImageUse(shadowImageForm(target, qualifiers), Kind.SHADOW_COLOR_IMAGE, target,
+                    "shadowcolor" + target);
         }
 
         /**
@@ -431,12 +451,41 @@ public final class PassComputePlan {
          */
         private StorageForm targetImageForm(int target, String qualifiers) {
             if (target < 0 || target > PackTargetGraphPlan.MAX_TARGET) return null;
-            IrisColorFormats.Format own = IrisColorFormats.stored(targetFormat(target));
+            return storageForm(targetFormat(target), qualifiers);
+        }
+
+        /** shadowcolorimgN: shadow colour target N in its format, or a view as for colorimgN. */
+        private StorageForm shadowImageForm(int target, String qualifiers) {
+            if (!irisShadowColor(target)) return null;
+            PackConfig.PackConfigData config = plan.config();
+            ShadowTargetDirectives targets = config == null ? ShadowTargetDirectives.defaults()
+                    : config.shadowSettings().targets();
+            return storageForm(targets.color(target).format().vkFormat(), qualifiers);
+        }
+
+        /**
+         * Whether Iris has shadow colour target {@code index}: eight with HIGHER_SHADOWCOLOR, two
+         * without (ShadowRenderTargets). It creates one a compute names on first use
+         * (IrisSamplers.addShadowSamplers createIfEmpty, IrisImages.addShadowColorImages getOrCreate).
+         */
+        private boolean irisShadowColor(int index) {
+            PackConfig.PackConfigData config = plan.config();
+            boolean higher = config != null && config.settings().hasFeature(PackFeatureFlags.HIGHER_SHADOWCOLOR);
+            return index >= 0 && index < (higher ? ShadowTargetDirectives.MAX_COLOR_TARGETS
+                    : ShadowTargetDirectives.LEGACY_COLOR_TARGETS);
+        }
+
+        /**
+         * An image stored in {@code vkFormat}, as a declaration with {@code qualifiers} binds it: in
+         * its own format, or through a view in another one of its texel size; null for another size.
+         */
+        private static StorageForm storageForm(int vkFormat, String qualifiers) {
+            IrisColorFormats.Format own = IrisColorFormats.stored(vkFormat);
             String view = own == null ? "" : AdvancedImageDeclarations.viewFormat(own, declaredFormat(qualifiers));
             if (view == null) return null;
             if (!view.isEmpty()) return new StorageForm(view, imageType(IrisColorFormats.of(view).kind()));
-            String format = imageFormat(targetFormat(target));
-            return format == null ? null : new StorageForm(format, imageType(kind(targetFormat(target))));
+            String format = imageFormat(vkFormat);
+            return format == null ? null : new StorageForm(format, imageType(kind(vkFormat)));
         }
 
         /** A pack image this session creates, or null. */
@@ -564,7 +613,8 @@ public final class PassComputePlan {
                 case SHADOW_DEPTH -> colour ? new Binding(name, index, Kind.SHADOW_DEPTH, -1, null, key)
                         : type.equals("sampler2DShadow") ? new Binding(name, index, Kind.SHADOW_COMPARE, -1, null, key)
                         : null;
-                case SHADOW_COLOR -> colour ? new Binding(name, index, Kind.SHADOW_COLOR, -1, null, key) : null;
+                case SHADOW_COLOR -> colour && irisShadowColor(PackResourcePlan.shadowColorIndex(key))
+                        ? new Binding(name, index, Kind.SHADOW_COLOR, -1, null, key) : null;
                 case NOISE, PACK_TEXTURE, RAW_TEXTURE -> textureSampler(name, type, resource, work);
                 default -> null;
             };

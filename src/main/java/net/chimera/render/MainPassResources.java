@@ -61,7 +61,8 @@ final class MainPassResources {
                         PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
                         PackConfig.DEFAULT_SHADOW_DISTANCE,
                         Map.of(), List.of());
-        pass.shadowPass.shadowMap.init(shadowSettings);
+        pass.shadowPass.shadowMap.init(shadowSettings,
+                pass.packPassComputes == null ? Map.of() : pass.packPassComputes.shadowTargets());
         pass.targets.createHdrFramebuffer(width, height);
         pass.targets.createOutputFramebuffer(width, height);
         pass.targets.createRenderPasses();
