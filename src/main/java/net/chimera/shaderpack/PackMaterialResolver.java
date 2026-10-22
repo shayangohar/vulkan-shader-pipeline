@@ -8,13 +8,10 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,31 +22,22 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Predicate;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Immutable resolver for block.properties mappings, read through the same
- * continuation and conditional handling as shaders.properties. A token is a
- * block name, optionally followed by state predicates as Iris writes them
- * ({@code minecraft:tall_grass:half=lower}, {@code leaves:waterlogged=false}),
- * or a block tag ({@code %walls:north=low}).
+ * Immutable resolver for block.properties mappings, read as Iris's IdMap reads the file
+ * ({@link IdMapProperties}). A token is a block name, optionally followed by state predicates as
+ * Iris writes them ({@code minecraft:tall_grass:half=lower}, {@code leaves:waterlogged=false}), or a
+ * block tag ({@code %walls:north=low}).
  *
- * <p>A state takes the first entry, in file order, that matches it, as Iris's
+ * <p>A state takes the first entry, in key order, that matches it, as Iris's
  * BlockMaterialMapping puts each id's states with putIfAbsent: a plain name
  * matches every state, so it wins over a later predicate entry for that block.
  * Tag entries come after every block entry, as Iris adds them last.</p>
  */
 public final class PackMaterialResolver {
-    private static final Pattern MAPPING = Pattern.compile(
-            "^\\s*block\\.(-?\\d+)\\s*=\\s*(.*?)\\s*$");
     private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9_.-]+");
     private static final Pattern PATH = Pattern.compile("[a-z0-9_./-]+");
-    private static final Pattern CONDITION = Pattern.compile(
-            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
-    private static final Pattern DEFINE = Pattern.compile(
-            "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
-    private static final Pattern UNDEFINE = Pattern.compile("^\\s*#\\s*undef\\s+([A-Za-z_]\\w*)\\s*$");
 
     /**
      * One block entry: its id applies to a state whose value for each predicate equals the
@@ -111,19 +99,12 @@ public final class PackMaterialResolver {
 
     /**
      * What one block.properties read collects: each name's plain id, every block's entries and
-     * the tag entries in file order, each layer key's value, deviations.
+     * the tag entries in key order, each layer key's value in key order, deviations.
      */
     private record Collected(Map<String, Integer> ids, Map<String, List<Entry>> entries, List<TagEntry> tags,
                              Map<Layer, String> layerLines, Set<String> deviations) {
         Collected() {
-            this(new TreeMap<>(), new TreeMap<>(), new ArrayList<>(), new EnumMap<>(Layer.class), new TreeSet<>());
-        }
-
-        void clear() {
-            ids.clear();
-            entries.clear();
-            tags.clear();
-            layerLines.clear();
+            this(new TreeMap<>(), new TreeMap<>(), new ArrayList<>(), new LinkedHashMap<>(), new TreeSet<>());
         }
     }
 
@@ -144,88 +125,39 @@ public final class PackMaterialResolver {
     }
 
     /**
-     * Reads block.properties as Iris does: backslash continuations join into one
-     * logical line, and {@code #if}/{@code #ifdef} branches are evaluated against
-     * the engine's standard macros plus the pack's own defines. BSL puts every
-     * id's block list on a continuation line and gates whole tables on
-     * {@code MC_VERSION}.
+     * Reads block.properties through {@link IdMapProperties}, preprocessed with the id-map
+     * {@code macros}, as Iris's IdMap reads it. Its {@code block.<id>} keys then map in key order,
+     * as IdMap.parseBlockMap keeps them: two keys for one id keep the later value where the first
+     * appeared. BSL puts every id's block list on continuation lines and gates whole tables on
+     * {@code MC_VERSION}; Photon, Bloop and superDuperVanilla name their tags through the file's own
+     * macros ({@code #define tags_leaves %leaves}).
      */
     public static ParseResult parse(Path shadersDir, Map<String, String> macros) {
-        Path file = shadersDir == null ? null : shadersDir.resolve("block.properties");
-        if (file == null || !Files.isRegularFile(file)) {
+        IdMapProperties.Loaded file = IdMapProperties.read(shadersDir, "block.properties", macros);
+        if (!file.present()) {
             return new ParseResult(empty(), false, null, List.of("BLOCK_PROPERTIES_MISSING"));
         }
-
         Collected collected = new Collected();
-        String sourceHash;
-        try {
-            byte[] bytes = Files.readAllBytes(file);
-            sourceHash = ConformanceReport.textSha256(bytes);
-            readLines(Files.readAllLines(file, StandardCharsets.UTF_8), macros, collected);
-        } catch (IOException e) {
-            collected.deviations().add("BLOCK_PROPERTIES_READ_FAILED");
-            sourceHash = null;
+        if (file.failure() != null) {
+            collected.deviations().add("BLOCK_PROPERTIES_" + file.failure());
         }
-        Map<String, Layer> layers = layers(collected.layerLines(), collected.deviations());
-        return new ParseResult(new PackMaterialResolver(collected, layers), true, sourceHash,
-                List.copyOf(collected.deviations()));
-    }
-
-    /**
-     * The file's lines as Iris's preprocessor (JCPP) hands them to IdMap: inactive branches drop,
-     * and each line reads the file's own #define macros made before it. Photon, Bloop and
-     * superDuperVanilla name their tags through such macros ({@code #define tags_leaves %leaves}).
-     */
-    private static void readLines(List<String> lines, Map<String, String> macros, Collected collected) {
-        PackConditionals.State conditions = new PackConditionals.State(macros);
-        PackSettingsPlan.PropertyLineJoiner joiner = new PackSettingsPlan.PropertyLineJoiner();
-        for (String raw : lines) {
-            if (PackSettingsPlan.PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
-                // A directive line ends the open continuation.
-                parseExpanded(joiner.finish(), conditions, collected);
-            }
-            Matcher directive = CONDITION.matcher(raw);
-            if (directive.matches()) {
-                try {
-                    conditions.apply(directive.group(1), directive.group(2).trim());
-                } catch (RuntimeException failure) {
-                    collected.deviations().add("BLOCK_PROPERTIES_CONDITION_UNSUPPORTED");
-                    collected.clear();
-                    return;
+        Map<Integer, String> blocks = new LinkedHashMap<>();
+        file.entries().forEach((key, value) -> {
+            if (key.startsWith("layer.")) {
+                collectLayer(key, value, collected);
+            } else if (key.startsWith("block.")) {
+                Integer id = mappingId(key.substring("block.".length()));
+                if (id == null) {
+                    collected.deviations().add("BLOCK_PROPERTIES_INVALID");
+                } else {
+                    blocks.put(id, value);
                 }
-                continue;
             }
-            if (!conditions.active() || defineMacro(raw, conditions)) {
-                continue;
-            }
-            String line = joiner.accept(raw);
-            if (line != null) {
-                parseExpanded(line, conditions, collected);
-            }
-        }
-        String last = joiner.finish();
-        if (last != null) {
-            parseExpanded(last, conditions, collected);
-        }
-    }
-
-    /** Applies a #define or #undef line to the macros later lines read; false for any other line. */
-    private static boolean defineMacro(String raw, PackConditionals.State conditions) {
-        Matcher define = DEFINE.matcher(raw);
-        if (define.matches()) {
-            conditions.define(define.group(1), define.group(2));
-            return true;
-        }
-        Matcher undefine = UNDEFINE.matcher(raw);
-        if (undefine.matches()) {
-            conditions.undefine(undefine.group(1));
-            return true;
-        }
-        return false;
-    }
-
-    private static void parseExpanded(String line, PackConditionals.State conditions, Collected collected) {
-        parseLine(PackConditionals.expandMacros(line, conditions.macros()), collected);
+        });
+        blocks.forEach((id, value) -> collectBlocks(id, value, collected));
+        Map<String, Layer> layers = layers(collected.layerLines(), collected.deviations());
+        return new ParseResult(new PackMaterialResolver(collected, layers), true, file.sourceHash(),
+                List.copyOf(collected.deviations()));
     }
 
     public static PackMaterialResolver empty() {
@@ -233,9 +165,9 @@ public final class PackMaterialResolver {
     }
 
     /**
-     * The blocks each {@code layer.<name>} line names, by normalized block name. A properties file
-     * keeps a key's last value, as Iris reads it; a block two layers name takes the later layer in
-     * {@link Layer} order. A tag or a state selector names no block here, as in Iris.
+     * The blocks each {@code layer.<name>} key names, by normalized block name. A block two layer
+     * keys name takes the later key's layer, as IdMap.parseRenderTypeMap puts them in key order. A
+     * tag or a state selector names no block here, as in Iris.
      */
     private static Map<String, Layer> layers(Map<Layer, String> layerLines, Set<String> deviations) {
         Map<String, Layer> layers = new TreeMap<>();
@@ -342,69 +274,43 @@ public final class PackMaterialResolver {
         return deviations;
     }
 
-    private static void parseLine(String rawLine, Collected collected) {
-        String line = rawLine;
-        int comment = line.indexOf('#');
-        if (comment >= 0) {
-            line = line.substring(0, comment);
-        }
-        line = line.trim();
-        if (line.startsWith("layer.")) {
-            parseLayerLine(line, collected);
-            return;
-        }
-        if (line.isEmpty() || !line.startsWith("block.")) {
-            return;
-        }
-        Set<String> deviations = collected.deviations();
-        Matcher matcher = MAPPING.matcher(line);
-        Integer mappedId = matchMappingId(matcher);
-        if (mappedId == null) {
-            deviations.add("BLOCK_PROPERTIES_INVALID");
-            return;
-        }
-        for (String token : matcher.group(2).split("\\s+")) {
-            if (token.isBlank()) {
+    /** Maps each whitespace-separated name or {@code %tag} of one {@code block.<id>} value to the id. */
+    private static void collectBlocks(int id, String value, Collected collected) {
+        for (String token : value.split("\\s+")) {
+            if (token.isEmpty()) {
                 continue;
             }
             if (token.startsWith("%")) {
-                addTag(token, mappedId, collected);
-                continue;
+                addTag(token, id, collected);
+            } else {
+                addEntry(token, id, collected);
             }
-            addEntry(token, mappedId, collected);
         }
     }
 
-    /** Keeps a {@code layer.<name> = <blocks>} line's value under its layer; the key's last value wins. */
-    private static void parseLayerLine(String line, Collected collected) {
-        int equals = line.indexOf('=');
-        Layer layer = equals < 0 ? null : Layer.named(line.substring("layer.".length(), equals).trim());
+    /** Keeps a {@code layer.<name>} key's value under its layer, in key order. */
+    private static void collectLayer(String key, String value, Collected collected) {
+        Layer layer = Layer.named(key.substring("layer.".length()));
         if (layer == null) {
             collected.deviations().add("BLOCK_LAYER_INVALID");
             return;
         }
-        collected.layerLines().put(layer, line.substring(equals + 1));
+        collected.layerLines().put(layer, value);
     }
 
     /**
-     * Matches a {@code block.<id> = <names>} line and returns its id, or null when the line is
-     * malformed or the id falls outside the short range. A line with no names maps nothing, as in
-     * Iris: superDuperVanilla keeps empty ids such as {@code block.10100 =} for user additions.
+     * A {@code block.<id>} key's id as IdMap.parseBlockMap reads it with Integer.parseInt, or null
+     * when it is not an integer or falls outside the short range. A key with no names maps nothing,
+     * as in Iris: superDuperVanilla keeps empty ids such as {@code block.10100 =} for user additions.
      */
-    private static Integer matchMappingId(Matcher matcher) {
-        if (!matcher.matches()) {
-            return null;
-        }
+    private static Integer mappingId(String text) {
         int id;
         try {
-            id = Integer.parseInt(matcher.group(1));
+            id = Integer.parseInt(text);
         } catch (NumberFormatException e) {
             return null;
         }
-        if (id < Short.MIN_VALUE || id > Short.MAX_VALUE) {
-            return null;
-        }
-        return id;
+        return id < Short.MIN_VALUE || id > Short.MAX_VALUE ? null : id;
     }
 
     /**
@@ -414,7 +320,7 @@ public final class PackMaterialResolver {
      * last value wins. The first plain mapping of a name is its resolveName id.
      */
     private static void addEntry(String token, int id, Collected collected) {
-        Token parsed = parseToken(token, collected.deviations());
+        Token parsed = parseToken(token, false, collected.deviations());
         if (parsed == null) return;
         collected.entries().computeIfAbsent(parsed.name(), key -> new ArrayList<>())
                 .add(new Entry(id, parsed.predicates()));
@@ -427,11 +333,11 @@ public final class PackMaterialResolver {
 
     /**
      * One {@code %[namespace:]tag[:prop=value...]} token, read as BlockEntry.parse reads it once its
-     * '%' signs are gone, with the tag's name lower-cased as BlockMaterialMapping.addTag compares
-     * names ignoring case.
+     * '%' signs are gone. The tag's name is lower-cased, as BlockMaterialMapping.addTag compares tag
+     * names ignoring case; its predicates compare exactly, as checkState does.
      */
     private static void addTag(String token, int id, Collected collected) {
-        Token parsed = parseToken(token.replace("%", "").toLowerCase(Locale.ROOT), collected.deviations());
+        Token parsed = parseToken(token.replace("%", ""), true, collected.deviations());
         if (parsed == null) return;
         TagKey<Block> key = TagKey.create(Registries.BLOCK, ResourceLocation.parse(parsed.name()));
         collected.tags().add(new TagEntry(key, new Entry(id, parsed.predicates())));
@@ -440,12 +346,15 @@ public final class PackMaterialResolver {
     /** A token's normalized name and predicates, and whether it named any predicate segment. */
     private record Token(String name, Map<String, String> predicates, boolean hasPredicates) {}
 
-    /** Splits a token as BlockEntry.parse does; null, with a deviation, when its name is invalid. */
-    private static Token parseToken(String token, Set<String> deviations) {
+    /**
+     * Splits a token as BlockEntry.parse does; null, with a deviation, when its name is invalid.
+     * {@code anyCase} reads the name ignoring case.
+     */
+    private static Token parseToken(String token, boolean anyCase, Set<String> deviations) {
         String[] segments = token.split(":");
         int first = segments.length > 1 && segments[1].indexOf('=') >= 0 ? 1 : Math.min(segments.length, 2);
         String name = first == 1 ? segments[0] : segments[0] + ":" + segments[1];
-        String normalized = normalizeName(name);
+        String normalized = normalizeName(anyCase ? name.toLowerCase(Locale.ROOT) : name);
         if (normalized == null) {
             deviations.add("BLOCK_PROPERTIES_INVALID");
             return null;

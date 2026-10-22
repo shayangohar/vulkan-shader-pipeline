@@ -749,14 +749,14 @@ record PackSettingsPlan(
             "^#\\s*(?:define|undef|include|line|pragma|error|warning|if|ifdef|ifndef|elif|else|endif)\\b");
 
     /**
-     * Joins backslash continuations the way Iris's PropertiesPreprocessor and Properties
-     * loader do. Iris drops blank and plain {@code #} comment lines before preprocessing,
-     * so neither ends a continuation. Preprocessing then turns every directive line into
-     * an empty line, which does end one: Photon closes a multi-line
-     * {@code moon_phase_brightness} with {@code ") \"} right before its {@code #else}, and
-     * Bliss's conditioned {@code block.56} ends at its {@code #endif}. Callers evaluate
-     * conditions on physical lines, end an open continuation at each directive line, and
-     * feed only active non-directive lines to {@link #accept}.
+     * Joins shaders.properties' backslash continuations the way Iris's PropertiesPreprocessor
+     * and Properties loader do. Iris drops blank and plain {@code #} comment lines before
+     * preprocessing, so neither ends a continuation. Preprocessing then turns every directive
+     * line into an empty line, which does end one: Photon closes a multi-line
+     * {@code moon_phase_brightness} with {@code ") \"} right before its {@code #else}. (The id
+     * maps differ: IdMap rejoins across those lines, see {@link IdMapProperties}.) Callers
+     * evaluate conditions on physical lines, end an open continuation at each directive line,
+     * and feed only active non-directive lines to {@link #accept}.
      */
     static final class PropertyLineJoiner {
         private final StringBuilder pending = new StringBuilder();
