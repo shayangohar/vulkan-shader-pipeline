@@ -112,6 +112,30 @@ final class AlphaTestContractTest {
                 "alphaTest.shadow does not fix the shadow test");
     }
 
+    /**
+     * Iris appends its test to the end of main's body (CommonTransformer, appendMainFunctionBody), so a
+     * return earlier in main skips it. Any integer literal of value 0 indexes buffer 0.
+     */
+    @Test
+    void theTestEndsMainsBody() {
+        PackAlphaTestPlan fixed = PackAlphaTestPlan.forProgram("gbuffers_entities",
+                settings(Map.of("alphaTest.gbuffers_entities", "GREATER 0.5")));
+        String early = "#version 130\nvoid main() {\n"
+                + "    if (gl_FragCoord.x < 1.0) { gl_FragData[0] = vec4(0.0); return; }\n"
+                + "    gl_FragData[0] = vec4(1.0);\n}\n";
+        String tested = fixed.injectDrawTest(early);
+        int test = tested.indexOf("gl_FragData[0].a > 0.5");
+        assertTrue(test > tested.indexOf("vec4(1.0);") && test < tested.lastIndexOf('}')
+                && !tested.contains("chimeraAuthoredMain") && tested.indexOf("void main") == tested.lastIndexOf(
+                "void main"), tested);
+        for (String index : List.of("0u", "0x0", "00")) {
+            String source = "#version 130\nvoid main() { gl_FragData[" + index + "] = vec4(1.0); }\n";
+            assertTrue(fixed.injectDrawTest(source).contains("gl_FragData[0].a > 0.5"), index);
+        }
+        String one = "#version 130\nvoid main() { gl_FragData[0x1] = vec4(1.0); }\n";
+        assertTrue(fixed.injectDrawTest(one).equals(one), "buffer 1 was tested");
+    }
+
     /** Iris ShaderKey.CLOUDS tests ONE_TENTH_ALPHA; a pack alphaTest.gbuffers_clouds replaces it. */
     @Test
     void cloudAlphaTest() {
@@ -305,10 +329,10 @@ final class AlphaTestContractTest {
         assertTrue(fragment != null && fragment.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
                 "converted terrain does not read the per-layer alpha reference");
         assertTrue(fragment.contains("discard;"), "converted terrain has no fragment termination");
-        int authored = fragment.lastIndexOf("chimeraAuthoredMain");
+        int main = fragment.indexOf("void main");
         int rejection = fragment.lastIndexOf(UniformRegistry.ENTITY_ALPHA_REFERENCE);
-        assertTrue(authored >= 0 && rejection > authored,
-                "alpha test was not appended after the authored main");
+        assertTrue(main >= 0 && rejection > main && !fragment.contains("chimeraAuthoredMain"),
+                "alpha test does not end the authored main's body");
         compile(fragment);
         String covered = FragmentConverter.withCoverageOutput(fragment);
         assertTrue(covered.indexOf("discard;") < covered.lastIndexOf("chimeraCoverage ="),

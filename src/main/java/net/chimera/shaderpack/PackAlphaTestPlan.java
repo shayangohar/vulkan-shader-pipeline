@@ -128,7 +128,7 @@ record PackAlphaTestPlan(
                 ? "if (" + test + ") {\n        discard;\n    }"
                 : rejection(output);
         if (rejection.isBlank()) return fragment;
-        String tested = GlslTokenRewriter.appendMainEpilogue(fragment, rejection);
+        String tested = GlslTokenRewriter.appendMainBody(fragment, rejection);
         return perDrawReference() ? declarePerDrawReference(tested) : tested;
     }
 
@@ -164,16 +164,31 @@ record PackAlphaTestPlan(
                 : declaration + source;
     }
 
-    /** Whether the fragment names gl_FragData[0] with a literal index, outside comments. */
+    /**
+     * Whether the fragment names gl_FragData[0] outside comments, its index an integer literal whose
+     * value is 0, as CommonTransformer's glFragDataI matcher reads it: {@code 0u}, {@code 0x0} and
+     * {@code 00} count.
+     */
     private static boolean indexesFragDataZero(String fragment) {
         List<GlslLexer.Token> tokens = GlslLexer.lex(fragment).stream().filter(GlslLexer.Token::significant).toList();
         for (int i = 0; i + 3 < tokens.size(); i++) {
             if (tokens.get(i).identifier("gl_FragData") && tokens.get(i + 1).symbol("[")
-                    && tokens.get(i + 2).text().equals("0") && tokens.get(i + 3).symbol("]")) {
+                    && zeroLiteral(tokens.get(i + 2).text()) && tokens.get(i + 3).symbol("]")) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Whether {@code text} is a GLSL integer literal (decimal, octal or hex, optionally unsigned) of value 0. */
+    private static boolean zeroLiteral(String text) {
+        String digits = text.endsWith("u") || text.endsWith("U") ? text.substring(0, text.length() - 1) : text;
+        try {
+            if (digits.startsWith("0x") || digits.startsWith("0X")) return Long.parseLong(digits.substring(2), 16) == 0;
+            return digits.startsWith("0") ? Long.parseLong(digits, 8) == 0 : Long.parseLong(digits) == 0;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     /**

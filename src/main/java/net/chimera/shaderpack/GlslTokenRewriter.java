@@ -288,6 +288,17 @@ public final class GlslTokenRewriter {
     }
 
     /**
+     * Appends statements at the end of the one real GLSL main function's body, as glsl-transformer's
+     * appendMainFunctionBody does for Iris: a {@code return} earlier in main skips them.
+     */
+    static String appendMainBody(String source, String statements) {
+        if (source == null || statements == null || statements.isBlank()) return source;
+        GlslTree tree = GlslTree.parse(source);
+        int close = mainDefinition(tree).body().range().end() - 1;
+        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(close, close), indent(statements) + "\n")));
+    }
+
+    /**
      * Splits {@code [layout(...)] [writeonly] uniform T a, b[2], c = x;} into
      * one declaration per name. GLSL gives each declarator the same qualifiers
      * and type, so this changes nothing a shader can observe; it lets every
