@@ -40,8 +40,8 @@ public final class ChimeraExtTerrainBuilder extends TerrainBufferBuilder {
 
     @Override
     public void setBlockAttributes(BlockState blockState) {
-        extendedVertexBuilder.setBlockData(materialResolver.resolve(blockState), -1,
-                LightEmission.of(blockState));
+        extendedVertexBuilder.setBlockData(materialResolver.resolve(blockState),
+                ChimeraExtVertexBuilder.BLOCK_RENDER_TYPE, LightEmission.of(blockState));
     }
 
     /**
@@ -51,8 +51,8 @@ public final class ChimeraExtTerrainBuilder extends TerrainBufferBuilder {
      */
     public void setFluidBlockAttributes(BlockState blockState, FluidState fluidState,
                                         int localX, int localY, int localZ) {
-        extendedVertexBuilder.setBlockData(materialResolver.resolve(fluidState.createLegacyBlock()), 1,
-                LightEmission.of(blockState));
+        extendedVertexBuilder.setBlockData(materialResolver.resolve(fluidState.createLegacyBlock()),
+                ChimeraExtVertexBuilder.FLUID_RENDER_TYPE, LightEmission.of(blockState));
         extendedVertexBuilder.setBlockPosition(localX, localY, localZ);
     }
 }

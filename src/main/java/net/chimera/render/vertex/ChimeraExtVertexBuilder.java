@@ -8,10 +8,15 @@ import java.util.Arrays;
 
 /** Compressed host vertex writer with two scalar material attributes. */
 public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVertexBuilder {
+    /** mc_Entity.y of a block model's quads, as Iris's MixinChunkMeshBuildTask passes to beginBlock. */
+    public static final int BLOCK_RENDER_TYPE = 0;
+    /** mc_Entity.y of a fluid's quads. */
+    public static final int FLUID_RENDER_TYPE = 1;
+
     private final TerrainMaterialPlan materialPlan;
     private final int vertexSize;
     private int materialId = -1;
-    private int renderType = -1;
+    private int renderType = BLOCK_RENDER_TYPE;
     private int blockEmission;
     private int blockX;
     private int blockY;
