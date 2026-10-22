@@ -355,6 +355,15 @@ public final class ChimeraEntityBridge {
         currentBlockEntityId = 0;
     }
 
+    /**
+     * Iris's ImmediateState.isRenderingLevel: from LevelRenderer.renderLevel's head to its return,
+     * except for the translucent hand. Iris draws that at the return after the flag has dropped:
+     * the immediate-state mixin (priority 999) applies before MixinLevelRenderer's injection.
+     */
+    public static boolean renderingLevel() {
+        return worldWindow && !ChimeraHandRenderer.translucentPhase();
+    }
+
     /** True while RenderBuffers' sources route family render types (ChimeraRenderBuffersMixin). */
     public static boolean routesWorldBuffers() {
         return enabled && worldWindow && !drawActive;

@@ -110,7 +110,7 @@ final class HostFamilyTest {
             var host = entry.getKey();
             var extended = entry.getValue();
             assertEquals(host, ChimeraVertexFormats.handHostFormat(extended), "hand variant host lookup");
-            boolean computedNormal = ChimeraVertexFormats.computesNormal(extended);
+            boolean computedNormal = ChimeraVertexFormats.appendsNormal(extended);
             assertEquals(host.getVertexSize() + (computedNormal ? 24 : 20), extended.getVertexSize(),
                     "hand prefix plus 20-byte material inputs (and a 4-byte GLYPH normal)");
             for (int i = 0; i < host.getElements().size(); i++) {

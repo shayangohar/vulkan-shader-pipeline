@@ -188,6 +188,23 @@ final class WorldEntityAdapterTest {
         }
     }
 
+    /**
+     * Iris writes each quad's face normal into the layouts it extends (TERRAIN, ENTITY and GLYPH)
+     * while the level renders, and keeps the written normals outside it (MixinBufferBuilder).
+     */
+    @Test
+    void levelQuadsTakeTheirFaceNormal() {
+        for (var format : List.of(ChimeraVertexFormats.EXTENDED_BLOCK, ChimeraVertexFormats.EXTENDED_ENTITY,
+                ChimeraVertexFormats.EXTENDED_GLYPH)) {
+            assertTrue(ChimeraVertexFormats.takesFaceNormal(format, true), format.toString());
+            assertTrue(!ChimeraVertexFormats.takesFaceNormal(format, false), format.toString());
+        }
+        assertTrue(!ChimeraVertexFormats.takesFaceNormal(ChimeraVertexFormats.EXTENDED_PARTICLE, true),
+                "Iris does not extend particles");
+        assertTrue(!ChimeraVertexFormats.takesFaceNormal(DefaultVertexFormat.NEW_ENTITY, true), "a host layout");
+        assertTrue(!ChimeraEntityBridge.renderingLevel(), "no level renders in a test");
+    }
+
     @Test
     void entityMath() {
         float[] normal = new float[3];
