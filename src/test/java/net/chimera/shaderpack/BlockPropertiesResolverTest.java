@@ -117,6 +117,21 @@ final class BlockPropertiesResolverTest {
         assertEquals(7, resolver.resolveName("minecraft:stone_blocks"), "#undef ends the macro");
     }
 
+    /** Without a block.properties, Iris's IdMap maps the legacy numeric ids (LegacyIdMap). */
+    @Test
+    void aPackWithoutBlockPropertiesTakesTheLegacyIds(@TempDir Path root) {
+        PackMaterialResolver.ParseResult result = PackMaterialResolver.parse(root);
+        PackMaterialResolver resolver = result.resolver();
+        assertTrue(!result.present() && result.deviations().contains("BLOCK_PROPERTIES_MISSING"));
+        assertEquals(1, resolver.resolveName("granite"));
+        assertEquals(-123, resolver.resolveName("emerald_block"));
+        assertEquals(35, resolver.resolveName("light_blue_wool"));
+        assertEquals(160, resolver.resolveName("black_stained_glass_pane"));
+        assertEquals(18, resolver.resolveName("dark_oak_leaves"));
+        assertEquals(-1, resolver.resolveName("short_grass"), "1.21.1's short grass is not the legacy grass");
+        assertTrue(resolver.layers().isEmpty());
+    }
+
     private static PackMaterialResolver.ParseResult parse(Path root) throws IOException {
         Files.writeString(root.resolve("block.properties"), PROPERTIES);
         return PackMaterialResolver.parse(root);

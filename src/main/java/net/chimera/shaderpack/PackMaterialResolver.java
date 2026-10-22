@@ -135,7 +135,10 @@ public final class PackMaterialResolver {
     public static ParseResult parse(Path shadersDir, Map<String, String> macros) {
         IdMapProperties.Loaded file = IdMapProperties.read(shadersDir, "block.properties", macros);
         if (!file.present()) {
-            return new ParseResult(empty(), false, null, List.of("BLOCK_PROPERTIES_MISSING"));
+            return new ParseResult(legacy(), false, null, List.of("BLOCK_PROPERTIES_MISSING"));
+        }
+        if ("READ_FAILED".equals(file.failure())) {
+            return new ParseResult(legacy(), true, null, List.of("BLOCK_PROPERTIES_READ_FAILED"));
         }
         Collected collected = new Collected();
         if (file.failure() != null) {
@@ -162,6 +165,53 @@ public final class PackMaterialResolver {
 
     public static PackMaterialResolver empty() {
         return new PackMaterialResolver(new Collected(), Map.of());
+    }
+
+    private static final List<String> LEGACY_COLORS = List.of("white", "orange", "magenta", "light_blue", "yellow",
+            "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black");
+    private static final List<String> LEGACY_WOODS = List.of("oak", "birch", "jungle", "spruce", "acacia", "dark_oak");
+
+    /**
+     * The ids Iris gives a pack whose block.properties is missing or unreadable (IdMap falls back to
+     * LegacyIdMap.addLegacyValues): the numeric ids of the blocks old packs were written for, under
+     * today's names. Some names no longer exist in 1.21.1 ({@code grass} is short_grass now) and map
+     * nothing, as in Iris.
+     */
+    static PackMaterialResolver legacy() {
+        Map<Integer, String> ids = new LinkedHashMap<>();
+        ids.put(1, "stone granite diorite andesite");
+        ids.put(2, "grass_block");
+        ids.put(4, "cobblestone");
+        ids.put(50, "torch");
+        ids.put(89, "glowstone");
+        ids.put(124, "redstone_lamp");
+        ids.put(12, "sand");
+        ids.put(24, "sandstone");
+        ids.put(41, "gold_block");
+        ids.put(42, "iron_block");
+        ids.put(57, "diamond_block");
+        ids.put(-123, "emerald_block");
+        ids.put(35, suffixed(LEGACY_COLORS, "_wool"));
+        ids.put(9, "water");
+        ids.put(11, "lava");
+        ids.put(79, "ice");
+        ids.put(18, suffixed(LEGACY_WOODS, "_leaves"));
+        ids.put(95, suffixed(LEGACY_COLORS, "_stained_glass"));
+        ids.put(160, suffixed(LEGACY_COLORS, "_stained_glass_pane"));
+        ids.put(31, "grass seagrass sweet_berry_bush");
+        ids.put(59, "wheat carrots potatoes");
+        ids.put(37, "dandelion poppy blue_orchid allium azure_bluet red_tulip pink_tulip white_tulip orange_tulip"
+                + " oxeye_daisy cornflower lily_of_the_valley wither_rose");
+        ids.put(175, "sunflower lilac tall_grass large_fern rose_bush peony tall_seagrass");
+        ids.put(51, "fire");
+        ids.put(111, "lily_pad");
+        Collected collected = new Collected();
+        ids.forEach((id, names) -> collectBlocks(id, names, collected));
+        return new PackMaterialResolver(collected, Map.of());
+    }
+
+    private static String suffixed(List<String> prefixes, String suffix) {
+        return String.join(" ", prefixes.stream().map(prefix -> prefix + suffix).toList());
     }
 
     /**
