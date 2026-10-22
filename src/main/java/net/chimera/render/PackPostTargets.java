@@ -78,11 +78,14 @@ public final class PackPostTargets {
 
     /** Installs the validated graph and allocates only required physical sides. */
     public boolean configure(PackTargetGraphPlan graph) {
-        return configure(graph, Set.of());
+        return configure(graph, Map.of());
     }
 
-    /** As {@link #configure(PackTargetGraphPlan)}, with the targets a pass compute writes allowing storage. */
-    public boolean configure(PackTargetGraphPlan graph, Set<Integer> storageTargets) {
+    /**
+     * As {@link #configure(PackTargetGraphPlan)}, with the targets a pass compute writes allowing
+     * storage in the formats it binds them in (PackPassComputes.storageTargets).
+     */
+    public boolean configure(PackTargetGraphPlan graph, Map<Integer, Set<Integer>> storageTargets) {
         trace("configure begin oldTarget0=" + imageId(this.images[0][0])
                 + " oldTarget1=" + imageId(this.images[1][0]));
         cleanUp();
@@ -106,7 +109,7 @@ public final class PackPostTargets {
             this.used[index] = true;
             this.doubled[index] = target.doubled();
             this.sideCounts[index] = target.doubled() ? (target.requiresHistory() ? 3 : 2) : 1;
-            boolean storage = storageTargets.contains(index);
+            Set<Integer> storage = storageTargets.getOrDefault(index, Set.of());
             this.images[0][index] = PackTargetImages.createTargetImage(target, storage);
             if (this.doubled[index]) {
                 this.images[1][index] = PackTargetImages.createTargetImage(target, storage);
@@ -676,7 +679,7 @@ public final class PackPostTargets {
         for (int side = 0; side < images.length; side++) {
             for (int target = 0; target < TARGET_COUNT; target++) {
                 if (this.images[side][target] != null) {
-                    this.images[side][target].free();
+                    TargetFormatViews.free(this.images[side][target]);
                     this.images[side][target] = null;
                 }
             }

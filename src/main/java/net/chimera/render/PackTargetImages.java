@@ -77,19 +77,27 @@ final class PackTargetImages {
 
     /** A target image; one a pass compute writes through {@code colorimgN} also allows storage. */
     static VulkanImage createTargetImage(TargetSpec target, boolean storage) {
-        VulkanImage image = VulkanImage.builder(target.width(), target.height())
+        return createTargetImage(target, storage ? Set.of(target.format()) : Set.of());
+    }
+
+    /**
+     * A target image that storage bindings write in {@code storageFormats} (none: not a storage
+     * image), with a view in each one other than its own (TargetFormatViews).
+     */
+    static VulkanImage createTargetImage(TargetSpec target, Set<Integer> storageFormats) {
+        boolean storage = !storageFormats.isEmpty() && PackPassComputes.storageSupported(target.format());
+        VulkanImage image = TargetFormatViews.create(() -> VulkanImage.builder(target.width(), target.height())
                 .setFormat(target.format())
                 .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                         | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                        | (storage && PackPassComputes.storageSupported(target.format())
-                        ? VK_IMAGE_USAGE_STORAGE_BIT : 0))
+                        | (storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0))
                 .setMipLevels(target.mipLevels())
                 // Reforged makes per-level views only on request. A mipmapped target renders to level 0
                 // through one, as does a padded-alpha target, whose main view reads alpha as 1.
                 .setLevelViews(target.mipLevels() > 1 || target.paddedAlpha())
                 .setLinearFiltering(!IrisColorFormats.integer(target.format()))
                 .setClamp(true)
-                .createVulkanImage();
+                .createVulkanImage(), target.format(), storage ? storageFormats : Set.of());
         if (target.paddedAlpha()) ImageViews.sampleAlphaAsOne(image);
         // Iris samples the base level until a program's pass generates the chain.
         if (image.mipLevels > 1) sampleWith(image, baseLevelSampler(image));

@@ -145,12 +145,16 @@ final class PackPassComputes implements AutoCloseable {
         return new PackTargetGraphPlan.ComputeUse(targets, depthReads);
     }
 
-    /** The targets a loaded compute writes, which their images must allow as storage. */
-    Set<Integer> storageTargets() {
-        Set<Integer> targets = new TreeSet<>();
+    /**
+     * The targets a loaded compute writes, which their images must allow as storage, each with the
+     * Vulkan formats it is bound in: a view in each one other than the target's own (TargetFormatViews).
+     */
+    Map<Integer, Set<Integer>> storageTargets() {
+        Map<Integer, Set<Integer>> targets = new TreeMap<>();
         for (Loaded compute : loaded) {
             compute.plan().bindings().stream().filter(binding -> binding.kind() == PassComputePlan.Kind.TARGET_IMAGE)
-                    .forEach(binding -> targets.add(binding.target()));
+                    .forEach(binding -> targets.computeIfAbsent(binding.target(), ignored -> new TreeSet<>())
+                            .add(IrisColorFormats.of(binding.format()).vkFormat()));
         }
         return targets;
     }
@@ -284,7 +288,8 @@ final class PackPassComputes implements AutoCloseable {
                 compute.kernel().writeImage(frame, binding.binding(), view,
                         binding.storage() ? 0L : pack.getSampler(), VK_IMAGE_LAYOUT_GENERAL);
             } else if (binding.storage()) {
-                compute.kernel().writeImage(frame, binding.binding(), PackPostTargets.attachmentView(image), 0L,
+                compute.kernel().writeImage(frame, binding.binding(),
+                        TargetFormatViews.storageView(image, IrisColorFormats.of(binding.format()).vkFormat()), 0L,
                         VK_IMAGE_LAYOUT_GENERAL);
             } else {
                 boolean general = written.containsKey(image);

@@ -431,9 +431,14 @@ final class AdvancedImageDeclarations {
      * null for a format of another size, which nothing reads the image as.
      */
     static String viewFormat(PackAdvancedResourcePlan.ImageSpec spec, String declared) {
+        return viewFormat(spec.format(), declared);
+    }
+
+    /** As {@link #viewFormat(PackAdvancedResourcePlan.ImageSpec, String)}, of any image stored in {@code own}. */
+    static String viewFormat(IrisColorFormats.Format own, String declared) {
         IrisColorFormats.Format format = IrisColorFormats.of(declared);
-        if (format == null || format.vkFormat() == spec.format().vkFormat()) return "";
-        return format.bytes() == spec.format().bytes()
+        if (format == null || format.vkFormat() == own.vkFormat()) return "";
+        return format.bytes() == own.bytes()
                 ? IrisColorFormats.stored(format.vkFormat()).token().toLowerCase(Locale.ROOT) : null;
     }
 

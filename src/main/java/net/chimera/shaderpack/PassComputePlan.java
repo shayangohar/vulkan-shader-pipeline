@@ -385,7 +385,8 @@ public final class PassComputePlan {
                 int target = color.matches() ? Integer.parseInt(color.group(1)) : -1;
                 // A shadowcomp compute binds shadowcolorimgN, not colorimgN (IrisImages.addShadowColorImages).
                 StorageForm form = pack != null ? packImageForm(pack, image.group(1))
-                        : registers(work, IrisSamplerOrder.Source.TARGET) ? targetImageForm(target) : null;
+                        : registers(work, IrisSamplerOrder.Source.TARGET) ? targetImageForm(target, image.group(1))
+                        : null;
                 if (form == null || !image.group(2).equals(form.type())) {
                     work.fail("PASS_COMPUTE_IMAGE_UNSUPPORTED:" + name);
                     continue;
@@ -406,26 +407,36 @@ public final class PassComputePlan {
          * uimg_r32f as layout(r32i) iimage2D. Null for a format of another size.
          */
         private static StorageForm packImageForm(PackAdvancedResourcePlan.ImageSpec pack, String qualifiers) {
-            StringBuilder layouts = new StringBuilder();
-            Matcher layout = LAYOUT.matcher(qualifiers);
-            while (layout.find()) layouts.append(layout.group(1)).append(',');
-            String view = AdvancedImageDeclarations.viewFormat(pack,
-                    AdvancedImageDeclarations.declaredFormat(layouts.toString()));
+            String view = AdvancedImageDeclarations.viewFormat(pack, declaredFormat(qualifiers));
             if (view == null) return null;
             return new StorageForm(view.isEmpty() ? pack.layoutQualifier() : view,
                     AdvancedImageDeclarations.storageImageType(pack, view));
         }
 
+        /** The format a declaration's {@code layout(...)} qualifiers name, lower case; empty for none. */
+        private static String declaredFormat(String qualifiers) {
+            StringBuilder layouts = new StringBuilder();
+            Matcher layout = LAYOUT.matcher(qualifiers);
+            while (layout.find()) layouts.append(layout.group(1)).append(',');
+            return AdvancedImageDeclarations.declaredFormat(layouts.toString());
+        }
+
         /**
          * colorimgN: the target's format, as the image type its kind takes (Iris
          * IrisImages.addRenderTargetImages binds the target's own internal format): Rethinking
-         * Voxels' prepare4 compute writes its RGBA16I colortex11 as iimage2D. Null out of range.
+         * Voxels' prepare4 compute writes its RGBA16I colortex11 as iimage2D. A layout naming
+         * another format of the same texel size reads the target through a view in it, as for a
+         * pack image: Alpha Piscium's begin2_b clears its R32UI colortex9 as rgba8. Null out of
+         * range, or for a format of another size.
          */
-        private StorageForm targetImageForm(int target) {
+        private StorageForm targetImageForm(int target, String qualifiers) {
             if (target < 0 || target > PackTargetGraphPlan.MAX_TARGET) return null;
+            IrisColorFormats.Format own = IrisColorFormats.stored(targetFormat(target));
+            String view = own == null ? "" : AdvancedImageDeclarations.viewFormat(own, declaredFormat(qualifiers));
+            if (view == null) return null;
+            if (!view.isEmpty()) return new StorageForm(view, imageType(IrisColorFormats.of(view).kind()));
             String format = imageFormat(targetFormat(target));
-            String type = targetSamplerType(target).replace("sampler", "image");
-            return format == null ? null : new StorageForm(format, type);
+            return format == null ? null : new StorageForm(format, imageType(kind(targetFormat(target))));
         }
 
         /** A pack image this session creates, or null. */
@@ -592,10 +603,22 @@ public final class PassComputePlan {
 
         /** The sampler type a target binds to: usampler2D or isampler2D for an integer format (Iris). */
         private String targetSamplerType(int target) {
-            IrisColorFormats.Format format = IrisColorFormats.stored(targetFormat(target));
-            IrisColorFormats.Kind kind = format == null ? IrisColorFormats.Kind.FLOAT : format.kind();
-            return kind == IrisColorFormats.Kind.UINT ? "usampler2D"
-                    : kind == IrisColorFormats.Kind.SINT ? "isampler2D" : "sampler2D";
+            return typePrefix(kind(targetFormat(target))) + "sampler2D";
+        }
+
+        /** The kind of value a target format stores; float for one no target uses. */
+        private static IrisColorFormats.Kind kind(int vkFormat) {
+            IrisColorFormats.Format format = IrisColorFormats.stored(vkFormat);
+            return format == null ? IrisColorFormats.Kind.FLOAT : format.kind();
+        }
+
+        /** The 2D storage image type that reads values of {@code kind}. */
+        private static String imageType(IrisColorFormats.Kind kind) {
+            return typePrefix(kind) + "image2D";
+        }
+
+        private static String typePrefix(IrisColorFormats.Kind kind) {
+            return kind == IrisColorFormats.Kind.UINT ? "u" : kind == IrisColorFormats.Kind.SINT ? "i" : "";
         }
 
         /** The live value uniforms the frame serves, in the order the block lays them out. */

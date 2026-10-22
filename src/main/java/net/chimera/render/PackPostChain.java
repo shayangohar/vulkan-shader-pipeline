@@ -630,7 +630,7 @@ final class PackPostChain {
             pass.packNeedsHdrDepth = pass.packTargetGraph.depth().any();
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
             pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph,
-                    pass.packPassComputes == null ? Set.of() : pass.packPassComputes.storageTargets());
+                    pass.packPassComputes == null ? Map.of() : pass.packPassComputes.storageTargets());
             pass.packPostChainActive = pass.packTargetResourcesReady
                     && !pass.packTargetGraph.steps().isEmpty();
             // New targets, at load or after a resize: Iris runs its setup computes again.
